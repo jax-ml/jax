@@ -144,7 +144,7 @@ def _validate_bcoo(data: jnp.ndarray, indices: jnp.ndarray, shape: Sequence[int]
 #----------------------------------------------------------------------
 # bcoo_todense
 
-bcoo_todense_p = core.Primitive('bcoo_todense_p')
+bcoo_todense_p = core.Primitive('bcoo_todense')
 
 def bcoo_todense(data, indices, *, shape):
   """Convert batched sparse matrix to a dense matrix.
