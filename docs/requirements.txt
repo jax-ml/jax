@@ -5,7 +5,6 @@ sphinx_rtd_theme
 sphinx-autodoc-typehints==1.11.1
 jupyter-sphinx>=0.3.2
 myst-nb
-jupyter-core!=4.9.0  # https://github.com/jupyter/jupyter_core/issues/246
 
 # Packages used for CI tests.
 pytest
