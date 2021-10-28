@@ -245,6 +245,16 @@ class NNInitializersTest(jtu.JaxTestCase):
     self.assertEqual(shape, jnp.shape(val))
     self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
 
+  def testVarianceScalingMultiAxis(self):
+    rng = random.PRNGKey(0)
+    shape = (2, 3, 4, 5)
+    initializer = nn.initializers.variance_scaling(
+      scale=1.0, mode='fan_avg', distribution='truncated_normal',
+      in_axis=(0, 1), out_axis=(-2, -1))
+    val = initializer(rng, shape)
+
+    self.assertEqual(shape, jnp.shape(val))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
