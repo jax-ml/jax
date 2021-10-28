@@ -722,13 +722,15 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
   Returns:
     An array containing the result.
   """
-  contract_dims_seq, batch_dims_seq = dimension_numbers
-  contract_dims = tuple(map(tuple, contract_dims_seq))  # type: ignore
-  batch_dims = tuple(map(tuple, batch_dims_seq))  # type: ignore
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  cdims = (api_util._ensure_index_tuple(lhs_contract),
+           api_util._ensure_index_tuple(rhs_contract))
+  bdims = (api_util._ensure_index_tuple(lhs_batch),
+           api_util._ensure_index_tuple(rhs_batch))
   preferred_element_type = (None if preferred_element_type is None else
                             np.dtype(preferred_element_type))
   return dot_general_p.bind(lhs, rhs,
-                            dimension_numbers=(contract_dims, batch_dims),
+                            dimension_numbers=(cdims, bdims),
                             precision=canonicalize_precision(precision),
                             preferred_element_type=preferred_element_type)
 
@@ -822,14 +824,19 @@ def reshape(operand: Array, new_sizes: Shape,
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
   same_shape = core.symbolic_equal_shape(np.shape(operand), new_sizes)
-  same_dims = dimensions is None or tuple(dimensions) == tuple(range(np.ndim(operand)))
+  if dimensions is None:
+    same_dims = True
+    dims = None
+  else:
+    dims = api_util._ensure_index_tuple(dimensions)
+    same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
   if (np.shape(operand) and same_shape and same_dims
       and isinstance(operand, (core.Tracer, xla.DeviceArray))):
     return operand
   else:
     return reshape_p.bind(
       operand, new_sizes=new_sizes,
-      dimensions=None if dimensions is None or same_dims else tuple(dimensions))
+      dimensions=None if dims is None or same_dims else dims)
 
 def pad(operand: Array, padding_value: Array,
         padding_config: Sequence[Tuple[int, int, int]]) -> Array:

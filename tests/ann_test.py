@@ -53,7 +53,7 @@ class AnnTest(jtu.JaxTestCase):
     hits = sum(
         len(list(x
                  for x in ann_args_per_q
-                 if x in gt_args_sets[q]))
+                 if x.item() in gt_args_sets[q]))
         for q, ann_args_per_q in enumerate(ann_args))
     self.assertGreater(hits / (qy_shape[0] * k), recall)
 
@@ -81,7 +81,7 @@ class AnnTest(jtu.JaxTestCase):
     hits = sum(
         len(list(x
                  for x in ann_args_per_q
-                 if x in gt_args_sets[q]))
+                 if x.item() in gt_args_sets[q]))
         for q, ann_args_per_q in enumerate(ann_args))
     self.assertGreater(hits / (qy_shape[0] * k), recall)
 
