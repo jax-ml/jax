@@ -771,6 +771,8 @@ def xla_computation(fun: Callable,
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   fun_name = getattr(fun, "__name__", "unknown")
+  
+  backend = backend if backend is not None else xb.get_backend().platform
 
   def make_axis_env(nreps):
     if axis_env is None:
