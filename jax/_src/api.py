@@ -321,9 +321,6 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
   else:
     donated_invars = (False,) * len(args_flat)
 
-  for arg in args_flat:
-    _check_arg(arg)
-
   return f, in_tree, args_flat, donated_invars
 
 
@@ -351,6 +348,8 @@ def _python_jit(
       return fun(*args, **kwargs)
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    for arg in args_flat:
+      _check_arg(arg)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
@@ -412,6 +411,8 @@ def _cpp_jit(
     # work/code that is redundant between C++ and Python. We can try that later.
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    for arg in args_flat:
+      _check_arg(arg)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
@@ -561,6 +562,15 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
   # If the function we returned from ``jit`` were a class instance,
   # this might naturally be a method, with ``fun`` as a ``self`` and
   # all the other arguments stored as attributes.
+
+  def arg_spec(x):
+    # like xla.arg_spec but duck-types on x.shape and x.dtype
+    aval = shaped_abstractify(x)
+    try:
+      return aval, x._device
+    except:
+      return aval, None
+
   @api_boundary
   def lower(*args, **kwargs) -> Lowered:
     """Lower this function for the given arguments.
@@ -576,7 +586,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     name = flat_fun.__name__
-    arg_specs = unsafe_map(xla.arg_spec, args_flat)
+    arg_specs = unsafe_map(arg_spec, args_flat)
     computation = xla.lower_xla_callable(
         flat_fun, device, backend, name, donated_invars, *arg_specs)
     return Lowered(computation, in_tree, out_tree())
