@@ -213,14 +213,13 @@ class NonConcreteBooleanIndexError(JAXIndexError):
     This pattern of replacing boolean masking with three-argument
     :func:`~jax.numpy.where` is a common solution to this sort of problem.
 
-  Boolean indices in :mod:`jax.ops`
+  Boolean indexing into JAX arrays
     The other situation where this error often arises is when using boolean
-    indices within functions in :mod:`jax.ops`, such as
-    :func:`jax.ops.index_update`. Here is a simple example::
+    indices, such as with :code:`.at[...].set(...)`. Here is a simple example::
 
       >>> @jax.jit
       ... def manual_clip(x):
-      ...   return jax.ops.index_update(x, x < 0, 0)
+      ...   return x.at[x < 0].set(0)
 
       >>> manual_clip(jnp.arange(-2, 2))  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
@@ -237,29 +236,6 @@ class NonConcreteBooleanIndexError(JAXIndexError):
 
       >>> manual_clip(jnp.arange(-2, 2))
       DeviceArray([0, 0, 0, 1], dtype=int32)
-
-    These operations also commonly are written in terms of the
-    :ref:`syntactic-sugar-for-ops`; for example, this is syntactic sugar for
-    :func:`~jax.ops.index_mul`, and fails under JIT::
-
-      >>> @jax.jit
-      ... def manual_abs(x):
-      ...   return x.at[x < 0].mul(-1)
-
-      >>> manual_abs(jnp.arange(-2, 2))  # doctest: +IGNORE_EXCEPTION_DETAIL
-      Traceback (most recent call last):
-          ...
-      NonConcreteBooleanIndexError: Array boolean indices must be concrete: ShapedArray(bool[4])
-
-    As above, the solution is to re-express this in terms of
-    :func:`~jax.numpy.where`::
-
-      >>> @jax.jit
-      ... def manual_abs(x):
-      ...   return jnp.where(x < 0, x * -1, x)
-
-      >>> manual_abs(jnp.arange(-2, 2))
-      DeviceArray([2, 1, 0, 1], dtype=int32)
   """
   def __init__(self, tracer: "core.Tracer"):
     super().__init__(

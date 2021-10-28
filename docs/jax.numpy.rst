@@ -15,7 +15,7 @@ cannot follow NumPy exactly.
   in-place cannot be implemented in JAX. However, often JAX is able to provide
   an alternative API that is purely functional. For example, instead of in-place
   array updates (:code:`x[i] = y`), JAX provides an alternative pure indexed
-  update function :func:`jax.ops.index_update`.
+  update function :code:`x.at[i].set(y)`.
 
 * Relatedly, some NumPy functions return views of arrays when possible (examples
   are :func:`numpy.transpose` and :func:`numpy.reshape`). JAX versions of such
