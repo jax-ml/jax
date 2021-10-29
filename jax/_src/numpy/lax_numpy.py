@@ -1784,7 +1784,7 @@ def ravel_multi_index(multi_index, dims, mode='raise', order='C'):
   else:
     raise ValueError(f"invalid order={order!r}. Expected 'C' or 'F'")
 
-  result = 0
+  result = array(0, dtype=dtypes.canonicalize_dtype(int_))
   for i, s in zip(multi_index, strides):
     result = result + i * s
   return result
@@ -1798,8 +1798,7 @@ and out-of-bounds indices are clipped.
 @_wraps(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(indices, shape):
   _check_arraylike("unravel_index", indices)
-  shape = core.concrete_or_error(tuple, shape, context="shape argument of unravel_index")
-  sizes = array(tuple(shape) + (1,))
+  sizes = append(array(shape), 1)
   cumulative_sizes = cumprod(sizes[::-1])[::-1]
   total_size = cumulative_sizes[0]
   # Clip so raveling and unraveling an oob index will not change the behavior
@@ -5200,7 +5199,7 @@ def _argmax(a, axis: Optional[int] = None, out=None):
     axis = 0
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmax of an empty sequence")
-  return lax.argmax(a, _canonicalize_axis(axis, a.ndim), int64)
+  return lax.argmax(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
 
 @_wraps(np.argmin, skip_params=['out'])
 def argmin(a, axis: Optional[int] = None, out=None):
@@ -5216,7 +5215,7 @@ def _argmin(a, axis: Optional[int] = None, out=None):
     axis = 0
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmin of an empty sequence")
-  return lax.argmin(a, _canonicalize_axis(axis, a.ndim), int64)
+  return lax.argmin(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
 
 
 _NANARG_DOC = """\

@@ -174,15 +174,16 @@ def _minimize_lbfgs(
 
     converged = jnp.linalg.norm(g_kp1, ord=norm) < gtol
 
+    # TODO(jakevdp): use a fixed-point procedure rather than type-casting?
     state = state._replace(
       converged=converged,
       failed=(status > 0) & (~converged),
       k=state.k + 1,
       nfev=state.nfev + ls_results.nfev,
       ngev=state.ngev + ls_results.ngev,
-      x_k=x_kp1,
-      f_k=f_kp1,
-      g_k=g_kp1,
+      x_k=x_kp1.astype(state.x_k.dtype),
+      f_k=f_kp1.astype(state.f_k.dtype),
+      g_k=g_kp1.astype(state.g_k.dtype),
       s_history=_update_history_vectors(history=state.s_history, new=s_k),
       y_history=_update_history_vectors(history=state.y_history, new=y_k),
       rho_history=_update_history_scalars(history=state.rho_history, new=rho_k),

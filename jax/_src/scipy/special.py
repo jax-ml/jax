@@ -912,6 +912,8 @@ def _gen_associated_legendre(l_max: int,
     p_val = p_val + h
     return p_val
 
+  # TODO(jakevdp): use some sort of fixed-point procedure here instead?
+  p = p.astype(jnp.result_type(p, x, d0_mask_3d))
   if l_max > 1:
     p = lax.fori_loop(lower=2, upper=l_max+1, body_fun=body_fun, init_val=p)
 
