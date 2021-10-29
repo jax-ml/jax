@@ -5449,7 +5449,12 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
       raise IndexError("Cannot do a non-empty jnp.take() from an empty axis.")
     return a
 
-  slice_sizes[axis_idx] = _min(indices.size, 1)
+  if indices.size == 0:
+    out_shape = (slice_sizes[:axis_idx] + list(indices.shape) +
+                 slice_sizes[axis_idx + 1:])
+    return full_like(a, 0, shape=out_shape)
+
+  slice_sizes[axis_idx] = 1
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(
       list(range(axis_idx)) +

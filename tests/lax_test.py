@@ -2041,7 +2041,7 @@ class LaxTest(jtu.JaxTestCase):
          "Gather op must have one slice size for every input dimension"),
         ("WindowBoundsNot1ForElidedDim", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
          (4, 5, 6, 7), (1,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
-         ("Gather op can only collapse slice dims with bound 1 or 0, but bound "
+         ("Gather op can only collapse slice dims with bound 1, but bound "
           "is 9 for index 1 at position 0."))
       ]
   ))
