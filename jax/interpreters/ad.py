@@ -215,7 +215,7 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, consts, primals_in, cotangents
       cts_in = map(read_cotangent, eqn.outvars)
     else:
       cts_in, = map(read_cotangent, eqn.outvars)
-    with source_info_util.user_context(eqn.source_info.traceback):
+    with source_info_util.user_context(eqn.source_info):
       if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
         cts_in_avals = [v.aval for v in eqn.outvars]
         call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)

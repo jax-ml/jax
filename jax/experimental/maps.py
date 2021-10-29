@@ -713,7 +713,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                  call_jaxpr=jaxpr,
                                  resource_env=resource_env,
                                  name=name),
-                        source_info_util.new_source_info(), resource_env, {})
+                        None, resource_env, {})
   jaxpr = plan.subst_axes_with_resources(jaxpr)
   use_spmd_lowering = config.experimental_xmap_spmd_lowering
   ensure_fixed_sharding = config.experimental_xmap_ensure_fixed_sharding
@@ -950,7 +950,7 @@ def show_axes(axes):
 
 def _resource_typing_xmap(avals,
                           params,
-                          source_info: source_info_util.SourceInfo,
+                          source_info: Optional[source_info_util.Traceback],
                           resource_env,
                           outer_axis_resources):
   axis_resources = params['axis_resources']
