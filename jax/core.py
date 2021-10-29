@@ -1605,9 +1605,9 @@ def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
   out_axes_transforms = _IgnoreElemList()
   if primitive.map_primitive:
     out_axes_thunk = params['out_axes_thunk']
-    # The new thunk depends deterministically on the old thunk and the wrapped function.
-    # Any caching already has to include the wrapped function as part of the key, so we
-    # only use the previous thunk for equality checks.
+    # The new thunk depends deterministically on the old thunk and the wrapped
+    # function. Any caching already has to include the wrapped function as part
+    # of the key, so we only use the previous thunk for equality checks.
     @as_hashable_function(closure=out_axes_thunk)
     def new_out_axes_thunk():
       out_axes = out_axes_thunk()

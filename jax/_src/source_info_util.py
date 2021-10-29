@@ -15,6 +15,7 @@
 import contextlib
 import itertools
 import os.path
+import pathlib
 import threading
 from typing import Optional, Iterator, NamedTuple
 
@@ -60,7 +61,8 @@ def user_frame(source_info: SourceInfo) -> Optional[Frame]:
 
 def summarize(source_info: SourceInfo, num_frames=1) -> str:
   frames = itertools.islice(user_frames(source_info), num_frames)
-  frame_strs = [f"{frame.file_name}:{frame.line_num} ({frame.function_name})"
+  s = lambda s: s.replace(str(pathlib.Path.home()), '~')
+  frame_strs = [f"{s(frame.file_name)}:{frame.line_num} ({frame.function_name})"
                 if frame else "unknown" for frame in frames]
   return '\n'.join(reversed(frame_strs))
 

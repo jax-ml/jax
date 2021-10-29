@@ -19,6 +19,7 @@ from functools import partial
 import inspect
 import itertools as it
 import operator as op
+import pathlib
 from typing import (Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple,
                     List, Union, cast)
 from weakref import ref
@@ -1461,13 +1462,14 @@ def debug_info(fn: Callable, in_tree: Optional[PyTreeDef], has_kwargs: bool,
   return DebugInfo(func_src_info, traced_for, arg_info)
 
 def fun_sourceinfo(fun: Callable):
+  s = lambda s: s.replace(str(pathlib.Path.home()), '~')
   while isinstance(fun, functools.partial):
     fun = fun.func
   fun = inspect.unwrap(fun)
   try:
     filename = fun.__code__.co_filename
     lineno = fun.__code__.co_firstlineno
-    line_info = f"{fun.__name__} at {filename}:{lineno}"
+    line_info = f"{fun.__name__} at {s(filename)}:{lineno}"
     return line_info
   except AttributeError:
     return "<unknown>"
