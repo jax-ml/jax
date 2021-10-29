@@ -98,12 +98,12 @@ def _get_canonical_source_file(frame: source_info_util.Frame):
 tracebacks = {}
 def make_op_metadata(primitive: core.Primitive,
                      params: Dict, *,
+                     source_info: source_info_util.SourceInfo,
                      name_stack: str = "",
-                     source_info: Optional[source_info_util.Traceback] = None
                      ) -> xc.OpMetadata:
   eqn_str = str(pp.text(name_stack) +
                 pp_eqn_compact(primitive.name, params, JaxprPpContext()))
-  tracebacks[eqn_str] = source_info
+  tracebacks[eqn_str] = source_info.traceback
   frame = source_info_util.user_frame(source_info) if source_info else None
   return xc.OpMetadata(
         op_type=primitive.name,
@@ -573,7 +573,7 @@ def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
       raise NotImplementedError(
           f"XLA translation rule for primitive '{eqn.primitive.name}' not found")
 
-    with source_info_util.user_context(eqn.source_info):
+    with source_info_util.user_context(eqn.source_info.traceback):
       ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
                  *in_nodes, **eqn.params)
 
