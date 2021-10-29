@@ -7141,7 +7141,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     raise TypeError(msg.format(fun_name, arg_name, bound_error, obj))
 
 
-def  _dynamic_slice_indices(operand, start_indices):
+def _dynamic_slice_indices(operand, start_indices):
   # Normalize the start_indices w.r.t. operand.shape
   if len(start_indices) != operand.ndim:
     msg = ("Length of slice indices must match number of operand dimensions ({} "

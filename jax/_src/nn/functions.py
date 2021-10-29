@@ -314,7 +314,7 @@ def normalize(x: Array,
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
 def one_hot(x: Array, num_classes: int, *,
-            dtype: Any = jnp.float64, axis: Union[int, AxisName] = -1) -> Array:
+            dtype: Any = jnp.float_, axis: Union[int, AxisName] = -1) -> Array:
   """One-hot encodes the given indicies.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -334,8 +334,7 @@ def one_hot(x: Array, num_classes: int, *,
   Args:
     x: A tensor of indices.
     num_classes: Number of classes in the one-hot dimension.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default :obj:`jnp.float_`).
     axis: the axis or axes along which the function should be
       computed.
   """

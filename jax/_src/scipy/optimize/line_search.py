@@ -131,7 +131,11 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
     a_j = jnp.where(use_quad, a_j_quad, a_j)
     a_j = jnp.where(use_bisection, a_j_bisection, a_j)
 
+    # TODO(jakevdp): should we use some sort of fixed-point approach here instead?
     phi_j, dphi_j, g_j = restricted_func_and_grad(a_j)
+    phi_j = phi_j.astype(state.phi_lo.dtype)
+    dphi_j = dphi_j.astype(state.dphi_lo.dtype)
+    g_j = g_j.astype(state.g_star.dtype)
     state = state._replace(nfev=state.nfev + 1,
                            ngev=state.ngev + 1)
 
