@@ -1805,7 +1805,7 @@ def unravel_index(indices, shape):
   # Clip so raveling and unraveling an oob index will not change the behavior
   clipped_indices = clip(indices, -total_size, total_size - 1)
   # Add enough trailing dims to avoid conflict with clipped_indices
-  cumulative_sizes = cumulative_sizes.reshape([-1] + [1] * _ndim(indices))
+  cumulative_sizes = expand_dims(cumulative_sizes, range(1, 1 + _ndim(indices)))
   clipped_indices = expand_dims(clipped_indices, axis=0)
   idx = clipped_indices % cumulative_sizes[:-1] // cumulative_sizes[1:]
   # TODO(jakevdp): return tuple(idx) once it behaves properly (#3821)
@@ -5139,11 +5139,11 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
 def kron(a, b):
   a, b = _promote_dtypes(a, b)
   if ndim(a) < ndim(b):
-    a = reshape(a, (1,) * (ndim(b) - ndim(a)) + shape(a))
+    a = expand_dims(a, range(ndim(b) - ndim(a)))
   elif ndim(b) < ndim(a):
-    b = reshape(b, (1,) * (ndim(a) - ndim(b)) + shape(b))
-  a_reshaped = reshape(a, [i for d in shape(a) for i in (d, 1)])
-  b_reshaped = reshape(b, [i for d in shape(b) for i in (1, d)])
+    b = expand_dims(b, range(ndim(a) - ndim(b)))
+  a_reshaped = expand_dims(a, range(1, 2 * ndim(a), 2))
+  b_reshaped = expand_dims(b, range(0, 2 * ndim(b), 2))
   out_shape = tuple(np.multiply(shape(a), shape(b)))
   return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
 
