@@ -34,3 +34,8 @@ from jax._src.lax.linalg import (
   schur,
   schur_p
 )
+
+
+from jax._src.lax.qdwh import (
+  qdwh as qdwh
+)

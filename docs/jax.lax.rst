@@ -199,6 +199,7 @@ Linear algebra operators (jax.lax.linalg)
     eig
     eigh
     lu
+    qdwh
     qr
     svd
     triangular_solve

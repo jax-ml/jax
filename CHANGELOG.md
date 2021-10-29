@@ -20,6 +20,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Moved `jax.experimental.stax` to `jax.example_libraries.stax`
   * Moved `jax.experimental.optimizers` to `jax.example_libraries.optimizers`
 
+* New features:
+  * Added `jax.lax.linalg.qdwh`.
 
 ## jax 0.2.24 (Oct 19, 2021)
 * [GitHub
