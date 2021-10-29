@@ -73,7 +73,8 @@ class AbsArray(core.AbstractValue):
     self.shape = shape
     self._eltTy = eltTy
 
-  def str_short(self):
+  def str_short(self, short_dtypes=False):
+    del short_dtypes  # ignored
     shape = f'[{",".join(str(d) for d in self.shape)}]' if self.shape else ''
     if isinstance(self._eltTy, BoundedIntTy):
       return f'BInt{{≤{self._eltTy._bound}}}{shape}'
@@ -1006,7 +1007,7 @@ def batch_jaxpr(jaxpr, axis_size, in_dims):
 
 @lu.transformation
 def _batch_fun(in_dims, *in_vals, **params):
-  with core.new_main(batching.BatchTrace, axis_name=None) as main:
+  with core.new_main(batching.BatchTrace, axis_name=core.no_axis_name) as main:
     out_vals = yield (main, in_dims, *in_vals), params
     del main
   yield out_vals
