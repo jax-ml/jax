@@ -51,6 +51,7 @@ complex_: type = np.complex128
 # uint = np.uint32
 # float_ = np.float32
 # complex_ = np.complex64
+_default_types = {'b': bool_, 'i': int_, 'u': uint, 'f': float_, 'c': complex_}
 
 # Trivial vectorspace datatype needed for tangent values of int/bool primals
 float0 = np.dtype([('float0', np.void, 0)])
@@ -368,4 +369,7 @@ def result_type(*args):
   """Convenience function to apply JAX argument dtype promotion."""
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
-  return canonicalize_dtype(_lattice_result_type(*args)[0])
+  dtype, weak_type = _lattice_result_type(*args)
+  if weak_type:
+    dtype = _default_types['f' if dtype == _bfloat16_dtype else dtype.kind]
+  return canonicalize_dtype(dtype)
