@@ -42,11 +42,13 @@ _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 bool_: type = np.bool_
 int_: type = np.int64
+uint: type = np.uint64
 float_: type = np.float64
 complex_: type = np.complex128
 
 # TODO(phawkins): change the above defaults to:
 # int_ = np.int32
+# uint = np.uint32
 # float_ = np.float32
 # complex_ = np.complex64
 

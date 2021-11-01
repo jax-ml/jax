@@ -365,6 +365,7 @@ from jax._src.numpy.lax_numpy import (
     triu_indices_from as triu_indices_from,
     true_divide as true_divide,
     trunc as trunc,
+    uint as uint,
     uint16 as uint16,
     uint32 as uint32,
     uint64 as uint64,
