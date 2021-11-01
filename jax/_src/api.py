@@ -964,7 +964,8 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     tuple). If ``argnums`` is an integer then the gradient has the same shape
     and type as the positional argument indicated by that integer. If argnums is
     a sequence of integers, the gradient is a tuple of values with the same
-    shapes and types as the corresponding arguments.
+    shapes and types as the corresponding arguments. If ``has_aux`` is True
+    then a tuple of ((value, auxiliary_data), gradient) is returned.
   """
 
   docstr = ("Value and gradient of {fun} with respect to positional "
@@ -1061,19 +1062,23 @@ _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
 
 
 def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-           holomorphic: bool = False) -> Callable:
+           has_aux: bool = False, holomorphic: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated column-by-column using forward-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
     argnums: Optional, integer or sequence of integers. Specifies which
       positional argument(s) to differentiate with respect to (default ``0``).
+    has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
+      first element is considered the output of the mathematical function to be
+      differentiated and the second element is auxiliary data. Default False.
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the Jacobian of
-    ``fun`` using forward-mode automatic differentiation.
+    ``fun`` using forward-mode automatic differentiation. If ``has_aux`` is True
+    then a pair of (jacobian, auxiliary_data) is returned.
 
   >>> import jax
   >>> import jax.numpy as jnp
@@ -1096,11 +1101,19 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     f_partial, dyn_args = argnums_partial(f, argnums, args,
                                           require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacfwd, holomorphic), dyn_args)
-    pushfwd = partial(_jvp, f_partial, dyn_args)
-    y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
+    if not has_aux:
+      pushfwd = partial(_jvp, f_partial, dyn_args)
+      y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
+    else:
+      pushfwd = partial(_jvp, f_partial, dyn_args, has_aux=True)
+      y, jac, aux = vmap(pushfwd, out_axes=(None, -1, None))(_std_basis(dyn_args))
     tree_map(partial(_check_output_dtype_jacfwd, holomorphic), y)
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
-    return tree_map(partial(_jacfwd_unravel, example_args), y, jac)
+    jac_tree = tree_map(partial(_jacfwd_unravel, example_args), y, jac)
+    if not has_aux:
+      return jac_tree
+    else:
+      return jac_tree, aux
 
   return jacfun
 
@@ -1126,13 +1139,16 @@ def _check_output_dtype_jacfwd(holomorphic, x):
                       f"but got {aval.dtype.name}.")
 
 def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-           holomorphic: bool = False, allow_int: bool = False) -> Callable:
+           has_aux: bool = False, holomorphic: bool = False, allow_int: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated row-by-row using reverse-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
     argnums: Optional, integer or sequence of integers. Specifies which
       positional argument(s) to differentiate with respect to (default ``0``).
+    has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
+      first element is considered the output of the mathematical function to be
+      differentiated and the second element is auxiliary data. Default False.
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
     allow_int: Optional, bool. Whether to allow differentiating with
@@ -1141,7 +1157,8 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the Jacobian of
-    ``fun`` using reverse-mode automatic differentiation.
+    ``fun`` using reverse-mode automatic differentiation. If ``has_aux`` is True
+    then a pair of (jacobian, auxiliary_data) is returned.
 
   >>> import jax
   >>> import jax.numpy as jnp
@@ -1163,13 +1180,20 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     f_partial, dyn_args = argnums_partial(f, argnums, args,
                                           require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacrev, holomorphic, allow_int), dyn_args)
-    y, pullback = _vjp(f_partial, *dyn_args)
+    if not has_aux:
+      y, pullback = _vjp(f_partial, *dyn_args)
+    else:
+      y, pullback, aux = _vjp(f_partial, *dyn_args, has_aux=True)
     tree_map(partial(_check_output_dtype_jacrev, holomorphic), y)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     jac_tree = tree_map(partial(_jacrev_unravel, y), example_args, jac)
-    return tree_transpose(tree_structure(example_args), tree_structure(y), jac_tree)
+    jac_tree = tree_transpose(tree_structure(example_args), tree_structure(y), jac_tree)
+    if not has_aux:
+      return jac_tree
+    else:
+      return jac_tree, aux
 
   return jacfun
 jacobian = jacrev
@@ -2046,7 +2070,9 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
                        map(tuple, out_shapes), out_tree_thunk())
   return fun
 
-def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
+def jvp(
+    fun: Callable, primals, tangents, has_aux: bool = False
+) -> Tuple[Any, ...]:
   """Computes a (forward-mode) Jacobian-vector product of ``fun``.
 
   Args:
@@ -2060,13 +2086,19 @@ def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
     tangents: The tangent vector for which the Jacobian-vector product should be
       evaluated. Should be either a tuple or a list of tangents, with the same
       tree structure and array shapes as ``primals``.
+    has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
+     first element is considered the output of the mathematical function to be
+     differentiated and the second element is auxiliary data. Default False.
 
   Returns:
-    A ``(primals_out, tangents_out)`` pair, where ``primals_out`` is
-    ``fun(*primals)``, and ``tangents_out`` is the Jacobian-vector product of
+    If ``has_aux`` is ``False``, returns a ``(primals_out, tangents_out)`` pair,
+    where ``primals_out`` is ``fun(*primals)``,
+    and ``tangents_out`` is the Jacobian-vector product of
     ``function`` evaluated at ``primals`` with ``tangents``. The
     ``tangents_out`` value has the same Python tree structure and shapes as
-    ``primals_out``.
+    ``primals_out``. If ``has_aux`` is ``True``, returns a
+    ``(primals_out, tangents_out, aux)`` tuple where ``aux``
+    is the auxiliary data returned by ``fun``.
 
   For example:
 
@@ -2079,9 +2111,9 @@ def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
   0.19900084
   """
   _check_callable(fun)
-  return _jvp(lu.wrap_init(fun), primals, tangents)
+  return _jvp(lu.wrap_init(fun), primals, tangents, has_aux=has_aux)
 
-def _jvp(fun: lu.WrappedFun, primals, tangents):
+def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
   """Variant of jvp() that takes an lu.WrappedFun."""
   if (not isinstance(primals, (tuple, list)) or
       not isinstance(tangents, (tuple, list))):
@@ -2106,11 +2138,21 @@ def _jvp(fun: lu.WrappedFun, primals, tangents):
       raise ValueError("jvp called with different primal and tangent shapes;"
                        f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
 
-  flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
-  out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
-  return (tree_unflatten(out_tree(), out_primals),
-          tree_unflatten(out_tree(), out_tangents))
-
+  if not has_aux:
+    flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
+    out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
+    out_tree = out_tree()
+    return (tree_unflatten(out_tree, out_primals),
+            tree_unflatten(out_tree, out_tangents))
+  else:
+    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, tree_def)
+    jvp_fun, aux = ad.jvp(flat_fun, has_aux=True)
+    out_primals, out_tangents = jvp_fun.call_wrapped(ps_flat, ts_flat)
+    out_tree, aux_tree = out_aux_trees()
+    return (tree_unflatten(out_tree, out_primals),
+            tree_unflatten(out_tree, out_tangents),
+            tree_unflatten(aux_tree, aux()))
+  
 def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   """Produces a linear approximation to ``fun`` using :py:func:`jvp` and partial eval.
 

@@ -1230,6 +1230,66 @@ class APITest(jtu.JaxTestCase):
     for val in aux.values():
       self.assertNotIsInstance(val, core.Tracer)
 
+  def test_jacfwd_and_aux_basic(self):
+    jac, aux = jacfwd(lambda x: (x**3, [x**2]), has_aux=True)(3.)
+    self.assertAllClose(jac, jacfwd(lambda x: x**3)(3.))
+    self.assertAllClose(aux, [9.], check_dtypes=False)
+
+  def test_jacrev_and_aux_basic(self):
+    jac, aux = jacrev(lambda x: (x**3, [x**2]), has_aux=True)(3.)
+    self.assertAllClose(jac, jacrev(lambda x: x**3)(3.))
+    self.assertAllClose(aux, [9.], check_dtypes=False)
+
+  def test_jacfwd_and_aux_nested(self):
+    def f(x):
+      jac, aux = jacfwd(lambda x: (x**3, [x**3]), has_aux=True)(x)
+      return aux[0]
+
+    f2 = lambda x: x**3
+
+    self.assertEqual(jacfwd(f)(4.), jacfwd(f2)(4.))
+    self.assertEqual(jit(jacfwd(f))(4.), jacfwd(f2)(4.))
+    self.assertEqual(jit(jacfwd(jit(f)))(4.), jacfwd(f2)(4.))
+
+    def f(x):
+      jac, aux = jacfwd(lambda x: (x**3, [x**3]), has_aux=True)(x)
+      return aux[0] * jnp.sin(x)
+
+    f2 = lambda x: x**3 * jnp.sin(x)
+
+    self.assertEqual(jacfwd(f)(4.), jacfwd(f2)(4.))
+    self.assertEqual(jit(jacfwd(f))(4.), jacfwd(f2)(4.))
+    self.assertEqual(jit(jacfwd(jit(f)))(4.), jacfwd(f2)(4.))
+
+  def test_jacrev_and_aux_nested(self):
+    def f(x):
+      jac, aux = jacrev(lambda x: (x**3, [x**3]), has_aux=True)(x)
+      return aux[0]
+
+    f2 = lambda x: x**3
+
+    self.assertEqual(jacrev(f)(4.), jacrev(f2)(4.))
+    self.assertEqual(jit(jacrev(f))(4.), jacrev(f2)(4.))
+    self.assertEqual(jit(jacrev(jit(f)))(4.), jacrev(f2)(4.))
+
+    def f(x):
+      jac, aux = jacrev(lambda x: (x**3, [x**3]), has_aux=True)(x)
+      return aux[0] * jnp.sin(x)
+
+    f2 = lambda x: x**3 * jnp.sin(x)
+
+    self.assertEqual(jacrev(f)(4.), jacrev(f2)(4.))
+    self.assertEqual(jit(jacrev(f))(4.), jacrev(f2)(4.))
+    self.assertEqual(jit(jacrev(jit(f)))(4.), jacrev(f2)(4.))
+
+  def test_jvp_and_aux_basic(self):
+    fun = lambda x: (x**3, [x**2])
+    primals, tangents, aux = api.jvp(fun, (3.,), (4.,), has_aux=True)
+    expected_primals, expected_tangents = api.jvp(lambda x: x**3, (3.,), (4.,))
+    self.assertAllClose(primals, expected_primals, check_dtypes=True)
+    self.assertAllClose(tangents, expected_tangents, check_dtypes=True)
+    self.assertEqual(aux, [3.**2])
+
   def test_jvp_mismatched_arguments(self):
     self.assertRaisesRegex(
       TypeError,
