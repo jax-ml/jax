@@ -749,6 +749,28 @@ class IndexingTest(jtu.JaxTestCase):
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testBoolean1DIndexingWithEllipsis(self):
+    # Regression test for https://github.com/google/jax/issues/8412
+    x = np.arange(24).reshape(4, 3, 2)
+    idx = (..., np.array([True, False]))
+    ans = jnp.array(x)[idx]
+    expected = x[idx]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testBoolean2DIndexingWithEllipsis(self):
+    x = np.arange(24).reshape(4, 3, 2)
+    idx = (..., np.array([[True, False], [True, False], [False, False]]))
+    ans = jnp.array(x)[idx]
+    expected = x[idx]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testBoolean1DIndexingWithTrailingEllipsis(self):
+    x = np.arange(24).reshape(4, 3, 2)
+    idx = (np.array([True, False, True, False]), ...)
+    ans = jnp.array(x)[idx]
+    expected = x[idx]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testBooleanIndexingDynamicShapeError(self):
     x = np.zeros(3)
     i = np.array([True, True, False])
@@ -760,6 +782,8 @@ class IndexingTest(jtu.JaxTestCase):
       jnp.arange(4)[True]
     with self.assertRaisesRegex(TypeError, msg):
       jnp.arange(4)[False]
+    with self.assertRaisesRegex(TypeError, msg):
+      jnp.arange(4)[..., True]
 
   def testIssue187(self):
     x = jnp.ones((5, 5))
