@@ -1596,15 +1596,12 @@ for device_array in [DeviceArray]:
     if self.ndim == 0:
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
-      return self._value.__iter__()
+      return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())
 
   setattr(device_array, "__iter__", __iter__)
 
   def __reversed__(self):
-    if self.ndim == 0:
-      raise TypeError("iteration over a 0-d array")
-    else:
-      return reversed(self._value)
+    return iter(self[::-1])
 
   setattr(device_array, "__reversed__", __reversed__)
 

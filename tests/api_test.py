@@ -2281,7 +2281,7 @@ class APITest(jtu.JaxTestCase):
     self.assertStartsWith(repr(rep), "DeviceArray")
 
   def test_device_array_hash(self):
-    rep = jnp.ones(()) + 1.
+    rep = jnp.ones((1,)) + 1.
     self.assertIsInstance(rep, jax.interpreters.xla.DeviceArray)
     self.assertNotIsInstance(rep, collections.abc.Hashable)
     with self.assertRaisesRegex(TypeError, 'unhashable type'):

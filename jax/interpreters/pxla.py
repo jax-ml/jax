@@ -622,21 +622,34 @@ def _sda_value(self):
 
 
 def _sda__getitem__(self, idx):
+  self._check_if_deleted()
   if not isinstance(idx, tuple):
     cidx = (idx,) + (slice(None),) * (len(self.aval.shape) - 1)
   else:
     cidx = idx + (slice(None),) * (len(self.aval.shape) - len(idx))
-  try:
-    buf_idx = self.indices.index(cidx)
-  except ValueError:
-    # NOTE: Slow path, this will materialize the sharded array on a single
-    # device and use XLA's Gather to index into the resulting array.
-    return xla.DeviceArray.__getitem__(self, idx)
+  if self._npy_value is None:
+    try:
+      buf_idx = self.indices.index(cidx)
+    except ValueError:
+      buf_idx = None
+    if buf_idx is not None:
+      buf = self.device_buffers[buf_idx]
+      aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
+      return xla.make_device_array(aval, None, buf)
+  return super(self.__class__, self).__getitem__(idx)
+
+
+def _sda__iter__(self):
+  if self.ndim == 0:
+    raise TypeError("iteration over a 0-d array")  # same as numpy error
   else:
-    self._check_if_deleted()
-    buf = self.device_buffers[buf_idx]
-    aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
-    return xla.make_device_array(aval, None, buf)
+    return (self[i] for i in range(self.shape[0]))
+
+def _sda__reversed__(self):
+  if self.ndim == 0:
+    raise TypeError("iteration over a 0-d array")  # same as numpy error
+  else:
+    return (self[i] for i in range(self.shape[0] - 1, -1, -1))
 
 
 for sda in [_ShardedDeviceArray, pmap_lib.ShardedDeviceArray]:
@@ -647,6 +660,8 @@ for sda in [_ShardedDeviceArray, pmap_lib.ShardedDeviceArray]:
   setattr(sda, "block_until_ready", _sda_block_until_ready)
   setattr(sda, "_value", property(_sda_value))
   setattr(sda, "__getitem__", _sda__getitem__)
+  setattr(sda, "__iter__", _sda__iter__)
+  setattr(sda, "__reversed__", _sda__reversed__)
 
 del (_sda_one_replica_buffer_indices, _sda_copy_to_host_async,
      _sda_check_if_deleted, _sda_block_until_ready, _sda_value, _sda__getitem__)
@@ -657,6 +672,7 @@ if _USE_CPP_SDA:
   ShardedDeviceArray = pmap_lib.ShardedDeviceArrayBase
 else:
   ShardedDeviceArray = _ShardedDeviceArray
+
 
 
 def _hashable_index(idx):

@@ -926,7 +926,7 @@ def dynamic_slice(operand: Array, start_indices: Sequence[Array],
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   return dynamic_slice_p.bind(operand, *start_indices,
-                              slice_sizes=tuple(slice_sizes))
+                              slice_sizes=core.canonicalize_shape(slice_sizes))
 
 def dynamic_update_slice(operand: Array, update: Array,
                          start_indices: Array) -> Array:
@@ -1362,7 +1362,7 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#transpose>`_
   operator.
   """
-  permutation = tuple(permutation)
+  permutation = tuple(operator.index(d) for d in permutation)
   if (permutation == tuple(range(np.ndim(operand)))
       and isinstance(operand, (core.Tracer, xla.DeviceArray))):
     return operand

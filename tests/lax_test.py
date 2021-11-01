@@ -26,6 +26,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from jax import core
 from jax._src import dtypes
 from jax import lax
@@ -1497,6 +1498,12 @@ class LaxTest(jtu.JaxTestCase):
     x = rng((6, 7), np.int32)
     np.testing.assert_equal(lax.dynamic_slice_in_dim(x, 2, 3), x[2:5])
 
+  def testDynamicSliceArraySliceSizes(self):
+    rng = jtu.rand_default(self.rng())
+    x = rng((6, 7), np.int32)
+    np.testing.assert_equal(lax.dynamic_slice(x, [2, 3], jnp.array([2, 2])),
+                            x[2:4, 3:5])
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_indices={}_update_shape={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
@@ -1555,6 +1562,10 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     op = lambda x: lax.transpose(x, perm)
     self._CompileAndCheck(op, args_maker)
+
+  def testTransposeWithArrayPermutation(self):
+    x = lax.transpose(np.ones((2, 3)), jnp.array([1, 0]))
+    self.assertEqual((3, 2), x.shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_perm={}".format(
