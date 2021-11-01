@@ -527,18 +527,19 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_n={}_full_matrices={}_compute_uv={}".format(
+      {"testcase_name": "_n={}_full_matrices={}_compute_uv={}_hermitian={}".format(
           jtu.format_shape_dtype_string(b + (m, n), dtype), full_matrices,
-          compute_uv),
+          compute_uv, hermitian),
        "b": b, "m": m, "n": n, "dtype": dtype, "full_matrices": full_matrices,
-       "compute_uv": compute_uv}
+       "compute_uv": compute_uv, "hermitian": hermitian}
       for b in [(), (3,), (2, 3)]
       for m in [0, 2, 7, 29, 53]
       for n in [0, 2, 7, 29, 53]
       for dtype in float_types + complex_types
       for full_matrices in [False, True]
-      for compute_uv in [False, True]))
-  def testSVD(self, b, m, n, dtype, full_matrices, compute_uv):
+      for compute_uv in [False, True]
+      for hermitian in ([False, True] if m == n else [False])))
+  def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian):
     if (jnp.issubdtype(dtype, np.complexfloating) and
         jtu.device_under_test() == "tpu"):
       raise unittest.SkipTest("No complex SVD implementation")
@@ -551,7 +552,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       return norm / (max(1, m, n) * jnp.finfo(dtype).eps)
 
     a, = args_maker()
-    out = jnp.linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
+    if hermitian:
+      a = a + np.conj(T(a))
+    out = jnp.linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv,
+                         hermitian=hermitian)
     if compute_uv:
       # Check the reconstructed matrices
       if full_matrices:
