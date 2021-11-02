@@ -19,7 +19,7 @@ These exampls are representative for what the average ML researcher is intereste
 | pixelcnn++ | SUCCESS |
 | ppo | SUCCESS |
 | seq2seq | SUCCESS |
-| sst2 | FAIL | NotImplementedError("Call to gather cannot be converted with enable_xla=False. unsupported dimension_numbers 'GatherDimensionNumbers(offset_dims=(1, 2), collapsed_slice_dims=(0,), start_index_map=(0, 1, 2))'; op_shape=(2, 6, 3).")
+| sst2 | SUCCESS |
 | vae | SUCCESS |
 | wmt | SUCCESS |
 
@@ -40,7 +40,7 @@ These exampls are representative for what the average ML researcher is intereste
 | pixelcnn++ | SUCCESS |
 | ppo | SUCCESS |
 | seq2seq | FAIL | ValueError('Unsupported Ops in the model before optimization\nBitcast, BitwiseAnd, BitwiseOr, LeftShift, BitwiseXor, RightShift')
-| sst2 | FAIL | NotImplementedError("Call to gather cannot be converted with enable_xla=False. unsupported dimension_numbers 'GatherDimensionNumbers(offset_dims=(1, 2), collapsed_slice_dims=(0,), start_index_map=(0, 1, 2))'; op_shape=(2, 6, 3).")
+| sst2 | FAIL | ValueError('Unsupported Ops in the model before optimization\nBitwiseAnd')
 | vae | SUCCESS |
 | wmt | FAIL | ValueError("in user code:\n\n\n    ValueError: Got a non-Tensor value FrozenDict({\n        cache: {\n            decoder: {\n                encoderdecoderblock_0: {\n                    SelfAttention_0: {\n                        cache_index: <tf.Tensor 'StatefulPartitionedCall:1' shape=() dtype=int32>,\n                        cached_key: <tf.Tensor 'StatefulPartitionedCall:2' shape=(2, 1, 1, 2) dtype=float32>,\n                        cached_value: <tf.Tensor 'StatefulPartitionedCall:3' shape=(2, 1, 1, 2) dtype=float32>,\n                    },\n                },\n                posembed_output: {\n                    cache_index: <tf.Tensor 'StatefulPartitionedCall:4' shape=() dtype=uint32>,\n                },\n            },\n        },\n    }) for key 'output_1' in the output of the function __inference_<lambda>_229578 used to generate the SavedModel signature 'serving_default'. Outputs for functions used as signatures must be a single Tensor, a sequence of Tensors, or a dictionary from string to Tensor.\n")
 

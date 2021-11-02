@@ -1188,6 +1188,39 @@ for shape, idxs, dnums, slice_sizes, needs_xla in [
         enable_xla=enable_xla)
 
 
+# Test cases lax.gather with non-empty batch_dims. This is for instance
+# triggered when executing `jax.vmap(lax.dynamic_slice)`.
+# We currently only support the case where we have a single batch dimension.
+dtype = np.float32
+dnums_2d = lax.GatherDimensionNumbers(
+    offset_dims=(1,),
+    collapsed_slice_dims=(0,),  # Batch dimension.
+    start_index_map=(0, 1))
+dnums_3d = lax.GatherDimensionNumbers(
+    offset_dims=(1, 2),
+    collapsed_slice_dims=(0,),  # Batch dimension.
+    start_index_map=(0, 1, 2))
+
+for op_shape, start_indices, slice_sizes, dnums in [
+    ((4, 6),    [[0, 1], [1, 2], [2, 3], [3, 2]], (1, 3),    dnums_2d),
+    ((2, 6, 3), [[0, 1, 0], [1, 2, 0]],           (1, 3, 3), dnums_3d),
+    # Test out of bounds behavior.
+    ((3, 10),   [[0, 0], [1, 8], [2, 0]],         (1, 5),    dnums_2d),
+    ((2, 3, 3), [[0, 1, 0], [1, 2, 1]],           (1, 3, 2), dnums_3d)]:
+  start_indices = np.array(start_indices)
+  for enable_xla in [True, False]:
+    define(
+        lax.gather_p,
+        f"batchdims_shape={op_shape}_start_indices_shape={start_indices.shape}_slice_sizes={slice_sizes}_enable_xla={enable_xla}",
+        lambda op, idxs, dnums, slice_sizes: lax.gather(
+                  op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
+        [RandArg(op_shape, dtype), start_indices,
+        StaticArg(dnums),
+        StaticArg(slice_sizes)],
+        dtype=dtype,
+        enable_xla=enable_xla)
+
+
 def _make_scatter_harness(name,
                           *,
                           shape=(5,),

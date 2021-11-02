@@ -13,7 +13,8 @@
 # limitations under the License.
 """Workarounds for jax2tf transforms when XLA is not linked in."""
 import builtins
-from functools import partial
+import dataclasses
+from functools import partial, wraps
 import string
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
@@ -515,38 +516,94 @@ def _clip(max_indices: Sequence[TfVal], start_indices: Sequence[TfVal],
   return tf.clip_by_value(tf.cast(start_indices, dtype=tf.int32), 0, max_start)
 
 
-def _gather_using_tf_slice(operand: TfVal, start_indices: TfVal, *,
-                           dimension_numbers, slice_sizes: core.Shape,
-                           _in_avals: Sequence[core.ShapedArray],
-                           _out_aval: core.ShapedArray):
+@dataclasses.dataclass
+class GatherArgs:
+  operand: TfVal
+  start_indices: TfVal
+  dnums: lax.GatherDimensionNumbers
+  slice_sizes: TfVal
+  op_shape: core.Shape
+  start_indices_shape: core.Shape
+  out_aval: core.ShapedArray
+
+  def __post_init__(self):
+    assert len(self.op_shape) == len(self.slice_sizes)
+
+  def __repr__(self):
+    return (f"operand shape={self.op_shape}, "
+            f"start_indices={self.start_indices}, "
+            f"dimension_numbes={self.dnums}, "
+            f"slice_sizes={self.slice_sizes}")
+
+
+def gather_precondition(precondition_fn: Callable[[GatherArgs], None]):
+  """Decorator for specifying a precondition function.
+
+  This decorator should be put on a function with argument `arg` of type
+  `GatherArgs`. It will first call `precondition_fn` with `arg` (which may throw
+  an exception), and then call the function it is decorating with `arg` as well.
+  """
+
+  def decorator(gather_fn: Callable[[GatherArgs], Any]):
+
+    @wraps(gather_fn)
+    def wrapper(args: GatherArgs):
+      # Call `precondition_fn`; we assume it may throw an exception.
+      precondition_fn(args)
+      return gather_fn(args)
+
+    return wrapper
+
+  return decorator
+
+
+def _pre_gather_for_scalar_indexing(args: GatherArgs):
+  """Returns True if this call to gather represents scalar indexing into arrays.
+
+  E.g., op[2], op[:, :5, :], jnp.take(op, 0, axis=0).
+  """
+  # TODO(marcvanzee): Add more assumptions here, because this is currently too
+  # permissive.
+  if len(args.start_indices_shape) != 1:
+    raise ValueError("start_indices shape should be 1")
+
+
+@gather_precondition(_pre_gather_for_scalar_indexing)
+def _gather_for_scalar_indexing(args: GatherArgs):
   """Implements 'scalar indexing into arrays' cases of lax.gather using tf.slice.
 
   E.g., op[2], op[:, :5, :], jnp.take(op, 0, axis=0).
   """
-  op_shape = _in_avals[0].shape
-  indices = tf.expand_dims(dimension_numbers.start_index_map, 1)
+  indices = tf.expand_dims(args.dnums.start_index_map, 1)
   # lax.gather uses an "index map" which maps `start_indices` to the right axes
   # in `operand`. Since tf.strided_slice uses a single array for specifying the
   # start indices, we use a scatter to map the start indices to the right axes.
-  begin = tf.scatter_nd(indices, start_indices, [len(op_shape)])
-  slice_sizes_tf = jax2tf._eval_shape(slice_sizes)
-  begin = _clip(jax2tf._eval_shape(op_shape), begin, slice_sizes_tf)
+  op_shape = jax2tf._eval_shape(args.op_shape)
+  slice_sizes_tf = jax2tf._eval_shape(args.slice_sizes)
+  # TODO(marcvanzee): Consider transposing `operand`, which is probably more
+  # optimization friendly.
+  begin = tf.scatter_nd(indices, args.start_indices, [len(op_shape)])
+  begin = _clip(op_shape, begin, slice_sizes_tf)
   end = slice_sizes_tf + begin
 
-  # Convert from tuple of dimensions to shrink mask. e.g. (0, 2) --> 5.
-  shrink_mask = sum(2**x for x in dimension_numbers.collapsed_slice_dims)
-  res = tf.strided_slice(operand, begin, end, shrink_axis_mask=shrink_mask)
+  # `collapsed_slice_dims` is a tuple of dimensions to collapse, e.g. (0, 2).
+  # `tf.strided_slice` expects a binary mask to specify the shrink axes, i.e.,
+  # if we want to shrink axis 0 and 2, this corresponds to binary mask 101,
+  # which is 5 in decimals. The following line converts the lax representation
+  # to the one used by `tf.strided_slice`.
+  shrink_mask = sum(2**x for x in args.dnums.collapsed_slice_dims)
+  res = tf.strided_slice(args.operand, begin, end, shrink_axis_mask=shrink_mask)
   # Shape inference doesn't work for tf.strided_slice.
-  res.set_shape(jax2tf._aval_to_tf_shape(_out_aval))
+  res.set_shape(jax2tf._aval_to_tf_shape(args.out_aval))
   return res
 
 
-def _gather_using_tf_gather(operand: TfVal, start_indices: TfVal, *,
-                            dimension_numbers, slice_sizes,
-                            _in_avals: Sequence[core.ShapedArray]):
-  """Implements 'multi-dimensional indexing into arrays' cases of lax.gather using tf.gather.
+def _pre_gather_for_multidim_indexing(args: GatherArgs):
+  """Returns True if this call to gather represents multi-dimensional indexing.
 
   E.g., jnp.take(op, [[0], [1]], axis=0).
+  Note we currently only support multi-dimensional indexing if the last
+  dimension is 1.
   """
   # Handle only the case when tf.gather argument batch_dims=0.
   # Find axis to match the tf.gather semantics
@@ -557,43 +614,87 @@ def _gather_using_tf_gather(operand: TfVal, start_indices: TfVal, *,
   # start_index_map == (axis,)
   # offset_dims == (0, 1, ..., axis - 1, axis + I, ..., O + I - 1)
   # We added a trailing dimension of size 1
-  op_shape = _in_avals[0].shape
-  start_indices_shape = _in_avals[1].shape
-  assert len(op_shape) == len(slice_sizes)
-  if not (len(op_shape) >= 1 and len(dimension_numbers.start_index_map) == 1 and
-          len(dimension_numbers.collapsed_slice_dims) == 1 and
-          dimension_numbers.collapsed_slice_dims[0]
-          == dimension_numbers.start_index_map[0] and
-          len(dimension_numbers.offset_dims) == len(op_shape) - 1):
-    raise _xla_disabled_error(
-        "gather",
-        f"unsupported dimension_numbers '{dimension_numbers}'; op_shape={op_shape}."
-    )
+  op_shape = args.op_shape
+  start_index_map = args.dnums.start_index_map
+  collapsed_slice_dims = args.dnums.collapsed_slice_dims
+  offset_dims = args.dnums.offset_dims
+  if not (len(op_shape) >= 1 and len(start_index_map) == 1 and
+          len(collapsed_slice_dims) == 1 and collapsed_slice_dims[0]
+          == start_index_map[0] and len(offset_dims) == len(op_shape) - 1):
+    raise ValueError("unsupported dimension numbers")
   # We added a trailing dimension of size 1
-  if not core.symbolic_equal_dim(start_indices_shape[-1], 1):
-    raise _xla_disabled_error("gather",
-                              "trailing dimension for start_indices must be 1")
+  if not core.symbolic_equal_dim(args.start_indices_shape[-1], 1):
+    raise ValueError("start_indices shape[-1] should be 1")
   # Guess the axis
-  axis = dimension_numbers.collapsed_slice_dims[0]
-  index_dims = len(start_indices_shape) - 1
+  axis = collapsed_slice_dims[0]
+  index_dims = len(args.start_indices_shape) - 1
   expected_offset_dims = tuple(
       list(range(axis)) +
       list(range(axis + index_dims,
                  len(op_shape) + index_dims - 1)))
-  if dimension_numbers.offset_dims != expected_offset_dims:
-    raise _xla_disabled_error(
-        "gather",
-        f"unexpected dimension_numbers.offset_dims {dimension_numbers.offset_dims} != {expected_offset_dims}"
-    )
-  expected_slice_sizes = op_shape[:axis] + (1,) + op_shape[axis + 1:]
-  if not core.symbolic_equal_shape(slice_sizes, expected_slice_sizes):
-    raise _xla_disabled_error(
-        "gather",
-        f"unexpected slice_sizes {slice_sizes} != {expected_slice_sizes}")
+  if offset_dims != expected_offset_dims:
+    raise ValueError("unsupported offset_dims")
+  expected_slice_sizes = op_shape[:axis] + (1,) + op_shape[axis + 1:]  # type: ignore
+  if not core.symbolic_equal_shape(args.slice_sizes, expected_slice_sizes):
+    raise ValueError("unsupported slice_sizes")
 
-  squeezed_indices = tf.squeeze(start_indices, -1)
-  start_indices = _clip((jax2tf._eval_shape(op_shape)[axis],), squeezed_indices, (1,))
-  return tf.gather(operand, start_indices, axis=axis, batch_dims=0)
+
+@gather_precondition(_pre_gather_for_multidim_indexing)
+def _gather_for_multidim_indexing(args: GatherArgs):
+  """Implements 'multi-dimensional indexing into arrays' cases of lax.gather using tf.gather.
+
+  E.g., jnp.take(op, [[0], [1]], axis=0).
+  """
+  # Guess the axis.
+  axis = args.dnums.collapsed_slice_dims[0]
+  squeezed_indices = tf.squeeze(args.start_indices, -1)
+  op_shape = jax2tf._eval_shape(args.op_shape)
+  start_indices = _clip((op_shape[axis],), squeezed_indices, (1,))
+  return tf.gather(args.operand, start_indices, axis=axis, batch_dims=0)
+
+
+def _pre_gather_with_batch_dims(args: GatherArgs):
+  """Returns True if this call to gather has non-empty batch dimensions.
+
+  This is for instance triggered when doing jax.vmap(lax.dynamic_slice).
+  """
+  # All dimensions in the output array and not in offset_dims are batch_dims.
+  batch_dims = tuple(
+      x for x in range(len(args.out_aval.shape))
+      if x not in args.dnums.offset_dims)
+
+  # We assume exactly one batch (and one or more non-batch dimensions).
+  if len(batch_dims) != 1:
+    raise ValueError(f"batch_dims is {len(batch_dims)} but should be 1")
+
+  # `start_index_map` maps indices in `start_indices` to indices in `operand`.
+  # For simplicity, we currently only consider the case where this mapping is
+  # the identity function, i.e., [2, 3] in `start_indices` maps to
+  # `operand[2, 3]`.
+  if args.dnums.start_index_map != tuple(range(args.start_indices_shape[-1])):
+    raise ValueError("unsupported start_index_map")
+
+  # The batch dims in `start_indices` and `operand` should agree.
+  if jax2tf._eval_shape(args.op_shape)[0] != args.start_indices_shape[0]:
+    raise ValueError("Batch dimensions in operand and start_indices don't "
+                     "agree")
+
+
+@gather_precondition(_pre_gather_with_batch_dims)
+def _gather_with_batch_dims(args: GatherArgs):
+  """Implements call to gather with non-empty batch dimensions.
+
+  E.g., when doing `jax.vmap(lax.dynamic_slice).
+  """
+  op_shape = jax2tf._eval_shape(args.op_shape)
+  start_indices = _clip(op_shape, args.start_indices, args.slice_sizes)
+  result = tf.map_fn(
+    lambda idxs: tf.slice(args.operand, begin=idxs, size=args.slice_sizes),
+    start_indices,
+    fn_output_signature=jax2tf._to_tf_dtype(args.operand.dtype)
+  )
+  result = tf.squeeze(result, axis=1)
+  return result
 
 
 def _gather(operand, start_indices, *, dimension_numbers,
@@ -609,27 +710,30 @@ def _gather(operand, start_indices, *, dimension_numbers,
 
   # TODO(marcvanzee): Check if we need more tests in shape_poly for gather with
   # enable_xla=False.
-
-  if len(_in_avals[1].shape) == 1:
-    # Use tf.slice if `start_indices` is a 1D array.
-    try:
-      return _gather_using_tf_slice(
-          operand,
-          start_indices,
-          dimension_numbers=dimension_numbers,
-          slice_sizes=slice_sizes,
-          _in_avals=_in_avals,
-          _out_aval=_out_aval)
-    except NotImplementedError:
-      # If `_gather_using_tf_slice` fails, don't give up yet.
-      pass
-
-  return _gather_using_tf_gather(
-      operand,
-      start_indices,
-      dimension_numbers=dimension_numbers,
+  gather_args = GatherArgs(
+      operand=operand,
+      start_indices=start_indices,
+      dnums=dimension_numbers,
       slice_sizes=slice_sizes,
-      _in_avals=_in_avals)
+      op_shape=_in_avals[0].shape,
+      start_indices_shape=_in_avals[1].shape,
+      out_aval=_out_aval)
+
+  errors = []
+
+  for gather_fn in [
+      _gather_for_scalar_indexing, _gather_for_multidim_indexing,
+      _gather_with_batch_dims
+  ]:
+    try:
+      return gather_fn(gather_args)
+    except ValueError as e:
+      errors.append(f"{gather_fn}: {repr(e)}")
+
+  error_msg = (f"Unsupported arguments for gather: {gather_args}, errors:\n" +
+               "\n".join(errors))
+
+  raise _xla_disabled_error("gather", error_msg)
 
 
 tf_impl_no_xla[lax.gather_p] = _gather
