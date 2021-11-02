@@ -702,11 +702,14 @@ def _gather(operand, start_indices, *, dimension_numbers,
             fill_value, _in_avals: Sequence[core.ShapedArray],
             _out_aval: core.ShapedArray):
   """Tensorflow implementation of gather."""
-  del unique_indices, fill_value
-
   if mode == lax.GatherScatterMode.FILL_OR_DROP:
-    raise NotImplementedError("FILL_OR_DROP gather mode is not implemented in "
-                              "jax2tf")
+    gather_fill_fn = jax2tf._convert_jax_impl(lax._gather_fill,
+                                              multiple_results=False)
+    return gather_fill_fn(
+        operand, start_indices, dimension_numbers=dimension_numbers,
+        slice_sizes=slice_sizes, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, fill_value=fill_value,
+        output_shape=_out_aval.shape, _in_avals=_in_avals, _out_aval=_out_aval)
 
   # TODO(marcvanzee): Check if we need more tests in shape_poly for gather with
   # enable_xla=False.

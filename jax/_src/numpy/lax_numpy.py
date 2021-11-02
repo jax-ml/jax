@@ -5432,14 +5432,25 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
     axis_idx = _canonicalize_axis(axis, ndim(a))
 
   if mode is None:
+    # TODO(phawkins): change default mode to "fill" and delete this case.
     # lax.gather() does not support negative indices, so we wrap them here
     indices = where(indices < 0, indices + a.shape[axis_idx], indices)
+    gather_mode = lax.GatherScatterMode.CLIP
   elif mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
     indices = mod(indices, _constant_like(indices, a.shape[axis_idx]))
-  elif mode != "clip":
+    gather_mode = lax.GatherScatterMode.PROMISE_IN_BOUNDS
+  elif mode == "fill":
+    # Undocumented non-standard mode corresponding to the fill_or_drop mode on
+    # lax.gather()
+    gather_mode = lax.GatherScatterMode.FILL_OR_DROP
+    # lax.gather() does not support negative indices, so we wrap them here
+    indices = where(indices < 0, indices + a.shape[axis_idx], indices)
+  elif mode == "clip":
+    gather_mode = lax.GatherScatterMode.CLIP
+  else:
     raise ValueError("Invalid mode '{}' for np.take".format(mode))
 
   index_dims = len(shape(indices))
@@ -5463,7 +5474,7 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
     start_index_map=(axis_idx,))
   return lax.gather(a, indices[..., None], dimension_numbers=dnums,
                     slice_sizes=tuple(slice_sizes),
-                    mode="clip")
+                    mode=gather_mode)
 
 
 def _normalize_index(index, axis_size):

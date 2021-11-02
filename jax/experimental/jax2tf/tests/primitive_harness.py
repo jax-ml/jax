@@ -1128,14 +1128,17 @@ for indices, index_oob, indices_name in [
 ]:
   for axis in [0, 1, 2]:
     for enable_xla in [True, False]:
-      define(
-          lax.gather_p,
-          f"from_take_indices_name={indices_name}_axis={axis}_enable_xla={enable_xla}",
-          lambda a, i, axis: jnp.take(a, i, axis=axis),
-          [_gather_input, indices, StaticArg(axis)],
-          dtype=_gather_input.dtype,
-          enable_xla=enable_xla,
-          index_oob=index_oob)
+      for mode in ["clip", "fill"]:
+        define(
+            lax.gather_p,
+            f"from_take_indices_name={indices_name}_axis={axis}"
+            f"_enable_xla={enable_xla}_mode={mode}",
+            lambda a, i, axis: jnp.take(a, i, axis=axis, mode=mode),
+            [_gather_input, indices, StaticArg(axis)],
+            dtype=_gather_input.dtype,
+            enable_xla=enable_xla,
+            index_oob=index_oob,
+            mode=mode)
 
 # Construct gather harnesses using array indexing and slicing.
 for slices, name in [

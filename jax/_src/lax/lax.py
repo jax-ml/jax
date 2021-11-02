@@ -4735,45 +4735,32 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
   return tuple(next(slice_sizes) if i in offset_dims
                else next(indices_shape) for i in range(output_shape_rank))
 
-def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
-                             dimension_numbers,
-                             slice_sizes, unique_indices, indices_are_sorted,
-                             mode, fill_value):
-  operand_aval, indices_aval = avals_in
-  aval_out, = avals_out
-  c = ctx.builder
-  dimensions = _gather_dimensions_proto(indices_aval.shape, dimension_numbers)
-  if (mode == GatherScatterMode.CLIP or
-      mode == GatherScatterMode.PROMISE_IN_BOUNDS):
-    # XLA's Gather has clamp semantics, so we can just call it directly.
-    return [xops.Gather(operand, indices, dimensions, slice_sizes,
-                        indices_are_sorted=indices_are_sorted)]
+def _shape_as_value(shape):
+  """Converts a shape that may contain Poly values into a JAX value."""
+  dims = [
+      expand_dims(convert_element_type(core.dimension_as_value(d), np.int64),
+                  (0,))
+      for d in shape
+  ]
+  return concatenate(dims, dimension=0)
 
-  # Otherwise, we need to mask out out-of-bounds indices and replace those
-  # slices with `fill_value`.
-  assert mode == GatherScatterMode.FILL_OR_DROP, mode
-
+def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
+                 unique_indices, indices_are_sorted, fill_value,
+                 output_shape):
+  """Lowers a FILL_OR_DROP gather as a PROMISE_IN_BOUNDS gather with masking."""
   dnums = dimension_numbers
   intarray = partial(np.array, dtype=np.int64)
-  operand_dims = intarray(operand_aval.shape)
-  indices = xops.ConvertElementType(
-    indices, xla.dtype_to_primitive_type(dtypes.canonicalize_dtype(np.int64)))
-  num_batch_dims = len(indices_aval.shape) - 1
+  operand_dims = _shape_as_value(operand.shape)
+  indices = convert_element_type(indices, np.int64)
+  num_batch_dims = len(indices.shape) - 1
 
-  upper_bound = operand_dims[intarray(dnums.start_index_map)]
-  upper_bound -= intarray(slice_sizes)[intarray(dnums.start_index_map)]
-  mask = xops.And(xops.Ge(indices, xla.pyval_to_ir_constant(c, intarray(0))),
-                  xops.Le(indices, xla.pyval_to_ir_constant(c, upper_bound),
-                          broadcast_dimensions=[num_batch_dims]))
+  upper_bound = (operand_dims[intarray(dnums.start_index_map)] -
+                 intarray(slice_sizes)[intarray(dnums.start_index_map)])
+  mask = bitwise_and(
+      ge(indices, np.int64(0)),
+      le(indices, expand_dims(upper_bound, tuple(range(num_batch_dims)))))
+  mask = _reduce_and(mask, [num_batch_dims])
 
-  # Compute the conjunction of the mask elements across the dimensions in which
-  # we are slicing.
-  and_builder = xc.XlaBuilder("and_reduction")
-  scalar_pred = xla_client.Shape.array_shape(np.dtype(np.bool_), ())
-  xops.And(xb.parameter(and_builder, 0, scalar_pred),
-           xb.parameter(and_builder, 1, scalar_pred))
-  mask = xops.Reduce(c, [mask], [xla.pyval_to_ir_constant(c, True)],
-                     and_builder.build(), [num_batch_dims])
 
   # Computes the output shape and the positions of the batch dimensions in the
   # output
@@ -4783,13 +4770,36 @@ def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
 
   # We don't consume unique_indices directly in gather(), only in its transpose
   # (scatter).
-  return [xops.Select(
-    xops.BroadcastInDim(mask, aval_out.shape, batch_dims_in_output),
-    xops.Gather(operand, indices, dimensions, slice_sizes,
-                indices_are_sorted=indices_are_sorted),
-    xops.Broadcast(
-        xla.pyval_to_ir_constant(c, np.array(fill_value, operand_aval.dtype)),
-        aval_out.shape))]
+  gather_out = gather(operand, indices, dnums, slice_sizes,
+                      indices_are_sorted=indices_are_sorted,
+                      mode=GatherScatterMode.PROMISE_IN_BOUNDS)
+  return select(
+    broadcast_in_dim(mask, output_shape, batch_dims_in_output),
+    gather_out, full_like(gather_out, fill_value=fill_value))
+
+
+def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
+                             dimension_numbers,
+                             slice_sizes, unique_indices, indices_are_sorted,
+                             mode, fill_value):
+  aval_out, = avals_out
+  if mode == GatherScatterMode.FILL_OR_DROP:
+    gather_fill_fn = xla.lower_fun(_gather_fill, multiple_results=False,
+                                   new_style=True)
+    return gather_fill_fn(
+        ctx, avals_in, avals_out, operand, indices,
+        dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
+        unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
+        fill_value=fill_value, output_shape=aval_out.shape)
+
+  operand_aval, indices_aval = avals_in
+  dimensions = _gather_dimensions_proto(indices_aval.shape, dimension_numbers)
+  assert (mode == GatherScatterMode.CLIP or
+          mode == GatherScatterMode.PROMISE_IN_BOUNDS), mode
+  # XLA's Gather has clamp semantics, so we can just call it directly.
+  return [xops.Gather(operand, indices, dimensions, slice_sizes,
+                      indices_are_sorted=indices_are_sorted)]
+
 
 def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
                      slice_sizes, unique_indices, indices_are_sorted, mode,
@@ -5026,40 +5036,41 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
 
   return operand.shape
 
-def _clamp_scatter_indices(c, indices, operand_shape, updates_shape, dnums):
+
+def _clamp_scatter_indices(operand, indices, updates, *, dnums):
   """Clamps `indices` to be in-range for a scatter."""
-  indices_shape = c.get_shape(indices)
-  indices_dtype = indices_shape.numpy_dtype()
   intarray = partial(np.array, dtype=np.int64)
-  operand_dims = intarray(operand_shape)
+  operand_dims = intarray(operand.shape)
   upper_bound = operand_dims[intarray(dnums.scatter_dims_to_operand_dims)]
 
   slice_sizes = []
   pos = 0
-  for i in range(len(operand_shape)):
+  for i in range(len(operand.shape)):
     if i in dnums.inserted_window_dims:
       slice_sizes.append(1)
     else:
-      slice_sizes.append(updates_shape[dnums.update_window_dims[pos]])
+      slice_sizes.append(updates.shape[dnums.update_window_dims[pos]])
       pos += 1
 
   upper_bound -= intarray(slice_sizes)[intarray(dnums.scatter_dims_to_operand_dims)]
-  upper_bound = np.minimum(upper_bound, np.iinfo(indices_dtype).max)
-  return xops.Min(
-    xops.Max(xla.pyval_to_ir_constant(c, np.array(0, dtype=indices_dtype)),
-             indices),
-    xla.pyval_to_ir_constant(c, upper_bound.astype(indices_dtype)),
-    broadcast_dimensions=[len(indices_shape.dimensions()) - 1])
+  upper_bound = np.minimum(upper_bound, np.iinfo(indices.dtype).max)
+  upper_bound = broadcast_in_dim(upper_bound, indices.shape,
+                                 (len(indices.shape) - 1,))
+  return clamp(np.int64(0), convert_element_type(indices, np.int64),
+               upper_bound)
 
 def _scatter_translation_rule(ctx, avals_in, avals_out, operand, indices,
                               updates, *, update_jaxpr, update_consts,
                               dimension_numbers, indices_are_sorted,
                               unique_indices, mode):
-  c = ctx.builder
   operand_aval, indices_aval, updates_aval = avals_in
   if mode == GatherScatterMode.CLIP:
-    indices = _clamp_scatter_indices(c, indices, operand_aval.shape,
-                                     updates_aval.shape, dimension_numbers)
+    clip_fn = xla.lower_fun(_clamp_scatter_indices, multiple_results=False,
+                            new_style=True)
+    indices, = clip_fn(ctx, avals_in, [indices_aval.update(dtype=np.int64)],
+                       operand, indices, updates, dnums=dimension_numbers)
+
+  c = ctx.builder
 
   init_value = xla.pyval_to_ir_constant(c, np.array(0, operand_aval.dtype))
   update_computation = _reduction_computation(
@@ -5073,11 +5084,13 @@ def _scatter_add_translation_rule(
     ctx, avals_in, avals_out, operand, indices, updates, *, update_jaxpr,
     update_consts, dimension_numbers, indices_are_sorted, unique_indices, mode,
     expand_complex128=False):
-  c = ctx.builder
   operand_aval, indices_aval, updates_aval = avals_in
   if mode == GatherScatterMode.CLIP:
-    indices = _clamp_scatter_indices(
-      c, indices, operand_aval.shape, updates_aval.shape, dimension_numbers)
+    clip_fn = xla.lower_fun(_clamp_scatter_indices, multiple_results=False,
+                            new_style=True)
+    indices, = clip_fn(ctx, avals_in, [indices_aval.update(dtype=np.int64)],
+                       operand, indices, updates, dnums=dimension_numbers)
+
   dtype = operand_aval.dtype
   scatter_dims = _scatter_dimensions_proto(
       indices_aval.shape, dimension_numbers)
