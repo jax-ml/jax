@@ -86,6 +86,113 @@ class cuSparseTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_csr_todense_ad(self, shape, dtype):
+    rng = rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    data, indices, indptr = sparse.csr_fromdense(M, nse=(M != 0).sum())
+    row, col = sparse.ops._csr_to_coo(indptr, len(data)), indices
+    f = lambda data: sparse.csr_todense(data, indices, indptr, shape=M.shape)
+
+    # Forward-mode
+    primals, tangents = jax.jvp(f, [data], [jnp.ones_like(data)])
+    self.assertArraysEqual(primals, f(data))
+    self.assertArraysEqual(tangents, jnp.zeros_like(M).at[row, col].set(1))
+
+    # Reverse-mode
+    primals, vjp_fun = jax.vjp(f, data)
+    data_out, = vjp_fun(primals)
+    self.assertArraysEqual(primals, f(data))
+    self.assertArraysEqual(data_out, data)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_csr_fromdense_ad(self, shape, dtype):
+    rng = rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    nse = (M != 0).sum()
+    f = lambda M: sparse.csr_fromdense(M, nse=nse)
+
+    # Forward-mode
+    primals, tangents = jax.jvp(f, [M], [jnp.ones_like(M)])
+    self.assertArraysEqual(primals[0], f(M)[0])
+    self.assertArraysEqual(primals[1], f(M)[1])
+    self.assertArraysEqual(primals[2], f(M)[2])
+    self.assertArraysEqual(tangents[0], jnp.ones(nse, dtype=dtype))
+    self.assertEqual(tangents[1].dtype, dtypes.float0)
+    self.assertEqual(tangents[2].dtype, dtypes.float0)
+
+    # Reverse-mode
+    primals, vjp_fun = jax.vjp(f, M)
+    M_out, = vjp_fun(primals)
+    self.assertArraysEqual(primals[0], f(M)[0])
+    self.assertArraysEqual(primals[1], f(M)[1])
+    self.assertArraysEqual(primals[2], f(M)[2])
+    self.assertArraysEqual(M_out, M)
+
+  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+        jtu.format_shape_dtype_string(shape, dtype),
+        jtu.format_shape_dtype_string(bshape, dtype)),
+       "shape": shape, "dtype": dtype, "bshape": bshape}
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for bshape in [shape[-1:] + s for s in [(), (1,), (3,)]]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_csr_matmul_ad(self, shape, dtype, bshape):
+    csr_matmul = sparse.csr_matvec if len(bshape) == 1 else sparse.csr_matmat
+    tol = {np.float32: 1E-5, np.float64: 1E-12, np.complex64: 1E-5, np.complex128: 1E-12}
+
+    rng = rand_sparse(self.rng(), post=jnp.array)
+    rng_b = jtu.rand_default(self.rng())
+
+    M = rng(shape, dtype)
+    data, indices, indptr = sparse.csr_fromdense(M, nse=(M != 0).sum())
+    x = rng_b(bshape, dtype)
+    xdot = rng_b(bshape, dtype)
+
+    # Forward-mode with respect to the vector
+    f_dense = lambda x: M @ x
+    f_sparse = lambda x: csr_matmul(data, indices, indptr, x, shape=M.shape)
+    v_sparse, t_sparse = jax.jvp(f_sparse, [x], [xdot])
+    v_dense, t_dense = jax.jvp(f_dense, [x], [xdot])
+    self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
+    self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
+
+    # Reverse-mode with respect to the vector
+    primals_dense, vjp_dense = jax.vjp(f_dense, x)
+    primals_sparse, vjp_sparse = jax.vjp(f_sparse, x)
+    out_dense, = vjp_dense(primals_dense)
+    out_sparse, = vjp_sparse(primals_sparse)
+    self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
+    self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
+
+    # Forward-mode with respect to nonzero elements of the matrix
+    f_sparse = lambda data: csr_matmul(data, indices, indptr, x, shape=M.shape)
+    f_dense = lambda data: sparse.csr_todense(data, indices, indptr, shape=M.shape) @ x
+    data = rng((len(data),), data.dtype)
+    data_dot = rng((len(data),), data.dtype)
+    v_sparse, t_sparse = jax.jvp(f_sparse, [data], [data_dot])
+    v_dense, t_dense = jax.jvp(f_dense, [data], [data_dot])
+
+    self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
+    self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
+
+    # Reverse-mode with respect to nonzero elements of the matrix
+    primals_dense, vjp_dense = jax.vjp(f_dense, data)
+    primals_sparse, vjp_sparse = jax.vjp(f_sparse, data)
+    out_dense, = vjp_dense(primals_dense)
+    out_sparse, = vjp_sparse(primals_sparse)
+    self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
+    self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
   def test_csr_fromdense(self, shape, dtype):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
@@ -338,7 +445,6 @@ class cuSparseTest(jtu.JaxTestCase):
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
   def test_coo_matmul_ad(self, shape, dtype, bshape):
     coo_matmul = sparse.coo_matvec if len(bshape) == 1 else sparse.coo_matmat
-
     tol = {np.float32: 1E-5, np.float64: 1E-12, np.complex64: 1E-5, np.complex128: 1E-12}
 
     rng = rand_sparse(self.rng(), post=jnp.array)
