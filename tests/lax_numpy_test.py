@@ -4016,6 +4016,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(np.arange(2.5, dtype=jnp.float_),
                         jnp.arange(2.5))
 
+  def testArangeTypes(self):
+    # Test that arange() output type is equal to the default types.
+    int_ = dtypes.canonicalize_dtype(jnp.int_)
+    float_ = dtypes.canonicalize_dtype(jnp.float_)
+
+    self.assertEqual(jnp.arange(10).dtype, int_)
+    self.assertEqual(jnp.arange(10.).dtype, float_)
+    self.assertEqual(jnp.arange(10, dtype='uint16').dtype, np.uint16)
+    self.assertEqual(jnp.arange(10, dtype='bfloat16').dtype, jnp.bfloat16)
+
+    self.assertEqual(jnp.arange(0, 10, 1).dtype, int_)
+    self.assertEqual(jnp.arange(0, 10, 1.).dtype, float_)
+    self.assertEqual(jnp.arange(0., 10, 1).dtype, float_)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),

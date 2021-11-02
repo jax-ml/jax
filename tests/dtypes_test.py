@@ -342,8 +342,12 @@ class TestPromotionTables(jtu.JaxTestCase):
   def testUnaryPromotion(self, dtype, weak_type):
     # Regression test for https://github.com/google/jax/issues/6051
     x = lax._convert_element_type(0, dtype, weak_type=weak_type)
-    y = jnp.array(0, dtype=dtypes.result_type(x))
-    assert x.dtype == y.dtype
+    if weak_type:
+      expected = dtypes.canonicalize_dtype(
+        dtypes._default_types['f' if x.dtype == 'bfloat16' else x.dtype.kind])
+    else:
+      expected = x.dtype
+    self.assertEqual(dtypes.result_type(x), expected)
 
   @parameterized.named_parameters(
     {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
