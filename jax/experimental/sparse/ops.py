@@ -118,6 +118,22 @@ def _csr_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
                                       indptr, *, shape):
   return [cusparse.csr_todense(ctx.builder, data, indices, indptr, shape=shape)]
 
+def _csr_todense_jvp(data_dot, data, indices, indptr, *, shape):
+  return csr_todense(data_dot, indices, indptr, shape=shape)
+
+def _csr_todense_transpose(ct, data, indices, indptr, *, shape):
+  # Note: we assume that transpose has the same sparsity pattern.
+  # Can we check this?
+  assert ad.is_undefined_primal(data)
+  if ad.is_undefined_primal(indices) or ad.is_undefined_primal(indptr):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ct.shape == shape
+  assert indices.aval.dtype == indptr.aval.dtype
+  assert ct.dtype == data.aval.dtype
+  return _csr_extract(indices, indptr, ct), indices, indptr
+
+ad.defjvp(csr_todense_p, _csr_todense_jvp, None, None)
+ad.primitive_transposes[csr_todense_p] = _csr_todense_transpose
 xla.register_translation(csr_todense_p, xla.lower_fun(
     _csr_todense_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
@@ -177,6 +193,33 @@ def _csr_fromdense_gpu_translation_rule(ctx, avals_in, avals_out, mat, *, nse,
       ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
   return [data, indices, indptr]
 
+def _csr_fromdense_jvp(primals, tangents, *, nse, index_dtype):
+  M, = primals
+  Mdot, = tangents
+
+  primals_out = csr_fromdense(M, nse=nse, index_dtype=index_dtype)
+  data, indices, indptr = primals_out
+
+  if type(Mdot) is ad.Zero:
+    data_dot = ad.Zero.from_value(data)
+  else:
+    data_dot = _csr_extract(indices, indptr, Mdot)
+
+  tangents_out = (data_dot, ad.Zero.from_value(indices), ad.Zero.from_value(indptr))
+
+  return primals_out, tangents_out
+
+def _csr_fromdense_transpose(ct, M, *, nse, index_dtype):
+  data, indices, indptr = ct
+  assert len(data) == nse
+  assert indices.dtype == indptr.dtype == index_dtype
+  if isinstance(indices, ad.Zero) or isinstance(indptr, ad.Zero):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ad.is_undefined_primal(M)
+  return csr_todense(data, indices, indptr, shape=M.aval.shape)
+
+ad.primitive_jvps[csr_fromdense_p] = _csr_fromdense_jvp
+ad.primitive_transposes[csr_fromdense_p] = _csr_fromdense_transpose
 xla.register_translation(csr_fromdense_p, xla.lower_fun(
     _csr_fromdense_impl, multiple_results=True, new_style=True))
 if cusparse and cusparse.is_supported:
@@ -230,6 +273,27 @@ def _csr_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
   return [cusparse.csr_matvec(ctx.builder, data, indices, indptr, v,
                               shape=shape, transpose=transpose)]
 
+def _csr_matvec_jvp_mat(data_dot, data, indices, indptr, v, *, shape, transpose):
+  return csr_matvec(data_dot, indices, indptr, v, shape=shape, transpose=transpose)
+
+def _csr_matvec_jvp_vec(v_dot, data, indices, indptr, v, *, shape, transpose):
+  return csr_matvec(data, indices, indptr, v_dot, shape=shape, transpose=transpose)
+
+def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
+  assert not ad.is_undefined_primal(indices)
+  assert not ad.is_undefined_primal(indptr)
+
+  if ad.is_undefined_primal(v):
+    return data, indices, indptr, csr_matvec(data, indices, indptr, ct, shape=shape, transpose=not transpose)
+  else:
+    v = jnp.asarray(v)
+    # The following lines do this, but more efficiently.
+    # return _csr_extract(indices, indptr, jnp.outer(ct, v)), indices, indptr, v
+    row, col = _csr_to_coo(indptr, len(indices)), indices
+    return ct[row] * v[col], indices, indptr, v
+
+ad.defjvp(csr_matvec_p, _csr_matvec_jvp_mat, None, None, _csr_matvec_jvp_vec)
+ad.primitive_transposes[csr_matvec_p] = _csr_matvec_transpose
 xla.register_translation(csr_matvec_p, xla.lower_fun(
     _csr_matvec_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
@@ -284,6 +348,25 @@ def _csr_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
   return [cusparse.csr_matmat(ctx.builder, data, indices, indptr, B,
                               shape=shape, transpose=transpose)]
 
+def _csr_matmat_jvp_left(data_dot, data, indices, indptr, B, *, shape, transpose):
+  return csr_matmat(data_dot, indices, indptr, B, shape=shape, transpose=transpose)
+
+def _csr_matmat_jvp_right(B_dot, data, indices, indptr, B, *, shape, transpose):
+  return csr_matmat(data, indices, indptr, B_dot, shape=shape, transpose=transpose)
+
+def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
+  assert not ad.is_undefined_primal(indices)
+  assert not ad.is_undefined_primal(indptr)
+
+  if ad.is_undefined_primal(B):
+    return data, indices, indptr, csr_matmat(data, indices, indptr, ct, shape=shape, transpose=not transpose)
+  else:
+    B = jnp.asarray(B)
+    row, col = _csr_to_coo(indptr, len(indices)), indices
+    return (ct[row] * B[col]).sum(1), indices, indptr, B
+
+ad.defjvp(csr_matmat_p, _csr_matmat_jvp_left, None, None, _csr_matmat_jvp_right)
+ad.primitive_transposes[csr_matmat_p] = _csr_matmat_transpose
 xla.register_translation(csr_matmat_p, xla.lower_fun(
     _csr_matmat_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
@@ -490,6 +573,7 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, shape, transpose):
     return data, row, col, coo_matvec(data, row, col, ct, shape=shape, transpose=not transpose)
   else:
     v = jnp.asarray(v)
+    # The following line does this, but more efficiently:
     # return _coo_extract(row, col, jnp.outer(ct, v)), row, col, v
     return ct[row] * v[col], row, col, v
 
@@ -558,7 +642,6 @@ def _coo_matmat_jvp_right(B_dot, data, row, col, B, *, shape, transpose):
 def _coo_matmat_transpose(ct, data, row, col, B, *, shape, transpose):
   assert not ad.is_undefined_primal(row)
   assert not ad.is_undefined_primal(col)
-
   if ad.is_undefined_primal(B):
     return data, row, col, coo_matmat(data, row, col, ct, shape=shape, transpose=not transpose)
   else:
