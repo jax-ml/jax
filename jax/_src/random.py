@@ -365,7 +365,7 @@ def shuffle(key: KeyArray, x: Array, axis: int = 0) -> jnp.ndarray:
     A shuffled version of x.
   """
   msg = ("jax.random.shuffle is deprecated and will be removed in a future release. "
-         "Use jax.random.permutation")
+         "Use jax.random.permutation with independent=True.")
   warnings.warn(msg, FutureWarning)
   key, _ = _check_prng_key(key)
   return _shuffle(key, x, axis)  # type: ignore
@@ -373,7 +373,8 @@ def shuffle(key: KeyArray, x: Array, axis: int = 0) -> jnp.ndarray:
 
 def permutation(key: KeyArray,
                 x: Union[int, Array],
-                axis: int = 0) -> jnp.ndarray:
+                axis: int = 0,
+                independent: bool = False) -> jnp.ndarray:
   """Returns a randomly permuted array or range.
 
   Args:
@@ -381,6 +382,8 @@ def permutation(key: KeyArray,
     x: int or array. If x is an integer, randomly shuffle np.arange(x).
       If x is an array, randomly shuffle its elements.
     axis: int, optional. The axis which x is shuffled along. Default is 0.
+    independent: bool, optional. If set to True, each individual vector along
+      the given axis is shuffled independently. Default is False.
 
   Returns:
     A shuffled version of x or array range
@@ -393,7 +396,7 @@ def permutation(key: KeyArray,
       raise TypeError("x must be an integer or at least 1-dimensional")
     r = core.concrete_or_error(int, x, 'argument x of jax.random.permutation()')
     return _shuffle(key, jnp.arange(r), axis)
-  if np.ndim(x) == 1:
+  if independent or np.ndim(x) == 1:
     return _shuffle(key, x, axis)
   ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[union-attr]
   return jnp.take(x, ind, axis)
