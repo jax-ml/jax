@@ -231,7 +231,7 @@ def coo_fromdense(c, mat, *, nnz, index_dtype):
   return tuple(_ops.GetTupleElement(out, i) for i in range(3))
 
 def coo_matvec(c, data, row, col, x, *, shape, transpose=False, compute_dtype=None):
-  """CSR matrix/vector multiply."""
+  """COO matrix/vector multiply."""
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(row).element_type())
   x_dtype = np.dtype(c.get_shape(x).element_type())
@@ -268,7 +268,7 @@ def coo_matvec(c, data, row, col, x, *, shape, transpose=False, compute_dtype=No
 
 
 def coo_matmat(c, data, row, col, B, *, shape, transpose=False, compute_dtype=None):
-  """CSR from dense matrix."""
+  """COO from dense matrix."""
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(row).element_type())
   B_dtype = np.dtype(c.get_shape(B).element_type())
