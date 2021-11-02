@@ -37,7 +37,6 @@ import numpy as np
 
 import jax
 from jax import core
-from jax import lax
 from jax import tree_util
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -550,26 +549,29 @@ def _coo_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
   return [cusparse.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
                               transpose=transpose)]
 
+def _coo_matmat_jvp_left(data_dot, data, row, col, B, *, shape, transpose):
+  return coo_matmat(data_dot, row, col, B, shape=shape, transpose=transpose)
+
+def _coo_matmat_jvp_right(B_dot, data, row, col, B, *, shape, transpose):
+  return coo_matmat(data, row, col, B_dot, shape=shape, transpose=transpose)
+
+def _coo_matmat_transpose(ct, data, row, col, B, *, shape, transpose):
+  assert not ad.is_undefined_primal(row)
+  assert not ad.is_undefined_primal(col)
+
+  if ad.is_undefined_primal(B):
+    return data, row, col, coo_matmat(data, row, col, ct, shape=shape, transpose=not transpose)
+  else:
+    B = jnp.asarray(B)
+    return (ct[row] * B[col]).sum(1), row, col, B
+
+ad.defjvp(coo_matmat_p, _coo_matmat_jvp_left, None, None, _coo_matmat_jvp_right)
+ad.primitive_transposes[coo_matmat_p] = _coo_matmat_transpose
 xla.register_translation(coo_matmat_p, xla.lower_fun(
     _coo_matmat_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
   xla.register_translation(coo_matmat_p, _coo_matmat_gpu_translation_rule,
                            platform='gpu')
-
-def _coo_matmat_jvp_rule(primals_in, tangents_in, **params):
-  vals, rows, cols, mat = primals_in
-  sparse_mat_dot, rows_dot, cols_dot, mat_dot = tangents_in
-  assert type(rows_dot) is ad.Zero
-  assert type(cols_dot) is ad.Zero
-
-  primals_out = coo_matmat(vals, rows, cols, mat, **params)
-  _zero = lambda p, t: lax.zeros_like_array(p) if isinstance(t, ad.Zero) else t
-  _sparse_mat_dot = _zero(vals, sparse_mat_dot)
-  _mat_dot = _zero(mat, mat_dot)
-
-  tangents_out = coo_matmat(_sparse_mat_dot, rows, cols, mat, **params) + coo_matmat(vals, rows, cols, _mat_dot, **params)
-  return primals_out, tangents_out
-ad.primitive_jvps[coo_matmat_p] = _coo_matmat_jvp_rule
 
 
 #----------------------------------------------------------------------

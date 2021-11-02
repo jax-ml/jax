@@ -327,17 +327,19 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(primals[2], f(M)[2])
     self.assertArraysEqual(M_out, M)
 
+  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(
         jtu.format_shape_dtype_string(shape, dtype),
         jtu.format_shape_dtype_string(bshape, dtype)),
        "shape": shape, "dtype": dtype, "bshape": bshape}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
-      for bshape in [shape[-1:] + s for s in [()]]  # TODO: matmul autodiff
-      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))  # TODO: other types
+      for bshape in [shape[-1:] + s for s in [(), (1,), (3,)]]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_coo_matmul_ad(self, shape, dtype, bshape):
+    coo_matmul = sparse.coo_matvec if len(bshape) == 1 else sparse.coo_matmat
 
-  def test_coo_matvec_ad(self, shape, dtype, bshape):
-    tol = {np.float32: 1E-6, np.float64: 1E-13, np.complex64: 1E-6, np.complex128: 1E-13}
+    tol = {np.float32: 1E-5, np.float64: 1E-12, np.complex64: 1E-5, np.complex128: 1E-12}
 
     rng = rand_sparse(self.rng(), post=jnp.array)
     rng_b = jtu.rand_default(self.rng())
@@ -349,7 +351,7 @@ class cuSparseTest(jtu.JaxTestCase):
 
     # Forward-mode with respect to the vector
     f_dense = lambda x: M @ x
-    f_sparse = lambda x: sparse.coo_matvec(data, row, col, x, shape=M.shape)
+    f_sparse = lambda x: coo_matmul(data, row, col, x, shape=M.shape)
     v_sparse, t_sparse = jax.jvp(f_sparse, [x], [xdot])
     v_dense, t_dense = jax.jvp(f_dense, [x], [xdot])
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
@@ -364,7 +366,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
     # Forward-mode with respect to nonzero elements of the matrix
-    f_sparse = lambda data: sparse.coo_matvec(data, row, col, x, shape=M.shape)
+    f_sparse = lambda data: coo_matmul(data, row, col, x, shape=M.shape)
     f_dense = lambda data: sparse.coo_todense(data, row, col, shape=M.shape) @ x
     data = rng((len(data),), data.dtype)
     data_dot = rng((len(data),), data.dtype)
