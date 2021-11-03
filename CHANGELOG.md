@@ -16,6 +16,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 * New features:
   * (Experimental) `jax.distributed.initialize` exposes multi-host GPU backend.
+  * `jax.random.permutation` supports new `independent` keyword argument
+    ({jax-issue}`#8430`)
 * Breaking changes
   * Moved `jax.experimental.stax` to `jax.example_libraries.stax`
   * Moved `jax.experimental.optimizers` to `jax.example_libraries.optimizers`

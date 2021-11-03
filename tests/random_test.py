@@ -443,14 +443,15 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(
       testcase_name=f"_dtype={dtype}_range_or_shape={range_or_shape}"
-                    f"_axis={axis}",
-      dtype=dtype, range_or_shape=range_or_shape, axis=axis)
+                    f"_axis={axis}_independent={independent}",
+      dtype=dtype, range_or_shape=range_or_shape, axis=axis, independent=independent)
     for dtype in jtu.dtypes.floating + jtu.dtypes.integer
     for range_or_shape in [0, 1, 100, (0,), (1,), (100,),
                            (10, 10), (10, 5, 2), (0, 5), (1, 5)]
     for ndim in [1 if type(range_or_shape) is int else len(range_or_shape)]
-    for axis in range(-ndim, ndim or 1)))
-  def testPermutation(self, dtype, range_or_shape, axis):
+    for axis in range(-ndim, ndim or 1)
+    for independent in [True, False]))
+  def testPermutation(self, dtype, range_or_shape, axis, independent):
     key = self.seed_prng(0)
     is_range = type(range_or_shape) is int
     x = (range_or_shape if is_range else
@@ -458,7 +459,7 @@ class LaxRandomTest(jtu.JaxTestCase):
            np.prod(range_or_shape), dtype=dtype)).reshape(range_or_shape))
     shape = ((range_or_shape,) if is_range else range_or_shape)
     x_ = np.copy(x)
-    rand = lambda key, x: random.permutation(key, x, axis)
+    rand = lambda key, x: random.permutation(key, x, axis, independent=independent)
     perm = rand(key, x)
     if shape[axis] >= 10:
       self.assertFalse(np.all(perm == x))  # seems unlikely!
@@ -467,7 +468,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       if not np.prod(x.shape): return x
       ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
       return jnp.take(x, ind, axis)
-    self.assertArraysEqual(lsort(arr), lsort(perm), check_dtypes=not is_range)
+    if not independent:
+      self.assertArraysEqual(lsort(arr), lsort(perm), check_dtypes=not is_range)
+    if independent and (arr.shape[axis] > 4) and (arr.size // arr.shape[axis] > 4):
+      # Check for independent shuffling if there are >4 vectors of size >4.
+      # Chance of false positive is 1 in (5!)^4
+      with self.assertRaises(AssertionError):
+        self.assertArraysEqual(lsort(arr), lsort(perm), check_dtypes=not is_range)
     self.assertArraysEqual(x_, x)
     self.assertArraysEqual(perm, rand(key, np.array(x)))
     self.assertArraysEqual(perm, jax.jit(rand, static_argnames=
