@@ -29,6 +29,7 @@ from jax._src import test_util as jtu
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
+from jax.interpreters import xla
 from jax._src import source_info_util
 import jax._src.lib.xla_bridge
 
@@ -827,6 +828,12 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                                 "Call to reduce cannot be converted with enable_xla=False"):
       tf_fun2_without_xla(x)
     self.assertAllClose(fun(x), tf_fun2_with_xla(x))
+
+  def test_xla_abstractify(self):
+    def fun(x):
+      xla.abstractify(x)
+
+    jax2tf.convert(fun)(np.zeros(3, dtype=np.float32))
 
   def test_device_array_arg(self):
     self.ConvertAndCompare(jnp.sin, jnp.zeros((2, 3), jnp.float32))

@@ -743,6 +743,10 @@ class TensorFlowTracer(core.Tracer):
     return self
 
 
+# Make `xla.abstractify` recognize `TensorFlowTracer`.
+xla.pytype_aval_mappings[TensorFlowTracer] = lambda x: x.aval
+
+
 class TensorFlowTrace(core.Trace):
   """Trace class that underlies the jax2tf transformation.
 
