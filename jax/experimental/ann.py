@@ -131,7 +131,11 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
     raise ValueError(
         'k must be smaller than the size of reduction_dim {}, got {}'.format(
             dims[reduction_dimension], k))
-  dims[reduction_dimension] = k
+  if xc._version > 41:
+    dims[reduction_dimension] = xc.ops.ApproxTopKReductionOutputSize(
+        dims[reduction_dimension], len(dims), k, recall_target, True)[0]
+  else:
+    dims[reduction_dimension] = k
   return (operand.update(
       shape=dims, dtype=operand.dtype, weak_type=operand.weak_type),
           operand.update(shape=dims, dtype=np.dtype(np.int32)))
