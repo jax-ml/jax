@@ -29,7 +29,6 @@ computed efficiently via cusparse.
 Further down are some examples of potential high-level wrappers for sparse objects.
 (API should be considered unstable and subject to change).
 """
-import functools
 import operator
 from typing import Tuple
 
@@ -53,20 +52,16 @@ xops = xla_client.ops
 
 #--------------------------------------------------------------------
 # utilities
-# TODO: possibly make these utilities into primitives, targeting
+# TODO: possibly make these primitives, targeting cusparse rountines
 #       csr2coo/coo2csr/SPDDMM
-@functools.partial(jax.jit, static_argnums=1)
-def _csr_to_coo(indptr, nse):
-  return jnp.cumsum(jnp.zeros_like(indptr, shape=nse).at[indptr].add(1)) - 1
-
-@functools.partial(jax.jit, static_argnums=1)
-def _coo_to_csr(row, nrows):
-  indptr = jnp.zeros(nrows + 1, row.dtype)
-  return indptr.at[1:].set(jnp.cumsum(jnp.bincount(row, length=nrows)))
+@jax.jit
+def _csr_to_coo(indices, indptr):
+  """Given CSR (indices, indptr) return COO (row, col)"""
+  return jnp.cumsum(jnp.zeros_like(indices).at[indptr].add(1)) - 1, indices
 
 def _csr_extract(indices, indptr, mat):
   """Extract values of dense matrix mat at given CSR indices."""
-  return _coo_extract(_csr_to_coo(indptr, len(indices)), indices, mat)
+  return _coo_extract(*_csr_to_coo(indices, indptr), mat)
 
 def _coo_extract(row, col, mat):
   """Extract values of dense matrix mat at given COO indices."""
@@ -104,7 +99,7 @@ def csr_todense(data, indices, indptr, *, shape):
 
 @csr_todense_p.def_impl
 def _csr_todense_impl(data, indices, indptr, *, shape):
-  return _coo_todense_impl(data, _csr_to_coo(indptr, len(indices)), indices, shape=shape)
+  return _coo_todense_impl(data, *_csr_to_coo(indices, indptr), shape=shape)
 
 @csr_todense_p.def_abstract_eval
 def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
@@ -253,8 +248,7 @@ def csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
 
 @csr_matvec_p.def_impl
 def _csr_matvec_impl(data, indices, indptr, v, *, shape, transpose):
-  row = _csr_to_coo(indptr, len(indices))
-  return _coo_matvec_impl(data, row, indices, v, shape=shape, transpose=transpose)
+  return _coo_matvec_impl(data, *_csr_to_coo(indices, indptr), v, shape=shape, transpose=transpose)
 
 @csr_matvec_p.def_abstract_eval
 def _csr_matvec_abstract_eval(data, indices, indptr, v, *, shape, transpose):
@@ -289,7 +283,7 @@ def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
     v = jnp.asarray(v)
     # The following lines do this, but more efficiently.
     # return _csr_extract(indices, indptr, jnp.outer(ct, v)), indices, indptr, v
-    row, col = _csr_to_coo(indptr, len(indices)), indices
+    row, col = _csr_to_coo(indices, indptr)
     return ct[row] * v[col], indices, indptr, v
 
 ad.defjvp(csr_matvec_p, _csr_matvec_jvp_mat, None, None, _csr_matvec_jvp_vec)
@@ -327,8 +321,7 @@ def csr_matmat(data, indices, indptr, B, *, shape, transpose=False):
 
 @csr_matmat_p.def_impl
 def _csr_matmat_impl(data, indices, indptr, B, *, shape, transpose):
-  row = _csr_to_coo(indptr, len(indices))
-  return _coo_matmat_impl(data, row, indices, B, shape=shape, transpose=transpose)
+  return _coo_matmat_impl(data, *_csr_to_coo(indices, indptr), B, shape=shape, transpose=transpose)
 
 @csr_matmat_p.def_abstract_eval
 def _csr_matmat_abstract_eval(data, indices, indptr, B, *, shape, transpose):
@@ -362,7 +355,7 @@ def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
     return data, indices, indptr, csr_matmat(data, indices, indptr, ct, shape=shape, transpose=not transpose)
   else:
     B = jnp.asarray(B)
-    row, col = _csr_to_coo(indptr, len(indices)), indices
+    row, col = _csr_to_coo(indices, indptr)
     return (ct[row] * B[col]).sum(1), indices, indptr, B
 
 ad.defjvp(csr_matmat_p, _csr_matmat_jvp_left, None, None, _csr_matmat_jvp_right)
