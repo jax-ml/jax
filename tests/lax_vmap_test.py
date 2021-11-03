@@ -69,7 +69,7 @@ def args_slicer(args, bdims):
 class LaxVmapTest(jtu.JaxTestCase):
 
   def _CheckBatching(self, op, bdim_size, bdims, shapes, dtypes, rng,
-                     rtol=None, atol=None):
+                     rtol=None, atol=None, multiple_results=False):
     batched_shapes = map(partial(add_bdim, bdim_size), bdims, shapes)
     args = [rng(shape, dtype) for shape, dtype in zip(batched_shapes, dtypes)]
     args_slice = args_slicer(args, bdims)
@@ -77,9 +77,16 @@ class LaxVmapTest(jtu.JaxTestCase):
     if bdim_size == 0:
       args = [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
       out = op(*args)
-      expected = np.zeros((0,) + out.shape, out.dtype)
+      if not multiple_results:
+        expected = np.zeros((0,) + out.shape, out.dtype)
+      else:
+        expected = [np.zeros((0,) + o.shape, o.dtype) for o in out]
     else:
-      expected = np.stack([op(*args_slice(i)) for i in range(bdim_size)])
+      outs = [op(*args_slice(i)) for i in range(bdim_size)]
+      if not multiple_results:
+        expected = np.stack(outs)
+      else:
+        expected = [np.stack(xs) for xs in zip(*outs)]
     self.assertAllClose(ans, expected, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -480,6 +487,27 @@ class LaxVmapTest(jtu.JaxTestCase):
     init_val = np.asarray(init_val, dtype=dtype)
     fun = lambda operand: lax.reduce(operand, init_val, op, dims)
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_reducedims={}_bdims={}"
+       .format(jtu.format_shape_dtype_string(shape, dtype), dims, bdims),
+       "shape": shape, "dtype": dtype, "dims": dims, "bdims": bdims}
+      for dtype in default_dtypes
+      for shape, dims in [
+          [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
+          [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
+      ]
+      for bdims in all_bdims(shape, shape)))
+  def testVariadicReduce(self, shape, dtype, dims, bdims):
+    def op(a, b):
+      x1, y1 = a
+      x2, y2 = b
+      return x1 + x2, y1 * y2
+    rng = jtu.rand_small(self.rng())
+    init_val = tuple(np.asarray([0, 1], dtype=dtype))
+    fun = lambda x, y: lax.reduce((x, y), init_val, op, dims)
+    self._CheckBatching(fun, 5, bdims, (shape, shape), (dtype, dtype), rng,
+                        multiple_results=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_inshape={}_reducedims={}_bdims={}"

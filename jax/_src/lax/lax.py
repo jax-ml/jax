@@ -5596,19 +5596,15 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
   operand_bdims, init_value_bdims = split_list(batch_dims, [num_operands])
   if all(init_value_bdim is batching.not_mapped
          for init_value_bdim in init_value_bdims):
-    # Assume all batch dims are the same for each of the operands
-    # TODO(sharadmv): handle the case when batch dims are different across
-    # operands or when some are unbatched
-    if not all(operand_bdim is not batching.not_mapped for operand_bdim in operand_bdims):
-      raise NotImplementedError
-    if not all(operand_bdim == operand_bdims[0] for operand_bdim in operand_bdims):
-      raise NotImplementedError
-    operand_bdim = operand_bdims[0]
-    new_dimensions = [d + bool(d >= operand_bdim) for d in dimensions]
-    new_operand_bdim = operand_bdim - int(np.sum(np.less(dimensions, operand_bdim)))
-    new_operand_bdims = [new_operand_bdim] * num_operands
+    size = next(x.shape[ax] for x, ax in zip(batched_args, batch_dims)
+                if ax is not None)
+    operands = [batching.bdim_at_front(arg, bdim, size)
+                for arg, bdim in zip(operands, operand_bdims)]
+    new_dimensions = [d + 1 for d in dimensions]
+    new_operand_bdims = [0] * num_operands
     return reduce_p.bind(*(operands + init_values),
-                         computation=computation, dimensions=tuple(new_dimensions),
+                         computation=computation,
+                         dimensions=tuple(new_dimensions),
                          consts=consts,
                          jaxpr=jaxpr), new_operand_bdims
   else:
