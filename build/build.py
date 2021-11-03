@@ -185,30 +185,32 @@ def get_bazel_paths(bazel_path_flag):
 
 def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found. Also,
-  it checks Bazel's version at lease newer than 2.0.0.
+  checks Bazel's version is at least newer than 4.1.0.
 
-  NOTE Manual version check is reasonably only for bazel < 2.0.0. Newer bazel
-  releases performs version check against .bazelversion (see for details
+  A manual version check is needed only for really old bazel versions.
+  Newer bazel releases perform their own version check against .bazelversion
+  (see for details
   https://blog.bazel.build/2019/12/19/bazel-2.0.html#other-important-changes).
   """
   for path in filter(None, get_bazel_paths(bazel_path_flag)):
-    if check_bazel_version(path):
-      return path
+    version = get_bazel_version(path)
+    if version is not None and version >= (4, 1, 0):
+      return path, ".".join(map(str, version))
 
-  print("Cannot find or download bazel. Please install bazel.")
+  print("Cannot find or download a suitable version of bazel."
+        "Please install bazel >= 4.1.0.")
   sys.exit(-1)
 
 
-def check_bazel_version(bazel_path):
+def get_bazel_version(bazel_path):
   try:
     version_output = shell([bazel_path, "--version"])
   except subprocess.CalledProcessError:
-    return False
+    return None
   match = re.search(r"bazel *([0-9\\.]+)", version_output)
   if match is None:
-    return False
-  actual_ints = [int(x) for x in match.group(1).split(".")]
-  return actual_ints >= [2, 0, 0]
+    return None
+  return tuple(int(x) for x in match.group(1).split("."))
 
 
 def write_bazelrc(python_bin_path=None, remote_build=None,
@@ -429,8 +431,9 @@ def main():
                else host_cpu)
 
   # Find a working Bazel.
-  bazel_path = get_bazel_path(args.bazel_path)
-  print("Bazel binary path: {}".format(bazel_path))
+  bazel_path, bazel_version = get_bazel_path(args.bazel_path)
+  print(f"Bazel binary path: {bazel_path}")
+  print(f"Bazel version: {bazel_version}")
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
   print("Python binary path: {}".format(python_bin_path))
