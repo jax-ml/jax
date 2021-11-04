@@ -47,7 +47,7 @@ from jax._src.api_util import _ensure_index_tuple
 from jax import errors
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import config
-from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray, make_device_array
+from jax.interpreters.xla import DeviceArray, _CppDeviceArray, make_device_array
 from jax.interpreters import pxla
 from jax import lax
 from jax._src.lax.lax import _array_copy
@@ -7046,7 +7046,6 @@ def _set_device_array_attributes(device_array):
   setattr(device_array, "_multi_slice", _multi_slice)
   setattr(device_array, "at", property(_IndexUpdateHelper))
 
-_set_device_array_attributes(_DeviceArray)
 _set_device_array_attributes(_CppDeviceArray)
 _set_device_array_attributes(pxla._ShardedDeviceArray)
 _set_device_array_attributes(pxla.pmap_lib.ShardedDeviceArray)

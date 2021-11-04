@@ -1395,7 +1395,7 @@ def _forward_method(attrname, self, fun, *args):
 _forward_to_value = partial(_forward_method, "_value")
 
 
-# The following is used for the type _CppDeviceArray or _DeviceArray.
+# The following is used for the type _CppDeviceArray.
 DeviceArrayProtocol = Any
 DeviceArray = xc.DeviceArrayBase
 
@@ -1405,23 +1405,16 @@ def make_device_array(
     aval: core.ShapedArray,
     device: Optional[Device],
     device_buffer: Buffer,
-) -> Union[Buffer, "_DeviceArray"]:
-  """Returns a DeviceArray implementation based on arguments.
+) -> Buffer:
+  assert isinstance(device_buffer, _CppDeviceArray)
 
-  This is to be used only within JAX. It will return either a PythonDeviceArray
-  or a C++ equivalent implementation.
-  """
-  if isinstance(device_buffer, _CppDeviceArray):
-
-    if device_buffer.aval == aval and device_buffer._device == device:
-      return device_buffer
-    device_buffer = device_buffer.clone()
-    device_buffer._device = device
-    device_buffer.aval = aval
-    device_buffer.weak_type = aval.weak_type
+  if device_buffer.aval == aval and device_buffer._device == device:
     return device_buffer
-
-  return _DeviceArray(aval, device, device_buffer)
+  device_buffer = device_buffer.clone()
+  device_buffer._device = device
+  device_buffer.aval = aval
+  device_buffer.weak_type = aval.weak_type
+  return device_buffer
 
 
 def type_is_device_array(x):
@@ -1429,8 +1422,7 @@ def type_is_device_array(x):
 
   Use this function instead of `type(x) is Devicearray`.
   """
-  type_x = type(x)
-  return type_x is _DeviceArray or type_x is _CppDeviceArray
+  return type(x) is _CppDeviceArray
 
 
 def device_array_supports_weakrefs():
@@ -1441,109 +1433,8 @@ def device_array_supports_weakrefs():
     return False
 
 
-class _DeviceArray(DeviceArray):  # type: ignore
-  """A DeviceArray is an ndarray backed by a single device memory buffer."""
-  # We don't subclass ndarray because that would open up a host of issues,
-  # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
-  __slots__ = [
-      "aval", "device_buffer", "_npy_value", "_device", "__weakref__"
-  ]
-  __array_priority__ = 100
 
-  # DeviceArray has methods that are dynamically populated in lax_numpy.py,
-  # and this annotation is needed to make pytype happy.
-  _HAS_DYNAMIC_ATTRIBUTES = True
-
-  def __init__(self, aval: core.ShapedArray, device: Optional[Device],
-               device_buffer: Buffer):
-    """Initializer.
-
-    Args:
-      aval: The abstract value associated to this array (shape+dtype+weak_type).
-      device:  The optional sticky device. See
-        https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
-      device_buffer: The underlying buffer owning the on-device data.
-    """
-    DeviceArray.__init__(self)
-    self.aval = aval
-    self.device_buffer = device_buffer
-    self._device = device
-
-    self._npy_value = None
-    if config.jax_enable_checks:
-      assert type(aval) is ShapedArray
-      npy_value = self._value
-      assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
-      assert (device is None) or device is device_buffer.device()
-
-  def _check_if_deleted(self):
-    if self.device_buffer is deleted_buffer:
-      raise RuntimeError("DeviceArray has been deleted.")
-
-  def block_until_ready(self):
-    """Blocks the caller until the buffer's value has been computed on device.
-
-    This method is mostly useful for timing microbenchmarks that wish to
-    time how long a computation takes, without transferring the result back
-    to the host.
-
-    Returns the buffer object (`self`).
-    """
-    self._check_if_deleted()
-    self.device_buffer.block_host_until_ready()  # pytype: disable=attribute-error
-    return self
-
-  @property
-  def _value(self):
-    self._check_if_deleted()
-    if self._npy_value is None:
-      self._npy_value = self.device_buffer.to_py()  # pytype: disable=attribute-error  # bind-properties
-      self._npy_value.flags.writeable = False
-    return self._npy_value
-
-  @property
-  def shape(self):
-    return self.aval.shape
-
-  @property
-  def dtype(self):
-    return self.aval.dtype
-
-  @property
-  def size(self):
-    return prod(self.aval.shape)
-
-  @property
-  def ndim(self):
-    return len(self.aval.shape)
-
-  def copy_to_host_async(self):
-    """Requests a copy of the buffer to the host."""
-    self._check_if_deleted()
-    if self._npy_value is None:
-      self.device_buffer.copy_to_host_async()  # pytype: disable=attribute-error
-
-  def delete(self):
-    """Deletes the device array and any cached copy on the host.
-
-    It is an error to access the contents of a `DeviceArray` after it has
-    been deleted.
-
-    Use of this method is optional; device buffers will be reclaimed
-    automatically by Python when a DeviceArray object is garbage collected.
-    However, it is sometimes useful to have more explicit control over the
-    time of deletion.
-    """
-    self.device_buffer.delete()  # pytype: disable=attribute-error
-    self.device_buffer = deleted_buffer
-    self._npy_value = None
-
-  @property
-  def __cuda_array_interface__(self):
-    return self.device_buffer.__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
-
-
-# Adding methods dynamically to both _DeviceArray and _CppDeviceArray
+# Adding methods dynamically to DeviceArray subclasses.
 # pylint: disable=protected-access
 for device_array in [DeviceArray]:
 
@@ -1654,7 +1545,7 @@ for device_array in [DeviceArray]:
 class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()
 
-for device_array in [_CppDeviceArray, _DeviceArray]:
+for device_array in [_CppDeviceArray]:
   core.literalable_types.add(device_array)
   core.pytype_aval_mappings[device_array] = ConcreteArray
   pytype_aval_mappings[device_array] = op.attrgetter('aval')
@@ -1662,16 +1553,14 @@ for device_array in [_CppDeviceArray, _DeviceArray]:
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
   return pyval_to_ir_constants(c, val.device_buffer.to_py())
-register_constant_handler(_DeviceArray, _device_array_constant_handler)
 register_constant_handler(_CppDeviceArray, _device_array_constant_handler)
 
-def _device_put_device_array(x: Union[DeviceArrayProtocol, _DeviceArray], device: Optional[Device]):
+def _device_put_device_array(x: Union[DeviceArrayProtocol], device: Optional[Device]):
   x = _copy_device_array_to_device(x, device)
   return (x.device_buffer,)
 device_put_handlers[_CppDeviceArray] = _device_put_device_array
-device_put_handlers[_DeviceArray] = _device_put_device_array
 
-def _copy_device_array_to_device(x: Union[DeviceArrayProtocol, _DeviceArray], device: Optional[xc.Device]) -> Union[DeviceArrayProtocol, _DeviceArray]:
+def _copy_device_array_to_device(x: Union[DeviceArrayProtocol], device: Optional[xc.Device]) -> Union[DeviceArrayProtocol]:
   if device is None:
     # no copying to be done because there's no target specified
     return x

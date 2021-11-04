@@ -362,7 +362,6 @@ def _shard_device_array(x, devices, indices):
       _as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   return device_put(shards, devices)
-shard_arg_handlers[xla._DeviceArray] = _shard_device_array
 shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
 
 
