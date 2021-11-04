@@ -48,9 +48,9 @@ def broadcasting_vmap(fun, in_axes=0, out_axes=0):
     size = max(arg.shape[i] for arg, i in safe_zip(args_flat, in_axes_flat))
     if size > 1:
       if any(arg.shape[i] not in (1, size) for arg, i in safe_zip(args_flat, in_axes_flat)):
-        raise ValueError("vmap_or_broadcast: mismatched input shapes")
+        raise ValueError("broadcasting_vmap: mismatched input shapes")
       args_flat, in_axes_flat = zip(*(
-          (lax.index_in_dim(arg, 0, i, keepdims=False), None) if arg.shape[i] == 1 else (arg, i)
+          (lax.squeeze(arg, (i,)), None) if arg.shape[i] == 1 else (arg, i)
           for arg, i in zip(args_flat, in_axes_flat)
       ))
     new_args = tree_util.tree_unflatten(in_tree, args_flat)
@@ -545,17 +545,9 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs
     prod = lax.dot_general(lhs_data, rhs.at[idx_right].get(mode='fill', fill_value=0),
                            (([], []), (ctc, ctc)))
     return out_array.at[idx_out].add(prod) if idx_out else prod.sum(0, dtype=out_array.dtype)
-  for i in range(n_batch)[::-1]:
-    axes_in = [0, 0, 0, 0]
-    if lhs_data.shape[i] == 1:
-      lhs_data = lax.squeeze(lhs_data, (i,))
-      axes_in[1] = None
-    if lhs_indices.shape[i] == 1:
-      lhs_indices = lax.squeeze(lhs_indices, (i,))
-      axes_in[2] = None
-    if i >= len(lhs_batch):
-      axes_in[3] = None
-    result = vmap(result, tuple(axes_in))
+  rhs = lax.expand_dims(rhs, range(len(rhs_batch), n_batch))
+  for _ in range(n_batch):
+    result = broadcasting_vmap(result)
   return result(out_array, lhs_data, lhs_indices, rhs)
 
 @bcoo_dot_general_p.def_abstract_eval
