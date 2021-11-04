@@ -1215,7 +1215,10 @@ class BCOOTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [[(3,), (3,)],
                                    [(3, 4), (4,)],
                                    [(4,), (4, 5)],
-                                   [(3, 4), (4, 5)]]
+                                   [(3, 4), (4, 5)],
+                                   [(3, 4), (2, 4, 5)],
+                                   [(2, 3, 4), (4, 5)],
+                                   [(2, 3, 4), (2, 4, 5)]]
       for lhs_dtype in all_dtypes
       for rhs_dtype in all_dtypes))
   def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
@@ -1223,9 +1226,14 @@ class BCOOTest(jtu.JaxTestCase):
     lhs = jnp.array(rng(lhs_shape, lhs_dtype))
     rhs = jnp.array(rng(rhs_shape, rhs_dtype))
 
+    # Note: currently, batch dimensions in matmul must correspond to batch
+    # dimensions in the sparse representation.
+    lhs_sp = sparse.BCOO.fromdense(lhs, n_batch=max(0, len(lhs_shape) - 2))
+    rhs_sp = sparse.BCOO.fromdense(rhs, n_batch=max(0, len(rhs_shape) - 2))
+
     out1 = lhs @ rhs
-    out2 = sparse.BCOO.fromdense(lhs) @ rhs
-    out3 = lhs @ sparse.BCOO.fromdense(rhs)
+    out2 = lhs_sp @ rhs
+    out3 = lhs @ rhs_sp
 
     tol = {np.float64: 1E-13, np.complex128: 1E-13,
            np.float32: 1E-6, np.complex64: 1E-6}

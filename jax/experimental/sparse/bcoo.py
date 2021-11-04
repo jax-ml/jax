@@ -1026,41 +1026,6 @@ class BCOO(ops.JAXSparse):
     """Create a dense version of the array."""
     return bcoo_todense(self.data, self.indices, shape=self.shape)
 
-  def __matmul__(self, other):
-    if isinstance(other, BCOO):
-      dtype = jnp.promote_types(self.dtype, other.dtype)
-      dimension_numbers = (([self.ndim - 1], [0]), ([], []))
-      data, indices = bcoo_spdot_general(self.data.astype(dtype), self.indices,
-                                         other.data.astype(dtype), other.indices,
-                                         lhs_shape=self.shape, rhs_shape=other.shape,
-                                         dimension_numbers=dimension_numbers)
-      shape = _dot_general_validated_shape(self.shape, other.shape, dimension_numbers)
-      return BCOO((data, indices), shape=shape)
-    elif isinstance(other, ops.JAXSparse):
-      raise NotImplementedError("sparse-sparse matmul")
-    other = jnp.asarray(other)
-    if self.ndim == 0 or other.ndim == 0:
-      raise ValueError("matmul inputs cannot be zero-dimensional.")
-    if self.ndim > 2 or other.ndim > 2:
-      raise NotImplementedError("sparse matmul for dimensions larger than 2")
-    dtype = jnp.promote_types(self.dtype, other.dtype)
-    return bcoo_dot_general(self.data.astype(dtype), self.indices, other.astype(dtype),
-                            lhs_shape=self.shape,
-                            dimension_numbers=(([self.ndim - 1], [0]), ([], [])))
-
-  def __rmatmul__(self, other):
-    if isinstance(other, ops.JAXSparse):
-      raise NotImplementedError("sparse-sparse matmul")
-    other = jnp.asarray(other)
-    if self.ndim == 0 or other.ndim == 0:
-      raise ValueError("matmul inputs cannot be zero-dimensional.")
-    if self.ndim > 2 or other.ndim > 2:
-      raise NotImplementedError("sparse matmul for dimensions larger than 2")
-    dtype = jnp.promote_types(self.dtype, other.dtype)
-    return bcoo_rdot_general(other.astype(dtype), self.data.astype(dtype), self.indices,
-                             rhs_shape=self.shape,
-                             dimension_numbers=(([other.ndim - 1], [0]), ([], [])))
-
   def transpose(self, axes=None):
     """Create a new array containing the transpose."""
     axes = np.arange(self.ndim)[::-1] if axes is None else axes
@@ -1098,6 +1063,14 @@ class BCOO(ops.JAXSparse):
   def __neg__(self):
     from jax.experimental.sparse import sparsify
     return sparsify(jnp.negative)(self)
+
+  def __matmul__(self, other):
+    from jax.experimental.sparse import sparsify
+    return sparsify(jnp.matmul)(self, other)
+
+  def __rmatmul__(self, other):
+    from jax.experimental.sparse import sparsify
+    return sparsify(jnp.matmul)(other, self)
 
   def __mul__(self, other):
     from jax.experimental.sparse import sparsify
