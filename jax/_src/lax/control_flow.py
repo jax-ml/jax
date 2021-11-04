@@ -679,43 +679,45 @@ def switch(index, branches: Sequence[Callable], operand):
   return tree_unflatten(out_trees[0], out)
 
 
-def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
+# For backward compatibility with a previous cond calling convention, we allow a
+# single (pytree) `operand` argument to be passed by keyword. We use a sentinel
+# object as its default value to indicate when it is _not_ passed.
+_no_operand_sentinel = object()
+
+def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
+          operand=_no_operand_sentinel):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   ``cond()`` has equivalent semantics to this Python implementation::
 
-    def cond(pred, true_fun, false_fun, operand):
+    def cond(pred, true_fun, false_fun, *operands):
       if pred:
-        return true_fun(operand)
+        return true_fun(*operands)
       else:
-        return false_fun(operand)
+        return false_fun(*operands)
 
   ``pred`` must be a scalar type.
-
-  Functions ``true_fun``/``false_fun`` may not need to refer to an ``operand``
-  to compute their result, but one must still be provided to the ``cond`` call
-  and be accepted by both the branch functions, e.g.::
-
-    jax.lax.cond(
-        get_predicate_value(),
-        lambda _: 23,
-        lambda _: 42,
-        operand=None)
-
 
   Args:
     pred: Boolean scalar type, indicating which branch function to apply.
     true_fun: Function (A -> B), to be applied if ``pred`` is True.
     false_fun: Function (A -> B), to be applied if ``pred`` is False.
-    operand: Operand (A) input to either branch depending on ``pred``. The type
-      can be a scalar, array, or any pytree (nested Python tuple/list/dict)
+    operands: Operands (A) input to either branch depending on ``pred``. The
+      type can be a scalar, array, or any pytree (nested Python tuple/list/dict)
       thereof.
 
   Returns:
-    Value (B) of either ``true_fun(operand)`` or ``false_fun(operand)``,
+    Value (B) of either ``true_fun(*operands)`` or ``false_fun(*operands)``,
     depending on the value of ``pred``. The type can be a scalar, array, or any
     pytree (nested Python tuple/list/dict) thereof.
   """
+  if operand is not _no_operand_sentinel:
+    if operands:
+      raise TypeError("if 'operand' keyword is passed then no positional "
+                      f"operands can be passed, got operand={operand} "
+                      f"and positional operands {operands}")
+    operands = (operand,)
+  del operand
 
   if isinstance(pred, Sequence) or np.ndim(pred) != 0:
     raise TypeError(
@@ -738,11 +740,11 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
 
   if config.jax_disable_jit and isinstance(core.get_aval(pred), ConcreteArray):
     if pred:
-      return true_fun(operand)
+      return true_fun(*operands)
     else:
-      return false_fun(operand)
+      return false_fun(*operands)
 
-  ops, ops_tree = tree_flatten((operand,))
+  ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(_map(_abstractify, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
