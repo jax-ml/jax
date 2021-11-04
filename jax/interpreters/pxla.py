@@ -1495,6 +1495,11 @@ class Mesh:
       return "Mesh([], ())"
     return f"Mesh({self.device_ids!r}, {self.axis_names!r})"
 
+  @maybe_cached_property
+  def local_devices(self):
+    process_index = xb.process_index()
+    return [d for d in self.devices.flat if d.process_index == process_index]
+
   def local_to_global(self, axes: ArrayMapping, aval):
     return untile_aval_nd(self.shape, axes,
                           tile_aval_nd(self.local_mesh.shape, axes, aval))
