@@ -188,6 +188,19 @@ class PythonPmapTest(jtu.JaxTestCase):
         TypeError, "function compiled for .*, called with .*",
         lambda: f_exe([x]))
 
+  def testLowerCompileArgTypeMismatch(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=int).reshape(shape)
+    x_f32 = x.astype(jnp.float32)
+    x_i32 = x.astype(jnp.int32)
+    f_exe = f.lower(x_f32).compile()
+    self.assertRaisesRegex(
+        TypeError,
+        "Computation compiled for input types:\n.*float32.*\n"
+        "called with:\n.*int32.*",
+        lambda: f_exe(x_i32))
+
   def testLowerCompileMultiArg(self):
     f = self.pmap(lambda x, y: x - lax.pmean(y, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)

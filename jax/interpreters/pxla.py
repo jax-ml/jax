@@ -990,12 +990,13 @@ class PmapComputation:
 
 
 class PmapExecutable:
-  __slots__ = ['xla_executable', 'unsafe_call', 'fingerprint']
+  __slots__ = ['xla_executable', 'unsafe_call', 'fingerprint', 'in_avals']
 
-  def __init__(self, xla_executable, unsafe_call, fingerprint):
+  def __init__(self, xla_executable, unsafe_call, fingerprint, in_avals):
     self.xla_executable = xla_executable
     self.unsafe_call = unsafe_call
     self.fingerprint = fingerprint
+    self.in_avals = in_avals
 
   @staticmethod
   def from_hlo(xla_computation,
@@ -1117,7 +1118,7 @@ class PmapExecutable:
           xla_computation, compile_options, input_indices, input_sharding_specs,
           handle_outs)
       # TODO(frostig): need `compile_replicated` to give us the XLA executable
-      return PmapExecutable(None, execute_fun, None)
+      return PmapExecutable(None, execute_fun, None, avals)
 
     compiled = dispatch.compile_or_get_cached(
         backend, xla_computation, compile_options)
@@ -1127,11 +1128,14 @@ class PmapExecutable:
         execute_replicated, compiled, backend, handle_args, handle_outs)
     fingerprint = getattr(compiled, "fingerprint", None)
 
-    return PmapExecutable(compiled, execute_fun, fingerprint)
+    return PmapExecutable(compiled, execute_fun, fingerprint, avals)
 
   def call(self, *args):
-    # TODO(frostig): check avals
+    # TODO(frostig): do we need to check sharding and sharded avals?
+    arg_avals = map(xla.abstractify, args)
+    dispatch.check_arg_avals_for_call(self.in_avals, arg_avals)
     return self.unsafe_call(*args)
+
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
 
