@@ -741,11 +741,10 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
                   global_axis_size, devices, name, in_axes, out_axes_thunk,
                   donated_invars, global_arg_shapes):
   abstract_args = unsafe_map(xla.abstractify, args)
-  compiled_fun, fingerprint = parallel_callable(fun, backend, axis_name, axis_size,
-                                   global_axis_size, devices, name,
-                                   in_axes, out_axes_thunk,
-                                   donated_invars, global_arg_shapes,
-                                   *abstract_args)
+  compiled_fun, fingerprint = parallel_callable(
+      fun, backend, axis_name, axis_size, global_axis_size, devices, name,
+      in_axes, out_axes_thunk, donated_invars, global_arg_shapes,
+      *abstract_args)
 
   # Don't re-abstractify args unless logging is enabled for performance.
   if config.jax_distributed_debug:
@@ -759,7 +758,7 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
 
 @lu.cache
 def parallel_callable(fun: lu.WrappedFun,
-                      backend_name: Optional[str],
+                      backend: Optional[str],
                       axis_name,
                       axis_size: int,
                       global_axis_size: Optional[int],
@@ -771,14 +770,14 @@ def parallel_callable(fun: lu.WrappedFun,
                       global_arg_shapes,
                       *avals):
   pmap_computation = lower_parallel_callable(
-      fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
-      in_axes, out_axes_thunk, donated_invars, global_arg_shapes, *avals)
+      fun, backend, axis_name, axis_size, global_axis_size, devices, name,
+      in_axes, out_axes_thunk, donated_invars, global_arg_shapes, avals)
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
 
 
 def lower_parallel_callable(fun: lu.WrappedFun,
-                            backend_name: Optional[str],
+                            backend: Optional[str],
                             axis_name,
                             axis_size: int,
                             global_axis_size: Optional[int],
@@ -788,7 +787,7 @@ def lower_parallel_callable(fun: lu.WrappedFun,
                             out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                             donated_invars: Iterable[bool],
                             global_arg_shapes,
-                            *avals):
+                            avals: Iterable[Any]):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
@@ -802,10 +801,10 @@ def lower_parallel_callable(fun: lu.WrappedFun,
         f"Specified axis_size {global_axis_size} doesn't match received "
         f"axis_size {axis_size}.")
 
-  if devices is not None and backend_name is None:
+  if devices is not None and backend is None:
     be = xb.get_device_backend(devices[0])
   else:
-    be = xb.get_backend(backend_name)
+    be = xb.get_backend(backend)
 
   must_run_on_all_devices = False
   no_nested_sharding = False
@@ -1129,6 +1128,10 @@ class PmapExecutable:
     fingerprint = getattr(compiled, "fingerprint", None)
 
     return PmapExecutable(compiled, execute_fun, fingerprint)
+
+  def call(self, *args):
+    # TODO(frostig): check avals
+    return self.unsafe_call(*args)
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
 

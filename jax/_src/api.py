@@ -496,7 +496,9 @@ class Lowered:
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donate_argnums: Tuple[int]
-  _lowering: Union[dispatch.XlaComputation, pxla.MeshComputation]
+  _lowering: Union[dispatch.XlaComputation,
+                   pxla.MeshComputation,
+                   pxla.PmapComputation]
   _no_kwargs: bool
 
   def __init__(self, lowering, in_tree, out_tree, donate_argnums,
@@ -532,7 +534,9 @@ class Compiled:
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donate_argnums: Tuple[int]
-  _executable: Union[dispatch.XlaCompiledComputation, pxla.MeshExecutable]
+  _executable: Union[dispatch.XlaCompiledComputation,
+                     pxla.MeshExecutable,
+                     pxla.PmapExecutable]
   _no_kwargs: bool
 
   def __init__(self, executable, in_tree, out_tree, donate_argnums,
@@ -1784,6 +1788,95 @@ def pmap(
       global_arg_shapes=global_arg_shapes)
 
 
+class PmapCallInfo(NamedTuple):
+  flat_fun: lu.WrappedFun
+  in_tree: PyTreeDef
+  out_tree: PyTreeDef
+  flat_args: Iterable[Any]
+  donated_invars: Iterable[bool]
+  in_axes_flat: Sequence[Optional[int]]
+  local_axis_size: int
+  global_arg_shapes_flat: Any
+  out_axes_thunk: HashableFunction
+
+
+def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
+                  donate_tuple, global_arg_shapes, args, kwargs):
+  f = lu.wrap_init(fun)
+  if static_broadcasted_tuple:
+    if max(static_broadcasted_tuple) >= len(args):
+      raise ValueError(
+          f"pmapped function has static_broadcasted_argnums={static_broadcasted_tuple}"
+          f" but was called with only {len(args)} positional "
+          f"argument{'s' if len(args) > 1 else ''}. "
+          "All static broadcasted arguments must be passed positionally.")
+    dyn_argnums = [i for i in range(len(args))
+                   if i not in static_broadcasted_tuple]
+    f, dyn_args = argnums_partial(f, dyn_argnums, args)
+
+    if isinstance(in_axes, tuple):
+      dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
+    else:
+      dyn_in_axes = in_axes
+      dyn_global_arg_shapes = global_arg_shapes
+
+    if isinstance(global_arg_shapes, tuple):
+      dyn_global_arg_shapes = tuple(global_arg_shapes[i] for i in dyn_argnums)
+    else:
+      dyn_global_arg_shapes = global_arg_shapes
+  else:
+    dyn_args, dyn_in_axes = args, in_axes
+    dyn_global_arg_shapes = global_arg_shapes
+  args, in_tree = tree_flatten((dyn_args, kwargs))
+
+  if donate_tuple:
+    donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
+  else:
+    donated_invars = (False,) * len(args)
+  in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
+  global_arg_shapes_flat = flatten_axes("pmap global_arg_shapes", in_tree,
+                                        (dyn_global_arg_shapes, None), kws=True)
+  local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap", kws=True)
+
+  for arg in args:
+    _check_arg(arg)
+
+  flat_fun, out_tree = flatten_fun(f, in_tree)
+
+  if any(out_axis is None for out_axis in tree_flatten(out_axes)):
+    raise NotImplementedError("None out_axes in pmap are not supported yet")
+  # NOTE: We don't put out_tree() in the closure, because it's (1) non-hashable,
+  #       (2) depends deterministically on flat_fun (at least that's the assumption
+  #       that we make).
+  if out_axes == 0:
+    # TODO(apaszke,mattjj): flatten_axes assumes that the output pytree is
+    #   functorial (i.e. it can hold leaves of any type), but some user code
+    #   breaks this assumption. This is a stop-gap solution to keep the old
+    #   out_axes == 0 path working as we look for a better solution.
+    out_axes_thunk = HashableFunction(
+        lambda: (0,) * out_tree().num_leaves,
+        closure=out_axes)
+  else:
+    # out_axes_thunk closes over the out_axes, they are flattened here to make
+    # them hashable.
+    out_axes_leaves, out_axes_treedef = tree_flatten(out_axes)
+    out_axes_thunk = HashableFunction(
+        lambda: tuple(flatten_axes("pmap out_axes", out_tree(),
+                                    tree_unflatten(out_axes_treedef,
+                                                  list(out_axes_leaves)))),
+        closure=(tuple(out_axes_leaves), out_axes_treedef))
+
+  return PmapCallInfo(flat_fun=flat_fun,
+                      in_tree=in_tree,
+                      out_tree=out_tree,
+                      flat_args=args,
+                      donated_invars=donated_invars,
+                      in_axes_flat=in_axes_flat,
+                      local_axis_size=local_axis_size,
+                      global_arg_shapes_flat=global_arg_shapes_flat,
+                      out_axes_thunk=out_axes_thunk)
+
+
 def _get_f_mapped(
     *,
     fun: F,
@@ -1797,76 +1890,19 @@ def _get_f_mapped(
     donate_tuple: Tuple[int],
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]],
 ):
-
   def f_pmapped(*args, **kwargs):
-    f = lu.wrap_init(fun)
-    if static_broadcasted_tuple:
-      if max(static_broadcasted_tuple) >= len(args):
-        raise ValueError(
-            f"pmapped function has static_broadcasted_argnums={static_broadcasted_tuple}"
-            f" but was called with only {len(args)} positional "
-            f"argument{'s' if len(args) > 1 else ''}. "
-            "All static broadcasted arguments must be passed positionally.")
-      dyn_argnums = [i for i in range(len(args))
-                     if i not in static_broadcasted_tuple]
-      f, dyn_args = argnums_partial(f, dyn_argnums, args)
-
-      if isinstance(in_axes, tuple):
-        dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
-      else:
-        dyn_in_axes = in_axes
-        dyn_global_arg_shapes = global_arg_shapes
-
-      if isinstance(global_arg_shapes, tuple):
-        dyn_global_arg_shapes = tuple(global_arg_shapes[i] for i in dyn_argnums)
-      else:
-        dyn_global_arg_shapes = global_arg_shapes
-    else:
-      dyn_args, dyn_in_axes = args, in_axes
-      dyn_global_arg_shapes = global_arg_shapes
-    args, in_tree = tree_flatten((dyn_args, kwargs))
-
-    if donate_tuple:
-      donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
-    else:
-      donated_invars = (False,) * len(args)
-    in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
-    global_arg_shapes_flat = flatten_axes("pmap global_arg_shapes", in_tree,
-                                          (dyn_global_arg_shapes, None), kws=True)
-    local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap", kws=True)
-    for arg in args: _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    if any(out_axis is None for out_axis in tree_flatten(out_axes)):
-      raise NotImplementedError("None out_axes in pmap are not supported yet")
-    # NOTE: We don't put out_tree() in the closure, because it's (1) non-hashable,
-    #       (2) depends deterministically on flat_fun (at least that's the assumption
-    #       that we make).
-    if out_axes == 0:
-      # TODO(apaszke,mattjj): flatten_axes assumes that the output pytree is
-      #   functorial (i.e. it can hold leaves of any type), but some user code
-      #   breaks this assumption. This is a stop-gap solution to keep the old
-      #   out_axes == 0 path working as we look for a better solution.
-      out_axes_thunk = HashableFunction(
-        lambda: (0,) * out_tree().num_leaves,
-        closure=out_axes)
-    else:
-      # out_axes_thunk closes over the out_axes, they are flattened here to make
-      # them hashable.
-      out_axes_leaves, out_axes_treedef = tree_flatten(out_axes)
-      out_axes_thunk = HashableFunction(
-        lambda: tuple(flatten_axes("pmap out_axes", out_tree(),
-                                   tree_unflatten(out_axes_treedef,
-                                                  list(out_axes_leaves)))),
-        closure=(tuple(out_axes_leaves), out_axes_treedef))
+    p = _prepare_pmap(
+        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
+        global_arg_shapes, args, kwargs)
     out = pxla.xla_pmap(
-        flat_fun, *args, backend=backend, axis_name=axis_name,
-        axis_size=local_axis_size, global_axis_size=axis_size,
+        p.flat_fun, *p.flat_args, backend=backend, axis_name=axis_name,
+        axis_size=p.local_axis_size, global_axis_size=axis_size,
         devices=None if devices is None else tuple(devices),
-        in_axes=tuple(in_axes_flat),
-        out_axes_thunk=out_axes_thunk,
-        name=flat_fun.__name__, donated_invars=tuple(donated_invars),
-        global_arg_shapes=tuple(global_arg_shapes_flat))
-    return out_tree, out
+        in_axes=tuple(p.in_axes_flat),
+        out_axes_thunk=p.out_axes_thunk,
+        name=p.flat_fun.__name__, donated_invars=tuple(p.donated_invars),
+        global_arg_shapes=tuple(p.global_arg_shapes_flat))
+    return p.out_tree, out
 
   return f_pmapped
 
@@ -1927,6 +1963,10 @@ def _python_pmap(
 
     out_tree, out_flat = f_pmapped_(*args, **kwargs)
     return tree_unflatten(out_tree(), out_flat)
+
+  f_pmapped.lower = _pmap_lower(
+      fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
+      backend, axis_size, global_arg_shapes, donate_tuple)
 
   return f_pmapped
 
@@ -2020,7 +2060,50 @@ def _cpp_pmap(
                                static_broadcasted_tuple, pxla._shard_arg)
 
   f_pmapped = wraps(fun)(cpp_mapped_f)
+
+  f_pmapped.lower = _pmap_lower(
+      fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
+      backend, axis_size, global_arg_shapes, donate_tuple)
+
   return f_pmapped
+
+
+def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
+                devices, backend, axis_size, global_arg_shapes, donate_tuple):
+  """Make a ``lower`` method for pmapped functions."""
+  # If the function we returned from ``pmap`` were a class instance,
+  # this might naturally be a method, with ``fun`` as a ``self`` and
+  # all the other arguments stored as attributes.
+  @api_boundary
+  def lower(*args, **kwargs) -> Lowered:
+    """Lower a parallel-mapped form of this function for the given arguments.
+
+    A parallel-mapped and lowered function is staged out of Python and
+    translated to a compiler's input language, possibly in a
+    backend-dependent manner. It is ready for compilation but is not yet
+    compiled. It represents a function intended for SPMD execution on
+    multiple devices.
+
+    Returns:
+      A ``Lowered`` instance representing the post-map lowering.
+    """
+    p = _prepare_pmap(
+        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
+        global_arg_shapes, args, kwargs)
+    abstract_args = map(xla.abstractify, p.flat_args)
+    computation = pxla.lower_parallel_callable(
+        p.flat_fun, backend, axis_name,
+        axis_size=p.local_axis_size, global_axis_size=axis_size,
+        devices=None if devices is None else tuple(devices),
+        name=p.flat_fun.__name__,
+        in_axes=tuple(p.in_axes_flat),
+        out_axes_thunk=p.out_axes_thunk,
+        donated_invars=p.donated_invars,
+        global_arg_shapes=tuple(p.global_arg_shapes_flat),
+        avals=abstract_args)
+    return Lowered(computation, p.in_tree, p.out_tree(), donate_tuple)
+
+  return lower
 
 
 def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
