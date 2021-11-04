@@ -70,6 +70,7 @@ from jax.experimental.sparse import BCOO
 sparse_rules : Dict[core.Primitive, Callable] = {}
 
 Array = Any
+ArrayOrSparse = Any
 
 
 class SparseEnv:
@@ -162,6 +163,113 @@ def argspecs_to_avals(
   return tree_map(argspec_to_aval, argspecs, is_leaf=_is_argspec)
 
 
+#------------------------------------------------------------------------------
+# Implementation of sparsify() using tracers.
+
+def popattr(obj, name):
+  assert hasattr(obj, name)
+  val = getattr(obj, name)
+  delattr(obj, name)
+  return val
+
+def setnewattr(obj, name, val):
+  assert not hasattr(obj, name)
+  setattr(obj, name, val)
+
+class SparseTracer(core.Tracer):
+  def __init__(self, trace: core.Trace, *, argspec):
+    self._argspec = argspec
+    self._trace = trace
+
+  @property
+  def spenv(self):
+    if not hasattr(self._trace.main, 'spenv'):
+      raise RuntimeError("Internal: main does not have spenv defined.")
+    return self._trace.main.spenv
+
+  @property
+  def aval(self):
+    return argspecs_to_avals(self.spenv, [self._argspec])[0]
+
+  def full_lower(self):
+    return self
+
+class SparseTrace(core.Trace):
+  def pure(self, val: Any):
+    if not hasattr(self.main, 'spenv'):
+      raise RuntimeError("Internal: main does not have spenv defined.")
+    argspec, = arrays_to_argspecs(self.main.spenv, [val])
+    return SparseTracer(self, argspec=argspec)
+
+  def lift(self, val: core.Tracer):
+    if not hasattr(self.main, 'spenv'):
+      raise RuntimeError("Internal: main does not have spenv defined.")
+    argspec, = arrays_to_argspecs(self.main.spenv, [val])
+    return SparseTracer(self, argspec=argspec)
+
+  def sublift(self, val: SparseTracer):
+    return SparseTracer(val._trace, argspec=val._argspec)
+
+  def process_primitive(self, primitive, tracers, params):
+    spenv = popattr(self.main, 'spenv')
+    argspecs = [t._argspec for t in tracers]
+    if any(argspec.is_sparse() for argspec in argspecs):
+      if primitive not in sparse_rules:
+        raise NotImplementedError(f"sparse rule for {primitive}")
+      out_argspecs = sparse_rules[primitive](spenv, *(t._argspec for t in tracers), **params)
+    else:
+      out_bufs = primitive.bind(*(argspec.data(spenv) for argspec in argspecs), **params)
+      out_argspecs = arrays_to_argspecs(spenv, out_bufs if primitive.multiple_results else [out_bufs])
+    setnewattr(self.main, 'spenv', spenv)
+    out_tracers = tuple(SparseTracer(self, argspec=argspec) for argspec in out_argspecs)
+    return out_tracers if primitive.multiple_results else out_tracers[0]
+
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+    spenv = popattr(self.main, 'spenv')
+    argspecs = tuple(t._argspec for t in tracers)
+    in_bufs = spenv._buffers
+    fun, out_argspecs = sparsify_subtrace(f, self.main, argspecs)
+    if any(params['donated_invars']):
+      raise NotImplementedError("sparsify does not support donated_invars")
+    params = dict(params, donated_invars=tuple(False for buf in in_bufs))
+    bufs_out = call_primitive.bind(fun, *in_bufs, **params)
+    setnewattr(self.main, 'spenv', SparseEnv(bufs_out))
+    return [SparseTracer(self, argspec=argspec) for argspec in out_argspecs()]
+
+@lu.transformation_with_aux
+def sparsify_subtrace(main, argspecs, *bufs):
+  setnewattr(main, 'spenv', SparseEnv(bufs))
+  trace = main.with_cur_sublevel()
+  in_tracers = [SparseTracer(trace, argspec=argspec) for argspec in argspecs]
+  outs = yield in_tracers, {}
+  out_traces = [trace.full_raise(out) for out in outs]
+  buffers = popattr(main, 'spenv')._buffers
+  yield buffers, [out._argspec for out in out_traces]
+
+def sparsify_fun(wrapped_fun, args: List[ArrayOrSparse]):
+  with core.new_main(SparseTrace) as main:
+    spenv = SparseEnv()
+    argspecs = arrays_to_argspecs(spenv, args)
+    in_bufs = spenv._buffers
+    fun, out_argspecs = sparsify_subtrace(wrapped_fun, main, argspecs)
+    out_bufs = fun.call_wrapped(*in_bufs)
+    spenv = SparseEnv(out_bufs)
+    del main
+  return argspecs_to_arrays(spenv, out_argspecs())
+
+def _sparsify_with_tracer(fun):
+  """Implementation of sparsify() using tracers."""
+  @functools.wraps(fun)
+  def _wrapped(*args):
+    args_flat, in_tree = tree_flatten(args, is_leaf=_is_bcoo)
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    out = sparsify_fun(wrapped_fun, args_flat)
+    return tree_unflatten(out_tree(), out)
+  return _wrapped
+
+#------------------------------------------------------------------------------
+# Implementation of sparsify() using a jaxpr interpreter.
+
 def eval_sparse(
     jaxpr: core.Jaxpr,
     consts: Sequence[Array],  # all consts are dense
@@ -234,7 +342,19 @@ def sparsify_raw(f):
     return result, out_tree()
   return wrapped
 
-def sparsify(f):
+def _sparsify_with_interpreter(f):
+  """Implementation of sparsify() using jaxpr interpreter."""
+  f_raw = sparsify_raw(f)
+  @functools.wraps(f)
+  def wrapped(*args, **params):
+    spenv = SparseEnv()
+    argspecs = arrays_to_argspecs(spenv, args)
+    argspecs_out, out_tree = f_raw(spenv, *argspecs, **params)
+    out = argspecs_to_arrays(spenv, argspecs_out)
+    return tree_unflatten(out_tree, out)
+  return wrapped
+
+def sparsify(f, use_tracer=False):
   """Experimental sparsification transform.
 
   Examples:
@@ -255,15 +375,14 @@ def sparsify(f):
     >>> f(M, v)
     DeviceArray([ 64,  82, 100, 118], dtype=int32)
   """
-  f_raw = sparsify_raw(f)
-  @functools.wraps(f)
-  def wrapped(*args, **params):
-    spenv = SparseEnv()
-    argspecs = arrays_to_argspecs(spenv, args)
-    argspecs_out, out_tree = f_raw(spenv, *argspecs, **params)
-    out = argspecs_to_arrays(spenv, argspecs_out)
-    return tree_unflatten(out_tree, out)
-  return wrapped
+  if use_tracer:
+    return _sparsify_with_tracer(f)
+  else:
+    return _sparsify_with_interpreter(f)
+
+
+#------------------------------------------------------------------------------
+# Sparse rules for various primitives
 
 def _zero_preserving_unary_op(prim):
   def func(spenv, *argspecs, **kwargs):

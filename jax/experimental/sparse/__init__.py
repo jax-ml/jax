@@ -232,4 +232,7 @@ from .ops import (
 )
 
 from .random import random_bcoo as random_bcoo
-from .transform import sparsify as sparsify
+from .transform import (
+    sparsify as sparsify,
+    SparseTracer as SparseTracer,
+)

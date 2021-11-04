@@ -23,7 +23,7 @@ import numpy as np
 from jax import config, core, jit, lax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
-from jax.experimental.sparse import BCOO, sparsify, todense
+from jax.experimental.sparse import BCOO, sparsify, todense, SparseTracer
 from jax.experimental.sparse.transform import (
   arrays_to_argspecs, argspecs_to_arrays, sparsify_raw, ArgSpec, SparseEnv)
 
@@ -31,6 +31,15 @@ config.parse_flags_with_absl()
 
 
 class SparsifyTest(jtu.JaxTestCase):
+  @classmethod
+  def sparsify(cls, f):
+    return sparsify(f, use_tracer=False)
+
+  def testTracerIsInstanceCheck(self):
+    @self.sparsify
+    def f(x):
+      self.assertNotIsInstance(x, SparseTracer)
+    f(jnp.arange(5))
 
   def assertBcooIdentical(self, x, y):
     self.assertIsInstance(x, BCOO)
@@ -72,7 +81,7 @@ class SparsifyTest(jtu.JaxTestCase):
   def testUnitHandling(self):
     x = BCOO.fromdense(jnp.arange(5))
     f = jit(lambda x, y: x)
-    result = sparsify(jit(f))(x, core.unit)
+    result = self.sparsify(jit(f))(x, core.unit)
     self.assertBcooIdentical(result, x)
 
   def testDropvar(self):
@@ -85,10 +94,10 @@ class SparsifyTest(jtu.JaxTestCase):
 
     x_dense = jnp.arange(5)
     x_sparse = BCOO.fromdense(x_dense)
-    self.assertArraysEqual(sparsify(f)(x_sparse).todense(), f(x_dense))
+    self.assertArraysEqual(self.sparsify(f)(x_sparse).todense(), f(x_dense))
 
   def testPytreeInput(self):
-    f = sparsify(lambda x: x)
+    f = self.sparsify(lambda x: x)
     args = (jnp.arange(4), BCOO.fromdense(jnp.arange(4)))
     out = f(args)
     self.assertLen(out, 2)
@@ -100,7 +109,7 @@ class SparsifyTest(jtu.JaxTestCase):
     M_sparse = BCOO.fromdense(M_dense)
     v = jnp.arange(M_dense.shape[0])
 
-    @sparsify
+    @self.sparsify
     def func(x, v):
       return -jnp.sin(jnp.pi * x).T @ (v + 1)
 
@@ -113,7 +122,7 @@ class SparsifyTest(jtu.JaxTestCase):
     M_dense = jnp.arange(24).reshape(4, 6)
     M_sparse = BCOO.fromdense(M_dense)
 
-    @sparsify
+    @self.sparsify
     def func(x):
       return jit(lambda x: jnp.sum(x, 1))(x)
 
@@ -129,17 +138,17 @@ class SparsifyTest(jtu.JaxTestCase):
     Ysp = BCOO.fromdense(Y)
 
     # dot_general
-    result_sparse = sparsify(operator.matmul)(Xsp, Y)
+    result_sparse = self.sparsify(operator.matmul)(Xsp, Y)
     result_dense = operator.matmul(X, Y)
     self.assertAllClose(result_sparse, result_dense)
 
     # rdot_general
-    result_sparse = sparsify(operator.matmul)(Y, Xsp)
+    result_sparse = self.sparsify(operator.matmul)(Y, Xsp)
     result_dense = operator.matmul(Y, X)
     self.assertAllClose(result_sparse, result_dense)
 
     # spdot_general
-    result_sparse = sparsify(operator.matmul)(Xsp, Ysp)
+    result_sparse = self.sparsify(operator.matmul)(Xsp, Ysp)
     result_dense = operator.matmul(X, Y)
     self.assertAllClose(result_sparse.todense(), result_dense)
 
@@ -148,7 +157,7 @@ class SparsifyTest(jtu.JaxTestCase):
     y = BCOO.fromdense(2 * jnp.arange(5))
 
     # Distinct indices
-    out = sparsify(operator.add)(x, y)
+    out = self.sparsify(operator.add)(x, y)
     self.assertEqual(out.nse, 8)  # uses concatenation.
     self.assertArraysEqual(out.todense(), 3 * jnp.arange(5))
 
@@ -170,7 +179,7 @@ class SparsifyTest(jtu.JaxTestCase):
     y = BCOO.fromdense(2 * jnp.arange(5))
 
     # Scalar multiplication
-    out = sparsify(operator.mul)(x, 2.5)
+    out = self.sparsify(operator.mul)(x, 2.5)
     self.assertArraysEqual(out.todense(), x.todense() * 2.5)
 
     # Shared indices – requires lower level call
@@ -194,7 +203,7 @@ class SparsifyTest(jtu.JaxTestCase):
       return x.sum(), x.sum(0), x.sum(1), x.sum((0, 1))
 
     result_dense = f(x)
-    result_sparse = sparsify(f)(xsp)
+    result_sparse = self.sparsify(f)(xsp)
 
     assert len(result_dense) == len(result_sparse)
 
@@ -222,7 +231,7 @@ class SparsifyTest(jtu.JaxTestCase):
 
     M_dense = rng(shape, np.float32)
     M_sparse = BCOO.fromdense(M_dense, n_batch=n_batch, n_dense=n_dense)
-    func = sparsify(partial(lax.squeeze, dimensions=dimensions))
+    func = self.sparsify(partial(lax.squeeze, dimensions=dimensions))
 
     result_dense = func(M_dense)
     result_sparse = func(M_sparse).todense()
@@ -245,7 +254,7 @@ class SparsifyTest(jtu.JaxTestCase):
     out_dense = f(A)
 
     Asp = BCOO.fromdense(A)
-    out_sparse = sparsify(f)(Asp)
+    out_sparse = self.sparsify(f)(Asp)
 
     self.assertEqual(len(out_dense), 2)
     self.assertEqual(len(out_sparse), 2)
@@ -275,7 +284,7 @@ class SparsifyTest(jtu.JaxTestCase):
     out_dense = f(A)
 
     Asp = BCOO.fromdense(A)
-    out_sparse = sparsify(f)(Asp)
+    out_sparse = self.sparsify(f)(Asp)
 
     self.assertEqual(len(out_dense), 3)
     self.assertEqual(len(out_sparse), 3)
@@ -285,7 +294,7 @@ class SparsifyTest(jtu.JaxTestCase):
 
   def testSparsifyDenseXlaCall(self):
     # Test handling of dense xla_call within jaxpr interpreter.
-    out = sparsify(jit(lambda x: x + 1))(0.0)
+    out = self.sparsify(jit(lambda x: x + 1))(0.0)
     self.assertEqual(out, 1.0)
 
   def testSparsifySparseXlaCall(self):
@@ -297,7 +306,7 @@ class SparsifyTest(jtu.JaxTestCase):
     Msp = BCOO.fromdense(M)
 
     out_dense = func(M)
-    out_sparse = sparsify(jit(func))(Msp)
+    out_sparse = self.sparsify(jit(func))(Msp)
     self.assertArraysEqual(out_dense, out_sparse.todense())
 
   def testSparseForiLoop(self):
@@ -310,7 +319,7 @@ class SparsifyTest(jtu.JaxTestCase):
     M_bcoo = BCOO.fromdense(M)
 
     result_dense = func(M, x)
-    result_sparse = sparsify(func)(M_bcoo, x)
+    result_sparse = self.sparsify(func)(M_bcoo, x)
 
     self.assertArraysAllClose(result_dense, result_sparse)
 
@@ -322,12 +331,12 @@ class SparsifyTest(jtu.JaxTestCase):
     result_dense = func(x)
 
     x_bcoo = BCOO.fromdense(x)
-    result_sparse = sparsify(func)(x_bcoo)
+    result_sparse = self.sparsify(func)(x_bcoo)
 
     self.assertArraysAllClose(result_dense, result_sparse.todense())
 
   def testSparseCondMismatchError(self):
-    @sparsify
+    @self.sparsify
     def func(x, y):
       return lax.cond(False, lambda x: x[0], lambda x: x[1], (x, y))
 
@@ -346,7 +355,7 @@ class SparsifyTest(jtu.JaxTestCase):
   def testToDense(self):
     M = jnp.arange(4)
     Msp = BCOO.fromdense(M)
-    @sparsify
+    @self.sparsify
     def func(M):
       return todense(M) + 1
     self.assertArraysEqual(func(M), M + 1)
@@ -360,10 +369,20 @@ class SparsifyTest(jtu.JaxTestCase):
     Msp = BCOO.fromdense(M)
     self.assertArraysEqual(
       operator.mul(2, M),
-      sparsify(operator.mul)(2, Msp).todense(),
+      self.sparsify(operator.mul)(2, Msp).todense(),
       check_dtypes=True,
     )
 
+class SparsifyTracerTest(SparsifyTest):
+  @classmethod
+  def sparsify(cls, f):
+    return sparsify(f, use_tracer=True)
+
+  def testTracerIsInstanceCheck(self):
+    @self.sparsify
+    def f(x):
+      self.assertIsInstance(x, SparseTracer)
+    f(jnp.arange(5))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
