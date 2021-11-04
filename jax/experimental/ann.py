@@ -72,17 +72,24 @@ from jax.interpreters import ad, xla, batching
 Array = Any
 
 
-def approx_max_k(operand: Array,
-                 k: int,
-                 reduction_dimension: int = -1,
-                 recall_target: float = 0.95) -> Tuple[Array, Array]:
+def approx_max_k(
+    operand: Array,
+    k: int,
+    reduction_dimension: int = -1,
+    recall_target: float = 0.95,
+    reduction_input_size_override: int = -1) -> Tuple[Array, Array]:
   """Returns max ``k`` values and their indices of the ``operand``.
 
   Args:
     operand : Array to search for max-k.
     k : Specifies the number of max-k.
-    reduction_dimension: Integer dimension along which to search. Default: -1.
-    recall_target: Recall target for the approximation.
+    reduction_dimension : Integer dimension along which to search. Default: -1.
+    recall_target : Recall target for the approximation.
+    reduction_input_size_override : When set to a positive value, it overrides
+      the size determined by operands[reduction_dim] for evaluating the recall.
+      This option is useful when the given operand is only a subset of the
+      overall computation in SPMD or distributed pipelines, where the true input
+      size cannot be deferred by the operand shape.
 
   Returns:
     Tuple[Array, Array] : Max k values and their indices of the inputs.
@@ -92,14 +99,16 @@ def approx_max_k(operand: Array,
       k=k,
       reduction_dimension=reduction_dimension,
       recall_target=recall_target,
-      is_max_k=True)
+      is_max_k=True,
+      reduction_input_size_override=reduction_input_size_override)
 
 
-# Build comparator like lax.sort
-def approx_min_k(operand: Array,
-                 k: int,
-                 reduction_dimension: int = -1,
-                 recall_target: float = 0.95) -> Tuple[Array, Array]:
+def approx_min_k(
+    operand: Array,
+    k: int,
+    reduction_dimension: int = -1,
+    recall_target: float = 0.95,
+    reduction_input_size_override: int = -1) -> Tuple[Array, Array]:
   """Returns min ``k`` values and their indices of the ``operand``.
 
   Args:
@@ -107,6 +116,11 @@ def approx_min_k(operand: Array,
     k : Specifies the number of min-k.
     reduction_dimension: Integer dimension along which to search. Default: -1.
     recall_target: Recall target for the approximation.
+    reduction_input_size_override : When set to a positive value, it overrides
+      the size determined by operands[reduction_dim] for evaluating the recall.
+      This option is useful when the given operand is only a subset of the overall
+      computation in SPMD or distributed pipelines, where the true input size
+      cannot be deferred by the operand shape.
 
   Returns:
     Tuple[Array, Array] : Least k values and their indices of the inputs.
@@ -116,11 +130,13 @@ def approx_min_k(operand: Array,
       k=k,
       reduction_dimension=reduction_dimension,
       recall_target=recall_target,
-      is_max_k=False)
+      is_max_k=False,
+      reduction_input_size_override=reduction_input_size_override)
 
 
 def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
-                                recall_target, is_max_k):
+                                recall_target, is_max_k,
+                                reduction_input_size_override):
   if k <= 0:
     raise ValueError('k must be positive, got {}'.format(k))
   if len(operand.shape) == 0:
@@ -131,9 +147,16 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
     raise ValueError(
         'k must be smaller than the size of reduction_dim {}, got {}'.format(
             dims[reduction_dimension], k))
-  if xc._version > 41:
+  if xc._version > 42:
+    reduction_input_size = dims[reduction_dimension]
+    if reduction_input_size_override >= 0:
+      if reduction_input_size < reduction_input_size_override:
+        raise ValueError(
+            'reduction_input_size_override must be greater equals to operand.shape[reduction_dimension], which is {}'
+            .format(reduction_input_size))
+      reduction_input_size = reduction_input_size_override
     dims[reduction_dimension] = xc.ops.ApproxTopKReductionOutputSize(
-        dims[reduction_dimension], len(dims), k, recall_target, True)[0]
+        reduction_input_size, len(dims), k, recall_target, True)[0]
   else:
     dims[reduction_dimension] = k
   return (operand.update(
@@ -156,7 +179,8 @@ def _comparator_builder(operand, op_type, is_max_k):
 
 
 def _approx_top_k_tpu_translation(c, operand, k, reduction_dimension,
-                                  recall_target, is_max_k):
+                                  recall_target, is_max_k,
+                                  reduction_input_size_override):
   op_shape = c.get_shape(operand)
   if not op_shape.is_array():
     raise ValueError('operand must be an array, but was {}'.format(op_shape))
@@ -180,11 +204,13 @@ def _approx_top_k_tpu_translation(c, operand, k, reduction_dimension,
   init_val = xc.ops.Constant(c, init_literal)
   init_arg = xc.ops.Constant(c, np.int32(-1))
   return xc.ops.ApproxTopK(c, [operand, iota], [init_val, init_arg], k,
-                           reduction_dimension, comparator, recall_target, True)
+                           reduction_dimension, comparator, recall_target, True,
+                           reduction_input_size_override)
 
 
 def _approx_top_k_fallback_translation(c, operand, k, reduction_dimension,
-                                       recall_target, is_max_k):
+                                       recall_target, is_max_k,
+                                       reduction_input_size_override):
   op_shape = c.get_shape(operand)
   if not op_shape.is_array():
     raise ValueError('operand must be an array, but was {}'.format(op_shape))
@@ -204,7 +230,8 @@ def _approx_top_k_fallback_translation(c, operand, k, reduction_dimension,
 
 
 def _approx_top_k_batch_rule(batched_args, batch_dims, *, k,
-                             reduction_dimension, recall_target, is_max_k):
+                             reduction_dimension, recall_target, is_max_k,
+                             reduction_input_size_override):
   prototype_arg, new_bdim = next(
       (a, b) for a, b in zip(batched_args, batch_dims) if b is not None)
   new_args = []
@@ -221,7 +248,8 @@ def _approx_top_k_batch_rule(batched_args, batch_dims, *, k,
       k=k,
       reduction_dimension=new_reduction_dim,
       recall_target=recall_target,
-      is_max_k=False), bdims)
+      is_max_k=False,
+      reduction_input_size_override=reduction_input_size_override), bdims)
 
 
 # Slow jvp implementation using gather.
@@ -233,15 +261,17 @@ def _approx_top_k_batch_rule(batched_args, batch_dims, *, k,
 #    distribute the output cotangent to input cotangent. A reasonable way to do
 #    this is to run it on CPU.
 def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
-                      recall_target, is_max_k):
+                      recall_target, is_max_k, reduction_input_size_override):
   operand, = primals
   tangent, = tangents
   if is_max_k:
     val_out, arg_out = approx_max_k(operand, k, reduction_dimension,
-                                    recall_target)
+                                    recall_target,
+                                    reduction_input_size_override)
   else:
     val_out, arg_out = approx_min_k(operand, k, reduction_dimension,
-                                    recall_target)
+                                    recall_target,
+                                    reduction_input_size_override)
   if type(tangent) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
