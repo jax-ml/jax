@@ -37,7 +37,16 @@ setup(
     url='https://github.com/google/jax',
     license='Apache-2.0',
     package_data={
-        'jaxlib': ['*.so', '*.pyd*', 'py.typed', 'cuda/nvvm/libdevice/libdevice*'],
+        'jaxlib': [
+            '*.so',
+            '*.pyd*',
+            'py.typed',
+            'cuda/nvvm/libdevice/libdevice*',
+            'mlir/*.py',
+            'mlir/dialects/*.py',
+            'mlir/_mlir_libs/*.so',
+            'mlir/_mlir_libs/*.pyd',
+        ],
         'jaxlib.xla_extension': ['*.pyi'],
     },
     zip_safe=False,

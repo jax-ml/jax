@@ -34,6 +34,10 @@ py_binary(
         "//jaxlib:cpu_feature_guard.so",
         "//jaxlib:_lapack.so",
         "//jaxlib:_pocketfft.so",
+        "//jaxlib/mlir:builtin_dialect",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:mhlo_dialect",
+        "//jaxlib/mlir:standard_dialect",
         "//jaxlib:pocketfft_flatbuffers_py",
     ] + if_not_windows([
         "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",

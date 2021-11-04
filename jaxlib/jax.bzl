@@ -30,3 +30,6 @@ if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
 flatbuffer_cc_library = _flatbuffer_cc_library
 flatbuffer_py_library = _flatbuffer_py_library
+
+def py_extension(name, srcs, copts, deps):
+    pybind_extension(name, srcs = srcs, copts = copts, deps = deps, module_name = name)
