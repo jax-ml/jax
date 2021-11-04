@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import contextmanager
 from functools import partial
 import itertools as it
+from typing import Any, List, Optional, Callable, Union, TypeVar
+
 import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -27,6 +30,8 @@ from jax._src.lax import parallel
 from jax import random
 from jax import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax import vmap
+from jax.interpreters import batching
+from jax.tree_util import register_pytree_node
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -57,7 +62,7 @@ class BatchingTest(jtu.JaxTestCase):
         rtol={np.float32:1e-2} if jtu.device_under_test() == "tpu" else None)
 
     jaxpr = make_jaxpr(matmat)(A, B)
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
 
   def testPerExampleGradients(self):
     def predict(params, inputs):
@@ -1262,6 +1267,113 @@ class BatchingTest(jtu.JaxTestCase):
 
     self.assertEqual(f(jnp.ones(3)).shape, (3,))
     self.assertEqual(jax.vmap(f)(jnp.ones((2, 3))).shape, (2, 3))
+
+
+Array = Any
+ArrayElt = Any
+Int = Union[int, jax.core.Tracer]
+
+# Can't used NamedTuple here b/c those are pytrees
+class NamedArray:
+  names: List[str]
+  data: Array
+
+  def __init__(self, names, data):
+    assert len(names) == data.ndim
+    self.names = names
+    self.data = data
+
+  def __repr__(self) -> str:
+    return f'NamedArray(names={self.names}, data={self.data})'
+
+class NamedMapSpec:
+  name: Optional[str]
+  axis: Optional[int]
+
+  def __init__(self, name: str, axis: Optional[int]):
+    assert (name is None) == (axis is None)
+    self.name = name
+    self.axis = axis
+
+def named_mul(x: NamedArray, y: NamedArray) -> NamedArray:
+  if x.names != y.names: raise Exception
+  return NamedArray(x.names, lax.mul(x.data, y.data))
+
+# TODO(mattjj): don't make this a pytree
+register_pytree_node(NamedArray,
+                     lambda x: ((x.data,), x.names),
+                     lambda names, xs: NamedArray(names, xs[0]))
+
+
+def named_to_elt(cont: Callable[[Array, Optional[int]], ArrayElt],
+                 _: Int, val: NamedArray, spec: NamedMapSpec) -> NamedArray:
+  if spec.name is None:
+    return val
+  else:
+    elt_names, mapped_name = list_pop(val.names, spec.axis)
+    if mapped_name != spec.name: raise Exception
+    elt = cont(val.data, spec.axis)
+    return NamedArray(elt_names, elt)
+
+def named_from_elt(cont: Callable[[int, ArrayElt, Optional[int]], Array],
+                   axis_size: int, elt: NamedArray, annotation: NamedMapSpec
+                   ) -> NamedArray:
+  data = cont(axis_size, elt.data, annotation.axis)
+  if annotation.axis is None:
+    return NamedArray(elt.names, data)
+  else:
+    names = list_insert(elt.names, annotation.axis, annotation.name)
+    return NamedArray(names, data)
+
+@contextmanager
+def temporarily_register_named_array_vmappable():
+  batching.register_vmappable(NamedArray, NamedMapSpec, int,
+                              named_to_elt, named_from_elt, None)
+  try:
+    yield
+  finally:
+    batching.unregister_vmappable(NamedArray)
+
+a = TypeVar('a')
+
+def list_pop(lst: List[a], idx: int) -> a:
+  lst = list(lst)
+  return lst, lst.pop(idx)
+
+def list_insert(lst: List[a], idx: int, val: a) -> List[a]:
+  lst = list(lst)
+  lst.insert(idx, val)
+  return lst
+
+
+class VmappableTest(jtu.JaxTestCase):
+  def test_basic(self):
+    with temporarily_register_named_array_vmappable():
+      def f(x):
+        return named_mul(x, x)
+
+      x = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4))
+      g = jax.vmap(f,
+                  in_axes=NamedMapSpec('i', 0),
+                  out_axes=NamedMapSpec('i', 1),
+                  axis_size=3)
+      ans = g(x)
+      expected = NamedArray(['j', 'i'], jnp.arange(12.).reshape(3, 4).T ** 2)
+
+      self.assertEqual(ans.names, expected.names)
+      self.assertAllClose(ans.data, expected.data)
+
+  def test_basic_jit(self):
+    with temporarily_register_named_array_vmappable():
+      def f(x):
+        return named_mul(x, x)
+
+      x = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4))
+      ans = jax.jit(f)(x)
+      expected = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4) ** 2)
+
+      self.assertEqual(ans.names, expected.names)
+      self.assertAllClose(ans.data, expected.data)
 
 
 if __name__ == '__main__':
