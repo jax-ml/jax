@@ -41,9 +41,11 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Uni
 
 import jax
 from jax._src.numpy import lax_numpy
+from jax._src import dtypes
 import opt_einsum
 from jax import config
 from jax import core
+
 
 import numpy as np
 
@@ -448,6 +450,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
     return _dim_as_value(d)
 
 core._SPECIAL_DIMENSION_HANDLERS[_DimPolynomial] = DimensionHandlerPoly()
+dtypes.python_scalar_dtypes[_DimPolynomial] = dtypes.python_scalar_dtypes[int]
 
 def _einsum_contract_path(*operands, **kwargs):
   """Like opt_einsum.contract_path, with support for DimPolynomial shapes.
