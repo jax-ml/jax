@@ -981,10 +981,6 @@ class BCOO(ops.JAXSparse):
   n_sparse = property(lambda self: self.indices.shape[-1])
   n_dense = property(lambda self: self.data.ndim - 1 - self.n_batch)
 
-  @property
-  def _sparse_shape(self):
-    return tuple(self.shape[self.n_batch:self.n_batch + self.n_sparse])
-
   def __init__(self, args, *, shape):
     # JAX transforms will sometimes instantiate pytrees with null values, so we
     # must catch that in the initialization of inputs.
@@ -1022,33 +1018,11 @@ class BCOO(ops.JAXSparse):
     """Create a new array containing the transpose."""
     axes = np.arange(self.ndim)[::-1] if axes is None else axes
     data_T, indices_T = bcoo_transpose(self.data, self.indices, shape=self.shape, permutation=axes)
-    shape_T = [self.shape[i] for i in axes]
+    shape_T = tuple(self.shape[i] for i in axes)
     return BCOO((data_T, indices_T), shape=shape_T)
 
   def tree_flatten(self):
-    children = (self.data, self.indices)
-    # pytree sometimes creates placeholder objects & we need to handle that.
-    sparse_shape = self.shape if ops._is_placeholder(*children) else self._sparse_shape
-    # We serialize the sparse shape only to support batching.
-    return children, {"sparse_shape": sparse_shape}
-
-  @classmethod
-  def tree_unflatten(cls, aux_data, children):
-    data, indices = children
-    sparse_shape = aux_data["sparse_shape"]
-    # pytree sometimes creates placeholder objects & we need to handle that.
-    if ops._is_placeholder(data, indices):
-      shape = sparse_shape
-    else:
-      if np.ndim(indices) < 2 or len(sparse_shape) != np.shape(indices)[-1]:
-        raise ValueError(f"Invalid sparse representation: got indices.shape={np.shape(indices)}, "
-                         f"data.shape={np.shape(data)}, sparse_shape={sparse_shape}")
-      n_batch = indices.ndim - 2
-      shape = (
-          tuple(np.maximum(data.shape[:n_batch], indices.shape[:n_batch]))
-          + tuple(sparse_shape)
-          + tuple(data.shape[n_batch + 1:]))
-    return cls(children, shape=shape)
+    return (self.data, self.indices), {"shape": self.shape}
 
   # TODO(jakevdp): refactor to avoid circular imports - we can use the same strategy
   #                we use when adding methods to DeviceArray within lax_numpy.py
@@ -1084,3 +1058,22 @@ class BCOO(ops.JAXSparse):
     """Sum array along axis."""
     from jax.experimental.sparse import sparsify
     return sparsify(lambda x: x.sum(*args, **kwargs))(self)
+
+# vmappable handlers
+def _bcoo_to_elt(cont, _, val, axis):
+  if axis is None:
+    return val
+  if axis >= val.n_batch:
+    raise ValueError(f"Cannot map in_axis={axis} for BCOO array with n_batch={val.n_batch}. "
+                     "in_axes for batched BCOO operations must correspond to a batch dimension.")
+  return BCOO((cont(val.data, axis), cont(val.indices, axis)),
+              shape= val.shape[:axis] + val.shape[axis + 1:])
+
+def _bcoo_from_elt(cont, axis_size, elt, axis):
+  if axis > elt.n_batch:
+    raise ValueError(f"BCOO: cannot add out_axis={axis} for BCOO array with n_batch={elt.n_batch}. "
+                     "BCOO batch axes must be a contiguous block of leading dimensions.")
+  return BCOO((cont(axis_size, elt.data, axis), cont(axis_size, elt.indices, axis)),
+              shape=elt.shape[:axis] + (axis_size,) + elt.shape[axis:])
+
+batching.register_vmappable(BCOO, int, int, _bcoo_to_elt, _bcoo_from_elt, None)
