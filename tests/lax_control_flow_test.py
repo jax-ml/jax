@@ -597,6 +597,40 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), cfun(4))
     self.assertEqual(fun(4), (8, 16))
 
+  def testCondTwoOperands(self):
+    # see https://github.com/google/jax/issues/8469
+    self.skipTest("two-operand cond behavior is ambiguous (#8469)")
+
+    add, mul = lax.add, lax.mul
+
+    def fun(x):
+      return add(x, x) if x == 0 else mul(x, x)
+
+    def cfun(x):
+      return lax.cond(x == 0, add, mul, x, x)
+
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(fun(1), cfun(1))
+    cfun = jax.jit(cfun)
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(fun(1), cfun(1))
+
+  def testCondThreeOperands(self):
+    add = lambda x, y, z: x + y + z
+    mul = lambda x, y, z: x * y * z
+
+    def fun(x):
+      return add(x, x, x) if x == 0 else mul(x, x, x)
+
+    def cfun(x):
+      return lax.cond(x == 0, add, mul, x, x, x)
+
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(fun(1), cfun(1))
+    cfun = jax.jit(cfun)
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(fun(1), cfun(1))
+
   def testSwitch(self):
     def branch(x):
       y = lax.mul(2, x)
