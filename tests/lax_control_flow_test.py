@@ -665,6 +665,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(2), cfun(2))
     self.assertEqual(fun(3), cfun(3))
 
+  def testSwitchMultiOperands(self):
+    branches = [lax.add, lax.mul]
+
+    def fun(x):
+      i = 0 if x <= 0 else 1
+      return branches[i](x, x)
+
+    def cfun(x):
+      return lax.switch(x, branches, x, x)
+
+    self.assertEqual(fun(-1), cfun(-1))
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(fun(1), cfun(1))
+    self.assertEqual(fun(2), cfun(2))
+    cfun = jax.jit(cfun)
+    self.assertEqual(fun(-1), cfun(-1))
+    self.assertEqual(fun(0), cfun(0))
+    self.assertEqual(fun(1), cfun(1))
+    self.assertEqual(fun(2), cfun(2))
+
   def testSwitchResidualsMerge(self):
     def get_conds(fun):
       jaxpr = jax.make_jaxpr(jax.grad(fun))(0., 0)
