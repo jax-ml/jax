@@ -13,10 +13,12 @@
 # limitations under the License.
 """Implementation of GlobalShardedDeviceArray."""
 
+from collections import defaultdict, Counter
 import dataclasses
 import numpy as np
-from typing import Callable, Sequence, Tuple, Union, Mapping
+from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict
 from .. import core
+from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from ..interpreters import pxla
 from .._src.util import prod, safe_zip
@@ -33,7 +35,7 @@ Index = Tuple[slice, ...]
 
 
 @dataclasses.dataclass(frozen=True)
-class _HashableSlice:
+class _HashableIndex:
   val: Index
 
   def __hash__(self):
@@ -43,8 +45,8 @@ class _HashableSlice:
     return self.val == other.val
 
 
-def shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
-                 mesh_axes: MeshAxes) -> Mapping[Device, Index]:
+def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
+                      mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   if not isinstance(mesh_axes, PartitionSpec):
     pspec = PartitionSpec(*mesh_axes)
   else:
@@ -61,10 +63,12 @@ def shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
     for idx in index:
       assert isinstance(idx, slice)
   # The type: ignore is to ignore the type returned by `spec_to_indices`.
-  return dict((d, i) for d, i in safe_zip(global_mesh.devices.flat, indices))  # type: ignore
+  return dict(
+      (d, i)
+      for d, i in safe_zip(global_mesh.devices.flat, indices))  # type: ignore
 
 
-def shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
+def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   chunk_size = []
   for mesh_axis, size in zip(mesh_axes, global_shape):
     if not mesh_axis:
@@ -84,25 +88,23 @@ class Shard:
   device: Device
   index: Index
   replica_id: int
-  data: DeviceArray
+  # None if this `Shard` lives on a non-local device.
+  data: Optional[DeviceArray] = None
 
 
 class GlobalShardedDeviceArray:
 
-  def __init__(self,
-               global_shape: Shape,
-               dtype,
-               global_mesh: pxla.Mesh,
-               mesh_axes: MeshAxes,
-               device_buffers: Sequence[DeviceArray]):
+  def __init__(self, global_shape: Shape, dtype, global_mesh: pxla.Mesh,
+               mesh_axes: MeshAxes, device_buffers: Sequence[DeviceArray]):
     self._global_shape = global_shape
     self._dtype = dtype
     self._global_mesh = global_mesh
     self._mesh_axes = mesh_axes
     assert len(device_buffers) == len(self._global_mesh.local_devices)
-    self._local_shards = self._create_local_shards(device_buffers)
+    self._global_shards, self._local_shards = self._create_shards(
+        device_buffers)
 
-    ss = shard_shape(self._global_shape, self._global_mesh, self._mesh_axes)
+    ss = get_shard_shape(self._global_shape, self._global_mesh, self._mesh_axes)
     assert all(db.shape == ss for db in device_buffers), (
         f"Expected shard shape {ss} doesn't match the device buffer "
         f"shape {device_buffers[0].shape}")
@@ -111,39 +113,39 @@ class GlobalShardedDeviceArray:
   def shape(self) -> Shape:
     return self._global_shape
 
-  # TODO(yashkatariya): Make this `create_shards` and create global_shards
-  # Then source the local_shards and add the data to it.
-  def _create_local_shards(
-      self, device_buffers: Sequence[DeviceArray]) -> Sequence[Shard]:
-    indices = shard_indices(self._global_shape, self._global_mesh,
-                           self._mesh_axes)
-
-    device_to_replica = {}
-    index_to_replica = {}
+  def _create_shards(
+      self, device_buffers: Sequence[DeviceArray]
+  ) -> Tuple[Sequence[Shard], Sequence[Shard]]:
+    indices = get_shard_indices(self._global_shape, self._global_mesh,
+                                self._mesh_axes)
+    device_to_buffer = dict((db.device(), db) for db in device_buffers)
+    gs, ls = [], []
+    index_to_replica: Dict[_HashableIndex, int] = Counter()
     for device, index in indices.items():
-      h_index = _HashableSlice(index)
-      if h_index not in index_to_replica:
-        index_to_replica[h_index] = 0
-      else:
-        index_to_replica[h_index] += 1
-      device_to_replica[device] = index_to_replica[h_index]
-
-    shards = []
-    # device_buffers are always local to the process.
-    for db in device_buffers:
-      d = db.device()
-      shards.append(Shard(d, indices[d], device_to_replica[d], db))
-    return shards
+      h_index = _HashableIndex(index)
+      replica_id = index_to_replica[h_index]
+      index_to_replica[h_index] += 1
+      local_shard = device.process_index == xb.process_index()
+      buf = device_to_buffer[device] if local_shard else None
+      sh = Shard(device, index, replica_id, buf)
+      gs.append(sh)
+      if local_shard:
+        ls.append(sh)
+    return gs, ls
 
   @property
   def local_shards(self) -> Sequence[Shard]:
     return self._local_shards
 
+  @property
+  def global_shards(self) -> Sequence[Shard]:
+    return self._global_shards
+
   @classmethod
   def from_callback(cls, global_shape: Shape, dtype, global_mesh: pxla.Mesh,
-                    mesh_axes: MeshAxes,
-                    data_callback: Callable[[Index], ArrayLike]):
-    indices = shard_indices(global_shape, global_mesh, mesh_axes)
+                    mesh_axes: MeshAxes, data_callback: Callable[[Index],
+                                                                 ArrayLike]):
+    indices = get_shard_indices(global_shape, global_mesh, mesh_axes)
     dbs = [
         device_put(data_callback(indices[device]), device)
         for device in global_mesh.local_devices
@@ -151,14 +153,31 @@ class GlobalShardedDeviceArray:
     return cls(global_shape, dtype, global_mesh, mesh_axes, dbs)
 
   @classmethod
-  def from_batched_callback(
-      cls, global_shape: Shape, dtype, global_mesh: pxla.Mesh,
-      mesh_axes: MeshAxes, data_callback: Callable[[Sequence[Index]], Sequence[ArrayLike]]):
-    raise NotImplementedError("Not implemented yet.")
+  def from_batched_callback(cls, global_shape: Shape, dtype,
+                            global_mesh: pxla.Mesh, mesh_axes: MeshAxes,
+                            data_callback: Callable[[Sequence[Index]],
+                                                    Sequence[ArrayLike]]):
+    indices = get_shard_indices(global_shape, global_mesh, mesh_axes)
+    local_indices = [indices[d] for d in global_mesh.local_devices]
+    local_arrays = data_callback(local_indices)
+    dbs = pxla.device_put(local_arrays, global_mesh.local_devices)
+    return cls(global_shape, dtype, global_mesh, mesh_axes, dbs)
 
   @classmethod
   def from_batched_callback_with_devices(
       cls, global_shape: Shape, dtype, global_mesh: pxla.Mesh,
       mesh_axes: MeshAxes,
-      data_callback: Callable[[Sequence[Tuple[Index, Tuple[Device]]]], Sequence[DeviceArray]]):
-    raise NotImplementedError("Not implemented yet.")
+      data_callback: Callable[[List[Tuple[Index, Tuple[Device, ...]]]],
+                              Sequence[DeviceArray]]):
+    indices = get_shard_indices(global_shape, global_mesh, mesh_axes)
+
+    index_to_device: Dict[_HashableIndex, List[Device]] = defaultdict(list)
+    for device in global_mesh.local_devices:
+      h_index = _HashableIndex(indices[device])
+      index_to_device[h_index].append(device)
+
+    cb_inp = [
+        (index.val, tuple(device)) for index, device in index_to_device.items()
+    ]
+    dbs = data_callback(cb_inp)
+    return cls(global_shape, dtype, global_mesh, mesh_axes, dbs)
