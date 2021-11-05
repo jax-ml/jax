@@ -167,11 +167,11 @@ class GlobalShardedDeviceArray:
   def from_batched_callback_with_devices(
       cls, global_shape: Shape, dtype, global_mesh: pxla.Mesh,
       mesh_axes: MeshAxes,
-      data_callback: Callable[[List[Tuple[Index, Tuple[Device, ...]]]],
+      data_callback: Callable[[Sequence[Tuple[Index, Tuple[Device, ...]]]],
                               Sequence[DeviceArray]]):
     indices = get_shard_indices(global_shape, global_mesh, mesh_axes)
 
-    index_to_device: Dict[_HashableIndex, List[Device]] = defaultdict(list)
+    index_to_device: Mapping[_HashableIndex, List[Device]] = defaultdict(list)
     for device in global_mesh.local_devices:
       h_index = _HashableIndex(indices[device])
       index_to_device[h_index].append(device)
