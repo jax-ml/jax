@@ -614,8 +614,16 @@ pe.partial_eval_jaxpr_custom_rules[while_p] = pe.partial_eval_jaxpr_custom_rule_
 
 ### cond and switch
 
+
+# For backward compatibility with a previous switch/cond calling convention,
+# we allow a single (pytree) `operand` argument to be passed by keyword. We use
+# a sentinel object as its default value to indicate when it is _not_ passed.
+_no_operand_sentinel = object()
+
+
 @api_boundary
-def switch(index, branches: Sequence[Callable], operand):
+def switch(index, branches: Sequence[Callable], *operands,
+           operand=_no_operand_sentinel):
   """Apply exactly one of ``branches`` given by ``index``.
 
   If ``index`` is out of bounds, it is clamped to within bounds.
@@ -628,9 +636,21 @@ def switch(index, branches: Sequence[Callable], operand):
 
   Args:
     index: Integer scalar type, indicating which branch function to apply.
-    branches: Sequence of functions (A -> B) to be applied based on `index`.
-    operand: Operand (A) input to whichever branch is applied.
+    branches: Sequence of functions (A -> B) to be applied based on ``index``.
+    operands: Operands (A) input to whichever branch is applied.
+
+  Returns:
+    Value (B) of ``branch(*operands)`` for the branch that was selected based
+    on ``index``.
   """
+  if operand is not _no_operand_sentinel:
+    if operands:
+      raise TypeError("if 'operand' keyword is passed then no positional "
+                      f"operands can be passed, got operand={operand} "
+                      f"and positional operands {operands}")
+    operands = (operand,)
+  del operand
+
   if len(np.shape(index)) != 0:
     raise TypeError(
         f"Branch index must be scalar, "
@@ -651,7 +671,7 @@ def switch(index, branches: Sequence[Callable], operand):
   if len(branches) == 0:
     raise ValueError("Empty branch sequence")
   elif len(branches) == 1:
-    return branches[0](operand)
+    return branches[0](*operands)
 
   index = lax.convert_element_type(index, np.int32)
   lo = np.array(0, np.int32)
@@ -660,9 +680,9 @@ def switch(index, branches: Sequence[Callable], operand):
 
   if (config.jax_disable_jit and
       isinstance(core.get_aval(index), ConcreteArray)):
-    return branches[int(index)](operand)
+    return branches[int(index)](*operands)
 
-  ops, ops_tree = tree_flatten((operand,))
+  ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(_map(_abstractify, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
@@ -678,11 +698,6 @@ def switch(index, branches: Sequence[Callable], operand):
       index, *consts, *ops, branches=tuple(jaxprs), linear=linear)
   return tree_unflatten(out_trees[0], out)
 
-
-# For backward compatibility with a previous cond calling convention, we allow a
-# single (pytree) `operand` argument to be passed by keyword. We use a sentinel
-# object as its default value to indicate when it is _not_ passed.
-_no_operand_sentinel = object()
 
 def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
           operand=_no_operand_sentinel):
