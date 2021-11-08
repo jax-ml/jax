@@ -469,7 +469,9 @@ check_tracer_leaks = config.define_bool_state(
     default=False,
     help=('Turn on checking for leaked tracers as soon as a trace completes. '
           'Enabling leak checking may have performance impacts: some caching '
-          'is disabled, and other overheads may be added.'))
+          'is disabled, and other overheads may be added. Additionally, be aware '
+          'that some Python debuggers can cause false positives, so it is recommended '
+          'to disable any debuggers while leak checking is enabled.'))
 checking_leaks = functools.partial(check_tracer_leaks, True)
 
 debug_nans = config.define_bool_state(
