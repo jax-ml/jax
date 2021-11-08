@@ -599,8 +599,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testCondTwoOperands(self):
     # see https://github.com/google/jax/issues/8469
-    self.skipTest("two-operand cond behavior is ambiguous (#8469)")
-
     add, mul = lax.add, lax.mul
 
     def fun(x):
