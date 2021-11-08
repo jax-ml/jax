@@ -71,7 +71,7 @@ def polar(a, side='right', method='qdwh', eps=None, maxiter=50):
       If side is "right" then `a = up`. If side is "left" then `a = pu`. The
       default is "right".
     method: Determines the algorithm used, as described above.
-    precision: Controls the TPU matrix multiplication precision.
+    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
 
     The remaining arguments are only meaningful if method is "qdwh".
     eps: The final result will satisfy |X_k - X_k-1| < |X_k| * (4*eps)**(1/3) .

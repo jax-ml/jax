@@ -527,20 +527,60 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
   """
   return concatenate_p.bind(*operands, dimension=dimension)
 
-Precision = xla_client.PrecisionConfig.Precision
-Precision.__str__ = lambda precision: precision.name  # type: ignore
+
+class _enum_descriptor(object):
+  def __init__(self, val):
+    self.val = val
+  def __get__(self, _, owner):
+    return owner(self.val)
+
+
+class Precision(xla_client.PrecisionConfig.Precision):  # type: ignore
+  """Precision enum for lax functions
+
+  The `precision` argument to JAX functions generally controls the tradeoff
+  between speed and accuracy for array computations on accelerator backends,
+  (i.e. TPU and GPU). Members are:
+
+  DEFAULT:
+    Fastest mode, but least accurate. Performs computations in bfloat16.
+    Aliases: ``'default'``, ``'fastest'``, ``'bfloat16'``.
+  HIGH:
+    Slower but more accurate. Performs float32 computations in 3 bfloat16
+    passes, or using tensorfloat32 where available. Aliases: ``'high'`,
+    ``'bfloat16_3x'``, ``'tensorfloat32'``.
+  HIGHEST:
+    Slowest but most accurate. Performs computations in float32 or float64
+    as applicable. Aliases: ``'highest'``, ``'float32'``.
+  """
+  # Wrap enum values with this class.
+  DEFAULT = _enum_descriptor('default')
+  HIGH = _enum_descriptor('high')
+  HIGHEST = _enum_descriptor('highest')
+
+  _strings = {
+      'highest':       xla_client.PrecisionConfig.Precision.HIGHEST,
+      'float32':       xla_client.PrecisionConfig.Precision.HIGHEST,
+      'high':          xla_client.PrecisionConfig.Precision.HIGH,
+      'bfloat16_3x':   xla_client.PrecisionConfig.Precision.HIGH,
+      'tensorfloat32': xla_client.PrecisionConfig.Precision.HIGH,
+      'default':       xla_client.PrecisionConfig.Precision.DEFAULT,
+      'bfloat16':      xla_client.PrecisionConfig.Precision.DEFAULT,
+      'fastest':       xla_client.PrecisionConfig.Precision.DEFAULT,
+      None:            xla_client.PrecisionConfig.Precision.DEFAULT,
+  }
+  def __init__(self, arg0):
+    arg0 = self._strings.get(arg0, arg0)
+    super().__init__(arg0)
+
+  def __str__(self) -> str:
+    return self.name
+
+
 PrecisionType = Any
 PrecisionLike = Union[None, str, PrecisionType, Tuple[str, str],
                       Tuple[PrecisionType, PrecisionType]]
-_precision_strings = {
-    'highest':       Precision.HIGHEST,
-    'float32':       Precision.HIGHEST,
-    'bfloat16_3x':   Precision.HIGH,
-    'tensorfloat32': Precision.HIGH,
-    'bfloat16':      Precision.DEFAULT,
-    'fastest':       Precision.DEFAULT,
-    None:            Precision.DEFAULT,
-}
+
 
 class ConvDimensionNumbers(NamedTuple):
   """Describes batch, spatial, and feature dimensions of a convolution.
@@ -595,10 +635,10 @@ def conv_general_dilated(
     feature_group_count: integer, default 1. See XLA HLO docs.
     batch_group_count: integer, default 1. See XLA HLO docs.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``), a string (e.g. 'highest' or
       'fastest', see the ``jax.default_matmul_precision`` context manager), or a
-      tuple of two ``lax.Precision`` enums or strings indicating precision of
+      tuple of two :class:`~jax.lax.Precision` enums or strings indicating precision of
       ``lhs`` and ``rhs``.
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
@@ -674,9 +714,9 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
     lhs: an array of rank 1 or 2.
     rhs: an array of rank 1 or 2.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+      :class:`~jax.lax.Precision` enums indicating precision of ``lhs``` and ``rhs``.
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
@@ -712,9 +752,9 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
       `((lhs_contracting_dims, rhs_contracting_dims),
       (lhs_batch_dims, rhs_batch_dims))`
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+      :class:`~jax.lax.Precision` enums indicating precision of ``lhs``` and ``rhs``.
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
@@ -1841,9 +1881,9 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+      :class:`~jax.lax.Precision` enums indicating precision of ``lhs``` and ``rhs``.
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
@@ -1879,9 +1919,9 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
       dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
       is also known as atrous convolution.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+      :class:`~jax.lax.Precision` enums indicating precision of ``lhs``` and ``rhs``.
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
@@ -1958,9 +1998,9 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       applied to the same kernel. For typical use in neural nets this is completely
       pointless and just makes input/output channel specification confusing.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+      :class:`~jax.lax.Precision` enums indicating precision of ``lhs``` and ``rhs``.
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
@@ -7212,20 +7252,20 @@ def canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[Precision
     if config.jax_default_matmul_precision is None:
       return None
     try:
-      precision = _precision_strings[config.jax_default_matmul_precision]
+      precision = Precision(config.jax_default_matmul_precision)
       return (precision, precision)
-    except KeyError:
+    except TypeError:
       raise ValueError(
           "jax_default_matmul_precision flag must be set to None or a value in "
-          f"{_precision_strings}, but got {config.jax_default_matmul_precision}"
+          f"{list(Precision._strings)}, but got {config.jax_default_matmul_precision}"
       ) from None
-  elif isinstance(precision, str) and precision in _precision_strings:
-    precision = _precision_strings.get(precision)
+  elif isinstance(precision, str) and precision in Precision._strings:
+    precision = Precision(precision)
     return (precision, precision)
-  elif isinstance(precision, Precision):
+  elif isinstance(precision, xla_client.PrecisionConfig.Precision):
     return (precision, precision)
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
-        all(isinstance(p, Precision) for p in precision)):
+        all(isinstance(p, xla_client.PrecisionConfig.Precision) for p in precision)):
     return precision  # type: ignore[return-value]
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(s, str) for s in precision)):
@@ -7233,7 +7273,7 @@ def canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[Precision
     return (canonicalize_precision(s1)[0], canonicalize_precision(s2)[0])  # type: ignore
   else:
     raise ValueError(
-        f"Precision argument must be None, a string in {_precision_strings}, "
+        f"Precision argument must be None, a string in {list(Precision._strings)}, "
         "a lax.Precision value or a tuple of two lax.Precision values or "
         f"strings; got {precision}.")
 

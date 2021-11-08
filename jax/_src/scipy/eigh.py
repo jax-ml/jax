@@ -98,7 +98,7 @@ def _split_spectrum_jittable(P, H, V0, rank, precision):
     H: Matrix to be projected.
     V0: Accumulates the isometries into the projected subspaces.
     rank: Rank of P.
-    precision: The matmul precision.
+    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
   Returns:
     H1, V1: Projection of H into the column space of P, and the accumulated
             isometry performing that projection.
@@ -128,7 +128,7 @@ def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
     H: The Hermitian matrix to split.
     split_point: The eigenvalue to split along.
     V0: Matrix of isometries to be updated.
-    precision: TPU matmul precision.
+    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
   Returns:
     Hm: A Hermitian matrix sharing the eigenvalues of `H` beneath
       `split_point`.
@@ -164,7 +164,7 @@ def _eigh_work(
   Args:
     H: The Hermitian input.
     V: Stores the isometries projecting H into its subspaces.
-    precision: The matmul precision.
+    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
 
   Returns:
     H, V: The result of the projection.
@@ -197,7 +197,7 @@ def eigh(
 
   Args:
     H: The `n x n` Hermitian input.
-    precision: The matmul precision.
+    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
     symmetrize: If True, `0.5 * (H + H.conj().T)` rather than `H` is used.
     termination_size: Recursion ends once the blocks reach this linear size.
   Returns:
@@ -225,7 +225,7 @@ def svd(A, precision=lax.Precision.HIGHEST):
 
   Args:
     A: The `m` by `n` input matrix.
-    precision: TPU matmul precision.
+    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
   Returns:
     U: An `m` by `m` unitary matrix of `A`'s left singular vectors.
     S: A length-`min(m, n)` vector of `A`'s singular values.

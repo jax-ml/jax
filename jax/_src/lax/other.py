@@ -68,7 +68,7 @@ def conv_general_dilated_patches(
       `(lhs_spec, rhs_spec, out_spec)`, where each element is a string
       of length `n+2`. `None` defaults to `("NCHWD..., OIHWD..., NCHWD...")`.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      the backend, or a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``).
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
