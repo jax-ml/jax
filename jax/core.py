@@ -26,6 +26,7 @@ import types
 from typing import (Any, Callable, ClassVar, DefaultDict, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
                     Type, Union, cast, Iterable, Hashable)
+import warnings
 from weakref import ref
 
 import numpy as np
@@ -770,6 +771,15 @@ def reset_trace_state() -> bool:
 def cur_sublevel() -> Sublevel:
   return thread_local_state.trace_state.substack[-1]
 
+TRACER_LEAK_DEBUGGER_WARNING = """\
+JAX check_tracer_leaks behavior can trigger false positives when used with a debugger.
+To avoid false positives and silence this warning, you can disable thread tracing using
+the following:
+
+  import threading
+  threading.current_thread().pydev_do_not_trace = True
+"""
+
 def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]):
   """Find the leaked tracers holding a reference to the MainTrace or SubLevel.
 
@@ -777,6 +787,8 @@ def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]):
   reference to `x` inside of a lambda closure, and no tracers were leaked
   by the user. In this case an empty list is returned.
   """
+  if not getattr(threading.current_thread(), 'pydev_do_not_trace', True):
+    warnings.warn(TRACER_LEAK_DEBUGGER_WARNING)
   traces = list(filter(lambda x: isinstance(x, Trace), gc.get_referrers(x)))
   tracers = list(filter(lambda x: isinstance(x, Tracer), gc.get_referrers(*traces)))
   return tracers
