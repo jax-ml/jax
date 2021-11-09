@@ -29,6 +29,7 @@ computed efficiently via cusparse.
 Further down are some examples of potential high-level wrappers for sparse objects.
 (API should be considered unstable and subject to change).
 """
+from functools import partial
 import operator
 from typing import Tuple
 
@@ -44,7 +45,6 @@ from jax._src import dtypes
 from jax._src.lib import cusparse
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
-from jax.util import safe_zip
 import jax.numpy as jnp
 
 xb = xla_bridge
@@ -701,11 +701,7 @@ def _todense_transpose(ct, *bufs, tree):
     raise NotImplementedError(f"todense_transpose for {type(obj)}")
 
 def _todense_batching_rule(batched_args, batch_dims, *, tree):
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"batch_dims={batch_dims}. Only 0 and None are supported.")
-  batched_args = [arg[None, ...] if dim is None else arg
-                  for arg, dim in safe_zip(batched_args, batch_dims)]
-  return todense_p.bind(*batched_args, tree=tree), 0
+  return jax.vmap(partial(_todense_impl, tree=tree), batch_dims)(*batched_args), 0
 
 ad.primitive_jvps[todense_p] = _todense_jvp
 ad.primitive_transposes[todense_p] = _todense_transpose
