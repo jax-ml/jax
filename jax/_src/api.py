@@ -1466,6 +1466,13 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
   return batched_fun
 
 def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
+  if not vals:
+    args, kwargs = tree_unflatten(tree, vals)
+    raise ValueError(
+        f"{name} wrapped function must be passed at least one argument "
+        f"containing an array, got empty *args={args} and **kwargs={kwargs}"
+    )
+
   def _get_axis_size(name: str, shape: Tuple[int, ...], axis: int):
     try:
       return shape[axis]

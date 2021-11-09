@@ -2244,6 +2244,20 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "must be an int"):
       api.pmap(lambda x: x, in_axes=False)(jnp.zeros(1))
 
+  def test_vmap_empty_arguments(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "vmap wrapped function must be passed at least one argument "
+        r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
+      api.vmap(lambda x: x)({})
+
+  def test_pmap_empty_arguments(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "pmap wrapped function must be passed at least one argument "
+        r"containing an array, got empty \*args=\(\{\},\) and \*\*kwargs=\{\}"):
+      api.pmap(lambda x: x)({})
+
   def test_pmap_global_cache(self):
     def f(x, y):
       return x, y
