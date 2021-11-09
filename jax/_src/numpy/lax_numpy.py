@@ -3870,41 +3870,23 @@ def _geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
 
 
 @_wraps(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
-def meshgrid(*args, **kwargs):
-  _check_arraylike("meshgrid", *args)
-  indexing = kwargs.get("indexing", "xy")
-  sparse = kwargs.get("sparse", False)
-  copy = kwargs.get("copy", True)
+def meshgrid(*xi, copy=True, sparse=False, indexing='xy'):
+  _check_arraylike("meshgrid", *xi)
+  args = [asarray(x) for x in xi]
   if not copy:
     raise ValueError("jax.numpy.meshgrid only supports copy=True")
-
-  args = list(args)
-  if indexing == "xy":
-    if len(args) >= 2:
-      args[0], args[1] = args[1], args[0]
-  elif indexing != "ij":
-    raise ValueError("Valid values for indexing are 'xy' and 'ij', got {}"
-                     .format(indexing))
-
-  shape = []
-  for i, a in enumerate(args):
-    args[i] = a = asarray(a)
-    if len(a.shape) != 1:
-      msg = "Arguments to jax.numpy.meshgrid must be 1D, got shape {}"
-      raise ValueError(msg.format(a.shape))
-    shape.append(1 if sparse else a.shape[0])
-
-  output = []
-  for i, a in enumerate(args):
-    s = shape
-    if sparse:
-      s = list(s)
-      s[i] = _shape(a)[0]
-    output.append(lax.broadcast_in_dim(a, s, (i,)))
-
+  if indexing not in ["xy", "ij"]:
+    raise ValueError(f"Valid values for indexing are 'xy' and 'ij', got {indexing}")
+  if _any(a.ndim != 1 for a in args):
+    raise ValueError("Arguments to jax.numpy.meshgrid must be 1D, got shapes "
+                     f"{[a.shape for a in args]}")
+  if indexing == "xy" and len(args) >= 2:
+    args[0], args[1] = args[1], args[0]
+  shape = [1 if sparse else a.shape[0] for a in args]
+  _a_shape = lambda i, a: [*shape[:i], a.shape[0], *shape[i + 1:]] if sparse else shape
+  output = [lax.broadcast_in_dim(a, _a_shape(i, a), (i,)) for i, a, in enumerate(args)]
   if indexing == "xy" and len(args) >= 2:
     output[0], output[1] = output[1], output[0]
-
   return output
 
 
