@@ -18,6 +18,7 @@ import typing
 from typing import Tuple
 
 from jax import tree_util
+from jax._src import api
 from jax._src.util import prod
 import jax.numpy as jnp
 
@@ -55,8 +56,7 @@ def _broadcasting_map(func, *args):
   static_argnums = [i for i, x in enumerate(args) if not isinstance(x, Vector)]
   func2, vector_args = _argnums_partial(func, args, static_argnums)
   if not vector_args:
-    # TODO(shoyer): return a trivial Vector instead?
-    return func2()
+    return func2()  # result is a scalar
   # check shape compatibility
   _flatten_together(*[arg.tree for arg in vector_args])
   for arg in args:
@@ -213,6 +213,22 @@ minimum = functools.partial(_broadcasting_map, jnp.minimum)
 square = functools.partial(_broadcasting_map, jnp.square)
 
 
+def _infer_argnums_and_argnames(fun, argnums, argnames):
+  if argnums is None and argnames is None:
+    return None, None  # wrap all arguments
+  return api._infer_argnums_and_argnames(fun, argnums, argnames)
+
+
+def _apply_argnums(wrapper, args, argnums):
+  return tuple(wrapper(arg) if argnums is None or i in argnums else arg
+               for i, arg in enumerate(args))
+
+
+def _apply_argnames(wrapper, kwargs, argnames):
+  return {k: wrapper(arg) if argnames is None or k in argnames else arg
+          for k, arg in kwargs.items()}
+
+
 def _get_tree(vector):
   return vector.tree
 
@@ -221,20 +237,26 @@ def _is_vector(arg):
   return isinstance(arg, Vector)
 
 
-# TODO(shoyer): add an explicit option for indicating
-# vector_argnums/vector_argnames in wrap/unwrap like
-# static_argnums/static_argnames in jit.
-
-def wrap(func):
+def wrap(fun, vector_argnums=None, vector_argnames=None):
   """Convert a vector -> vector function to a pytree -> pytree function."""
-  def wrapper(*args):
-    result = func(*map(Vector, args))
+  vector_argnums, vector_argnames = _infer_argnums_and_argnames(
+      fun, vector_argnums, vector_argnames)
+  @functools.wraps(fun)
+  def wrapper(*args, **kwargs):
+    args = _apply_argnums(Vector, args, vector_argnums)
+    kwargs = _apply_argnames(Vector, kwargs, vector_argnames)
+    result = fun(*args, **kwargs)
     return tree_util.tree_map(_get_tree, result, is_leaf=_is_vector)
   return wrapper
 
 
-def unwrap(func):
+def unwrap(fun, vector_argnums=None, vector_argnames=None):
   """Convert a pytree -> pytree function to a vector -> vector function."""
-  def wrapper(*args):
-    return Vector(func(*[arg.tree for arg in args]))
+  vector_argnums, vector_argnames = _infer_argnums_and_argnames(
+      fun, vector_argnums, vector_argnames)
+  @functools.wraps(fun)
+  def wrapper(*args, **kwargs):
+    args = _apply_argnums(_get_tree, args, vector_argnums)
+    kwargs = _apply_argnames(_get_tree, kwargs, vector_argnames)
+    return Vector(fun(*args, **kwargs))
   return wrapper

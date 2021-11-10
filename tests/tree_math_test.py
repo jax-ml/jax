@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import operator
 import unittest
 
@@ -209,10 +210,34 @@ class TreeMathTest(jtu.JaxTestCase):
     expected = tm.Vector({'b': 2})
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+  def test_wrap_argnums_argnames(self):
+
+    def f(x, y):
+      assert isinstance(x, tm.Vector)
+      assert not isinstance(y, tm.Vector)
+      return x
+
+    tm.wrap(f, vector_argnums=0)(1, 2)
+    tm.wrap(f, vector_argnums=0)(x=1, y=2)
+    tm.wrap(f, vector_argnames='x')(1, 2)
+    tm.wrap(f, vector_argnames='x')(x=1, y=2)
+
+    def g(x, y):
+      assert not isinstance(x, tm.Vector)
+      assert isinstance(y, tm.Vector)
+      return y
+
+    tm.wrap(g, vector_argnums=1)(1, 2)
+    tm.wrap(g, vector_argnums=1)(x=1, y=2)
+    tm.wrap(g, vector_argnames='y')(1, 2)
+    tm.wrap(g, vector_argnames='y')(x=1, y=2)
+
   def test_cg(self):
     # an integration test to verify non-trivial examples work
 
-    def cg(b, x0, maxiter=5, tol=1e-5, atol=0.0):
+    @functools.partial(tm.wrap, vector_argnames=['b', 'x0'])
+    def cg(A, b, x0, M=lambda x: x, maxiter=5, tol=1e-5, atol=0.0):
+      A = tm.unwrap(A)
 
       # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
       bs = b @ b
@@ -246,14 +271,10 @@ class TreeMathTest(jtu.JaxTestCase):
 
       return x_final
 
-    A = tm.unwrap(
-        lambda x: {'a': x['a'] + 0.5 * x['b'], 'b': 0.5 * x['a'] + x['b']}
-    )
+    A = lambda x: {'a': x['a'] + 0.5 * x['b'], 'b': 0.5 * x['a'] + x['b']}
     b = {'a': 1.0, 'b': -1.0}
     x0 = {'a': 0.0, 'b': 0.0}
-    M = lambda x: x
-
-    actual = tm.wrap(cg)(b, x0)
+    actual = cg(A, b, x0)
 
     expected = {'a': 2.0, 'b': -2.0}
     self.assertAllClose(actual, expected, check_dtypes=True)
