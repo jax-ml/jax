@@ -236,6 +236,18 @@ class TreeMathTest(jtu.JaxTestCase):
     tm.wrap(g, vector_argnames='y')(1, 2)
     tm.wrap(g, vector_argnames='y')(x=1, y=2)
 
+  def test_norm(self):
+
+    @tm.wrap
+    def norm(x, y):
+      return ((x - y) ** 2).sum() ** 0.5
+
+    x = {'a': 1, 'b': 1}
+    y = {'a': 1 + 3, 'b': 1 + 4}
+    expected = 5.0
+    actual = norm(x, y)
+    self.assertAllClose(actual, expected)
+
   def test_cg(self):
     # an integration test to verify non-trivial examples work
 

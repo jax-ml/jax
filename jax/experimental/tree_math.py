@@ -230,8 +230,9 @@ def _apply_argnames(wrapper, kwargs, argnames):
           for k, arg in kwargs.items()}
 
 
-def _get_tree(vector):
-  return vector.tree
+
+def _maybe_get_tree(arg):
+  return arg.tree if isinstance(arg, Vector) else arg
 
 
 def _is_vector(arg):
@@ -247,8 +248,12 @@ def wrap(fun, vector_argnums=None, vector_argnames=None):
     args = _apply_argnums(Vector, args, vector_argnums)
     kwargs = _apply_argnames(Vector, kwargs, vector_argnames)
     result = fun(*args, **kwargs)
-    return tree_util.tree_map(_get_tree, result, is_leaf=_is_vector)
+    return tree_util.tree_map(_maybe_get_tree, result, is_leaf=_is_vector)
   return wrapper
+
+
+def _get_tree(vector):
+  return vector.tree
 
 
 def unwrap(fun, vector_argnums=None, vector_argnames=None):
