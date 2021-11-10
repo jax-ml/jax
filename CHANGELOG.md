@@ -8,11 +8,15 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
+## jax 0.2.26 (Unreleased)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.25...main).
+
 ## jaxlib 0.1.74 (Unreleased)
 
-## jax 0.2.25 (Unreleased)
+## jax 0.2.25 (Nov 10, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.24...main).
+  commits](https://github.com/google/jax/compare/jax-v0.2.24...jax-v0.2.25).
 
 * New features:
   * (Experimental) `jax.distributed.initialize` exposes multi-host GPU backend.
