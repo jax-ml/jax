@@ -55,15 +55,16 @@ def _broadcasting_map(func, *args):
   """Like tree_map, but scalar arguments are broadcast to all leaves."""
   static_argnums = [i for i, x in enumerate(args) if not isinstance(x, Vector)]
   func2, vector_args = _argnums_partial(func, args, static_argnums)
-  if not vector_args:
-    return func2()  # result is a scalar
-  # check shape compatibility
-  _flatten_together(*[arg.tree for arg in vector_args])
   for arg in args:
     if not isinstance(arg, Vector):
       shape = jnp.shape(arg)
       if shape != ():
-        raise TypeError(f"non-tree_math.Vector arguments must be scalars: {arg}")
+        raise TypeError(
+            f"non-tree_math.Vector argument is not a scalar: {arg!r}"
+        )
+  if not vector_args:
+    return func2()  # result is a scalar
+  _flatten_together(*[arg.tree for arg in vector_args])  # check shapes
   return tree_util.tree_map(func2, *vector_args)
 
 
@@ -258,5 +259,7 @@ def unwrap(fun, vector_argnums=None, vector_argnames=None):
   def wrapper(*args, **kwargs):
     args = _apply_argnums(_get_tree, args, vector_argnums)
     kwargs = _apply_argnames(_get_tree, kwargs, vector_argnames)
+    # TODO(shoyer): add out_vectors argument so this behavior can be customized,
+    # similar to vmap's out_axes.
     return Vector(fun(*args, **kwargs))
   return wrapper

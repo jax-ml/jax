@@ -65,7 +65,7 @@ class TreeMathTest(jtu.JaxTestCase):
     self.assertTreeEqual(vector + 1, expected, check_dtypes=True)
     self.assertTreeEqual(1 + vector, expected, check_dtypes=True)
     with self.assertRaisesRegex(
-        TypeError, "non-tree_math.Vector arguments must be scalars",
+        TypeError, "non-tree_math.Vector argument is not a scalar",
     ):
       vector + jnp.ones((3,))
 
@@ -145,6 +145,10 @@ class TreeMathTest(jtu.JaxTestCase):
     expected = 1
     actual = tm.where(True, 1, 2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
+    with self.assertRaisesRegex(
+        TypeError, "non-tree_math.Vector argument is not a scalar",
+    ):
+      tm.where(True, jnp.array([1, 2]), 3)
 
   def test_zeros_like(self):
     x = jnp.array([1, 2])
