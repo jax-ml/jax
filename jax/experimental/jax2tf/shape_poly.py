@@ -582,11 +582,11 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       return dim_spec  #
     dim_spec = dim_spec.strip()
     if not dim_spec:
-      raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (empty dimension {dim_spec}')")
+      raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (empty dimension '{dim_spec}')")
     # Terms are separated by "+"
     terms = dim_spec.split("+")
     if not terms:
-      raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (empty dimension {dim_spec}')")
+      raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (empty dimension '{dim_spec}')")
     def _parse_term(term_spec: str) -> DimSize:
       term_spec = term_spec.strip()
       # Factors are separated by "*"
