@@ -102,7 +102,7 @@ class TreeMathTest(jtu.JaxTestCase):
   def test_matmul_scalars(self):
     actual = tm.Vector(1.0) @ tm.Vector(2.0)
     expected = 2.0
-    self.assertTreeEqual(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected, check_dtypes=True)
 
   def test_matmul(self):
     rng = jtu.rand_default(self.rng())
@@ -112,7 +112,7 @@ class TreeMathTest(jtu.JaxTestCase):
     vector1 = tm.Vector(tree1)
     vector2 = tm.Vector(tree2)
     actual = vector1 @ vector2
-    self.assertTreeEqual(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected, check_dtypes=True)
     with self.assertRaisesRegex(
         TypeError, "matmul arguments must both be tree_math.Vector objects",
     ):
