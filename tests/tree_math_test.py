@@ -254,6 +254,7 @@ class TreeMathTest(jtu.JaxTestCase):
     @functools.partial(tm.wrap, vector_argnames=['b', 'x0'])
     def cg(A, b, x0, M=lambda x: x, maxiter=5, tol=1e-5, atol=0.0):
       A = tm.unwrap(A)
+      M = tm.unwrap(M)
 
       # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
       bs = b @ b
