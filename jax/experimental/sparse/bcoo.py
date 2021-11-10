@@ -113,31 +113,31 @@ class BCOOProperties(NamedTuple):
 
 
 def _validate_bcoo(data: jnp.ndarray, indices: jnp.ndarray, shape: Sequence[int]) -> BCOOProperties:
+  props = _validate_bcoo_indices(indices, shape)
+  n_batch, n_sparse, n_dense, nse = props
+  shape = tuple(shape)
+  if any(s1 not in (1, s2) for s1, s2 in safe_zip(data.shape[:n_batch], shape[:n_batch])):
+    raise ValueError("data batch dimensions not compatible for "
+                     f"data.shape={data.shape}, shape={shape}")
+  if data.shape[n_batch:] != (nse,) + shape[n_batch + n_sparse:]:
+    raise ValueError(f"Invalid data.shape={data.shape} for "
+                    f"nse={nse}, n_batch={n_batch}, n_dense={n_dense}")
+  return props
+
+
+def _validate_bcoo_indices(indices: jnp.ndarray, shape: Sequence[int]) -> BCOOProperties:
   assert jnp.issubdtype(indices.dtype, jnp.integer)
   shape = tuple(shape)
-
   nse, n_sparse = indices.shape[-2:]
   n_batch = indices.ndim - 2
   n_dense = len(shape) - n_batch - n_sparse
   assert n_dense >= 0
-
-  def _compatible(shape1, shape2):
-    return all(s1 in (1, s2) for s1, s2 in safe_zip(shape1, shape2))
-
-  if data is not None:
-    if not _compatible(data.shape[:n_batch], shape[:n_batch]):
-      raise ValueError("data batch dimensions not compatible for "
-                      f"data.shape={data.shape}, shape={shape}")
-    if data.shape[-(n_dense + 1):] != (nse,) + shape[n_batch + n_sparse:]:
-      raise ValueError(f"Invalid data.shape={data.shape} for "
-                      f"nse={nse}, n_batch={n_batch}, n_dense={n_dense}")
-  if not _compatible(indices.shape[:n_batch], shape[:n_batch]):
+  if any(s1 not in (1, s2) for s1, s2 in safe_zip(indices.shape[:n_batch], shape[:n_batch])):
     raise ValueError("indices batch dimensions not compatible for "
                      f"indices.shape={indices.shape}, shape={shape}")
   if indices.shape[n_batch:] != (nse, n_sparse):
     raise ValueError(f"Invalid indices.shape={indices.shape} for "
                      f"nse={nse}, n_batch={n_batch}, n_dense={n_dense}")
-
   return BCOOProperties(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense, nse=nse)
 
 
@@ -328,7 +328,7 @@ def bcoo_extract(indices, mat):
 @bcoo_extract_p.def_impl
 def _bcoo_extract_impl(indices, mat):
   mat = jnp.asarray(mat)
-  n_batch, n_sparse, _, _ = _validate_bcoo(None, indices, mat.shape)
+  n_batch, n_sparse, _, _ = _validate_bcoo_indices(indices, mat.shape)
 
   ind_slices = tuple(np.zeros(s, int) if i_s == 1 else np.arange(s)
                      for s, i_s in zip(mat.shape[:n_batch], indices.shape[:n_batch]))
@@ -345,7 +345,7 @@ def _bcoo_extract_impl(indices, mat):
 
 @bcoo_extract_p.def_abstract_eval
 def _bcoo_extract_abstract_eval(indices, mat):
-  n_batch, _, n_dense, nse = _validate_bcoo(None, indices, mat.shape)
+  n_batch, _, n_dense, nse = _validate_bcoo_indices(indices, mat.shape)
   out_shape = mat.shape[:n_batch] + (nse,) + mat.shape[mat.ndim - n_dense:]
   return core.ShapedArray(out_shape, mat.dtype)
 
