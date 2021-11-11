@@ -15,7 +15,6 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 
-import re
 from typing import Dict, Tuple
 
 from absl.testing import absltest
@@ -753,11 +752,39 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     def f(x):
       return x + const + const + const + const
 
-    f_tf_graph = tf.function(jax2tf.convert(f), autograph=False).get_concrete_function(const).graph.as_graph_def()
-    f_tf_graph_nr_consts = len(re.findall(r'op:\s*"Const"', str(f_tf_graph)))
+    f_tf_nr_consts = self.CountTfConstants(jax2tf.convert(f), const)
     # It seems that there is already a shape constant in the graph, we want to
     # make sure our 4 instances of "const" are shared.
-    self.assertEqual(f_tf_graph_nr_consts, 2)
+    self.assertEqual(f_tf_nr_consts, 2)
+
+  def test_shared_constants_under_cond(self):
+    # Check that the constants are shared properly in converted functions
+    # See https://github.com/google/jax/issues/7992.
+    const = np.arange(16, dtype=np.float32)
+    x = np.ones((16,), dtype=np.float32)
+    def f1(x):
+      return lax.cond(x[0] >= 0., lambda x: x + const, lambda x: x * const, x) + const
+    def f2(x):
+      return f1(x) + const  # The extra const should not cost anything
+    f1_nr_consts = self.CountTfConstants(jax2tf.convert(f1), x)
+    f2_nr_consts = self.CountTfConstants(jax2tf.convert(f2), x)
+    self.assertEqual(f1_nr_consts, f2_nr_consts)
+
+  def test_shared_constants_under_scan(self):
+    # See https://github.com/google/jax/issues/7992.
+    const = np.arange(16, dtype=np.float32)
+    xs = np.ones((8, 16), dtype=np.float32)
+    def f1(xs):
+      res, _ = lax.scan(lambda carry, x: (carry + x + const, None),
+                        np.zeros((16,), dtype=np.float32), xs)
+      return res
+
+    def f2(xs):
+      return f1(xs) + const  # The extra const should not be saved
+
+    f1_nr_consts = self.CountTfConstants(jax2tf.convert(f1), xs)
+    f2_nr_consts = self.CountTfConstants(jax2tf.convert(f2), xs)
+    self.assertEqual(f1_nr_consts, f2_nr_consts)
 
   def test_weak_types(self):
     mul = jax.jit(jnp.multiply)
