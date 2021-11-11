@@ -413,6 +413,9 @@ def arg_spec(x: Any) -> ArgSpec:
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
+  if config.jax_enable_mlir:
+    import jax.interpreters.mlir
+    return jax.interpreters.mlir.apply_primitive(prim, *args, **params)
   compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
                                         **params)
   return compiled_fun(*args)
@@ -683,6 +686,12 @@ def jaxpr_collectives(jaxpr):
 
 def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
                    donated_invars, inline):
+  if config.jax_enable_mlir:
+    import jax.interpreters.mlir
+    return jax.interpreters.mlir._xla_call_impl_mlir(
+        fun, *args, device=device, backend=backend, name=name,
+        donated_invars=donated_invars, inline=inline)
+
   del inline  # Only used at tracing time
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
                                *unsafe_map(arg_spec, args))

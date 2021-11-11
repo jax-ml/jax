@@ -1645,18 +1645,14 @@ def _reduce_window_min(operand: Array, window_dimensions: Shape,
 def _select_and_scatter(operand: Array, select: Callable,
                         window_dimensions: Shape, window_strides: Sequence[int],
                         padding: Sequence[Tuple[int, int]], source: Array,
-                        init_value: Array, scatter: Callable,
-                        base_dilation: Sequence[int],
-                        window_dilation: Sequence[int]) -> Array:
+                        init_value: Array, scatter: Callable) -> Array:
   select_jaxpr, select_consts = _reduction_jaxpr(select, _abstractify(init_value))
   scatter_jaxpr, scatter_consts = _reduction_jaxpr(scatter, _abstractify(init_value))
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
       select_consts=select_consts, scatter_jaxpr=scatter_jaxpr,
       scatter_consts=scatter_consts, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding),
-      base_dilation=tuple(base_dilation),
-      window_dilation=tuple(window_dilation))
+      window_strides=tuple(window_strides), padding=tuple(padding))
 
 def _select_and_scatter_add(source: Array, operand: Array,
                             select_prim: core.Primitive,
@@ -3832,11 +3828,13 @@ batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 
 def _clamp_shape_rule(min, operand, max):
   if min.shape and min.shape != operand.shape:
-    m = "clamp requires min.shape == operand.shape or min.shape == (), got {}."
-    raise TypeError(m.format(min.shape))
+    raise TypeError("clamp requires min.shape == operand.shape or min.shape == "
+                    f"(), got min.shape={min.shape}, "
+                    f"operand.shape={operand.shape}.")
   if max.shape and max.shape != operand.shape:
-    m = "clamp requires max.shape == operand.shape or max.shape == (), got {}."
-    raise TypeError(m.format(max.shape))
+    raise TypeError("clamp requires max.shape == operand.shape or max.shape == "
+                    f"(), got max.shape={max.shape}, "
+                    f"operand.shape={operand.shape}.")
   return operand.shape
 
 _clamp_dtype_rule = partial(naryop_dtype_rule, _input_dtype, [_any, _any, _any],

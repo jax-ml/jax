@@ -612,3 +612,9 @@ traceback_filtering = config.define_enum_state(
          " hidden stack frames, which some traceback printers support.\n"
          " * \"remove_frames\": removes hidden frames from tracebacks, and adds "
          " the unfiltered traceback as a __cause__ of the exception.\n")
+
+enable_mlir = config.define_bool_state(
+    name='jax_enable_mlir',
+    default=False,
+    help=('Enables an experimental code path that compiles JAX programs via '
+          'emitting the MLIR MHLO dialect.'))
