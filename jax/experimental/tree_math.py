@@ -19,7 +19,6 @@ from typing import Tuple
 
 from jax import tree_util
 from jax._src import api
-from jax._src.tree_util import tree_unflatten
 from jax._src.util import prod
 import jax.numpy as jnp
 
