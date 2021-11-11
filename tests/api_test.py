@@ -723,6 +723,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f_exe = f_low.compile()
     self.assertAllClose(f_exe(1.), 2.)
 
+  def test_jit_lower_duck_typing(self):
+    f_jit = self.jit(lambda x: 2 * x)
+    f_low = f_jit.lower(jax.ShapeDtypeStruct((), 'float32'))  # doesn't crash
+    f_exe = f_low.compile()
+    self.assertAllClose(f_exe(jnp.float32(1.)), jnp.float32(2.))
+
   def test_jit_lower_compile_in_tree_mismatch(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.

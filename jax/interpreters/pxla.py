@@ -1677,15 +1677,19 @@ def lower_mesh_computation(
 class MeshComputation:
   def __init__(self, hlo, *compile_args):
     self._executable = None
-    self.hlo = hlo
+    self._hlo = hlo
     self.compile_args = compile_args
+
+  def hlo(self):
+    # this is a method for api consistency with xla.XlaComputation
+    return self._hlo
 
   def compile(self,
               _allow_propagation_to_outputs : bool = False,
               _allow_compile_replicated : bool = True) -> 'MeshExecutable':
     if self._executable is None:
       self._executable = MeshExecutable(
-          self.hlo, *self.compile_args,
+          self._hlo, *self.compile_args,
           _allow_propagation_to_outputs=_allow_propagation_to_outputs,
           _allow_compile_replicated=_allow_compile_replicated)  # type: ignore
     return self._executable

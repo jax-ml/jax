@@ -372,7 +372,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       xla._translations[pjit_p] = rule
 
   @jtu.with_mesh([('x', 2)])
-  def testLowerWithAbstractArgs(self):
+  def testLowerWithDuckTyping(self):
     x = jax.ShapeDtypeStruct((2, 2), jnp.float32)
     # Make sure this doesn't crash
     pjit(lambda x: x + 4, in_axis_resources=P('x'), out_axis_resources=P('x')).lower(x)
