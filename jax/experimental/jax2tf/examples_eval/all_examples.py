@@ -118,7 +118,7 @@ def _flax_examples():
           ModuleSpec(
               module_path='ppo.models.ActorCritic',
               input_shape=(1, 8, 8, 4),
-              module_kwargs=dict(num_outputs=2)),
+              module_kwargs=dict(num_outputs=8)),
       'seq2seq':
           ModuleSpec(
               module_path='seq2seq.train.Seq2seq',
@@ -135,10 +135,14 @@ def _flax_examples():
               module_path='sst2.models.TextClassifier',
               input_shape=(2, 3),
               module_kwargs=dict(
+                  # TODO(marcvanzee): TFLite throws a concatenation error when
+                  # `embedding_size != hidden_size`. I suppose some arrays are
+                  # concatenation with incompatible shapes, which could mean
+                  # something is going wrong in the translation.
                   embedding_size=3,
-                  hidden_size=1,
-                  vocab_size=5,
-                  output_size=3,
+                  hidden_size=3,
+                  vocab_size=13,
+                  output_size=1,
                   dropout_rate=0.,
                   word_dropout_rate=0.),
               init_args=(Arg.RNG, Arg.ONES, jnp.array([2, 3], dtype=jnp.int32)),

@@ -86,9 +86,15 @@ def make_module(spec: all_examples.ModuleSpec) -> ModuleToConvert:
 
   def apply(variables, inputs):
     replace_map.update({Arg.VARS: variables, Arg.INPUT: inputs})
+    mutable = spec.apply_kwargs.get("mutable", None)
     result = module.apply(*replace(spec.apply_args),
                           **replace(spec.apply_kwargs))
-    return result
+    # If any variables are mutable, `apply` returns a pair
+    # `(output, mutated_vars)`. In that case we only return the output.
+    if mutable:
+      return result[0]
+    else:
+      return result
 
   return ModuleToConvert(spec.input_shape, apply, variables, spec.dtype)
 
