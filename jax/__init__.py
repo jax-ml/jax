@@ -55,6 +55,7 @@ from ._src.api import (
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
   closure_convert as closure_convert,
+  Compiled as Compiled,
   curry,  # TODO(phawkins): update users to avoid this.
   custom_ivjp as custom_ivjp,
   custom_gradient as custom_gradient,
@@ -84,6 +85,7 @@ from ._src.api import (
   jvp as jvp,
   local_device_count as local_device_count,
   local_devices as local_devices,
+  Lowered as Lowered,
   linearize as linearize,
   linear_transpose as linear_transpose,
   make_jaxpr as make_jaxpr,
