@@ -239,13 +239,21 @@ class TreeMathTest(jtu.JaxTestCase):
   def test_norm(self):
 
     @tm.wrap
-    def norm(x, y):
+    def norm1(x, y):
       return ((x - y) ** 2).sum() ** 0.5
+
+    @tm.wrap
+    def norm2(x, y):
+      d = x - y
+      return (d @ d) ** 0.5
 
     x = {'a': 1, 'b': 1}
     y = {'a': 1 + 3, 'b': 1 + 4}
     expected = 5.0
-    actual = norm(x, y)
+    actual = norm1(x, y)
+    self.assertAllClose(actual, expected)
+
+    actual = norm2(x, y)
     self.assertAllClose(actual, expected)
 
   def test_cg(self):
@@ -285,7 +293,6 @@ class TreeMathTest(jtu.JaxTestCase):
       initial_value = (x0, r0, gamma0, p0, 0)
 
       x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
-
       return x_final
 
     A = lambda x: {'a': x['a'] + 0.5 * x['b'], 'b': 0.5 * x['a'] + x['b']}
