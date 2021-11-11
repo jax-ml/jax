@@ -214,6 +214,21 @@ class TreeMathTest(jtu.JaxTestCase):
     expected = tm.Vector({'b': 2})
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+  def test_unwrap_out_vectors(self):
+    f = lambda *args: args
+
+    expected = tm.Vector((1, 2))
+    actual = tm.unwrap(f, out_vectors=True)(tm.Vector(1), tm.Vector(2))
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+    expected = (1, 2)
+    actual = tm.unwrap(f, out_vectors=False)(tm.Vector(1), tm.Vector(2))
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+    expected = (tm.Vector(1), 2)
+    actual = tm.unwrap(f, out_vectors=(True, False))(tm.Vector(1), tm.Vector(2))
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
   def test_wrap_argnums_argnames(self):
 
     def f(x, y):

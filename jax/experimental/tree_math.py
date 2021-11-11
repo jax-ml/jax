@@ -256,7 +256,11 @@ def _get_tree(vector):
   return vector.tree
 
 
-def unwrap(fun, vector_argnums=None, vector_argnames=None):
+def _maybe_vector(condition, arg):
+  return Vector(arg) if condition else arg
+
+
+def unwrap(fun, vector_argnums=None, vector_argnames=None, out_vectors=True):
   """Convert a pytree -> pytree function to a vector -> vector function."""
   vector_argnums, vector_argnames = _infer_argnums_and_argnames(
       fun, vector_argnums, vector_argnames)
@@ -264,7 +268,6 @@ def unwrap(fun, vector_argnums=None, vector_argnames=None):
   def wrapper(*args, **kwargs):
     args = _apply_argnums(_get_tree, args, vector_argnums)
     kwargs = _apply_argnames(_get_tree, kwargs, vector_argnames)
-    # TODO(shoyer): add out_vectors argument so this behavior can be customized,
-    # similar to vmap's out_axes.
-    return Vector(fun(*args, **kwargs))
+    result = fun(*args, **kwargs)
+    return tree_util.tree_map(_maybe_vector, out_vectors, result)
   return wrapper
