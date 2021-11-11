@@ -19,6 +19,7 @@ from typing import Tuple
 
 from jax import tree_util
 from jax._src import api
+from jax._src.tree_util import tree_unflatten
 from jax._src.util import prod
 import jax.numpy as jnp
 
@@ -50,6 +51,7 @@ def _argnums_partial(f, args, static_argnums):
     return f(*args3)
   args2 = tuple(x for i, x in enumerate(args) if i not in static_argnums)
   return g, args2
+
 
 def _broadcasting_map(func, *args):
   """Like tree_map, but scalar arguments are broadcast to all leaves."""
@@ -163,8 +165,13 @@ class Vector:
   __floordiv__, __rfloordiv__ = _numeric_methods(operator.floordiv, 'floordiv')
   __mod__, __rmod__ = _numeric_methods(operator.mod, 'mod')
   __pow__, __rpow__ = _numeric_methods(operator.pow, 'pow')
-  # __divmod__, __rdivmod__ = _numeric_methods(divmod, 'divmod')  # TODO(shoyer): fix me
   __matmul__ = __rmatmul__ = matmul
+
+  # TODO(shoyer): implement this via divmod() on the leaves
+  def __divmod__(self, other):
+    return self // other, self % other
+  def __rdivmod__(self, other):
+    return other // self, other % self
 
   # bitwise
   __lshift__, __rlshift__ = _numeric_methods(operator.lshift, 'lshift')

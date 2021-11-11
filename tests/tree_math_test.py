@@ -94,10 +94,14 @@ class TreeMathTest(jtu.JaxTestCase):
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_divmod(self):
-    raise unittest.SkipTest("not working yet")
     x, y = divmod(jnp.arange(5), 2)
     expected = tm.Vector({'a': x}), tm.Vector({'a': y})
     actual = divmod(tm.Vector({'a': jnp.arange(5)}), 2)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+    x, y = divmod(5, jnp.arange(5))
+    expected = tm.Vector({'a': x}), tm.Vector({'a': y})
+    actual = divmod(5, tm.Vector({'a': jnp.arange(5)}))
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_matmul_scalars(self):
