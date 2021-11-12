@@ -33,7 +33,11 @@ from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
+from jax._src.lib import cusparse
 from . import ops
+from jax._src.lib import xla_client as xc
+
+xops = xc._xla.ops
 
 Dtype = Any
 Shape = Tuple[int, ...]
@@ -581,6 +585,63 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
   out_dtype = jnp.promote_types(lhs_data.dtype, rhs.dtype)
   return core.ShapedArray(out_shape, out_dtype)
 
+_bcoo_dot_general_default_translation_rule = xla.lower_fun(
+    _bcoo_dot_general_impl, multiple_results=False, new_style=True)
+
+def _bcoo_dot_general_cuda_translation_rule(
+    ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs, *, dimension_numbers,
+    lhs_shape):
+
+  (lhs_contract, rhs_contract), _ = dimension_numbers
+  _, lhs_indices_aval, _, = avals_in
+  props = _validate_bcoo_indices(lhs_indices_aval, lhs_shape)
+
+  lhs_transpose = False
+  if props.n_sparse == 1:
+    # Converts lhs to a row vector.
+    col = xops.Collapse(lhs_indices, dimensions=[0, 1])
+    row = xops.Broadcast(xops.Constant(ctx.builder, np.array(0, dtype=int)),
+                         ctx.builder.get_shape(col).dimensions())
+    lhs_shape = (1, lhs_shape[0])
+    lhs_transpose = True
+  elif props.n_sparse == 2:
+    row = xops.Collapse(
+        xops.SliceInDim(lhs_indices, start_index=0, limit_index=1, stride=1, dimno=1),
+        dimensions=[0, 1])
+    col = xops.Collapse(
+        xops.SliceInDim(lhs_indices, start_index=1, limit_index=2, stride=1, dimno=1),
+        dimensions=[0, 1])
+    if lhs_contract[0] == 0:
+      lhs_transpose = True
+
+  rhs_ndim = len(ctx.builder.get_shape(rhs).dimensions())
+  if rhs_ndim == 1:
+    bcoo_dot_general_fn = cusparse.coo_matvec
+  elif rhs_ndim == 2:
+    bcoo_dot_general_fn = cusparse.coo_matmat
+    if rhs_contract[0] == 1:
+      rhs = xops.Transpose(rhs, permutation=[1, 0])
+
+  return [bcoo_dot_general_fn(ctx.builder, lhs_data, row, col, rhs,
+                              shape=lhs_shape, transpose=lhs_transpose)]
+
+def _bcoo_dot_general_gpu_translation_rule(
+    ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs, *, dimension_numbers,
+    lhs_shape):
+
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  _, lhs_indices_aval, rhs_aval, = avals_in
+  n_batch, n_sparse, n_dense, _ = _validate_bcoo_indices(lhs_indices_aval, lhs_shape)
+
+  if n_batch or n_dense or n_sparse not in [1, 2] or rhs_aval.ndim not in [1, 2] or lhs_batch or rhs_batch or len(lhs_contract) != 1:
+    return _bcoo_dot_general_default_translation_rule(
+      ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
+      dimension_numbers=dimension_numbers, lhs_shape=lhs_shape)
+  else:
+      return _bcoo_dot_general_cuda_translation_rule(
+      ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
+      dimension_numbers=dimension_numbers, lhs_shape=lhs_shape)
+
 def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape):
   return bcoo_dot_general(lhs_data_dot, lhs_indices, rhs, dimension_numbers=dimension_numbers, lhs_shape=lhs_shape)
 
@@ -646,8 +707,11 @@ def _bcoo_dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
 ad.defjvp(bcoo_dot_general_p, _bcoo_dot_general_jvp_lhs, None, _bcoo_dot_general_jvp_rhs)
 ad.primitive_transposes[bcoo_dot_general_p] = _bcoo_dot_general_transpose
 batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
-xla.register_translation(bcoo_dot_general_p, xla.lower_fun(
-    _bcoo_dot_general_impl, multiple_results=False, new_style=True))
+xla.register_translation(bcoo_dot_general_p, _bcoo_dot_general_default_translation_rule)
+if cusparse and cusparse.is_supported:
+  xla.register_translation(bcoo_dot_general_p,
+                           _bcoo_dot_general_gpu_translation_rule,
+                           platform='gpu')
 
 #----------------------------------------------------------------------
 # bcoo_dot_general_sampled

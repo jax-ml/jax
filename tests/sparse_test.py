@@ -798,6 +798,51 @@ class BCOOTest(jtu.JaxTestCase):
     # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
+  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_lhs_contracting={}_rhs_contracting={}"
+       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
+               jtu.format_shape_dtype_string(rhs_shape, dtype),
+               lhs_contracting, rhs_contracting),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "lhs_contracting": lhs_contracting, "rhs_contracting": rhs_contracting}
+      for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
+          [(5,), (6,), [], []],
+          [(5,), (5,), [0], [0]],
+          [(5,), (5, 7), [0], [0]],
+          [(5,), (7, 5), [0], [1]],
+          [(5, 7), (5,), [0], [0]],
+          [(7, 5), (5,), [1], [0]],
+          [(3, 5), (2, 5), [1], [1]],
+          [(3, 5), (5, 2), [1], [0]],
+          [(5, 3), (2, 5), [0], [1]],
+          [(5, 3), (5, 2), [0], [0]],
+      ]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_bcoo_dot_general_cusparse(
+    self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting):
+    rng = jtu.rand_small(self.rng())
+    rng_sparse = rand_sparse(self.rng())
+    def args_maker():
+      lhs = rng_sparse(lhs_shape, dtype)
+      rhs = rng(rhs_shape, dtype)
+      data, indices = sparse.bcoo_fromdense(lhs)
+      return data, indices, lhs, rhs
+    dimension_numbers = ((lhs_contracting, rhs_contracting), ([], []))
+
+    def f_dense(data, indices, lhs, rhs):
+      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+
+    def f_sparse(data, indices, lhs, rhs):
+      return sparse.bcoo_dot_general(data, indices, rhs,
+                                    lhs_shape=lhs.shape,
+                                    dimension_numbers=dimension_numbers)
+
+    self._CompileAndCheck(f_sparse, args_maker)
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": props.testcase_name(), "props": props}
       for props in _generate_bcoo_dot_general_properties(
@@ -862,7 +907,7 @@ class BCOOTest(jtu.JaxTestCase):
 
     def f_sparse(data, indices, Y):
       return sparse.bcoo_dot_general(data, indices, Y, lhs_shape=X.shape,
-                                        dimension_numbers=dimension_numbers)
+                                     dimension_numbers=dimension_numbers)
 
     for data, indices in itertools.product([data, data[:1]], [indices, indices[:1]]):
       X = sparse.bcoo_todense(data, indices, shape=X.shape)
