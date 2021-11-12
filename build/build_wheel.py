@@ -50,6 +50,10 @@ args = parser.parse_args()
 r = runfiles.Create()
 
 
+def _is_mac():
+  return platform.system() == "Darwin"
+
+
 def _is_windows():
   return sys.platform.startswith("win32")
 
@@ -145,7 +149,7 @@ def verify_mac_libraries_dont_reference_chkstack():
 
   This check makes sure we don't release wheels that have this dependency.
   """
-  if platform.system() != "Darwin":
+  if not _is_mac():
     return
   nm = subprocess.run(
     ["nm", "-g",
@@ -228,10 +232,17 @@ def prepare_wheel(sources_path):
   if _is_windows():
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlir.pyd"), dst_dir=mlir_libs_dir)
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.pyd"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll"), dst_dir=mlir_libs_dir)
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.pyd"))
+  elif _is_mac():
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlir.so"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.so"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.dylib"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so"))
   else:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlir.so"), dst_dir=mlir_libs_dir)
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.so"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.so"), dst_dir=mlir_libs_dir)
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so"))
   patch_copy_xla_extension_stubs(jaxlib_dir)
   patch_copy_xla_client_py(jaxlib_dir)

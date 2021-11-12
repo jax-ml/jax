@@ -44,6 +44,8 @@ setup(
             'cuda/nvvm/libdevice/libdevice*',
             'mlir/*.py',
             'mlir/dialects/*.py',
+            'mlir/_mlir_libs/*.dll',
+            'mlir/_mlir_libs/*.dylib',
             'mlir/_mlir_libs/*.so',
             'mlir/_mlir_libs/*.pyd',
         ],
