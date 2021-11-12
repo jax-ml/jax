@@ -6287,8 +6287,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
     raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
                      "'midpoint', or 'nearest'")
-  a = asarray(a, dtype=promote_types(_dtype(a), float32))
-  q = asarray(q, dtype=promote_types(_dtype(q), float32))
+  a, q = _promote_dtypes_inexact(a, q)
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -6473,7 +6472,8 @@ def percentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                out=None, overwrite_input=False, interpolation="linear",
                keepdims=False):
   _check_arraylike("percentile", a, q)
-  q = true_divide(q, float32(100.0))
+  a, q = _promote_dtypes_inexact(a, q)
+  q = true_divide(q, 100.0)
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, keepdims=keepdims)
 
