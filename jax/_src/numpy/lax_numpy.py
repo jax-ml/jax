@@ -3594,7 +3594,15 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0, *, device=None):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
-  out = lax._convert_element_type(out, dtype, weak_type=weak_type)
+  if weak_type:
+    # Here we make a judgment call: we only return a weakly-typed array when obj
+    # itself is weakly typed. That ensures array(x) is a no-op whenever x is weak,
+    # but avoids introducing weak types with something like array([1, 2, 3])
+    out = lax._convert_element_type(out, dtype, weak_type=True)
+  else:
+    # If dtype is not specified, we use result_type(out). This ensures JIT invariance
+    # with, e.g. lists of scalars.
+    out = lax._convert_element_type(out, dtype or result_type(out))
 
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
