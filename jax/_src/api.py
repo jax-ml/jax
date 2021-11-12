@@ -2982,6 +2982,8 @@ def named_call(
 
   @functools.wraps(fun)
   def named_f(*args, **kwargs):
+    if config.jax_disable_jit:
+      return fun(*args, **kwargs)
     lu_f = lu.wrap_init(lambda: fun(*args, **kwargs))
     flat_f, out_tree = flatten_fun_nokwargs(lu_f, in_tree)
     out_flat = core.named_call_p.bind(flat_f, name=name)
