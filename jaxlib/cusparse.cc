@@ -59,7 +59,7 @@ cusparseIndexType_t DtypeToCuSparseIndexType(const py::dtype& np_type) {
 cudaDataType DtypeToCudaDataType(const py::dtype& np_type) {
   static auto* types =
       new absl::flat_hash_map<std::pair<char, int>, cudaDataType>({
-        {{'f', 2}, CUDA_R_16F}, {{'f', 4}, CUDA_R_32F}, {{'f', 4}, CUDA_R_32F},
+        {{'f', 2}, CUDA_R_16F}, {{'c', 4}, CUDA_C_16F}, {{'f', 4}, CUDA_R_32F},
             {{'c', 8}, CUDA_C_32F}, {{'f', 8}, CUDA_R_64F},
             {{'c', 16}, CUDA_C_64F}, {{'i', 1}, CUDA_R_8I},
             {{'u', 1}, CUDA_R_8U}, {{'i', 4}, CUDA_R_32I},
