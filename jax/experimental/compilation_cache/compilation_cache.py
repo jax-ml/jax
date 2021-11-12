@@ -16,6 +16,7 @@ import hashlib
 import os
 import re
 import sys
+from typing import List
 
 import jax
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
@@ -173,6 +174,8 @@ _xla_flags_to_exclude_from_cache_key = [
     "--xla_dump_hlo_pipeline_re",
 ]
 
+extra_flag_prefixes_to_include_in_cache_key: List[str] = []
+
 def _hash_xla_flags(hash_obj):
   xla_flags = []
 
@@ -180,7 +183,10 @@ def _hash_xla_flags(hash_obj):
   if xla_flags_env_var:
     xla_flags.extend(xla_flags_env_var.split())
 
-  xla_flags.extend(arg for arg in sys.argv if arg.startswith("--xla_"))
+  for arg in sys.argv:
+    if arg.startswith("--xla") or any(
+        arg.startswith(p) for p in extra_flag_prefixes_to_include_in_cache_key):
+      xla_flags.append(arg)
 
   # N.B. all XLA flags that take an argument must use '=' and not a space
   # (e.g. --xla_force_host_platform_device_count=8) (I think).
