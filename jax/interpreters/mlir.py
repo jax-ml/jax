@@ -1625,22 +1625,22 @@ translations[lax.rng_uniform_p] = _rng_uniform_lowering
 #   # sidestep issues with the jax_enable_x64=False configuration. As a result, we
 #   # need to convert u32[4] -> u64[2] here in the translation rule. However, we
 #   # also polymorphically allow a u64[2] for backward compatibility.
-#   assert ((key_aval.shape == (4,) and key_aval.dtype == dtypes.dtype('uint32')) or
-#           (key_aval.shape == (2,) and key_aval.dtype == dtypes.dtype('uint64'))), key_aval.shape
+#   assert ((key_aval.shape == (4,) and key_aval.dtype == np.dtype('uint32')) or
+#           (key_aval.shape == (2,) and key_aval.dtype == np.dtype('uint64'))), key_aval.shape
 #   xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
-#   if key_dtype == dtypes.dtype('uint32'):
+#   if key_dtype == np.dtype('uint32'):
 #     # TODO(mattjj): the BitcastConvertType segfaults on GPU
 #     # TODO(mattjj): remove fallback when minimum jaxlib is 0.1.72 or newer
 #     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-#       u64_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint64'))
+#       u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
 #       key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
 #     else:
 #       key = _convert_4xU32_to_2xU64_without_bitcast(c, key)
 #   out_key, out_vals = xla.xla_destructure(
 #       c, xops.RngBitGenerator(algorithm, key, xla_shape))
-#   if key_dtype == dtypes.dtype('uint32'):
+#   if key_dtype == np.dtype('uint32'):
 #     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-#       u32_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint32'))
+#       u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
 #       out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
 #     else:
 #       out_key = _convert_2xU64_to_4xU32_without_bitcast(c, out_key)

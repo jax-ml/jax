@@ -6551,7 +6551,7 @@ def _view(arr, dtype=None, type=None):
   if arr_dtype == bool_:
     arr = arr.astype(uint8)
   nbits_in = 8 * arr_dtype.itemsize
-  nbits_out = 8 * _dtype(dtype).itemsize
+  nbits_out = 8 * np.dtype(dtype).itemsize
   if nbits_in == nbits_out:
     if dtype == bool_:
       return lax.bitcast_convert_type(arr, uint8).astype(dtype)
