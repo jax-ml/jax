@@ -412,58 +412,18 @@ def _shard_abstract_array(size, axis: int, x):
   return x.update(shape=tuple_delete(x.shape, axis))
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
-MeshAxisName = Any
-"""
-ArrayMapping specifies how an ndarray should map to mesh axes.
-
-Note that the ordering is crucial for the cases when this mapping is non-injective
-(i.e. when multiple mesh axes map to the same positional axis). Then, the
-order of entries of the mapping determines a major-to-minor order on mesh axes,
-according to which chunks of the value along the repeated dimension will be assigned.
-
-For example, consider a mapping {'x': 1, 'y': 1} and a mesh with shape {'x': 2, 'y': 3}.
-The second dimension of the value would get chunked into 6 pieces, and assigned to the
-mesh in a way that treats 'y' as the fastest changing (minor) dimension. In this case,
-that would mean that a flat list of chunks would get assigned to a flattened list of
-mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, then the
-mesh devices ndarray would have to be transposed before flattening and assignment.
-"""
-ArrayMapping = OrderedDictType[MeshAxisName, int]
-
-AxisResource = Tuple[Optional[Tuple[Any, ...]], ...]
-
-def array_mapping_to_axis_resources(array_mapping: ArrayMapping) -> AxisResource:
-  if not array_mapping:
-    return tuple()
-  max_index = array_mapping[max(array_mapping, key=array_mapping.get)]  # type: ignore
-  reverse_map = defaultdict(list)
-  for axis, index in array_mapping.items():
-    reverse_map[index].append(axis)
-  return tuple(
-      tuple(reverse_map[i]) if reverse_map[i] else None for i in range(max_index + 1)
-  )
-
-def aval_to_result_handler(
-    sharding_spec: Optional[ShardingSpec],
-    indices: Optional[Tuple[Index]],
-    aval: core.AbstractValue,
-    global_aval: Optional[ShapedArray] = None,
-    out_axis_resources: Optional[AxisResource] = None,
-    global_mesh = None,
-) -> Callable[[List[xb.xla_client.Buffer]], Any]:
+def aval_to_result_handler(sharding_spec: Optional[ShardingSpec],
+                           indices: Optional[Tuple[Index]],
+                           aval: core.AbstractValue) -> Callable[
+                               [List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
   Args:
-    sharding_spec: Indicates how the output is sharded across devices, or None
+    sharding_spec: indicates how the output is sharded across devices, or None
       for non-array avals.
-    indices: The pre-computed result of spec_to_indices, or None for non-array
+    indices: the pre-computed result of spec_to_indices, or None for non-array
       avals.
-    aval: The output AbstractValue.
-    global_aval: Global output AbstractValue. Used for creating GSDAs.
-    out_axis_resources: A tuple specifying the sharding of outputs.
-      Used for creating GSDAs.
-    global_mesh: The global device mesh that generated this output. Used
-      for creating GSDAs.
+    aval: the output AbstractValue.
 
   Returns:
     A function for handling the Buffers that will eventually be produced
@@ -471,8 +431,7 @@ def aval_to_result_handler(
     to the user, e.g. a ShardedDeviceArray.
   """
   try:
-    return pxla_result_handlers[type(aval)](sharding_spec, indices, aval,
-                                            global_aval, out_axis_resources, global_mesh)
+    return pxla_result_handlers[type(aval)](sharding_spec, indices, aval)
   except KeyError as err:
     raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
                     ) from err
@@ -480,26 +439,14 @@ def aval_to_result_handler(
 PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
 pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
+def array_result_handler(sharding_spec, indices, aval: ShapedArray):
+  return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
+                                                indices)
 
-def array_result_handler(sharding_spec, indices, aval: ShapedArray, global_aval,
-                         out_axis_resources, global_mesh):
-  if config.jax_gsda_out:
-    return gsda_array_result_handler(global_aval, global_mesh, out_axis_resources)
-  else:
-    return sda_array_result_handler(sharding_spec, indices, aval)
 
 pxla_result_handlers[ShapedArray] = array_result_handler
 pxla_result_handlers[ConcreteArray] = array_result_handler
 
-def sda_array_result_handler(sharding_spec, indices, aval: ShapedArray):
-  return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
-                                                indices)
-
-def gsda_array_result_handler(global_aval, global_mesh, out_axis_resources):
-  from ..experimental.gsda import GlobalShardedDeviceArray
-
-  return lambda bufs: GlobalShardedDeviceArray(
-      global_aval.shape, global_mesh, out_axis_resources, bufs)
 
 ### lazy device-memory persistence and result handling
 
@@ -1225,31 +1172,12 @@ class ResultsHandler:
   def __call__(self, out_bufs):
     return [h(bufs) for h, bufs in safe_zip(self.handlers, out_bufs)]
 
-
-def avals_to_results_handler(
-    nrep,
-    npart,
-    out_specs,
-    unmapped_local_out_avals,
-    global_out_avals: Optional[Sequence[ShapedArray]] = None,
-    out_axis_resources: Optional[Sequence[AxisResource]] = None,
-    global_mesh=None):
+def avals_to_results_handler(nrep, npart, out_specs, unmapped_local_out_avals):
   out_indices = [spec_to_indices(aval.shape, spec)
                  if aval is not core.abstract_unit else None
                  for aval, spec in safe_zip(unmapped_local_out_avals, out_specs)]  # pytype: disable=attribute-error
-  if global_out_avals and out_axis_resources and global_mesh:
-    handlers = [
-        aval_to_result_handler(spec, idcs, aval, global_aval, out_axis, global_mesh)
-        for spec, idcs, aval, global_aval, out_axis in safe_zip(
-            out_specs, out_indices, unmapped_local_out_avals,
-            global_out_avals, out_axis_resources)
-    ]
-  else:
-    handlers = [
-        aval_to_result_handler(spec, idcs, aval)
-        for spec, idcs, aval, in safe_zip(out_specs, out_indices,
-                                          unmapped_local_out_avals)
-    ]
+  handlers = [aval_to_result_handler(spec, idcs, aval)
+              for spec, idcs, aval in safe_zip(out_specs, out_indices, unmapped_local_out_avals)]
 
   return ResultsHandler(handlers, out_specs, out_indices, unmapped_local_out_avals)
 
@@ -1468,6 +1396,24 @@ def _unravel_index(c, axis_env):
   return xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
 
 # ------------------- xmap -------------------
+
+MeshAxisName = Any
+"""
+ArrayMapping specifies how an ndarray should map to mesh axes.
+
+Note that the ordering is crucial for the cases when this mapping is non-injective
+(i.e. when multiple mesh axes map to the same positional axis). Then, the
+order of entries of the mapping determines a major-to-minor order on mesh axes,
+according to which chunks of the value along the repeated dimension will be assigned.
+
+For example, consider a mapping {'x': 1, 'y': 1} and a mesh with shape {'x': 2, 'y': 3}.
+The second dimension of the value would get chunked into 6 pieces, and assigned to the
+mesh in a way that treats 'y' as the fastest changing (minor) dimension. In this case,
+that would mean that a flat list of chunks would get assigned to a flattened list of
+mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, then the
+mesh devices ndarray would have to be transposed before flattening and assignment.
+"""
+ArrayMapping = OrderedDictType[MeshAxisName, int]
 
 class Mesh:
 
@@ -1724,8 +1670,8 @@ def lower_mesh_computation(
   built = c.Build(out_tuple)
   return MeshComputation(
       built, mesh, local_in_untiled_avals,
-      local_out_untiled_avals, (out_jaxpr_avals if spmd_lowering else None),
-      in_axes, out_axes, spmd_lowering, tuple_args)
+      local_out_untiled_avals, in_axes, out_axes,
+      spmd_lowering, tuple_args)
 
 
 class MeshComputation:
@@ -1757,7 +1703,6 @@ class MeshExecutable:
                mesh: Mesh,
                local_in_untiled_avals: Sequence[ShapedArray],
                local_out_untiled_avals: Sequence[ShapedArray],
-               global_out_avals: Optional[Sequence[ShapedArray]],
                in_axes: Sequence[ArrayMapping],
                out_axes: Sequence[ArrayMapping],
                spmd_lowering: bool, tuple_args: bool,
@@ -1799,10 +1744,8 @@ class MeshExecutable:
 
     local_output_specs = [local_sharding_spec(aval, aval_out_axes)
                           for aval, aval_out_axes in safe_zip(local_out_untiled_avals, out_axes)]
-    out_axis_resources = [array_mapping_to_axis_resources(o) for o in out_axes]
     handle_outs = avals_to_results_handler(num_local_replicas, num_local_partitions,
-                                           local_output_specs, local_out_untiled_avals,
-                                           global_out_avals, out_axis_resources, mesh)
+                                           local_output_specs, local_out_untiled_avals)
 
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       self.unsafe_call = backend.compile_replicated(

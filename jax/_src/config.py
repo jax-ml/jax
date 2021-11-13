@@ -498,12 +498,6 @@ log_compiles = config.define_bool_state(
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
 
-gsda_out = config.define_bool_state(
-    name='jax_gsda_out',
-    default=False,
-    help='If True, pjit will output GSDAs.')
-
-
 distributed_debug = config.define_bool_state(
     name='jax_distributed_debug',
     default=False,
