@@ -592,27 +592,12 @@ def _bcoo_dot_general_cuda_translation_rule(
     ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs, *, dimension_numbers,
     lhs_shape):
 
+  lhs_indices = xops.ConvertElementType(
+      lhs_indices, xla.dtype_to_primitive_type(np.dtype(np.int)))
+
   (lhs_contract, rhs_contract), _ = dimension_numbers
   _, lhs_indices_aval, _, = avals_in
   props = _validate_bcoo_indices(lhs_indices_aval, lhs_shape)
-
-  lhs_transpose = False
-  if props.n_sparse == 1:
-    # Converts lhs to a row vector.
-    col = xops.Collapse(lhs_indices, dimensions=[0, 1])
-    row = xops.Broadcast(xops.Constant(ctx.builder, np.array(0, dtype=int)),
-                         ctx.builder.get_shape(col).dimensions())
-    lhs_shape = (1, lhs_shape[0])
-    lhs_transpose = True
-  elif props.n_sparse == 2:
-    row = xops.Collapse(
-        xops.SliceInDim(lhs_indices, start_index=0, limit_index=1, stride=1, dimno=1),
-        dimensions=[0, 1])
-    col = xops.Collapse(
-        xops.SliceInDim(lhs_indices, start_index=1, limit_index=2, stride=1, dimno=1),
-        dimensions=[0, 1])
-    if lhs_contract[0] == 0:
-      lhs_transpose = True
 
   rhs_ndim = len(ctx.builder.get_shape(rhs).dimensions())
   if rhs_ndim == 1:
@@ -622,8 +607,31 @@ def _bcoo_dot_general_cuda_translation_rule(
     if rhs_contract[0] == 1:
       rhs = xops.Transpose(rhs, permutation=[1, 0])
 
-  return [bcoo_dot_general_fn(ctx.builder, lhs_data, row, col, rhs,
-                              shape=lhs_shape, transpose=lhs_transpose)]
+  lhs_transpose = False
+  if props.n_sparse == 1:
+    # Converts lhs to a row vector.
+    col = xops.Collapse(lhs_indices, dimensions=[0, 1])
+    row = xops.Broadcast(xops.Constant(ctx.builder, np.array(0, dtype=int)),
+                         ctx.builder.get_shape(col).dimensions())
+    lhs_shape = (1, lhs_shape[0])
+    dot_product = bcoo_dot_general_fn(ctx.builder, lhs_data, row, col, rhs,
+                                      shape=lhs_shape, transpose=lhs_transpose)
+    if rhs_ndim == 1:
+      # Transforms a single-element array to a scalar.
+      return [xops.Reshape(dot_product, dimensions=[0], new_sizes=[])]
+    else:
+      return [xops.Collapse(dot_product, dimensions=[0, 1])]
+  elif props.n_sparse == 2:
+    row = xops.Collapse(
+        xops.SliceInDim(lhs_indices, start_index=0, limit_index=1, stride=1, dimno=1),
+        dimensions=[0, 1])
+    col = xops.Collapse(
+        xops.SliceInDim(lhs_indices, start_index=1, limit_index=2, stride=1, dimno=1),
+        dimensions=[0, 1])
+    if lhs_contract[0] == 0:
+      lhs_transpose = True
+    return [bcoo_dot_general_fn(ctx.builder, lhs_data, row, col, rhs,
+                                shape=lhs_shape, transpose=lhs_transpose)]
 
 def _bcoo_dot_general_gpu_translation_rule(
     ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs, *, dimension_numbers,
@@ -638,7 +646,7 @@ def _bcoo_dot_general_gpu_translation_rule(
       ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_shape=lhs_shape)
   else:
-      return _bcoo_dot_general_cuda_translation_rule(
+    return _bcoo_dot_general_cuda_translation_rule(
       ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_shape=lhs_shape)
 

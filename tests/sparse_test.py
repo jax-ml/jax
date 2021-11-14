@@ -808,7 +808,6 @@ class BCOOTest(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "lhs_contracting": lhs_contracting, "rhs_contracting": rhs_contracting}
       for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
-          [(5,), (6,), [], []],
           [(5,), (5,), [0], [0]],
           [(5,), (5, 7), [0], [0]],
           [(5,), (7, 5), [0], [1]],
@@ -836,12 +835,11 @@ class BCOOTest(jtu.JaxTestCase):
 
     def f_sparse(data, indices, lhs, rhs):
       return sparse.bcoo_dot_general(data, indices, rhs,
-                                    lhs_shape=lhs.shape,
-                                    dimension_numbers=dimension_numbers)
+                                     lhs_shape=lhs.shape,
+                                     dimension_numbers=dimension_numbers)
 
     self._CompileAndCheck(f_sparse, args_maker)
     self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
-
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": props.testcase_name(), "props": props}
