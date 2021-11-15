@@ -95,7 +95,7 @@ def jax2tf_to_tflite(module: examples_converter.ModuleToConvert):
   outputs = tuple(interpreter.tensor(out["index"]) for out in output_details)
 
   # Generate random data and get outputs from TFLite and JAX.
-  input_data = _get_random_data(module.input_shape, module.dtype)
+  input_data = _get_random_data(module.dtype, module.input_shape)
   interpreter.set_tensor(inputs['index'], input_data)
   interpreter.invoke()
   tflite_results = tuple(output() for output in outputs)
