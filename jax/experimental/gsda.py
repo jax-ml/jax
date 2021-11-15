@@ -17,14 +17,15 @@ from collections import defaultdict, Counter
 import dataclasses
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict
+
+from . import maps
 from .. import core
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from ..interpreters import pxla
+from ..interpreters import pxla, xla
 from .._src.util import prod, safe_zip
 from .._src.api import device_put
 from ..interpreters.sharded_jit import PartitionSpec
-from .pjit import get_array_mapping, _prepare_axis_resources
 
 Shape = Tuple[int, ...]
 MeshAxes = Sequence[Union[str, Tuple[str], None]]
@@ -47,6 +48,9 @@ class _HashableIndex:
 
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
+  # Import here to avoid cyclic import error when importing gsda in pjit.py.
+  from .pjit import get_array_mapping, _prepare_axis_resources
+
   if not isinstance(mesh_axes, PartitionSpec):
     pspec = PartitionSpec(*mesh_axes)
   else:
@@ -94,10 +98,9 @@ class Shard:
 
 class GlobalShardedDeviceArray:
 
-  def __init__(self, global_shape: Shape, dtype, global_mesh: pxla.Mesh,
+  def __init__(self, global_shape: Shape, global_mesh: pxla.Mesh,
                mesh_axes: MeshAxes, device_buffers: Sequence[DeviceArray]):
     self._global_shape = global_shape
-    self._dtype = dtype
     self._global_mesh = global_mesh
     self._mesh_axes = mesh_axes
     assert len(device_buffers) == len(self._global_mesh.local_devices)
@@ -108,6 +111,12 @@ class GlobalShardedDeviceArray:
     assert all(db.shape == ss for db in device_buffers), (
         f"Expected shard shape {ss} doesn't match the device buffer "
         f"shape {device_buffers[0].shape}")
+
+    dtype = device_buffers[0].dtype
+    assert all(db.dtype == dtype for db in device_buffers), (
+        "Input arrays to GlobalShardedDeviceArray must have matching dtypes, "
+        f"got: {[db.dtype for db in device_buffers]}")
+    self.dtype = dtype
 
   @property
   def shape(self) -> Shape:
@@ -130,6 +139,8 @@ class GlobalShardedDeviceArray:
       sh = Shard(device, index, replica_id, buf)
       gs.append(sh)
       if local_shard:
+        if sh.data is None:
+          raise ValueError("Local shard's data field should not be None.")
         ls.append(sh)
     return gs, ls
 
@@ -142,7 +153,7 @@ class GlobalShardedDeviceArray:
     return self._global_shards
 
   @classmethod
-  def from_callback(cls, global_shape: Shape, dtype, global_mesh: pxla.Mesh,
+  def from_callback(cls, global_shape: Shape, global_mesh: pxla.Mesh,
                     mesh_axes: MeshAxes, data_callback: Callable[[Index],
                                                                  ArrayLike]):
     indices = get_shard_indices(global_shape, global_mesh, mesh_axes)
@@ -150,10 +161,10 @@ class GlobalShardedDeviceArray:
         device_put(data_callback(indices[device]), device)
         for device in global_mesh.local_devices
     ]
-    return cls(global_shape, dtype, global_mesh, mesh_axes, dbs)
+    return cls(global_shape, global_mesh, mesh_axes, dbs)
 
   @classmethod
-  def from_batched_callback(cls, global_shape: Shape, dtype,
+  def from_batched_callback(cls, global_shape: Shape,
                             global_mesh: pxla.Mesh, mesh_axes: MeshAxes,
                             data_callback: Callable[[Sequence[Index]],
                                                     Sequence[ArrayLike]]):
@@ -161,11 +172,11 @@ class GlobalShardedDeviceArray:
     local_indices = [indices[d] for d in global_mesh.local_devices]
     local_arrays = data_callback(local_indices)
     dbs = pxla.device_put(local_arrays, global_mesh.local_devices)
-    return cls(global_shape, dtype, global_mesh, mesh_axes, dbs)
+    return cls(global_shape, global_mesh, mesh_axes, dbs)
 
   @classmethod
   def from_batched_callback_with_devices(
-      cls, global_shape: Shape, dtype, global_mesh: pxla.Mesh,
+      cls, global_shape: Shape, global_mesh: pxla.Mesh,
       mesh_axes: MeshAxes,
       data_callback: Callable[[Sequence[Tuple[Index, Tuple[Device, ...]]]],
                               Sequence[DeviceArray]]):
@@ -180,4 +191,18 @@ class GlobalShardedDeviceArray:
         (index.val, tuple(device)) for index, device in index_to_device.items()
     ]
     dbs = data_callback(cb_inp)
-    return cls(global_shape, dtype, global_mesh, mesh_axes, dbs)
+    return cls(global_shape, global_mesh, mesh_axes, dbs)
+
+
+core.pytype_aval_mappings[GlobalShardedDeviceArray] = lambda x: core.ShapedArray(x.shape, x.dtype)
+xla.pytype_aval_mappings[GlobalShardedDeviceArray] = lambda x: core.ShapedArray(x.shape, x.dtype)
+xla.canonicalize_dtype_handlers[GlobalShardedDeviceArray] = pxla.identity
+
+def _gsda_shard_arg(x, devices, indices):
+  pjit_mesh = maps.thread_resources.env.physical_mesh
+  if x._global_mesh != pjit_mesh:
+    raise ValueError("Pjit's mesh and GSDA's mesh should be equal. Got Pjit "
+                     f"mesh: {pjit_mesh},\n GSDA mesh: {x._global_mesh}")
+  return [s.data for s in x.local_shards]
+
+pxla.shard_arg_handlers[GlobalShardedDeviceArray] = _gsda_shard_arg

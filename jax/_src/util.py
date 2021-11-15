@@ -18,8 +18,8 @@ from functools import partial
 import itertools as it
 import operator
 import types
-from typing import (Any, Callable, List, Tuple, Generic, TypeVar, Set, Iterator,
-                    Sequence)
+from typing import (Any, Callable, Iterable, List, Tuple, Generic, TypeVar, Set,
+                    Iterator, Sequence)
 
 from absl import logging
 import numpy as np
@@ -28,6 +28,7 @@ from jax.config import config
 
 Seq = Sequence
 
+T = TypeVar("T")
 
 def safe_zip(*args):
   n = len(args[0])
@@ -66,8 +67,7 @@ def subvals(lst, replace):
     lst[i] = v
   return tuple(lst)
 
-def split_list(args, ns):
-  assert type(ns) is list
+def split_list(args: Sequence[T], ns: Sequence[int]) -> List[List[T]]:
   args = list(args)
   lists = []
   for n in ns:
@@ -76,7 +76,7 @@ def split_list(args, ns):
   lists.append(args)
   return lists
 
-def partition_list(bs: Seq[bool], l: Seq[Any]) -> Tuple[List[Any], List[Any]]:
+def partition_list(bs: Sequence[bool], l: Sequence[T]) -> Tuple[List[T], List[T]]:
   assert len(bs) == len(l)
   lists = [], []  # type: ignore
   for b, x in zip(bs, l):
@@ -89,8 +89,22 @@ def split_dict(dct, names):
   assert not dct
   return lst
 
-def concatenate(xs):
+def concatenate(xs: Iterable[Sequence[T]]) -> Sequence[T]:
+  """Concatenates/flattens a list of lists."""
   return list(it.chain.from_iterable(xs))
+
+flatten = concatenate
+
+def unflatten(xs: Iterable[T], ns: Sequence[int]) -> Sequence[Sequence[T]]:
+  """Splits `xs` into subsequences of lengths `ns`.
+
+  Unlike `split_list`, the `sum(ns)` must be equal to `len(xs)`."""
+  xs_iter = iter(xs)
+  unflattened = [[next(xs_iter) for _ in range(n)] for n in ns]
+  done = object()
+  assert next(xs_iter, done) is done
+  return unflattened
+
 
 def curry(f):
   """Curries arguments of f, returning a function on any remaining arguments.
@@ -407,7 +421,6 @@ def distributed_debug_log(*pairs):
     lines.append("DISTRIBUTED_DEBUG_END")
     logging.warning("\n".join(lines))
 
-T = TypeVar('T')
 
 class OrderedSet(Generic[T]):
   elts_set: Set[T]

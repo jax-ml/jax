@@ -24,11 +24,9 @@ package(
     licenses = ["notice"],
 )
 
-
 COPTS = [
     "-fexceptions",
     "-frtti",
-    "-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.",
 ]
 
 py_extension(
@@ -38,8 +36,9 @@ py_extension(
     ],
     copts = COPTS,
     deps = [
-        "@llvm-project//mlir:MLIRBindingsPythonCore",
-        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:MLIRBindingsPythonCoreNoCAPI",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
     ],
 )
 
@@ -54,10 +53,54 @@ py_extension(
     ],
     copts = COPTS,
     deps = [
-        "@llvm-project//mlir:CAPIIR",
-        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
-        "@pybind11",
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@local_config_python//:headers",
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo:CAPI",
+        "@org_tensorflow//tensorflow/compiler/mlir/hlo:CAPIHeaders",
+        "@pybind11",
     ],
+)
+
+cc_library(
+    name = "jaxlib_mlir_capi_shared_library",
+    srcs = select({
+        "@org_tensorflow//tensorflow:windows": [":jaxlib_mlir_capi.dll"],
+        "@org_tensorflow//tensorflow:macos": [":libjaxlib_mlir_capi.dylib"],
+        "//conditions:default": [":libjaxlib_mlir_capi.so"],
+    }),
+)
+
+cc_library(
+    name = "jaxlib_mlir_capi_objects",
+    deps = [
+        "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
+        "@org_tensorflow//tensorflow/compiler/mlir/hlo:CAPIObjects",
+    ],
+)
+
+cc_binary(
+    name = "libjaxlib_mlir_capi.so",
+    linkopts = [
+        "-Wl,-soname=libjaxlib_mlir_capi.so",
+        "-Wl,-rpath='$$ORIGIN'",
+    ],
+    linkshared = 1,
+    deps = [":jaxlib_mlir_capi_objects"],
+)
+
+cc_binary(
+    name = "libjaxlib_mlir_capi.dylib",
+    linkopts = [
+        "-Wl,-rpath,@loader_path/",
+        "-Wl,-install_name,@loader_path/libjaxlib_mlir_capi.dylib",
+    ],
+    linkshared = 1,
+    deps = [":jaxlib_mlir_capi_objects"],
+)
+
+cc_binary(
+    name = "jaxlib_mlir_capi.dll",
+    linkshared = 1,
+    deps = [":jaxlib_mlir_capi_objects"],
 )

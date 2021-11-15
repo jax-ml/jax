@@ -30,7 +30,8 @@ from jax.errors import JAXTypeError
 from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import PartitionSpec as P
-from jax.experimental.maps import xmap, mesh
+from jax.experimental.maps import xmap, mesh, Mesh
+from jax.experimental import gsda
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import pjit, pjit_p, with_sharding_constraint, SpecSync
 from jax.interpreters import pxla
@@ -60,6 +61,15 @@ def check_1d_2d_mesh(f, set_mesh):
       ("2x1", (("x", 2), ("y", 1)), ("x", "y")),
       ("2x2", (("x", 2), ("y", 2)), ("x", "y")),
     ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
+
+
+def create_global_mesh(mesh_shape, axis_names):
+  size = prod(mesh_shape)
+  if len(jax.devices()) < size:
+    raise unittest.SkipTest(f"Test requires {size} local devices")
+  mesh_devices = np.array(jax.devices()[:size]).reshape(mesh_shape)
+  global_mesh = Mesh(mesh_devices, axis_names)
+  return global_mesh
 
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
@@ -571,6 +581,139 @@ class PJitTest(jtu.BufferDonationTestCase):
         "called with:\n.*int32.*",
         lambda: exe(x_i32, x_i32))
 
+
+class GSDAPjitTest(jtu.JaxTestCase):
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_pjit_gsda_single_output(self):
+    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return input_data[index]
+
+    gsda_obj = gsda.GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    with jax._src.config.gsda_out(True):
+      @partial(pjit, in_axis_resources=mesh_axes, out_axis_resources=P('x', 'y'))
+      def f(x):
+        return x @ x.T
+      expected_matrix_mul = input_data @ input_data.T
+
+      out = f(gsda_obj)
+      self.assertIsInstance(out, gsda.GlobalShardedDeviceArray)
+      self.assertEqual(out.shape, (8, 8))
+      self.assertEqual(out.local_shards[0].data.shape, (2, 4))
+      self.assertDictEqual(out._global_mesh.shape, {'x': 4, 'y': 2})
+      for s in out.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+      out1 = f(input_data)
+      self.assertIsInstance(out1, gsda.GlobalShardedDeviceArray)
+      self.assertEqual(out1.shape, (8, 8))
+      self.assertEqual(out1.local_shards[0].data.shape, (2, 4))
+      for s in out.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_pjit_gsda_multi_input_multi_output(self):
+    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return input_data[index]
+
+    mesh_axes1 = P('x', 'y')
+    gsda1 = gsda.GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes1, cb)
+    mesh_axes2 = P('x')
+    gsda2 = gsda.GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes2, cb)
+    mesh_axes3 = P(('x', 'y'))
+    gsda3 = gsda.GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes3, cb)
+    mesh_axes4 = P(None)
+    gsda4 = gsda.GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes4, cb)
+
+    with jax._src.config.gsda_out(True):
+      @partial(
+          pjit,
+          in_axis_resources=(mesh_axes1, mesh_axes2, mesh_axes3, mesh_axes4),
+          out_axis_resources=(mesh_axes1, mesh_axes4, mesh_axes2, mesh_axes3))
+      def f(x, y, z, a):
+        return x @ x.T, y, z, a
+      out1, out2, out3, out4 = f(gsda1, gsda2, gsda3, gsda4)
+
+      self.assertIsInstance(out1, gsda.GlobalShardedDeviceArray)
+      self.assertEqual(out1.shape, (8, 8))
+      self.assertEqual(out1.local_shards[0].data.shape, (2, 4))
+      self.assertEqual(out1.local_shards[0].index, (slice(0, 2), slice(0, 4)))
+      self.assertEqual(out1.local_shards[1].index, (slice(0, 2), slice(4, 8)))
+      self.assertListEqual([s.replica_id for s in out1.local_shards],
+                           [0, 0, 0, 0, 0, 0, 0, 0])
+      expected_matrix_mul = input_data @ input_data.T
+      for s in out1.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+      self.assertIsInstance(out2, gsda.GlobalShardedDeviceArray)
+      self.assertEqual(out2.shape, (8, 2))
+      self.assertEqual(out2.local_shards[0].data.shape, (8, 2))
+      self.assertEqual(out2.local_shards[0].index, (slice(None), slice(None)))
+      self.assertEqual(out2.local_shards[1].index, (slice(None), slice(None)))
+      self.assertListEqual([s.replica_id for s in out2.local_shards],
+                           [0, 1, 2, 3, 4, 5, 6, 7])
+      for s in out2.local_shards:
+        self.assertArraysEqual(s.data, input_data)
+
+      self.assertIsInstance(out3, gsda.GlobalShardedDeviceArray)
+      self.assertEqual(out3.shape, (8, 2))
+      self.assertEqual(out3.local_shards[0].data.shape, (2, 2))
+      self.assertEqual(out3.local_shards[0].index, (slice(0, 2), slice(None)))
+      self.assertEqual(out3.local_shards[1].index, (slice(0, 2), slice(None)))
+      self.assertListEqual([s.replica_id for s in out3.local_shards],
+                           [0, 1, 0, 1, 0, 1, 0, 1])
+      for s in out3.local_shards:
+        self.assertArraysEqual(s.data, input_data[s.index])
+
+      self.assertIsInstance(out4, gsda.GlobalShardedDeviceArray)
+      self.assertEqual(out4.shape, (8, 2))
+      self.assertEqual(out4.local_shards[0].data.shape, (1, 2))
+      self.assertEqual(out4.local_shards[0].index, (slice(0, 1), slice(None)))
+      self.assertEqual(out4.local_shards[1].index, (slice(1, 2), slice(None)))
+      self.assertListEqual([s.replica_id for s in out4.local_shards],
+                           [0, 0, 0, 0, 0, 0, 0, 0])
+      for s in out4.local_shards:
+        self.assertArraysEqual(s.data, input_data[s.index])
+
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def test_pjit_gsda_mesh_mismatch(self):
+    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = ['x', 'y']
+    global_input_data = np.arange(
+        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+    def cb(index):
+      return global_input_data[index]
+
+    gsda_obj = gsda.GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Pjit's mesh and GSDA's mesh should be equal."):
+      @partial(pjit, in_axis_resources=P('x', 'y'), out_axis_resources=P('x', 'y'))
+      def f(x):
+        return x
+      f(gsda_obj)
+
+
+
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
@@ -760,15 +903,15 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x, y: x, p, p)(x, x)  # Error, but make sure we hint at tupling
     # TODO(apaszke): Disable implicit list casts and enable this
     # error = re.escape(
-        # r"pjit in_axis_resources specification must be a tree prefix of the "
-        # r"corresponding value, got specification (None, None, None) for value "
-        # r"tree PyTreeDef(([*, *, *],)). Note that pjit in_axis_resources that "
-        # r"are non-trivial pytrees should always be wrapped in a tuple representing "
-        # r"the argument list. In particular, you're passing in a single argument "
-        # r"which means that pjit in_axis_resources might need to be wrapped in a "
-        # r"singleton tuple.")
+    # r"pjit in_axis_resources specification must be a tree prefix of the "
+    # r"corresponding value, got specification (None, None, None) for value "
+    # r"tree PyTreeDef(([*, *, *],)). Note that pjit in_axis_resources that "
+    # r"are non-trivial pytrees should always be wrapped in a tuple representing "
+    # r"the argument list. In particular, you're passing in a single argument "
+    # r"which means that pjit in_axis_resources might need to be wrapped in a "
+    # r"singleton tuple.")
     # with self.assertRaisesRegex(ValueError, error):
-      # pjit(lambda x: x, p, p)([x, x, x])  # Error, but make sure we hint at singleton tuple
+    # pjit(lambda x: x, p, p)([x, x, x])  # Error, but make sure we hint at singleton tuple
     error = re.escape(
         r"pjit out_axis_resources specification must be a tree prefix of the "
         r"corresponding value, got specification [[None, None, None], None] for "
@@ -793,6 +936,7 @@ class PJitErrorTest(jtu.JaxTestCase):
 
 
 class UtilTest(jtu.JaxTestCase):
+
   def testOpShardingRoundTrip(self):
     FakeDevice = namedtuple('FakeDevice', ['id'])
     mesh_named_shape = OrderedDict([('a', 2), ('b', 3), ('c', 4), ('d', 7), ('e', 4)])
@@ -819,6 +963,14 @@ class UtilTest(jtu.JaxTestCase):
         spec[rng.choice(dims)] += (axis,)
       roundtrip(P(*spec))
 
+  @parameterized.named_parameters(
+      ("linear", {'x': 0, 'y': 1, 'z': 2}, (('x',), ('y',), ('z',))),
+      ("combine", {'x': 0, 'y': 0, 'z': 1}, (('x', 'y'), ('z',))),
+      ("skip", {'x': 0, 'y': 0, 'z': 2}, (('x', 'y'), None, ('z',))),
+      ("multi_skip", {'x': 0, 'y': 1, 'z': 3}, (('x',), ('y',), None, ('z',))),
+  )
+  def test_array_mapping_to_axis_resources(self, inp, expected_out):
+    self.assertEqual(pxla.array_mapping_to_axis_resources(inp), expected_out)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -28,7 +28,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 import jax.numpy as jnp
 from jax.interpreters import ad
-from jax.util import safe_zip
+from jax.util import safe_zip, unzip2
 from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
@@ -515,44 +515,57 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs
   out_aval = _bcoo_dot_general_abstract_eval(lhs_data.aval, lhs_indices.aval, rhs.aval,
                                              dimension_numbers=dimension_numbers,
                                              lhs_shape=lhs_shape)
-
-  (lhs_contracting, rhs_contracting) , (lhs_batch, rhs_batch) = dimension_numbers
   n_sparse = lhs_indices.shape[-1]
   n_batch = lhs_indices.ndim - 2
 
-  # Move lhs batch dimensions to the front
-  if lhs_batch:
-    perm = list(lhs_batch) + remaining(range(n_batch), lhs_batch)
-    lhs_data = lhs_data.transpose(perm + list(range(n_batch, lhs_data.ndim)))
-    lhs_indices = lhs_indices.transpose(perm + list(range(n_batch, lhs_indices.ndim)))
+  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_contracting_b, rhs_contracting_b = unzip2([
+    (l, r) for l, r in safe_zip(lhs_contracting, rhs_contracting) if l < n_batch])
+  lhs_contracting_s, rhs_contracting_s = unzip2([
+    (l, r) for l, r in safe_zip(lhs_contracting, rhs_contracting) if l >= n_batch])
 
-  # Move lhs contracting dimensions to the front of sparse dims, in order
-  n_contracting = len(lhs_contracting)
-  lhs_contracting = [d - n_batch for d in lhs_contracting]
-  perm = list(lhs_contracting) + remaining(range(n_sparse), lhs_contracting)
-  lhs_indices = lhs_indices[..., jnp.array(perm)]
+  # Reorder lhs batch dimensions
+  if lhs_batch or lhs_contracting_b:
+    batch_perm = [*lhs_batch, *remaining(range(n_batch), lhs_batch, lhs_contracting_b), *lhs_contracting_b]
+    lhs_data = lhs_data.transpose([*batch_perm, *range(n_batch, lhs_data.ndim)])
+    lhs_indices = lhs_indices.transpose([*batch_perm, *range(n_batch, lhs_indices.ndim)])
 
-  # Move rhs batch dimensions then contracting dimensions to the front, in order
-  perm = (list(rhs_batch) + list(rhs_contracting) +
-          remaining(range(rhs.ndim), rhs_batch, rhs_contracting))
-  rhs = rhs.transpose(perm)
+  # Reorder lhs sparse dimensions
+  if lhs_contracting_s:
+    lhs_contracting_s = [d - n_batch for d in lhs_contracting_s]
+    sparse_perm = jnp.array([*lhs_contracting_s, *remaining(range(n_sparse), lhs_contracting_s)])
+    lhs_indices = lhs_indices[..., sparse_perm]
 
-  out_array = jnp.zeros(out_aval.shape, out_aval.dtype)
+  # Reorder rhs dimensions
+  rhs_perm = [*rhs_batch, *rhs_contracting_b, *rhs_contracting_s,
+              *remaining(range(rhs.ndim), rhs_batch, rhs_contracting)]
+  rhs = rhs.transpose(rhs_perm)
+
   def result(out_array, lhs_data, lhs_indices, rhs):
-    idx = tuple(lhs_indices.T)
-    idx_right, idx_out = idx[:n_contracting], idx[n_contracting:]
-    ctc = [0] if n_contracting else []
+    idx = tuple(lhs_indices[..., i] for i in range(n_sparse))
+    idx_right = idx[:len(lhs_contracting_s)]
+    idx_out = idx[len(lhs_contracting_s):]
+    if idx_right and lhs_indices.ndim > 2:
+      idx_batch = jnp.meshgrid(
+          *(jnp.arange(n) for n in lhs_indices.shape[:-1]),
+          indexing='ij')[:lhs_indices.ndim - 2]
+      idx_right = (*idx_batch, *idx_right)
+    batch_dims = list(range(len(lhs_contracting_b) + bool(lhs_contracting_s)))
     prod = lax.dot_general(lhs_data, rhs.at[idx_right].get(mode='fill', fill_value=0),
-                           (([], []), (ctc, ctc)))
-    return out_array.at[idx_out].add(prod) if idx_out else prod.sum(0, dtype=out_array.dtype)
-  rhs = lax.expand_dims(rhs, range(len(rhs_batch), n_batch))
-  for _ in range(n_batch):
+                           (([], []), (batch_dims, batch_dims)))
+    if idx_out:
+      return out_array.at[idx_out].add(prod)
+    else:
+      return prod.sum(tuple(range(prod.ndim - out_array.ndim)), dtype=out_array.dtype)
+  for _ in range(n_batch - len(lhs_contracting_b)):
     result = broadcasting_vmap(result)
+  rhs = lax.expand_dims(rhs, range(len(rhs_batch), n_batch - len(lhs_contracting_b)))
+  out_array = jnp.zeros(out_aval.shape, out_aval.dtype)
   return result(out_array, lhs_data, lhs_indices, rhs)
 
 @bcoo_dot_general_p.def_abstract_eval
 def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape):
-  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  (lhs_contracting, _), (lhs_batch, _) = dimension_numbers
   n_batch, n_sparse, _, _ = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   out_shape = _dot_general_validated_shape(lhs_shape, rhs.shape, dimension_numbers)
 
@@ -560,10 +573,6 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
     raise NotImplementedError(
       "bcoo_dot_general batch dimensions must be among the batch dimensions in the sparse representtaion.\n"
       f"got lhs_batch={lhs_batch}, n_batch={n_batch}")
-
-  # TODO: support constraction of batch dimensions?
-  if any(d < n_batch for d in lhs_contracting):
-    raise NotImplementedError("bcoo_dot_general: contracting over batch dimensions.")
 
   # TODO: support contraction of dense dimensions?
   if any(d >= n_batch + n_sparse for d in lhs_contracting):

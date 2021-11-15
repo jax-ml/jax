@@ -15,12 +15,15 @@
 from functools import partial
 import itertools
 import operator
+import random
 import unittest
+from typing import NamedTuple, Tuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+import jax.random
 from jax import config
 from jax import dtypes
 from jax.experimental import sparse
@@ -31,7 +34,7 @@ from jax import jit
 from jax import tree_util
 from jax import vmap
 from jax._src import test_util as jtu
-from jax import random
+from jax._src.lax.lax import remaining, DotDimensionNumbers
 from jax import xla
 import jax.numpy as jnp
 from jax.util import split_list
@@ -47,6 +50,53 @@ MATMUL_TOL = {
   np.complex64: 1e-5,
   np.complex128: 1E-10,
 }
+
+class BcooDotGeneralProperties(NamedTuple):
+  lhs_shape: Tuple[int]
+  rhs_shape: Tuple[int]
+  dtype: np.dtype
+  n_batch: int
+  n_dense: int
+  dimension_numbers: DotDimensionNumbers
+
+  def testcase_name(self):
+    return "_{}_{}_nbatch={}_ndense={}_dimension_numbers={}".format(
+      jtu.format_shape_dtype_string(self.lhs_shape, self.dtype),
+      jtu.format_shape_dtype_string(self.rhs_shape, self.dtype),
+      self.n_batch, self.n_dense, self.dimension_numbers)
+
+
+def _iter_subsets(s):
+  return itertools.chain.from_iterable(itertools.combinations(s, n) for n in range(len(s) + 1))
+
+def _generate_bcoo_dot_general_properties(shapes, dtypes) -> BcooDotGeneralProperties:
+  """Generator of properties for bcoo_dot_general tests."""
+  rng = random.Random(0)
+
+  for shape in shapes:
+    for n_batch in range(len(shape) + 1):
+      for n_dense in range(len(shape) + 1 - n_batch):
+        n_sparse = len(shape) - n_batch - n_dense
+        subsets = split_list(range(len(shape)), [n_batch, n_sparse])
+        for batch_dims in _iter_subsets(range(n_batch)):
+          for contracting_dims in _iter_subsets(remaining(range(n_batch + n_sparse), batch_dims)):
+            # We want coverage of permutations & dtypes without generating hundreds of thousands
+            # of test cases; we do this by deterministic pseudo-random sampling instead of iterating.
+            rhs_permute = rng.sample(range(len(shape)), len(shape))
+            lhs_permute = list(itertools.chain.from_iterable(
+              rng.sample(subset, len(subset)) for subset in subsets))
+            yield BcooDotGeneralProperties(
+              lhs_shape=tuple(shape[p] for p in lhs_permute),
+              rhs_shape=tuple(shape[p] for p in rhs_permute),
+              dtype=rng.choice(dtypes),
+              n_batch=n_batch,
+              n_dense=n_dense,
+              dimension_numbers=(
+                ([lhs_permute.index(d) for d in contracting_dims], [rhs_permute.index(d) for d in contracting_dims]),
+                ([lhs_permute.index(d) for d in batch_dims], [rhs_permute.index(d) for d in batch_dims])
+              ),
+            )
+
 
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 
@@ -720,133 +770,63 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(M3, M4)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_lhs_shape={}_rhs_shape={}_lhs_contracting={}_rhs_contracting={}_n_dense={}"
-       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
-               jtu.format_shape_dtype_string(rhs_shape, dtype),
-               lhs_contracting, rhs_contracting, n_dense),
-       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "lhs_contracting": lhs_contracting, "rhs_contracting": rhs_contracting,
-       "n_dense": n_dense}
-      for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
-          [(5,), (6,), [], []],
-          [(5,), (5,), [0], [0]],
-          [(5, 7), (5,), [0], [0]],
-          [(7, 5), (5,), [1], [0]],
-          [(3, 5), (2, 5), [1], [1]],
-          [(5, 3), (5, 2), [0], [0]],
-          [(5, 3, 2), (5, 2, 4), [0], [0]],
-          [(5, 3, 2), (5, 2, 4), [0,2], [0,1]],
-          [(5, 3, 2), (3, 5, 2, 4), [0,2], [1,2]],
-          [(1, 2, 2, 3), (1, 2, 3, 1), [1], [1]],
-          [(3, 2), (2, 4), [1], [0]],
-      ]
-      for n_dense in range(len(lhs_shape) - max(lhs_contracting, default=0))
-      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
-  def test_bcoo_dot_general_contract_only(self, lhs_shape, rhs_shape, dtype,
-                                          lhs_contracting, rhs_contracting, n_dense):
+      {"testcase_name": props.testcase_name(), "props": props}
+      for props in _generate_bcoo_dot_general_properties(
+        shapes=[(5,), (2, 3), (2, 3, 4), (2, 3, 4, 4)],
+        dtypes=jtu.dtypes.floating + jtu.dtypes.complex,
+      )))
+  def test_bcoo_dot_general(self, props: BcooDotGeneralProperties):
     rng = jtu.rand_small(self.rng())
     rng_sparse = rand_sparse(self.rng())
+
     def args_maker():
-      lhs = rng_sparse(lhs_shape, dtype)
-      rhs = rng(rhs_shape, dtype)
-      data, indices = sparse.bcoo_fromdense(lhs, n_dense=n_dense)
+      lhs = rng_sparse(props.lhs_shape, props.dtype)
+      rhs = rng(props.rhs_shape, props.dtype)
+      data, indices = sparse.bcoo_fromdense(lhs, n_batch=props.n_batch, n_dense=props.n_dense)
       return data, indices, lhs, rhs
-    dimension_numbers = ((lhs_contracting, rhs_contracting), ([], []))
 
     def f_dense(data, indices, lhs, rhs):
-      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+      return lax.dot_general(lhs, rhs, dimension_numbers=props.dimension_numbers)
 
     def f_sparse(data, indices, lhs, rhs):
-      return sparse.bcoo_dot_general(data, indices, rhs,
-                                         lhs_shape=lhs.shape,
-                                         dimension_numbers=dimension_numbers)
+      return sparse.bcoo_dot_general(data, indices, rhs, lhs_shape=lhs.shape,
+                                     dimension_numbers=props.dimension_numbers)
 
-    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
-    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
+    tol = {'float32': 3E-2} if jtu.device_under_test() == 'tpu' else {}
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker, tol=tol)
+    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker, tol=tol)
     # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_lhs_shape={}_rhs_shape={}_dimension_numbers={}_n_batch={}_n_dense={}"
-       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
-               jtu.format_shape_dtype_string(rhs_shape, dtype),
-               dimension_numbers, n_batch, n_dense),
-       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "dimension_numbers": dimension_numbers,
-       "n_batch": n_batch, "n_dense": n_dense}
-      for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
-          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
-          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 2, 0),
-          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 1, 0),
-          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 2, 0),
-          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 0),
-          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 1),
-      ]
-      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
-  def test_bcoo_dot_general_contract_and_batch(self, lhs_shape, rhs_shape, dtype,
-                                               dimension_numbers, n_batch, n_dense):
+      {"testcase_name": props.testcase_name(), "props": props}
+      for props in _generate_bcoo_dot_general_properties(
+        shapes=[(5,), (2, 3), (2, 3, 4), (2, 3, 4, 4)],
+        dtypes=jtu.dtypes.floating + jtu.dtypes.complex,
+      )))
+  def test_bcoo_rdot_general(self, props: BcooDotGeneralProperties):
     rng = jtu.rand_small(self.rng())
     rng_sparse = rand_sparse(self.rng())
+
+    lhs_shape, rhs_shape = props.rhs_shape, props.lhs_shape
+    dimension_numbers = tuple(d[::-1] for d in props.dimension_numbers)
+
     def args_maker():
-      lhs = rng_sparse(lhs_shape, dtype)
-      rhs = rng(rhs_shape, dtype)
-      data, indices = sparse.bcoo_fromdense(lhs, n_batch=n_batch, n_dense=n_dense)
+      lhs = rng_sparse(lhs_shape, props.dtype)
+      rhs = rng(rhs_shape, props.dtype)
+      data, indices = sparse.bcoo_fromdense(rhs, n_batch=props.n_batch, n_dense=props.n_dense)
       return data, indices, lhs, rhs
 
     def f_dense(data, indices, lhs, rhs):
       return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
 
     def f_sparse(data, indices, lhs, rhs):
-      return sparse.bcoo_dot_general(data, indices, rhs,
-                                         lhs_shape=lhs.shape,
-                                         dimension_numbers=dimension_numbers)
+      return sparse.bcoo_rdot_general(lhs, data, indices, rhs_shape=rhs.shape,
+                                      dimension_numbers=dimension_numbers)
 
-    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
-    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
-    # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
-    # self._CompileAndCheck(f_sparse, args_maker)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_lhs_shape={}_rhs_shape={}_dimension_numbers={}_n_batch={}_n_dense={}"
-       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
-               jtu.format_shape_dtype_string(rhs_shape, dtype),
-               dimension_numbers, n_batch, n_dense),
-       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "dimension_numbers": dimension_numbers,
-       "n_batch": n_batch, "n_dense": n_dense}
-      for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
-          ((3, 2, 4), (3, 3, 2), (([1], [2]), ([0], [0])), 1, 0),
-          ((3, 2, 4), (3, 3, 2), (([1], [2]), ([0], [0])), 2, 0),
-          ((2, 3, 4), (3, 3, 2), (([0], [2]), ([1], [0])), 1, 0),
-          ((2, 3, 4), (3, 3, 2), (([0], [2]), ([1], [0])), 2, 0),
-          ((3, 4, 3, 2), (3, 4, 2, 4), (([3], [2]), ([0], [0])), 1, 0),
-          ((3, 4, 3, 2), (3, 4, 2, 4), (([3], [2]), ([0, 1], [0, 1])), 2, 0),
-          ((3, 4, 3, 2), (3, 4, 2, 4), (([3], [2]), ([0, 1], [0, 1])), 2, 1),
-      ]
-      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
-  def test_bcoo_rdot_general_contract_and_batch(self, lhs_shape, rhs_shape, dtype,
-                                                dimension_numbers, n_batch, n_dense):
-    rng = jtu.rand_small(self.rng())
-    rng_sparse = rand_sparse(self.rng())
-    def args_maker():
-      lhs = rng(lhs_shape, dtype)
-      rhs = rng_sparse(rhs_shape, dtype)
-      data, indices = sparse.bcoo_fromdense(rhs, n_batch=n_batch, n_dense=n_dense)
-      return data, indices, lhs, rhs
-
-    def f_dense(data, indices, lhs, rhs):
-      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
-
-    def f_sparse(data, indices, lhs, rhs):
-      return sparse.bcoo_rdot_general(lhs, data, indices,
-                                          rhs_shape=rhs.shape,
-                                          dimension_numbers=dimension_numbers)
-
-    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
-    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
+    tol = {'float32': 3E-2} if jtu.device_under_test() == 'tpu' else {}
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker, tol=tol)
+    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker, tol=tol)
     # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
@@ -903,10 +883,9 @@ class BCOOTest(jtu.JaxTestCase):
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
           ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 1, 0),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 0),
-          # These require contraction over batch & dense dimensions
-          # which is not yet implemented:
-          # ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 2, 0),
-          # ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 2, 0),
+          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 2, 0),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 2, 0),
+          # This requires contraction over dense dimensions, which is not yet implemented:
           # ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 1),
       ]
       for dtype in jtu.dtypes.floating))
@@ -1531,7 +1510,7 @@ class SparseRandomTest(jtu.JaxTestCase):
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)))
   def test_random_bcoo(self, shape, dtype, n_batch, n_dense):
-    key = random.PRNGKey(1701)
+    key = jax.random.PRNGKey(1701)
     mat = sparse.random_bcoo(key, shape=shape, dtype=dtype, n_batch=n_batch, n_dense=n_dense)
 
     mat_dense = mat.todense()

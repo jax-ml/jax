@@ -21,6 +21,7 @@ import itertools as it
 from functools import partial
 
 from . import maps
+from .gsda import GlobalShardedDeviceArray as GSDA
 from .. import core
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg, Lowered
@@ -169,10 +170,10 @@ def pjit(fun: Callable,
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axis_resources = tuple(in_axis_resources)
 
-  in_axis_resources, _, _ = \
-      _prepare_axis_resources(in_axis_resources, "in_axis_resources")
-  out_axis_resources, _, _ = \
-      _prepare_axis_resources(out_axis_resources, "out_axis_resources")
+  in_axis_resources, _, _ = _prepare_axis_resources(
+      in_axis_resources, "in_axis_resources")
+  out_axis_resources, _, _ = _prepare_axis_resources(
+      out_axis_resources, "out_axis_resources")
 
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
@@ -210,11 +211,16 @@ def pjit(fun: Callable,
       donated_invars = (False,) * len(args_flat)
 
     local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
-    jaxpr, in_axis_resources_flat, out_axis_resources_flat = \
-        _pjit_jaxpr(flat_fun, mesh, local_in_avals,
-                    in_tree, hashable_pytree(in_axis_resources),
-                    HashableFunction(out_tree, closure=()), hashable_pytree(out_axis_resources),
-                    maps._positional_semantics)
+    # TODO(yashkatariya): Remove `is_gsda` check when special value for in_axis_resources
+    # is added for GSDA.
+    is_gsda = all(isinstance(a, GSDA) for a in args_flat)
+    jaxpr, in_axis_resources_flat, out_axis_resources_flat = _pjit_jaxpr(
+        flat_fun, mesh, local_in_avals, in_tree,
+        hashable_pytree(in_axis_resources),
+        HashableFunction(out_tree, closure=()),
+        hashable_pytree(out_axis_resources),
+        (maps._PositionalSemantics.GLOBAL
+         if is_gsda else maps._positional_semantics))
     params = dict(
         jaxpr=jaxpr,
         in_axis_resources=in_axis_resources_flat,

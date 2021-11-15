@@ -116,7 +116,6 @@ try:
 except:
   tpu_driver_client = None  # type: ignore
 
-
 cuda_path: Optional[str]
 cuda_path = os.path.join(os.path.dirname(jaxlib.__file__), "cuda")
 if not os.path.isdir(cuda_path):

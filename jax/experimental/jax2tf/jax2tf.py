@@ -408,7 +408,8 @@ def convert(fun: Callable,
         @tf.custom_gradient
         def converted_fun_flat_with_custom_gradient(*args_flat: TfVal) -> TfVal:
           out_with_avals = _interpret_fun(flat_fun, args_flat, args_avals_flat,
-                                          name_stack)
+                                          name_stack,
+                                          fresh_constant_cache=True)
           outs, out_avals = util.unzip2(out_with_avals)
           return (tuple(outs),
                   partial(converted_grad_fn, _out_cts_avals=tuple(out_avals)))
@@ -416,7 +417,7 @@ def convert(fun: Callable,
         out_flat = converted_fun_flat_with_custom_gradient(*args_flat)
       else:
         out_with_avals = _interpret_fun(flat_fun, args_flat, args_avals_flat,
-                                        name_stack)
+                                        name_stack, fresh_constant_cache=True)
         outs, out_avals = util.unzip2(out_with_avals)
         message = ("The jax2tf-converted function does not support gradients. "
                    "Use `with_gradient` parameter to enable gradients")
@@ -470,13 +471,16 @@ def _extended_name_stack(extra_name_stack: Optional[str]):
 def _interpret_fun(
     fun: lu.WrappedFun, in_vals: Sequence[TfVal],
     in_avals: Sequence[core.ShapedArray],
-    extra_name_stack: Optional[str]
+    extra_name_stack: Optional[str],
+    fresh_constant_cache: bool = False
 ) -> Sequence[Tuple[TfVal, core.ShapedArray]]:
   try:
     prev_constant_cache = _thread_local_state.constant_cache
+    prev_constant_cache_keys = set(prev_constant_cache.keys()) if prev_constant_cache is not None else set()
     # Start a new cache, so that we don't share constants across tf.function
     # boundaries.
-    _thread_local_state.constant_cache = {}
+    if fresh_constant_cache:
+      _thread_local_state.constant_cache = {}
 
     with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
       fun = _interpret_subtrace(fun, main, in_avals)
@@ -486,6 +490,11 @@ def _interpret_fun(
               fun.call_wrapped(*in_vals)
         del main
   finally:
+    if prev_constant_cache is not None and not fresh_constant_cache:
+      newly_added_keys = set(prev_constant_cache.keys()) - prev_constant_cache_keys
+      # Delete the newly added keys
+      for k in newly_added_keys:
+        del prev_constant_cache[k]
     _thread_local_state.constant_cache = prev_constant_cache
 
   return tuple(out_vals)
@@ -614,7 +623,8 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     # collected and reused for a different value, which would create correctness
     # issues. We keep the `val` alive by storing in the cache the pair
     # `(val, tf_val)`.
-    if memoize_constants and _thread_local_state.constant_cache is not None:
+    do_memoize = (memoize_constants and np.shape(val) and _thread_local_state.constant_cache is not None)
+    if do_memoize:
       _, tf_val = _thread_local_state.constant_cache.get(const_key, (None, None))
     else:
       tf_val = None
@@ -624,7 +634,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       if jax_dtype == dtypes.float0:
         val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
       tf_val = tf.convert_to_tensor(val, dtype=conversion_dtype)
-      if memoize_constants and _thread_local_state.constant_cache is not None:
+      if do_memoize:
         _thread_local_state.constant_cache[const_key] = (val, tf_val)
     return tf_val, jax_dtype
 

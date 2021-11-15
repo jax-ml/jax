@@ -15,6 +15,7 @@
 import contextlib
 import dataclasses
 import logging
+import re
 import os
 
 from typing import Any, Callable, List, Optional, Sequence, Tuple
@@ -420,6 +421,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
           dtype=tf.float32)
 
     return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)
+
+  def CountTfConstants(self, tf_fun: Callable, *args):
+    f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
+    return len(re.findall("tensor_content", str(f_tf_graph)))
 
   def CheckOpMetadata(self, jax_fun, x,
                       expected: Sequence[OpMetadataGraph],

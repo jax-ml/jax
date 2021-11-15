@@ -26,8 +26,12 @@ build --define=grpc_no_ares=true
 build -c opt
 
 build --config=short_logs
+
+build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
+
 ###########################################################################
 
+build:posix --copt=-fvisibility=hidden
 build:posix --copt=-Wno-sign-compare
 build:posix --cxxopt=-std=c++14
 build:posix --host_cxxopt=-std=c++14
