@@ -141,7 +141,7 @@ def _flax_examples():
               module_kwargs=dict(
                   # TODO(marcvanzee): TFLite throws a concatenation error when
                   # `embedding_size != hidden_size`. I suppose some arrays are
-                  # concatenation with incompatible shapes, which could mean
+                  # concatenated with incompatible shapes, which could mean
                   # something is going wrong in the translation.
                   embedding_size=3,
                   hidden_size=3,

@@ -90,7 +90,9 @@ def make_module(spec: all_examples.ModuleSpec) -> ModuleToConvert:
     result = module.apply(*replace(spec.apply_args),
                           **replace(spec.apply_kwargs))
     # If any variables are mutable, `apply` returns a pair
-    # `(output, mutated_vars)`. In that case we only return the output.
+    # `(output, mutated_vars)`. In that case we only return the output, because
+    # `mutated_vars` is a `FrozenDict` and TFLite returns only some of the leafs
+    # in this dict, so it is not clear how to compare these.
     if mutable:
       return result[0]
     else:
