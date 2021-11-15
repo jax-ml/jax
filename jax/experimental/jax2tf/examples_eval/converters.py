@@ -55,7 +55,7 @@ def _get_random_data(dtype: jnp.dtype, shape: Tuple[int, ...]) -> Any:
   if np.issubdtype(dtype, np.integer):
     return np.random.randint(0, 100, size=shape, dtype=dtype)
   elif np.issubdtype(dtype, np.floating):
-    return np.array(np.random.uniform(size=shape), dtype=dtype)
+    return np.array(np.random.uniform(size=shape), dtype=dtype) * 100
   elif dtype == np.bool:
     return np.random.choice(a=[False, True], size=shape)
   else:
