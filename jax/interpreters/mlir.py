@@ -261,11 +261,15 @@ class LoweringContext:
   axis_env: xla.AxisEnv
   name_stack: str
 
+  # Should function results be tupled?
+  tuple_results: bool
+
   def __init__(self, platform: str, axis_env: xla.AxisEnv, name_stack: str,
                context: Optional[ir.Context] = None,
                module: Optional[ir.Module] = None,
                ip: Optional[ir.InsertionPoint] = None,
-               symbol_table: Optional[ir.SymbolTable] = None):
+               symbol_table: Optional[ir.SymbolTable] = None,
+               tuple_results: bool = True):
     self.context = context or ir.Context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
     self.ip = ip or ir.InsertionPoint(self.module.operation.opview.body)
@@ -273,6 +277,7 @@ class LoweringContext:
     self.platform = platform
     self.axis_env = axis_env
     self.name_stack = name_stack
+    self.tuple_results = tuple_results
     mhlo.register_mhlo_dialect(self.context)
     chlo.register_chlo_dialect(self.context)
 
@@ -308,7 +313,7 @@ def _flatten_lowering_ir_args(
 def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
                        jaxpr: core.ClosedJaxpr, *,
                        tuple_arguments: bool = False,
-                       uniquify_name: bool = True) -> str:
+                       public: bool = False) -> str:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -318,13 +323,21 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
   input_types = map(aval_to_ir_types, jaxpr.in_avals)
   output_types = map(aval_to_ir_types, jaxpr.out_avals)
   flat_input_types = util.flatten(input_types)
-  output_tuple_type = ir.TupleType.get_tuple(util.flatten(output_types))
+  flat_output_types = util.flatten(output_types)
+  if ctx.tuple_results:
+    output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+    fn_output_types = [output_tuple_type]
+  else:
+    fn_output_types = flat_output_types
   if tuple_arguments:
     input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
-    ftype = ir.FunctionType.get([input_tuple_type], [output_tuple_type])
+    fn_input_types = [input_tuple_type]
   else:
-    ftype = ir.FunctionType.get(flat_input_types, [output_tuple_type])
+    fn_input_types = flat_input_types
+  ftype = ir.FunctionType.get(fn_input_types, fn_output_types)
   func_op = builtin.FuncOp(name, ftype, ip=ctx.ip)
+  func_op.attributes["sym_visibility"] = ir.StringAttr.get(
+      "public" if public else "private")
   symbol_name = ir.StringAttr(ctx.symbol_table.insert(func_op)).value
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
@@ -340,7 +353,12 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
     out_vals = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
                              jaxpr.jaxpr, map(ir_constants, jaxpr.consts),
                              *unflattened_args)
-    std.ReturnOp([mhlo.TupleOp(output_tuple_type, util.flatten(out_vals)).result])
+    flat_outputs = util.flatten(out_vals)
+    if ctx.tuple_results:
+      std.ReturnOp([mhlo.TupleOp(output_tuple_type, flat_outputs).result])
+    else:
+      std.ReturnOp(flat_outputs)
+
   return symbol_name
 
 
@@ -447,16 +465,24 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   xla.check_backend_matches(backend, ctx.platform)
   output_types = map(aval_to_ir_types, avals_out)
   flat_output_types = util.flatten(output_types)
-  output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+  if ctx.tuple_results:
+    output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+    call_output_types = [output_tuple_type]
+  else:
+    call_output_types = flat_output_types
   sub_ctx = ctx.replace(
       name_stack=xla.extend_name_stack(ctx.name_stack, stack_name))
   symbol_name = lower_jaxpr_to_fun(sub_ctx, fn_name,
                                    core.ClosedJaxpr(call_jaxpr, ()))
-  call = std.CallOp([output_tuple_type],
+  call = std.CallOp(call_output_types,
                     ir.FlatSymbolRefAttr.get(symbol_name),
-                    _flatten_lowering_ir_args(args)).result
-  flat_results = [mhlo.GetTupleElementOp(typ, call, _i32_attr(i)).result
-                  for i, typ in enumerate(flat_output_types)]
+                    _flatten_lowering_ir_args(args))
+  if ctx.tuple_results:
+    flat_results = [
+        mhlo.GetTupleElementOp(typ, call.result, _i32_attr(i)).result
+        for i, typ in enumerate(flat_output_types)]
+  else:
+    flat_results = call.results
   return util.unflatten(flat_results, map(len, output_types))
 
 def _xla_call_lower(ctx, avals_in, avals_out, *args,
@@ -774,16 +800,21 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")
 
-  tuple_args = len(avals_in) > 100  # pass long arg lists as tuple for TPU
-
   ctx = LoweringContext(backend.platform if backend is not None else None,
                         xla.AxisEnv(nreps, (), ()), "")
+
+  backend = xb.get_backend(backend)
+  if backend.runtime_type == "iree":
+    tuple_args = False
+    ctx = ctx.replace(tuple_results=False)
+  else:
+    tuple_args = len(avals_in) > 100  # pass long arg lists as tuple for TPU
+
   with ctx.context, ir.Location.unknown(ctx.context):
     lower_jaxpr_to_fun(ctx, "main", core.ClosedJaxpr(jaxpr, consts),
-                       tuple_arguments=tuple_args, uniquify_name=False)
+                       tuple_arguments=tuple_args, public=True)
 
   assert not any(donated_invars), donated_invars
-  backend = xb.get_backend(backend)
   # TODO(b/203122001): implement buffer donation.
   # if backend.platform in ("gpu", "tpu"):
   #   donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
@@ -794,9 +825,10 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
   #   warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
   ctx.module.operation.verify()
   output = io.StringIO()
-  ctx.module.operation.print(file=output, enable_debug_info=True,
+  ctx.module.operation.print(file=output, #enable_debug_info=True,
                              print_generic_op_form=False)
   module = output.getvalue()
+  # print("MLIR module to be compiled:")
   # print(module)
   return XlaComputation(
       name, module, False, nreps, device, backend, tuple_args, avals_in,

@@ -1482,7 +1482,8 @@ class _DeviceArray(DeviceArray):  # type: ignore
     if config.jax_enable_checks:
       assert type(aval) is ShapedArray
       npy_value = self._value
-      assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
+      assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape, (
+          aval, npy_value.shape, npy_value.dtype)
       assert (device is None) or device is device_buffer.device()
 
   def _check_if_deleted(self):
