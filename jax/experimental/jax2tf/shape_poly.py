@@ -11,11 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Shape polymorphism support for jax2tf.
+"""Shape polymorphism support.
 
-For usage instructions, read the jax2tf.convert docstring, and the
+This was built initially for jax2tf, but it is now customizeable to be
+independent of TF. The idea is that we introduce a set of dimension variables
+at the top-level of a `jit` function. They are introduced implicitly by way
+of specifying for each dimension of each argument a dimension polynomial
+in terms of some dimension variables. All dimension variables are assumed to
+range over integer greater or equal to 1.
+
+Dimension polynomials essentially overaload some integer operations, such as
+add, multiply, equality, etc. The JAX NumPu layer and the LAX layers have been
+touched up to be sensitive to handling shapes that contain dimension
+polynomials.
+
+The best overall documentation at the moment is in the
+jax2tf.convert docstring, and the
 [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
-
 """
 import collections
 import dataclasses
@@ -23,18 +35,15 @@ import itertools
 import functools
 import operator as op
 import re
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
-
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
 import jax
 from jax._src.numpy import lax_numpy
 import opt_einsum
 from jax import config
 from jax import core
-from . import jax2tf as jax2tf_internal
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
 
 DimSize = core.DimSize
 Shape = core.Shape
@@ -62,7 +71,7 @@ class _DimMon(dict):
   """Represents a multivariate monomial, such as n^3 * m.
 
   The representation is a dictionary mapping var:exponent.
-  The `var` are strings and the exponents are >= 1.
+  The `var` are strings and the exponents are integers >= 1.
   The dimension variables are assumed to range over integers >= 1.
   """
   def __hash__(self):
@@ -124,20 +133,12 @@ class _DimMon(dict):
       elif diff > 0: d[key] = diff
     return _DimMon(d)
 
-  def evaluate(self, env: Dict[str, Any]) -> Any:
-    prod = lambda xs: functools.reduce(op.mul, xs) if xs else 1
-    def pow_opt(v, p):
-      return v if p == 1 else pow(v, p)
+  def evaluate(self, env: "ShapeEnv") -> Union["DimExpr", int]:
+    prod = lambda xs: functools.reduce(_multiply_dim_expr, xs) if xs else 1
+    def pow_opt(v: DimExpr, p: int) -> DimExpr:
+      return v if p == 1 else prod([v] * p)
     return prod([pow_opt(env[id], deg) for id, deg in self.items()])
 
-
-def _multiply(coeff, v: TfVal) -> TfVal:
-  try:
-    coeff = int(coeff)
-  except:
-    return coeff * v
-  else:
-    return 0 if coeff == 0 else v if coeff == 1 else coeff * v
 
 class _DimPolynomial(dict):
   """Polynomial with integer coefficients for polymorphic shapes.
@@ -375,12 +376,6 @@ class _DimPolynomial(dict):
         ub = None if ub is None else ub + coeff
     return lb, ub
 
-  def evaluate(self, env: Dict[str, Any]) -> Any:
-    def pow_opt(v, p):
-      return v if p == 1 else pow(v, p)
-    terms = [_multiply(coeff, mon.evaluate(env)) for mon, coeff in self.items()]
-    return sum(terms) if len(terms) > 1 else terms[0]
-
   @property
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
@@ -389,6 +384,10 @@ class _DimPolynomial(dict):
   def leading_term(self) -> Tuple[_DimMon, int]:
     """Returns the highest degree term that comes first lexicographically."""
     return max(self.items())
+
+  def evaluate(self, env: "ShapeEnv") -> Union["DimExpr", int]:
+    terms = [_multiply_dim_expr(mon.evaluate(env), coeff) for mon, coeff in self.items()]
+    return functools.reduce(_add_dim_expr, terms) if len(terms) > 1 else terms[0]
 
 
 def _ensure_poly(p: DimSize) -> _DimPolynomial:
@@ -504,15 +503,6 @@ dim_as_value_p.def_abstract_eval(_dim_as_value_abstract)
 def _dim_as_value(dim: DimSize):
   return dim_as_value_p.bind(dim=dim)
 
-def _dim_as_value_jax2tf(dim: DimSize):
-  dim_tf, = jax2tf_internal._eval_shape((dim,))
-  assert dim_tf.dtype == tf.int32
-  return dim_tf
-
-def _register_conversion_rules():
-  jax2tf_internal.tf_impl[dim_as_value_p] = _dim_as_value_jax2tf
-
-
 class PolyShape(tuple):
   """Tuple of polymorphic dimension specifications.
 
@@ -527,8 +517,8 @@ class PolyShape(tuple):
     return tuple.__new__(PolyShape, dim_specs)
 
 
-def parse_spec(spec: Optional[Union[str, PolyShape]],
-               arg_shape: Sequence[Optional[int]]) -> Tuple[DimSize, ...]:
+def _parse_spec(spec: Optional[Union[str, PolyShape]],
+                arg_shape: Sequence[Optional[int]]) -> Tuple[DimSize, ...]:
   """Parse the shape polymorphic specification for one array argument.
   Args:
     spec: a shape polymorphic specification, either a string, or a PolyShape.
@@ -612,8 +602,6 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
     if isinstance(dim_spec, str):
       dim_spec = dim_spec.strip()
     dim_size = arg_shape[i]
-    if isinstance(dim_size, tf.compat.v1.Dimension):
-      dim_size = dim_size.value
     if dim_size is None:
       def need_dim_var_msg():
         msg = (f"polymorphic shape {repr(spec)} in axis {i} must contain a dimension variable "
@@ -644,22 +632,128 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
   dims = tuple([_process_dim(i, ds) for i, ds in enumerate(spec_tuple)])
   return dims
 
+
+_Expr = TypeVar("_Expr")
+
+class DimExpr:
+  """Encapsulates an expression that denotes the value of a dimension size
+  for some intermediate value in the computation. It is computed based on the
+  input values for the top-level function arguments and the polymorphic
+  specifications.
+
+  This class is intedend to be subclassed. An example of DimExpr, is
+  shape_poly_tf.DimExprTfVal which computes dimension sizes using TF ops,
+  e.g., `tf.shape(arg0)[0] + 1`.
+  """
+  def __init__(self, raw: _Expr):
+    self._raw = raw
+
+  @property
+  def raw(self) -> _Expr:
+    """Returns the raw value."""
+    return self._raw
+
+  @classmethod
+  def for_arg(cls, arg: _Expr) -> Sequence["DimExpr"]:
+    """A list of dimension expressions, one for each dimensionof arg."""
+    raise NotImplementedError
+
+  def is_constant(self) -> Optional[int]:
+    raise NotImplementedError
+
+  def add(self, other: Union["DimExpr", int]) -> "DimExpr":
+    raise NotImplementedError
+
+  def subtract(self, other: Union["DimExpr", int]) -> "DimExpr":
+    raise NotImplementedError
+
+  def multiply(self, other: Union["DimExpr", int]) -> "DimExpr":
+    raise NotImplementedError
+
+  def divmod(self, factor: int) -> Tuple["DimExpr", "DimExpr"]:
+    """Like Python divmod."""
+    raise NotImplementedError
+
+
+def _add_dim_expr(v1: Union["DimExpr", int],
+                  v2: Union["DimExpr", int]) -> Union["DimExpr", int]:
+  if isinstance(v1, DimExpr):
+    return v1.add(v2) if v2 != 0 else v1
+  elif isinstance(v2, DimExpr):
+    return v2.add(v1) if v1 != 0 else v2
+  else:
+    return v1 + v2  # integers
+
+
+def _multiply_dim_expr(v1: Union["DimExpr", int],
+                       v2: Union[DimExpr, int]) -> Union[DimExpr, int]:
+  if isinstance(v1, DimExpr):
+    return v1.multiply(v2) if v2 != 1 else v1
+  elif isinstance(v2, DimExpr):
+    return v2.multiply(v1) if v1 != 1 else v2
+  else:
+    return v1 * v2  # integers
+
+
 @dataclasses.dataclass
 class DimEquation:
-  # Represents poly == tf_expr
+  # Represents poly == _expr
   poly: _DimPolynomial
-  tf_expr: TfVal
+  dim_expr: DimExpr
 
-# A dimension environment maps dimension variables to TF expressions that
-# compute the value of the dimension. These expressions refer to the TF
+# A dimension environment maps dimension variables to expressions that
+# compute the value of the dimension. These expressions refer to the
 # function arguments.
-ShapeEnv = Dict[str, TfVal]
+ShapeEnv = Dict[str, DimExpr]
+DType = Any
 
-def eval_shape(shape: Sequence[DimSize], shape_env: Dict[str, TfVal]) -> Sequence[TfVal]:
-  return tuple(d.evaluate(shape_env) if type(d) is _DimPolynomial else d   # type: ignore
+def eval_shape(shape: Sequence[DimSize], shape_env: ShapeEnv) -> Sequence[_Expr]:
+  def eval_dim(d: DimSize) -> Any:
+    d1 = d.evaluate(shape_env)  # type: ignore[union-attr]
+    if isinstance(d1, int):
+      return d1
+    else:
+      return d1.raw
+  return tuple(eval_dim(d) if type(d) is _DimPolynomial else d   # type: ignore
                for d in shape)
 
-def solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
+def args_avals_and_env(
+    arg_shapes: Sequence[Sequence[Optional[int]]],
+    arg_jax_dtypes: Sequence[DType],
+    polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]],
+    arg_dim_exprs: Sequence[Sequence[DimExpr]]) -> \
+  Tuple[Sequence[core.ShapedArray], ShapeEnv]:
+  """Computes abstract values and a dimension environment for arguments.
+
+  Args:
+    arg_shapes: the shapes for the arguments, possibly having None dimensions.
+    arg_dtypes: the inferred JAX dtypes for the args.
+    polymorphic_shapes: the polymorphic specifications for the arguments.
+    arg_dim_exprs: an expression that represents each dimension of each argument.
+  Returns: a tuple of: a sequence of abstract values corresponding to the
+    arguments, and a dimension variable environment.
+  """
+  dim_equations: List[DimEquation] = []
+
+  def input_aval(arg_shape: Sequence[Optional[int]],
+                 arg_jax_dtype: DType,
+                 polymorphic_shape: Optional[str],
+                 arg_dim_exprs: Sequence[DimExpr]) -> core.ShapedArray:
+    """The abstract value for an input."""
+    aval_shape = _parse_spec(polymorphic_shape, arg_shape)
+    for i, d in enumerate(aval_shape):
+      if is_poly_dim(d):
+        dim_equations.append(DimEquation(
+            poly=d, dim_expr=arg_dim_exprs[i]))  # type: ignore
+
+    return core.ShapedArray(aval_shape, arg_jax_dtype)
+
+  avals = tuple(map(input_aval, arg_shapes, arg_jax_dtypes, polymorphic_shapes, arg_dim_exprs))  # type: ignore
+
+  shapeenv = _solve_dim_equations(dim_equations)
+  return avals, shapeenv
+
+def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
   # Returns a shape environment if it can solve all dimension variables.
   # Raises an exception if it cannot.
   shapeenv: ShapeEnv = {}
@@ -667,24 +761,24 @@ def solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
   def _shapeenv_to_str() -> str:
     if shapeenv:
       return (" Partial solution: " +
-              ", ".join([f"{var} = {val}" for var, val in shapeenv.items()]) + ".")
+              ", ".join([f"{var} = {val.raw}" for var, val in shapeenv.items()]) + ".")
     else:
       return ""
 
   def process_one_eqn(eqn: DimEquation) -> bool:
-    # Try to rewrite the equation as "var * factor_var = tf_expr" (a linear
+    # Try to rewrite the equation as "var * factor_var = dim_expr" (a linear
     # uni-variate equation. Return False if this rewrite fails.
     # Otherwise, add the variable to shapeenv and return True.
 
-    # The invariant is: var * factor_var + rest_eqn_poly = tf_expr
+    # The invariant is: var * factor_var + rest_eqn_poly = dim_expr
     var, factor_var = None, None
-    tf_expr = eqn.tf_expr
+    dim_expr = eqn.dim_expr
 
     for mon, factor in eqn.poly.items():
       # Perhaps we can already evaluate this monomial (all vars solved)
       try:
         mon_value = mon.evaluate(shapeenv)
-        tf_expr = tf.math.subtract(tf_expr, _multiply(factor, mon_value))
+        dim_expr = dim_expr.subtract(_multiply_dim_expr(mon_value, factor))
         continue
       except KeyError:
         # There are some indeterminate variables. We handle only the case of
@@ -697,37 +791,33 @@ def solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
       return False
 
     if var is not None:
-      try:
-        var_value = tf.math.floordiv(tf_expr, factor_var) if factor_var != 1 else tf_expr
-        # Check that the division is even. Works only in eager mode.
-        if tf.math.floormod(tf_expr, factor_var).numpy() != 0:
-          msg = (f"Dimension variable {var} must have integer value >= 1. "  # type: ignore
-                 f"Found value {int(tf_expr.numpy()) / factor_var} when solving "
-                 f"{eqn.poly} == {eqn.tf_expr}.{_shapeenv_to_str()}")
-          raise ValueError(msg)
-        if var_value.numpy() <= 0:
-          msg = (f"Dimension variable {var} must have integer value >= 1. "
-                 f"Found value {int(var_value.numpy())} when solving "
-                 f"{eqn.poly} == {eqn.tf_expr}.{_shapeenv_to_str()}")
-          raise ValueError(msg)
-      except AttributeError:
+      var_value, var_remainder = dim_expr.divmod(factor_var)  # type: ignore
+      # Check that the division is even. Works only in eager mode.
+      var_remainder_int = var_remainder.is_constant()
+      if var_remainder_int is not None and var_remainder_int != 0:
         # TODO(necula): check even in graph mode, by embedding the checks in
         # the graph.
-        pass
+        msg = (f"Dimension variable {var} must have integer value >= 1. "  # type: ignore
+               f"Found value {int(dim_expr.is_constant()) / factor_var} when solving "
+               f"{eqn.poly} == {eqn.dim_expr}.{_shapeenv_to_str()}")
+        raise ValueError(msg)
+      var_value_int = var_value.is_constant()
+      if var_value_int is not None and var_value_int <= 0:
+        msg = (f"Dimension variable {var} must have integer value >= 1. "
+               f"Found value {int(var_value_int)} when solving "
+               f"{eqn.poly} == {eqn.dim_expr.raw}.{_shapeenv_to_str()}")
+        raise ValueError(msg)
+
       shapeenv[var] = var_value
       return True
     else:
       # All variables are resolved for this equation
-      try:
-        if tf_expr.numpy() != 0:
-          err_msg = (
-              "Found inconsistency when solving "
-              f"{eqn.poly} == {eqn.tf_expr}.{_shapeenv_to_str()}")
-          raise ValueError(err_msg)
-      except AttributeError:
-        # TODO(necula): check that the equation is satisfied even in graph
-        # mode.
-        pass
+      dim_expr_int = dim_expr.is_constant()
+      if dim_expr_int is not None and dim_expr_int != 0:
+        err_msg = (
+            "Found inconsistency when solving "
+            f"{eqn.poly} == {eqn.dim_expr.raw}.{_shapeenv_to_str()}")
+        raise ValueError(err_msg)
       return True
 
   while True:
