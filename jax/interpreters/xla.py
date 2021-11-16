@@ -463,10 +463,11 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
     msg = "primitive arguments must be colocated on the same device, got {}"
     raise ValueError(msg.format(", ".join(map(str, devices)))) from err
 
-def primitive_subcomputation(prim: core.Primitive, *avals: core.AbstractValue,
-                             **params):
+def primitive_subcomputation(platform: str, prim: core.Primitive,
+                             *avals: core.AbstractValue, **params):
   c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
-  f = lower_fun(prim.bind, multiple_results=prim.multiple_results)
+  f = lower_fun(prim.bind, multiple_results=prim.multiple_results,
+                backend=platform)
   xla_args, _ = _xla_callable_args(c, avals, tuple_args=False)
   ans = f(c, *xla_args, **params)
   return c.build(ans)
@@ -538,8 +539,7 @@ class TranslationContext:
 
 def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
                   consts: Sequence[XlaOp], *args: XlaOp) -> Sequence[XlaOp]:
-  # TODO(phawkins): make platform non-optional.
-  # assert ctx.platform is not None
+  assert ctx.platform is not None
   def read(v):
     if type(v) is Literal:
       return pyval_to_ir_constants(ctx.builder, canonicalize_dtype(v.val))
@@ -836,7 +836,6 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   ctx = TranslationContext(c, platform, AxisEnv(nreps, (), ()),
                            extend_name_stack(wrap_name(name, 'jit')))
   out_nodes = jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-  backend = xb.get_backend(backend)
   # There is a non-zero cost to building an output tuple, particularly on TPU.
   # Avoid it if the output arity is 1.
   output = out_nodes[0] if len(out_nodes) == 1 else xops.Tuple(c, out_nodes)
@@ -1337,7 +1336,8 @@ def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
               backend=None, new_style: bool = False) -> Callable:
   if new_style:
     def f_new(ctx: TranslationContext, avals_in: Sequence[core.AbstractValue],
-              avals_out: Sequence[core.AbstractValue], *xla_args: xc.XlaOp,
+              avals_out: Sequence[core.AbstractValue],
+              *xla_args: xc.XlaOp,
               **params) -> Sequence[xc.XlaOp]:
       wrapped_fun = lu.wrap_init(fun, params)
       if not multiple_results:
@@ -1353,6 +1353,12 @@ def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
     return f_new
 
   # TODO(phawkins): migrate dependent code & always use new_style=True.
+
+  if backend is None:
+    # The user didn't specify a backend. This isn't possible with the new style
+    # API.
+    backend = "backend_not_specified"
+
   def f(c, *xla_args, **params):
     avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
     return f_with_avals(c, avals, xla_args, params)

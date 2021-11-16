@@ -270,6 +270,7 @@ class LoweringContext:
                ip: Optional[ir.InsertionPoint] = None,
                symbol_table: Optional[ir.SymbolTable] = None,
                tuple_results: bool = True):
+    assert platform is not None
     self.context = context or ir.Context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
     self.ip = ip or ir.InsertionPoint(self.module.operation.opview.body)
@@ -767,8 +768,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
 
   nreps = xla.jaxpr_replicas(jaxpr)
   device = xla._xla_callable_device(nreps, backend, device, arg_devices)
-  backend = xb.get_device_backend(device) if device else (
-      xb.get_backend(backend) if backend is not None else None)
+  backend = xb.get_device_backend(device) if device else xb.get_backend(backend)
 
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
@@ -800,10 +800,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")
 
-  ctx = LoweringContext(backend.platform if backend is not None else None,
-                        xla.AxisEnv(nreps, (), ()), "")
-
-  backend = xb.get_backend(backend)
+  ctx = LoweringContext(backend.platform, xla.AxisEnv(nreps, (), ()), "")
   if backend.runtime_type == "iree":
     tuple_args = False
     ctx = ctx.replace(tuple_results=False)
@@ -1898,7 +1895,8 @@ translations[pe.remat_call_p] = _remat_lowering
 
 def _fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
                        avals_in, avals_out, *args, **params):
-  xla_computation = xla.primitive_subcomputation(prim, *avals_in, **params)
+  xla_computation = xla.primitive_subcomputation(ctx.platform, prim, *avals_in,
+                                                 **params)
   submodule_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
   submodule = ir.Module.parse(submodule_str)
   callee_name = None

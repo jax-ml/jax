@@ -5112,7 +5112,7 @@ def _scatter_translation_rule(ctx, avals_in, avals_out, operand, indices,
 
   init_value = xla.pyval_to_ir_constant(c, np.array(0, operand_aval.dtype))
   update_computation = _reduction_computation(
-      c, update_jaxpr, update_consts, init_value)
+      ctx, update_jaxpr, update_consts, init_value)
   return [xops.Scatter(
       operand, indices, updates, update_computation,
       _scatter_dimensions_proto(indices_aval.shape, dimension_numbers),
@@ -5619,9 +5619,9 @@ def _reduce_translation_rule(ctx, avals_in, avals_out, *values, computation,
   operands, init_values = split_list(values, [len(values) // 2])
   if len(operands) == 1:
     init_value = init_values[0]
-    xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
+    xla_computation = _reduction_computation(ctx, jaxpr, consts, init_value)
     return [xops.Reduce(c, operands, init_values, xla_computation, dimensions)]
-  xla_computation = _reduction_computation(c, jaxpr, consts, init_values,
+  xla_computation = _reduction_computation(ctx, jaxpr, consts, init_values,
                                            singleton=False)
   return xla.xla_destructure(
       c, xops.Reduce(c, operands, init_values, xla_computation, dimensions))
@@ -5648,7 +5648,9 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
   else:
     raise NotImplementedError  # loop and stack
 
-def _reduction_computation(c, jaxpr, consts, init_values, singleton=True):
+def _reduction_computation(ctx, jaxpr, consts, init_values, singleton=True):
+  c = ctx.builder
+  platform = ctx.platform
   if singleton:
     init_values = [init_values]
   shapes = safe_map(c.get_shape, init_values + init_values)
@@ -5656,7 +5658,7 @@ def _reduction_computation(c, jaxpr, consts, init_values, singleton=True):
   subc = xc.XlaBuilder("reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [xb.parameter(subc, i, shape) for i, shape in enumerate(shapes)]
-  ctx = xla.TranslationContext(subc, None, axis_env, '')
+  ctx = xla.TranslationContext(subc, platform, axis_env, '')
   out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, consts, *args)
   if singleton:
     return subc.build(out_nodes[0])
@@ -5762,7 +5764,7 @@ def _reduce_sum_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
   return [xops.Reduce(
       ctx.builder, [operand],
       [xla.pyval_to_ir_constant(ctx.builder, np.array(0, operand_aval.dtype))],
-      xla.primitive_subcomputation(add_p, scalar, scalar), axes)]
+      xla.primitive_subcomputation(ctx.platform, add_p, scalar, scalar), axes)]
 
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
@@ -5795,7 +5797,7 @@ def _reduce_prod_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
   return [xops.Reduce(
       ctx.builder, [operand],
       [xla.pyval_to_ir_constant(ctx.builder, np.array(1, operand_aval.dtype))],
-      xla.primitive_subcomputation(mul_p, scalar, scalar), axes)]
+      xla.primitive_subcomputation(ctx.platform, mul_p, scalar, scalar), axes)]
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   reducer = lambda x, y: [mul(x, y)]
@@ -5819,10 +5821,10 @@ def _reduce_chooser_translation_rule(prim, identity, ctx, avals_in, avals_out,
                                      operand, *, axes):
   operand_aval, = avals_in
   scalar = ShapedArray((), operand_aval.dtype)
-  return [xops.Reduce(ctx.builder, [operand],
-                      [xla.pyval_to_ir_constant(ctx.builder,
-                                                identity(operand_aval.dtype))],
-                      xla.primitive_subcomputation(prim, scalar, scalar), axes)]
+  return [xops.Reduce(
+      ctx.builder, [operand],
+      [xla.pyval_to_ir_constant(ctx.builder, identity(operand_aval.dtype))],
+      xla.primitive_subcomputation(ctx.platform, prim, scalar, scalar), axes)]
 
 def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -5949,9 +5951,10 @@ def _reduce_logical_shape_rule(operand, *, axes):
 def _reduce_logical_translation_rule(prim, identity, ctx, avals_in, avals_out,
                                      operand, *, axes):
   scalar = ShapedArray((), np.bool_)
-  return [xops.Reduce(ctx.builder, [operand],
-                      [xla.pyval_to_ir_constant(ctx.builder, identity(np.bool_))],
-                      xla.primitive_subcomputation(prim, scalar, scalar), axes)]
+  return [xops.Reduce(
+      ctx.builder, [operand],
+      [xla.pyval_to_ir_constant(ctx.builder, identity(np.bool_))],
+      xla.primitive_subcomputation(ctx.platform, prim, scalar, scalar), axes)]
 
 _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
                                       or_p, _get_max_identity)
@@ -5987,8 +5990,7 @@ def _reduce_window_translation_rule(ctx, avals_in, avals_out, operand,
                                     init_value, *, jaxpr, consts,
                                     window_dimensions, window_strides, padding,
                                     base_dilation, window_dilation):
-  xla_computation = _reduction_computation(ctx.builder, jaxpr, consts,
-                                           init_value)
+  xla_computation = _reduction_computation(ctx, jaxpr, consts, init_value)
   return [xops.ReduceWindowWithGeneralPadding(
     operand, init_value, xla_computation, window_dimensions,
     window_strides, base_dilation, window_dilation, padding)]
@@ -6038,7 +6040,8 @@ def _reduce_window_sum_translation_rule(ctx, avals_in, avals_out, operand, *,
   return [xops.ReduceWindowWithGeneralPadding(
     operand,
     xla.pyval_to_ir_constant(ctx.builder, np.array(0, operand_aval.dtype)),
-    xla.primitive_subcomputation(add_p, scalar, scalar), window_dimensions,
+    xla.primitive_subcomputation(ctx.platform, add_p, scalar, scalar),
+      window_dimensions,
     window_strides, base_dilation, window_dilation, padding)]
 
 def _reduce_window_sum_transpose_rule(cotangent, operand, *, window_dimensions,
@@ -6093,7 +6096,8 @@ def _reduce_window_chooser_translation_rule(
   return [xops.ReduceWindowWithGeneralPadding(
     operand,
     xla.pyval_to_ir_constant(ctx.builder, identity(operand_aval.dtype)),
-    xla.primitive_subcomputation(prim, scalar, scalar), window_dimensions,
+    xla.primitive_subcomputation(ctx.platform, prim, scalar, scalar),
+      window_dimensions,
     window_strides, base_dilation, window_dilation, padding)]
 
 def _reduce_window_chooser_jvp_rule(prim, g, operand, *, window_dimensions,
@@ -6215,9 +6219,8 @@ def _select_and_scatter_translation(
     ctx, avals_in, avals_out, operand, source, init_value, *, select_jaxpr,
     select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
     window_strides, padding):
-  c = ctx.builder
-  select = _reduction_computation(c, select_jaxpr, select_consts, init_value)
-  scatter = _reduction_computation(c, scatter_jaxpr, scatter_consts, init_value)
+  select = _reduction_computation(ctx, select_jaxpr, select_consts, init_value)
+  scatter = _reduction_computation(ctx, scatter_jaxpr, scatter_consts, init_value)
   return [xops.SelectAndScatterWithGeneralPadding(
     operand, select, window_dimensions, window_strides, padding, source,
     init_value, scatter)]
@@ -6239,9 +6242,10 @@ def _select_and_scatter_add_translation(
   c = ctx.builder
   dtype = operand_aval.dtype
   scalar = ShapedArray((), dtype)
-  select = xla.primitive_subcomputation(select_prim, scalar, scalar)
-  scatter = xla.primitive_subcomputation(or_p if dtype == np.bool_ else add_p,
-                                         scalar, scalar)
+  select = xla.primitive_subcomputation(
+      ctx.platform, select_prim, scalar, scalar)
+  scatter = xla.primitive_subcomputation(
+      ctx.platform, or_p if dtype == np.bool_ else add_p, scalar, scalar)
   zero = xla.pyval_to_ir_constant(c, np.array(0, dtype))
   # TODO(b/161704903): remove this workaround when XLA:CPU bug is fixed.
   expand_padding = (expand_padding and
@@ -6626,6 +6630,7 @@ def _sort_translation_rule(ctx, avals_in, avals_out, *operands, dimension,
   params = [xb.parameter(subc, 2 * i + j, xc.Shape.array_shape(typ, ()))
             for i, typ in enumerate(types) for j in range(2)]
   result = xla.lower_fun(partial(_sort_lt_comparator, num_keys=num_keys),
+                         backend=ctx.platform,
                          multiple_results=False)(subc, *params)
   comparator = subc.build(result)
   out = xops.Sort(c, operands, dimension=dimension, is_stable=is_stable,

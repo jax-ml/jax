@@ -803,7 +803,8 @@ def traceable_to_padded_translation(traceable):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
 
     operands_ = it.chain.from_iterable([*dims.values(), *operands])
-    ctx = xla.TranslationContext(c, None, xla.AxisEnv(1, (), ()), '')
+    platform = "cpu"  # TODO: don't hardwire in the CPU translation.
+    ctx = xla.TranslationContext(c, platform, xla.AxisEnv(1, (), ()), '')
     outs = xla.jaxpr_subcomp(ctx, jaxpr, xla._xla_consts(c, consts), *operands_)
     return xla._partition_outputs(
       [aval_to_num_buffers(aval) for aval in out_avals], outs)

@@ -1192,7 +1192,8 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, ctx, avals_in,
   else:
     pass # rocsolver does not return info
 
-  r = xla.lower_fun(jnp.triu, multiple_results=False)(c, r)
+  r = xla.lower_fun(jnp.triu, multiple_results=False,
+                    backend=ctx.platform)(c, r)
   return [q, r]
 
 qr_p = Primitive('qr')
