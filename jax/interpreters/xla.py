@@ -467,9 +467,16 @@ def primitive_subcomputation(platform: str, prim: core.Primitive,
                              *avals: core.AbstractValue, **params):
   c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
   f = lower_fun(prim.bind, multiple_results=prim.multiple_results,
-                backend=platform)
-  xla_args, _ = _xla_callable_args(c, avals, tuple_args=False)
-  ans = f(c, *xla_args, **params)
+                new_style=True)
+  xla_args, _ = _xla_callable_args(c, avals, tuple_args=False,
+                                   filter_tokens=False)
+  ctx = TranslationContext(builder=c, platform=platform,
+                           axis_env=AxisEnv(1, (), ()), name_stack="")
+  ans = f(ctx.replace(builder=c), avals, None, *xla_args, **params)
+  if prim.multiple_results:
+    ans = xops.Tuple(c, ans)
+  else:
+    ans, = ans
   return c.build(ans)
 
 def backend_compile(backend, built_c, options):
@@ -1046,7 +1053,8 @@ def _xla_callable_args(
     replicated=None,
     partitions=None,
     partitions_proto: bool = False,
-    donated_invars=None):
+    donated_invars=None,
+    filter_tokens=True):
   assert partitions is None or len(partitions) == len(avals)
   if not tuple_args:
     if replicated is None:
@@ -1060,7 +1068,7 @@ def _xla_callable_args(
                for part in partitions]
     counts = it.count()
     xla_args = [_xla_param(c, next(counts), xla_shape, r, p, partitions_proto)
-                if a is not abstract_token else xops.CreateToken(c)
+                if not (filter_tokens and a is abstract_token) else xops.CreateToken(c)
                 for (a, r, p) in safe_zip(avals, replicated, parts)
                 for xla_shape in aval_to_xla_shapes(a)]
     if donated_invars is not None:
@@ -1079,11 +1087,12 @@ def _xla_callable_args(
     else:
       tuple_parts = tuple(partitions)
     tuple_shape = xc.Shape.tuple_shape(
-        [shape for a in avals for shape in aval_to_xla_shapes(a) if a is not abstract_token])
+        [shape for a in avals for shape in aval_to_xla_shapes(a)
+         if not (filter_tokens and a is abstract_token)])
     tuple_param = _xla_param(c, 0, tuple_shape, replicated, tuple_parts, partitions_proto)
     xla_inputs = iter(xla_destructure(c, tuple_param))
-    xla_args = [next(xla_inputs) if a is not abstract_token else
-                xops.CreateToken(c) for a in avals]
+    xla_args = [next(xla_inputs) if not (filter_tokens and a is abstract_token)
+                else xops.CreateToken(c) for a in avals]
     assert next(xla_inputs, None) is None
     return xla_args, donated_invars
 

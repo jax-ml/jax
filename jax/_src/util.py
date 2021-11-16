@@ -95,7 +95,7 @@ def concatenate(xs: Iterable[Sequence[T]]) -> List[T]:
 
 flatten = concatenate
 
-def unflatten(xs: Iterable[T], ns: Sequence[int]) -> Sequence[Sequence[T]]:
+def unflatten(xs: Iterable[T], ns: Sequence[int]) -> List[List[T]]:
   """Splits `xs` into subsequences of lengths `ns`.
 
   Unlike `split_list`, the `sum(ns)` must be equal to `len(xs)`."""
