@@ -38,6 +38,7 @@ def csr_todense(c, data, indices, indptr, *, shape):
   """CSR to dense matrix."""
   data_dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(indices).element_type())
+  assert c.get_shape(indptr).element_type() == index_dtype
   rows, cols = shape
   nnz = c.get_shape(data).dimensions()[0]
 
@@ -99,6 +100,7 @@ def csr_matvec(c, data, indices, indptr, x, *, shape, transpose=False, compute_d
   """CSR matrix/vector multiply."""
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(indices).element_type())
+  assert c.get_shape(indptr).element_type() == index_dtype
   x_dtype = np.dtype(c.get_shape(x).element_type())
   rows, cols = shape
   nnz, = c.get_shape(data).dimensions()
@@ -136,6 +138,7 @@ def csr_matmat(c, data, indices, indptr, B, *, shape, transpose=False, compute_d
   """CSR from dense matrix."""
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(indices).element_type())
+  assert c.get_shape(indptr).element_type() == index_dtype
   B_dtype = np.dtype(c.get_shape(B).element_type())
   B_shape = c.get_shape(B).dimensions()
   rows, cols = shape
@@ -174,6 +177,7 @@ def coo_todense(c, data, row, col, *, shape):
   """COO to dense matrix."""
   data_dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(row).element_type())
+  assert c.get_shape(row).element_type() == index_dtype
   rows, cols = shape
   nnz = c.get_shape(data).dimensions()[0]
 
@@ -234,6 +238,7 @@ def coo_matvec(c, data, row, col, x, *, shape, transpose=False, compute_dtype=No
   """COO matrix/vector multiply."""
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(row).element_type())
+  assert c.get_shape(row).element_type() == index_dtype
   x_dtype = np.dtype(c.get_shape(x).element_type())
   rows, cols = shape
   nnz, = c.get_shape(data).dimensions()
@@ -271,6 +276,7 @@ def coo_matmat(c, data, row, col, B, *, shape, transpose=False, compute_dtype=No
   """COO from dense matrix."""
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(row).element_type())
+  assert c.get_shape(row).element_type() == index_dtype
   B_dtype = np.dtype(c.get_shape(B).element_type())
   B_shape = c.get_shape(B).dimensions()
   rows, cols = shape
