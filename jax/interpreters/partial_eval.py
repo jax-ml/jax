@@ -1189,7 +1189,7 @@ class JaxprStackFrame:
     outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.items())
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns)
-    jaxpr, constvals = _prune_convert_element_types(jaxpr, constvals)
+    jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     out_avals = [t.aval for t in out_tracers]
     return jaxpr, out_avals, constvals
@@ -1212,24 +1212,44 @@ class JaxprStackFrame:
     const_eqns = [eqn for eqn in self.eqns if set(eqn.invars) & constvars]
     return invar_positions, const_eqns
 
-def _prune_convert_element_types(jaxpr, constvals):
-  consts = dict(zip(jaxpr.constvars, constvals))
+def _const_folding_and_forwarding(jaxpr, constvals):
+  consts: Dict[Var, Any] = dict(zip(jaxpr.constvars, constvals))
+  var_subs: Dict[Var, Var] = {}  # not Dict[Var, Atom] b/c literals not inlined
   new_eqns = []
   for eqn in jaxpr.eqns:
-    if eqn.primitive is core.convert_element_type_p:
-      c = consts.get(eqn.invars[0])
-      if type(c) in core.literalable_types and not np.shape(c):
-        # constant-fold dtype conversion of literals to be inlined
-        consts[eqn.outvars[0]] = np.array(c, eqn.params['new_dtype'])
-        continue
-      if c is not None and dtypes.dtype(c) == eqn.params['new_dtype']:
-        # don't stage out no-op convert_element_type calls as clutter
-        consts[eqn.outvars[0]] = c
-        continue
+    # always apply invar substitutions
+    eqn = JaxprEqn([var_subs.get(v, v) for v in eqn.invars], eqn.outvars,
+                   eqn.primitive, eqn.params, eqn.source_info)
+    # if any inputs are constants and we have a constant-folding rule, apply it
+    if eqn.primitive in const_fold_rules and any(v in consts for v in eqn.invars):
+      consts_in = [consts.get(v) for v in eqn.invars]
+      consts_out, new_eqn = const_fold_rules[eqn.primitive](consts_in, eqn)
+      assert (new_eqn is None) == all(c is not None for c in consts_out)
+      for v, c in zip(eqn.outvars, consts_out):
+        if c is not None: consts[v] = c
+      if new_eqn is None: continue
+      else: eqn = new_eqn
+    # if the application trivially maps some inputs to outputs, simplify
+    if eqn.primitive in forwarding_rules:
+      fwd_vars, new_eqn = forwarding_rules[eqn.primitive](eqn)
+      assert (new_eqn is None) == all(v is not None for v in fwd_vars)
+      for v_orig, v_new in zip(eqn.outvars, fwd_vars):
+        if v_new is not None: var_subs[v_orig] = v_new
+      if new_eqn is None: continue
+      else: eqn = new_eqn
     new_eqns.append(eqn)
   new_constvars, new_constvals = unzip2(consts.items())
-  new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, jaxpr.outvars, new_eqns)
+  new_outvars = [var_subs.get(v, v) for v in jaxpr.outvars]
+  new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, new_outvars, new_eqns)
   return new_jaxpr, new_constvals
+
+ConstFoldRule = Callable[[List[Optional[Any]], JaxprEqn],
+                         Tuple[List[Optional[Any]], Optional[JaxprEqn]]]
+const_fold_rules: Dict[Primitive, ConstFoldRule] = {}
+
+ForwardingRule = Callable[[JaxprEqn],
+                          Tuple[List[Optional[Var]], Optional[JaxprEqn]]]
+forwarding_rules: Dict[Primitive, ForwardingRule] = {}
 
 def _inline_literals(jaxpr, constvals):
   # This function also ensures variables are labeled in a canonical ordering,
@@ -1280,7 +1300,7 @@ class DynamicJaxprTrace(core.Trace):
     aval = raise_to_shaped(get_aval(val), weak_type=dtypes.is_weakly_typed(val))
     tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
     self.frame.tracers.append(tracer)
-    var = self.frame.tracer_to_var[id(tracer)] = self.getconstvar(val)
+    var = self.frame.tracer_to_var[id(tracer)] = self.getconstvar(aval, val)
     self.frame.constvar_to_val[var] = val
     return tracer
 
@@ -1299,10 +1319,10 @@ class DynamicJaxprTrace(core.Trace):
     var = self.frame.tracer_to_var[id(tracer)] = self.frame.newvar(tracer.aval)
     return var
 
-  def getconstvar(self, c):
+  def getconstvar(self, aval, c):
     var = self.frame.constid_to_var.get(id(c))
     if var is None:
-      var = self.frame.constid_to_var[id(c)] = self.frame.newvar(get_aval(c))
+      var = self.frame.constid_to_var[id(c)] = self.frame.newvar(aval)
     return var
 
   def instantiate_const(self, val):

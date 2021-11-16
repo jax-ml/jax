@@ -4149,6 +4149,40 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertEqual(shapes, expected)
     self.assertIn('psum', str(jaxpr))
 
+  def test_weak_type_jit_invariance(self):
+    y = jnp.broadcast_to(3., (3,))
+    self.assertTrue(y.aval.weak_type)
+
+    def f():
+      return lax.convert_element_type(y, 'float32')
+
+    self.assertEqual(f().aval.weak_type, api.jit(f)().aval.weak_type)
+
+  def test_elide_trivial_convert_element_types(self):
+    # since we apply convert_element_type to a numpy.ndarray, the primitive is
+    # still bound and thus would appear in the jaxpr if we didn't clean it up
+    if config.x64_enabled:
+      x = np.arange(3, dtype='float64')
+    else:
+      x = np.arange(3, dtype='float32')
+
+    cet = partial(lax.convert_element_type, new_dtype=x.dtype)
+    jaxpr = api.make_jaxpr(lambda: cet(cet(cet(x))))()
+    self.assertLen(jaxpr.eqns, 0)
+
+  def test_elide_trivial_broadcasts(self):
+    # since we apply broadcast to a numpy.ndarray, the primitive is still bound
+    # and thus would appear in the jaxpr if we didn't clean it up
+    jaxpr = api.make_jaxpr(lambda: lax.broadcast(np.float32(3), ()))()
+    self.assertLen(jaxpr.jaxpr.eqns, 0)
+
+  def test_convert_element_type_literal_constant_folding(self):
+    # this convert_elemnt_type is nontrivial, but because it's on a scalar we
+    # constant-fold it
+    cet = partial(lax.convert_element_type, new_dtype='float16')
+    jaxpr = api.make_jaxpr(lambda: cet(3.))()
+    self.assertLen(jaxpr.eqns, 0)
+
 
 class CustomJVPTest(jtu.JaxTestCase):
 
