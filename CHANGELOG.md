@@ -13,6 +13,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   commits](https://github.com/google/jax/compare/jax-v0.2.25...main).
 
 ## jaxlib 0.1.74 (Unreleased)
+* Enabled peer-to-peer copies between GPUs. Previously, GPU copies were bounced via
+  the host, which is usually slower.
+* Added experimental MLIR Python bindings for use by JAX.
 
 ## jax 0.2.25 (Nov 10, 2021)
 * [GitHub
