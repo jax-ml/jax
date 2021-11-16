@@ -780,6 +780,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f_exe = self.jit(f).lower(1., 1.).compile()
     self.assertAllClose(f_exe(1., 1.), 1.)
 
+  def test_jit_lower_donate_argnums_available(self):
+    def f(*args):
+      x, *_ = args
+      return x
+    f_low = self.jit(f, donate_argnums=(0,)).lower(1., 1.)
+    f_com = f_low.compile()
+    f_low.donate_argnums == f_com.donate_argnums == (0,)
+
 
 class PythonJitTest(CPPJitTest):
 

@@ -488,17 +488,21 @@ class Lowered:
   querying properties of lowered computations across JAX's various
   lowering paths (``jit``, ``pmap``, etc.).
   """
-  __slots__ = ['in_tree', 'out_tree', '_lowering', '_no_kwargs']
+  __slots__ = ['in_tree', 'out_tree', 'donate_argnums', '_lowering',
+               '_no_kwargs']
 
   in_tree: PyTreeDef
   out_tree: PyTreeDef
+  donate_argnums: Tuple[int]
   _lowering: Union[xla.XlaComputation, pxla.MeshComputation]
   _no_kwargs: bool
 
-  def __init__(self, lowering, in_tree, out_tree, no_kwargs=False):
+  def __init__(self, lowering, in_tree, out_tree, donate_argnums,
+               no_kwargs=False):
     self._lowering = lowering
     self.in_tree = in_tree
     self.out_tree = out_tree
+    self.donate_argnums = donate_argnums
     self._no_kwargs = no_kwargs
 
   def _xla_computation(self):
@@ -508,7 +512,8 @@ class Lowered:
 
   def compile(self) -> 'Compiled':
     return Compiled(
-        self._lowering.compile(), self.in_tree, self.out_tree, self._no_kwargs)
+        self._lowering.compile(), self.in_tree, self.out_tree,
+        self.donate_argnums, self._no_kwargs)
 
 
 class Compiled:
@@ -519,17 +524,21 @@ class Compiled:
   common API for querying properties of compiled computations across
   JAX's various compilation paths and backends.
   """
-  __slots__ = ['in_tree', 'out_tree', '_executable', '_no_kwargs']
+  __slots__ = ['in_tree', 'out_tree', 'donate_argnums', '_executable',
+               '_no_kwargs']
 
   in_tree: PyTreeDef
   out_tree: PyTreeDef
+  donate_argnums: Tuple[int]
   _executable: Union[xla.XlaCompiledComputation, pxla.MeshExecutable]
   _no_kwargs: bool
 
-  def __init__(self, executable, in_tree, out_tree, no_kwargs=False):
+  def __init__(self, executable, in_tree, out_tree, donate_argnums,
+               no_kwargs=False):
     self._executable = executable
     self.in_tree = in_tree
     self.out_tree = out_tree
+    self.donate_argnums = donate_argnums
     self._no_kwargs = no_kwargs
 
   def _xla_executable(self):
@@ -589,7 +598,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
     arg_specs = unsafe_map(arg_spec, args_flat)
     computation = xla.lower_xla_callable(
         flat_fun, device, backend, name, donated_invars, *arg_specs)
-    return Lowered(computation, in_tree, out_tree())
+    return Lowered(computation, in_tree, out_tree(), donate_argnums)
 
   return lower
 
