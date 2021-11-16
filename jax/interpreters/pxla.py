@@ -1723,15 +1723,16 @@ def lower_mesh_computation(
 
   built = c.Build(out_tuple)
   return MeshComputation(
-      built, mesh, local_in_untiled_avals,
+      built, donated_invars, mesh, local_in_untiled_avals,
       local_out_untiled_avals, (out_jaxpr_avals if spmd_lowering else None),
       in_axes, out_axes, spmd_lowering, tuple_args)
 
 
 class MeshComputation:
-  def __init__(self, hlo, *compile_args):
+  def __init__(self, hlo, donated_invars, *compile_args):
     self._executable = None
     self._hlo = hlo
+    self._donated_invars = donated_invars
     self.compile_args = compile_args
 
   def hlo(self):

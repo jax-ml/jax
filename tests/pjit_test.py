@@ -385,7 +385,19 @@ class PJitTest(jtu.BufferDonationTestCase):
   def testLowerWithDuckTyping(self):
     x = jax.ShapeDtypeStruct((2, 2), jnp.float32)
     # Make sure this doesn't crash
-    pjit(lambda x: x + 4, in_axis_resources=P('x'), out_axis_resources=P('x')).lower(x)
+    pjit(lambda x: x + 4,
+         in_axis_resources=P('x'), out_axis_resources=P('x')).lower(x)
+
+  @jtu.with_mesh([('x', 2)])
+  def testLowerDonateArgnumsAvailable(self):
+    x = jax.ShapeDtypeStruct((2, 2), jnp.float32)
+    def f(*args):
+      x, *_ = args
+      return x
+    f_low = pjit(f, donate_argnums=(0,),
+                 in_axis_resources=P('x'), out_axis_resources=P('x')).lower(x)
+    f_com = f_low.compile()
+    f_low.donate_argnums == f_com.donate_argnums == (0,)
 
   def testInfeed(self):
     devices = np.array(jax.local_devices())

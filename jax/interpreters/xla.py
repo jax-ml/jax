@@ -800,7 +800,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
     return XlaComputation(
-        name, None, True, jaxpr, consts, device, abstract_args, out_avals,
+        name, None, True, None, jaxpr, consts, device, abstract_args, out_avals,
         kept_var_idx)
 
   if not _on_exit:
@@ -850,8 +850,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
          ", ".join(unused_donations)))
   built = c.build(output)
   return XlaComputation(
-      name, built, False, nreps, device, backend, tuple_args, abstract_args,
-      out_avals, kept_var_idx)
+      name, built, False, donated_invars, nreps, device, backend, tuple_args,
+      abstract_args, out_avals, kept_var_idx)
 
 
 def compile_or_get_cached(backend, computation, compile_options):
@@ -875,11 +875,14 @@ class XlaComputation:
   name: str
   _is_trivial: bool
   _executable: Optional['XlaCompiledComputation']
+  _donated_invars: Optional[Sequence[bool]]
 
-  def __init__(self, name: str, hlo, is_trivial: bool, *compile_args):
+  def __init__(self, name: str, hlo, is_trivial: bool,
+               donated_invars: Optional[Sequence[bool]], *compile_args):
     self.name = name
     self._hlo = hlo
     self._is_trivial = is_trivial
+    self._donated_invars = donated_invars
     self._executable = None
     self.compile_args = compile_args
 
