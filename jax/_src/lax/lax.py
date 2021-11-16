@@ -2633,10 +2633,17 @@ pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 def _broadcast_in_dim_lower(ctx, x, *, shape, broadcast_dimensions):
   del shape
   aval_out, = ctx.avals_out
-  return mhlo.BroadcastInDimOp(
-      mlir.aval_to_ir_type(aval_out), x,
-      mlir.dense_int_elements(broadcast_dimensions)
-  ).results
+  if not core.is_constant_shape(aval_out.shape):
+    shape_val = ctx.module_context.eval_shape(aval_out.shape)
+    return mhlo.DynamicBroadcastInDimOp(
+        mlir.aval_to_ir_type(aval_out), x,
+        shape_val, mlir.dense_int_elements(broadcast_dimensions)
+    ).results
+  else:
+    return mhlo.BroadcastInDimOp(
+        mlir.aval_to_ir_type(aval_out), x,
+        mlir.dense_int_elements(broadcast_dimensions)
+    ).results
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
 
 
@@ -3040,7 +3047,12 @@ def _reshape_lower(ctx, x, *, new_sizes, dimensions):
           mlir.dense_int_elements(dimensions)).result
     else:
       x = mhlo.TransposeOp(x, mlir.dense_int_elements(dimensions)).result
-  return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), x).results
+  if not core.is_constant_shape(aval_out.shape):
+    shape_val = ctx.module_context.eval_shape(aval_out.shape)
+    return mhlo.DynamicReshapeOp(mlir.aval_to_ir_type(aval_out), x, shape_val).results
+  else:
+    return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), x).results
+
 mlir.register_lowering(reshape_p, _reshape_lower)
 
 def _rev_shape_rule(operand, *, dimensions):
@@ -4230,8 +4242,13 @@ xla.register_translation(iota_p, _iota_translation_rule)
 def _iota_lower(ctx, *, dtype, shape, dimension):
   del dtype, shape
   aval_out, = ctx.avals_out
-  return mhlo.IotaOp(mlir.aval_to_ir_type(aval_out),
-                     mlir.i64_attr(dimension)).results
+  if not core.is_constant_shape(aval_out.shape):
+    shape_val = ctx.module_context.eval_shape(aval_out.shape)
+    return mhlo.DynamicIotaOp(mlir.aval_to_ir_type(aval_out), shape_val,
+                              mlir.i64_attr(dimension)).results
+  else:
+    return mhlo.IotaOp(mlir.aval_to_ir_type(aval_out),
+                       mlir.i64_attr(dimension)).results
 mlir.register_lowering(iota_p, _iota_lower)
 
 

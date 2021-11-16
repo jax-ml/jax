@@ -109,7 +109,7 @@ def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
     else:
       return out,
   compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), device, None,
-                                    prim.name, donated_invars, *arg_specs)
+                                    prim.name, donated_invars, None, *arg_specs)
   if not prim.multiple_results:
     return lambda *args, **kw: compiled(*args, **kw)[0]
   else:
@@ -137,9 +137,10 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
 # JIT execution
 
 def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
-                   donated_invars, inline):
+                   donated_invars, inline, experimental_polymorphic_shapes):
   del inline  # Only used at tracing time
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
+                               experimental_polymorphic_shapes,
                                *unsafe_map(arg_spec, args))
   try:
     out = compiled_fun(*args)
@@ -165,8 +166,10 @@ xla.xla_call_p.def_impl(_xla_call_impl)
 
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
-                           donated_invars, *arg_specs):
+                           donated_invars, experimental_polymorphic_shapes,
+                           *arg_specs):
   return lower_xla_callable(fun, device, backend, name, donated_invars,
+                            experimental_polymorphic_shapes,
                             *arg_specs).compile().unsafe_call
 
 _xla_callable = lu.cache(_xla_callable_uncached)
@@ -186,12 +189,21 @@ def log_elapsed_time(fmt: str):
 
 @profiler.annotate_function
 def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
-                       donated_invars, *arg_specs):
+                       donated_invars, experimental_polymorphic_shapes,
+                       *arg_specs):
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
 
   abstract_args, arg_devices = util.unzip2(arg_specs)
+  if experimental_polymorphic_shapes:
+    from jax.experimental.jax2tf import shape_poly
+
+    arg_shapes = tuple([a.shape for a in abstract_args])
+    arg_jax_dtypes = tuple([a.dtype for a in abstract_args])
+    abstract_args = shape_poly.args_avals(
+        arg_shapes, arg_jax_dtypes, experimental_polymorphic_shapes)
+    arg_specs = zip(abstract_args, arg_devices)
   with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                         "for jit in {elapsed_time} sec"):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(
@@ -257,7 +269,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   if config.jax_enable_mlir:
     module = mlir.lower_jaxpr_to_module(
         module_name, closed_jaxpr, backend.platform, axis_env, name_stack,
-        donated_invars)
+        donated_invars, experimental_polymorphic_shapes=experimental_polymorphic_shapes)
   else:
     module = xla.lower_jaxpr_to_xla_module(
         module_name, closed_jaxpr, backend.platform, axis_env,

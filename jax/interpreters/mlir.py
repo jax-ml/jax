@@ -108,7 +108,10 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
   return ir_type_factory()
 
 def _array_ir_types(aval: core.ShapedArray) -> ir.Type:
-  return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
+  # TODO(necula): replace -1 with ir.ShapedType.kDynamicSize (the latter is not yet exposed)
+  mlir_shape = tuple(d if core.is_constant_dim(d) else -1
+                     for d in aval.shape)
+  return (ir.RankedTensorType.get(mlir_shape, dtype_to_ir_type(aval.dtype)),)
 
 ir_type_handlers: Dict[Type[core.AbstractValue],
                         Callable[[Any], Sequence[ir.Type]]] = {}
@@ -288,6 +291,9 @@ def make_ir_context() -> ir.Context:
   chlo.register_chlo_dialect(context)
   return context
 
+# A dimension variable environment is a list of pairs of dimension variables
+# and their value in the current context.
+DimVarEnv = Sequence[Tuple[str, List[ir.Value]]]
 
 @dataclasses.dataclass
 class ModuleContext:
@@ -299,7 +305,7 @@ class ModuleContext:
   platform: str
   axis_env: xla.AxisEnv
   name_stack: str
-
+  dim_var_env: DimVarEnv
   # Cached primitive lowerings.
   cached_primitive_lowerings: Dict[Any, builtin.FuncOp]
 
@@ -309,6 +315,7 @@ class ModuleContext:
       module: Optional[ir.Module] = None,
       ip: Optional[ir.InsertionPoint] = None,
       symbol_table: Optional[ir.SymbolTable] = None,
+      dim_var_env: DimVarEnv = (),
       cached_primitive_lowerings: Optional[Dict[Any, builtin.FuncOp]] = None):
     assert platform is not None
     self.context = context or make_ir_context()
@@ -318,11 +325,28 @@ class ModuleContext:
     self.platform = platform
     self.axis_env = axis_env
     self.name_stack = name_stack
+    self.dim_var_env = dim_var_env
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
                                        else cached_primitive_lowerings)
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 
+  def eval_shape(self, shape: core.Shape):
+    from jax.experimental.jax2tf import shape_poly
+    dim_vars, dim_var_values = util.unzip2(self.dim_var_env)
+    eval_shape, dim_avals = shape_poly.get_shape_evaluator(dim_vars, shape)
+    shape_values_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(eval_shape), dim_avals)
+    assert not consts
+    out_dims = jaxpr_subcomp(self, shape_values_jaxpr, (), *dim_var_values)
+
+    # Broadcast the scalars to i32[1] and then concatenate them
+    i32_1 = ir.RankedTensorType.get((1,), ir.IntegerType.get_signless(32))
+    # TODO(necula): why do we need od[0]
+    out_dims_1 = tuple(mhlo.BroadcastInDimOp(i32_1, od[0], dense_int_elements([])).result
+                       for od in out_dims)
+    shape_val = mhlo.ConcatenateOp(out_dims_1, i64_attr(0))
+    return shape_val
 
 @dataclasses.dataclass
 class LoweringRuleContext:
@@ -375,7 +399,8 @@ def lower_jaxpr_to_module(
     name_stack: str, donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
-    result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None
+    result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
+    experimental_polymorphic_shapes: Optional[Sequence[str]] = None,
     ) -> ir.Module:
   """Lowers a top-level jaxpr to an MHLO module.
 
@@ -402,11 +427,32 @@ def lower_jaxpr_to_module(
     ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
         f"{module_name}.{next(_module_unique_id)}")
     # TODO(phawkins): represent units with zero buffers at the runtime level.
+    if any(not core.is_constant_shape(ina.shape) for ina in jaxpr.in_avals):
+      # TODO(necula): clean up the dependencies
+      from jax.experimental.jax2tf import shape_poly
+
+      if shape_poly.dimension_size_p not in _lowerings:
+        def _dimension_size_lowering(ctx, x, *, dimension):
+          i32_scalar_type = ir.RankedTensorType.get((), ir.IntegerType.get_signless(32))
+          return mhlo.GetDimensionSizeOp(i32_scalar_type, x, i64_attr(dimension)).results
+
+        register_lowering(shape_poly.dimension_size_p, _dimension_size_lowering)
+
+      def make_dim_var_env(ctx, *args):
+        dim_vars, get_dim_values = shape_poly.prepare_dim_var_env(jaxpr.in_avals)
+        dim_vars_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+            lu.wrap_init(get_dim_values), jaxpr.in_avals)
+        assert not consts
+        dim_values = jaxpr_subcomp(ctx, dim_vars_jaxpr, (), *args)
+        return zip(dim_vars, dim_values)
+    else:
+      make_dim_var_env = None
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, public=True, replace_units_with_dummy=True,
         replace_tokens_with_dummy=True, replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
-        input_output_aliases=input_output_aliases)
+        input_output_aliases=input_output_aliases,
+        make_dim_var_env=make_dim_var_env)
 
   ctx.module.operation.verify()
   return ctx.module
@@ -441,7 +487,8 @@ def lower_jaxpr_to_fun(
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
-    input_output_aliases: Optional[Sequence[Optional[int]]] = None
+    input_output_aliases: Optional[Sequence[Optional[int]]] = None,
+    make_dim_var_env: Optional[Callable[[ModuleContext, Sequence[ir.Value]], DimVarEnv]] = None,
   ) -> builtin.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -462,6 +509,8 @@ def lower_jaxpr_to_fun(
     result_shardings: sharding annotations for each argument (optional).
     input_output_aliases: optional sequence that maps argument numbers to the
       corresponding output that should alias them.
+    make_dim_var_env: an optional function to generate a DimensionVariableEnv
+      given the context and the actual arguments to the function.
   Returns the name of the function.
   """
   def aval_to_types(aval):
@@ -542,7 +591,9 @@ def lower_jaxpr_to_fun(
         args.append(arg)
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
                                               xla.wrap_name(name, 'jit'))
-    out_vals = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
+    dim_var_env = make_dim_var_env(ctx, *args) if make_dim_var_env is not None else ()
+    out_vals = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack,
+                                         dim_var_env=dim_var_env),
                              jaxpr.jaxpr, map(ir_constants, jaxpr.consts),
                              *args)
     outs = []
@@ -601,7 +652,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     env[v] = tuple(node)
 
 
-  env: Dict[core.Var, Tuple[ir.Value]] = {}
+  env: Dict[core.Var, Sequence[ir.Value]] = {}
 
   assert len(args) == len(jaxpr.invars), (jaxpr, args)
   assert len(consts) == len(jaxpr.constvars), (jaxpr, consts)
@@ -677,8 +728,25 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   flat_output_types = util.flatten(output_types)
   sub_ctx = ctx.replace(
       name_stack=xla.extend_name_stack(ctx.name_stack, stack_name))
+  if any(not core.is_constant_shape(inv.aval.shape) for inv in call_jaxpr.invars):
+    from jax.experimental.jax2tf import shape_poly
+    # Add some invars for the values of the dimension variables, to call_jaxpr and to args
+    dim_vars, dim_values = util.unzip2(ctx.dim_var_env)
+
+    args = dim_values + args
+    mk_new_var = core.gensym([call_jaxpr])
+    dim_invars = tuple(mk_new_var(core.ShapedArray((), np.int32)) for dv in dim_vars)
+    call_jaxpr = core.Jaxpr(call_jaxpr.constvars,
+                            list(dim_invars) + call_jaxpr.invars,
+                            call_jaxpr.outvars, call_jaxpr.eqns)
+    def make_dim_var_env(ctx, *dim_args_and_args):
+      # The first |dim_vars| args are the dim_values
+      return tuple((dv, dim_args_and_args[i]) for i, dv in enumerate(dim_vars))
+  else:
+    make_dim_var_env = None
   symbol_name = lower_jaxpr_to_fun(sub_ctx, fn_name,
-                                   core.ClosedJaxpr(call_jaxpr, ())).name.value
+                                   core.ClosedJaxpr(call_jaxpr, ()),
+                                   make_dim_var_env=make_dim_var_env).name.value
   call = std.CallOp(flat_output_types,
                     ir.FlatSymbolRefAttr.get(symbol_name),
                     flatten_lowering_ir_args(args))
@@ -686,6 +754,7 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
 
 def _xla_call_lower(ctx, *args,
                     backend=None, name, call_jaxpr, donated_invars, inline=None,
+                    experimental_polymorphic_shapes=None,
                     device=None):
   del device, donated_invars, inline  # Ignored.
   return _call_lowering(f"jit_{name}", xla.wrap_name(name, "jit"), call_jaxpr,
@@ -860,6 +929,7 @@ def xla_fallback_lowering(prim: core.Primitive):
   return fallback
 
 register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
+
 
 # Lax ops missing MLIR lowerings.
 # # TODO(b/203775215): these are missing from the cHLO dialect. Either add

@@ -126,10 +126,10 @@ class IreeClient:
   def get_default_device_assignment(
       self,
       num_replicas: int,
-      num_partitions: int = 1) -> List[List[IreeDevice]]:
+      num_partitions: int = 1) -> List[IreeDevice]:
     if num_replicas != 1 or num_partitions != 1:
       raise NotImplementedError("Only single-device computations implemented")
-    return [[self._devices[0]]]
+    return [self._devices[0]]
 
   def compile(self, computation: str,
               compile_options: xla_client.CompileOptions) -> IreeExecutable:

@@ -1466,6 +1466,9 @@ def is_constant_dim(d: DimSize) -> bool:
   handler, ds = _dim_handler_and_canonical(d)
   return handler.is_constant(*ds)
 
+def is_constant_shape(s: Shape) -> bool:
+  return all(is_constant_dim(d) for d in s)
+
 def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   handler, ds = _dim_handler_and_canonical(d1, d2)
   return handler.symbolic_equal(*ds)

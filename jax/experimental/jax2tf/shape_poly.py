@@ -141,6 +141,7 @@ class _DimMon(dict):
       elif diff > 0: d[key] = diff
     return _DimMon(d)
 
+
   def evaluate(self, env: ShapeEnv):
     prod = lambda xs: functools.reduce(_multiply, xs) if xs else np.int32(1)
     def pow_opt(v, p: int):
@@ -642,17 +643,17 @@ def _parse_spec(spec: Optional[Union[str, PolyShape]],
 
 
 def _add(v1, v2):
-  if isinstance(v1, int) and v1 == 0:
+  if not isinstance(v1, core.Tracer) and v1 == 0:
     return v2
-  elif isinstance(v2, int) and v2 == 0:
+  elif not isinstance(v2, core.Tracer) and v2 == 0:
     return v1
   else:
     return v1 + v2
 
 def _multiply(v1, v2):
-  if isinstance(v1, int) and v1 == 1:
+  if not isinstance(v1, core.Tracer) and v1 == 1:
     return v2
-  elif isinstance(v2, int) and v2 == 1:
+  elif not isinstance(v2, core.Tracer) and v2 == 1:
     return v1
   else:
     return v1 * v2

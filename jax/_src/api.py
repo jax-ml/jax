@@ -233,6 +233,7 @@ def jit(
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
   inline: bool = False,
+  experimental_polymorphic_shapes: Union[str, Iterable[str], None] = None,
 ) -> F:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -308,13 +309,14 @@ def jit(
   """
   if FLAGS.experimental_cpp_jit:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
-                    donate_argnums, inline)
+                    donate_argnums, inline, experimental_polymorphic_shapes)
   else:
     return _python_jit(fun, static_argnums, static_argnames, device, backend,
-                       donate_argnums, inline)
+                       donate_argnums, inline, experimental_polymorphic_shapes)
 
 
 def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
+                 experimental_polymorphic_shapes,
                  args, kwargs):
   if max(donate_argnums, default=-1) >= len(args):
     raise ValueError(
@@ -330,7 +332,9 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
   else:
     donated_invars = (False,) * len(args_flat)
 
-  return f, in_tree, args_flat, donated_invars
+  # TODO: process polymorphic shapes as pytrees
+  polymorphic_shapes_invars = None if experimental_polymorphic_shapes is None else tuple(experimental_polymorphic_shapes)
+  return f, in_tree, args_flat, donated_invars, polymorphic_shapes_invars
 
 
 def _python_jit(
@@ -341,6 +345,7 @@ def _python_jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
+    experimental_polymorphic_shapes: Union[str, Iterable[str], None] = None,
 ) -> F:
   # The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit.
   _check_callable(fun)
@@ -355,19 +360,21 @@ def _python_jit(
   def f_jitted(*args, **kwargs):
     if config.jax_disable_jit:
       return fun(*args, **kwargs)
-    closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
-        fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    closed_fun, in_tree, args_flat, donated_invars, polymorphic_shapes_invars = _prepare_jit(
+        fun, static_argnums, static_argnames, donate_argnums, experimental_polymorphic_shapes,
+        args, kwargs)
     for arg in args_flat:
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
-        donated_invars=donated_invars, inline=inline)
+        donated_invars=donated_invars, inline=inline,
+        experimental_polymorphic_shapes=polymorphic_shapes_invars)
     return tree_unflatten(out_tree(), out_flat)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
-                              backend, donate_argnums, inline)
+                              backend, donate_argnums, inline, experimental_polymorphic_shapes)
   return f_jitted
 
 
@@ -393,6 +400,7 @@ def _cpp_jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
+    experimental_polymorphic_shapes: Union[str, Iterable[str], None] = None,
 ) -> F:
   # An implementation of `jit` that tries to do as much as possible in C++.
   # The goal of this function is to speed up the time it takes to process the
@@ -418,15 +426,16 @@ def _cpp_jit(
     # An alternative would be for cache_miss to accept from C++ the arguments
     # (dyn_args, donated_invars, args_flat, in_tree), since otherwise we have
     # work/code that is redundant between C++ and Python. We can try that later.
-    closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
-        fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    closed_fun, in_tree, args_flat, donated_invars, polymorphic_shape_invars = _prepare_jit(
+        fun, static_argnums, static_argnames, donate_argnums, experimental_polymorphic_shapes, args, kwargs)
     for arg in args_flat:
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
-        donated_invars=donated_invars, inline=inline)
+        donated_invars=donated_invars, inline=inline,
+        experimental_polymorphic_shapes=polymorphic_shape_invars)
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 
@@ -483,7 +492,7 @@ def _cpp_jit(
   f_jitted = wraps(fun)(cpp_jitted_f)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
-                              backend, donate_argnums, inline)
+                              backend, donate_argnums, inline, experimental_polymorphic_shapes)
 
   return f_jitted
 
@@ -617,7 +626,7 @@ class Compiled:
 
 
 def _jit_lower(fun, static_argnums, static_argnames, device, backend,
-               donate_argnums, inline):
+               donate_argnums, inline, experimental_polymorphic_shapes):
   """Make a ``lower`` method for jitted functions."""
   # If the function we returned from ``jit`` were a class instance,
   # this might naturally be a method, with ``fun`` as a ``self`` and
@@ -642,13 +651,13 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
     Returns:
       A ``Lowered`` instance representing the lowering.
     """
-    closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
-        fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    closed_fun, in_tree, args_flat, donated_invars, polymorphic_shapes_invars = _prepare_jit(
+        fun, static_argnums, static_argnames, donate_argnums, experimental_polymorphic_shapes, args, kwargs)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     name = flat_fun.__name__
     arg_specs = unsafe_map(arg_spec, args_flat)
     computation = dispatch.lower_xla_callable(
-        flat_fun, device, backend, name, donated_invars, *arg_specs)
+        flat_fun, device, backend, name, donated_invars, polymorphic_shapes_invars, *arg_specs)
     return Lowered(computation, in_tree, out_tree(), donate_argnums)
 
   return lower
