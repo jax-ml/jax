@@ -1185,7 +1185,6 @@ def _jaxpr_forwarding(jaxpr: Jaxpr) -> List[Optional[int]]:
           for v in jaxpr.outvars]
 
 
-# TODO(mattjj): unify with dce code below
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool]
               ) -> Tuple[Jaxpr, List[bool]]:
   return _dce_jaxpr(jaxpr, tuple(used_outputs))
@@ -1193,7 +1192,6 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool]
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...]
                ) -> Tuple[Jaxpr, List[bool]]:
-  if jaxpr.constvars: raise NotImplementedError  # TODO(mattjj)
   env: Dict[Var, bool] = {}
 
   def read(v: Var) -> bool:
@@ -1224,7 +1222,7 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...]
     map(write, eqn.invars, used_ins)
   used_inputs = map(read, jaxpr.invars)
 
-  new_jaxpr = Jaxpr((),
+  new_jaxpr = Jaxpr(jaxpr.constvars,
                     [v for v, b in zip(jaxpr.invars, used_inputs)   if b],
                     [v for v, b in zip(jaxpr.outvars, used_outputs) if b],
                     new_eqns[::-1], jaxpr.effects)

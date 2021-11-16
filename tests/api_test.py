@@ -50,6 +50,7 @@ from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
+from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
 from jax._src import device_array
 import jax._src.lib
@@ -4491,6 +4492,76 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr.jaxpr.outvars = [core.unitvar]
     self.assertIn('in (*,)', str(jaxpr))
     self.assertNotIn('in (a,)', str(jaxpr))
+
+  def test_dce_jaxpr_scan(self):
+    @api.remat
+    def scanned_f(c, x):
+      out = jnp.tanh(c * x)
+      return out, out
+
+    def f(xs):
+      return lax.scan(scanned_f, 1., xs)
+
+    jaxpr = api.make_jaxpr(lambda xs: api.linearize(f, xs)[1])(jnp.arange(10.)).jaxpr
+    jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars))
+
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertLen(jaxpr.eqns[-1].params['jaxpr'].jaxpr.eqns, 2)
+
+  def test_dce_jaxpr_scan_nontrivial_fixedpoint(self):
+    def f(lst):
+      def body(c, _):
+        return [c[0]] + [c1 + c2 for c1, c2 in zip(c[:-1], c[1:])], None
+      out, _ = jax.lax.scan(body, lst, None, length=len(lst))
+      return out
+    jaxpr = api.make_jaxpr(f)([1, 2, 3, 4]).jaxpr
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertLen(jaxpr.eqns[0].params['jaxpr'].jaxpr.eqns, 3)
+
+    # If we use all but the last element, only one eqn is pruned.
+    jaxpr_pruned, used_inputs = pe.dce_jaxpr(jaxpr, [True, True, True, False])
+    self.assertLen(jaxpr_pruned.eqns, 1)
+    self.assertLen(jaxpr_pruned.eqns[0].params['jaxpr'].jaxpr.eqns, 2)
+    # And all but the first input is used.
+    self.assertEqual(used_inputs, [True, True, True, False])
+
+    # If we use all but the last two elements, two eqns can be pruned.
+    jaxpr_pruned, used_inputs = pe.dce_jaxpr(jaxpr, [True, True, False, False])
+    self.assertLen(jaxpr_pruned.eqns, 1)
+    self.assertLen(jaxpr_pruned.eqns[0].params['jaxpr'].jaxpr.eqns, 1)
+    # And the last two inputs are not used.
+    self.assertEqual(used_inputs, [True, True, False, False])
+
+    # If we only use the last element, no eqns can be pruned.
+    jaxpr_pruned, used_inputs = pe.dce_jaxpr(jaxpr, [False, False, False, True])
+    self.assertLen(jaxpr_pruned.eqns, 1)
+    self.assertLen(jaxpr_pruned.eqns[0].params['jaxpr'].jaxpr.eqns, 3)
+    # And all inputs are used.
+    self.assertEqual(used_inputs, [True, True, True, True])
+
+  def test_dce_jaxpr_scan_const_in_jvp(self):
+    @api.custom_jvp
+    def f(x):
+      return x * np.arange(3.)
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return f(x), xdot * np.arange(3.)
+
+    def g(x):
+      def body(c, _):
+        return f(c), None
+      y, _ = jax.lax.scan(body, x, None, length=1)
+      return y
+
+    jvp_jaxpr = api.make_jaxpr(lambda x, xdot: api.jvp(g, (x,), (xdot,)))(
+                               np.arange(3.), np.arange(3.)).jaxpr
+
+    jaxpr_pruned, used_inputs = pe.dce_jaxpr(jvp_jaxpr, [True, True])
+    self.assertTrue(all(used_inputs))
+
+    jaxpr_pruned, used_inputs = pe.dce_jaxpr(jvp_jaxpr, [True, False])
+    self.assertEqual(used_inputs, [True, False])
 
 
 class CustomJVPTest(jtu.JaxTestCase):
