@@ -30,6 +30,7 @@ from jax.interpreters import xla
 from jax._src.api import jit, vmap
 from jax._src.lib import xla_client
 from jax._src.lib import cuda_prng
+from jax._src.numpy.lax_numpy import _register_stackable
 import jax._src.pretty_printer as pp
 from jax._src.util import prod
 
@@ -189,6 +190,19 @@ class PRNGKeyArray:
   def _split(self, num: int) -> 'PRNGKeyArray':
     return PRNGKeyArray(self.impl, self.impl.split(self._keys, num))
 
+  def reshape(self, newshape, order=None):
+    reshaped_keys = jnp.reshape(self._keys, (*newshape, -1), order=order)
+    return PRNGKeyArray(self.impl, reshaped_keys)
+
+  def concatenate(self, key_arrs, axis):
+    axis = axis % len(self.shape)
+    arrs = [self._keys, *[k._keys for k in key_arrs]]
+    return PRNGKeyArray(self.impl, jnp.stack(arrs, axis))
+
+  def broadcast_to(self, shape):
+    new_shape = tuple(shape)+(self._keys.shape[-1],)
+    return PRNGKeyArray(self.impl, jnp.broadcast_to(self._keys, new_shape))
+
   def __repr__(self):
     arr_shape = self._shape
     pp_keys = pp.text('shape = ') + pp.text(str(arr_shape))
@@ -201,6 +215,7 @@ class PRNGKeyArray:
 def seed_with_impl(impl: PRNGImpl, seed: int) -> PRNGKeyArray:
   return PRNGKeyArray(impl, impl.seed(seed))
 
+_register_stackable(PRNGKeyArray)
 
 # -- threefry2x32 PRNG implementation --
 

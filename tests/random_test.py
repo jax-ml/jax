@@ -1237,6 +1237,49 @@ class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
   def seed_prng(self, seed):
     return prng.seed_with_impl(prng.unsafe_rbg_prng_impl, seed)
 
+@skipIf(not config.jax_enable_custom_prng,
+        'custom PRNG tests require config.jax_enable_custom_prng')
+class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
+  def test_reshape(self):
+    key = random.PRNGKey(123)
+    keys = random.split(key, 4)
+    keys = jnp.reshape(keys, (2, 2))
+    self.assertEqual(keys.shape, (2, 2))
+
+  def test_tile(self):
+    key = random.PRNGKey(123)
+    keys = jnp.tile(key, 3)
+    self.assertEqual(keys.shape, (3,))
+
+  def test_concatenate(self):
+    key = random.PRNGKey(123)
+    keys = random.split(key, 2)
+    keys = jnp.concatenate([keys, keys, keys], axis=0)
+    self.assertEqual(keys.shape, (3, 2))
+
+  def test_broadcast_to(self):
+    key = random.PRNGKey(123)
+    keys = jnp.broadcast_to(key, (3,))
+    self.assertEqual(keys.shape, (3,))
+
+  def test_broadcast_arrays(self):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 3)
+    key, _ = jnp.broadcast_arrays(key, keys)
+    self.assertEqual(key.shape, (3,))
+
+  def test_append(self):
+    key = random.PRNGKey(123)
+    keys = jnp.append(key, key)
+    self.assertEqual(keys.shape, (2, 1))
+
+  def test_ravel(self):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 4)
+    keys = jnp.reshape(keys, (2, 2))
+    keys = jnp.ravel(keys)
+    self.assertEqual(keys.shape, (4,))
+
 def _sampler_unimplemented_with_rbg(*args, **kwargs):
   # TODO(mattjj): enable these tests if/when RngBitGenerator supports them
   raise SkipTest('8- and 16-bit types not supported with RBG PRNG')
