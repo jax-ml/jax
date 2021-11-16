@@ -2094,7 +2094,7 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
       raise ValueError(
           "jax.numpy.arange supports non-constant arguments only in single-argument form. "
           f"Found jax.numpy.arange(start={start}, stop={stop}, step={step})")
-    return lax.iota(int_, start)
+    return lax.iota(dtype or int_, start)
   if dtype is None:
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = _jnp_dtype(dtype)

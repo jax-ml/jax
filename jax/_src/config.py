@@ -840,7 +840,7 @@ bcoo_cusparse_lowering = config.define_bool_state(
 # if the intended backend can handle lowering the result
 config.define_bool_state(
     name='jax_dynamic_shapes',
-    default=False,
+    default=bool(os.getenv('JAX_DYNAMIC_SHAPES', '')),
     help=('Enables experimental features for staging out computations with '
           'dynamic shapes.'),
     update_global_hook=lambda val: \

@@ -1653,10 +1653,6 @@ def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
           all(unsafe_map(symbolic_equal_dim, s1, s2)))
 
 def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
-  # TODO(mattjj): revise this temporary workaround for dynamic shapes
-  if isinstance(d1, Tracer) or isinstance(d2, Tracer):
-    return True
-
   handler, ds = _dim_handler_and_canonical(d1, d2)
   return handler.greater_equal(*ds)
 
