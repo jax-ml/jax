@@ -449,7 +449,6 @@ array_repr = np.array_repr
 
 save = np.save
 savez = np.savez
-load = np.load
 
 
 ### utility functions
@@ -632,6 +631,18 @@ def _convert_and_clip_integer(val, dtype):
 
 def _constant_like(x, const):
   return np.array(const, dtype=_dtype(x))
+
+@_wraps(np.load, update_doc=False)
+def load(*args, **kwargs):
+  # The main purpose of this wrapper is to recover bfloat16 data types.
+  # Note: this will only work for files created via np.save(), not np.savez().
+  out = np.load(*args, **kwargs)
+  if isinstance(out, np.ndarray):
+    # numpy does not recognize bfloat16, so arrays are serialized as void16
+    if out.dtype == 'V2':
+      out = out.view(bfloat16)
+    out = asarray(out)
+  return out
 
 ### implementations of numpy functions in terms of lax
 

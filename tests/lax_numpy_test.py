@@ -17,6 +17,7 @@ import collections
 import functools
 from functools import partial
 import inspect
+import io
 import itertools
 import operator
 from typing import cast, Iterator, Optional, List, Tuple
@@ -519,6 +520,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       func = getattr(jnp, name)
       with self.assertRaises(NotImplementedError):
         func()
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(dtype), "dtype": dtype}
+      for dtype in float_dtypes))
+  def testLoad(self, dtype):
+    rng = jtu.rand_default(self.rng())
+    arr = rng((10), dtype)
+    with io.BytesIO() as f:
+      jnp.save(f, arr)
+      f.seek(0)
+      arr_out = jnp.load(f)
+    self.assertArraysEqual(arr, arr_out)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
