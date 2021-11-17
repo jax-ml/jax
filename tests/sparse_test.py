@@ -1136,29 +1136,52 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(result_dense, result_sparse_jit.todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
-        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
-       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      {"testcase_name": "_{}_nbatch={}_ndense={}_nse={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, nse),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense, "nse": nse}
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex
       for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)))
-  def test_bcoo_dedupe(self, shape, dtype, n_batch, n_dense):
+      for n_dense in range(len(shape) + 1 - n_batch)
+      for nse in [None, np.prod(shape) - 1]))
+  def test_bcoo_sum_duplicates(self, shape, dtype, n_batch, n_dense, nse):
     rng = self.rng()
     rng_sparse = rand_sparse(self.rng())
     M = sparse.BCOO.fromdense(rng_sparse(shape, dtype))
     for i, s in enumerate(shape[n_batch:len(shape) - n_dense]):
       M.indices = M.indices.at[..., i, :].set(rng.randint(0, s, size=M.indices.shape[-1]))
-    M_dedup = M._dedupe()
-    self.assertAllClose(M.todense(), M_dedup.todense())
+    dedupe = partial(M.sum_duplicates, nse=nse)
+    jit_dedupe = jax.jit(dedupe)
 
-  def test_bcoo_dedupe_padding(self):
+    M_dedup = dedupe()
+    self.assertAllClose(M.todense(), M_dedup.todense())
+    if nse:
+      self.assertEqual(M_dedup.nse, nse)
+
+    if not nse:
+      with self.assertRaisesRegex(ValueError, ".*nse argument"):
+        jit_dedupe()
+    else:
+      M_dedup = jit_dedupe()
+      self.assertAllClose(M.todense(), M_dedup.todense())
+      self.assertEqual(M_dedup.nse, nse)
+
+  def test_bcoo_sum_duplicates_inferred_nse(self):
+    x = sparse.BCOO.fromdense(jnp.diag(jnp.arange(4)))
+    self.assertEqual(x.nse, 3)
+    y = x + x.T
+    self.assertEqual(y.nse, 6)
+    y2 = y.sum_duplicates()
+    self.assertEqual(y2.nse, 3)
+    self.assertArraysEqual(y.todense(), y2.todense())
+
+  def test_bcoo_sum_duplicates_padding(self):
     # Regression test for https://github.com/google/jax/issues/8163
     size = 3
     data = jnp.array([1, 0, 0])
     indices = jnp.array([1, size, size])[:, None]
     x = sparse.BCOO((data, indices), shape=(3,))
-    y = x._dedupe()
+    y = x.sum_duplicates(nse=x.nse)
     self.assertArraysEqual(x.todense(), y.todense())
     self.assertArraysEqual(x.indices, y.indices)
     self.assertArraysEqual(x.data, y.data)
@@ -1301,8 +1324,8 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertArraysEqual(x_de, jnp.array([0, 1, 2, 3, 0]))
     self.assertArraysEqual(y_de, jnp.array([0, 0, 3, 2, 0]))
 
-    self.assertArraysEqual(x_sp._dedupe().todense(), x_de)
-    self.assertArraysEqual(y_sp._dedupe().todense(), y_de)
+    self.assertArraysEqual(x_sp.sum_duplicates().todense(), x_de)
+    self.assertArraysEqual(y_sp.sum_duplicates().todense(), y_de)
 
     # reduce_sum:
     self.assertArraysEqual(x_sp.sum(), x_de.sum())
