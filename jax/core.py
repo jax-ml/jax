@@ -1099,15 +1099,17 @@ class UnshapedArray(AbstractValue):
     raise TypeError(msg)
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'named_shape']
+  __slots__ = ['shape', 'named_shape', 'is_global']
   array_abstraction_level = 1
 
-  def __init__(self, shape, dtype, weak_type=False, named_shape=None):
+  def __init__(self, shape, dtype, weak_type=False, named_shape=None,
+               is_global=False):
     super().__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
     self.named_shape = {} if named_shape is None else dict(named_shape)
+    self.is_global = is_global
 
-  def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
+  def update(self, shape=None, dtype=None, weak_type=None, named_shape=None, is_global=None):
     if shape is None:
       shape = self.shape
     if dtype is None:
@@ -1116,7 +1118,9 @@ class ShapedArray(UnshapedArray):
       weak_type = self.weak_type
     if named_shape is None:
       named_shape = self.named_shape
-    return ShapedArray(shape, dtype, weak_type, named_shape)
+    if is_global is None:
+      is_global = self.is_global
+    return ShapedArray(shape, dtype, weak_type, named_shape, is_global)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
@@ -1130,20 +1134,23 @@ class ShapedArray(UnshapedArray):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
-            and self.named_shape == other.named_shape)
+            and self.named_shape == other.named_shape
+            and self.is_global == other.is_global)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type,
-                 tuple(self.named_shape.items())))
+                 tuple(self.named_shape.items()), self.is_global))
 
   def at_least_vspace(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       self.weak_type, self.named_shape)
+                       self.weak_type, self.named_shape, self.is_global)
 
   def join(self, other):
+    if self.is_global != other.is_global:
+      raise TypeError(self, other)
     if symbolic_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
       named_shape = join_named_shapes(self.named_shape, other.named_shape)
@@ -1156,11 +1163,12 @@ class ShapedArray(UnshapedArray):
   def str_short(self, short_dtypes=False):
     dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     shapestr = ','.join(map(str, self.shape))
+    g_str = 'g' if self.is_global else ''
     if self.named_shape:
       named_shapestr = ','.join(f'{k}:{v}' for k, v in self.named_shape.items())
-      return f'{dt_str}[{shapestr};{named_shapestr}]'
+      return f'{dt_str}[{shapestr};{named_shapestr}]{g_str}'
     else:
-      return f'{dt_str}[{shapestr}]'
+      return f'{dt_str}[{shapestr}]{g_str}'
 
   def strip_named_shape(self):
     return self.update(named_shape={})
@@ -1262,7 +1270,7 @@ raise_to_shaped_mappings : Dict[type, Callable] = {
   Bot: lambda aval, _: aval,
   UnshapedArray: lambda aval, _: aval,
   ShapedArray: lambda aval, weak_type: ShapedArray(
-      aval.shape, aval.dtype, weak_type, aval.named_shape)
+      aval.shape, aval.dtype, weak_type, aval.named_shape, aval.is_global)
 }
 
 ### Operations on shapes and dimension sizes.

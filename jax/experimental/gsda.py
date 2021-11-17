@@ -194,8 +194,8 @@ class GlobalShardedDeviceArray:
     return cls(global_shape, global_mesh, mesh_axes, dbs)
 
 
-core.pytype_aval_mappings[GlobalShardedDeviceArray] = lambda x: core.ShapedArray(x.shape, x.dtype)
-xla.pytype_aval_mappings[GlobalShardedDeviceArray] = lambda x: core.ShapedArray(x.shape, x.dtype)
+core.pytype_aval_mappings[GlobalShardedDeviceArray] = lambda x: core.ShapedArray(x.shape, x.dtype, is_global=True)
+xla.pytype_aval_mappings[GlobalShardedDeviceArray] = lambda x: core.ShapedArray(x.shape, x.dtype, is_global=True)
 xla.canonicalize_dtype_handlers[GlobalShardedDeviceArray] = pxla.identity
 
 def _gsda_shard_arg(x, devices, indices):

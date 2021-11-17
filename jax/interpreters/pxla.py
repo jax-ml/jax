@@ -1555,12 +1555,14 @@ class Mesh:
     return [d for d in self.devices.flat if d.process_index == process_index]
 
   def local_to_global(self, axes: ArrayMapping, aval):
+    assert not aval.is_global
     return untile_aval_nd(self.shape, axes,
-                          tile_aval_nd(self.local_mesh.shape, axes, aval))
+                          tile_aval_nd(self.local_mesh.shape, axes, aval)).update(is_global=True)
 
   def global_to_local(self, axes: ArrayMapping, aval):
+    assert aval.is_global
     return untile_aval_nd(self.local_mesh.shape, axes,
-                          tile_aval_nd(self.shape, axes, aval))
+                          tile_aval_nd(self.shape, axes, aval)).update(is_global=False)
 
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval, tiling_sizes=None):
@@ -1645,6 +1647,8 @@ def lower_mesh_computation(
 
   # 1. Trace to jaxpr and preprocess/verify it
   # Note that we tile by the local axis sizes, but use global axis sizes for named_shape
+  # TODO(yashkatariya): While lifting the non-contiguous mesh requirement pass
+  # in only the global avals so that such hacks are not needed.
   in_tiled_avals = [tile_aval_nd(global_axis_sizes, aval_in_axes, aval,
                                  tiling_sizes=local_axis_sizes)
                     for aval, aval_in_axes in safe_zip(local_in_untiled_avals, in_axes)]

@@ -33,7 +33,8 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap, mesh, Mesh
 from jax.experimental import gsda
 import jax.experimental.pjit as pjit_lib
-from jax.experimental.pjit import pjit, pjit_p, with_sharding_constraint, SpecSync
+from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
+                                   SpecSync, FROM_GSDA)
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src.lib import xla_client
@@ -610,7 +611,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
         global_input_shape, global_mesh, mesh_axes, cb)
 
     with jax._src.config.gsda_out(True):
-      @partial(pjit, in_axis_resources=mesh_axes, out_axis_resources=P('x', 'y'))
+      @partial(pjit, in_axis_resources=FROM_GSDA, out_axis_resources=P('x', 'y'))
       def f(x):
         return x @ x.T
       expected_matrix_mul = input_data @ input_data.T
@@ -623,12 +624,11 @@ class GSDAPjitTest(jtu.JaxTestCase):
       for s in out.local_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
-      out1 = f(input_data)
-      self.assertIsInstance(out1, gsda.GlobalShardedDeviceArray)
-      self.assertEqual(out1.shape, (8, 8))
-      self.assertEqual(out1.local_shards[0].data.shape, (2, 4))
-      for s in out.local_shards:
-        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+      with self.assertRaisesRegex(
+          ValueError,
+          ('For a non-GSDA input, the corresponding resource in '
+           'in_axis_resources should NOT be `pjit.FROM_GSDA`.')):
+        f(input_data)
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_pjit_gsda_multi_input_multi_output(self):
@@ -655,7 +655,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
     with jax._src.config.gsda_out(True):
       @partial(
           pjit,
-          in_axis_resources=(mesh_axes1, mesh_axes2, mesh_axes3, mesh_axes4),
+          in_axis_resources=(FROM_GSDA, FROM_GSDA, FROM_GSDA, FROM_GSDA),
           out_axis_resources=(mesh_axes1, mesh_axes4, mesh_axes2, mesh_axes3))
       def f(x, y, z, a):
         return x @ x.T, y, z, a
@@ -702,6 +702,41 @@ class GSDAPjitTest(jtu.JaxTestCase):
       for s in out4.local_shards:
         self.assertArraysEqual(s.data, input_data[s.index])
 
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_pjit_gsda_mixed_inputs(self):
+    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return input_data[index]
+
+    gsda_obj = gsda.GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    with jax._src.config.gsda_out(True):
+      @partial(pjit,
+               in_axis_resources=(FROM_GSDA, P('x', 'y')),
+               out_axis_resources=(P('x', 'y'), P(('x', 'y'))))
+      def f(x, y):
+        return x @ x.T, y @ y.T
+      expected_matrix_mul = input_data @ input_data.T
+
+      out1, out2 = f(gsda_obj, input_data)
+      self.assertIsInstance(out1, gsda.GlobalShardedDeviceArray)
+      self.assertEqual(out1.shape, (8, 8))
+      self.assertEqual(out1.local_shards[0].data.shape, (2, 4))
+      self.assertDictEqual(out1._global_mesh.shape, {'x': 4, 'y': 2})
+      for s in out1.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+      self.assertIsInstance(out2, gsda.GlobalShardedDeviceArray)
+      self.assertEqual(out2.shape, (8, 8))
+      self.assertEqual(out2.local_shards[0].data.shape, (1, 8))
+      self.assertDictEqual(out2._global_mesh.shape, {'x': 4, 'y': 2})
+      for s in out2.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def test_pjit_gsda_mesh_mismatch(self):
@@ -719,11 +754,32 @@ class GSDAPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Pjit's mesh and GSDA's mesh should be equal."):
-      @partial(pjit, in_axis_resources=P('x', 'y'), out_axis_resources=P('x', 'y'))
+      @partial(pjit, in_axis_resources=FROM_GSDA, out_axis_resources=P('x', 'y'))
       def f(x):
         return x
       f(gsda_obj)
 
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_pjit_gsda_wrong_resource_for_gsda_input(self):
+    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = ['x', 'y']
+    global_input_data = np.arange(
+        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+    def cb(index):
+      return global_input_data[index]
+
+    gsda_obj = gsda.GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        ("For a GSDA input, the corresponding resource in "
+        "in_axis_resources should be `pjit.FROM_GSDA`.")):
+      @partial(pjit, in_axis_resources=P('x', 'y'), out_axis_resources=P('x', 'y'))
+      def f(x):
+        return x
+      f(gsda_obj)
 
 
 def spec_regex(s):

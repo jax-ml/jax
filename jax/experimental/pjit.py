@@ -45,6 +45,10 @@ from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          split_list, cache, tuple_insert)
 xops = xc._xla.ops
 
+class _GSDASingleton:
+  pass
+FROM_GSDA = _GSDASingleton()
+
 def pjit(fun: Callable,
          in_axis_resources,
          out_axis_resources,
@@ -219,8 +223,10 @@ def pjit(fun: Callable,
         hashable_pytree(in_axis_resources),
         HashableFunction(out_tree, closure=()),
         hashable_pytree(out_axis_resources),
-        (maps._PositionalSemantics.GLOBAL
-         if is_gsda else maps._positional_semantics))
+        maps._positional_semantics,
+        tuple(isinstance(a, GSDA) for a in args_flat))
+    in_axis_resources_flat = tree_map(canonicalize_spec, in_axis_resources_flat,
+                                      tuple(args_flat))
     params = dict(
         jaxpr=jaxpr,
         in_axis_resources=in_axis_resources_flat,
@@ -274,10 +280,11 @@ def flatten_axis_resources(what, tree, axis_resources, tupled_args):
 def _pjit_jaxpr(fun, mesh, local_in_avals,
                 in_tree, in_axis_resources_thunk,
                 out_tree, out_axis_resources_thunk,
-                positional_semantics):
+                positional_semantics, is_gsda):
   in_axis_resources_flat = flatten_axis_resources(
         "pjit in_axis_resources", in_tree,
         in_axis_resources_thunk(), tupled_args=True)
+  tree_map(_check_resources_mismatch, in_axis_resources_flat, is_gsda)
   _check_shapes_against_resources("pjit arguments", False, mesh.local_mesh.shape,
                                   local_in_avals, in_axis_resources_flat)
   global_in_avals = local_to_global(positional_semantics, mesh,
@@ -383,13 +390,25 @@ def _prepare_axis_resources(axis_resources, arg_name):
   # to explicitly declare them as such
   entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
-  entries = [ParsedPartitionSpec.from_user_input(entry, what) for entry in entries]
+  entries = [
+      entry if entry is FROM_GSDA else ParsedPartitionSpec.from_user_input(
+          entry, what) for entry in entries
+  ]
   _check_unique_resources(entries, arg_name)
   return tree_unflatten(treedef, entries), entries, treedef
+
+def _check_resources_mismatch(in_axis_resources_flat, is_gsda):
+  if is_gsda and in_axis_resources_flat is not FROM_GSDA:
+    raise ValueError('For a GSDA input, the corresponding resource in '
+                     'in_axis_resources should be `pjit.FROM_GSDA`.')
+  if not is_gsda and in_axis_resources_flat is FROM_GSDA:
+    raise ValueError('For a non-GSDA input, the corresponding resource in '
+                     'in_axis_resources should NOT be `pjit.FROM_GSDA`.')
 
 def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
+    if arg_axis_resources is FROM_GSDA: continue
     resource_counts = Counter(it.chain.from_iterable(arg_axis_resources))
     if not resource_counts: continue
     if resource_counts.most_common(1)[0][1] > 1:
@@ -402,6 +421,8 @@ def _check_unique_resources(axis_resources, arg_name):
 def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape, flat_avals, flat_axis_resources):
   global_str = " global" if is_global_shape else ""
   for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
+    if aval_axis_resources is FROM_GSDA:
+      continue
     shape = aval.shape
     if len(shape) < len(aval_axis_resources):
       raise ValueError(f"One of {what} was given the resource assignment "
@@ -815,16 +836,33 @@ def get_aval_sharding_proto(aval: core.AbstractValue,
   return sharding_spec.sharding_proto()
 
 def global_to_local(positional_semantics, mesh, avals, axes):
-  if positional_semantics == maps._PositionalSemantics.GLOBAL:
+  if (isinstance(positional_semantics, maps._PositionalSemantics) and
+      positional_semantics == maps._PositionalSemantics.GLOBAL):
     return avals
-  return [mesh.global_to_local(get_array_mapping(aval_axes), aval)
-          for aval, aval_axes in zip(avals, axes)]
+  return [
+      aval if not aval.is_global else mesh.global_to_local(
+          get_array_mapping(aval_axes), aval)
+      for aval, aval_axes in safe_zip(avals, axes)
+  ]
 
 def local_to_global(positional_semantics, mesh, avals, axes):
-  if positional_semantics == maps._PositionalSemantics.GLOBAL:
-    return avals
-  return [mesh.local_to_global(get_array_mapping(aval_axes), aval)
-          for aval, aval_axes in zip(avals, axes)]
+  return [
+      aval if aval.is_global else mesh.local_to_global(
+          get_array_mapping(aval_axes), aval)
+      for aval, aval_axes in safe_zip(avals, axes)
+  ]
+
+def canonicalize_spec(in_axis_resources_flat, arg):
+  if isinstance(arg, GSDA):
+    return gsda_mesh_axes_to_parsed_pspec(arg._mesh_axes)
+  return in_axis_resources_flat
+
+def gsda_mesh_axes_to_parsed_pspec(mesh_axes) -> ParsedPartitionSpec:
+  if not isinstance(mesh_axes, PartitionSpec):
+    pspec = PartitionSpec(*mesh_axes)
+  else:
+    pspec = mesh_axes
+  return ParsedPartitionSpec.from_user_input(pspec, arg_name='GSDA mesh_axes')
 
 # -------------------- XLA OpSharding to PartitionSpec --------------------
 # Note that OpSharding is more expressive than PartitionSpecs, so it's not
