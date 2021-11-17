@@ -758,7 +758,7 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
 
 @lu.cache
 def parallel_callable(fun: lu.WrappedFun,
-                      backend: Optional[str],
+                      backend_name: Optional[str],
                       axis_name,
                       axis_size: int,
                       global_axis_size: Optional[int],
@@ -770,14 +770,14 @@ def parallel_callable(fun: lu.WrappedFun,
                       global_arg_shapes,
                       *avals):
   pmap_computation = lower_parallel_callable(
-      fun, backend, axis_name, axis_size, global_axis_size, devices, name,
+      fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, out_axes_thunk, donated_invars, global_arg_shapes, avals)
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
 
 
 def lower_parallel_callable(fun: lu.WrappedFun,
-                            backend: Optional[str],
+                            backend_name: Optional[str],
                             axis_name,
                             axis_size: int,
                             global_axis_size: Optional[int],
@@ -801,15 +801,15 @@ def lower_parallel_callable(fun: lu.WrappedFun,
         f"Specified axis_size {global_axis_size} doesn't match received "
         f"axis_size {axis_size}.")
 
-  if devices is not None and backend is None:
-    be = xb.get_device_backend(devices[0])
+  if devices is not None and backend_name is None:
+    backend = xb.get_device_backend(devices[0])
   else:
-    be = xb.get_backend(backend)
+    backend = xb.get_backend(backend_name)
 
   must_run_on_all_devices = False
   no_nested_sharding = False
   if global_axis_size is None:
-    if xb.process_count(be) == 1:
+    if xb.process_count(backend) == 1:
       global_axis_size = axis_size
     elif devices:
       # This allows each host in a multi-host pmap to run on a different number
@@ -822,15 +822,15 @@ def lower_parallel_callable(fun: lu.WrappedFun,
       # this assumption is true by requiring that the pmap is run on all devices
       # (and making the further assumption that each host has the same number of
       # devices). Nested sharding is ok in this case.
-      global_axis_size = axis_size * xb.process_count(be)
+      global_axis_size = axis_size * xb.process_count(backend)
       assert all(
-          len(xb.local_devices(process_index, be)) == xb.local_device_count(be)
-          for process_index in range(xb.process_count(be)))
+          len(xb.local_devices(process_index, backend)) == xb.local_device_count(backend)
+          for process_index in range(xb.process_count(backend)))
       must_run_on_all_devices = True
 
   if devices:
     local_devices = [
-        d for d in devices if d.process_index == xb.process_index(be)]
+        d for d in devices if d.process_index == xb.process_index(backend)]
     assert len(local_devices) > 0
   else:
     local_devices = None  # type: ignore
@@ -863,7 +863,7 @@ def lower_parallel_callable(fun: lu.WrappedFun,
   if devices is not None:
     is_multi_host_pmap = len(local_devices) != len(devices)
   else:
-    is_multi_host_pmap = xb.process_count(be) > 1
+    is_multi_host_pmap = xb.process_count(backend) > 1
   if is_multi_host_pmap:
     check_multihost_collective_allowlist(jaxpr)
 
@@ -898,21 +898,21 @@ def lower_parallel_callable(fun: lu.WrappedFun,
   num_local_shards = num_local_replicas * local_num_partitions
   num_global_shards = num_global_replicas * num_partitions
 
-  if (xb.process_count(be) > 1 and must_run_on_all_devices and
-      num_local_shards != xb.local_device_count(be)):
+  if (xb.process_count(backend) > 1 and must_run_on_all_devices and
+      num_local_shards != xb.local_device_count(backend)):
     if num_local_shards == axis_size:
       raise ValueError(
          f"On multi-host platforms, the input to pmapped functions must have "
          f"leading axis size equal to the number of local devices if no "
          f"`devices` argument is specified. Got axis_size={axis_size}, "
-         f"num_local_devices={xb.local_device_count(be)}")
+         f"num_local_devices={xb.local_device_count(backend)}")
     else:
       raise ValueError(
         f"On multi-host platforms, pmapped functions must run across all "
         f"devices, i.e. num_replicas * num_partitions should equal the "
         f"number of local devices. Got num_replicas={num_local_replicas}, "
         f"num_partitions={num_partitions}, and "
-        f"num_local_devices={xb.local_device_count(be)}")
+        f"num_local_devices={xb.local_device_count(backend)}")
 
   if no_nested_sharding and (jaxpr_replicas > 1 or num_partitions > 1):
     raise ValueError(
@@ -940,7 +940,7 @@ def lower_parallel_callable(fun: lu.WrappedFun,
       partitions=arg_parts,
       donated_invars=donated_invars)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    ctx = xla.TranslationContext(c, be.platform, axis_env,
+    ctx = xla.TranslationContext(c, backend.platform, axis_env,
                                  extend_name_stack(wrap_name(name, 'pmap')))
     out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   build_out_tuple = partial(xops.Tuple, c, out_nodes)
@@ -949,7 +949,7 @@ def lower_parallel_callable(fun: lu.WrappedFun,
   else:
     out_tuple = build_out_tuple()
 
-  if be.platform in ("gpu", "tpu"):
+  if backend.platform in ("gpu", "tpu"):
     donated_invars = xla.set_up_aliases(c, xla_args, c.GetShape(out_tuple),
                                         donated_invars, tuple_args)
   built = c.Build(out_tuple)
@@ -961,7 +961,7 @@ def lower_parallel_callable(fun: lu.WrappedFun,
                          out_axes,
                          local_devices,
                          devices,
-                         be,
+                         backend,
                          tuple_args,
                          local_num_partitions,
                          num_partitions,
