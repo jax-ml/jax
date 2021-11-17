@@ -62,6 +62,22 @@ def _get_random_data(dtype: jnp.dtype, shape: Tuple[int, ...]) -> Any:
     raise ValueError(f"Unsupported dtype for numerical comparison: {dtype}")
 
 
+def _all_close(jax_results, tf_results, tf_description, rtol=1e-05):
+  if len(tf_results) != len(jax_results):
+    raise ValueError(f"Numerical difference: returned output tuples lengths do "
+        f"not match: {tf_description} length vs JAX length: "
+        f"{len(tf_results)} != {len(jax_results)}")
+
+  for jax_result, tf_result in zip(jax_results, tf_results):
+    for jax_array, tf_array in zip(jax_result, tf_result):
+      jax_array = np.asarray(jax_array)
+      tf_array = np.asarray(tf_array)
+      if not np.allclose(jax_array, tf_array, rtol):
+        raise ValueError(f"Numerical difference JAX vs {tf_description}: "
+                         f"JAX result={jax_result} vs "
+                         f"{tf_description} result={tf_result}")
+
+
 def jax2tf_to_tflite(module: examples_converter.ModuleToConvert):
   """Converts the given `module` using the TFLite converter."""
   apply = functools.partial(module.apply, module.variables)
@@ -74,10 +90,17 @@ def jax2tf_to_tflite(module: examples_converter.ModuleToConvert):
               name='input')
       ],
       autograph=False)
+  tf_predict_concrete = tf_predict.get_concrete_function()
+
+  input_data = _get_random_data(module.dtype, module.input_shape)
+
+  # First compare JAX output with TF output.
+  jax_results = apply(input_data)
+  _all_close(jax_results, tf_predict_concrete(input_data), "TF")
 
   # Convert TF function to TF Lite format.
   converter = tf.lite.TFLiteConverter.from_concrete_functions(
-      [tf_predict.get_concrete_function()])
+      [tf_predict_concrete], tf_predict)
   converter.target_spec.supported_ops = [
       tf.lite.OpsSet.TFLITE_BUILTINS,  # enable TensorFlow Lite ops.
       tf.lite.OpsSet.SELECT_TF_OPS  # enable TensorFlow ops.
@@ -94,27 +117,12 @@ def jax2tf_to_tflite(module: examples_converter.ModuleToConvert):
   output_details = interpreter.get_output_details()
   outputs = tuple(interpreter.tensor(out["index"]) for out in output_details)
 
-  # Generate random data and get outputs from TFLite and JAX.
-  input_data = _get_random_data(module.dtype, module.input_shape)
   interpreter.set_tensor(inputs['index'], input_data)
   interpreter.invoke()
   tflite_results = tuple(output() for output in outputs)
-  jax_results = apply(input_data)
 
-  # If the model returns a single value, put the JAX return value in a tuple so
-  # we can compare it with the TFLite output, which is always a tuple.
   if len(tflite_results) == 1:
-    jax_results = (jax_results,)
+    # If we only have one result, don't use a tuple since JAX also doesn't.
+    tflite_results = tflite_results[0]
 
-  if len(tflite_results) != len(jax_results):
-    raise ValueError(f"Numerical difference: returned output tuples lengths do "
-        f"not match: TFLite length vs JAX length: {len(tflite_results)} != "
-        f"{len(jax_results)}")
-
-  for jax_result, tflite_result in zip(jax_results, tflite_results):
-    for jax_array, tflite_array in zip(jax_result, tflite_result):
-      jax_array = np.asarray(jax_array)
-      tflite_array = np.asarray(tflite_array)
-      if not np.allclose(jax_array, tflite_array, 1e-05):
-        raise ValueError(f"Numerical difference: jax_result={jax_result} vs "
-                        f"tflite_result={tflite_result}")
+  _all_close(jax_results, tflite_results, "TFLite")

@@ -212,6 +212,8 @@ def test_convert(converter_name: str,
           logging.info('OK!')
         except Exception as e:  # pylint: disable=broad-except
           error_msg = repr(e)
+          if len(error_msg) > 250:
+            error_msg = error_msg[:250] + "... (CROPPED)"
           logging.info('ERROR %s', error_msg)
 
       errors[example_name] = error_msg

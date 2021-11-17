@@ -1,6 +1,6 @@
 # Evaluation Results
 
-*Last generated on: 2021-11-15* (YYYY-MM-DD)
+*Last generated on: 2021-11-17* (YYYY-MM-DD)
 
 ## jax2tf --> TFLite
 
@@ -16,11 +16,11 @@ These exampls are representative for what the average ML researcher is intereste
 | lm1b | SUCCESS |
 | mnist | SUCCESS |
 | nlp_seq | SUCCESS |
-| pixelcnn++ | FAIL | ValueError('Numerical difference: jax_result=[[[[-1.42588705e-01  4.43906128e-01 -4.43267524e-01 ...  2.41633713e-01\n ... ]]]] vs tflite_result=[[[[-1.42588705e-01  4.43906128e-01 -4.43267554e-01 ...  2.41633728e-01\n ...]]]]')
+| pixelcnn++ | FAIL | ValueError('Numerical difference JAX vs TF: JAX result=[[[-1.42588705e-01  4.43906128e-01 -4.43267524e-01 ...  2.41633713e-01\n    4.30841953e-01 -3.73984545e-01]\n  [-5.50750673e-01  8.27922702e-01 -5.37640810e-01 ...  7.13608935e-02\n    5.00771403... (CROPPED)
 | ppo | SUCCESS |
 | seq2seq | SUCCESS |
 | sst2 | SUCCESS |
-| vae | FAIL | ValueError('Numerical difference: jax_result=[[[[1.00000000e+00 2.50768606e-09 8.24737523e-09 ... 0.00000000e+00\n ...]]]] vs tflite_result=[[[[1.00000000e+00 2.50769538e-09 8.24742230e-09 ... 2.93873588e-39\n...]]]]')
+| vae | FAIL | ValueError('Numerical difference JAX vs TF: JAX result=[[[1.00000000e+00 2.96458746e-09 2.83802848e-08 ... 0.00000000e+00\n   9.99999881e-01 6.08000756e-19]\n  [9.81082678e-01 6.93151236e-01 7.65325581e-08 ... 1.04346945e-07\n   7.08327889e-01 3.9745... (CROPPED)
 | wmt | SUCCESS |
 
 ## jax2tf --> TFjs
