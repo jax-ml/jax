@@ -68,7 +68,7 @@ For example, you can  use the `from_concrete_functions` API as follows:
 ```python
 # Convert your TF function to the TF Lite format.
 converter = tf.lite.TFLiteConverter.from_concrete_functions(
-    [tf_predict.get_concrete_function()])
+    [tf_predict.get_concrete_function()], tf_predict)
 
 converter.target_spec.supported_ops = [
     tf.lite.OpsSet.TFLITE_BUILTINS,  # enable TensorFlow Lite ops.
