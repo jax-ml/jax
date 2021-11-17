@@ -13,6 +13,7 @@
 # limitations under the License.
 """Implementation of GlobalShardedDeviceArray."""
 
+import asyncio
 from collections import defaultdict, Counter
 import dataclasses
 import numpy as np
@@ -161,6 +162,19 @@ class GlobalShardedDeviceArray:
         device_put(data_callback(indices[device]), device)
         for device in global_mesh.local_devices
     ]
+    return cls(global_shape, global_mesh, mesh_axes, dbs)
+
+  @classmethod
+  async def from_async_callback(cls, global_shape: Shape,
+                                global_mesh: pxla.Mesh, mesh_axes: MeshAxes,
+                                data_callback: Callable[[Index], asyncio.Future]):
+    indices = get_shard_indices(global_shape, global_mesh, mesh_axes)
+    future_arrays = [data_callback(indices[d])
+                    for d in global_mesh.local_devices]
+    # Pause here and come back to `from_async_callback()` when future_arrays are
+    # ready.
+    local_arrays = await asyncio.gather(*future_arrays)
+    dbs = pxla.device_put(local_arrays, global_mesh.local_devices)
     return cls(global_shape, global_mesh, mesh_axes, dbs)
 
   @classmethod
