@@ -730,7 +730,7 @@ class JAXSparse:
     return map(_asarray_or_float0, args)
 
   def __init__(self, args, *, shape):
-    self.shape = shape
+    self.shape = tuple(shape)
 
   def __repr__(self):
     name = self.__class__.__name__

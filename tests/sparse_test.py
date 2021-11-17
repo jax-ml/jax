@@ -1363,10 +1363,10 @@ class SparseGradTest(jtu.JaxTestCase):
 class SparseObjectTest(jtu.JaxTestCase):
   def test_repr(self):
     M = sparse.BCOO.fromdense(jnp.arange(5, dtype='float32'))
-    assert repr(M) == "BCOO(float32[5], nse=4)"
+    self.assertEqual(repr(M), "BCOO(float32[5], nse=4)")
 
-    M_invalid = sparse.BCOO(([], []), shape=100)
-    assert repr(M_invalid) == "BCOO(<invalid>)"
+    M_invalid = sparse.BCOO(([], []), shape=(100,))
+    self.assertEqual(repr(M_invalid), "BCOO(<invalid>)")
 
   @parameterized.named_parameters(
     {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
