@@ -2371,7 +2371,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "size": size, "fill_value": fill_value}
       for dtype in number_dtypes
       for size in [1, 5, 10]
-      for fill_value in [None, -1, "slice"]
+      for fill_value in [None, -1.0, "slice"]
       for shape in nonempty_array_shapes
       for axis in [None] + list(range(len(shape)))))
   def testUniqueSize(self, shape, dtype, axis, size, fill_value):
