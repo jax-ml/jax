@@ -226,6 +226,7 @@ from .ops import (
     csr_todense_p as csr_todense_p,
     todense as todense,
     todense_p as todense_p,
+    CuSparseEfficiencyWarning as CuSparseEfficiencyWarning,
     COO as COO,
     CSC as CSC,
     CSR as CSR,
