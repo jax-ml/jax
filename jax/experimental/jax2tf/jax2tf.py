@@ -47,6 +47,7 @@ from jax.interpreters import xla
 from jax._src.lib import xla_client
 
 from . import shape_poly
+from . import shape_poly_tf
 from . import impl_no_xla
 
 import numpy as np
@@ -304,12 +305,19 @@ def convert(fun: Callable,
                                                           in_tree.children()[0],
                                                           polymorphic_shapes_))
 
+    def fix_tf1_shape(arg: TfVal) -> Sequence[Optional[int]]:
+      tf_arg_shape = np.shape(arg)
+      return tuple(d.value if isinstance(d, tf.compat.v1.Dimension) else d for d in tf_arg_shape)
+    args_shapes_flat = tuple(fix_tf1_shape(a) for a in args_flat)
+
+    args_dim_exprs_flat = tuple(shape_poly_tf.DimExprTfVal.for_arg(a) for a in args_flat)
     # Construct the abstract values for the flat arguments, possibly based on
     # the input shapes and the polymorphic_shapes if given. May create new shape
     # variables. May cast the args_flat to JAX types, using JAX's interpretation
     # of types of constants.
-    args_avals_flat, shapeenv = _args_to_avals_and_env(
-        args_flat, arg_dtypes_flat, polymorphic_shapes_flat)
+    args_avals_flat, shapeenv = shape_poly.args_avals_and_env(
+        args_shapes_flat, arg_dtypes_flat, polymorphic_shapes_flat,
+        args_dim_exprs_flat)
 
     # This function may take pytrees of TfVals. We can only set
     # tf.custom_gradient on functions that take a flat argument list.
@@ -637,47 +645,6 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       if do_memoize:
         _thread_local_state.constant_cache[const_key] = (val, tf_val)
     return tf_val, jax_dtype
-
-def _args_to_avals_and_env(
-    args: Sequence[TfVal],
-    arg_jax_dtypes: Sequence[DType],
-    polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]]) -> \
-  Tuple[Sequence[core.ShapedArray], shape_poly.ShapeEnv]:
-  """Computes canonicalized args, abstract values and a dimension environment for arguments.
-
-  Args:
-    args: the arguments, TF inputs. Must be tf.Tensor or tf.Variable.
-    arg_dtypes: the inferred JAX dtypes for the args.
-    polymorphic_shapes: the polymorphic specifications for the arguments.
-  Returns: a tuple of: a sequence of abstract values corresponding to the
-    arguments, and a dimension variable environment.
-  """
-  dim_equations: List[shape_poly.DimEquation] = []
-
-  def input_aval(arg: TfVal,
-                 arg_jax_dtype: DType,
-                 polymorphic_shape: Optional[str]) -> core.ShapedArray:
-    """The abstract value for an input."""
-    arg_shape = np.shape(arg)
-    aval_shape = shape_poly.parse_spec(polymorphic_shape, arg_shape)
-    arg_tf_shape = tf.shape(arg)
-    for i, d in enumerate(aval_shape):
-      dim_size = arg_shape[i]
-      if isinstance(dim_size, tf.compat.v1.Dimension):
-        dim_size = dim_size.value
-      if not shape_poly.is_poly_dim(d):
-        assert d == dim_size
-      else:
-        dim_equations.append(shape_poly.DimEquation(
-            poly=d, tf_expr=arg_tf_shape[i]))  # type: ignore
-
-
-    return core.ShapedArray(aval_shape, arg_jax_dtype)
-
-  avals = tuple(map(input_aval, args, arg_jax_dtypes, polymorphic_shapes))  # type: ignore
-
-  shapeenv = shape_poly.solve_dim_equations(dim_equations)
-  return avals, shapeenv
 
 
 def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
@@ -2589,6 +2556,11 @@ def _pjit_sharding_constraint(arg: TfVal, *,
 
 tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint
 
+def _dim_as_value_jax2tf(dim: shape_poly.DimSize):
+  dim_tf, = _eval_shape((dim,))
+  return dim_tf
+
+tf_impl[shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""
@@ -2620,5 +2592,3 @@ def _register_checkpoint_pytrees():
 
 
 _register_checkpoint_pytrees()
-
-shape_poly._register_conversion_rules()
