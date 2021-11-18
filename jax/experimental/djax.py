@@ -19,7 +19,6 @@ from typing import (Tuple, List, Sequence, Set, Dict, Any, Callable, Union,
                     Optional)
 
 from jax import core
-from jax._src import dtypes
 from jax._src import source_info_util
 from jax.core import Var, Literal, Atom, Tracer
 from jax._src.util import (safe_zip, safe_map, curry, unzip2, split_list,
@@ -42,7 +41,7 @@ class EltTy: pass
 
 class BaseType(EltTy):
   def __init__(self, dtype: DType):
-    self._dtype = dtypes.dtype(dtype)
+    self._dtype = np.dtype(dtype)
 
   def __repr__(self):
     return f'BaseType({self._dtype.name})'
@@ -619,7 +618,7 @@ def _array_xla_shape(aval: AbsArray):
     return (xla.xc.Shape.array_shape(dtype, shape),)
   elif isinstance(aval._eltTy, BoundedIntTy):
     shape = [d._bound if isinstance(d, BoundedInt) else d for d in aval.shape]
-    return (xla.xc.Shape.array_shape(dtypes.dtype('int32'), shape),)
+    return (xla.xc.Shape.array_shape(np.dtype('int32'), shape),)
   else:
     raise NotImplementedError
 xla.xla_shape_handlers[AbsArray] = _array_xla_shape
@@ -804,7 +803,8 @@ def traceable_to_padded_translation(traceable):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
 
     operands_ = it.chain.from_iterable([*dims.values(), *operands])
-    ctx = xla.TranslationContext(c, None, xla.AxisEnv(1, (), ()), '')
+    platform = "cpu"  # TODO: don't hardwire in the CPU translation.
+    ctx = xla.TranslationContext(c, platform, xla.AxisEnv(1, (), ()), '')
     outs = xla.jaxpr_subcomp(ctx, jaxpr, xla._xla_consts(c, consts), *operands_)
     return xla._partition_outputs(
       [aval_to_num_buffers(aval) for aval in out_avals], outs)

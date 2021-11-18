@@ -79,10 +79,10 @@ def canonicalize_dtype(dtype):
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes : dict = {
-  bool: np.dtype(bool_),
-  int: np.dtype(int_),
-  float: np.dtype(float_),
-  complex: np.dtype(complex_),
+  bool: np.dtype('bool'),
+  int: np.dtype('int64'),
+  float: np.dtype('float64'),
+  complex: np.dtype('complex128'),
 }
 
 def scalar_type_of(x):

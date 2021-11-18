@@ -17,6 +17,7 @@ import collections
 import functools
 from functools import partial
 import inspect
+import io
 import itertools
 import operator
 from typing import cast, Iterator, Optional, List, Tuple
@@ -519,6 +520,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       func = getattr(jnp, name)
       with self.assertRaises(NotImplementedError):
         func()
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(dtype), "dtype": dtype}
+      for dtype in float_dtypes))
+  def testLoad(self, dtype):
+    rng = jtu.rand_default(self.rng())
+    arr = rng((10), dtype)
+    with io.BytesIO() as f:
+      jnp.save(f, arr)
+      f.seek(0)
+      arr_out = jnp.load(f)
+    self.assertArraysEqual(arr, arr_out)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
@@ -3560,6 +3573,39 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             canonicalize_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*")
+  def testArrayDtypeInference(self):
+    def _check(obj, out_dtype, weak_type):
+      dtype_reference = np.array(obj, dtype=out_dtype)
+
+      out = jnp.array(obj)
+      self.assertDtypesMatch(out, dtype_reference)
+      self.assertEqual(dtypes.is_weakly_typed(out), weak_type)
+
+      out_jit = jnp.array(obj)
+      self.assertDtypesMatch(out_jit, dtype_reference)
+      self.assertEqual(dtypes.is_weakly_typed(out_jit), weak_type)
+
+    # Python scalars become 64-bit weak types.
+    _check(1, np.int64, True)
+    _check(1.0, np.float64, True)
+    _check(1.0j, np.complex128, True)
+
+    # Lists become strongly-typed defaults.
+    _check([1], jnp.int_, False)
+    _check([1.0], jnp.float_, False)
+    _check([1.0j], jnp.complex_, False)
+
+    # Lists of weakly-typed objects become strongly-typed defaults.
+    _check([jnp.array(1)], jnp.int_, False)
+    _check([jnp.array(1.0)], jnp.float_, False)
+    _check([jnp.array(1.0j)], jnp.complex_, False)
+
+    # Lists of strongly-typed objects maintain their strong type.
+    _check([jnp.int64(1)], np.int64, False)
+    _check([jnp.float64(1)], np.float64, False)
+    _check([jnp.complex128(1)], np.complex128, False)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_dtype={np.dtype(dtype)}", "dtype": dtype}
       for dtype in all_dtypes))
@@ -5573,6 +5619,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('stop')):
       jax.jit(lambda stop: jnp.arange(0, stop))(3)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": str(dtype), "dtype": dtype}
+    for dtype in [None] + float_dtypes))
+  def testArange64Bit(self, dtype):
+    # Test that jnp.arange uses 64-bit arithmetic to define its range, even if the
+    # output has another dtype. The issue here is that if python scalar inputs to
+    # jnp.arange are cast to float32 before the range is computed, it changes the
+    # number of elements output by the range.  It's unclear whether this was deliberate
+    # behavior in the initial implementation, but it's behavior that downstream users
+    # have come to rely on.
+    args = (1.2, 4.8, 0.24)
+
+    # Ensure that this test case leads to differing lengths if cast to float32.
+    self.assertLen(np.arange(*args), 15)
+    self.assertLen(np.arange(*map(np.float32, args)), 16)
+
+    jnp_fun = lambda: jnp.arange(*args, dtype=dtype)
+    np_fun = lambda: np.arange(*args, dtype=dtype)
+    args_maker = lambda: []
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testIssue2347(self):
     # https://github.com/google/jax/issues/2347

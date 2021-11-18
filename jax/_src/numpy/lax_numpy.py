@@ -30,7 +30,7 @@ import collections
 from functools import partial
 import operator
 import types
-from typing import Sequence, FrozenSet, Optional, Tuple, Union
+from typing import Sequence, FrozenSet, Optional, Tuple, Union, Set, Type, Callable
 from textwrap import dedent as _dedent
 import warnings
 
@@ -449,7 +449,6 @@ array_repr = np.array_repr
 
 save = np.save
 savez = np.savez
-load = np.load
 
 
 ### utility functions
@@ -554,6 +553,12 @@ def _arraylike(x):
   return (isinstance(x, np.ndarray) or isinstance(x, ndarray) or
           hasattr(x, '__jax_array__') or isscalar(x))
 
+
+def _stackable(*args):
+  return _all(type(arg) in stackables for arg in args)
+stackables: Set[Type] = set()
+_register_stackable: Callable[[Type], None] = stackables.add
+
 def _check_arraylike(fun_name, *args):
   """Check if all args fit JAX's definition of arraylike."""
   assert isinstance(fun_name, str), f"fun_name must be a string. Got {fun_name}"
@@ -632,6 +637,18 @@ def _convert_and_clip_integer(val, dtype):
 
 def _constant_like(x, const):
   return np.array(const, dtype=_dtype(x))
+
+@_wraps(np.load, update_doc=False)
+def load(*args, **kwargs):
+  # The main purpose of this wrapper is to recover bfloat16 data types.
+  # Note: this will only work for files created via np.save(), not np.savez().
+  out = np.load(*args, **kwargs)
+  if isinstance(out, np.ndarray):
+    # numpy does not recognize bfloat16, so arrays are serialized as void16
+    if out.dtype == 'V2':
+      out = out.view(bfloat16)
+    out = asarray(out)
+  return out
 
 ### implementations of numpy functions in terms of lax
 
@@ -1707,7 +1724,7 @@ def polyfit(x, y, deg, rcond=None, full=False, w=None, cov=False):
 
 @_wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a, newshape, order="C"):
-  _check_arraylike("reshape", a)
+  _stackable(a) or _check_arraylike("reshape", a)
   try:
     return a.reshape(newshape, order=order)  # forward to method for ndarrays
   except AttributeError:
@@ -1750,7 +1767,7 @@ def _transpose(a, *args):
 @_wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('order',), inline=True)
 def ravel(a, order="C"):
-  _check_arraylike("ravel", a)
+  _stackable(a) or _check_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
   return reshape(a, (size(a),), order)
@@ -2213,6 +2230,8 @@ def broadcast_arrays(*args):
 The JAX version does not necessarily return a view of the input.
 """)
 def broadcast_to(arr, shape):
+  if hasattr(arr, "broadcast_to"):
+    return arr.broadcast_to(shape)
   arr = arr if isinstance(arr, ndarray) else array(arr)
   shape = (shape,) if ndim(shape) == 0 else shape
   shape = canonicalize_shape(shape)  # check that shape is concrete
@@ -3350,7 +3369,7 @@ def stack(arrays, axis: int = 0, out=None):
 
 @_wraps(np.tile)
 def tile(A, reps):
-  _check_arraylike("tile", A)
+  _stackable(A) or _check_arraylike("tile", A)
   try:
     iter(reps)
   except TypeError:
@@ -3381,13 +3400,15 @@ def _concatenate_array(arr, axis: int):
 def concatenate(arrays, axis: int = 0):
   if isinstance(arrays, (np.ndarray, ndarray)):
     return _concatenate_array(arrays, axis)
-  _check_arraylike("concatenate", *arrays)
+  _stackable(*arrays) or _check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
   if axis is None:
     return concatenate([ravel(a) for a in arrays], axis=0)
+  if hasattr(arrays[0], "concatenate"):
+    return arrays[0].concatenate(arrays[1:], axis)
   axis = _canonicalize_axis(axis, ndim(arrays[0]))
   arrays = _promote_dtypes(*arrays)
   # lax.concatenate can be slow to compile for wide concatenations, so form a
@@ -3594,7 +3615,15 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0, *, device=None):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
-  out = lax._convert_element_type(out, dtype, weak_type=weak_type)
+  if weak_type:
+    # Here we make a judgment call: we only return a weakly-typed array when obj
+    # itself is weakly typed. That ensures array(x) is a no-op whenever x is weak,
+    # but avoids introducing weak types with something like array([1, 2, 3])
+    out = lax._convert_element_type(out, dtype, weak_type=True)
+  else:
+    # If dtype is not specified, we use result_type(out). This ensures JIT invariance
+    # with, e.g. lists of scalars.
+    out = lax._convert_element_type(out, dtype or result_type(out))
 
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
@@ -6543,7 +6572,7 @@ def _view(arr, dtype=None, type=None):
   if arr_dtype == bool_:
     arr = arr.astype(uint8)
   nbits_in = 8 * arr_dtype.itemsize
-  nbits_out = 8 * _dtype(dtype).itemsize
+  nbits_out = 8 * np.dtype(dtype).itemsize
   if nbits_in == nbits_out:
     if dtype == bool_:
       return lax.bitcast_convert_type(arr, uint8).astype(dtype)

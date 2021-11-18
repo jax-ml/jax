@@ -16,6 +16,7 @@
 import functools
 import operator
 from typing import Any, NamedTuple, Sequence, Tuple
+import warnings
 
 import numpy as np
 
@@ -23,6 +24,7 @@ from jax import core
 from jax import lax
 from jax import tree_util
 from jax import vmap
+from jax.errors import NonConcreteBooleanIndexError
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -69,25 +71,26 @@ def _bcoo_nse(mat, n_batch=0, n_dense=0):
   mask = mask.sum(list(range(n_batch, mask.ndim)))
   return mask.max()
 
-def _dedupe_bcoo(data, indices, shape):
+def _bcoo_sum_duplicates(data, indices, shape, nse=None):
   props = _validate_bcoo(data, indices, shape)
-  if indices.shape[:props.n_batch] != data.shape[:props.n_batch]:
-    # TODO: handle broadcasted dimensions.
-    raise NotImplementedError("dedupe_bcoo for broadcasted dimensions.")
-  f = functools.partial(_dedupe_bcoo_one,
-      shape=shape[props.n_batch:props.n_batch + props.n_sparse])
+  f = functools.partial(_bcoo_sum_duplicates_unbatched,
+      shape=shape[props.n_batch:props.n_batch + props.n_sparse], nse=nse)
   for _ in range(props.n_batch):
-    f = vmap(f)
+    f = broadcasting_vmap(f)
   return f(data, indices)
 
-def _dedupe_bcoo_one(data, indices, *, shape):
-  nse, = data.shape
-  assert indices.shape == (nse, len(shape))
+def _bcoo_sum_duplicates_unbatched(data, indices, *, shape, nse):
+  assert indices.shape == (data.shape[0], len(shape))
   if indices.shape[1] == 0:
     return data, indices
-  indices_unique, inv_idx = jnp.unique(indices, axis=0, return_inverse=True,
-                                       size=nse, fill_value=jnp.array(shape))
-  data_unique = jnp.zeros_like(data).at[inv_idx].add(data)
+  try:
+    indices_unique, inv_idx = jnp.unique(indices, axis=0, return_inverse=True,
+                                         size=nse, fill_value=jnp.array(shape))
+  except NonConcreteBooleanIndexError:
+    raise ValueError("When used with JIT, vmap, or another transform, sum_duplicates() "
+                     "requires passing a non-None value for the nse argument.")
+  data_shape =  [indices_unique.shape[0], *data.shape[1:]]
+  data_unique = jnp.zeros(data_shape, data.dtype).at[inv_idx].add(data)
   oob_mask = jnp.all(indices_unique == jnp.array(shape), 1)
   data_unique = jnp.where(oob_mask, 0, data_unique)
   return data_unique, indices_unique
@@ -723,7 +726,7 @@ def _bcoo_Mv(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_sha
   assert lhs.n_sparse >= 1
   assert rhs.n_sparse == 1
   assert (lhs_shape[lhs_contract],) == rhs_shape
-  rhs_data, rhs_indices = _dedupe_bcoo(rhs_data, rhs_indices, rhs_shape)
+  rhs_data, rhs_indices = _bcoo_sum_duplicates(rhs_data, rhs_indices, rhs_shape, nse=rhs.nse)
   lhs_i = lhs_indices[:, lhs_contract]
   rhs_i = rhs_indices[:, 0]
   mask = jnp.isin(lhs_i, rhs_i, assume_unique=True)
@@ -1016,8 +1019,28 @@ class BCOO(ops.JAXSparse):
     return BCOO(_unbatch_bcoo(self.data, self.indices, self.shape), shape=self.shape)
 
   def _dedupe(self):
-    """Return a de-duplicated representation of the BCOO matrix."""
-    return BCOO(_dedupe_bcoo(self.data, self.indices, self.shape), shape=self.shape)
+    warnings.warn("_dedupe() is deprecated. Use sum_duplicates() instead.", FutureWarning)
+    return self.sum_duplicates(nse=self.nse)
+
+  def sum_duplicates(self, nse=None):
+    """Return a copy of the array with duplicate indices summed.
+
+    Additionally, this operation will result in explicit zero entries removed, and
+    indices being sorted in lexicographic order.
+
+    Because the size of the resulting representation depends on the values in the
+    arrays, this operation is not compatible with JIT or other transforms. To use
+    ``sum_duplicates`` in such cases, you may pass a value to `nse` to specify the
+    desired size of the output representation.
+
+    Args:
+      nse : integer (optional), if specified, gives the number of specified elements in
+        the output sparse representation; if it is larger than the number required, data
+        will be padded with zeros and indices will be padded with out-of-bounds values.
+        If it is smaller than the number required, data will be silently discarded.
+    """
+    data, indices = _bcoo_sum_duplicates(self.data, self.indices, self.shape, nse=nse)
+    return BCOO((data, indices), shape=self.shape)
 
   def todense(self):
     """Create a dense version of the array."""

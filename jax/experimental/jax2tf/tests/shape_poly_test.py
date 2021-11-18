@@ -26,6 +26,7 @@ import jax
 from jax import core
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf import shape_poly
+from jax.experimental.jax2tf import shape_poly_tf
 from jax import lax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
@@ -51,21 +52,19 @@ PS = jax2tf.PolyShape
 class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
 
   def test_parse_poly_spec(self):
-    self.assertEqual((2, 3), shape_poly.parse_spec(None, (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec("2, 3", (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec("2, _", (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec("2, ...", (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec("...", (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec(" ( 2 , 3 ) ", (2, 3)))
+    self.assertEqual((2, 3), shape_poly._parse_spec(None, (2, 3)))
+    self.assertEqual((2, 3), shape_poly._parse_spec("2, 3", (2, 3)))
+    self.assertEqual((2, 3), shape_poly._parse_spec("2, _", (2, 3)))
+    self.assertEqual((2, 3), shape_poly._parse_spec("2, ...", (2, 3)))
+    self.assertEqual((2, 3), shape_poly._parse_spec("...", (2, 3)))
+    self.assertEqual((2, 3), shape_poly._parse_spec(" ( 2 , 3 ) ", (2, 3)))
 
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
-    self.assertEqual((a, 3), shape_poly.parse_spec("(a, ...) ", (None, 3)))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    self.assertEqual((a, 3), shape_poly._parse_spec("(a, ...) ", (None, 3)))
     tshape = tf.TensorShape([None, 3])
-    self.assertEqual((a, 3), shape_poly.parse_spec("(a, ...) ", tshape))
-    # Test directly with tf.compat.v1.Dimension
-    self.assertEqual((a, 3), shape_poly.parse_spec("(a, ...) ", tshape.dims))
+    self.assertEqual((a, 3), shape_poly._parse_spec("(a, ...) ", tshape))
 
-  a, b = shape_poly.parse_spec("a, b", (2, 3))
+  a, b = shape_poly._parse_spec("a, b", (2, 3))
   @parameterized.named_parameters(
       dict(testcase_name=f"_dim_spec={dim_spec}",
            dim_spec=dim_spec, dim_poly=dim_poly)
@@ -82,8 +81,8 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
                                 dim_poly=3 * a * b * a - 2):
     # For internal usage only (the polymorphic_shapes of VJP) we need to
     # parse polynomials.
-    self.assertEqual((dim_poly,), shape_poly.parse_spec(dim_spec, (2,)))
-    self.assertEqual((dim_poly,), shape_poly.parse_spec(str(dim_poly), (2,)))
+    self.assertEqual((dim_poly,), shape_poly._parse_spec(dim_spec, (2,)))
+    self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (2,)))
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dim_spec={dim_spec}",
@@ -101,11 +100,11 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
                                 dim_poly=3 * a * b * a - 2):
     # For internal usage only (the polymorphic_shapes of VJP) we need to
     # parse polynomials.
-    self.assertEqual((dim_poly,), shape_poly.parse_spec(dim_spec, (2,)))
-    self.assertEqual((dim_poly,), shape_poly.parse_spec(str(dim_poly), (2,)))
+    self.assertEqual((dim_poly,), shape_poly._parse_spec(dim_spec, (2,)))
+    self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (2,)))
 
   def test_dim_vars(self):
-    a, b, a1 = shape_poly.parse_spec("a, b, a", (2, 3, 2))
+    a, b, a1 = shape_poly._parse_spec("a, b, a", (2, 3, 2))
     self.assertEqual(True, a == a)
     self.assertEqual(True, a == a1)
     self.assertEqual(False, a != a)
@@ -134,19 +133,19 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
       b in [a, b]
 
   def test_get_vars(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
 
     self.assertEqual({"a"}, a.get_vars())
     self.assertEqual({"a", "b"}, (a * b * a).get_vars())
 
   def test_evaluate(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
 
     self.assertEqual(1, (a * a - b).evaluate(dict(a=2, b=3)))
     self.assertEqual(2, (a * a - b + 1).evaluate(dict(a=-2, b=3)))
 
   def test_dim_vars_symbolic_equal(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
     self.assertTrue(core.symbolic_equal_dim(a, a))
     self.assertFalse(core.symbolic_equal_dim(a, 1))
     self.assertFalse(core.symbolic_equal_dim(a, b))
@@ -165,7 +164,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
       self.assertTrue(core.symbolic_equal_dim(1, "a"))
 
   def test_poly_bounds(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
     self.assertEqual(a.bounds(), (1, None))
     self.assertEqual((2 * a).bounds(), (2, None))
     self.assertEqual((2 * a - 3).bounds(), (-1, None))
@@ -176,7 +175,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((a + 2 * b - a).bounds(), (2, None))
 
   def test_poly_equal(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
     poly3 = a + 3 - a
     self.assertTrue(poly3 == 3)
     self.assertTrue(poly3 == np.array(3, np.int64))
@@ -195,7 +194,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
       (3 * a * b * a - 2).eq(a * b * a)
 
   def test_poly_compare(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
     poly = 4 * a + b + 3
     self.assertTrue(poly.ge(0))
     self.assertTrue(poly.ge(8))
@@ -209,7 +208,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
       (4 * a - b).ge(0)
 
   def test_poly_compare_overload(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
     poly = 4 * a + b + 3
     self.assertTrue(poly >= 0)
     self.assertTrue(poly >= 8)
@@ -224,7 +223,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
       (4 * a - b) >= 0
 
   def test_core_greater_equal(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
     self.assertTrue(core.greater_equal_dim(a, a))
     self.assertTrue(core.greater_equal_dim(a, 0))
     self.assertTrue(core.greater_equal_dim(a, 1))
@@ -240,7 +239,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
       core.greater_equal_dim(a, b)
 
   def test_poly_int_results(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b = shape_poly._parse_spec("a, b", (2, 3))
     self.assertEqual(a + 2 - a, 2)
     self.assertIsInstance(a + 2 - a, int)
     self.assertEqual(a + (2 - a), 2)
@@ -299,14 +298,14 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
       self.assertEqual(quotient, dividend / divisor)
 
   def test_poly_truediv_error(self):
-    a, = shape_poly.parse_spec("a,", (2,))
+    a, = shape_poly._parse_spec("a,", (2,))
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
                                 "Division of '3' by dimension polynomial .* is not supported"):
       3 / a
 
   def test_dilate_shape(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
-    a, = shape_poly.parse_spec("a,", (2,))
+    a, = shape_poly._parse_spec("a,", (2,))
 
     self.assertEqual((4, 7), core.dilate_shape((2, 3), (3, 3)))
     self.assertEqual((0, 7), core.dilate_shape((0, 3), (3, 3)))
@@ -315,7 +314,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
 
   def test_stride_shape(self):
     """(s - window_size) // window_stride + 1"""
-    a, stride = shape_poly.parse_spec("a, s", (2, 3))
+    a, stride = shape_poly._parse_spec("a, s", (2, 3))
 
     self.assertEqual((8, 9), core.stride_shape((10, 20), window_size=(3, 3), window_stride=(1, 2)))
     self.assertEqual((a, 9), core.stride_shape((a, 20), (1, 3), (1, 2)))
@@ -418,11 +417,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       # check expected_shapeenv.
       arg_dtypes = (_f32,) * len(arg_shapes)
       def f_tf(*tf_args):
-        avals, shape_env = jax2tf.jax2tf._args_to_avals_and_env(
-            tf_args, arg_dtypes, polymorphic_shapes)  # The function under test
+        avals, shape_env = shape_poly.args_avals_and_env(
+            arg_shapes, arg_dtypes, polymorphic_shapes,
+            tuple(shape_poly_tf.DimExprTfVal.for_arg(a) for a in tf_args))  # The function under test
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
-        return shape_env
+        return {k: d.raw for k, d in shape_env.items()}
       if eager_mode:
         # If we want to check the shape_env then all arg_shapes must be known
         assert all(all(d is not None for d in a_s)
@@ -439,7 +439,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     def shaped_array(shape_spec: str, actual_shape: core.Shape):
       return core.ShapedArray(
-          shape_poly.parse_spec(shape_spec, actual_shape), np.float32)
+          shape_poly._parse_spec(shape_spec, actual_shape), np.float32)
 
     # Known shapes for the arguments
     check_avals(
@@ -648,7 +648,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           arg_shapes=[(2, 3), (5,)],
           polymorphic_shapes=["a, ...", "a"],
           eager_mode=True)
-
 
   def test_pytree(self):
     """Arguments and polymorphic_shapes are pytrees."""

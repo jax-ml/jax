@@ -261,18 +261,24 @@ class LoweringContext:
   axis_env: xla.AxisEnv
   name_stack: str
 
+  # Should function results be tupled?
+  tuple_results: bool
+
   def __init__(self, platform: str, axis_env: xla.AxisEnv, name_stack: str,
                context: Optional[ir.Context] = None,
                module: Optional[ir.Module] = None,
                ip: Optional[ir.InsertionPoint] = None,
-               symbol_table: Optional[ir.SymbolTable] = None):
+               symbol_table: Optional[ir.SymbolTable] = None,
+               tuple_results: bool = True):
+    assert platform is not None
     self.context = context or ir.Context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
     self.ip = ip or ir.InsertionPoint(self.module.operation.opview.body)
-    self.symbol_table = ir.SymbolTable(self.module.operation)
+    self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
     self.platform = platform
     self.axis_env = axis_env
     self.name_stack = name_stack
+    self.tuple_results = tuple_results
     mhlo.register_mhlo_dialect(self.context)
     chlo.register_chlo_dialect(self.context)
 
@@ -307,8 +313,7 @@ def _flatten_lowering_ir_args(
 
 def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
                        jaxpr: core.ClosedJaxpr, *,
-                       tuple_arguments: bool = False,
-                       uniquify_name: bool = True) -> str:
+                       public: bool = False) -> str:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -318,29 +323,32 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
   input_types = map(aval_to_ir_types, jaxpr.in_avals)
   output_types = map(aval_to_ir_types, jaxpr.out_avals)
   flat_input_types = util.flatten(input_types)
-  output_tuple_type = ir.TupleType.get_tuple(util.flatten(output_types))
-  if tuple_arguments:
-    input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
-    ftype = ir.FunctionType.get([input_tuple_type], [output_tuple_type])
+  flat_output_types = util.flatten(output_types)
+  if ctx.tuple_results:
+    output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+    fn_output_types = [output_tuple_type]
   else:
-    ftype = ir.FunctionType.get(flat_input_types, [output_tuple_type])
+    fn_output_types = flat_output_types
+  ftype = ir.FunctionType.get(flat_input_types, fn_output_types)
   func_op = builtin.FuncOp(name, ftype, ip=ctx.ip)
+  func_op.attributes["sym_visibility"] = ir.StringAttr.get(
+      "public" if public else "private")
   symbol_name = ir.StringAttr(ctx.symbol_table.insert(func_op)).value
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
-    if tuple_arguments:
-      args = [mhlo.GetTupleElementOp(input_type, entry_block.arguments[0],
-                                     _i32_attr(i)).result
-              for i, input_type in enumerate(flat_input_types)]
-    else:
-      args = entry_block.arguments
-    unflattened_args = util.unflatten(args, map(len, input_types))
+    unflattened_args = util.unflatten(entry_block.arguments,
+                                      map(len, input_types))
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
                                               xla.wrap_name(name, 'jit'))
     out_vals = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
                              jaxpr.jaxpr, map(ir_constants, jaxpr.consts),
                              *unflattened_args)
-    std.ReturnOp([mhlo.TupleOp(output_tuple_type, util.flatten(out_vals)).result])
+    flat_outputs = util.flatten(out_vals)
+    if ctx.tuple_results:
+      std.ReturnOp([mhlo.TupleOp(output_tuple_type, flat_outputs).result])
+    else:
+      std.ReturnOp(flat_outputs)
+
   return symbol_name
 
 
@@ -385,14 +393,20 @@ def jaxpr_subcomp(ctx: LoweringContext, jaxpr: core.Jaxpr,
         rule = platform_specific_translations[ctx.platform][eqn.primitive]
       elif eqn.primitive in translations:
         rule = translations[eqn.primitive]
+      elif eqn.primitive in xla._translations:
+        rule = partial(_fallback_lowering, eqn.primitive)
       else:
         raise NotImplementedError(
             f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
             "found")
 
-      ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
-                 *map(_unwrap_singleton_ir_values, in_nodes),
-                 **eqn.params)
+      try:
+        ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
+                   *map(_unwrap_singleton_ir_values, in_nodes),
+                   **eqn.params)
+      except Exception as e:
+        raise RuntimeError(
+            f"MLIR translation failed for equation: {eqn}") from e
 
     try:
       out_nodes = tuple(map(_wrap_singleton_ir_values, ans))
@@ -447,20 +461,28 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   xla.check_backend_matches(backend, ctx.platform)
   output_types = map(aval_to_ir_types, avals_out)
   flat_output_types = util.flatten(output_types)
-  output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+  if ctx.tuple_results:
+    output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+    call_output_types = [output_tuple_type]
+  else:
+    call_output_types = flat_output_types
   sub_ctx = ctx.replace(
       name_stack=xla.extend_name_stack(ctx.name_stack, stack_name))
   symbol_name = lower_jaxpr_to_fun(sub_ctx, fn_name,
                                    core.ClosedJaxpr(call_jaxpr, ()))
-  call = std.CallOp([output_tuple_type],
+  call = std.CallOp(call_output_types,
                     ir.FlatSymbolRefAttr.get(symbol_name),
-                    _flatten_lowering_ir_args(args)).result
-  flat_results = [mhlo.GetTupleElementOp(typ, call, _i32_attr(i)).result
-                  for i, typ in enumerate(flat_output_types)]
+                    _flatten_lowering_ir_args(args))
+  if ctx.tuple_results:
+    flat_results = [
+        mhlo.GetTupleElementOp(typ, call.result, _i32_attr(i)).result
+        for i, typ in enumerate(flat_output_types)]
+  else:
+    flat_results = call.results
   return util.unflatten(flat_results, map(len, output_types))
 
 def _xla_call_lower(ctx, avals_in, avals_out, *args,
-                    backend, name, call_jaxpr, donated_invars, inline=None,
+                    backend=None, name, call_jaxpr, donated_invars, inline=None,
                     device=None):
   del device, donated_invars, inline  # Ignored.
   return _call_lowering(f"jit_{name}", xla.wrap_name(name, "jit"), call_jaxpr,
@@ -741,8 +763,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
 
   nreps = xla.jaxpr_replicas(jaxpr)
   device = xla._xla_callable_device(nreps, backend, device, arg_devices)
-  backend = xb.get_device_backend(device) if device else (
-      xb.get_backend(backend) if backend is not None else None)
+  backend = xb.get_device_backend(device) if device else xb.get_backend(backend)
 
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
@@ -774,16 +795,18 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")
 
-  tuple_args = len(avals_in) > 100  # pass long arg lists as tuple for TPU
+  ctx = LoweringContext(backend.platform, xla.AxisEnv(nreps, (), ()), "")
+  if backend.runtime_type == "iree":
+    tuple_args = False
+    ctx = ctx.replace(tuple_results=False)
+  else:
+    tuple_args = len(avals_in) > 100  # pass long arg lists as tuple for TPU
 
-  ctx = LoweringContext(backend.platform if backend is not None else None,
-                        xla.AxisEnv(nreps, (), ()), "")
   with ctx.context, ir.Location.unknown(ctx.context):
     lower_jaxpr_to_fun(ctx, "main", core.ClosedJaxpr(jaxpr, consts),
-                       tuple_arguments=tuple_args, uniquify_name=False)
+                       public=True)
 
   assert not any(donated_invars), donated_invars
-  backend = xb.get_backend(backend)
   # TODO(b/203122001): implement buffer donation.
   # if backend.platform in ("gpu", "tpu"):
   #   donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
@@ -794,9 +817,10 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
   #   warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
   ctx.module.operation.verify()
   output = io.StringIO()
-  ctx.module.operation.print(file=output, enable_debug_info=True,
+  ctx.module.operation.print(file=output, #enable_debug_info=True,
                              print_generic_op_form=False)
   module = output.getvalue()
+  # print("MLIR module to be compiled:")
   # print(module)
   return XlaComputation(
       name, module, False, nreps, device, backend, tuple_args, avals_in,
@@ -1485,14 +1509,22 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
   select = lambda x, y: select_prim.bind(x, y)
   scatter = lax.bitwise_or if dtype == np.bool_ else lax.add
   if expand_padding:
+    operand_shape = operand.shape
+    original_padding = padding
     identity = (lax._get_max_identity if select_prim is lax.ge_p
                 else lax._get_min_identity)
     pads = [(lo, hi, 0) for (lo, hi) in padding]
     operand = lax.pad(operand, identity(dtype), pads)
     padding = [(0, 0) for _ in padding]
-  return lax._select_and_scatter(operand, select, window_dimensions,
-                                 window_strides, padding, source,
-                                 lax._zero(operand), scatter)
+  out = lax._select_and_scatter(operand, select, window_dimensions,
+                                window_strides, padding, source,
+                                lax._zero(operand), scatter)
+  if expand_padding:
+    start_indices = [lo for (lo, hi) in original_padding]
+    stop_indices = [lo + d for ((lo, hi), d) in zip(original_padding,
+                                                    operand_shape)]
+    out = lax.slice(out, start_indices, stop_indices)
+  return out
 
 translations[lax.select_and_scatter_add_p] = lower_fun(
     partial(_select_and_scatter_add, expand_padding=False),
@@ -1528,7 +1560,7 @@ def _sort_lower(ctx, avals_in, avals_out, *operands, dimension, is_stable,
 translations[lax.sort_p] = _sort_lower
 
 
-def _create_token_lowering(ctx, avals_in, avals_out):
+def _create_token_lowering(ctx, avals_in, avals_out, *operands):
   aval_out, = avals_out
   return mhlo.CreateTokenOp(aval_to_ir_type(aval_out)).results
 
@@ -1543,19 +1575,29 @@ translations[lax.after_all_p] = _after_all_lowering
 
 def _infeed_lowering(ctx, avals_in, avals_out, token, *, shapes, partitions):
   assert partitions is None, partitions  # TODO(phawkins): implement me.
-  output_types = map(aval_to_ir_types, avals_out)
+  output_types = map(aval_to_ir_types, avals_out[:-1])
   flat_output_types = util.flatten(output_types)
   output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
   # TODO(phawkins): verify `shapes` have a major-to-minor layout.
   layouts = ir.ArrayAttr.get([
-      ir.ArrayAttr.get([_i64_attr(i) for i in range(len(aval.shape))])
-      for aval in avals_in
+      ir.ArrayAttr.get(
+          [ir.ArrayAttr.get(
+              [_i64_attr(i) for i in range(len(aval.shape) - 1, -1, -1)])
+           for aval in shapes]),
+      ir.UnitAttr.get(),
   ])
-  out = mhlo.InfeedOp(output_tuple_type, token, ir.StringAttr.get(""),
-                      layouts).result
-  outs = [mhlo.GetTupleElementOp(typ, out, _i32_attr(i)).result
+  output_and_token_tuple_type = ir.TupleType.get_tuple(
+      [output_tuple_type, mhlo.TokenType.get()])
+  outs_and_token = mhlo.InfeedOp(
+      output_and_token_tuple_type, token, ir.StringAttr.get(""),
+      layouts).result
+  outs_tuple = mhlo.GetTupleElementOp(output_tuple_type, outs_and_token,
+                                      _i32_attr(0)).result
+  token = mhlo.GetTupleElementOp(mhlo.TokenType.get(), outs_and_token,
+                                 _i32_attr(1)).result
+  outs = [mhlo.GetTupleElementOp(typ, outs_tuple, _i32_attr(i)).result
           for i, typ in enumerate(flat_output_types)]
-  return util.unflatten(outs, map(len, output_types))
+  return util.unflatten(outs, map(len, output_types)) + [[token,]]
 
 translations[lax.infeed_p] = _infeed_lowering
 
@@ -1593,22 +1635,22 @@ translations[lax.rng_uniform_p] = _rng_uniform_lowering
 #   # sidestep issues with the jax_enable_x64=False configuration. As a result, we
 #   # need to convert u32[4] -> u64[2] here in the translation rule. However, we
 #   # also polymorphically allow a u64[2] for backward compatibility.
-#   assert ((key_aval.shape == (4,) and key_aval.dtype == dtypes.dtype('uint32')) or
-#           (key_aval.shape == (2,) and key_aval.dtype == dtypes.dtype('uint64'))), key_aval.shape
+#   assert ((key_aval.shape == (4,) and key_aval.dtype == np.dtype('uint32')) or
+#           (key_aval.shape == (2,) and key_aval.dtype == np.dtype('uint64'))), key_aval.shape
 #   xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
-#   if key_dtype == dtypes.dtype('uint32'):
+#   if key_dtype == np.dtype('uint32'):
 #     # TODO(mattjj): the BitcastConvertType segfaults on GPU
 #     # TODO(mattjj): remove fallback when minimum jaxlib is 0.1.72 or newer
 #     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-#       u64_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint64'))
+#       u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
 #       key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
 #     else:
 #       key = _convert_4xU32_to_2xU64_without_bitcast(c, key)
 #   out_key, out_vals = xla.xla_destructure(
 #       c, xops.RngBitGenerator(algorithm, key, xla_shape))
-#   if key_dtype == dtypes.dtype('uint32'):
+#   if key_dtype == np.dtype('uint32'):
 #     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-#       u32_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint32'))
+#       u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
 #       out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
 #     else:
 #       out_key = _convert_2xU64_to_4xU32_without_bitcast(c, out_key)
@@ -1646,7 +1688,7 @@ def _cond_lowering(ctx, avals_in, avals_out, index, *args, branches, linear):
               for i, input_type in enumerate(flat_input_types)]
       unflattened_args = util.unflatten(args, map(len, input_types))
       out_vals = jaxpr_subcomp(ctx, jaxpr.jaxpr, jaxpr.consts,
-                                unflattened_args)
+                               *unflattened_args)
       out = mhlo.TupleOp(output_tuple_type, util.flatten(out_vals)).results
       mhlo.ReturnOp(out)
 
@@ -1669,7 +1711,7 @@ def _pred_bcast_select(pred_aval: core.ShapedArray,
   elif x_y_aval is core.abstract_token:
     x, = xs
     y, = ys
-    return [mhlo.AfterAllOp(aval_to_ir_type(x_y_aval), [x, y])]
+    return [mhlo.AfterAllOp(aval_to_ir_type(x_y_aval), [x, y]).result]
   else:
     assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
     x, = xs
@@ -1695,9 +1737,7 @@ def _while_lowering(ctx, avals_in, avals_out, *args, cond_jaxpr,
   # generating a Call into the computations formed from the jaxprs.
 
   loop_carry_types = map(aval_to_ir_types, avals_in)
-  output_types = map(aval_to_ir_types, avals_out)
   flat_loop_carry_types = util.flatten(loop_carry_types)
-  flat_output_types = util.flatten(output_types)
   loop_carry_tuple_type = ir.TupleType.get_tuple(flat_loop_carry_types)
 
   flat_args = _flatten_lowering_ir_args(args)
@@ -1751,11 +1791,12 @@ def _while_lowering(ctx, avals_in, avals_out, *args, cond_jaxpr,
         [*util.flatten(x), *util.flatten(y), *util.flatten(new_z)])
     mhlo.ReturnOp([new_carry.result])
 
-  outputs = [mhlo.GetTupleElementOp(output_type, while_op.result,
-                                    _i32_attr(cond_nconsts + body_nconsts + i)
-                                   ).result
-             for i, output_type in enumerate(flat_output_types)]
-  return util.unflatten(outputs, map(len, output_types))
+  outputs = util.unflatten([
+    mhlo.GetTupleElementOp(output_type, while_op.result, _i32_attr(i)).result
+    for i, output_type in enumerate(flat_loop_carry_types)
+  ], map(len, loop_carry_types))
+  _,  _, z = util.split_list(outputs, [cond_nconsts, body_nconsts])
+  return z
 
 translations[control_flow.while_p] = _while_lowering
 
@@ -1866,7 +1907,8 @@ translations[pe.remat_call_p] = _remat_lowering
 
 def _fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
                        avals_in, avals_out, *args, **params):
-  xla_computation = xla.primitive_subcomputation(prim, *avals_in, **params)
+  xla_computation = xla.primitive_subcomputation(ctx.platform, prim, *avals_in,
+                                                 **params)
   submodule_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
   submodule = ir.Module.parse(submodule_str)
   callee_name = None
@@ -1880,13 +1922,12 @@ def _fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
 
   output_types = map(aval_to_ir_types, avals_out)
   flat_output_types = util.flatten(output_types)
-  output_arity = len(flat_output_types)
-  output_type = (flat_output_types[0] if output_arity == 1
-                 else ir.TupleType.get_tuple(flat_output_types))
+  output_type = (ir.TupleType.get_tuple(flat_output_types)
+                 if prim.multiple_results else flat_output_types[0])
 
   call = std.CallOp([output_type], ir.FlatSymbolRefAttr.get(callee_name),
                     _flatten_lowering_ir_args(args)).result
-  if output_arity == 1:
+  if not prim.multiple_results:
     return [call]
   flat_results = [mhlo.GetTupleElementOp(typ, call, _i32_attr(i)).result
                   for i, typ in enumerate(flat_output_types)]

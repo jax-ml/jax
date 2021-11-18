@@ -463,12 +463,20 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
     msg = "primitive arguments must be colocated on the same device, got {}"
     raise ValueError(msg.format(", ".join(map(str, devices)))) from err
 
-def primitive_subcomputation(prim: core.Primitive, *avals: core.AbstractValue,
-                             **params):
+def primitive_subcomputation(platform: str, prim: core.Primitive,
+                             *avals: core.AbstractValue, **params):
   c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
-  f = lower_fun(prim.bind, multiple_results=prim.multiple_results)
-  xla_args, _ = _xla_callable_args(c, avals, tuple_args=False)
-  ans = f(c, *xla_args, **params)
+  f = lower_fun(prim.bind, multiple_results=prim.multiple_results,
+                new_style=True)
+  xla_args, _ = _xla_callable_args(c, avals, tuple_args=False,
+                                   filter_tokens=False)
+  ctx = TranslationContext(builder=c, platform=platform,
+                           axis_env=AxisEnv(1, (), ()), name_stack="")
+  ans = f(ctx.replace(builder=c), avals, None, *xla_args, **params)
+  if prim.multiple_results:
+    ans = xops.Tuple(c, ans)
+  else:
+    ans, = ans
   return c.build(ans)
 
 def backend_compile(backend, built_c, options):
@@ -538,8 +546,7 @@ class TranslationContext:
 
 def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
                   consts: Sequence[XlaOp], *args: XlaOp) -> Sequence[XlaOp]:
-  # TODO(phawkins): make platform non-optional.
-  # assert ctx.platform is not None
+  assert ctx.platform is not None
   def read(v):
     if type(v) is Literal:
       return pyval_to_ir_constants(ctx.builder, canonicalize_dtype(v.val))
@@ -800,7 +807,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
     return XlaComputation(
-        name, None, True, jaxpr, consts, device, abstract_args, out_avals,
+        name, None, True, None, jaxpr, consts, device, abstract_args, out_avals,
         kept_var_idx)
 
   if not _on_exit:
@@ -836,7 +843,6 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   ctx = TranslationContext(c, platform, AxisEnv(nreps, (), ()),
                            extend_name_stack(wrap_name(name, 'jit')))
   out_nodes = jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-  backend = xb.get_backend(backend)
   # There is a non-zero cost to building an output tuple, particularly on TPU.
   # Avoid it if the output arity is 1.
   output = out_nodes[0] if len(out_nodes) == 1 else xops.Tuple(c, out_nodes)
@@ -851,8 +857,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
          ", ".join(unused_donations)))
   built = c.build(output)
   return XlaComputation(
-      name, built, False, nreps, device, backend, tuple_args, abstract_args,
-      out_avals, kept_var_idx)
+      name, built, False, donated_invars, nreps, device, backend, tuple_args,
+      abstract_args, out_avals, kept_var_idx)
 
 
 def compile_or_get_cached(backend, computation, compile_options):
@@ -876,11 +882,14 @@ class XlaComputation:
   name: str
   _is_trivial: bool
   _executable: Optional['XlaCompiledComputation']
+  _donated_invars: Optional[Sequence[bool]]
 
-  def __init__(self, name: str, hlo, is_trivial: bool, *compile_args):
+  def __init__(self, name: str, hlo, is_trivial: bool,
+               donated_invars: Optional[Sequence[bool]], *compile_args):
     self.name = name
     self._hlo = hlo
     self._is_trivial = is_trivial
+    self._donated_invars = donated_invars
     self._executable = None
     self.compile_args = compile_args
 
@@ -1044,7 +1053,8 @@ def _xla_callable_args(
     replicated=None,
     partitions=None,
     partitions_proto: bool = False,
-    donated_invars=None):
+    donated_invars=None,
+    filter_tokens=True):
   assert partitions is None or len(partitions) == len(avals)
   if not tuple_args:
     if replicated is None:
@@ -1058,7 +1068,7 @@ def _xla_callable_args(
                for part in partitions]
     counts = it.count()
     xla_args = [_xla_param(c, next(counts), xla_shape, r, p, partitions_proto)
-                if a is not abstract_token else xops.CreateToken(c)
+                if not (filter_tokens and a is abstract_token) else xops.CreateToken(c)
                 for (a, r, p) in safe_zip(avals, replicated, parts)
                 for xla_shape in aval_to_xla_shapes(a)]
     if donated_invars is not None:
@@ -1077,11 +1087,12 @@ def _xla_callable_args(
     else:
       tuple_parts = tuple(partitions)
     tuple_shape = xc.Shape.tuple_shape(
-        [shape for a in avals for shape in aval_to_xla_shapes(a) if a is not abstract_token])
+        [shape for a in avals for shape in aval_to_xla_shapes(a)
+         if not (filter_tokens and a is abstract_token)])
     tuple_param = _xla_param(c, 0, tuple_shape, replicated, tuple_parts, partitions_proto)
     xla_inputs = iter(xla_destructure(c, tuple_param))
-    xla_args = [next(xla_inputs) if a is not abstract_token else
-                xops.CreateToken(c) for a in avals]
+    xla_args = [next(xla_inputs) if not (filter_tokens and a is abstract_token)
+                else xops.CreateToken(c) for a in avals]
     assert next(xla_inputs, None) is None
     return xla_args, donated_invars
 
@@ -1337,7 +1348,8 @@ def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
               backend=None, new_style: bool = False) -> Callable:
   if new_style:
     def f_new(ctx: TranslationContext, avals_in: Sequence[core.AbstractValue],
-              avals_out: Sequence[core.AbstractValue], *xla_args: xc.XlaOp,
+              avals_out: Sequence[core.AbstractValue],
+              *xla_args: xc.XlaOp,
               **params) -> Sequence[xc.XlaOp]:
       wrapped_fun = lu.wrap_init(fun, params)
       if not multiple_results:
@@ -1353,6 +1365,12 @@ def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
     return f_new
 
   # TODO(phawkins): migrate dependent code & always use new_style=True.
+
+  if backend is None:
+    # The user didn't specify a backend. This isn't possible with the new style
+    # API.
+    backend = "backend_not_specified"
+
   def f(c, *xla_args, **params):
     avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
     return f_with_avals(c, avals, xla_args, params)
@@ -1482,7 +1500,8 @@ class _DeviceArray(DeviceArray):  # type: ignore
     if config.jax_enable_checks:
       assert type(aval) is ShapedArray
       npy_value = self._value
-      assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
+      assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape, (
+          aval, npy_value.shape, npy_value.dtype)
       assert (device is None) or device is device_buffer.device()
 
   def _check_if_deleted(self):

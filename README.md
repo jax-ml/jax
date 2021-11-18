@@ -15,8 +15,6 @@
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 
 
-**News:** [JAX tops largest-scale MLPerf Training 0.7 benchmarks!](https://cloud.google.com/blog/products/ai-machine-learning/google-breaks-ai-performance-records-in-mlperf-with-worlds-fastest-training-supercomputer)
-
 ## What is JAX?
 
 JAX is [Autograd](https://github.com/hips/autograd) and [XLA](https://www.tensorflow.org/xla),
@@ -497,19 +495,16 @@ source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source
 Multiple Google research groups develop and share libraries for training neural
 networks in JAX. If you want a fully featured library for neural network
 training with examples and how-to guides, try
-[Flax](https://github.com/google/flax). Another option is
-[Trax](https://github.com/google/trax), a combinator-based framework focused on
-ease-of-use and end-to-end single-command examples, especially for sequence
-models and reinforcement learning. Finally,
-[Objax](https://github.com/google/objax) is a minimalist object-oriented
-framework with a PyTorch-like interface.
+[Flax](https://github.com/google/flax).
 
-DeepMind has open-sourced an
-[ecosystem of libraries around JAX](https://deepmind.com/blog/article/using-jax-to-accelerate-our-research) including [Haiku](https://github.com/deepmind/dm-haiku) for neural
-network modules, [Optax](https://github.com/deepmind/optax) for gradient
-processing and optimization, [RLax](https://github.com/deepmind/rlax) for RL
-algorithms, and [chex](https://github.com/deepmind/chex) for reliable code and
-testing. (Watch the NeurIPS 2020 JAX Ecosystem at DeepMind talk [here](https://www.youtube.com/watch?v=iDxJxIyzSiM))
+In addition, DeepMind has open-sourced an [ecosystem of libraries around
+JAX](https://deepmind.com/blog/article/using-jax-to-accelerate-our-research)
+including [Haiku](https://github.com/deepmind/dm-haiku) for neural network
+modules, [Optax](https://github.com/deepmind/optax) for gradient processing and
+optimization, [RLax](https://github.com/deepmind/rlax) for RL algorithms, and
+[chex](https://github.com/deepmind/chex) for reliable code and testing. (Watch
+the NeurIPS 2020 JAX Ecosystem at DeepMind talk
+[here](https://www.youtube.com/watch?v=iDxJxIyzSiM))
 
 ## Citing JAX
 

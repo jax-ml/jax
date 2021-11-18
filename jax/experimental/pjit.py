@@ -229,23 +229,24 @@ def pjit(fun: Callable,
         donated_invars=donated_invars,
         name=flat_fun.__name__,
         positional_semantics=maps._positional_semantics)
-    return args_flat, params, in_tree, out_tree()
+    return args_flat, params, in_tree, out_tree(), donate_argnums
 
   @wraps(fun)
   def wrapped(*args, **kwargs):
     for arg in tree_leaves(args):
       _check_arg(arg)
-    args_flat, params, _, out_tree = infer_params(*args, **kwargs)
+    args_flat, params, _, out_tree, _ = infer_params(*args, **kwargs)
     out = pjit_p.bind(*args_flat, **params)
     return tree_unflatten(out_tree, out)
 
   def lower(*args, **kwargs):
-    args_flat, params, in_tree, out_tree = infer_params(*args, **kwargs)
+    args_flat, params, in_tree, out_tree, donate_argnums = \
+        infer_params(*args, **kwargs)
     lowering = _pjit_lower(
         params['jaxpr'], params['in_axis_resources'],
         params['out_axis_resources'], params['resource_env'],
         params['donated_invars'], params['name'], maps._positional_semantics)
-    return Lowered(lowering, in_tree, out_tree, no_kwargs=True)
+    return Lowered(lowering, in_tree, out_tree, donate_argnums, no_kwargs=True)
 
   wrapped.lower = lower
   return wrapped

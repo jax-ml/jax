@@ -22,6 +22,7 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial, lru_cache
 import os
+import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 import warnings
 
@@ -35,7 +36,13 @@ from . import tpu_driver_client
 from . import xla_client
 from jax._src import util, traceback_util
 import numpy as np
-import threading
+
+iree: Optional[Any]
+
+try:
+  import jax._src.iree as iree  # type: ignore
+except ModuleNotFoundError:
+  iree = None
 
 traceback_util.register_exclusion(__file__)
 
@@ -193,6 +200,9 @@ register_backend_factory('gpu', xla_client.make_gpu_client,
                          priority=200)
 register_backend_factory(
   'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
+
+if iree is not None:
+  register_backend_factory("iree", iree.iree_client_factory, priority=-100)
 
 
 def backends():

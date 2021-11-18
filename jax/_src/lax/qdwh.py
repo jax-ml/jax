@@ -37,7 +37,7 @@ def _use_qr(u, params):
   a, b, c = params
   m, n = u.shape
   y = jnp.concatenate([jnp.sqrt(c) * u, jnp.eye(n)])
-  q, _ = jnp.linalg.qr(y)
+  q, _ = lax_linalg.qr(y, full_matrices=False)
   q1 = q[:m, :]
   q2 = (q[m:, :]).T.conj()
   e = b / c

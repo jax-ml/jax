@@ -43,9 +43,8 @@ from jax.experimental.maps import mesh
 
 
 FLAGS = flags.FLAGS
-flags.DEFINE_enum(
+flags.DEFINE_string(
     'jax_test_dut', '',
-    enum_values=['', 'cpu', 'gpu', 'tpu'],
     help=
     'Describes the device under test in case special consideration is required.'
 )
@@ -405,6 +404,9 @@ def supported_dtypes():
   if device_under_test() == "tpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
              np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64}
+  elif device_under_test() == "iree":
+    types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
+             np.uint32, np.float32}
   else:
     types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
              np.uint8, np.uint16, np.uint32, np.uint64,
