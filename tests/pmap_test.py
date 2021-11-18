@@ -1890,6 +1890,26 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
+       "collective": collective}
+      for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
+  def testCollectivesWithVmap2(self, collective):
+    def f(map1, map2):
+      @partial(map1, axis_name='i')
+      @partial(map2, axis_name='j')
+      def f(x, y):
+        return x + collective(x.dot(y), ('i', 'j'))
+      return f
+
+    if jax.device_count() < 8:
+      raise SkipTest("test requires at least eight devices")
+    x = jnp.arange(4*2*64*64).reshape(4, 2, 64, 64)
+    y = f(jax.pmap, jax.pmap)(x, x)
+    self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
+
   def testPPermuteWithVmap(self):
     perm = [(0, 1), (1, 0)]
 
@@ -1904,6 +1924,18 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       raise SkipTest("test requires at least four devices")
     x = jnp.ones((2, 2, 64, 64))
     self.assertAllClose(f(jax.pmap)(x, x), f(jax.vmap)(x, x))
+
+  def testPPermuteAgreesWithVmap(self):
+    if jax.device_count() < 3:
+      raise SkipTest("test requires at least three devices")
+
+    def f(x):
+      return lax.ppermute(x, 'i', [[1, 0], [2, 1], [0, 2]])
+
+    xs = jnp.arange(3) * 10
+    ys = jax.pmap(f, axis_name='i')(xs)
+    zs = jax.vmap(f, axis_name='i')(xs)
+    self.assertAllClose(ys, zs, check_dtypes=True)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
