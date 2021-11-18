@@ -90,6 +90,7 @@ class ImageTest(jtu.JaxTestCase):
         "target_shape": target_shape,
         "method": method}
        for dtype in [np.float32]
+
        for target_shape, image_shape in itertools.combinations_with_replacement(
         [[3, 2], [6, 4], [33, 17], [50, 39]], 2)
        for method in ["nearest", "bilinear", "lanczos3", "bicubic"]))
