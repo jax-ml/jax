@@ -10,6 +10,10 @@
 
 {{jax2tf_to_tfjs}}
 
+## jax2tf (enable_xla=True)
+
+{{jax2tf_xla}}
+
 ## Table generation
 
 See `examples_test.py` for instructions on how to regenerate this table.

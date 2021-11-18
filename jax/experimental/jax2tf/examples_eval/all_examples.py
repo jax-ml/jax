@@ -117,11 +117,10 @@ def _flax_examples():
       'ppo':
           ModuleSpec(
               module_path='ppo.models.ActorCritic',
-              # TODO(marcvanzee): We get numerical differences if we run this
-              # for input shapes (1, 8, 8, 4). conv_general_dilated then returns
+              # TODO(marcvanzee): This fails. conv_general_dilated then returns
               # only zeros for TFLite, but not for JAX. We should investigate
               # and fix this.
-              input_shape=(1, 84, 84, 4),
+              input_shape=(1, 8, 8, 4),
               module_kwargs=dict(num_outputs=8)),
       'seq2seq':
           ModuleSpec(
@@ -139,12 +138,12 @@ def _flax_examples():
               module_path='sst2.models.TextClassifier',
               input_shape=(2, 3),
               module_kwargs=dict(
-                  # TODO(marcvanzee): TFLite throws a concatenation error when
+                  # TODO(marcvanzee): This fails when
                   # `embedding_size != hidden_size`. I suppose some arrays are
                   # concatenated with incompatible shapes, which could mean
                   # something is going wrong in the translation.
                   embedding_size=3,
-                  hidden_size=3,
+                  hidden_size=1,
                   vocab_size=13,
                   output_size=1,
                   dropout_rate=0.,
