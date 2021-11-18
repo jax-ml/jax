@@ -1376,13 +1376,10 @@ def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple
     raise ValueError(msg)
   return next(iter(special_handlers), _dimension_handler_int), tuple(canonical)
 
-def is_dim_size(v: Any) -> bool:
-  """Checks if a value is a DimSize."""
-  try:
-    handler, _ = _dim_handler_and_canonical(v)
-    return True
-  except TypeError:
-    return False
+def is_special_dim_size(v: Any) -> bool:
+  """Checks if a value is a special DimSize."""
+  handler = _SPECIAL_DIMENSION_HANDLERS.get(type(v))
+  return (handler is not None)
 
 def is_constant_dim(d: DimSize) -> bool:
   handler, ds = _dim_handler_and_canonical(d)

@@ -233,7 +233,9 @@ def _resize_nearest(x, output_shape: core.Shape):
     m = input_shape[d]
     n = output_shape[d]
     offsets = (jnp.arange(n) + 0.5) * core.dimension_as_value(m) / core.dimension_as_value(n)
-    offsets = jnp.floor(offsets).astype(np.int32)
+    # TODO(b/206898375): this computation produces the wrong result on
+    # CPU and GPU when using float64. Use float32 until the bug is fixed.
+    offsets = jnp.floor(offsets.astype(np.float32)).astype(np.int32)
     indices = [slice(None)] * len(input_shape)
     indices[d] = offsets
     x = x[tuple(indices)]

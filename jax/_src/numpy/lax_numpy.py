@@ -3762,7 +3762,7 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
   msg = "It arose in jax.numpy.arange argument `{}`.".format
   dtype = dtype or _dtype(start, *(x for x in [stop, step] if x is not None))
   if stop is None and step is None:
-    if not core.is_dim_size(start):
+    if not core.is_special_dim_size(start):
       start = require(start, msg("stop"))
       start = np.ceil(start).astype(int)
 
