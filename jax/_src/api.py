@@ -2014,7 +2014,7 @@ def _cpp_pmap(
     return out, fastpath_data
 
   cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,
-                               static_broadcasted_tuple, pxla._shard_arg)
+                               static_broadcasted_tuple, pxla._shard_arg)  # type: ignore
 
   f_pmapped = wraps(fun)(cpp_mapped_f)
   return f_pmapped
