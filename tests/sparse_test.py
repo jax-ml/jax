@@ -1059,14 +1059,18 @@ class BCOOTest(jtu.JaxTestCase):
 
   @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}[n_batch={}]_{}[n_batch={}]_dims={}".format(
+      {"testcase_name": "_{}[n_batch={}]_{}[n_batch={}]_swap={}_dims={}".format(
         jtu.format_shape_dtype_string(lhs_shape, dtype), lhs_n_batch,
         jtu.format_shape_dtype_string(rhs_shape, dtype), rhs_n_batch,
-        dimension_numbers),
+        swap, dimension_numbers),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape,
        "lhs_n_batch": lhs_n_batch, "rhs_n_batch": rhs_n_batch,
-       "dimension_numbers": dimension_numbers, "dtype": dtype}
+       "dimension_numbers": dimension_numbers, "swap": swap, "dtype": dtype}
       for lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dimension_numbers in [
+          # (batched) outer products (no contraction)
+          ((5,), 0, (6,), 0, (([], []), ([], []))),
+          ((3, 5), 0, (2, 4), 0, (([], []), ([], []))),
+          ((3, 5), 1, (3, 4), 1, (([], []), ([0], [0]))),
           # (batched) vector-vector products
           ((5,), 0, (5,), 0, (([0], [0]), ([], []))),
           ((7,), 0, (7,), 0, (([0], [0]), ([], []))),
@@ -1081,9 +1085,27 @@ class BCOOTest(jtu.JaxTestCase):
           ((2, 3, 4), 1, (2, 4), 1, (([2], [1]), ([0], [0]))),
           ((3, 2, 4), 1, (3, 4), 1, (([2], [1]), ([0], [0]))),
           ((2, 3, 4), 0, (2,), 0, (([0], [0]), ([], []))),
+          # (batched) matrix-matrix products
+          ((5, 7), 0, (7, 3), 0, (([1], [0]), ([], []))),
+          ((2, 3, 4), 1, (4, 3), 0, (([2], [0]), ([], []))),
+          ((2, 3, 4), 1, (2, 4, 3), 1, (([2], [1]), ([0], [0]))),
+          # more general operations
+          ((2, 3, 4, 3), 1, (2, 4, 3, 4), 1, (([2, 3], [1, 2]), ([0], [0]))),
+          ((2, 3, 4, 3, 1), 2, (3, 2, 3, 4), 2, (([2, 3], [3, 2]), ([0, 1], [1, 0]))),
       ]
+      for swap in [True, False]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
-  def test_bcoo_spdot_general(self, lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dtype, dimension_numbers):
+  def test_bcoo_spdot_general(self, lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dtype, swap, dimension_numbers):
+    if swap:
+      dimension_numbers = tuple(d[::-1] for d in dimension_numbers)
+      lhs_shape, rhs_shape = rhs_shape, lhs_shape
+      lhs_n_batch, rhs_n_batch = rhs_n_batch, lhs_n_batch
+
+    lhs_n_sparse = len(lhs_shape) - lhs_n_batch
+    rhs_batch = dimension_numbers[1][1]
+    lhs_contracting = dimension_numbers[0][0]
+    should_error = (rhs_n_batch > len(rhs_batch) and lhs_n_sparse > len(lhs_contracting))
+
     sprng = rand_sparse(self.rng())
     def args_maker():
       x = sprng(lhs_shape, dtype)
@@ -1096,16 +1118,34 @@ class BCOOTest(jtu.JaxTestCase):
       return lax.dot_general(x, y, dimension_numbers=dimension_numbers)
 
     def f_sparse(x, y, xsp, ysp):
-      shape = sparse.bcoo._dot_general_validated_shape(x.shape, y.shape, dimension_numbers)
+      shape = sparse.bcoo._dot_general_validated_shape(xsp.shape, ysp.shape, dimension_numbers)
       data, indices = sparse.bcoo_spdot_general(xsp.data, xsp.indices, ysp.data, ysp.indices,
                                                 lhs_shape=x.shape, rhs_shape=y.shape,
                                                 dimension_numbers=dimension_numbers)
       return sparse.bcoo_todense(data, indices, shape=shape)
 
-    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
-    # TODO(jakevdp): This occasionally fails python_should_be_executing check. Why?
-    # self._CompileAndCheck(f_sparse, args_maker)
-    self._CheckAgainstNumpy(jit(f_dense), jit(f_sparse), args_maker)
+    tol = {"complex128": 1E-14}
+    if should_error:
+      with self.assertRaisesRegex(ValueError, ".*cannot have unused batch dims on rhs with unused sparse dims on lhs."):
+        f_sparse(*args_maker())
+    else:
+      self._CheckAgainstNumpy(f_dense, f_sparse, args_maker, tol=tol)
+      self._CheckAgainstNumpy(jit(f_dense), jit(f_sparse), args_maker, tol=tol)
+      # TODO(jakevdp): This occasionally fails python_should_be_executing check. Why?
+      # self._CompileAndCheck(f_sparse, args_maker)
+
+  def test_bcoo_spdot_general_nse(self):
+    # vector-vector product -> nse=1
+    x = sparse.BCOO.fromdense(jnp.arange(3))
+    self.assertEqual((x @ x).nse, 1)
+
+    # matrix-vector product -> nse matches matrix
+    M = sparse.BCOO.fromdense(jnp.arange(6).reshape(2, 3))
+    self.assertEqual((M @ x).nse, M.nse)
+
+    # matrix-matrix product -> product of nse
+    N = sparse.BCOO.fromdense(jnp.arange(12).reshape(3, 4))
+    self.assertEqual((M @ N).nse, M.nse * N.nse)
 
   @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @parameterized.named_parameters(jtu.cases_from_list(
