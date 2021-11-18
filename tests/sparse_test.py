@@ -1159,7 +1159,7 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_sum_duplicates(self, shape, dtype, n_batch, n_dense, nse):
     rng = self.rng()
     rng_sparse = rand_sparse(self.rng())
-    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype))
+    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
     for i, s in enumerate(shape[n_batch:len(shape) - n_dense]):
       M.indices = M.indices.at[..., i, :].set(rng.randint(0, s, size=M.indices.shape[-1]))
     dedupe = partial(M.sum_duplicates, nse=nse)
