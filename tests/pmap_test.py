@@ -781,12 +781,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     device_count = jax.device_count()
     rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
     f = lambda x: lax.ppermute(x, perm=rotation, axis_name='i')
-    f = self.pmap(f, 'i')
+    f_pmap = self.pmap(f, axis_name='i')
+    f_vmap = jax.vmap(f, axis_name='i')
 
     x = jnp.arange(4 * device_count).reshape((device_count, 4))
-    ans = f(x)
+    ans_pmap = f_pmap(x)
+    ans_vmap = f_vmap(x)
     expected = np.roll(x, shift=1, axis=0)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans_pmap, expected, check_dtypes=False)
+    self.assertAllClose(ans_vmap, expected, check_dtypes=False)
 
   @jtu.skip_on_devices("cpu")
   def testCollectivePermuteGrad(self):
