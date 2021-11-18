@@ -313,15 +313,34 @@ def _flatten_lowering_ir_args(
 
 def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
                        jaxpr: core.ClosedJaxpr, *,
-                       public: bool = False) -> str:
+                       public: bool = False,
+                       prune_tokens: bool = False) -> str:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
 
-  Returns the name of the function."""
+  Args:
+    ctx: the lowering context.
+    name: the function name. The name will be uniquified by the symbol table,
+      so it is ok to use the same name multiple times.
+    jaxpr: the jaxpr to lower.
+    public: if true, the function's visibility is set to "public".
+    prune_tokens: if true, tokens are pruned from the arguments and return
+      values.
+  Returns the name of the function.
+  """
   # print(jaxpr.jaxpr)
-  input_types = map(aval_to_ir_types, jaxpr.in_avals)
-  output_types = map(aval_to_ir_types, jaxpr.out_avals)
+  if prune_tokens:
+    pruned_in_avals = [aval for aval in jaxpr.in_avals
+                       if aval is not core.abstract_token]
+    pruned_out_avals = [aval for aval in jaxpr.out_avals
+                        if aval is not core.abstract_token]
+  else:
+    pruned_in_avals = jaxpr.in_avals
+    pruned_out_avals = jaxpr.out_avals
+
+  input_types = map(aval_to_ir_types, pruned_in_avals)
+  output_types = map(aval_to_ir_types, pruned_out_avals)
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
   if ctx.tuple_results:
@@ -338,11 +357,26 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
   with ir.InsertionPoint(entry_block):
     unflattened_args = util.unflatten(entry_block.arguments,
                                       map(len, input_types))
+    # If we pruned tokens out of the parameter list, create a new token and add
+    # it here.
+    if prune_tokens and len(pruned_in_avals) != len(jaxpr.in_avals):
+      token = mhlo.CreateTokenOp(mhlo.TokenType.get()).results
+      arg_iter = iter(unflattened_args)
+      unflattened_args = [
+          token if aval is core.abstract_token else next(arg_iter)
+          for aval in jaxpr.in_avals
+      ]
+      done = object()
+      assert next(arg_iter, done) is done
+
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
                                               xla.wrap_name(name, 'jit'))
     out_vals = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
                              jaxpr.jaxpr, map(ir_constants, jaxpr.consts),
                              *unflattened_args)
+    if prune_tokens:
+      out_vals = [v for v, aval in zip(out_vals, jaxpr.out_avals)
+                  if aval is not core.abstract_token]
     flat_outputs = util.flatten(out_vals)
     if ctx.tuple_results:
       std.ReturnOp([mhlo.TupleOp(output_tuple_type, flat_outputs).result])
@@ -400,13 +434,9 @@ def jaxpr_subcomp(ctx: LoweringContext, jaxpr: core.Jaxpr,
             f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
             "found")
 
-      try:
-        ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
-                   *map(_unwrap_singleton_ir_values, in_nodes),
-                   **eqn.params)
-      except Exception as e:
-        raise RuntimeError(
-            f"MLIR translation failed for equation: {eqn}") from e
+      ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
+                 *map(_unwrap_singleton_ir_values, in_nodes),
+                 **eqn.params)
 
     try:
       out_nodes = tuple(map(_wrap_singleton_ir_values, ans))
@@ -596,7 +626,7 @@ def _array_result_handler(aval: core.ShapedArray) -> ResultHandler:
   return lambda device, buffer: xla.make_device_array(aval, device, buffer)
 
 _aval_to_result_handler[core.AbstractUnit] = lambda _: lambda _: core.unit
-_aval_to_result_handler[core.AbstractToken] = lambda _: lambda _, __: xla.token
+_aval_to_result_handler[core.AbstractToken] = lambda _: lambda _: xla.token
 _aval_to_result_handler[core.ShapedArray] = _array_result_handler
 _aval_to_result_handler[core.ConcreteArray] = _array_result_handler
 
@@ -803,8 +833,12 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
     tuple_args = len(avals_in) > 100  # pass long arg lists as tuple for TPU
 
   with ctx.context, ir.Location.unknown(ctx.context):
+    # XLA doesn't have a runtime representation of tokens, so we prune them out
+    # of the arguments and return values of the top-level function. This is fine
+    # since the purpose of tokens is to preserve ordering inside compiled
+    # functions.
     lower_jaxpr_to_fun(ctx, "main", core.ClosedJaxpr(jaxpr, consts),
-                       public=True)
+                       public=True, prune_tokens=True)
 
   assert not any(donated_invars), donated_invars
   # TODO(b/203122001): implement buffer donation.
