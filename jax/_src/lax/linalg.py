@@ -41,7 +41,6 @@ from jax._src.lib import cusparse
 from jax._src.lib import rocsolver
 
 from jax._src.lib import xla_client
-from jax._src.lib import version as jaxlib_version
 
 xops = xla_client.ops
 
@@ -1537,11 +1536,6 @@ def _schur_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
   operand_aval, = avals_in
   batch_dims = operand_aval.shape[:-2]
   c = ctx.builder
-
-  if jaxlib_version < (0, 1, 72):
-    raise NotImplementedError(
-        "The Schur primitive is only implemented for jaxlib versions >= 0.1.72"
-    )
 
   _cpu_gees = lapack.gees
 

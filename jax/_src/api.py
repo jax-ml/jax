@@ -109,8 +109,7 @@ flags.DEFINE_bool(
     "Set this to `False` only if it crashes otherwise and report "
     "the error to the jax-team.")
 flags.DEFINE_bool(
-    "experimental_cpp_pmap",
-    bool_env("JAX_CPP_PMAP", jax._src.lib._xla_extension_version >= 39),
+    "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", True),
     "A flag enabling the C++ jax.pmap fast path. Until the default "
     "is switched to True, the feature is not supported and possibly broken "
     "(e.g. it may use unreleased code from jaxlib.")
@@ -2014,8 +2013,7 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
-  # TODO(slebedev): Remove the ignore once jaxlib>=0.1.71.
-  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,  # type: ignore[call-arg]
+  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,
                                static_broadcasted_tuple, pxla._shard_arg)
 
   f_pmapped = wraps(fun)(cpp_mapped_f)

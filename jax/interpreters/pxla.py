@@ -34,14 +34,13 @@ from functools import partial
 import itertools as it
 import operator as op
 import threading
-from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional,
+from typing import (Any, Callable, Dict, List, Optional,
                     Sequence, Set, Tuple, Type, Union, Iterable)
 import sys
 
 from absl import logging
 import numpy as np
 
-import jax
 from .._src.config import config
 from .. import core
 from .. import linear_util as lu
@@ -55,7 +54,6 @@ from ..errors import JAXTypeError
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
-from jax._src.lib import _xla_extension_version
 from ..tree_util import tree_flatten, tree_map
 from . import batching
 from . import partial_eval as pe
@@ -97,9 +95,7 @@ MeshDimAssignment = Union[ShardedAxis, Replicated]
 # mypy will consider this constant to be True at type check time.
 MYPY = False
 
-# TODO(jblespiau): Remove the version check when jaxlib 0.1.70 is the minimal
-# version.
-if MYPY or (not TYPE_CHECKING and _xla_extension_version < 30):
+if MYPY:
   class ShardingSpec:
     """Describes the sharding of an ndarray.
 
@@ -503,8 +499,8 @@ def gsda_array_result_handler(global_aval, global_mesh, out_axis_resources):
 
 ### lazy device-memory persistence and result handling
 
-# TODO(jblespiau): Remove when jaxlib 0.1.72 is the minimal version.
-_USE_CPP_SDA = _xla_extension_version >= 38
+# TODO(jblespiau): Consider removing this option.
+_USE_CPP_SDA = True
 
 
 def make_sharded_device_array(
@@ -539,9 +535,8 @@ def make_sharded_device_array(
   if (_USE_CPP_SDA and
       (not device_buffers or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
-    # TODO(slebedev): Remove the ignore once jaxlib>=0.1.71.
     return pmap_lib.ShardedDeviceArray.make(
-        aval, sharding_spec, device_buffers,  # type: ignore[arg-type, call-arg]
+        aval, sharding_spec, device_buffers,
         indices, aval.weak_type)
 
   return _ShardedDeviceArray(aval, sharding_spec, device_buffers, indices)
@@ -1783,12 +1778,8 @@ class MeshExecutable:
         use_spmd_partitioning=spmd_lowering,
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
-    if jax._src.lib.version >= (0, 1, 72):
-      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
-          _allow_propagation_to_outputs
-    elif _allow_propagation_to_outputs:
-      raise RuntimeError("Propagation of SPMD sharding specs to outputs is only supported "
-                         "in jaxlib 0.1.72+. Please update your JAX version.")
+    compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
+        _allow_propagation_to_outputs
 
     local_sharding_spec = mesh_sharding_specs(local_axis_sizes, mesh.axis_names)
     local_input_specs = [local_sharding_spec(aval, aval_in_axes)

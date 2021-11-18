@@ -82,16 +82,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # Tensorflow.
     return api._cpp_jit
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 40,
-                   "Test requires jaxlib 0.1.73")
   def test_jit_repr(self):
     def my_function():
       return
     jitted = jit(my_function)
     self.assertEqual(repr(jitted), f"<CompiledFunction of {repr(my_function)}>")
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 40,
-                   "Test requires jaxlib 0.1.73")
   def test_jit_repr_errors(self):
     class Callable:
       def __call__(self): pass
@@ -692,8 +688,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       np.testing.assert_allclose(f_pruned(*args), 3)
     self.assertEqual(count[0], 1)
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version <= 36,
-                   "Test requires jaxlib 0.1.71")
   def testBuffersAreFreedPromptly(self):
     # Regression test for a bug where garbage collection was delayed too long
     # for NumPy buffers that are aliased zero-copy by the runtime.

@@ -1821,10 +1821,7 @@ class CppPmapTest(PythonPmapTest):
 
   @property
   def pmap(self):
-    if jax._src.lib._xla_extension_version >= 38:
-      return src_api._cpp_pmap
-    else:
-      return src_api._python_pmap
+    return src_api._cpp_pmap
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):

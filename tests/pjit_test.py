@@ -266,7 +266,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertTrue(hasattr(y, "sharding_spec"))
 
   @check_1d_2d_mesh(set_mesh=True)
-  @unittest.skipIf(jax._src.lib.version < (0, 1, 72), "Needs jaxlib 0.1.72+")
   def testAutodiff(self, mesh, resources):
     if len(mesh) != 2: return
     assert resources == ('x', 'y')
