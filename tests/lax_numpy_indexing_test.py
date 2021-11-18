@@ -19,7 +19,6 @@ from functools import partial
 import itertools
 import typing
 from typing import Any, Optional, Tuple
-import unittest
 import warnings
 
 from absl.testing import absltest
@@ -1241,8 +1240,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     with self.assertNoWarnings():
       x.at[normalize(idx)].set(0)
 
-  @unittest.skipIf(jax._src.lib.version < (0, 1, 72),
-                   "Bug fixed in jaxlib 0.1.72")
   def testIndexedUpdateAliasingBug(self):
     # https://github.com/google/jax/issues/7461
     fn = lambda x: x.at[1:].set(1 + x[:-1])

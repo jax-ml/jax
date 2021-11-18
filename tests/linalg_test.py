@@ -1453,8 +1453,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
                             for dtype in float_types + complex_types))
   @jtu.skip_on_devices("gpu", "tpu")
   def testSchur(self, shape, dtype):
-      if jax._src.lib.version < (0, 1, 72):
-          self.skipTest("Schur LAPACK wrapper only implemented for jaxlib versions >= 0.1.72")
       rng = jtu.rand_default(self.rng())
       args_maker = lambda: [rng(shape, dtype)]
 
@@ -1470,8 +1468,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
                           for dtype in float_types + complex_types))
   @jtu.skip_on_devices("gpu", "tpu")
   def testSchurBatching(self, shape, dtype):
-      if jax._src.lib.version < (0, 1, 72):
-          self.skipTest("Schur LAPACK wrapper only implemented for jaxlib versions >= 0.1.72")
       rng = jtu.rand_default(self.rng())
       batch_size = 10
       shape = (batch_size, ) + shape

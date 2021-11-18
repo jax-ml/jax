@@ -55,7 +55,6 @@ import jax._src.lib
 from jax._src.lib import pytree
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import version as jaxlib_version
 
 xb = xla_bridge
 xc = xla_client
@@ -2801,21 +2800,7 @@ ad.defjvp2(rsqrt_p,
            lambda g, ans, x:
            mul(g, mul(_const(x, -0.5), div(ans, x))))
 
-# TODO(phawkins): remove the fallback translation rule after the minimum jaxlib
-# is 0.1.70 or newer.
-if jax._src.lib._xla_extension_version >= 28:
-  _cbrt_translation_rule = None
-else:
-  def _cbrt_translation_rule(ctx, avals_in, avals_out, x):
-    x_aval, = avals_in
-    return [xops.Mul(
-       xops.Sign(x),
-       xops.Pow(xops.Abs(x),
-                xla.pyval_to_ir_constant(ctx.builder,
-                                         np.array(1/3, dtype=x_aval.dtype))))]
-
-cbrt_p = standard_unop(_float, 'cbrt',
-                       translation_rule=_cbrt_translation_rule)
+cbrt_p = standard_unop(_float, 'cbrt')
 ad.defjvp2(cbrt_p,
            lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
 
@@ -5900,15 +5885,6 @@ def _compute_argminmax(value_comparator, get_identity,
                axes)
   return res[1]
 
-def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
-  axis, = axes
-  idxs = tie_in(a, broadcasted_iota(index_dtype, a.shape, axis))
-  maxval = np.array(dtypes.iinfo(index_dtype).max, dtype=index_dtype)
-  maxval = broadcast(tie_in(a, maxval), a.shape)
-  maxvals = expand_dims(op(a, (axis,)), (axis,))
-  mask_idxs = select(eq(a, maxvals) | ne(a, a), idxs, maxval)
-  return _reduce_min(mask_idxs, (axis,))
-
 _argmin_translation_rule = xla.lower_fun(
   partial(_compute_argminmax, lt, _get_min_identity),
   multiple_results=False, new_style=True)
@@ -5922,28 +5898,12 @@ argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               weak_type_rule=_strip_weak_type)
 batching.defreducer(argmin_p)
 ad.defjvp_zero(argmin_p)
-if jax._src.lib._xla_extension_version < 41:
-  xla.register_translation(
-      argmin_p,
-      xla.lower_fun(
-          partial(_argminmax_gpu_translation_rule, _reduce_min),
-          multiple_results=False,
-          new_style=True),
-      platform='gpu')
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', _argmax_translation_rule,
                               weak_type_rule=_strip_weak_type)
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
-if jax._src.lib._xla_extension_version < 41:
-  xla.register_translation(
-      argmax_p,
-      xla.lower_fun(
-          partial(_argminmax_gpu_translation_rule, _reduce_max),
-          multiple_results=False,
-          new_style=True),
-      platform='gpu')
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
@@ -6927,7 +6887,6 @@ def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
 def _rng_bit_generator_translation_rule(
     ctx, avals_in, avals_out, key, *, shape, dtype, algorithm):
   c = ctx.builder
-  backend_is_gpu = ctx.platform == "gpu"
   key_shape, key_dtype = c.get_shape(key).dimensions(), c.get_shape(key).numpy_dtype()
   # While the RngBitGenerator HLO accepts a u64[2] key on all backends, we
   # typically represent the key argument to this primitive as a u32[4] so as to
@@ -6938,48 +6897,15 @@ def _rng_bit_generator_translation_rule(
           (key_shape == (2,) and key_dtype == np.dtype('uint64'))), (key_shape, key_dtype)
   xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
   if key_dtype == np.dtype('uint32'):
-    # TODO(mattjj): the BitcastConvertType segfaults on GPU
-    # TODO(mattjj): remove fallback when minimum jaxlib is 0.1.72 or newer
-    if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-      u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
-      key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
-    else:
-      key = _convert_4xU32_to_2xU64_without_bitcast(c, key)
+    u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
+    key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
   out_key, out_vals = xla.xla_destructure(
       c, xops.RngBitGenerator(algorithm, key, xla_shape))
   if key_dtype == np.dtype('uint32'):
-    if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-      u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
-      out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
-    else:
-      out_key = _convert_2xU64_to_4xU32_without_bitcast(c, out_key)
+    u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
+    out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
   return [out_key, out_vals]
 
-def _convert_4xU32_to_2xU64_without_bitcast(c, key):
-  u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
-  new_key = xops.Constant(c, np.zeros(2, dtype=np.dtype('uint64')))
-  _32 = xops.Constant(c, np.array(32, np.uint64))
-  for i in [0, 2]:
-    hi = xops.ConvertElementType(xops.Slice(key, [i]  , [i+1], [1]), u64_etype)
-    lo = xops.ConvertElementType(xops.Slice(key, [i+1], [i+2], [1]), u64_etype)
-    elt = xops.Xor(xops.ShiftLeft(hi, _32), lo)
-    new_key = xops.DynamicUpdateSlice(new_key, elt,
-                                      [xla.pyval_to_ir_constant(c, i // 2)])
-  return new_key
-
-def _convert_2xU64_to_4xU32_without_bitcast(c, key):
-  u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
-  new_key = xops.Constant(c, np.zeros(4, dtype=np.dtype('uint32')))
-  _32 = xops.Constant(c, np.array(32, np.uint64))
-  for i in [0, 1]:
-    elt = xops.Slice(key, [i], [i+1], [1])
-    hi = xops.ConvertElementType(xops.ShiftRightLogical(elt, _32), u32_etype)
-    lo = xops.ConvertElementType(elt, u32_etype)
-    new_key = xops.DynamicUpdateSlice(new_key, hi,
-                                      [xla.pyval_to_ir_constant(c, 2 * i)])
-    new_key = xops.DynamicUpdateSlice(new_key, lo,
-                                      [xla.pyval_to_ir_constant(c, 2 * i + 1)])
-  return new_key
 
 def _rng_bit_generator_named_shape_rule(key, *, shape, dtype, algorithm):
   return [key.named_shape, key.named_shape]

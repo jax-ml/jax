@@ -13,4 +13,4 @@
 # limitations under the License.
 
 __version__ = "0.2.26"
-_minimum_jaxlib_version = "0.1.69"
+_minimum_jaxlib_version = "0.1.74"
