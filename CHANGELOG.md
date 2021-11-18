@@ -8,11 +8,13 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
+## jaxlib 0.1.75 (Unreleased)
+
 ## jax 0.2.26 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.25...main).
 
-## jaxlib 0.1.74 (Unreleased)
+## jaxlib 0.1.74 (Nov 17, 2021)
 * Enabled peer-to-peer copies between GPUs. Previously, GPU copies were bounced via
   the host, which is usually slower.
 * Added experimental MLIR Python bindings for use by JAX.
