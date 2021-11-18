@@ -35,6 +35,7 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lax import lax
+from jax._src.lax import windowed_reductions
 from jax import linear_util as lu
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax._src.api_util import flatten_fun_nokwargs
@@ -2747,11 +2748,11 @@ def _cumulative_reduction_primitive(name,
                                                    reducer_p)
   return reducer_p
 
-cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, lax._reduce_window_sum)
+cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, windowed_reductions._reduce_window_sum)
 ad.deflinear2(cumsum_p, _cumsum_transpose_rule)
-cumprod_p = _cumulative_reduction_primitive("cumprod", lax.mul, lax._reduce_window_prod)
-cummax_p = _cumulative_reduction_primitive("cummax", lax.max, lax._reduce_window_max)
-cummin_p = _cumulative_reduction_primitive("cummin", lax.min, lax._reduce_window_min)
+cumprod_p = _cumulative_reduction_primitive("cumprod", lax.mul, windowed_reductions._reduce_window_prod)
+cummax_p = _cumulative_reduction_primitive("cummax", lax.max, windowed_reductions._reduce_window_max)
+cummin_p = _cumulative_reduction_primitive("cummin", lax.min, windowed_reductions._reduce_window_min)
 
 
 def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,

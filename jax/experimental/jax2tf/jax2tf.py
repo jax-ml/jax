@@ -35,6 +35,7 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
+from jax._src.lax import windowed_reductions
 import jax._src.prng
 import jax._src.random
 from jax.experimental import maps
@@ -1708,7 +1709,7 @@ def _select_and_gather_add(
   return snd(out)
 
 
-tf_impl_with_avals[lax.select_and_gather_add_p] = _select_and_gather_add
+tf_impl_with_avals[windowed_reductions.select_and_gather_add_p] = _select_and_gather_add
 
 
 def _get_shape_from_tensor_or_array(x):
@@ -1837,20 +1838,20 @@ def _get_min_identity(tf_dtype):
 
 
 # pylint: disable=protected-access
-tf_impl_with_avals[lax.reduce_window_sum_p] = (
+tf_impl_with_avals[windowed_reductions.reduce_window_sum_p] = (
     partial(_specialized_reduce_window, _add, lambda x: 0,
             name="reduce_window_sum"))
-tf_impl_with_avals[lax.reduce_window_min_p] = (
+tf_impl_with_avals[windowed_reductions.reduce_window_min_p] = (
     partial(_specialized_reduce_window,
             partial(_minmax_scalar, is_min=True),
             _get_min_identity,
             name="reduce_window_min"))
-tf_impl_with_avals[lax.reduce_window_max_p] = (
+tf_impl_with_avals[windowed_reductions.reduce_window_max_p] = (
     partial(_specialized_reduce_window,
             partial(_minmax_scalar, is_min=False),
             _get_max_identity,
             name="reduce_window_max"))
-tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
+tf_impl_with_avals[windowed_reductions.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
 def _reduce(*operands: TfVal,
@@ -1894,12 +1895,12 @@ tf_impl_with_avals[lax.reduce_p] = _reduce
 # instead to favor different backends.
 tf_impl_with_avals[lax_control_flow.cummin_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-            lax._reduce_window_min),
+            windowed_reductions._reduce_window_min),
     multiple_results=False,
     extra_name_stack="cummin")
 tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-            lax._reduce_window_max),
+            windowed_reductions._reduce_window_max),
     multiple_results=False,
     extra_name_stack="cummin")
 # TODO(bchetioui): cumsum and cumprod can be converted using pure TF ops for
@@ -1909,12 +1910,12 @@ tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
 # tests will crash.
 tf_impl_with_avals[lax_control_flow.cumsum_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-            lax._reduce_window_sum),
+            windowed_reductions._reduce_window_sum),
     multiple_results=False,
     extra_name_stack="cumsum")
 tf_impl_with_avals[lax_control_flow.cumprod_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-            lax._reduce_window_prod),
+            windowed_reductions._reduce_window_prod),
     multiple_results=False,
     extra_name_stack="cumprod")
 
@@ -1925,7 +1926,7 @@ def _select_and_scatter(operand, source, init_value, select_jaxpr,
   raise NotImplementedError("TODO: jax2tf can not convert _select_and_scatter")
 
 
-tf_impl[lax.select_and_scatter_p] = _select_and_scatter
+tf_impl[windowed_reductions.select_and_scatter_p] = _select_and_scatter
 
 
 @partial(bool_to_int8, argnums=(0, 1))
@@ -1943,7 +1944,7 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
   return out
 
 
-tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
+tf_impl_with_avals[windowed_reductions.select_and_scatter_add_p] = _select_and_scatter_add
 
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
