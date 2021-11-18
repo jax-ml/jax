@@ -1419,10 +1419,6 @@ class SparseObjectTest(jtu.JaxTestCase):
   def test_todense_ad(self, Obj, shape=(3,), dtype=np.float32):
     M_dense = jnp.array([1., 2., 3.])
     M = M_dense if Obj is jnp.array else Obj.fromdense(M_dense)
-
-    print(M_dense)
-    print(M)
-
     bufs, tree = tree_util.tree_flatten(M)
     jac = jnp.eye(M.shape[0], dtype=M.dtype)
     jac1 = jax.jacfwd(lambda *bufs: sparse.todense_p.bind(*bufs, tree=tree))(*bufs)
