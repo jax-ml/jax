@@ -1078,7 +1078,7 @@ def _all_gather_translation_rule(
                        replica_groups=xc.make_replica_groups(replica_groups))]
   else:
     lowering = xla.lower_fun(_all_gather_via_psum, multiple_results=False,
-                             parallel=True, new_style=True)
+                             new_style=True)
     return lowering(
         ctx, avals_in, avals_out, x, all_gather_dimension=all_gather_dimension,
         axis_name=axis_name, axis_index_groups=axis_index_groups,

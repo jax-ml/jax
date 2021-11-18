@@ -1344,8 +1344,8 @@ def _tuple_output(*args, **kwargs):
   ans = yield args, kwargs
   yield (ans,)
 
-def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
-              backend=None, new_style: bool = False) -> Callable:
+def lower_fun(fun: Callable, *, multiple_results: bool, backend=None,
+              new_style: bool = False) -> Callable:
   if new_style:
     def f_new(ctx: TranslationContext, avals_in: Sequence[core.AbstractValue],
               avals_out: Sequence[core.AbstractValue],
@@ -1354,11 +1354,7 @@ def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
       wrapped_fun = lu.wrap_init(fun, params)
       if not multiple_results:
         wrapped_fun = _tuple_output(wrapped_fun)
-      if parallel:
-        axis_env = ctx.axis_env
-      else:
-        axis_env = AxisEnv(1, (), ())
-      with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
+      with core.extend_axis_env_nd(zip(ctx.axis_env.names, ctx.axis_env.sizes)):
         jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals_in)
       return jaxpr_subcomp(ctx, jaxpr, _xla_consts(ctx.builder, consts),
                            *xla_args)
@@ -1376,11 +1372,8 @@ def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
     return f_with_avals(c, avals, xla_args, params)
 
   def f_with_avals(c, avals, xla_args, params):
-    if parallel:
-      axis_env = params.pop('axis_env')
-      del params['platform']
-    else:
-      axis_env = AxisEnv(1, (), ())
+    # parallelism is only supported via the new-style API.
+    axis_env = AxisEnv(1, (), ())
     wrapped_fun = lu.wrap_init(fun, params)
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)

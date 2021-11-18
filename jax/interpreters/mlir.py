@@ -456,33 +456,23 @@ def _ir_consts(consts):
       id_: ir_constants(const) for id_, const in unique_consts.items()}
   return [ir_consts[id(const)] for const in consts]
 
-def lower_fun(fun: Callable, parallel: bool = False,
-              multiple_results: bool = True,
-              expect_avals_out: bool = True) -> TranslationRule:
-  """Converts a traceable JAX function `fun` into a lowering rule."""
-  def f(ctx, avals_in, *args, **params):
-    if parallel:
-      axis_env = params.pop('axis_env')
-      del params['platform']
-    else:
-      axis_env = xla.AxisEnv(1, (), ())
+def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
+  """Converts a traceable JAX function `fun` into a lowering rule.
+
+  The returned function does not use `avals_out`, so callers may pass any value
+  as `avals_out`."""
+  def f_lowered(ctx, avals_in, avals_out, *args, **params):
     if multiple_results:
       f = fun
     else:
       f = lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params)
-    with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
+    with core.extend_axis_env_nd(zip(ctx.axis_env.names, ctx.axis_env.sizes)):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals_in)
-    ctx = ctx.replace(axis_env=axis_env, name_stack='')
     return jaxpr_subcomp(ctx, jaxpr, _ir_consts(consts),
                          *map(_wrap_singleton_ir_values, args))
 
-  if expect_avals_out:
-    def f_avals(ctx, avals_in, avals_out, *args, **params):
-      return f(ctx, avals_in, *args, **params)
-    return f_avals
-  else:
-    return f
+  return f_lowered
 
 
 
@@ -1275,9 +1265,8 @@ def _scatter_lower(ctx, avals_in, avals_out, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
   if mode == lax.GatherScatterMode.CLIP:
-    clip_fn = lower_fun(lax._clamp_scatter_indices, expect_avals_out=False,
-                        multiple_results=False)
-    (indices,), = clip_fn(ctx, avals_in, operand, indices, updates,
+    clip_fn = lower_fun(lax._clamp_scatter_indices, multiple_results=False)
+    (indices,), = clip_fn(ctx, avals_in, None, operand, indices, updates,
                           dnums=dimension_numbers)
 
   aval_out, = avals_out
