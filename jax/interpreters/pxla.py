@@ -90,44 +90,7 @@ Replicated = pmap_lib.Replicated
 _UNSHARDED_INSTANCE = NoSharding()
 AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
 MeshDimAssignment = Union[ShardedAxis, Replicated]
-
-# https://mypy.readthedocs.io/en/stable/runtime_troubles.html#typing-type-checking
-# mypy will consider this constant to be True at type check time.
-MYPY = False
-
-if MYPY:
-  class ShardingSpec:
-    """Describes the sharding of an ndarray.
-
-    Attributes:
-      sharding: specifies how the array is supposed to get partitioned into
-        chunks. Its length should match the rank of the array. See the
-        docstring of`AvalDimSharding` for the supported partitioning schemes.
-      mesh_mapping: describes an assignments of the array chunks created by
-        `sharding` to a logical device mesh. The length of the tuple is equal
-        to the rank of the mesh. Each mesh dimension can either get partitions
-        of data varying along one of the sharded dimensions, or the data can
-        be replicated. See the docstring of `MeshDimAssignment` for more
-        information.
-    """
-    sharding: Tuple[AvalDimSharding, ...]
-    mesh_mapping: Tuple[MeshDimAssignment, ...]
-
-    def __init__(self,
-                 sharding: Iterable[AvalDimSharding],
-                 mesh_mapping: Iterable[MeshDimAssignment]):
-      self.sharding = tuple(sharding)
-      assert all(x is not None for x in self.sharding)
-      self.mesh_mapping = tuple(mesh_mapping)
-
-    def __eq__(self, other):
-      return (self.sharding, self.mesh_mapping) == (other.sharding,
-                                                    other.mesh_mapping)
-
-    def __hash__(self):
-      return hash((self.sharding, self.mesh_mapping))
-else:
-  ShardingSpec: Type[pmap_lib.ShardingSpec] = pmap_lib.ShardingSpec
+ShardingSpec = pmap_lib.ShardingSpec
 
 
 def sharding_spec_mesh_shape(self):
@@ -1294,7 +1257,8 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
                                    device_buffers)
 
 
-def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, map_axis: Optional[int]):
+def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval,
+                        map_axis: Optional[int]) -> ShardingSpec:
   """Sharding spec for arguments or results of a pmap.
   Args:
     nrep: number of local XLA replicas (product of local axis sizes)
