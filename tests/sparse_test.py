@@ -1496,9 +1496,15 @@ class SparseObjectTest(jtu.JaxTestCase):
     rng_b = jtu.rand_default(self.rng())
     M = rng(shape, dtype)
     Msp = Obj.fromdense(M)
+
+    # Test matching type
     x = rng_b(bshape, dtype)
     x = jnp.asarray(x)
+    self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
 
+    # Test mismatched type
+    x = rng_b(bshape, np.int32)
+    x = jnp.asarray(x)
     self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
