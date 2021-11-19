@@ -6321,6 +6321,8 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
                      "'midpoint', or 'nearest'")
   a, q = _promote_dtypes_inexact(a, q)
+  if issubdtype(a.dtype, np.complexfloating):
+    raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
   if axis is None:
     a = ravel(a)
     axis = 0
