@@ -19,7 +19,6 @@ import itertools
 import operator
 import re
 import unittest
-import textwrap
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -255,10 +254,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
     with self.assertRaisesWithLiteralMatch(TypeError,
         ("body_fun output and input must have identical types, got\n"
-         "ShapedArray(bool[], weak_type=True)\n"
-         "and\n"
-         "ShapedArray(float32[]).")):
-      lax.while_loop(lambda c: True, lambda c: True, np.float32(0.))
+         "('ShapedArray(bool[], weak_type=True)', "
+         "'DIFFERENT ShapedArray(bool[], weak_type=True) vs. "
+         "ShapedArray(float32[])').")):
+      lax.while_loop(lambda c: True, lambda c: (True, True),
+                     (np.bool_(True), np.float32(0.)))
 
   def testNestedWhileWithDynamicUpdateSlice(self):
     num = 5
@@ -807,12 +807,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                   f"got {tree_util.tree_structure(2.)} and {tree_util.tree_structure((3., 3.))}.")):
       lax.cond(True, lambda top: 2., lambda fop: (3., 3.), 1.)
     with self.assertRaisesRegex(
-        TypeError, textwrap.dedent(
-            r"""
-            true_fun and false_fun output must have identical types, got
-            ShapedArray\(float32\[1\]\)
-            and
-            ShapedArray\(float32\[\].*\).""").strip()):
+        TypeError,
+        "true_fun and false_fun output must have identical types, got\n"
+        r"DIFFERENT ShapedArray\(float32\[1\]\) vs. "
+        r"ShapedArray\(float32\[\].*\)."):
       lax.cond(True,
                lambda top: jnp.array([1.], jnp.float32),
                lambda fop: jnp.float32(1.),
@@ -837,12 +835,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                   f"got {tree_util.tree_structure(2.)} and {tree_util.tree_structure((3., 3.))}.")):
       lax.switch(1, [lambda _: 2., lambda _: (3., 3.)], 1.)
     with self.assertRaisesRegex(
-        TypeError, textwrap.dedent(
-            r"""
-            branch 0 and 1 outputs must have identical types, got
-            ShapedArray\(float32\[1\]\)
-            and
-            ShapedArray\(float32\[\].*\).""").strip()):
+        TypeError,
+        "branch 0 and 1 outputs must have identical types, got\n"
+        r"DIFFERENT ShapedArray\(float32\[1\]\) "
+        r"vs. ShapedArray\(float32\[\].*\)."):
       lax.switch(1, [lambda _: jnp.array([1.], jnp.float32),
                      lambda _: jnp.float32(1.)],
                  1.)
@@ -1688,9 +1684,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesWithLiteralMatch(
         TypeError,
         "scan carry output and input must have identical types, got\n"
-        "ShapedArray(int32[])\n"
-        "and\n"
-        "ShapedArray(float32[])."):
+        "DIFFERENT ShapedArray(int32[]) vs. ShapedArray(float32[])."):
       lax.scan(lambda c, x: (np.int32(0), x), np.float32(1.0), a)
     with self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, "

@@ -2033,6 +2033,11 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, 
 
 batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
 
+def _show_diff(array1, array2):
+  if core.typematch(array1, array2):
+    return f"{array1}"
+  return f"DIFFERENT {array1} vs. {array2}"
+
 def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
 
@@ -2044,10 +2049,9 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
     raise TypeError(
         f"{what} must have same type structure, got {tree1} and {tree2}.")
   if not all(_map(core.typematch, avals1, avals2)):
-    raise TypeError(
-        f"{what} must have identical types, got\n"
-        f"{tree_unflatten(tree1, avals1)}\nand\n"
-        f"{tree_unflatten(tree2, avals2)}.")
+    diff = tree_multimap(_show_diff, tree_unflatten(tree1, avals1),
+                         tree_unflatten(tree2, avals2))
+    raise TypeError(f"{what} must have identical types, got\n{diff}.")
 
 
 def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=False):
