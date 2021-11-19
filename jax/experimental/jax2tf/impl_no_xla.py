@@ -22,6 +22,7 @@ from jax import core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.lax import lax
+from jax._src.lax import windowed_reductions
 
 from . import jax2tf
 
@@ -479,18 +480,18 @@ def _reduce_window(operand, *, window_dimensions, window_strides, padding,
 
 
 # pylint: disable=protected-access
-tf_impl_no_xla[lax.reduce_window_sum_p] = (
+tf_impl_no_xla[windowed_reductions.reduce_window_sum_p] = (
     partial(_reduce_window, name="reduce_window_sum"))
-tf_impl_no_xla[lax.reduce_window_max_p] = (
+tf_impl_no_xla[windowed_reductions.reduce_window_max_p] = (
     partial(_reduce_window, name="reduce_window_max"))
 # pylint: enable=protected-access
 
-tf_impl_no_xla[lax.reduce_window_min_p] = _unimplemented("reduce_window_min")
-tf_impl_no_xla[lax.reduce_window_p] = _unimplemented("reduce_window")
+tf_impl_no_xla[windowed_reductions.reduce_window_min_p] = _unimplemented("reduce_window_min")
+tf_impl_no_xla[windowed_reductions.reduce_window_p] = _unimplemented("reduce_window")
 
 tf_impl_no_xla[lax.reduce_p] = _unimplemented("reduce")
 
-tf_impl_no_xla[lax.select_and_scatter_add_p] = _unimplemented(
+tf_impl_no_xla[windowed_reductions.select_and_scatter_add_p] = _unimplemented(
     "select_and_scatter_add")
 
 tf_impl_no_xla[lax.rng_bit_generator_p] = _unimplemented("rng_bit_generator")
