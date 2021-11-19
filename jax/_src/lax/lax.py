@@ -2927,7 +2927,22 @@ def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
                                        weak_type=weak_type)
 
-convert_element_type_p = core.convert_element_type_p
+def _convert_elt_type_folding_rule(consts, eqn):
+  c, = consts
+  if type(c) in core.literalable_types and not np.shape(c):
+    return [np.array(c, eqn.params['new_dtype'])], None
+  else:
+    return [None], eqn
+
+def _convert_elt_type_fwd_rule(eqn):
+  v, = eqn.invars
+  if (v.aval.dtype == eqn.params['new_dtype'] and
+      v.aval.weak_type == eqn.params['weak_type']):
+    return [v], None
+  else:
+    return [None], eqn
+
+convert_element_type_p = Primitive('convert_element_type')
 convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
@@ -2939,6 +2954,8 @@ ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
+pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
+pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -3641,11 +3658,19 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
   new_broadcast_dimensions = (0,) + tuple(np.add(1, broadcast_dimensions))
   return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
 
+def _broadcast_in_dim_fwd_rule(eqn):
+  v, = eqn.invars
+  if core.symbolic_equal_shape(eqn.params['shape'], v.aval.shape):
+    return [v], None
+  else:
+    return [None], eqn
+
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 ad.deflinear2(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
+pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -4622,7 +4647,6 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
       ge(indices, np.int64(0)),
       le(indices, expand_dims(upper_bound, tuple(range(num_batch_dims)))))
   mask = _reduce_and(mask, [num_batch_dims])
-
 
   # Computes the output shape and the positions of the batch dimensions in the
   # output

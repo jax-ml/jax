@@ -47,8 +47,8 @@ import jax._src.pretty_printer as pp
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
-zip = safe_zip
-map = safe_map
+zip, unsafe_zip = safe_zip, zip
+map, unsafe_map = safe_map, map
 
 
 # -------------------- jaxprs --------------------
@@ -1025,8 +1025,6 @@ def concrete_or_error(force: Any, val: Any, context=""):
   else:
     return force(val)
 
-convert_element_type_p = Primitive('convert_element_type')
-
 
 def _short_dtype_name(dtype):
   return (dtype.name.replace('float', 'f').replace('uint', 'u')
@@ -1395,7 +1393,7 @@ def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
 
 def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
   return (len(s1) == len(s2) and
-          all(map(symbolic_equal_dim, s1, s2)))
+          all(unsafe_map(symbolic_equal_dim, s1, s2)))
 
 def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   handler, ds = _dim_handler_and_canonical(d1, d2)
