@@ -1603,6 +1603,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       if (pad_width != () and stat_length != () and
           not (dtype in bool_dtypes and mode == 'mean'))))
   def testPadStatValues(self, shape, dtype, mode, pad_width, stat_length):
+    if mode == 'median' and np.issubdtype(dtype, np.complexfloating):
+      self.skipTest("median statistic is not supported for dtype=complex.")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
