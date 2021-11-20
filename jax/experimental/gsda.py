@@ -152,6 +152,9 @@ class GlobalShardedDeviceArray:
   def global_shards(self) -> Sequence[Shard]:
     return self._global_shards
 
+  def local_data(self, index) -> DeviceArray:
+    return self.local_shards[index].data
+
   @classmethod
   def from_callback(cls, global_shape: Shape, global_mesh: pxla.Mesh,
                     mesh_axes: MeshAxes, data_callback: Callable[[Index],
