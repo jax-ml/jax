@@ -21,7 +21,7 @@ import itertools as it
 from functools import partial
 
 from . import maps
-from .gsda import GlobalShardedDeviceArray as GSDA
+from .gda import GlobalDeviceArray as GDA
 from .. import core
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg, Lowered
@@ -220,7 +220,7 @@ def pjit(fun: Callable,
     # is_global attribute.
     in_positional_semantics = tuple(
         maps._PositionalSemantics.GLOBAL
-        if type(a) is GSDA else maps._positional_semantics
+        if type(a) is GDA else maps._positional_semantics
         for a in args_flat)
     out_positional_semantics = maps._positional_semantics
     jaxpr, in_axis_resources_flat, out_axis_resources_flat = _pjit_jaxpr(
@@ -229,7 +229,7 @@ def pjit(fun: Callable,
         HashableFunction(out_tree, closure=()),
         hashable_pytree(out_axis_resources),
         in_positional_semantics, out_positional_semantics,
-        tuple(isinstance(a, GSDA) for a in args_flat))
+        tuple(isinstance(a, GDA) for a in args_flat))
     in_axis_resources_flat = tree_map(_canonicalize_spec, in_axis_resources_flat,
                                       tuple(args_flat))
     params = dict(
@@ -293,7 +293,7 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
         "pjit in_axis_resources", in_tree,
         in_axis_resources_thunk(), tupled_args=True)
   # This check should be above local_to_global call below otherwise if
-  # `FROM_GSDA` is passed to any input other than GSDA, a ugly error message
+  # `FROM_GSDA` is passed to any input other than GDA, a ugly error message
   # will be raised because get_array_mapping (in local_to_global) of a
   # FROM_GSDA cannot happen.
   tree_map(_check_resources_mismatch, in_axis_resources_flat, is_gsda)
@@ -411,7 +411,7 @@ def _prepare_axis_resources(axis_resources, arg_name):
 
 def _check_resources_mismatch(in_axis_resources_flat, is_gsda):
   if not is_gsda and in_axis_resources_flat is FROM_GSDA:
-    raise ValueError('For a non-GSDA input, the corresponding resource in '
+    raise ValueError('For a non-GDA input, the corresponding resource in '
                      'in_axis_resources cannot be `pjit.FROM_GSDA`.')
 
 def _check_unique_resources(axis_resources, arg_name):
@@ -885,14 +885,14 @@ def local_to_global(positional_semantics, mesh, avals, axes):
   ]
 
 def _canonicalize_spec(in_axis_resources_flat: ParsedPartitionSpec, arg):
-  if isinstance(arg, GSDA):
+  if isinstance(arg, GDA):
     gsda_ppspec = gsda_mesh_axes_to_parsed_pspec(arg._mesh_axes)
     if in_axis_resources_flat is not FROM_GSDA and in_axis_resources_flat != gsda_ppspec:
       raise ValueError(
-          'Got an input GSDA to pjit with different partitioning than specified in '
+          'Got an input GDA to pjit with different partitioning than specified in '
           'the in_axis_resources argument to pjit. The paritioning must match, or '
           'use `jax.experimental.pjit.FROM_GSDA` in `in_axis_resources`. '
-          f'Got GSDA spec: {gsda_ppspec}, pjit spec: {in_axis_resources_flat}')
+          f'Got GDA spec: {gsda_ppspec}, pjit spec: {in_axis_resources_flat}')
     return gsda_ppspec
   return in_axis_resources_flat
 
@@ -901,7 +901,7 @@ def gsda_mesh_axes_to_parsed_pspec(mesh_axes) -> ParsedPartitionSpec:
     pspec = PartitionSpec(*mesh_axes)
   else:
     pspec = mesh_axes
-  return ParsedPartitionSpec.from_user_input(pspec, arg_name='GSDA mesh_axes')
+  return ParsedPartitionSpec.from_user_input(pspec, arg_name='GDA mesh_axes')
 
 # -------------------- XLA OpSharding to PartitionSpec --------------------
 # Note that OpSharding is more expressive than PartitionSpecs, so it's not

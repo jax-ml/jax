@@ -31,7 +31,7 @@ from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap, mesh, Mesh
-from jax.experimental import gsda
+from jax.experimental import gda
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    SpecSync, FROM_GSDA)
@@ -606,7 +606,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
     def cb(index):
       return input_data[index]
 
-    gsda_obj = gsda.GlobalShardedDeviceArray.from_callback(
+    gsda_obj = gda.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
 
     with jax._src.config.gsda_out(True):
@@ -616,7 +616,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
       expected_matrix_mul = input_data @ input_data.T
 
       out = f(gsda_obj)
-      self.assertIsInstance(out, gsda.GlobalShardedDeviceArray)
+      self.assertIsInstance(out, gda.GlobalDeviceArray)
       self.assertEqual(out.shape, (8, 8))
       self.assertEqual(out.local_shards[0].data.shape, (2, 4))
       self.assertDictEqual(out._global_mesh.shape, {'x': 4, 'y': 2})
@@ -625,7 +625,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(
           ValueError,
-          ('For a non-GSDA input, the corresponding resource in '
+          ('For a non-GDA input, the corresponding resource in '
            'in_axis_resources cannot be `pjit.FROM_GSDA`.')):
         f(input_data)
 
@@ -639,16 +639,16 @@ class GSDAPjitTest(jtu.JaxTestCase):
       return input_data[index]
 
     mesh_axes1 = P('x', 'y')
-    gsda1 = gsda.GlobalShardedDeviceArray.from_callback(
+    gsda1 = gda.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes1, cb)
     mesh_axes2 = P('x')
-    gsda2 = gsda.GlobalShardedDeviceArray.from_callback(
+    gsda2 = gda.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes2, cb)
     mesh_axes3 = P(('x', 'y'))
-    gsda3 = gsda.GlobalShardedDeviceArray.from_callback(
+    gsda3 = gda.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes3, cb)
     mesh_axes4 = P(None)
-    gsda4 = gsda.GlobalShardedDeviceArray.from_callback(
+    gsda4 = gda.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes4, cb)
 
     with jax._src.config.gsda_out(True):
@@ -661,7 +661,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
         return x @ x.T, y, z, a
       out1, out2, out3, out4 = f(gsda1, gsda2, gsda3, gsda4)
 
-      self.assertIsInstance(out1, gsda.GlobalShardedDeviceArray)
+      self.assertIsInstance(out1, gda.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8, 8))
       self.assertEqual(out1.local_shards[0].data.shape, (2, 4))
       self.assertEqual(out1.local_shards[0].index, (slice(0, 2), slice(0, 4)))
@@ -672,7 +672,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
       for s in out1.local_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
-      self.assertIsInstance(out2, gsda.GlobalShardedDeviceArray)
+      self.assertIsInstance(out2, gda.GlobalDeviceArray)
       self.assertEqual(out2.shape, (8, 2))
       self.assertEqual(out2.local_shards[0].data.shape, (8, 2))
       self.assertEqual(out2.local_shards[0].index, (slice(None), slice(None)))
@@ -682,7 +682,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
       for s in out2.local_shards:
         self.assertArraysEqual(s.data, input_data)
 
-      self.assertIsInstance(out3, gsda.GlobalShardedDeviceArray)
+      self.assertIsInstance(out3, gda.GlobalDeviceArray)
       self.assertEqual(out3.shape, (8, 2))
       self.assertEqual(out3.local_shards[0].data.shape, (2, 2))
       self.assertEqual(out3.local_shards[0].index, (slice(0, 2), slice(None)))
@@ -692,7 +692,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
       for s in out3.local_shards:
         self.assertArraysEqual(s.data, input_data[s.index])
 
-      self.assertIsInstance(out4, gsda.GlobalShardedDeviceArray)
+      self.assertIsInstance(out4, gda.GlobalDeviceArray)
       self.assertEqual(out4.shape, (8, 2))
       self.assertEqual(out4.local_shards[0].data.shape, (1, 2))
       self.assertEqual(out4.local_shards[0].index, (slice(0, 1), slice(None)))
@@ -712,7 +712,7 @@ class GSDAPjitTest(jtu.JaxTestCase):
     def cb(index):
       return input_data[index]
 
-    gsda_obj = gsda.GlobalShardedDeviceArray.from_callback(
+    gsda_obj = gda.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
 
     with jax._src.config.gsda_out(True):
@@ -724,14 +724,14 @@ class GSDAPjitTest(jtu.JaxTestCase):
       expected_matrix_mul = input_data @ input_data.T
 
       out1, out2 = f(gsda_obj, input_data)
-      self.assertIsInstance(out1, gsda.GlobalShardedDeviceArray)
+      self.assertIsInstance(out1, gda.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8, 8))
       self.assertEqual(out1.local_shards[0].data.shape, (2, 4))
       self.assertDictEqual(out1._global_mesh.shape, {'x': 4, 'y': 2})
       for s in out1.local_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
-      self.assertIsInstance(out2, gsda.GlobalShardedDeviceArray)
+      self.assertIsInstance(out2, gda.GlobalDeviceArray)
       self.assertEqual(out2.shape, (8, 8))
       self.assertEqual(out2.local_shards[0].data.shape, (1, 8))
       self.assertDictEqual(out2._global_mesh.shape, {'x': 4, 'y': 2})
@@ -748,12 +748,12 @@ class GSDAPjitTest(jtu.JaxTestCase):
     def cb(index):
       return global_input_data[index]
 
-    gsda_obj = gsda.GlobalShardedDeviceArray.from_callback(
+    gsda_obj = gda.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
 
     with self.assertRaisesRegex(
         ValueError,
-        "Pjit's mesh and GSDA's mesh should be equal."):
+        "Pjit's mesh and GDA's mesh should be equal."):
       @partial(pjit, in_axis_resources=FROM_GSDA, out_axis_resources=P('x', 'y'))
       def f(x):
         return x
@@ -769,14 +769,14 @@ class GSDAPjitTest(jtu.JaxTestCase):
     def cb(index):
       return global_input_data[index]
 
-    gsda_obj = gsda.GlobalShardedDeviceArray.from_callback(
+    gsda_obj = gda.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
     with self.assertRaisesWithLiteralMatch(
         ValueError,
-        ("Got an input GSDA to pjit with different partitioning than specified "
+        ("Got an input GDA to pjit with different partitioning than specified "
          "in the in_axis_resources argument to pjit. The paritioning must "
          "match, or use `jax.experimental.pjit.FROM_GSDA` in `in_axis_resources`. "
-         "Got GSDA spec: <partitions=(('x',),) sync=2>, "
+         "Got GDA spec: <partitions=(('x',),) sync=2>, "
          "pjit spec: <partitions=(('x',), ('y',)) sync=2>")):
       @partial(pjit, in_axis_resources=P('x', 'y'), out_axis_resources=P('x', 'y'))
       def f(x):

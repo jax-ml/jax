@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for GlobalShardedDeviceArray."""
+"""Tests for GlobalDeviceArray."""
 
 import unittest
 from absl.testing import absltest
@@ -24,7 +24,7 @@ from jax._src.util import prod, safe_zip
 
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import Mesh
-from jax.experimental.gsda import GlobalShardedDeviceArray
+from jax.experimental.gda import GlobalDeviceArray
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -77,21 +77,21 @@ class GSDATest(jtu.JaxTestCase):
         prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
-    gsda = GlobalShardedDeviceArray.from_callback(global_input_shape,
+    gda = GlobalDeviceArray.from_callback(global_input_shape,
                                                   global_mesh,
                                                   mesh_axes, cb)
-    self.assertEqual(gsda.local_shards[0].index, expected_index[0])
-    self.assertArraysEqual(gsda.local_shards[0].data,
+    self.assertEqual(gda.local_shards[0].index, expected_index[0])
+    self.assertArraysEqual(gda.local_shards[0].data,
                            global_input_data[expected_index[0]])
-    self.assertEqual(gsda.local_shards[1].index, expected_index[1])
-    self.assertArraysEqual(gsda.local_shards[1].data,
+    self.assertEqual(gda.local_shards[1].index, expected_index[1])
+    self.assertArraysEqual(gda.local_shards[1].data,
                            global_input_data[expected_index[1]])
-    self.assertEqual(gsda.local_shards[0].data.shape, expected_shard_shape)
-    replica_ids = [i.replica_id for i in gsda.local_shards]
+    self.assertEqual(gda.local_shards[0].data.shape, expected_shard_shape)
+    replica_ids = [i.replica_id for i in gda.local_shards]
     self.assertListEqual(replica_ids, expected_replica_ids)
-    self.assertListEqual([i.device.id for i in gsda.local_shards],
+    self.assertListEqual([i.device.id for i in gda.local_shards],
                          [0, 1, 2, 3, 4, 5, 6, 7])
-    for g, l in safe_zip(gsda.global_shards, gsda.local_shards):
+    for g, l in safe_zip(gda.global_shards, gda.local_shards):
       self.assertEqual(g.device, l.device)
       self.assertEqual(g.index, l.index)
       self.assertEqual(g.replica_id, l.replica_id)
@@ -121,18 +121,18 @@ class GSDATest(jtu.JaxTestCase):
         prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
-    gsda = GlobalShardedDeviceArray.from_callback(global_input_shape,
+    gda = GlobalDeviceArray.from_callback(global_input_shape,
                                                   global_mesh,
                                                   mesh_axes, cb)
-    self.assertEqual(gsda.local_shards[0].index, expected_index[0])
-    self.assertArraysEqual(gsda.local_shards[0].data,
+    self.assertEqual(gda.local_shards[0].index, expected_index[0])
+    self.assertArraysEqual(gda.local_shards[0].data,
                            global_input_data[expected_index[0]])
-    self.assertEqual(gsda.local_shards[1].index, expected_index[1])
-    self.assertArraysEqual(gsda.local_shards[1].data,
+    self.assertEqual(gda.local_shards[1].index, expected_index[1])
+    self.assertArraysEqual(gda.local_shards[1].data,
                            global_input_data[expected_index[1]])
-    self.assertEqual(gsda.local_shards[0].data.shape, expected_shard_shape)
+    self.assertEqual(gda.local_shards[0].data.shape, expected_shard_shape)
 
-    replica_ids = [i.replica_id for i in gsda.local_shards]
+    replica_ids = [i.replica_id for i in gda.local_shards]
     self.assertListEqual(replica_ids, expected_replica_ids)
 
   @parameterized.named_parameters(
@@ -154,17 +154,17 @@ class GSDATest(jtu.JaxTestCase):
     global_input_data = np.arange(prod(global_input_shape)).reshape(-1)
     def cb(index):
       return global_input_data[index]
-    gsda = GlobalShardedDeviceArray.from_callback(global_input_shape,
+    gda = GlobalDeviceArray.from_callback(global_input_shape,
                                                   global_mesh,
                                                   mesh_axes, cb)
-    self.assertEqual(gsda.local_shards[0].index, expected_index[0])
-    self.assertArraysEqual(gsda.local_shards[0].data,
+    self.assertEqual(gda.local_shards[0].index, expected_index[0])
+    self.assertArraysEqual(gda.local_shards[0].data,
                            global_input_data[expected_index[0]])
-    self.assertEqual(gsda.local_shards[1].index, expected_index[1])
-    self.assertArraysEqual(gsda.local_shards[1].data,
+    self.assertEqual(gda.local_shards[1].index, expected_index[1])
+    self.assertArraysEqual(gda.local_shards[1].data,
                            global_input_data[expected_index[1]])
-    self.assertEqual(gsda.local_shards[0].data.shape, expected_shard_shape)
-    replica_ids = [i.replica_id for i in gsda.local_shards]
+    self.assertEqual(gda.local_shards[0].data.shape, expected_shard_shape)
+    replica_ids = [i.replica_id for i in gda.local_shards]
     self.assertListEqual(replica_ids, expected_replica_ids)
 
   @parameterized.named_parameters(
@@ -183,19 +183,19 @@ class GSDATest(jtu.JaxTestCase):
         prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
-    gsda = GlobalShardedDeviceArray.from_callback(global_input_shape,
+    gda = GlobalDeviceArray.from_callback(global_input_shape,
                                                   global_mesh,
                                                   mesh_axes, cb)
-    self.assertEqual(gsda.local_shards[0].index, expected_index[0])
-    self.assertArraysEqual(gsda.local_shards[0].data,
+    self.assertEqual(gda.local_shards[0].index, expected_index[0])
+    self.assertArraysEqual(gda.local_shards[0].data,
                            global_input_data[expected_index[0]])
-    self.assertEqual(gsda.local_shards[1].index, expected_index[1])
-    self.assertArraysEqual(gsda.local_shards[1].data,
+    self.assertEqual(gda.local_shards[1].index, expected_index[1])
+    self.assertArraysEqual(gda.local_shards[1].data,
                            global_input_data[expected_index[1]])
-    self.assertEqual(gsda.local_shards[0].data.shape, expected_shard_shape)
-    replica_ids = [i.replica_id for i in gsda.local_shards]
+    self.assertEqual(gda.local_shards[0].data.shape, expected_shard_shape)
+    replica_ids = [i.replica_id for i in gda.local_shards]
     self.assertListEqual(replica_ids, expected_replica_ids)
-    for g, l in safe_zip(gsda.global_shards, gsda.local_shards):
+    for g, l in safe_zip(gda.global_shards, gda.local_shards):
       self.assertEqual(g.device, l.device)
       self.assertEqual(g.index, l.index)
       self.assertEqual(g.replica_id, l.replica_id)
@@ -212,13 +212,13 @@ class GSDATest(jtu.JaxTestCase):
       self.assertEqual(len(indices), len(global_mesh.local_devices))
       return [global_input_data[index] for index in indices]
 
-    gsda = GlobalShardedDeviceArray.from_batched_callback(
+    gda = GlobalDeviceArray.from_batched_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
     expected_first_shard_value = np.array([[0, 1]])
-    self.assertArraysEqual(gsda.local_shards[0].data.to_py(),
+    self.assertArraysEqual(gda.local_shards[0].data.to_py(),
                            expected_first_shard_value)
     expected_second_shard_value = np.array([[2, 3]])
-    self.assertArraysEqual(gsda.local_shards[1].data.to_py(),
+    self.assertArraysEqual(gda.local_shards[1].data.to_py(),
                            expected_second_shard_value)
 
   def test_gsda_batched_callback_with_devices(self):
@@ -238,13 +238,13 @@ class GSDATest(jtu.JaxTestCase):
         dbs.extend([jax.device_put(array, device) for device in devices])
       return dbs
 
-    gsda = GlobalShardedDeviceArray.from_batched_callback_with_devices(
+    gda = GlobalDeviceArray.from_batched_callback_with_devices(
         global_input_shape, global_mesh, mesh_axes, cb)
     expected_first_shard_value = np.array([[0, 1], [2, 3]], dtype=np.float32)
-    self.assertArraysEqual(gsda.local_shards[0].data.to_py(),
+    self.assertArraysEqual(gda.local_shards[0].data.to_py(),
                            expected_first_shard_value)
     expected_second_shard_value = np.array([[0, 1], [2, 3]], dtype=np.float32)
-    self.assertArraysEqual(gsda.local_shards[1].data.to_py(),
+    self.assertArraysEqual(gda.local_shards[1].data.to_py(),
                            expected_second_shard_value)
 
 
