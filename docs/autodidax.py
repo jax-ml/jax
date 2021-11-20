@@ -1583,7 +1583,7 @@ def _xla_shape(aval: ShapedArray) -> xe.Shape:
 
 # +
 def jaxpr_subcomp(c: xe.XlaBuilder, jaxpr: Jaxpr, args: List[xe.XlaOp]
-                  ) -> xe.XlaOp:
+                  ) -> List[xe.XlaOp]:
   env: Dict[Var, xe.XlaOp] = {}
 
   def read(x: Atom) -> xe.XlaOp:
