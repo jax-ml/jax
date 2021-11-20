@@ -19,10 +19,10 @@ import string
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from jax import core
+from jax import lax
+from jax._src.lax import lax as lax_internal
 from jax._src import dtypes
 from jax._src import util
-from jax._src.lax import lax
-from jax._src.lax import windowed_reductions
 
 from . import jax2tf
 
@@ -480,18 +480,18 @@ def _reduce_window(operand, *, window_dimensions, window_strides, padding,
 
 
 # pylint: disable=protected-access
-tf_impl_no_xla[windowed_reductions.reduce_window_sum_p] = (
+tf_impl_no_xla[lax.reduce_window_sum_p] = (
     partial(_reduce_window, name="reduce_window_sum"))
-tf_impl_no_xla[windowed_reductions.reduce_window_max_p] = (
+tf_impl_no_xla[lax.reduce_window_max_p] = (
     partial(_reduce_window, name="reduce_window_max"))
 # pylint: enable=protected-access
 
-tf_impl_no_xla[windowed_reductions.reduce_window_min_p] = _unimplemented("reduce_window_min")
-tf_impl_no_xla[windowed_reductions.reduce_window_p] = _unimplemented("reduce_window")
+tf_impl_no_xla[lax.reduce_window_min_p] = _unimplemented("reduce_window_min")
+tf_impl_no_xla[lax.reduce_window_p] = _unimplemented("reduce_window")
 
 tf_impl_no_xla[lax.reduce_p] = _unimplemented("reduce")
 
-tf_impl_no_xla[windowed_reductions.select_and_scatter_add_p] = _unimplemented(
+tf_impl_no_xla[lax.select_and_scatter_add_p] = _unimplemented(
     "select_and_scatter_add")
 
 tf_impl_no_xla[lax.rng_bit_generator_p] = _unimplemented("rng_bit_generator")
@@ -704,7 +704,7 @@ def _gather(operand, start_indices, *, dimension_numbers,
             _out_aval: core.ShapedArray):
   """Tensorflow implementation of gather."""
   if mode == lax.GatherScatterMode.FILL_OR_DROP:
-    gather_fill_fn = jax2tf._convert_jax_impl(lax._gather_fill,
+    gather_fill_fn = jax2tf._convert_jax_impl(lax_internal._gather_fill,
                                               multiple_results=False)
     return gather_fill_fn(
         operand, start_indices, dimension_numbers=dimension_numbers,

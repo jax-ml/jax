@@ -20,6 +20,7 @@ import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import jax
+from jax import lax
 from jax._src import ad_util
 from jax._src import api_util
 from jax import config
@@ -29,13 +30,11 @@ from jax._src import dtypes
 from jax import linear_util as lu
 from jax import random, tree_util
 from jax import numpy as jnp
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import lax as lax_internal
+from jax._src.lax import linalg as lax_linalg
 from jax._src import source_info_util
 from jax._src import util
-from jax._src.lax import control_flow as lax_control_flow
-from jax._src.lax import fft as lax_fft
-from jax._src.lax import lax
-from jax._src.lax import linalg as lax_linalg
-from jax._src.lax import windowed_reductions
 import jax._src.prng
 import jax._src.random
 from jax.experimental import maps
@@ -1013,7 +1012,7 @@ def _round(operand, *, rounding_method,
                  tf.math.round(operand)) + floor)
   else:  # rounding_method is RoundingMethod.TO_NEAREST_EVEN
     rounding_fun = _convert_jax_impl(
-        lax._round_to_nearest_even, multiple_results=False)
+        lax_internal._round_to_nearest_even, multiple_results=False)
     return rounding_fun(operand, _in_avals=_in_avals, _out_aval=_out_aval)
 
 tf_impl_with_avals[lax.round_p] = _round
@@ -1068,12 +1067,12 @@ tf_impl[lax.sin_p] = tf.math.sin
 tf_impl[lax.sinh_p] = tf.math.sinh
 tf_impl[lax.cos_p] = tf.math.cos
 tf_impl[lax.cosh_p] = tf.math.cosh
-tf_impl_with_avals[lax.acos_p] = _convert_jax_impl(lax.acos_translation_rule,
-                                                   multiple_results=False)
-tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(lax.asin_translation_rule,
-                                                   multiple_results=False)
-tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(lax.atan_translation_rule,
-                                                   multiple_results=False)
+tf_impl_with_avals[lax.acos_p] = _convert_jax_impl(
+    lax_internal.acos_translation_rule, multiple_results=False)
+tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(
+    lax_internal.asin_translation_rule, multiple_results=False)
+tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(
+    lax_internal.atan_translation_rule, multiple_results=False)
 
 def _atan2(y, x, **kwargs):
   if x.dtype.is_complex or y.dtype.is_complex:
@@ -1174,8 +1173,8 @@ def _minmax(x: TfVal, y: TfVal, *, is_min: bool,
   # For complex numbers use lexicographic ordering, like JAX
   if dtypes.issubdtype(x.dtype.as_numpy_dtype, np.complexfloating):
     return _convert_jax_impl(
-        partial(lax._minmax_complex_lowering,
-                          lax_cmp_pick_x=lax.lt if is_min else lax.gt),
+        partial(lax_internal._minmax_complex_lowering,
+                lax_cmp_pick_x=lax.lt if is_min else lax.gt),
         multiple_results=False)(x, y, _in_avals=_in_avals, _out_aval=_out_aval)
   elif x.dtype.as_numpy_dtype == np.bool_:
     return (tf.math.logical_and if is_min else tf.math.logical_or)(x, y)
@@ -1362,7 +1361,7 @@ tf_impl[lax.gt_p] = bool_to_int8(tf.math.greater, argnums=(0, 1))
 tf_impl[lax.le_p] = bool_to_int8(tf.math.less_equal, argnums=(0, 1))
 tf_impl[lax.lt_p] = bool_to_int8(tf.math.less, argnums=(0, 1))
 
-tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
+tf_impl[lax.linalg.cholesky_p] = tf.linalg.cholesky
 
 
 def _convert_element_type(operand, *, new_dtype, weak_type=False):
@@ -1609,14 +1608,14 @@ def _argminmax(is_min: bool, operand: TfVal, axes: Sequence[int],
   if is_min:
     extra_name_stack = "argmin"
     value_comparator = lax.lt
-    get_identity = lax._get_min_identity
+    get_identity = lax_internal._get_min_identity
   else:
     extra_name_stack = "argmax"
     value_comparator = lax.gt
-    get_identity = lax._get_max_identity
+    get_identity = lax_internal._get_max_identity
 
   res = _convert_jax_impl(
-      partial(lax._compute_argminmax, value_comparator, get_identity),
+      partial(lax_internal._compute_argminmax, value_comparator, get_identity),
       multiple_results=False,
       extra_name_stack=extra_name_stack)(
           operand,
@@ -1656,8 +1655,8 @@ def _select_and_gather_add(
   const = lambda dtype, x: tf.constant(np.array(x), dtype)
 
   if double_word_reduction:
-    word_dtype = lax._UINT_DTYPES[nbits]
-    double_word_dtype = lax._UINT_DTYPES[nbits * 2]
+    word_dtype = lax_internal._UINT_DTYPES[nbits]
+    double_word_dtype = lax_internal._UINT_DTYPES[nbits * 2]
 
     # Packs two values into a tuple.
     def pack(a, b):
@@ -1709,7 +1708,7 @@ def _select_and_gather_add(
   return snd(out)
 
 
-tf_impl_with_avals[windowed_reductions.select_and_gather_add_p] = _select_and_gather_add
+tf_impl_with_avals[lax.select_and_gather_add_p] = _select_and_gather_add
 
 
 def _get_shape_from_tensor_or_array(x):
@@ -1838,20 +1837,20 @@ def _get_min_identity(tf_dtype):
 
 
 # pylint: disable=protected-access
-tf_impl_with_avals[windowed_reductions.reduce_window_sum_p] = (
+tf_impl_with_avals[lax.reduce_window_sum_p] = (
     partial(_specialized_reduce_window, _add, lambda x: 0,
             name="reduce_window_sum"))
-tf_impl_with_avals[windowed_reductions.reduce_window_min_p] = (
+tf_impl_with_avals[lax.reduce_window_min_p] = (
     partial(_specialized_reduce_window,
             partial(_minmax_scalar, is_min=True),
             _get_min_identity,
             name="reduce_window_min"))
-tf_impl_with_avals[windowed_reductions.reduce_window_max_p] = (
+tf_impl_with_avals[lax.reduce_window_max_p] = (
     partial(_specialized_reduce_window,
             partial(_minmax_scalar, is_min=False),
             _get_max_identity,
             name="reduce_window_max"))
-tf_impl_with_avals[windowed_reductions.reduce_window_p] = _reduce_window
+tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
 def _reduce(*operands: TfVal,
@@ -1889,18 +1888,18 @@ def _reduce(*operands: TfVal,
 tf_impl_with_avals[lax.reduce_p] = _reduce
 
 
-# We use lax_control_flow._cumred_tpu_translation_rule to convert cummax,
+# We use lax._cumred_tpu_translation_rule to convert cummax,
 # cummin, cumsum and cumprod. This is efficient on TPU, but the complexity is
 # O(n^2) on other backends. This may be implemented using associative_scan
 # instead to favor different backends.
-tf_impl_with_avals[lax_control_flow.cummin_p] = _convert_jax_impl(
+tf_impl_with_avals[lax.cummin_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-            windowed_reductions._reduce_window_min),
+            lax._reduce_window_min),
     multiple_results=False,
     extra_name_stack="cummin")
-tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
+tf_impl_with_avals[lax.cummax_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-            windowed_reductions._reduce_window_max),
+            lax._reduce_window_max),
     multiple_results=False,
     extra_name_stack="cummin")
 # TODO(bchetioui): cumsum and cumprod can be converted using pure TF ops for
@@ -1908,14 +1907,14 @@ tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
 # will fail when running in compiled mode, but are otherwise compatible with
 # the operation. A non-XLA path can thus be defined for all dtypes, though the
 # tests will crash.
-tf_impl_with_avals[lax_control_flow.cumsum_p] = _convert_jax_impl(
+tf_impl_with_avals[lax.cumsum_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-            windowed_reductions._reduce_window_sum),
+            lax._reduce_window_sum),
     multiple_results=False,
     extra_name_stack="cumsum")
-tf_impl_with_avals[lax_control_flow.cumprod_p] = _convert_jax_impl(
+tf_impl_with_avals[lax.cumprod_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-            windowed_reductions._reduce_window_prod),
+            lax._reduce_window_prod),
     multiple_results=False,
     extra_name_stack="cumprod")
 
@@ -1926,7 +1925,7 @@ def _select_and_scatter(operand, source, init_value, select_jaxpr,
   raise NotImplementedError("TODO: jax2tf can not convert _select_and_scatter")
 
 
-tf_impl[windowed_reductions.select_and_scatter_p] = _select_and_scatter
+tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 
 
 @partial(bool_to_int8, argnums=(0, 1))
@@ -1944,7 +1943,7 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
   return out
 
 
-tf_impl_with_avals[windowed_reductions.select_and_scatter_add_p] = _select_and_scatter_add
+tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
@@ -2000,7 +1999,8 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
             _out_aval: core.ShapedArray):
   """Tensorflow implementation of gather."""
   if mode == lax.GatherScatterMode.FILL_OR_DROP:
-    gather_fill_fn = _convert_jax_impl(lax._gather_fill, multiple_results=False)
+    gather_fill_fn = _convert_jax_impl(lax_internal._gather_fill,
+                                       multiple_results=False)
     return gather_fill_fn(
         operand, start_indices, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
@@ -2121,7 +2121,7 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
   return tf.switch_case(index, branches_tf)
 
 
-tf_impl[lax_control_flow.cond_p] = _cond
+tf_impl[lax.cond_p] = _cond
 
 
 def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
@@ -2201,10 +2201,10 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
   return res_carry
 
 
-tf_impl[lax_control_flow.while_p] = _while
+tf_impl[lax.while_p] = _while
 
 # We use the scan impl rule to rewrite in terms of while.
-tf_impl_with_avals[lax_control_flow.scan_p] = _convert_jax_impl(
+tf_impl_with_avals[lax.scan_p] = _convert_jax_impl(
     lax_control_flow._scan_impl,
     extra_name_stack="scan")
 
@@ -2254,7 +2254,7 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
   # corresponding to two scalars from operand[k].
   def lexicographic_comparator(*tf_args: TfVal) -> TfVal:
     return _convert_jax_impl(
-        lax._sort_lt_comparator, multiple_results=False)(
+        lax_internal._sort_lt_comparator, multiple_results=False)(
             *tf_args,
             _in_avals=comparator_jax_in_avals,
             _out_aval=core.ShapedArray((), np.bool_),
@@ -2293,14 +2293,14 @@ def _fft(x, fft_type, fft_lengths):
   return tf_funcs[fft_type][len(fft_lengths) - 1](x)
 
 
-tf_impl[lax_fft.fft_p] = _fft
+tf_impl[lax.fft_p] = _fft
 
 
 def _qr(operand, full_matrices):
   return tf.linalg.qr(operand, full_matrices=full_matrices)
 
 
-tf_impl[lax_linalg.qr_p] = _qr
+tf_impl[lax.linalg.qr_p] = _qr
 
 
 def _svd(operand, full_matrices, compute_uv):
@@ -2311,7 +2311,7 @@ def _svd(operand, full_matrices, compute_uv):
   return s, u, tf.linalg.adjoint(v)
 
 
-tf_impl[lax_linalg.svd_p] = _svd
+tf_impl[lax.linalg.svd_p] = _svd
 
 
 def _eig(operand: TfVal, compute_left_eigenvectors: bool,
@@ -2335,7 +2335,7 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
     return tuple([wHH, vl])
 
 
-tf_impl[lax_linalg.eig_p] = _eig
+tf_impl[lax.linalg.eig_p] = _eig
 
 
 def _eigh(operand: TfVal, lower: bool, _in_avals, _out_aval):
@@ -2354,7 +2354,7 @@ def _eigh(operand: TfVal, lower: bool, _in_avals, _out_aval):
   return v, w
 
 
-tf_impl_with_avals[lax_linalg.eigh_p] = _eigh
+tf_impl_with_avals[lax.linalg.eigh_p] = _eigh
 
 
 def _lu(operand: TfVal, _in_avals, _out_aval):
@@ -2362,7 +2362,7 @@ def _lu(operand: TfVal, _in_avals, _out_aval):
       operand, _in_avals=_in_avals, _out_aval=_out_aval)
 
 
-tf_impl_with_avals[lax_linalg.lu_p] = _lu
+tf_impl_with_avals[lax.linalg.lu_p] = _lu
 
 
 def _triangular_solve(a: TfVal, b: TfVal, *, left_side: bool, lower: bool,
@@ -2390,7 +2390,7 @@ def _triangular_solve(a: TfVal, b: TfVal, *, left_side: bool, lower: bool,
   return result
 
 
-tf_impl_with_avals[lax_linalg.triangular_solve_p] = _triangular_solve
+tf_impl_with_avals[lax.linalg.triangular_solve_p] = _triangular_solve
 
 
 def _linear_solve(*args: TfVal, const_lengths, jaxprs, _in_avals, _out_aval):
@@ -2403,7 +2403,7 @@ def _linear_solve(*args: TfVal, const_lengths, jaxprs, _in_avals, _out_aval):
       _out_aval=_out_aval)
 
 
-tf_impl_with_avals[lax_control_flow.linear_solve_p] = _linear_solve
+tf_impl_with_avals[lax.linear_solve_p] = _linear_solve
 
 def _tridiagonal_solve(*args: TfVal, _in_avals, _out_aval, **params):
   return _convert_jax_impl(lax_linalg._tridiagonal_solve_jax,
@@ -2414,7 +2414,7 @@ def _tridiagonal_solve(*args: TfVal, _in_avals, _out_aval, **params):
       _out_aval=_out_aval)
 
 
-tf_impl_with_avals[lax_linalg.tridiagonal_solve_p] = _tridiagonal_solve
+tf_impl_with_avals[lax.linalg.tridiagonal_solve_p] = _tridiagonal_solve
 
 def _custom_jvp_call_jaxpr(*args: TfVal, fun_jaxpr: core.ClosedJaxpr,
                            jvp_jaxpr_thunk: Callable,
