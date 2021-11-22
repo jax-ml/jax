@@ -25,6 +25,7 @@ from . import partial_eval as pe
 from . import pxla
 from . import xla
 from .. import linear_util as lu
+from jax._src import dispatch
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from .._src.api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index_tuple
@@ -157,7 +158,7 @@ def _sharded_callable(
   device_assignment = np.reshape(device_assignment, (-1, nparts))
   # device_assignment = None  # TODO(skye): replace with default device assignment?
 
-  compiled = xla.backend_compile(
+  compiled = dispatch.backend_compile(
       xb.get_backend(), built,
       xb.get_compile_options(nrep, nparts, device_assignment))
 

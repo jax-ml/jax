@@ -31,6 +31,8 @@ from jax import linear_util as lu
 from jax._src.config import config
 from jax._src import ad_util
 from jax._src import custom_derivatives
+from jax._src import device_array
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lax import control_flow
@@ -234,8 +236,8 @@ for ptype, dtype in dtypes.python_scalar_dtypes.items():
 def _device_array_constant_handler(val, canonicalize_types):
   return _ndarray_constant_handler(val.device_buffer.to_py(),
                                    canonicalize_types)
-register_constant_handler(xla._DeviceArray, _device_array_constant_handler)
-register_constant_handler(xla._CppDeviceArray, _device_array_constant_handler)
+for t in device_array.device_array_types:
+  register_constant_handler(t, _device_array_constant_handler)
 
 
 # Source locations
@@ -313,15 +315,34 @@ def _flatten_lowering_ir_args(
 
 def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
                        jaxpr: core.ClosedJaxpr, *,
-                       public: bool = False) -> str:
+                       public: bool = False,
+                       prune_tokens: bool = False) -> str:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
 
-  Returns the name of the function."""
+  Args:
+    ctx: the lowering context.
+    name: the function name. The name will be uniquified by the symbol table,
+      so it is ok to use the same name multiple times.
+    jaxpr: the jaxpr to lower.
+    public: if true, the function's visibility is set to "public".
+    prune_tokens: if true, tokens are pruned from the arguments and return
+      values.
+  Returns the name of the function.
+  """
   # print(jaxpr.jaxpr)
-  input_types = map(aval_to_ir_types, jaxpr.in_avals)
-  output_types = map(aval_to_ir_types, jaxpr.out_avals)
+  if prune_tokens:
+    pruned_in_avals = [aval for aval in jaxpr.in_avals
+                       if aval is not core.abstract_token]
+    pruned_out_avals = [aval for aval in jaxpr.out_avals
+                        if aval is not core.abstract_token]
+  else:
+    pruned_in_avals = jaxpr.in_avals
+    pruned_out_avals = jaxpr.out_avals
+
+  input_types = map(aval_to_ir_types, pruned_in_avals)
+  output_types = map(aval_to_ir_types, pruned_out_avals)
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
   if ctx.tuple_results:
@@ -338,11 +359,26 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
   with ir.InsertionPoint(entry_block):
     unflattened_args = util.unflatten(entry_block.arguments,
                                       map(len, input_types))
+    # If we pruned tokens out of the parameter list, create a new token and add
+    # it here.
+    if prune_tokens and len(pruned_in_avals) != len(jaxpr.in_avals):
+      token = mhlo.CreateTokenOp(mhlo.TokenType.get()).results
+      arg_iter = iter(unflattened_args)
+      unflattened_args = [
+          token if aval is core.abstract_token else next(arg_iter)
+          for aval in jaxpr.in_avals
+      ]
+      done = object()
+      assert next(arg_iter, done) is done
+
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
                                               xla.wrap_name(name, 'jit'))
     out_vals = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
                              jaxpr.jaxpr, map(ir_constants, jaxpr.consts),
                              *unflattened_args)
+    if prune_tokens:
+      out_vals = [v for v, aval in zip(out_vals, jaxpr.out_avals)
+                  if aval is not core.abstract_token]
     flat_outputs = util.flatten(out_vals)
     if ctx.tuple_results:
       std.ReturnOp([mhlo.TupleOp(output_tuple_type, flat_outputs).result])
@@ -400,13 +436,9 @@ def jaxpr_subcomp(ctx: LoweringContext, jaxpr: core.Jaxpr,
             f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
             "found")
 
-      try:
-        ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
-                   *map(_unwrap_singleton_ir_values, in_nodes),
-                   **eqn.params)
-      except Exception as e:
-        raise RuntimeError(
-            f"MLIR translation failed for equation: {eqn}") from e
+      ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
+                 *map(_unwrap_singleton_ir_values, in_nodes),
+                 **eqn.params)
 
     try:
       out_nodes = tuple(map(_wrap_singleton_ir_values, ans))
@@ -426,33 +458,23 @@ def _ir_consts(consts):
       id_: ir_constants(const) for id_, const in unique_consts.items()}
   return [ir_consts[id(const)] for const in consts]
 
-def lower_fun(fun: Callable, parallel: bool = False,
-              multiple_results: bool = True,
-              expect_avals_out: bool = True) -> TranslationRule:
-  """Converts a traceable JAX function `fun` into a lowering rule."""
-  def f(ctx, avals_in, *args, **params):
-    if parallel:
-      axis_env = params.pop('axis_env')
-      del params['platform']
-    else:
-      axis_env = xla.AxisEnv(1, (), ())
+def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
+  """Converts a traceable JAX function `fun` into a lowering rule.
+
+  The returned function does not use `avals_out`, so callers may pass any value
+  as `avals_out`."""
+  def f_lowered(ctx, avals_in, avals_out, *args, **params):
     if multiple_results:
       f = fun
     else:
       f = lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params)
-    with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
+    with core.extend_axis_env_nd(zip(ctx.axis_env.names, ctx.axis_env.sizes)):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals_in)
-    ctx = ctx.replace(axis_env=axis_env, name_stack='')
     return jaxpr_subcomp(ctx, jaxpr, _ir_consts(consts),
                          *map(_wrap_singleton_ir_values, args))
 
-  if expect_avals_out:
-    def f_avals(ctx, avals_in, avals_out, *args, **params):
-      return f(ctx, avals_in, *args, **params)
-    return f_avals
-  else:
-    return f
+  return f_lowered
 
 
 
@@ -503,7 +525,7 @@ translations[core.call_p] = partial(_named_call_lowering, name="core_call")
 def _device_put_lowering(ctx, avals_in, avals_out, x, *, device):
   return [x]
 
-translations[xla.device_put_p] = _device_put_lowering
+translations[dispatch.device_put_p] = _device_put_lowering
 
 
 def _full_like_aval(value, aval: core.ShapedArray) -> ir.Value:
@@ -596,7 +618,7 @@ def _array_result_handler(aval: core.ShapedArray) -> ResultHandler:
   return lambda device, buffer: xla.make_device_array(aval, device, buffer)
 
 _aval_to_result_handler[core.AbstractUnit] = lambda _: lambda _: core.unit
-_aval_to_result_handler[core.AbstractToken] = lambda _: lambda _, __: xla.token
+_aval_to_result_handler[core.AbstractToken] = lambda _: lambda _: xla.token
 _aval_to_result_handler[core.ShapedArray] = _array_result_handler
 _aval_to_result_handler[core.ConcreteArray] = _array_result_handler
 
@@ -609,7 +631,7 @@ def _execute_compiled(name: str, compiled: xla.XlaExecutable,
       unsafe_zip(arg_handlers,
                  (x for i, x in enumerate(args) if i in kept_var_idx)))
   out_bufs = compiled.execute(input_bufs)
-  xla.check_special(name, out_bufs)
+  dispatch.check_special(name, out_bufs)
   return [handler(device, *bs) for handler, bs in
           zip(result_handlers, xla._partition_outputs(buffer_counts, out_bufs))]
 
@@ -629,7 +651,7 @@ def _execute_replicated(name: str, compiled: xla.XlaExecutable,
       buf[0] for buf in compiled.execute_sharded_on_local_devices(
           list(zip(*input_bufs)))
   ]
-  xla.check_special(name, out_bufs)
+  dispatch.check_special(name, out_bufs)
   return [handler(device, *bs) for handler, bs in
           zip(result_handlers, xla._partition_outputs(buffer_counts, out_bufs))]
 
@@ -642,7 +664,7 @@ def _execute_trivial(jaxpr, device: Optional[xla.Device], consts, buffer_counts,
   map(env.setdefault, jaxpr.constvars, consts)
   outs = [xla.canonicalize_dtype(v.val) if type(v) is core.Literal else env[v]
           for v in jaxpr.outvars]
-  return [xla.device_put_p.bind(x, device=device) for x in outs]
+  return [dispatch.device_put_p.bind(x, device=device) for x in outs]
 
 
 class XlaCompiledComputation:
@@ -668,7 +690,7 @@ class XlaCompiledComputation:
         num_partitions=1,
         device_assignment=(device.id,) if device else None)
     options.parameter_is_tupled_arguments = tuple_args
-    compiled = xla.compile_or_get_cached(backend, xla_computation, options)
+    compiled = dispatch.compile_or_get_cached(backend, xla_computation, options)
     buffer_counts = [aval_to_num_buffers(aval) for aval in avals_out]
     if nreps == 1:
       return XlaCompiledComputation(compiled, partial(
@@ -751,18 +773,18 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
 
-  jaxpr, kept_const_idx, kept_var_idx = xla._prune_unused_inputs(jaxpr)
+  jaxpr, kept_const_idx, kept_var_idx = dispatch._prune_unused_inputs(jaxpr)
   consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
   pruned_arg_specs = (a for i, a in enumerate(arg_specs) if i in kept_var_idx)
   avals_in, arg_devices = util.unzip2(pruned_arg_specs)
   donated_invars = [
       x for i, x in enumerate(donated_invars) if i in kept_var_idx
   ]
-  map(xla.prefetch, itertools.chain(consts, xla.jaxpr_literals(jaxpr)))
-  jaxpr = xla.apply_outfeed_rewriter(jaxpr)
+  map(dispatch.prefetch, itertools.chain(consts, dispatch.jaxpr_literals(jaxpr)))
+  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
-  nreps = xla.jaxpr_replicas(jaxpr)
-  device = xla._xla_callable_device(nreps, backend, device, arg_devices)
+  nreps = dispatch.jaxpr_replicas(jaxpr)
+  device = dispatch._xla_callable_device(nreps, backend, device, arg_devices)
   backend = xb.get_device_backend(device) if device else xb.get_backend(backend)
 
   # Computations that only produce constants and/or only rearrange their inputs,
@@ -772,7 +794,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
     return XlaComputation(name, None, True, jaxpr, consts, device, avals_in,
                           avals_out, kept_var_idx)
 
-  if not xla._on_exit:
+  if not dispatch._on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
     logging.log(log_priority, "Compiling %s (%s) for args %s.",
                 fun.__name__, id(fun), avals_in)
@@ -790,7 +812,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
         f"compiling computation that requires {nreps} replicas, but only "
         f"{xb.device_count(backend)} XLA devices are available")
 
-  if xb.process_count() > 1 and (nreps > 1 or xla.jaxpr_has_pmap(jaxpr)):
+  if xb.process_count() > 1 and (nreps > 1 or dispatch.jaxpr_has_pmap(jaxpr)):
     raise NotImplementedError(
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")
@@ -803,8 +825,12 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
     tuple_args = len(avals_in) > 100  # pass long arg lists as tuple for TPU
 
   with ctx.context, ir.Location.unknown(ctx.context):
+    # XLA doesn't have a runtime representation of tokens, so we prune them out
+    # of the arguments and return values of the top-level function. This is fine
+    # since the purpose of tokens is to preserve ordering inside compiled
+    # functions.
     lower_jaxpr_to_fun(ctx, "main", core.ClosedJaxpr(jaxpr, consts),
-                       public=True)
+                       public=True, prune_tokens=True)
 
   assert not any(donated_invars), donated_invars
   # TODO(b/203122001): implement buffer donation.
@@ -831,15 +857,15 @@ def _xla_call_impl_mlir(fun: lu.WrappedFun, *args, device, backend, name,
                         donated_invars, inline):
   del inline  # Only used at tracing time
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
-                               *unsafe_map(xla.arg_spec, args))
+                               *unsafe_map(dispatch.arg_spec, args))
   return compiled_fun(*args)
 
 
 @util.cache()
-def _xla_primitive_callable(prim, *arg_specs: xla.ArgSpec, **params):
+def _xla_primitive_callable(prim, *arg_specs: dispatch.ArgSpec, **params):
   avals, arg_devices = util.unzip2(arg_specs)
   donated_invars = (False,) * len(arg_specs)
-  device = xla._device_from_arg_devices(arg_devices)
+  device = dispatch._device_from_arg_devices(arg_devices)
   def prim_fun(*args):
     out = prim.bind(*args, **params)
     if prim.multiple_results:
@@ -855,7 +881,7 @@ def _xla_primitive_callable(prim, *arg_specs: xla.ArgSpec, **params):
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = _xla_primitive_callable(prim, *unsafe_map(xla.arg_spec, args),
+  compiled_fun = _xla_primitive_callable(prim, *unsafe_map(dispatch.arg_spec, args),
                                          **params)
   return compiled_fun(*args)
 
@@ -1241,9 +1267,8 @@ def _scatter_lower(ctx, avals_in, avals_out, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
   if mode == lax.GatherScatterMode.CLIP:
-    clip_fn = lower_fun(lax._clamp_scatter_indices, expect_avals_out=False,
-                        multiple_results=False)
-    (indices,), = clip_fn(ctx, avals_in, operand, indices, updates,
+    clip_fn = lower_fun(lax._clamp_scatter_indices, multiple_results=False)
+    (indices,), = clip_fn(ctx, avals_in, None, operand, indices, updates,
                           dnums=dimension_numbers)
 
   aval_out, = avals_out
@@ -1640,20 +1665,13 @@ translations[lax.rng_uniform_p] = _rng_uniform_lowering
 #   xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
 #   if key_dtype == np.dtype('uint32'):
 #     # TODO(mattjj): the BitcastConvertType segfaults on GPU
-#     # TODO(mattjj): remove fallback when minimum jaxlib is 0.1.72 or newer
-#     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-#       u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
-#       key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
-#     else:
-#       key = _convert_4xU32_to_2xU64_without_bitcast(c, key)
+#     u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
+#     key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
 #   out_key, out_vals = xla.xla_destructure(
 #       c, xops.RngBitGenerator(algorithm, key, xla_shape))
 #   if key_dtype == np.dtype('uint32'):
-#     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-#       u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
-#       out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
-#     else:
-#       out_key = _convert_2xU64_to_4xU32_without_bitcast(c, out_key)
+#     u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
+#     out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
 #   return [out_key, out_vals]
 
 

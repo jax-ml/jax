@@ -47,8 +47,8 @@ import jax._src.pretty_printer as pp
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
-zip = safe_zip
-map = safe_map
+zip, unsafe_zip = safe_zip, zip
+map, unsafe_map = safe_map, map
 
 
 # -------------------- jaxprs --------------------
@@ -1025,8 +1025,6 @@ def concrete_or_error(force: Any, val: Any, context=""):
   else:
     return force(val)
 
-convert_element_type_p = Primitive('convert_element_type')
-
 
 def _short_dtype_name(dtype):
   return (dtype.name.replace('float', 'f').replace('uint', 'u')
@@ -1247,6 +1245,11 @@ class AbstractToken(AbstractValue):
 
 abstract_token: AbstractToken = AbstractToken()
 
+# Concrete token object
+class Token(object): pass
+token = Token()
+pytype_aval_mappings[Token] = lambda _: abstract_token
+
 
 def raise_to_shaped(aval: AbstractValue, weak_type=None):
   if weak_type is None:
@@ -1376,6 +1379,11 @@ def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple
     raise ValueError(msg)
   return next(iter(special_handlers), _dimension_handler_int), tuple(canonical)
 
+def is_special_dim_size(v: Any) -> bool:
+  """Checks if a value is a special DimSize."""
+  handler = _SPECIAL_DIMENSION_HANDLERS.get(type(v))
+  return (handler is not None)
+
 def is_constant_dim(d: DimSize) -> bool:
   handler, ds = _dim_handler_and_canonical(d)
   return handler.is_constant(*ds)
@@ -1390,7 +1398,7 @@ def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
 
 def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
   return (len(s1) == len(s2) and
-          all(map(symbolic_equal_dim, s1, s2)))
+          all(unsafe_map(symbolic_equal_dim, s1, s2)))
 
 def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   handler, ds = _dim_handler_and_canonical(d1, d2)

@@ -27,7 +27,6 @@ from jax._src import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -166,7 +165,7 @@ class DtypesTest(jtu.JaxTestCase):
   def testScalarInstantiation(self, scalar_type):
     a = scalar_type(1)
     self.assertEqual(a.dtype, jnp.dtype(scalar_type))
-    self.assertIsInstance(a, xla.DeviceArray)
+    self.assertIsInstance(a, jnp.DeviceArray)
     self.assertEqual(0, jnp.ndim(a))
     self.assertIsInstance(np.dtype(scalar_type).type(1), scalar_type)
 

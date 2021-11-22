@@ -27,6 +27,7 @@ from .. import numpy as jnp
 from .. import core
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg
+from jax._src import dispatch
 from ..tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
                          tree_leaves)
 from .._src.tree_util import _replace_nones
@@ -735,7 +736,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         use_spmd_lowering, in_avals,
         tile_by_mesh_axes=True)
   else:
-    return xla.lower_xla_callable(
+    return dispatch.lower_xla_callable(
         f, None, backend, name, donated_invars, *((a, None) for a in in_avals))
 
 class EvaluationPlan(NamedTuple):

@@ -1011,7 +1011,7 @@ class BatchingTest(jtu.JaxTestCase):
       rng.shuffle(perm_pairs)
       self.assertAllClose(
         vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs), axis_name='i')(x),
-        x - x[perm])
+        x - x[np.argsort(perm)])
 
   @parameterized.named_parameters(
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
@@ -1130,8 +1130,6 @@ class BatchingTest(jtu.JaxTestCase):
     vmap_jaxpr = make_jaxpr(jax.vmap(f, axis_name='i'))(jnp.ones((3, 4)),
         jnp.ones((3, 4)))
     self.assertIn('HIGHEST', str(vmap_jaxpr))
-
-
 
   def testPdotJvp(self):
     def f(x, y):

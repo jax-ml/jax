@@ -795,7 +795,7 @@ def _ppermute_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, per
   assert d is not batching.not_mapped
   perm_indices = np.zeros(axis_size, dtype=int)
   for src, dst in perm:
-    perm_indices[src] = dst
+    perm_indices[dst] = src
   return lax_numpy.take(v, perm_indices, d), d
 
 def _collective_batcher(prim, args, dims, **params):
@@ -1078,7 +1078,7 @@ def _all_gather_translation_rule(
                        replica_groups=xc.make_replica_groups(replica_groups))]
   else:
     lowering = xla.lower_fun(_all_gather_via_psum, multiple_results=False,
-                             parallel=True, new_style=True)
+                             new_style=True)
     return lowering(
         ctx, avals_in, avals_out, x, all_gather_dimension=all_gather_dimension,
         axis_name=axis_name, axis_index_groups=axis_index_groups,

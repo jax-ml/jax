@@ -1149,6 +1149,28 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=0) + x)),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
+    _make_harness("arange", "start",
+                  lambda op: jnp.arange(2 * op.shape[0], dtype=_f32),
+                  [RandArg((3,), _f32)],
+                  poly_axes=[0],
+                  enable_and_diable_xla=True),
+    _make_harness("arange", "start_no_dtype",
+                  lambda op: jnp.arange(op.shape[0]),
+                  [RandArg((3,), _f32)],
+                  poly_axes=[0],
+                  enable_and_diable_xla=True),
+    # Reduce the poly dimension
+    _make_harness("argmax", "0",
+                  lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
+                  [RandArg((3, 4, 5), _f32)],
+                  poly_axes=[0],
+                  enable_and_diable_xla=True),
+    # Reduce the non-poly dimension
+    _make_harness("argmax", "1",
+                  lambda op: lax.argmax(op, axis=1, index_dtype=np.int32),
+                  [RandArg((3, 4, 5), _f32)],
+                  poly_axes=[0],
+                  enable_and_diable_xla=True),
     [
         _make_harness("average",
                       f"axis={axis}_weights=None",
@@ -1165,18 +1187,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
                       poly_axes=[0, 0])
         for axis in [None, 0, 1]
     ],
-    # Reduce the poly dimension
-    _make_harness("argmax", "0",
-                  lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
-                  [RandArg((3, 4, 5), _f32)],
-                  poly_axes=[0],
-                  enable_and_diable_xla=True),
-    # Reduce the non-poly dimension
-    _make_harness("argmax", "1",
-                  lambda op: lax.argmax(op, axis=1, index_dtype=np.int32),
-                  [RandArg((3, 4, 5), _f32)],
-                  poly_axes=[0],
-                  enable_and_diable_xla=True),
     _make_harness("broadcast_to", "",
                   lambda x: jnp.broadcast_to(x, [x.shape[0], x.shape[0], 4]),
                   [RandArg((3, 4), _f32)],
@@ -1391,8 +1401,23 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0], enable_and_diable_xla=True,
                   expect_error=(IndexError, "Array slice indices must have static")),
-    _make_harness("index_in_dim", "idx=pos",
-                  lambda x: lax.index_in_dim(x, 0, axis=0, keepdims=False),
+    _make_harness("image_resize", "linear_0",
+                  lambda x: jax.image.resize(x, (x.shape[0], 2 * x.shape[1], 2 * x.shape[2], x.shape[3]),
+                                             method="linear"),
+                  [RandArg((3, 16, 32, 3), _f32)],
+                  poly_axes=[(1, 2)]),
+    _make_harness("image_resize", "linear_to_fixed_dim",
+                  lambda x: jax.image.resize(x, (x.shape[0], 64, 64, x.shape[3]),
+                                             method="linear"),
+                  [RandArg((3, 16, 32, 3), _f32)],
+                  poly_axes=[(1, 2)]),
+    _make_harness("image_resize", "nearest_0",
+                  lambda x: jax.image.resize(x, (x.shape[0], 2 * x.shape[1], 2 * x.shape[2], x.shape[3]),
+                                             method="nearest"),
+                  [RandArg((3, 5, 7, 3), _f32)],
+                  poly_axes=[(1, 2)]),
+    _make_harness("index_in_dim", "0",
+                  lambda x: lax.index_in_dim(x, -1, axis=0, keepdims=False),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
     _make_harness("index_in_dim", "idx=neg",
@@ -1734,7 +1759,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="getitem_op=poly_idx=slice-None-1"
+      #one_containing="arange_start_no_dtype"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())

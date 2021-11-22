@@ -39,9 +39,9 @@ import jax.ops
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
+from jax._src import device_array
 from jax._src import dtypes
 from jax import tree_util
-from jax.interpreters import xla
 from jax.test_util import check_grads
 from jax._src.util import prod, safe_zip
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
@@ -1603,6 +1603,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       if (pad_width != () and stat_length != () and
           not (dtype in bool_dtypes and mode == 'mean'))))
   def testPadStatValues(self, shape, dtype, mode, pad_width, stat_length):
+    if mode == 'median' and np.issubdtype(dtype, np.complexfloating):
+      self.skipTest("median statistic is not supported for dtype=complex.")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
@@ -2371,7 +2373,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "size": size, "fill_value": fill_value}
       for dtype in number_dtypes
       for size in [1, 5, 10]
-      for fill_value in [None, -1, "slice"]
+      for fill_value in [None, -1.0, "slice"]
       for shape in nonempty_array_shapes
       for axis in [None] + list(range(len(shape)))))
   def testUniqueSize(self, shape, dtype, axis, size, fill_value):
@@ -2481,7 +2483,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected_np_input_after_call = np.ones((1))
     expected_jnp_input_after_call = jnp.ones((1))
 
-    self.assertTrue(xla.type_is_device_array(jnp.concatenate([np_input])))
+    self.assertTrue(device_array.type_is_device_array(jnp.concatenate([np_input])))
 
     attempt_sideeffect(np_input)
     attempt_sideeffect(jnp_input)
@@ -3676,13 +3678,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     assert not np.isscalar(jnp.array(3))
 
   def testArrayOutputsDeviceArrays(self):
-    assert xla.type_is_device_array(jnp.array([]))
-    assert xla.type_is_device_array(jnp.array(np.array([])))
+    assert device_array.type_is_device_array(jnp.array([]))
+    assert device_array.type_is_device_array(jnp.array(np.array([])))
 
     class NDArrayLike:
       def __array__(self, dtype=None):
         return np.array([], dtype=dtype)
-    assert xla.type_is_device_array(jnp.array(NDArrayLike()))
+    assert device_array.type_is_device_array(jnp.array(NDArrayLike()))
 
     # NOTE(mattjj): disabled b/c __array__ must produce ndarrays
     # class DeviceArrayLike:

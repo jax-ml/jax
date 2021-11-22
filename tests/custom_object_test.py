@@ -19,6 +19,8 @@ import numpy as np
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax import core, jit, lax, make_jaxpr
+from jax._src import device_array
+from jax._src import dispatch
 from jax.interpreters import xla
 from jax._src.lib import xla_bridge, xla_client
 xops = xla_client.ops
@@ -102,8 +104,8 @@ class ConcreteSparseArray(AbstractSparseArray):
 
 def sparse_array_result_handler(device, aval):
   def build_sparse_array(data_buf, indices_buf):
-    data = xla.make_device_array(aval.data_aval, device, data_buf)
-    indices = xla.make_device_array(aval.indices_aval, device, indices_buf)
+    data = device_array.make_device_array(aval.data_aval, device, data_buf)
+    indices = device_array.make_device_array(aval.indices_aval, device, indices_buf)
     return SparseArray(aval, data, indices)
   return build_sparse_array
 
@@ -129,8 +131,8 @@ core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
 xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
-xla.device_put_handlers[SparseArray] = sparse_array_device_put_handler
-xla.xla_result_handlers[AbstractSparseArray] = sparse_array_result_handler
+dispatch.device_put_handlers[SparseArray] = sparse_array_device_put_handler
+dispatch.xla_result_handlers[AbstractSparseArray] = sparse_array_result_handler
 xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
 xla.register_constant_handler(SparseArray, sparse_array_constant_handler)
 
@@ -257,8 +259,8 @@ core.pytype_aval_mappings[Empty] = lambda x: ConcreteEmpty()
 core.raise_to_shaped_mappings[AbstractEmpty] = lambda aval, _: aval
 xla.pytype_aval_mappings[Empty] = lambda x: AbstractEmpty()
 xla.canonicalize_dtype_handlers[Empty] = lambda x: x
-xla.device_put_handlers[Empty] = lambda _, __: ()
-xla.xla_result_handlers[AbstractEmpty] = lambda _, __: lambda: Empty(AbstractEmpty())
+dispatch.device_put_handlers[Empty] = lambda _, __: ()
+dispatch.xla_result_handlers[AbstractEmpty] = lambda _, __: lambda: Empty(AbstractEmpty())
 xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 

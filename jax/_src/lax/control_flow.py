@@ -35,6 +35,7 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lax import lax
+from jax._src.lax import windowed_reductions
 from jax import linear_util as lu
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax._src.api_util import flatten_fun_nokwargs
@@ -2032,6 +2033,11 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, 
 
 batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
 
+def _show_diff(array1, array2):
+  if core.typematch(array1, array2):
+    return f"{array1}"
+  return f"DIFFERENT {array1} vs. {array2}"
+
 def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
 
@@ -2043,10 +2049,9 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
     raise TypeError(
         f"{what} must have same type structure, got {tree1} and {tree2}.")
   if not all(_map(core.typematch, avals1, avals2)):
-    raise TypeError(
-        f"{what} must have identical types, got\n"
-        f"{tree_unflatten(tree1, avals1)}\nand\n"
-        f"{tree_unflatten(tree2, avals2)}.")
+    diff = tree_multimap(_show_diff, tree_unflatten(tree1, avals1),
+                         tree_unflatten(tree2, avals2))
+    raise TypeError(f"{what} must have identical types, got\n{diff}.")
 
 
 def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=False):
@@ -2747,11 +2752,11 @@ def _cumulative_reduction_primitive(name,
                                                    reducer_p)
   return reducer_p
 
-cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, lax._reduce_window_sum)
+cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, windowed_reductions._reduce_window_sum)
 ad.deflinear2(cumsum_p, _cumsum_transpose_rule)
-cumprod_p = _cumulative_reduction_primitive("cumprod", lax.mul, lax._reduce_window_prod)
-cummax_p = _cumulative_reduction_primitive("cummax", lax.max, lax._reduce_window_max)
-cummin_p = _cumulative_reduction_primitive("cummin", lax.min, lax._reduce_window_min)
+cumprod_p = _cumulative_reduction_primitive("cumprod", lax.mul, windowed_reductions._reduce_window_prod)
+cummax_p = _cumulative_reduction_primitive("cummax", lax.max, windowed_reductions._reduce_window_max)
+cummin_p = _cumulative_reduction_primitive("cummin", lax.min, windowed_reductions._reduce_window_min)
 
 
 def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,

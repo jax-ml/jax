@@ -40,6 +40,7 @@ from jax import random
 from jax.core import ShapedArray
 from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
+from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_bridge
 from jax._src.util import prod, safe_map
@@ -540,12 +541,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     y = f(x)
     self.assertIsInstance(y, jnp.ndarray)
     self.assertIsInstance(y, pxla.ShardedDeviceArray)
-    self.assertIsInstance(y, jax.interpreters.xla.DeviceArray)
+    self.assertIsInstance(y, device_array.DeviceArray)
     self.assertNotIsInstance(y, np.ndarray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
     z = f(y)
     self.assertIsInstance(z, pxla.ShardedDeviceArray)
-    self.assertIsInstance(z, jax.interpreters.xla.DeviceArray)
+    self.assertIsInstance(z, device_array.DeviceArray)
     self.assertNotIsInstance(z, np.ndarray)
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
@@ -1821,10 +1822,7 @@ class CppPmapTest(PythonPmapTest):
 
   @property
   def pmap(self):
-    if jax._src.lib._xla_extension_version >= 38:
-      return src_api._cpp_pmap
-    else:
-      return src_api._python_pmap
+    return src_api._cpp_pmap
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):
@@ -1890,6 +1888,26 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
+       "collective": collective}
+      for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
+  def testCollectivesWithVmap2(self, collective):
+    def f(map1, map2):
+      @partial(map1, axis_name='i')
+      @partial(map2, axis_name='j')
+      def f(x, y):
+        return x + collective(x.dot(y), ('i', 'j'))
+      return f
+
+    if jax.device_count() < 8:
+      raise SkipTest("test requires at least eight devices")
+    x = jnp.arange(4*2*64*64).reshape(4, 2, 64, 64)
+    y = f(jax.pmap, jax.pmap)(x, x)
+    self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
+
   def testPPermuteWithVmap(self):
     perm = [(0, 1), (1, 0)]
 
@@ -1904,6 +1922,18 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       raise SkipTest("test requires at least four devices")
     x = jnp.ones((2, 2, 64, 64))
     self.assertAllClose(f(jax.pmap)(x, x), f(jax.vmap)(x, x))
+
+  def testPPermuteAgreesWithVmap(self):
+    if jax.device_count() < 3:
+      raise SkipTest("test requires at least three devices")
+
+    def f(x):
+      return lax.ppermute(x, 'i', [[1, 0], [2, 1], [0, 2]])
+
+    xs = jnp.arange(3) * 10
+    ys = jax.pmap(f, axis_name='i')(xs)
+    zs = jax.vmap(f, axis_name='i')(xs)
+    self.assertAllClose(ys, zs, check_dtypes=True)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
@@ -2296,7 +2326,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     sharded_x = pmap(lambda x: x)(x)
     self.assertIsNone(sharded_x._npy_value)
     for i in range(8):
-      self.assertIsInstance(sharded_x[i], jax.interpreters.xla.DeviceArray)
+      self.assertIsInstance(sharded_x[i], device_array.DeviceArray)
     self.assertIsNone(sharded_x._npy_value)
 
   def test_device_put_sharded_array(self):

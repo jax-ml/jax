@@ -374,8 +374,9 @@ For the example consider the function ``func11`` below
           j:f32[] = mul h i
           k:f32[] = convert_element_type[new_dtype=float32 weak_type=False] g
           l:f32[] = add k j
-          m:f32[] = add l f
-        in (m, g) }
+          m:f32[] = convert_element_type[new_dtype=float32 weak_type=False] f
+          n:f32[] = add l m
+        in (n, g) }
       length=16
       linear=(False, False, False, False)
       num_carry=1
@@ -417,18 +418,19 @@ which the computation should run. For example
       backend=None
       call_jaxpr={ lambda ; d:f32[] e:f32[]. let
           f:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
-          g:f32[1] = mul d f
-          h:f32[] = convert_element_type[new_dtype=float32 weak_type=False] e
-          i:f32[1] = add h g
-        in (i,) }
+          g:f32[] = convert_element_type[new_dtype=float32 weak_type=False] d
+          h:f32[1] = mul g f
+          i:f32[] = convert_element_type[new_dtype=float32 weak_type=False] e
+          j:f32[1] = add i h
+        in (j,) }
       device=None
       donated_invars=(False, False)
       inline=False
       name=inner
     ] a b
-    j:f32[] = convert_element_type[new_dtype=float32 weak_type=False] a
-    k:f32[1] = add j c
-  in (k,) }
+    k:f32[] = convert_element_type[new_dtype=float32 weak_type=False] a
+    l:f32[1] = add k c
+  in (l,) }
 
 
 XLA_pmap
@@ -452,12 +454,13 @@ captured using the ``xla_pmap`` primitive. Consider this example
       axis_size=1
       backend=None
       call_jaxpr={ lambda ; d:f32[] e:f32[3]. let
-          f:f32[3] = add e d
-          g:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
-          h:f32[3] = add f g
-          i:f32[3] = psum[axes=('rows',) axis_index_groups=None] e
-          j:f32[3] = div h i
-        in (j,) }
+          f:f32[] = convert_element_type[new_dtype=float32 weak_type=False] d
+          g:f32[3] = add e f
+          h:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
+          i:f32[3] = add g h
+          j:f32[3] = psum[axes=('rows',) axis_index_groups=None] e
+          k:f32[3] = div i j
+        in (k,) }
       devices=None
       donated_invars=(False, False)
       global_arg_shapes=(None,)
@@ -466,7 +469,7 @@ captured using the ``xla_pmap`` primitive. Consider this example
       name=inner
       out_axes=(0,)
     ] b a
-    in (c,) }
+  in (c,) }
 
 The ``xla_pmap`` primitive specifies the name of the axis (parameter
 ``axis_name``) and the body of the function to be mapped as the ``call_jaxpr``

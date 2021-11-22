@@ -48,6 +48,7 @@ from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters.sharded_jit import PartitionSpec as P
+from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
@@ -82,16 +83,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # Tensorflow.
     return api._cpp_jit
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 40,
-                   "Test requires jaxlib 0.1.73")
   def test_jit_repr(self):
     def my_function():
       return
     jitted = jit(my_function)
     self.assertEqual(repr(jitted), f"<CompiledFunction of {repr(my_function)}>")
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 40,
-                   "Test requires jaxlib 0.1.73")
   def test_jit_repr_errors(self):
     class Callable:
       def __call__(self): pass
@@ -229,7 +226,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_device(self):
     device = jax.devices()[-1]
     x = self.jit(lambda x: x, device=device)(3.)
-    self.assertIsInstance(x, xla.DeviceArray)
+    self.assertIsInstance(x, jnp.DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_complex_support(self):
@@ -496,7 +493,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     jitted_f = self.jit(lambda a: a + 1)
     jitted_f(1)
-    self.assertIsInstance(jitted_f(2), xla._CppDeviceArray)
+    self.assertIsInstance(jitted_f(2), device_array.Buffer)
 
   @jtu.skip_on_devices("cpu")
   def test_explicit_backend(self):
@@ -692,8 +689,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       np.testing.assert_allclose(f_pruned(*args), 3)
     self.assertEqual(count[0], 1)
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version <= 36,
-                   "Test requires jaxlib 0.1.71")
   def testBuffersAreFreedPromptly(self):
     # Regression test for a bug where garbage collection was delayed too long
     # for NumPy buffers that are aliased zero-copy by the runtime.
@@ -992,13 +987,13 @@ class APITest(jtu.JaxTestCase):
                      "Transpose rule (for reverse-mode differentiation) for 'foo' not implemented")
 
   def test_is_subclass(self):
-    self.assertTrue(issubclass(xla.DeviceArray, jnp.ndarray))
-    self.assertTrue(issubclass(xla._CppDeviceArray, jnp.ndarray))
+    self.assertTrue(issubclass(device_array.DeviceArray, jnp.ndarray))
+    self.assertTrue(issubclass(device_array.Buffer, jnp.ndarray))
     self.assertTrue(issubclass(pxla.ShardedDeviceArray, jnp.ndarray))
     self.assertTrue(issubclass(pxla._ShardedDeviceArray, jnp.ndarray))
     self.assertFalse(issubclass(np.ndarray, jnp.ndarray))
-    self.assertFalse(issubclass(xla.DeviceArray, np.ndarray))
-    self.assertFalse(issubclass(xla._CppDeviceArray, np.ndarray))
+    self.assertFalse(issubclass(device_array.DeviceArray, np.ndarray))
+    self.assertFalse(issubclass(device_array.Buffer, np.ndarray))
     self.assertFalse(issubclass(pxla.ShardedDeviceArray, np.ndarray))
     self.assertFalse(issubclass(pxla._ShardedDeviceArray, np.ndarray))
 
@@ -1013,7 +1008,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
-    self.assertIsInstance(dx, xla.DeviceArray)
+    self.assertIsInstance(dx, device_array.DeviceArray)
     self.assertIsInstance(dx, jnp.ndarray)
     self.assertNotIsInstance(dx, np.ndarray)
     x2 = api.device_get(dx)
@@ -1036,7 +1031,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
-    self.assertIsInstance(x, xla.DeviceArray)
+    self.assertIsInstance(x, device_array.DeviceArray)
     y = [x, 2]
     y2 = api.device_get(y)
     self.assertIsInstance(y2, list)
@@ -1471,11 +1466,11 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_repr(self):
     x = device_put(jnp.zeros(3))
-    self.assertIsInstance(x, xla.DeviceArray)
+    self.assertIsInstance(x, device_array.DeviceArray)
     repr(x)  # doesn't crash
 
     x = device_put(jnp.ones(3) + 1j * jnp.ones(3))
-    self.assertIsInstance(x, xla.DeviceArray)
+    self.assertIsInstance(x, device_array.DeviceArray)
     repr(x)  # doesn't crash
 
   def test_devicearray_delete(self):
@@ -2310,7 +2305,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_device_array_hash(self):
     rep = jnp.ones((1,)) + 1.
-    self.assertIsInstance(rep, jax.interpreters.xla.DeviceArray)
+    self.assertIsInstance(rep, device_array.DeviceArray)
     self.assertNotIsInstance(rep, collections.abc.Hashable)
     with self.assertRaisesRegex(TypeError, 'unhashable type'):
       hash(rep)
@@ -2739,7 +2734,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_jit_returning_token(self):
     x = jax.jit(jax.lax.create_token)(1.0)
-    self.assertIsInstance(x, jax.interpreters.xla.Token)
+    self.assertIsInstance(x, jax.core.Token)
 
   def test_leak_checker_catches_a_jit_leak(self):
     with jax.checking_leaks():
@@ -4148,6 +4143,40 @@ class JaxprTest(jtu.JaxTestCase):
     expected = (w, x)
     self.assertEqual(shapes, expected)
     self.assertIn('psum', str(jaxpr))
+
+  def test_weak_type_jit_invariance(self):
+    y = jnp.broadcast_to(3., (3,))
+    self.assertTrue(y.aval.weak_type)
+
+    def f():
+      return lax.convert_element_type(y, 'float32')
+
+    self.assertEqual(f().aval.weak_type, api.jit(f)().aval.weak_type)
+
+  def test_elide_trivial_convert_element_types(self):
+    # since we apply convert_element_type to a numpy.ndarray, the primitive is
+    # still bound and thus would appear in the jaxpr if we didn't clean it up
+    if config.x64_enabled:
+      x = np.arange(3, dtype='float64')
+    else:
+      x = np.arange(3, dtype='float32')
+
+    cet = partial(lax.convert_element_type, new_dtype=x.dtype)
+    jaxpr = api.make_jaxpr(lambda: cet(cet(cet(x))))()
+    self.assertLen(jaxpr.eqns, 0)
+
+  def test_elide_trivial_broadcasts(self):
+    # since we apply broadcast to a numpy.ndarray, the primitive is still bound
+    # and thus would appear in the jaxpr if we didn't clean it up
+    jaxpr = api.make_jaxpr(lambda: lax.broadcast(np.float32(3), ()))()
+    self.assertLen(jaxpr.jaxpr.eqns, 0)
+
+  def test_convert_element_type_literal_constant_folding(self):
+    # this convert_elemnt_type is nontrivial, but because it's on a scalar we
+    # constant-fold it
+    cet = partial(lax.convert_element_type, new_dtype='float16')
+    jaxpr = api.make_jaxpr(lambda: cet(3.))()
+    self.assertLen(jaxpr.eqns, 0)
 
 
 class CustomJVPTest(jtu.JaxTestCase):

@@ -34,28 +34,28 @@ from functools import partial
 import itertools as it
 import operator as op
 import threading
-from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional,
+from typing import (Any, Callable, Dict, List, Optional,
                     Sequence, Set, Tuple, Type, Union, Iterable)
 import sys
 
 from absl import logging
 import numpy as np
 
-import jax
 from .._src.config import config
 from .. import core
 from .. import linear_util as lu
 from jax._src.abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
+from jax._src import device_array
 from .._src import source_info_util
 from .._src.util import (unzip3, prod, safe_map, safe_zip,
                          extend_name_stack, wrap_name, assert_unreachable,
                          tuple_insert, tuple_delete, distributed_debug_log)
 from ..errors import JAXTypeError
+from jax._src import dispatch
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
-from jax._src.lib import _xla_extension_version
 from ..tree_util import tree_flatten, tree_map
 from . import batching
 from . import partial_eval as pe
@@ -92,46 +92,7 @@ Replicated = pmap_lib.Replicated
 _UNSHARDED_INSTANCE = NoSharding()
 AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
 MeshDimAssignment = Union[ShardedAxis, Replicated]
-
-# https://mypy.readthedocs.io/en/stable/runtime_troubles.html#typing-type-checking
-# mypy will consider this constant to be True at type check time.
-MYPY = False
-
-# TODO(jblespiau): Remove the version check when jaxlib 0.1.70 is the minimal
-# version.
-if MYPY or (not TYPE_CHECKING and _xla_extension_version < 30):
-  class ShardingSpec:
-    """Describes the sharding of an ndarray.
-
-    Attributes:
-      sharding: specifies how the array is supposed to get partitioned into
-        chunks. Its length should match the rank of the array. See the
-        docstring of`AvalDimSharding` for the supported partitioning schemes.
-      mesh_mapping: describes an assignments of the array chunks created by
-        `sharding` to a logical device mesh. The length of the tuple is equal
-        to the rank of the mesh. Each mesh dimension can either get partitions
-        of data varying along one of the sharded dimensions, or the data can
-        be replicated. See the docstring of `MeshDimAssignment` for more
-        information.
-    """
-    sharding: Tuple[AvalDimSharding, ...]
-    mesh_mapping: Tuple[MeshDimAssignment, ...]
-
-    def __init__(self,
-                 sharding: Iterable[AvalDimSharding],
-                 mesh_mapping: Iterable[MeshDimAssignment]):
-      self.sharding = tuple(sharding)
-      assert all(x is not None for x in self.sharding)
-      self.mesh_mapping = tuple(mesh_mapping)
-
-    def __eq__(self, other):
-      return (self.sharding, self.mesh_mapping) == (other.sharding,
-                                                    other.mesh_mapping)
-
-    def __hash__(self):
-      return hash((self.sharding, self.mesh_mapping))
-else:
-  ShardingSpec: Type[pmap_lib.ShardingSpec] = pmap_lib.ShardingSpec
+ShardingSpec = pmap_lib.ShardingSpec
 
 
 def sharding_spec_mesh_shape(self):
@@ -362,15 +323,15 @@ def _shard_device_array(x, devices, indices):
       _as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   return device_put(shards, devices)
-shard_arg_handlers[xla._DeviceArray] = _shard_device_array
-shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
+for t in device_array.device_array_types:
+  shard_arg_handlers[t] = _shard_device_array
 
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
 # require duplicating the ordering logic of spec_to_indices, which is more
 # subtle and more likely to change than the index logic we have to support here.
-def _as_slice_indices(arr: xla.DeviceArrayProtocol, idx: Index) -> Tuple[
+def _as_slice_indices(arr: device_array.DeviceArrayProtocol, idx: Index) -> Tuple[
     Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]:
   """Returns start_indices, limit_indices, removed_dims"""
   start_indices = [0] * arr.ndim
@@ -503,8 +464,8 @@ def gsda_array_result_handler(global_aval, global_mesh, out_axis_resources):
 
 ### lazy device-memory persistence and result handling
 
-# TODO(jblespiau): Remove when jaxlib 0.1.72 is the minimal version.
-_USE_CPP_SDA = _xla_extension_version >= 38
+# TODO(jblespiau): Consider removing this option.
+_USE_CPP_SDA = True
 
 
 def make_sharded_device_array(
@@ -539,9 +500,8 @@ def make_sharded_device_array(
   if (_USE_CPP_SDA and
       (not device_buffers or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
-    # TODO(slebedev): Remove the ignore once jaxlib>=0.1.71.
     return pmap_lib.ShardedDeviceArray.make(
-        aval, sharding_spec, device_buffers,  # type: ignore[arg-type, call-arg]
+        aval, sharding_spec, device_buffers,
         indices, aval.weak_type)
 
   return _ShardedDeviceArray(aval, sharding_spec, device_buffers, indices)
@@ -551,11 +511,11 @@ if _USE_CPP_SDA:
   ShardedDeviceArrayBase = pmap_lib.ShardedDeviceArrayBase  # type: ignore
   # We want the C++ SDA to extend the DeviceArrayBase. We want this both to
   # benefit from its methods, and to have isinstance(x, DeviceArray) return true
-  ShardedDeviceArrayBase.__bases__ = ((xla.DeviceArray,) +  # type: ignore
+  ShardedDeviceArrayBase.__bases__ = ((device_array.DeviceArray,) +  # type: ignore
                                       ShardedDeviceArrayBase.__bases__)
   _SDA_BASE_CLASS = pmap_lib.ShardedDeviceArrayBase  # type: ignore
 else:
-  _SDA_BASE_CLASS: Type[xla.DeviceArray] = xla.DeviceArray  # type: ignore
+  _SDA_BASE_CLASS: Type[device_array.DeviceArray] = device_array.DeviceArray  # type: ignore
 
 
 class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
@@ -688,7 +648,7 @@ def _sda__getitem__(self, idx):
     if buf_idx is not None:
       buf = self.device_buffers[buf_idx]
       aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
-      return xla.make_device_array(aval, None, buf)
+      return device_array.make_device_array(aval, None, buf)
   return super(self.__class__, self).__getitem__(idx)
 
 
@@ -768,7 +728,7 @@ def _register_handlers_for_sharded_device_array(sda):
   xla.register_constant_handler(sda, _sharded_device_array_constant_handler)
 
   core.pytype_aval_mappings[sda] = ConcreteArray
-  xla.device_put_handlers[sda] = xla._device_put_array
+  dispatch.device_put_handlers[sda] = dispatch._device_put_array
   xla.pytype_aval_mappings[sda] = op.attrgetter("aval")
   xla.canonicalize_dtype_handlers[sda] = identity
 
@@ -871,7 +831,7 @@ def parallel_callable(fun: lu.WrappedFun,
   with core.extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
         fun, global_sharded_avals, pe.debug_info_final(fun, "pmap"))
-  jaxpr = xla.apply_outfeed_rewriter(jaxpr)
+  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   out_axes = out_axes_thunk()
   assert len(out_sharded_avals) == len(out_axes), (len(out_sharded_avals), len(out_axes))
@@ -886,7 +846,7 @@ def parallel_callable(fun: lu.WrappedFun,
     check_multihost_collective_allowlist(jaxpr)
 
   # TODO(skyewm): replace this with a chain of pmaps and/or sharded_jits
-  jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
+  jaxpr_replicas = dispatch.jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
   num_global_replicas = global_axis_size * jaxpr_replicas
 
@@ -1066,7 +1026,7 @@ def parallel_callable(fun: lu.WrappedFun,
                                       handle_outs)
     return WeakRefList([execute_fun, None])
 
-  compiled = xla.compile_or_get_cached(backend, built, compile_options)
+  compiled = dispatch.compile_or_get_cached(backend, built, compile_options)
   handle_args = InputsHandler(compiled.local_devices(), input_sharding_specs,
                               input_indices)
   execute_fun = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
@@ -1299,7 +1259,8 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
                                    device_buffers)
 
 
-def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, map_axis: Optional[int]):
+def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval,
+                        map_axis: Optional[int]) -> ShardingSpec:
   """Sharding spec for arguments or results of a pmap.
   Args:
     nrep: number of local XLA replicas (product of local axis sizes)
@@ -1355,9 +1316,9 @@ def partitioned_sharding_spec(num_partitions: int,
 def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
-  if xla.needs_check_special():
+  if dispatch.needs_check_special():
     for bufs in out_bufs:
-      xla.check_special("parallel computation", bufs)
+      dispatch.check_special("parallel computation", bufs)
   return out_handler(out_bufs)
 
 
@@ -1675,7 +1636,7 @@ def lower_mesh_computation(
   _sanitize_mesh_jaxpr(jaxpr)
   if local_mesh.shape != mesh.shape:
     check_multihost_collective_allowlist(jaxpr)
-  jaxpr = xla.apply_outfeed_rewriter(jaxpr)
+  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   # 3. Build up the HLO
   c = xc.XlaBuilder(f"xmap_{fun.__name__}")
@@ -1783,12 +1744,8 @@ class MeshExecutable:
         use_spmd_partitioning=spmd_lowering,
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
-    if jax._src.lib.version >= (0, 1, 72):
-      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
-          _allow_propagation_to_outputs
-    elif _allow_propagation_to_outputs:
-      raise RuntimeError("Propagation of SPMD sharding specs to outputs is only supported "
-                         "in jaxlib 0.1.72+. Please update your JAX version.")
+    compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
+        _allow_propagation_to_outputs
 
     local_sharding_spec = mesh_sharding_specs(local_axis_sizes, mesh.axis_names)
     local_input_specs = [local_sharding_spec(aval, aval_in_axes)
@@ -1811,7 +1768,7 @@ class MeshExecutable:
           input_indices, local_input_specs,
           handle_outs)
     else:
-      compiled = xla.compile_or_get_cached(backend, computation, compile_options)
+      compiled = dispatch.compile_or_get_cached(backend, computation, compile_options)
       handle_args = InputsHandler(compiled.local_devices(), local_input_specs,
                                   input_indices)
       self.unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
@@ -1822,7 +1779,7 @@ class MeshExecutable:
   def call(self, *args):
     arg_avals = map(xla.abstractify, args)
     ref_avals = self._local_in_untiled_avals
-    xla.check_arg_avals_for_call(ref_avals, arg_avals)
+    dispatch.check_arg_avals_for_call(ref_avals, arg_avals)
     return self.unsafe_call(*args)
 
 
@@ -1953,6 +1910,6 @@ _thread_local_state = _ThreadLocalState()
 def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> List[xb.xla_client.Buffer]:
   """Call device_put on a sequence of devices and return a flat sequence of buffers."""
   if replicate:
-    return list(it.chain.from_iterable(xla.device_put(x, device) for device in devices))
+    return list(it.chain.from_iterable(dispatch.device_put(x, device) for device in devices))
   else:
-    return list(it.chain.from_iterable(xla.device_put(val, device) for val, device in safe_zip(x, devices)))
+    return list(it.chain.from_iterable(dispatch.device_put(val, device) for val, device in safe_zip(x, devices)))

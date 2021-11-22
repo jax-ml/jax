@@ -13,7 +13,6 @@
 # limitations under the License.
 """Converters for jax2tf."""
 import functools
-from jax.experimental.jax2tf import examples
 import numpy as np
 import tempfile
 from typing import Any, Callable, Tuple
@@ -62,7 +61,7 @@ def _get_random_data(dtype: jnp.dtype, shape: Tuple[int, ...], seed=0) -> Any:
 
 
 def _compare(jax_fn: Callable[..., Any], tf_fn: Callable[..., Any],
-    module: examples_converter.ModuleToConvert, comparison: str, 
+    module: examples_converter.ModuleToConvert, comparison: str,
     nr_runs: int = 5, rtol: float = 1e-05):
   for i in range(nr_runs):
     input_data = _get_random_data(module.dtype, module.input_shape, seed=i)
@@ -124,7 +123,7 @@ def jax2tf_to_tflite(module: examples_converter.ModuleToConvert):
   """Converts the given `module` using the TFLite converter."""
   apply = functools.partial(module.apply, module.variables)
   tf_fn, apply_tf = _jax2tf(apply, module.input_shape, module.dtype, enable_xla=False)
-  
+
   # First compare JAX output with TF output.
   _compare(apply, apply_tf, module, "JAX vs TF (enable_xla=False)")
 
@@ -145,7 +144,7 @@ def jax2tf_to_tflite(module: examples_converter.ModuleToConvert):
   inputs = interpreter.get_input_details()[0]
   output_details = interpreter.get_output_details()
   outputs = tuple(interpreter.tensor(out["index"]) for out in output_details)
-  
+
   def apply_tflite(input_data):
     interpreter.set_tensor(inputs['index'], input_data)
     interpreter.invoke()

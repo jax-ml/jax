@@ -19,9 +19,10 @@ import string
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from jax import core
+from jax import lax
+from jax._src.lax import lax as lax_internal
 from jax._src import dtypes
 from jax._src import util
-from jax._src.lax import lax
 
 from . import jax2tf
 
@@ -703,7 +704,7 @@ def _gather(operand, start_indices, *, dimension_numbers,
             _out_aval: core.ShapedArray):
   """Tensorflow implementation of gather."""
   if mode == lax.GatherScatterMode.FILL_OR_DROP:
-    gather_fill_fn = jax2tf._convert_jax_impl(lax._gather_fill,
+    gather_fill_fn = jax2tf._convert_jax_impl(lax_internal._gather_fill,
                                               multiple_results=False)
     return gather_fill_fn(
         operand, start_indices, dimension_numbers=dimension_numbers,

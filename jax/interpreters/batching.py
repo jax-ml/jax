@@ -29,7 +29,6 @@ from .. import linear_util as lu
 from .._src.util import (unzip2, safe_map, safe_zip, wrap_name, split_list,
                          canonicalize_axis, moveaxis, as_hashable_function,
                          curry, memoize)
-from . import xla
 from . import partial_eval as pe
 
 map = safe_map
@@ -629,5 +628,3 @@ def zeros_like_batched(batched_args, batch_dims):
   bdim, = batch_dims
   return zeros_like_jaxval(val), bdim
 primitive_batchers[zeros_like_p] = zeros_like_batched
-
-defvectorized(xla.device_put_p)

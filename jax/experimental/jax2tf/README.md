@@ -148,7 +148,8 @@ want gradients w.r.t. the parameters.
 
 A better way to deal with parameters (or any large constants) is to
 pass them as parameters to the function to be converted:
-```
+
+```python
 def model_jax(params, inputs):
   return params[0] + params[1] * inputs
 

@@ -14,7 +14,7 @@
 
 from jax import core
 from jax import numpy as jnp
-from jax.interpreters import xla
+from jax._src import device_array
 from jax._src.lib import xla_client
 from jax._src.lib import xla_bridge
 
@@ -23,7 +23,7 @@ SUPPORTED_DTYPES = set([jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                         jnp.float16, jnp.bfloat16, jnp.float32, jnp.float64])
 
 
-def to_dlpack(x: xla.DeviceArrayProtocol, take_ownership: bool = False):
+def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False):
   """Returns a DLPack tensor that encapsulates a DeviceArray `x`.
 
   Takes ownership of the contents of `x`; leaves `x` in an invalid/deleted
@@ -37,7 +37,7 @@ def to_dlpack(x: xla.DeviceArrayProtocol, take_ownership: bool = False):
       undefined behavior if the DLPack consumer writes to a buffer that JAX
       owns.
   """
-  if not isinstance(x, xla.DeviceArray):
+  if not isinstance(x, device_array.DeviceArray):
     raise TypeError("Argument to to_dlpack must be a DeviceArray, got {}"
                     .format(type(x)))
   return xla_client._xla.buffer_to_dlpack_managed_tensor(
@@ -62,4 +62,4 @@ def from_dlpack(dlpack):
   xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
-  return xla.make_device_array(aval, buf.device(), buf)  # pytype: disable=attribute-error
+  return device_array.make_device_array(aval, buf.device(), buf)  # pytype: disable=attribute-error
