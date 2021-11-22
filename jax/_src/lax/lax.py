@@ -6475,8 +6475,8 @@ _one: Callable = partial(full_like, shape=(), fill_value=1)
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)
 
-dtype: Callable = dtypes.result_type
-_dtype: Callable = dtypes.result_type
+dtype: Callable = partial(dtypes.dtype, canonicalize=True)
+_dtype: Callable = partial(dtypes.dtype, canonicalize=True)
 
 def _iscomplex(x) -> bool:
   return dtypes.issubdtype(_dtype(x), np.complexfloating)

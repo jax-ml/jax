@@ -374,7 +374,7 @@ iscomplexobj = np.iscomplexobj
 shape = _shape = np.shape
 ndim = _ndim = np.ndim
 size = np.size
-_dtype = dtypes.result_type
+_dtype = partial(dtypes.dtype, canonicalize=True)
 
 # At present JAX doesn't have a reason to distinguish between scalars and arrays
 # in its object system. Further, we want JAX scalars to have the same type
@@ -1222,7 +1222,7 @@ mod = _wraps(np.mod)(remainder)
 @jit
 def fmod(x1, x2):
   _check_arraylike("fmod", x1, x2)
-  if issubdtype(_dtype(x1, x2), integer):
+  if issubdtype(result_type(x1, x2), integer):
     x2 = where(x2 == 0, 1, x2)
   return lax.rem(*_promote_args("fmod", x1, x2))
 
@@ -3761,7 +3761,7 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
   lax._check_user_dtype_supported(dtype, "arange")
   require = partial(core.concrete_or_error, None)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
-  dtype = dtype or _dtype(start, *(x for x in [stop, step] if x is not None))
+  dtype = dtype or result_type(start, *(x for x in [stop, step] if x is not None))
   if stop is None and step is None:
     if not core.is_special_dim_size(start):
       start = require(start, msg("stop"))
