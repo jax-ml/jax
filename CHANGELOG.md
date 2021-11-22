@@ -13,6 +13,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.26 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.25...main).
+* Bug fixes:
+  * Out-of-bounds indices to `jax.ops.segment_sum` will now be handled with
+    `FILL_OR_DROP` semantics, as documented. This primarily afects the
+    reverse-mode derivative, where gradients corresponding to out-of-bounds
+    indices will now be returned as 0. (#8634).
 
 ## jaxlib 0.1.74 (Nov 17, 2021)
 * Enabled peer-to-peer copies between GPUs. Previously, GPU copies were bounced via

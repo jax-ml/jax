@@ -1155,6 +1155,17 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     expected = jnp.array([0, 0, 0, 13, 2, 7])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testSegmentSumOutOfBounds(self):
+    def fn(data, segment_ids):
+      return jax.ops.segment_sum(data, segment_ids, num_segments).sum()
+
+    data = np.array([0, 0], dtype=np.float32)
+    num_segments = 2
+    segment_ids = np.array([2, 3])
+    val, grad = jax.value_and_grad(fn)(data, segment_ids)
+    self.assertAllClose(val, np.array(0., np.float32))
+    self.assertAllClose(grad, np.array([0., 0.], np.float32))
+
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list({
