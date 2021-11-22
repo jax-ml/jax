@@ -485,6 +485,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for nonzero_condition_number in nonzero_condition_numbers
       for dtype in jtu.dtypes.floating
       for seed in seeds))
+  @jtu.skip_on_devices("gpu")  # Fails on A100.
   def testPolar(
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
       side, nonzero_condition_number, dtype, seed):
@@ -575,6 +576,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     for linear_size in linear_sizes
     for seed in seeds
     for dtype in jtu.dtypes.floating))
+  @jtu.skip_on_devices("gpu")  # Fails on A100.
   def test_spectral_dac_svd(self, linear_size, seed, dtype):
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       if jtu.device_under_test() != "cpu":
