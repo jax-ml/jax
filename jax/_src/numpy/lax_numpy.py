@@ -3759,7 +3759,7 @@ def identity(n, dtype=None):
 def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
            step: Optional[core.DimSize]=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
-  require = partial(core.concrete_or_error, _np_asarray)
+  require = partial(core.concrete_or_error, None)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
   dtype = dtype or _dtype(start, *(x for x in [stop, step] if x is not None))
   if stop is None and step is None:
