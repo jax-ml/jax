@@ -711,14 +711,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
             [(2, 1), (1, 2)],
             [(1, 1), (2, 1), (1, 2)],
             ["VALID", "SAME", [(0, 3), (1, 2)]],
-            [(1, 1)] + ([(2, 3)] if op is lax.add else []),
+            [(1, 1)] + ([(2, 3)]),
             [(1, 1)] + ([(1, 2)] if op is lax.add else [])),
           itertools.product(
             [(3, 2, 4, 6)],
             [(1, 1, 2, 1), (2, 1, 2, 1)],
             [(1, 2, 2, 1), (1, 1, 1, 1)],
             ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
-            [(1, 1, 1, 1)] + ([(2, 1, 3, 2)] if op is lax.add else []),
+            [(1, 1, 1, 1)] + ([(2, 1, 3, 2)]),
             [(1, 1, 1, 1)] + ([(1, 2, 2, 1)] if op is lax.add else []))))
       for dtype in dtypes))
   @jtu.ignore_warning(category=UserWarning,
@@ -738,9 +738,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       if (len(shape) != 4 or dims != (1, 1, 2, 1)
           or not isinstance(padding, str)):
         raise SkipTest("Only R4 SelectAndScatter implemented on TPU")
-
-      # TODO(b/73062247): need variadic reduce-window for better precision.
-      gradient_order = 1
 
     def fun(operand):
       return lax.reduce_window(operand, init_val, op, dims, strides, padding,

@@ -724,8 +724,8 @@ def _select_and_gather_add_transpose(
   result = _select_and_scatter_add(t, operand, select_prim, window_dimensions,
                                    window_strides, padding)
   if has_base_dilation:
-    result = slice(operand, (0,) * len(operand.shape), operand.shape,
-                   base_dilation)
+    result = lax.slice(result, (0,) * len(result.shape), result.shape,
+                       base_dilation)
   return [result, None]
 
 def _select_and_gather_add_batching_rule(
