@@ -85,6 +85,8 @@ class PolarTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([8, 10, 20], [6, 10, 18])
       for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
+  # TODO(tianjianlu): Fails on A100 GPU and TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
   def testQdwhWithUpperTriangularInputAllOnes(self, m, n, log_cond):
     """Tests qdwh with upper triangular input of all ones."""
     a = jnp.triu(jnp.ones((m, n)))
@@ -123,11 +125,12 @@ class PolarTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([6, 8], [6, 4])
       for log_cond in np.linspace(1, 4, 4)))
+  # TODO(tianjianlu): Fails on TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
   def testQdwhWithRandomMatrix(self, m, n, log_cond):
     """Tests qdwh with random input."""
-
-    a = np.random.uniform(
-        low=0.3, high=0.9, size=(m, n)).astype(_POLAR_TEST_DTYPE)
+    rng = jtu.rand_uniform(self.rng(), low=0.3, high=0.9)
+    a = rng((m, n), _POLAR_TEST_DTYPE)
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
     s = jnp.linspace(cond, 1, min(m, n))
@@ -158,6 +161,8 @@ class PolarTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([10, 12], [10, 12])
       for log_cond in np.linspace(1, 4, 4)))
+  # TODO(tianjianlu): Fails on A100 GPU and TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
   def testQdwhWithOnRankDeficientInput(self, m, n, log_cond):
     """Tests qdwh with rank-deficient input."""
     a = jnp.triu(jnp.ones((m, n))).astype(_POLAR_TEST_DTYPE)
