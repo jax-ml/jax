@@ -120,6 +120,9 @@ Operators
     rsqrt
     scatter
     scatter_add
+    scatter_max
+    scatter_min
+    scatter_mul
     select
     shift_left
     shift_right_arithmetic
@@ -212,6 +215,7 @@ Argument classes
 .. autoclass:: ConvDimensionNumbers
 .. autoclass:: ConvGeneralDilatedDimensionNumbers
 .. autoclass:: GatherDimensionNumbers
+.. autoclass:: GatherScatterMode
 .. autoclass:: Precision
 .. autoclass:: RoundingMethod
 .. autoclass:: ScatterDimensionNumbers

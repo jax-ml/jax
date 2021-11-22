@@ -1043,21 +1043,28 @@ class GatherDimensionNumbers(NamedTuple):
 
 
 class GatherScatterMode(Enum):
-  # Indices will be clamped to the nearest in-range value, i.e., such that the
-  # entire window to be gathered is in-range.
+  """
+  Describes how to handle out-of-bounds indices in a gather or scatter.
+
+  Possible values are:
+
+  CLIP:
+    Indices will be clamped to the nearest in-range value, i.e., such that the
+    entire window to be gathered is in-range.
+  FILL_OR_DROP:
+    If any part of a gathered window is out of bounds, the entire window
+    that is returned, even those elements that were otherwise in-bounds, will be
+    filled with a constant.
+    If any part of a scattered window is out of bounds, the entire window
+    will be discarded.
+  PROMISE_IN_BOUNDS:
+    The user promises that indices are in bounds. No additional checking will be
+    performed. In practice, with the current XLA  implementation this means
+    that, out-of-bounds gathers will be clamped but out-of-bounds scatters will
+    be discarded. Gradients will not be correct if indices are out-of-bounds.
+  """
   CLIP = enum.auto()
-
-  # If any part of a gathered window is out of bounds, the entire window
-  # that is returned, even those elements that were otherwise in-bounds, will be
-  # filled with a constant.
-  # If any part of a scattered window is out of bounds, the entire window
-  # will be discarded.
   FILL_OR_DROP = enum.auto()
-
-  # The user promises that indices are in bounds. No additional checking will be
-  # performed. In practice, with the current XLA  implementation this means
-  # that, out-of-bounds gathers will be clamped but out-of-bounds scatters will
-  # be discarded. Gradients will not be correct if indices are out-of-bounds.
   PROMISE_IN_BOUNDS = enum.auto()
 
   @staticmethod
@@ -1089,7 +1096,7 @@ def gather(operand: Array, start_indices: Array,
 
   The semantics of gather are complicated, and its API might change in the
   future. For most use cases, you should prefer `Numpy-style indexing
-  <https://docs.scipy.org/doc/numpy-1.16.0/reference/arrays.indexing.html>`_
+  <https://numpy.org/doc/stable/reference/arrays.indexing.html>`_
   (e.g., `x[:, (1,4,7), ...]`), rather than using `gather` directly.
 
   Args:
@@ -1180,7 +1187,10 @@ def scatter_add(
   <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
   addition is used to combine updates and values from `operand`.
 
-  The semantics of scatter are complicated and its API is subject to change.
+  The semantics of scatter are complicated, and its API might change in the
+  future. For most use cases, you should prefer the
+  :attr:`jax.numpy.ndarray.at` property on JAX arrays which uses
+  the familiar NumPy indexing syntax.
 
   Args:
     operand: an array to which the scatter should be applied
@@ -1222,7 +1232,10 @@ def scatter_mul(
   <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
   multiplication is used to combine updates and values from `operand`.
 
-  The semantics of scatter are complicated and its API is subject to change.
+  The semantics of scatter are complicated, and its API might change in the
+  future. For most use cases, you should prefer the
+  :attr:`jax.numpy.ndarray.at` property on JAX arrays which uses
+  the familiar NumPy indexing syntax.
 
   Args:
     operand: an array to which the scatter should be applied
@@ -1264,7 +1277,10 @@ def scatter_min(
   <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
   the `min` function is used to combine updates and values from `operand`.
 
-  The semantics of scatter are complicated and its API is subject to change.
+  The semantics of scatter are complicated, and its API might change in the
+  future. For most use cases, you should prefer the
+  :attr:`jax.numpy.ndarray.at` property on JAX arrays which uses
+  the familiar NumPy indexing syntax.
 
   Args:
     operand: an array to which the scatter should be applied
@@ -1306,7 +1322,10 @@ def scatter_max(
   <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
   the `max` function is used to combine updates and values from `operand`.
 
-  The semantics of scatter are complicated and its API is subject to change.
+  The semantics of scatter are complicated, and its API might change in the
+  future. For most use cases, you should prefer the
+  :attr:`jax.numpy.ndarray.at` property on JAX arrays which uses
+  the familiar NumPy indexing syntax.
 
   Args:
     operand: an array to which the scatter should be applied
@@ -1354,7 +1373,10 @@ def scatter(
   If multiple updates are performed to the same index of operand, they may be
   applied in any order.
 
-  The semantics of scatter are complicated and its API is subject to change.
+  The semantics of scatter are complicated, and its API might change in the
+  future. For most use cases, you should prefer the
+  :attr:`jax.numpy.ndarray.at` property on JAX arrays which uses
+  the familiar NumPy indexing syntax.
 
   Args:
     operand: an array to which the scatter should be applied
