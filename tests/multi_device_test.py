@@ -23,7 +23,6 @@ import jax.numpy as jnp
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge
-from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -182,7 +181,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     devices = self.get_devices()
 
     def f(): return lax.add(3., 4.)
-    self.assertIsInstance(f(), xla.DeviceArray)
+    self.assertIsInstance(f(), jnp.DeviceArray)
     self.assert_uncommitted_to_device(f(), devices[0])
     self.assert_uncommitted_to_device(jax.jit(f)(), devices[0])
     self.assert_committed_to_device(jax.jit(f, device=devices[1])(),

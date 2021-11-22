@@ -47,9 +47,9 @@ from jax._src.api_util import _ensure_index_tuple
 from jax import errors
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import config
-from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray, make_device_array
 from jax.interpreters import pxla
 from jax import lax
+from jax._src import device_array
 from jax._src.lax.lax import _array_copy
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
@@ -362,8 +362,9 @@ class ndarray(metaclass=ArrayMeta):
   def weak_type(self) -> bool: ...
 
 
-ndarray.register(DeviceArray)
-ndarray.register(_CppDeviceArray)
+ndarray.register(device_array.DeviceArray)
+for t in device_array.device_array_types:
+  ndarray.register(t)
 ndarray.register(pxla._SDA_BASE_CLASS)
 
 
@@ -3593,12 +3594,12 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0, *, device=None):
     lax._check_user_dtype_supported(_inferred_dtype, "array")
     out = _np_array(object, copy=copy, dtype=dtype)
     if dtype: assert _dtype(out) == dtype
-  elif isinstance(object, (DeviceArray, core.Tracer)):
+  elif isinstance(object, (device_array.DeviceArray, core.Tracer)):
     if object.aval is None:
       # object is a raw buffer; convert to device array on its current device.
       aval = ShapedArray(object.xla_shape().dimensions(), object.dtype,
                          weak_type=bool(getattr(object, "weak_type", False)))
-      object = make_device_array(aval, object.device(), object)
+      object = device_array.make_device_array(aval, object.device(), object)
     out = _array_copy(object) if copy else object
   elif isinstance(object, (list, tuple)):
     if object:
@@ -3630,7 +3631,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0, *, device=None):
   return out
 
 def _can_call_numpy_array(x):
-  return _all(not isinstance(l, (core.Tracer, DeviceArray))
+  return _all(not isinstance(l, (core.Tracer, device_array.DeviceArray))
               for l in tree_leaves(x))
 
 
@@ -6715,7 +6716,7 @@ _NOT_IMPLEMENTED = ['argpartition']
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch
-_JAX_ARRAY_TYPES = (DeviceArray, core.Tracer)
+_JAX_ARRAY_TYPES = (device_array.DeviceArray, core.Tracer)
 _HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
 
 def __array_module__(self, types):
@@ -6752,7 +6753,7 @@ def _multi_slice(arr,
 @jit
 def _unstack(x):
   return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
-setattr(DeviceArray, "_unstack", _unstack)
+setattr(device_array.DeviceArray, "_unstack", _unstack)
 def _chunk_iter(x, size):
   if size > x.shape[0]:
     yield x
@@ -6762,7 +6763,7 @@ def _chunk_iter(x, size):
       yield lax.dynamic_slice_in_dim(x, i * size, size)
     if tail:
       yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
-setattr(DeviceArray, "_chunk_iter", _chunk_iter)
+setattr(device_array.DeviceArray, "_chunk_iter", _chunk_iter)
 
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
@@ -7050,7 +7051,7 @@ def _set_device_array_base_attributes(device_array):
   setattr(device_array, "nbytes", property(_nbytes))
   setattr(device_array, "clip", _clip)
 
-_set_device_array_base_attributes(DeviceArray)
+_set_device_array_base_attributes(device_array.DeviceArray)
 
 
 def _set_device_array_attributes(device_array):
@@ -7063,7 +7064,7 @@ def _set_device_array_attributes(device_array):
   setattr(device_array, "_multi_slice", _multi_slice)
   setattr(device_array, "at", property(_IndexUpdateHelper))
 
-_set_device_array_attributes(_DeviceArray)
-_set_device_array_attributes(_CppDeviceArray)
+for t in device_array.device_array_types:
+  _set_device_array_attributes(t)
 _set_device_array_attributes(pxla._ShardedDeviceArray)
 _set_device_array_attributes(pxla.pmap_lib.ShardedDeviceArray)

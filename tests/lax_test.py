@@ -36,7 +36,6 @@ from jax._src import lax_reference
 from jax.test_util import check_grads
 import jax.util
 from jax._src.util import prod
-from jax import xla
 
 from jax._src.lax.lax import _device_put_raw
 
@@ -2566,7 +2565,7 @@ class LazyConstantTest(jtu.JaxTestCase):
     if jit:
       op = jax.jit(op)
     result = op(input_type(value))
-    assert isinstance(result, xla.DeviceArray)
+    assert isinstance(result, jnp.DeviceArray)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype_in={}_dtype_out={}".format(

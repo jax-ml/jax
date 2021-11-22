@@ -33,6 +33,8 @@ from jax import core
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
+from jax._src import device_array
+from jax._src import dispatch
 from jax import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util
@@ -473,7 +475,7 @@ def _convert_element_type(operand: Array, new_dtype: Optional[DType] = None,
     operand = np.asarray(operand, new_dtype)
 
   if ((old_dtype, old_weak_type) == (new_dtype, new_weak_type)
-      and isinstance(operand, (core.Tracer, xla.DeviceArray))):
+      and isinstance(operand, (core.Tracer, device_array.DeviceArray))):
     return operand
   else:
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
@@ -813,7 +815,7 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   shape = _broadcast_in_dim_shape_rule(
     operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
-      and isinstance(operand, (xla.DeviceArray, core.Tracer))):
+      and isinstance(operand, (device_array.DeviceArray, core.Tracer))):
     return operand
   return broadcast_in_dim_p.bind(
       operand, shape=tuple(shape),
@@ -872,7 +874,7 @@ def reshape(operand: Array, new_sizes: Shape,
     dims = api_util._ensure_index_tuple(dimensions)
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
   if (np.shape(operand) and same_shape and same_dims
-      and isinstance(operand, (core.Tracer, xla.DeviceArray))):
+      and isinstance(operand, (core.Tracer, device_array.DeviceArray))):
     return operand
   else:
     return reshape_p.bind(
@@ -1405,7 +1407,7 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   """
   permutation = tuple(operator.index(d) for d in permutation)
   if (permutation == tuple(range(np.ndim(operand)))
-      and isinstance(operand, (core.Tracer, xla.DeviceArray))):
+      and isinstance(operand, (core.Tracer, device_array.DeviceArray))):
     return operand
   else:
     return transpose_p.bind(operand, permutation=permutation)
@@ -1607,11 +1609,11 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
   return broadcast(fill_value, shape)
 
 def _device_put_raw(x, weak_type=None):
-  if isinstance(x, xla.DeviceArray):
+  if isinstance(x, device_array.DeviceArray):
     return x
   else:
     aval = raise_to_shaped(core.get_aval(x), weak_type=weak_type)
-    return xla.array_result_handler(None, aval)(*xla.device_put(x))
+    return dispatch.array_result_handler(None, aval)(*dispatch.device_put(x))
 
 def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
@@ -2107,10 +2109,11 @@ def zeros_like_array(x):
 
 for t in itertools.chain(
     dtypes.python_scalar_dtypes.keys(), array_types,
-    [xla._CppDeviceArray, xla._DeviceArray, pxla.ShardedDeviceArray, pxla.pmap_lib.ShardedDeviceArray]):
+    device_array.device_array_types,
+    [pxla.ShardedDeviceArray, pxla.pmap_lib.ShardedDeviceArray]):
   ad_util.jaxval_adders[t] = add
-ad_util.jaxval_zeros_likers[xla._DeviceArray] = zeros_like_array
-ad_util.jaxval_zeros_likers[xla._CppDeviceArray] = zeros_like_array
+ad_util.jaxval_zeros_likers[device_array._DeviceArray] = zeros_like_array
+ad_util.jaxval_zeros_likers[device_array.Buffer] = zeros_like_array
 ad_util.jaxval_zeros_likers[pxla.ShardedDeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[pxla.pmap_lib.ShardedDeviceArray] = zeros_like_array
 

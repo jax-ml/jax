@@ -40,6 +40,7 @@ from jax import random
 from jax.core import ShapedArray
 from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
+from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_bridge
 from jax._src.util import prod, safe_map
@@ -540,12 +541,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     y = f(x)
     self.assertIsInstance(y, jnp.ndarray)
     self.assertIsInstance(y, pxla.ShardedDeviceArray)
-    self.assertIsInstance(y, jax.interpreters.xla.DeviceArray)
+    self.assertIsInstance(y, device_array.DeviceArray)
     self.assertNotIsInstance(y, np.ndarray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
     z = f(y)
     self.assertIsInstance(z, pxla.ShardedDeviceArray)
-    self.assertIsInstance(z, jax.interpreters.xla.DeviceArray)
+    self.assertIsInstance(z, device_array.DeviceArray)
     self.assertNotIsInstance(z, np.ndarray)
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
@@ -2325,7 +2326,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     sharded_x = pmap(lambda x: x)(x)
     self.assertIsNone(sharded_x._npy_value)
     for i in range(8):
-      self.assertIsInstance(sharded_x[i], jax.interpreters.xla.DeviceArray)
+      self.assertIsInstance(sharded_x[i], device_array.DeviceArray)
     self.assertIsNone(sharded_x._npy_value)
 
   def test_device_put_sharded_array(self):

@@ -1245,6 +1245,11 @@ class AbstractToken(AbstractValue):
 
 abstract_token: AbstractToken = AbstractToken()
 
+# Concrete token object
+class Token(object): pass
+token = Token()
+pytype_aval_mappings[Token] = lambda _: abstract_token
+
 
 def raise_to_shaped(aval: AbstractValue, weak_type=None):
   if weak_type is None:

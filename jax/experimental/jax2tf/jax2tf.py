@@ -26,6 +26,7 @@ from jax._src import api_util
 from jax import config
 from jax._src import api
 from jax import core, custom_derivatives
+from jax._src import dispatch
 from jax._src import dtypes
 from jax import linear_util as lu
 from jax import random, tree_util
@@ -968,7 +969,7 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
 
 
 tf_impl[ad_util.add_jaxvals_p] = _add
-tf_impl[xla.device_put_p] = lambda x, device=None: x
+tf_impl[dispatch.device_put_p] = lambda x, device=None: x
 
 def _neg(x: TfVal) -> TfVal:
   if x.dtype.is_unsigned:

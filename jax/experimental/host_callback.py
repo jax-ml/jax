@@ -458,6 +458,7 @@ from jax import lax
 from jax.experimental import pjit
 from jax.interpreters import ad, xla, batching, masking, pxla
 from jax.interpreters import partial_eval as pe
+from jax._src import dispatch
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
@@ -880,7 +881,7 @@ It takes the following parameters:
 """
 outside_call_p = core.Primitive("outside_call")
 outside_call_p.multiple_results = True
-xla.outfeed_primitives.add(outside_call_p)
+dispatch.outfeed_primitives.add(outside_call_p)
 
 
 def _outside_call_abstract_eval(*args_a: pe.AbstractValue,
@@ -918,7 +919,7 @@ def _outside_call_impl(*args, **params):
     # even in eager execution some primitives, such as while, are compiled.
     # It would be confusing to process a sequence "id_tap; while" in two
     # different threads.
-    return xla.apply_primitive(outside_call_p, *args, **params)
+    return dispatch.apply_primitive(outside_call_p, *args, **params)
 
 
 outside_call_p.def_impl(_outside_call_impl)
@@ -1355,7 +1356,7 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
   """Rewrite a Jaxpr to thread the token, if needed."""
   assert has_input_token or not has_output_token
 
-  if not has_input_token and not xla.jaxpr_uses_outfeed(jaxpr):
+  if not has_input_token and not dispatch.jaxpr_uses_outfeed(jaxpr):
     return jaxpr
 
   mk_new_var = core.gensym([jaxpr])
@@ -1377,7 +1378,7 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
                            lax.create_token_p, {}, source_info_util.current()))
 
   for eqn in jaxpr.eqns:
-    if not xla.primitive_uses_outfeed(eqn.primitive, eqn.params):
+    if not dispatch.primitive_uses_outfeed(eqn.primitive, eqn.params):
       eqns.append(eqn)
     else:
       output_token_var = mk_new_var(last_token_var.aval)
@@ -1415,7 +1416,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
     cond_jaxpr, _, body_jaxpr, _ = util.split_dict(
         eqn.params,
         ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
-    if xla.jaxpr_uses_outfeed(cond_jaxpr.jaxpr):
+    if dispatch.jaxpr_uses_outfeed(cond_jaxpr.jaxpr):
       _rewrite_while_outfeed_cond(eqn, eqns, input_token_var, output_token_var,
                                   input_itoken_var, output_itoken_var,
                                   mk_new_var)
@@ -1692,7 +1693,7 @@ id_p.def_impl(lambda *args: args)
 id_p.def_abstract_eval(lambda *args: args)
 xla.register_translation(id_p, lambda ctx, avals_in, avals_out, *args: args)
 
-xla.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)
+dispatch.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)
 
 
 class CallbackException(Exception):
@@ -1820,7 +1821,7 @@ def _initialize_outfeed_receiver(
 
     def exit_handler():
       # Prevent logging usage during compilation, gives errors under pytest
-      xla._on_exit = True  # type: ignore[protected-access]
+      dispatch._on_exit = True  # type: ignore[protected-access]
       if not _callback_handler_data.on_exit:
         _callback_handler_data.on_exit = True
         barrier_wait("at_exit")

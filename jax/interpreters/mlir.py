@@ -31,6 +31,8 @@ from jax import linear_util as lu
 from jax._src.config import config
 from jax._src import ad_util
 from jax._src import custom_derivatives
+from jax._src import device_array
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lax import control_flow
@@ -234,8 +236,8 @@ for ptype, dtype in dtypes.python_scalar_dtypes.items():
 def _device_array_constant_handler(val, canonicalize_types):
   return _ndarray_constant_handler(val.device_buffer.to_py(),
                                    canonicalize_types)
-register_constant_handler(xla._DeviceArray, _device_array_constant_handler)
-register_constant_handler(xla._CppDeviceArray, _device_array_constant_handler)
+for t in device_array.device_array_types:
+  register_constant_handler(t, _device_array_constant_handler)
 
 
 # Source locations
@@ -523,7 +525,7 @@ translations[core.call_p] = partial(_named_call_lowering, name="core_call")
 def _device_put_lowering(ctx, avals_in, avals_out, x, *, device):
   return [x]
 
-translations[xla.device_put_p] = _device_put_lowering
+translations[dispatch.device_put_p] = _device_put_lowering
 
 
 def _full_like_aval(value, aval: core.ShapedArray) -> ir.Value:
@@ -629,7 +631,7 @@ def _execute_compiled(name: str, compiled: xla.XlaExecutable,
       unsafe_zip(arg_handlers,
                  (x for i, x in enumerate(args) if i in kept_var_idx)))
   out_bufs = compiled.execute(input_bufs)
-  xla.check_special(name, out_bufs)
+  dispatch.check_special(name, out_bufs)
   return [handler(device, *bs) for handler, bs in
           zip(result_handlers, xla._partition_outputs(buffer_counts, out_bufs))]
 
@@ -649,7 +651,7 @@ def _execute_replicated(name: str, compiled: xla.XlaExecutable,
       buf[0] for buf in compiled.execute_sharded_on_local_devices(
           list(zip(*input_bufs)))
   ]
-  xla.check_special(name, out_bufs)
+  dispatch.check_special(name, out_bufs)
   return [handler(device, *bs) for handler, bs in
           zip(result_handlers, xla._partition_outputs(buffer_counts, out_bufs))]
 
@@ -662,7 +664,7 @@ def _execute_trivial(jaxpr, device: Optional[xla.Device], consts, buffer_counts,
   map(env.setdefault, jaxpr.constvars, consts)
   outs = [xla.canonicalize_dtype(v.val) if type(v) is core.Literal else env[v]
           for v in jaxpr.outvars]
-  return [xla.device_put_p.bind(x, device=device) for x in outs]
+  return [dispatch.device_put_p.bind(x, device=device) for x in outs]
 
 
 class XlaCompiledComputation:
@@ -688,7 +690,7 @@ class XlaCompiledComputation:
         num_partitions=1,
         device_assignment=(device.id,) if device else None)
     options.parameter_is_tupled_arguments = tuple_args
-    compiled = xla.compile_or_get_cached(backend, xla_computation, options)
+    compiled = dispatch.compile_or_get_cached(backend, xla_computation, options)
     buffer_counts = [aval_to_num_buffers(aval) for aval in avals_out]
     if nreps == 1:
       return XlaCompiledComputation(compiled, partial(
@@ -771,18 +773,18 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
 
-  jaxpr, kept_const_idx, kept_var_idx = xla._prune_unused_inputs(jaxpr)
+  jaxpr, kept_const_idx, kept_var_idx = dispatch._prune_unused_inputs(jaxpr)
   consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
   pruned_arg_specs = (a for i, a in enumerate(arg_specs) if i in kept_var_idx)
   avals_in, arg_devices = util.unzip2(pruned_arg_specs)
   donated_invars = [
       x for i, x in enumerate(donated_invars) if i in kept_var_idx
   ]
-  map(xla.prefetch, itertools.chain(consts, xla.jaxpr_literals(jaxpr)))
-  jaxpr = xla.apply_outfeed_rewriter(jaxpr)
+  map(dispatch.prefetch, itertools.chain(consts, dispatch.jaxpr_literals(jaxpr)))
+  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
-  nreps = xla.jaxpr_replicas(jaxpr)
-  device = xla._xla_callable_device(nreps, backend, device, arg_devices)
+  nreps = dispatch.jaxpr_replicas(jaxpr)
+  device = dispatch._xla_callable_device(nreps, backend, device, arg_devices)
   backend = xb.get_device_backend(device) if device else xb.get_backend(backend)
 
   # Computations that only produce constants and/or only rearrange their inputs,
@@ -792,7 +794,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
     return XlaComputation(name, None, True, jaxpr, consts, device, avals_in,
                           avals_out, kept_var_idx)
 
-  if not xla._on_exit:
+  if not dispatch._on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
     logging.log(log_priority, "Compiling %s (%s) for args %s.",
                 fun.__name__, id(fun), avals_in)
@@ -810,7 +812,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
         f"compiling computation that requires {nreps} replicas, but only "
         f"{xb.device_count(backend)} XLA devices are available")
 
-  if xb.process_count() > 1 and (nreps > 1 or xla.jaxpr_has_pmap(jaxpr)):
+  if xb.process_count() > 1 and (nreps > 1 or dispatch.jaxpr_has_pmap(jaxpr)):
     raise NotImplementedError(
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")
@@ -855,15 +857,15 @@ def _xla_call_impl_mlir(fun: lu.WrappedFun, *args, device, backend, name,
                         donated_invars, inline):
   del inline  # Only used at tracing time
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
-                               *unsafe_map(xla.arg_spec, args))
+                               *unsafe_map(dispatch.arg_spec, args))
   return compiled_fun(*args)
 
 
 @util.cache()
-def _xla_primitive_callable(prim, *arg_specs: xla.ArgSpec, **params):
+def _xla_primitive_callable(prim, *arg_specs: dispatch.ArgSpec, **params):
   avals, arg_devices = util.unzip2(arg_specs)
   donated_invars = (False,) * len(arg_specs)
-  device = xla._device_from_arg_devices(arg_devices)
+  device = dispatch._device_from_arg_devices(arg_devices)
   def prim_fun(*args):
     out = prim.bind(*args, **params)
     if prim.multiple_results:
@@ -879,7 +881,7 @@ def _xla_primitive_callable(prim, *arg_specs: xla.ArgSpec, **params):
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = _xla_primitive_callable(prim, *unsafe_map(xla.arg_spec, args),
+  compiled_fun = _xla_primitive_callable(prim, *unsafe_map(dispatch.arg_spec, args),
                                          **params)
   return compiled_fun(*args)
 

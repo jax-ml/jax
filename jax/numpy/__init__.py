@@ -19,7 +19,7 @@
 from . import fft as fft
 from . import linalg as linalg
 
-from jax.interpreters.xla import DeviceArray as DeviceArray
+from jax._src.device_array import DeviceArray as DeviceArray
 
 from jax._src.numpy.lax_numpy import (
     ComplexWarning as ComplexWarning,

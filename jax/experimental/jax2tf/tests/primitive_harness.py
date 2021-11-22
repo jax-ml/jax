@@ -52,7 +52,7 @@ from jax._src import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow
-from jax.interpreters import xla
+from jax._src import dispatch
 
 from jax._src.lib import xla_client
 
@@ -639,7 +639,7 @@ def _make_device_put_harness(name,
   define(
       "device_put",
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_device={device}",
-      lambda x: xla.device_put_p.bind(x, device=_device_fn()),
+      lambda x: dispatch.device_put_p.bind(x, device=_device_fn()),
       [RandArg(shape, dtype)],
       shape=shape,
       dtype=dtype,

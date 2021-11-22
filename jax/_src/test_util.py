@@ -38,6 +38,7 @@ from jax._src.config import flags, bool_env, config
 from jax._src.util import prod, unzip2
 from jax.tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from jax._src.lib import xla_bridge
+from jax._src import dispatch
 from jax.interpreters import xla
 from jax.experimental.maps import mesh
 
@@ -337,29 +338,29 @@ def check_grads(f, args, order,
 
 @contextmanager
 def count_device_put():
-  device_put = xla.device_put
+  device_put = dispatch.device_put
   count = [0]
 
   def device_put_and_count(*args, **kwargs):
     count[0] += 1
     return device_put(*args, **kwargs)
 
-  xla.device_put = device_put_and_count
+  dispatch.device_put = device_put_and_count
   try:
     yield count
   finally:
-    xla.device_put = device_put
+    dispatch.device_put = device_put
 
 
 @contextmanager
 def count_primitive_compiles():
-  xla.xla_primitive_callable.cache_clear()
+  dispatch.xla_primitive_callable.cache_clear()
 
   count = [-1]
   try:
     yield count
   finally:
-    count[0] = xla.xla_primitive_callable.cache_info().misses
+    count[0] = dispatch.xla_primitive_callable.cache_info().misses
 
 
 @contextmanager
@@ -986,11 +987,11 @@ class JaxTestCase(parameterized.TestCase):
     np_shapes = tree_map(lambda x: np.shape(np.asarray(x)), python_ans)
     self.assertEqual(python_shapes, np_shapes)
 
-    cache_misses = xla.xla_primitive_callable.cache_info().misses
+    cache_misses = dispatch.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
     if check_cache_misses:
       self.assertEqual(
-          cache_misses, xla.xla_primitive_callable.cache_info().misses,
+          cache_misses, dispatch.xla_primitive_callable.cache_info().misses,
           "Compilation detected during second call of {} in op-by-op "
           "mode.".format(fun))
 

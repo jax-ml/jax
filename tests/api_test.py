@@ -48,6 +48,7 @@ from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters.sharded_jit import PartitionSpec as P
+from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
@@ -225,7 +226,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_device(self):
     device = jax.devices()[-1]
     x = self.jit(lambda x: x, device=device)(3.)
-    self.assertIsInstance(x, xla.DeviceArray)
+    self.assertIsInstance(x, jnp.DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_complex_support(self):
@@ -492,7 +493,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     jitted_f = self.jit(lambda a: a + 1)
     jitted_f(1)
-    self.assertIsInstance(jitted_f(2), xla._CppDeviceArray)
+    self.assertIsInstance(jitted_f(2), device_array.Buffer)
 
   @jtu.skip_on_devices("cpu")
   def test_explicit_backend(self):
@@ -986,13 +987,13 @@ class APITest(jtu.JaxTestCase):
                      "Transpose rule (for reverse-mode differentiation) for 'foo' not implemented")
 
   def test_is_subclass(self):
-    self.assertTrue(issubclass(xla.DeviceArray, jnp.ndarray))
-    self.assertTrue(issubclass(xla._CppDeviceArray, jnp.ndarray))
+    self.assertTrue(issubclass(device_array.DeviceArray, jnp.ndarray))
+    self.assertTrue(issubclass(device_array.Buffer, jnp.ndarray))
     self.assertTrue(issubclass(pxla.ShardedDeviceArray, jnp.ndarray))
     self.assertTrue(issubclass(pxla._ShardedDeviceArray, jnp.ndarray))
     self.assertFalse(issubclass(np.ndarray, jnp.ndarray))
-    self.assertFalse(issubclass(xla.DeviceArray, np.ndarray))
-    self.assertFalse(issubclass(xla._CppDeviceArray, np.ndarray))
+    self.assertFalse(issubclass(device_array.DeviceArray, np.ndarray))
+    self.assertFalse(issubclass(device_array.Buffer, np.ndarray))
     self.assertFalse(issubclass(pxla.ShardedDeviceArray, np.ndarray))
     self.assertFalse(issubclass(pxla._ShardedDeviceArray, np.ndarray))
 
@@ -1007,7 +1008,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
-    self.assertIsInstance(dx, xla.DeviceArray)
+    self.assertIsInstance(dx, device_array.DeviceArray)
     self.assertIsInstance(dx, jnp.ndarray)
     self.assertNotIsInstance(dx, np.ndarray)
     x2 = api.device_get(dx)
@@ -1030,7 +1031,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
-    self.assertIsInstance(x, xla.DeviceArray)
+    self.assertIsInstance(x, device_array.DeviceArray)
     y = [x, 2]
     y2 = api.device_get(y)
     self.assertIsInstance(y2, list)
@@ -1465,11 +1466,11 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_repr(self):
     x = device_put(jnp.zeros(3))
-    self.assertIsInstance(x, xla.DeviceArray)
+    self.assertIsInstance(x, device_array.DeviceArray)
     repr(x)  # doesn't crash
 
     x = device_put(jnp.ones(3) + 1j * jnp.ones(3))
-    self.assertIsInstance(x, xla.DeviceArray)
+    self.assertIsInstance(x, device_array.DeviceArray)
     repr(x)  # doesn't crash
 
   def test_devicearray_delete(self):
@@ -2304,7 +2305,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_device_array_hash(self):
     rep = jnp.ones((1,)) + 1.
-    self.assertIsInstance(rep, jax.interpreters.xla.DeviceArray)
+    self.assertIsInstance(rep, device_array.DeviceArray)
     self.assertNotIsInstance(rep, collections.abc.Hashable)
     with self.assertRaisesRegex(TypeError, 'unhashable type'):
       hash(rep)
@@ -2733,7 +2734,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_jit_returning_token(self):
     x = jax.jit(jax.lax.create_token)(1.0)
-    self.assertIsInstance(x, jax.interpreters.xla.Token)
+    self.assertIsInstance(x, jax.core.Token)
 
   def test_leak_checker_catches_a_jit_leak(self):
     with jax.checking_leaks():

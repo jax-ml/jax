@@ -56,6 +56,8 @@ from ..tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                          treedef_is_leaf, treedef_children, Partial, PyTreeDef)
 from .util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                    extend_name_stack, wrap_name, cache, wraps, HashableFunction)
+from jax._src import device_array
+from jax._src import dispatch
 from jax._src.lib import jax_jit
 from jax._src.lib import version
 from jax._src.lib import xla_bridge as xb
@@ -82,6 +84,7 @@ from .._src.config import (flags, config, bool_env, disable_jit as _disable_jit,
                            debug_nans as config_debug_nans,
                            debug_infs as config_debug_infs,
                            _thread_local_state as config_thread_local_state)
+
 
 traceback_util.register_exclusion(__file__)
 
@@ -127,7 +130,7 @@ def _nan_check_posthook(fun, args, kwargs, output):
       buffers.extend(da_or_sda.device_buffers)
 
   try:
-    xla.check_special(xla.xla_call_p, buffers)
+    dispatch.check_special(xla.xla_call_p, buffers)
   except FloatingPointError:
     # compiled_fun can only raise in this case
     assert config.jax_debug_nans or config.jax_debug_infs
@@ -426,14 +429,14 @@ def _cpp_jit(
     # inspect the argument x, we actually do need to execute it and look at the
     # outputs that could be tracers (if f is capturing `Tracer` by closure).
     execute: Optional[functools.partial] = (
-        xla._xla_callable.most_recent_entry())
+        dispatch._xla_callable.most_recent_entry())
     use_fastpath = (
         # This is if we have already executed this code-path (most-recent entry
         # has been reset to None). Thus, we do not support the fast-path.
         execute is not None and
-        execute.func is xla._execute_compiled and  # not trivial, not pmap
+        execute.func is dispatch._execute_compiled and  # not trivial, not pmap
         # Not supported: ShardedDeviceArray
-        all(xla.type_is_device_array(x) for x in out_flat))
+        all(device_array.type_is_device_array(x) for x in out_flat))
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       _, xla_executable, _, result_handlers, kept_var_idx = execute.args
@@ -493,7 +496,7 @@ class Lowered:
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donate_argnums: Tuple[int]
-  _lowering: Union[xla.XlaComputation, pxla.MeshComputation]
+  _lowering: Union[dispatch.XlaComputation, pxla.MeshComputation]
   _no_kwargs: bool
 
   def __init__(self, lowering, in_tree, out_tree, donate_argnums,
@@ -529,7 +532,7 @@ class Compiled:
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donate_argnums: Tuple[int]
-  _executable: Union[xla.XlaCompiledComputation, pxla.MeshExecutable]
+  _executable: Union[dispatch.XlaCompiledComputation, pxla.MeshExecutable]
   _no_kwargs: bool
 
   def __init__(self, executable, in_tree, out_tree, donate_argnums,
@@ -595,7 +598,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     name = flat_fun.__name__
     arg_specs = unsafe_map(arg_spec, args_flat)
-    computation = xla.lower_xla_callable(
+    computation = dispatch.lower_xla_callable(
         flat_fun, device, backend, name, donated_invars, *arg_specs)
     return Lowered(computation, in_tree, out_tree(), donate_argnums)
 
@@ -830,8 +833,8 @@ def xla_computation(fun: Callable,
       for axis_name, size in axis_env or []:
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
-      jaxpr = xla.apply_outfeed_rewriter(jaxpr)
-      axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
+      jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
+      axis_env_ = make_axis_env(dispatch.jaxpr_replicas(jaxpr))
       if out_parts is None:
         out_parts_flat = None
       else:
@@ -1990,7 +1993,7 @@ def _cpp_pmap(
         getattr(execute[0], "func", None) is pxla.execute_replicated and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
-        all(isinstance(x, xla.DeviceArray) for x in out_flat))
+        all(isinstance(x, device_array.DeviceArray) for x in out_flat))
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       xla_executable, backend_, in_handler, out_handler = execute[0].args
@@ -2552,7 +2555,7 @@ def device_put(x, device: Optional[xc.Device] = None):
   Returns:
     A copy of ``x`` that resides on ``device``.
   """
-  return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
+  return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
 
 
 def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
@@ -2617,7 +2620,8 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
       raise ValueError("the shards passed to device_put_sharded must have "
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
-    buffers = [buf for x, d in zip(xs, devices) for buf in xla.device_put(x, d)]
+    buffers = [buf for x, d in zip(xs, devices)
+               for buf in dispatch.device_put(x, d)]
     return pxla.make_sharded_device_array(stacked_aval, None, buffers)
 
   return tree_multimap(_device_put_sharded, *shards)
@@ -2660,7 +2664,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
                               core.raise_to_shaped(core.get_aval(x)))
     assert (isinstance(aval, core.ShapedArray) and
             len(xla.aval_to_xla_shapes(aval)) == 1)
-    buf, = xla.device_put(x, devices[0])
+    buf, = dispatch.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
     return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
   return tree_map(_device_put_replicated, x)

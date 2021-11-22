@@ -39,9 +39,9 @@ import jax.ops
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
+from jax._src import device_array
 from jax._src import dtypes
 from jax import tree_util
-from jax.interpreters import xla
 from jax.test_util import check_grads
 from jax._src.util import prod, safe_zip
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
@@ -2483,7 +2483,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected_np_input_after_call = np.ones((1))
     expected_jnp_input_after_call = jnp.ones((1))
 
-    self.assertTrue(xla.type_is_device_array(jnp.concatenate([np_input])))
+    self.assertTrue(device_array.type_is_device_array(jnp.concatenate([np_input])))
 
     attempt_sideeffect(np_input)
     attempt_sideeffect(jnp_input)
@@ -3678,13 +3678,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     assert not np.isscalar(jnp.array(3))
 
   def testArrayOutputsDeviceArrays(self):
-    assert xla.type_is_device_array(jnp.array([]))
-    assert xla.type_is_device_array(jnp.array(np.array([])))
+    assert device_array.type_is_device_array(jnp.array([]))
+    assert device_array.type_is_device_array(jnp.array(np.array([])))
 
     class NDArrayLike:
       def __array__(self, dtype=None):
         return np.array([], dtype=dtype)
-    assert xla.type_is_device_array(jnp.array(NDArrayLike()))
+    assert device_array.type_is_device_array(jnp.array(NDArrayLike()))
 
     # NOTE(mattjj): disabled b/c __array__ must produce ndarrays
     # class DeviceArrayLike:

@@ -23,6 +23,7 @@ import jax.numpy as jnp
 from jax import core
 from jax._src.util import unzip2
 from jax._src import ad_util
+from jax._src import dispatch
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
 import jax.linear_util as lu
@@ -240,7 +241,7 @@ deflinear(lax.slice_p)
 deflinear(lax.reduce_sum_p)
 deflinear(lax.reduce_window_sum_p)
 deflinear(lax.fft_p)
-deflinear(xla.device_put_p)
+deflinear(dispatch.device_put_p)
 
 def _cumulative_jet_rule(primals_in, series_in, *, axis: int, reverse: bool,
                          combine_fn: Callable):
