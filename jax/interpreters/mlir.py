@@ -36,6 +36,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lax import control_flow
+from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import chlo
@@ -1450,27 +1451,26 @@ translations[lax.argmax_p] = lower_fun(
   multiple_results=False)
 
 
-def _generic_reduce_window_lower(ctx, avals_in, avals_out, operand, init_value,
-                                 *, jaxpr, consts, window_dimensions,
-                                 window_strides, padding, base_dilation,
-                                 window_dilation):
-  aval_out, = avals_out
-  operand_aval, scalar_aval = avals_in
-  scalar_type = aval_to_ir_type(scalar_aval)
+def _generic_reduce_window_lower(ctx, avals_in, avals_out, *args, jaxpr, consts,
+                                 window_dimensions, window_strides, padding,
+                                 base_dilation, window_dilation):
+  operands, init_values = util.split_list(args, [len(args) // 2])
+  _, init_value_avals = util.split_list(avals_in, [len(operands)])
+  scalar_types = [aval_to_ir_type(aval) for aval in init_value_avals]
   rw = mhlo.ReduceWindowOp(
-      aval_to_ir_types(aval_out), [operand], [init_value],
+      map(aval_to_ir_type, avals_out), operands, init_values,
       _dense_int_elements(window_dimensions),
       _dense_int_elements(window_strides), _dense_int_elements(base_dilation),
       _dense_int_elements(window_dilation),
       ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
-  reducer = rw.regions[0].blocks.append(scalar_type, scalar_type)
+  reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
   with ir.InsertionPoint(reducer):
     out_nodes = jaxpr_subcomp(ctx, jaxpr, consts,
                               *([a] for a in reducer.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return rw.results
 
-translations[lax.reduce_window_p] = _generic_reduce_window_lower
+translations[lax_windowed_reductions.reduce_window_p] = _generic_reduce_window_lower
 
 
 def _reduce_window_lower(
@@ -1492,11 +1492,11 @@ def _reduce_window_lower(
     mhlo.ReturnOp(reduce_op(*reducer.arguments))
   return rw.results
 
-translations[lax.reduce_window_sum_p] = partial(
+translations[lax_windowed_reductions.reduce_window_sum_p] = partial(
     _reduce_window_lower, mhlo.AddOp, lambda _: 0)
-translations[lax.reduce_window_min_p] = partial(
+translations[lax_windowed_reductions.reduce_window_min_p] = partial(
     _reduce_window_lower, mhlo.MinOp, lax._get_min_identity)
-translations[lax.reduce_window_max_p] = partial(
+translations[lax_windowed_reductions.reduce_window_max_p] = partial(
     _reduce_window_lower, mhlo.MaxOp, lax._get_max_identity)
 
 
@@ -1525,7 +1525,7 @@ def _select_and_scatter_lower(
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
 
-translations[lax.select_and_scatter_p] = _select_and_scatter_lower
+translations[lax_windowed_reductions.select_and_scatter_p] = _select_and_scatter_lower
 
 
 def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
@@ -1551,13 +1551,13 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
     out = lax.slice(out, start_indices, stop_indices)
   return out
 
-translations[lax.select_and_scatter_add_p] = lower_fun(
+translations[lax_windowed_reductions.select_and_scatter_add_p] = lower_fun(
     partial(_select_and_scatter_add, expand_padding=False),
     multiple_results=False)
-platform_specific_translations['cpu'][lax.select_and_scatter_add_p] = lower_fun(
+platform_specific_translations['cpu'][lax_windowed_reductions.select_and_scatter_add_p] = lower_fun(
     partial(_select_and_scatter_add, expand_padding=True),
     multiple_results=False)
-platform_specific_translations['gpu'][lax.select_and_scatter_add_p] = lower_fun(
+platform_specific_translations['gpu'][lax_windowed_reductions.select_and_scatter_add_p] = lower_fun(
     partial(_select_and_scatter_add, expand_padding=True),
     multiple_results=False)
 
@@ -1826,10 +1826,14 @@ def _add_cumulative_reduce(prim, reducer, tpu_reduce_window_fn):
       partial(control_flow._cumred_tpu_translation_rule, tpu_reduce_window_fn),
       multiple_results=False)
 
-_add_cumulative_reduce(control_flow.cumsum_p, lax.add, lax._reduce_window_sum)
-_add_cumulative_reduce(control_flow.cumprod_p, lax.mul, lax._reduce_window_prod)
-_add_cumulative_reduce(control_flow.cummin_p, lax.min, lax._reduce_window_min)
-_add_cumulative_reduce(control_flow.cummax_p, lax.max, lax._reduce_window_max)
+_add_cumulative_reduce(control_flow.cumsum_p, lax.add,
+                       lax_windowed_reductions._reduce_window_sum)
+_add_cumulative_reduce(control_flow.cumprod_p, lax.mul,
+                       lax_windowed_reductions._reduce_window_prod)
+_add_cumulative_reduce(control_flow.cummin_p, lax.min,
+                       lax_windowed_reductions._reduce_window_min)
+_add_cumulative_reduce(control_flow.cummax_p, lax.max,
+                       lax_windowed_reductions._reduce_window_max)
 
 translations[custom_derivatives.custom_jvp_call_jaxpr_p] = lower_fun(
     custom_derivatives._custom_jvp_call_jaxpr_impl, multiple_results=True)
@@ -1986,6 +1990,6 @@ map(add_fallback_lowering, [
     lax.top_k_p,
 
     # TODO(phawkins): implement these lax ops:
-    lax.select_and_gather_add_p,
+    lax_windowed_reductions.select_and_gather_add_p,
     lax.rng_bit_generator_p,
 ])

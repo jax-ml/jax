@@ -1696,6 +1696,62 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": ("_shape={}_dims={}_strides={}_padding={}"
+                         "_basedilation={}_windowdilation={}")
+       .format(jtu.format_shape_dtype_string(shape, dtype),
+               dims, strides, padding, base_dilation, window_dilation),
+       "dtype": dtype, "shape": shape,
+       "dims": dims, "strides": strides, "padding": padding,
+       "base_dilation": base_dilation, "window_dilation": window_dilation}
+      for dtype in [np.float32]
+      for shape, dims, strides, padding, base_dilation, window_dilation in (
+        itertools.chain(
+          itertools.product(
+            [(4, 6)],
+            [(2, 1), (1, 2)],
+            [(1, 1), (2, 1), (1, 2)],
+            ["VALID", "SAME", [(0, 3), (1, 2)]],
+            [(1, 1), (2, 3)],
+            [(1, 1), (1, 2)]),
+          itertools.product(
+            [(3, 2, 4, 6)], [(1, 1, 2, 1), (2, 1, 2, 1)],
+            [(1, 2, 2, 1), (1, 1, 1, 1)],
+            ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
+            [(1, 1, 1, 1), (2, 1, 3, 2)],
+            [(1, 1, 1, 1), (1, 2, 2, 1)])))))
+  # TODO(b/183233858): variadic reduce-window is not implemented on XLA:GPU
+  @jtu.skip_on_devices("gpu")
+  def testReduceWindowVariadic(self, dtype, shape, dims, strides, padding,
+                               base_dilation, window_dilation):
+    if (jtu.device_under_test() == "tpu" and
+        any(d != 1 for d in window_dilation)):
+      raise SkipTest("TPU support missing for arbitrary window dilation.")
+    rng = jtu.rand_small(self.rng())
+    init_values = (np.asarray(0, dtype=dtype), np.array(-np.inf, dtype=dtype))
+
+    def reducer(xs, ys):
+      x1, x2 = xs
+      y1, y2 = ys
+      return (x1 + y1, lax.max(x2, y2))
+
+    def fun(*operands):
+      return lax.reduce_window(operands, init_values, reducer, dims, strides,
+                               padding, base_dilation, window_dilation)
+
+    def reference_fun(*operands):
+      return [
+          lax_reference.reduce_window(operand, init_val, op, dims, strides,
+                                      padding, base_dilation)
+          for operand, init_val, op in zip(operands, init_values,
+                                           [np.add, np.maximum])]
+
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    self._CompileAndCheck(fun, args_maker)
+    if all(d == 1 for d in window_dilation):
+      self._CheckAgainstNumpy(reference_fun, fun, args_maker)
+
+
   def testReduceWindowFailures(self):
     def empty_window_test():
       return lax.reduce_window(np.ones((1,)), 0., lax.add, padding='VALID',
@@ -1711,9 +1767,8 @@ class LaxTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "Invalid return type from reduction function: <class 'list'>\n"
-        "Reduction functions should only return an array.\n"
-        "Full return value: .*"):
+        "reduce_window output must have the same tree structure as the "
+        "operands.*"):
       return lax.reduce_window(
           np.ones((1,)), 0., lambda x, y: [x + y],
           padding='VALID', window_dimensions=(1,), window_strides=(1,))
@@ -2363,8 +2418,8 @@ class LaxTest(jtu.JaxTestCase):
            , "window_dilation": (1, 1)
            }
 
-    msg = (r"reduce_window expected init_value to be a scalar but init_value "
-           r"has shape \(1,\).")
+    msg = (r"reduce_window expected init_values to be scalars but init_values "
+           r"have shapes \[\(1,\)\].")
     with self.assertRaisesRegex(TypeError, msg):
       lax.reduce_window(**args)
 

@@ -1424,8 +1424,8 @@ def argmax(operand: Array, axis: int,
   return argmax_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
 
-def reduce(operands: Array, init_values: Array, computation: Callable,
-           dimensions: Sequence[int]) -> Array:
+def reduce(operands, init_values, computation: Callable,
+           dimensions: Sequence[int]):
   """Wraps XLA's `Reduce
   <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
   operator.
@@ -1483,7 +1483,8 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
   return jaxpr, tuple(consts), out_tree()
 
-def _get_monoid_reducer(monoid_op: Callable, xs: Array) -> Optional[Callable]:
+def _get_monoid_reducer(monoid_op: Callable,
+                        xs: Sequence[Array]) -> Optional[Callable]:
   if len(xs) != 1:
     return None
   x, = xs

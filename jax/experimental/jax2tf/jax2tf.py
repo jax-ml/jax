@@ -1741,14 +1741,14 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
   return out
 
 
-def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
+def _reduce_window(*args, jaxpr, consts, window_dimensions,
                    window_strides, padding, base_dilation, window_dilation,
                    _in_avals, _out_aval):
   """TensorFlow implementation of reduce_window.
 
   Args:
-    operand: N dimensional array containing elements of type T
-    init_value: starting value of the reduction
+    operands: N dimensional arrays containing elements of type T
+    init_values: starting values of the reduction
     jaxpr: the jaxpr corresponding to the reduction function
     consts: the constants associated with jaxpr.
     window_dimensions: array of integers for window dimension values
@@ -1761,15 +1761,20 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
     The reduced operand.
   """
   assert len(consts) == 0, "Reduction computation cannot have constants"
+  operands, init_values = util.split_list(args, [len(args) // 2])
+
+  if len(operands) != 1:
+    raise NotImplementedError("jax2tf does not support variadic reduce_window")
 
   def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2, extra_name_stack=None)
     return res
 
-  return _common_reduce_window(operand, init_value, reducer, window_dimensions,
-                               window_strides, padding, base_dilation,
-                               window_dilation, _in_avals, _out_aval)
+  return (_common_reduce_window(operands[0], init_values[0], reducer,
+                                window_dimensions, window_strides, padding,
+                                base_dilation, window_dilation, _in_avals,
+                                _out_aval[0]),)
 
 
 

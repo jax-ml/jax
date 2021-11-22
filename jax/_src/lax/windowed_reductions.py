@@ -24,6 +24,7 @@ from jax.interpreters import xla
 
 from jax import core
 from jax.core import (ShapedArray, ConcreteArray)
+from jax import tree_util
 
 from jax._src import ad_util
 from jax._src import dtypes
@@ -36,7 +37,10 @@ from jax._src.lax.lax import (
 )
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+import jax._src.util as util
 
+map = util.safe_map
+zip = util.safe_zip
 
 xb = xla_bridge
 xc = xla_client
@@ -45,7 +49,7 @@ xops = xla_client.ops
 Array = Any
 
 
-def reduce_window(operand: Array, init_value: Array, computation: Callable,
+def reduce_window(operand, init_value, computation: Callable,
                   window_dimensions: core.Shape, window_strides: Sequence[int],
                   padding: Union[str, Sequence[Tuple[int, int]]],
                   base_dilation: Optional[Sequence[int]] = None,
@@ -54,31 +58,52 @@ def reduce_window(operand: Array, init_value: Array, computation: Callable,
   <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
   operator.
   """
+  flat_operands, operand_tree = tree_util.tree_flatten(operand)
+  flat_init_values, init_value_tree = tree_util.tree_flatten(init_value)
+  if operand_tree != init_value_tree:
+    raise ValueError('Operands must have the same tree structure as '
+                     f'init_values: {operand_tree} vs. {init_value_tree}')
+  if len(flat_operands) == 0:
+    raise ValueError('reduce_window must have at least one operand.')
+  if len(flat_operands) != len(flat_init_values):
+    raise ValueError('Must have same total number of operands as init_values: '
+                     f' {len(flat_operands)} vs. {len(flat_init_values)}')
   if isinstance(padding, str):
     dilated_window_dims = (window_dimensions if window_dilation is None else
                            _dilate_shape(window_dimensions, window_dilation))
-    padding = tuple(lax.padtype_to_pads(operand.shape, dilated_window_dims,
-                                        window_strides, padding))
+    padding = tuple(lax.padtype_to_pads(
+        flat_operands[0].shape, dilated_window_dims, window_strides, padding))
   else:
     padding = tuple(padding)
   if base_dilation is None:
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
     window_dilation = (1,) * len(window_dimensions)
-  monoid_reducer = _get_monoid_window_reducer(computation, init_value)
+  monoid_reducer = _get_monoid_window_reducer(computation, flat_init_values)
   if monoid_reducer:
     return monoid_reducer(operand, window_dimensions, window_strides, padding,
                           base_dilation, window_dilation)
   else:
-    jaxpr, consts = lax._reduction_jaxpr(computation, lax._abstractify(init_value))
-    return reduce_window_p.bind(
-        operand, init_value, jaxpr=jaxpr, consts=consts,
+    flat_init_avals = map(lax._abstractify, flat_init_values)
+    jaxpr, consts, out_tree = lax._variadic_reduction_jaxpr(
+        computation, tuple(flat_init_avals), init_value_tree)
+    if operand_tree != out_tree:
+      raise ValueError(
+        'reduce_window output must have the same tree structure as the operands'
+        f' {operand_tree} vs. {out_tree}')
+    out_flat = reduce_window_p.bind(
+        *(flat_operands + flat_init_values), jaxpr=jaxpr, consts=consts,
         window_dimensions=tuple(window_dimensions),
         window_strides=tuple(window_strides), padding=padding,
         base_dilation=tuple(base_dilation),
         window_dilation=tuple(window_dilation))
+    return tree_util.tree_unflatten(out_tree, out_flat)
 
-def _get_monoid_window_reducer(monoid_op: Callable, x: Array) -> Optional[Callable]:
+def _get_monoid_window_reducer(monoid_op: Callable,
+                               xs: Sequence[Array]) -> Optional[Callable]:
+  if len(xs) != 1:
+    return None
+  x, = xs
   aval = core.get_aval(x)
   if (type(aval) is ConcreteArray) and aval.shape == ():
     if monoid_op is lax.add:
@@ -115,12 +140,13 @@ def _reduce_window_prod(operand: Array, window_dimensions: core.Shape,
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
     window_dilation = (1,) * len(window_dimensions)
-  return reduce_window_p.bind(
+  out, = reduce_window_p.bind(
       operand, init_value, jaxpr=jaxpr, consts=consts,
       window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding),
       base_dilation=tuple(base_dilation),
       window_dilation=tuple(window_dilation))
+  return out
 
 def _reduce_window_max(operand: Array, window_dimensions: core.Shape,
                        window_strides: Sequence[int],
@@ -189,10 +215,10 @@ def _select_and_gather_add(tangents: Array, operand: Array,
 
   Wraps XLA's `ReduceWindow
   <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
-  operator, which applies a reduction function to all elements in each window of the
-  input multi-dimensional array. In this case, the input multi-dimensional array is
-  built by packing each element in the `operand` array with its corresponding
-  element in the `tangents` array.
+  operator, which applies a reduction function to all elements in each window of
+  the input multi-dimensional array. In this case, the input multi-dimensional
+  array is built by packing each element in the `operand` array with its
+  corresponding element in the `tangents` array.
 
   Args:
     tangents: an array
@@ -204,8 +230,8 @@ def _select_and_gather_add(tangents: Array, operand: Array,
     window_dilation: an array of integers for window dilation values
 
   Returns:
-    An array containing the elements in `tangents` corresponding to the output of the
-    reduction of `operand` fin each window.
+    An array containing the elements in `tangents` corresponding to the output
+    of the reduction of `operand` fin each window.
   """
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
@@ -215,56 +241,70 @@ def _select_and_gather_add(tangents: Array, operand: Array,
       window_dilation=tuple(window_dilation))
 
 
-def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
-                              window_dimensions, window_strides, padding,
-                              base_dilation, window_dilation):
-  if operand.dtype != init_value.dtype:
-    msg = ("reduce_window got inconsistent dtypes for operand and init_value: "
-           " got operand dtype {} and init_value dtype {}.")
-    raise TypeError(msg.format(operand.dtype, init_value.dtype))
-  if init_value.shape != ():
-    msg = ("reduce_window expected init_value to be a scalar but init_value "
-           "has shape {}.")
-    raise TypeError(msg.format(init_value.shape))
-  return _common_reduce_window_shape_rule(
-    operand, window_dimensions, window_strides, padding, base_dilation,
-    window_dilation)
+def _reduce_window_abstract_eval_rule(
+    *avals, jaxpr, consts, window_dimensions, window_strides, padding,
+    base_dilation, window_dilation):
+  operand_avals, init_val_avals = util.split_list(avals, [len(avals) // 2])
+  if any(o.dtype != iv.dtype for o, iv in zip(operand_avals, init_val_avals)):
+    msg = ("reduce_window got inconsistent dtypes for operands and init_values:"
+           " got operand dtypes {} and init_value dtypes {}.")
+    raise TypeError(msg.format([o.dtype for o in operand_avals],
+                               [iv.dtype for iv in init_val_avals]))
+  if any(len(v.shape) != 0 for v in init_val_avals):
+    msg = ("reduce_window expected init_values to be scalars but init_values "
+           "have shapes {}.")
+    raise TypeError(msg.format([v.shape for v in init_val_avals]))
+  out_shape = _common_reduce_window_shape_rule(
+    operand_avals[0], window_dimensions, window_strides, padding,
+    base_dilation, window_dilation)
+  return tuple(ShapedArray(out_shape, op.dtype) for op in operand_avals)
 
-def _reduce_window_translation_rule(ctx, avals_in, avals_out, operand,
-                                    init_value, *, jaxpr, consts,
-                                    window_dimensions, window_strides, padding,
-                                    base_dilation, window_dilation):
-  xla_computation = lax._reduction_computation(ctx, jaxpr, consts, init_value)
-  return [xops.ReduceWindowWithGeneralPadding(
-    operand, init_value, xla_computation, window_dimensions,
-    window_strides, base_dilation, window_dilation, padding)]
+def _reduce_window_translation_rule(ctx, avals_in, avals_out, *args, jaxpr,
+                                    consts, window_dimensions, window_strides,
+                                    padding, base_dilation, window_dilation):
+  operands, init_values = util.split_list(args, [len(args) // 2])
+  xla_computation = lax._reduction_computation(ctx, jaxpr, consts, init_values,
+                                               singleton=False)
+  return xla.xla_destructure(ctx.builder, xops.ReduceWindowWithGeneralPadding(
+    operands, init_values, xla_computation, window_dimensions,
+    window_strides, base_dilation, window_dilation, padding))
 
 def _generic_reduce_window_batch_rule(
     batched_args, batch_dims, *, jaxpr, consts, window_dimensions,
     window_strides, padding, base_dilation, window_dilation):
+  num_operands = len(batched_args) // 2
+  operands, init_values = util.split_list(batched_args, [num_operands])
+  operand_bdims, init_value_bdims = util.split_list(batch_dims, [num_operands])
+
   operand, init = batched_args
   bdim, init_bdim = batch_dims
-  if init_bdim is not None:
+  if any(init_bdim is not None for init_bdim in init_value_bdims):
     raise NotImplementedError("reduce_window batching is not implemented for "
                               "initial values")
 
-  def reduce_window(x, window_dimensions, window_strides, padding, base_dilation,
-                    window_dilation):
-    return reduce_window_p.bind(
-      x, init, jaxpr=jaxpr, consts=consts, window_dimensions=window_dimensions,
-      window_strides=window_strides, padding=padding, base_dilation=base_dilation,
+  size = next(x.shape[ax] for x, ax in zip(operands, operand_bdims)
+              if ax is not None)
+  operands = [batching.bdim_at_front(arg, bdim, size)
+              for arg, bdim in zip(operands, operand_bdims)]
+  window_dimensions = (1,) + window_dimensions
+  window_strides = (1,) + window_strides
+  padding = ((0, 0),) + padding
+  base_dilation = (1,) + base_dilation
+  window_dilation = (1,) + window_dilation
+  outs = reduce_window_p.bind(
+      *(operands + init_values), jaxpr=jaxpr, consts=consts,
+      window_dimensions=window_dimensions, window_strides=window_strides,
+      padding=padding, base_dilation=base_dilation,
       window_dilation=window_dilation)
-  return _reduce_window_batch_rule(
-    reduce_window, (operand,), (bdim,), window_dimensions=window_dimensions,
-    window_strides=window_strides, padding=padding, base_dilation=base_dilation,
-    window_dilation=window_dilation)
+  return outs, (0,) * num_operands
 
 
-reduce_window_p = lax.standard_primitive(
-    _reduce_window_shape_rule, _input_dtype, 'reduce_window',
-    _reduce_window_translation_rule)
+reduce_window_p = core.Primitive('reduce_window')
+reduce_window_p.multiple_results = True
+reduce_window_p.def_impl(partial(xla.apply_primitive, reduce_window_p))
+reduce_window_p.def_abstract_eval(_reduce_window_abstract_eval_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
-
+xla.register_translation(reduce_window_p, _reduce_window_translation_rule)
 
 def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
                                   padding, base_dilation, window_dilation):
@@ -272,8 +312,8 @@ def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
     msg = "operand to reduce_window_sum must have a number dtype, got {}"
     raise TypeError(msg.format(np.dtype(operand.dtype).name))
   return _common_reduce_window_shape_rule(operand, window_dimensions,
-                                          window_strides, padding, base_dilation,
-                                          window_dilation)
+                                          window_strides, padding,
+                                          base_dilation, window_dilation)
 
 def _reduce_window_sum_translation_rule(ctx, avals_in, avals_out, operand, *,
                                         window_dimensions, window_strides,
@@ -436,8 +476,10 @@ def _select_and_scatter_translation(
     ctx, avals_in, avals_out, operand, source, init_value, *, select_jaxpr,
     select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
     window_strides, padding):
-  select = lax._reduction_computation(ctx, select_jaxpr, select_consts, init_value)
-  scatter = lax._reduction_computation(ctx, scatter_jaxpr, scatter_consts, init_value)
+  select = lax._reduction_computation(ctx, select_jaxpr, select_consts,
+                                      init_value)
+  scatter = lax._reduction_computation(ctx, scatter_jaxpr, scatter_consts,
+                                       init_value)
   return [xops.SelectAndScatterWithGeneralPadding(
     operand, select, window_dimensions, window_strides, padding, source,
     init_value, scatter)]
@@ -462,7 +504,8 @@ def _select_and_scatter_add_translation(
   select = xla.primitive_subcomputation(
       ctx.platform, select_prim, scalar, scalar)
   scatter = xla.primitive_subcomputation(
-      ctx.platform, lax.or_p if dtype == np.bool_ else lax.add_p, scalar, scalar)
+      ctx.platform, lax.or_p if dtype == np.bool_ else lax.add_p, scalar,
+      scalar)
   zero = xla.pyval_to_ir_constant(c, np.array(0, dtype))
   # TODO(b/161704903): remove this workaround when XLA:CPU bug is fixed.
   expand_padding = (expand_padding and
@@ -599,11 +642,13 @@ def _select_and_gather_add_translation(
     # Unpacks the first element of a tuple.
     def fst(c, t):
       st = xops.ShiftRightLogical(t, const(c, double_word_dtype, nbits))
-      return xops.BitcastConvertType(xops.ConvertElementType(st, word_type), etype)
+      return xops.BitcastConvertType(xops.ConvertElementType(st, word_type),
+                                     etype)
 
     # Unpacks the second element of a tuple.
     def snd(t):
-      return xops.BitcastConvertType(xops.ConvertElementType(t, word_type), etype)
+      return xops.BitcastConvertType(xops.ConvertElementType(t, word_type),
+                                     etype)
 
   else:
     # The double-word trick above only works if we have a sufficiently large
@@ -638,8 +683,8 @@ def _select_and_gather_add_translation(
 
     # Unpacks the second element of a tuple.
     def snd(t):
-      return xops.BitcastConvertType(xops.ShiftLeft(t, const(c, word_dtype, r_nbits)),
-                                  etype)
+      return xops.BitcastConvertType(
+          xops.ShiftLeft(t, const(c, word_dtype, r_nbits)), etype)
 
   def reducer():
     c = xc.XlaBuilder("select_and_gather_pair_reducer")
