@@ -1792,11 +1792,11 @@ class PmapCallInfo(NamedTuple):
   flat_fun: lu.WrappedFun
   in_tree: PyTreeDef
   out_tree: PyTreeDef
-  flat_args: Iterable[Any]
-  donated_invars: Iterable[bool]
+  flat_args: Sequence[Any]
+  donated_invars: Sequence[bool]
   in_axes_flat: Sequence[Optional[int]]
   local_axis_size: int
-  global_arg_shapes_flat: Any
+  global_arg_shapes_flat: Sequence[Optional[Tuple[int, ...]]]
   out_axes_thunk: HashableFunction
 
 

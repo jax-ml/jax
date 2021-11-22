@@ -738,9 +738,17 @@ _register_handlers_for_sharded_device_array(pmap_lib.ShardedDeviceArray)
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
-def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
-                  global_axis_size, devices, name, in_axes, out_axes_thunk,
-                  donated_invars, global_arg_shapes):
+def xla_pmap_impl(fun: lu.WrappedFun, *args,
+                  backend: Optional[str],
+                  axis_name: core.AxisName,
+                  axis_size: int,
+                  global_axis_size: Optional[int],
+                  devices: Optional[Sequence[Any]],
+                  name: str,
+                  in_axes: Sequence[Optional[int]],
+                  out_axes_thunk: Callable[[], Sequence[Optional[int]]],
+                  donated_invars: Sequence[bool],
+                  global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
   abstract_args = unsafe_map(xla.abstractify, args)
   compiled_fun, fingerprint = parallel_callable(
       fun, backend, axis_name, axis_size, global_axis_size, devices, name,
@@ -760,15 +768,15 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
 @lu.cache
 def parallel_callable(fun: lu.WrappedFun,
                       backend_name: Optional[str],
-                      axis_name,
+                      axis_name: core.AxisName,
                       axis_size: int,
                       global_axis_size: Optional[int],
                       devices: Optional[Sequence[Any]],
                       name: str,
-                      in_axes: Iterable[Optional[int]],
+                      in_axes: Sequence[Optional[int]],
                       out_axes_thunk: Callable[[], Sequence[Optional[int]]],
-                      donated_invars: Iterable[bool],
-                      global_arg_shapes,
+                      donated_invars: Sequence[bool],
+                      global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
                       *avals):
   pmap_computation = lower_parallel_callable(
       fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
@@ -779,14 +787,14 @@ def parallel_callable(fun: lu.WrappedFun,
 
 @dataclasses.dataclass(frozen=True)
 class ParallelCallableInfo:
-  backend: Any
-  axis_name: Any
+  backend: Any  # TODO(frostig): really xla.Backend, fix xla_bridge annotations
+  axis_name: core.AxisName
   axis_size: int
   global_axis_size: Optional[int]
-  devices: Optional[Sequence[Any]]
+  devices: Optional[Sequence[xla.Device]]
   in_axes: Iterable[Optional[int]]
   out_axes_thunk: Callable[[], Sequence[Optional[int]]]
-  avals: Sequence[Any]
+  avals: Sequence[core.AbstractValue]
 
   @maybe_cached_property
   def local_devices(self):
@@ -804,9 +812,9 @@ class ParallelCallableInfo:
 
 
 class ShardInfo(NamedTuple):
-  sharded_avals: Sequence[Any]
-  out_sharded_avals: Sequence[Any]
-  global_sharded_avals: Sequence[Any]
+  sharded_avals: Sequence[core.AbstractValue]
+  out_sharded_avals: Sequence[core.AbstractValue]
+  global_sharded_avals: Sequence[core.AbstractValue]
   num_local_shards: int
   num_global_shards: int
 
@@ -830,8 +838,10 @@ def tuple_args(shards: ShardInfo):
   return len(shards.global_sharded_avals) > 100
 
 
-def stage_parallel_callable(pci: ParallelCallableInfo, fun: lu.WrappedFun,
-                            global_arg_shapes):
+def stage_parallel_callable(
+    pci: ParallelCallableInfo,
+    fun: lu.WrappedFun,
+    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
   sharded_avals = tuple(
       shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
       for axis, aval in safe_zip(pci.in_axes, pci.avals))
@@ -874,18 +884,19 @@ def stage_parallel_callable(pci: ParallelCallableInfo, fun: lu.WrappedFun,
   return jaxpr, consts, replicas, parts, shards
 
 
-def lower_parallel_callable(fun: lu.WrappedFun,
-                            backend_name: Optional[str],
-                            axis_name,
-                            axis_size: int,
-                            global_axis_size: Optional[int],
-                            devices: Optional[Sequence[Any]],
-                            name: str,
-                            in_axes: Iterable[Optional[int]],
-                            out_axes_thunk: Callable[[], Sequence[Optional[int]]],
-                            donated_invars: Iterable[bool],
-                            global_arg_shapes,
-                            avals: Sequence[Any]):
+def lower_parallel_callable(
+    fun: lu.WrappedFun,
+    backend_name: Optional[str],
+    axis_name: core.AxisName,
+    axis_size: int,
+    global_axis_size: Optional[int],
+    devices: Optional[Sequence[xla.Device]],
+    name: str,
+    in_axes: Iterable[Optional[int]],
+    out_axes_thunk: Callable[[], Sequence[Optional[int]]],
+    donated_invars: Sequence[bool],
+    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+    avals: Sequence[core.AbstractValue]):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
