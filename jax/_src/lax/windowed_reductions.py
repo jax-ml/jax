@@ -707,30 +707,23 @@ def _select_and_gather_add_translation(
   return [snd(out)]
 
 # TODO(phawkins): use this translation rule on all platforms.
-def _select_and_gather_add_translation_using_variadic_reducewindow(
-    ctx, avals_in, avals_out, tangents, operand, *, select_prim,
-    window_dimensions, window_strides, padding, base_dilation, window_dilation):
-  c = ctx.builder
-  tangents_aval, operand_aval = avals_in
-  dtype = operand_aval.dtype
-
-  const = lambda c, dtype, x: xops.Constant(c, np.array(x, dtype=dtype))
-
-  def reducer():
-    c = xc.XlaBuilder("select_and_gather_pair_reducer")
-    shape = xla_client.Shape.array_shape(np.dtype(dtype), ())
-    kx, vx, ky, vy = (xb.parameter(c, i, shape) for i in range(4))
-    which = (xops.Ge if select_prim is lax.ge_p else xops.Le)(kx, ky)
-    xops.Tuple(c, [xops.Select(which, kx, ky), xops.Select(which, vx, vy)])
-    return c.build()
+def _select_and_gather_add_using_variadic_reducewindow(
+    tangents, operand, *, select_prim, window_dimensions, window_strides,
+    padding, base_dilation, window_dilation):
+  def reducer(x, y):
+    kx, vx = x
+    ky, vy = y
+    which = select_prim.bind(kx, ky)
+    return (lax.select(which, kx, ky), lax.select(which, vx, vy))
 
   assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim
   init = -np.inf if select_prim is lax.ge_p else np.inf
-  out = xops.ReduceWindowWithGeneralPadding(
-    [operand, tangents], [const(c, dtype, init), const(c, dtype, 0)],
-    reducer(), window_dimensions, window_strides, base_dilation,
-    window_dilation, padding)
-  return [xops.GetTupleElement(out, 1)]
+  _, out = reduce_window(
+    (operand, tangents),
+    (np.array(init, dtype=operand.dtype), np.array(0, dtype=operand.dtype)),
+    reducer, window_dimensions, window_strides, padding, base_dilation,
+    window_dilation)
+  return out
 
 def _select_and_gather_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
@@ -795,7 +788,8 @@ def _select_and_gather_add_batching_rule(
 
 select_and_gather_add_p = lax.standard_primitive(
     _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
-    _select_and_gather_add_translation_using_variadic_reducewindow)
+    xla.lower_fun(_select_and_gather_add_using_variadic_reducewindow,
+                  new_style=True, multiple_results=False))
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
   _select_and_gather_add_transpose
