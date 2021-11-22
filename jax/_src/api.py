@@ -1833,10 +1833,12 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
     donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
   else:
     donated_invars = (False,) * len(args)
-  in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
-  global_arg_shapes_flat = flatten_axes("pmap global_arg_shapes", in_tree,
-                                        (dyn_global_arg_shapes, None), kws=True)
-  local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap", kws=True)
+  in_axes_flat = tuple(flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0)))
+  global_arg_shapes_flat = tuple(flatten_axes(
+      "pmap global_arg_shapes", in_tree, (dyn_global_arg_shapes, None),
+      kws=True))
+  local_axis_size = _mapped_axis_size(
+      in_tree, args, in_axes_flat, "pmap", kws=True)
 
   for arg in args:
     _check_arg(arg)
@@ -1898,10 +1900,9 @@ def _get_f_mapped(
         p.flat_fun, *p.flat_args, backend=backend, axis_name=axis_name,
         axis_size=p.local_axis_size, global_axis_size=axis_size,
         devices=None if devices is None else tuple(devices),
-        in_axes=tuple(p.in_axes_flat),
-        out_axes_thunk=p.out_axes_thunk,
-        name=p.flat_fun.__name__, donated_invars=tuple(p.donated_invars),
-        global_arg_shapes=tuple(p.global_arg_shapes_flat))
+        in_axes=p.in_axes_flat, out_axes_thunk=p.out_axes_thunk,
+        name=p.flat_fun.__name__, donated_invars=p.donated_invars,
+        global_arg_shapes=p.global_arg_shapes_flat)
     return p.out_tree, out
 
   return f_pmapped
@@ -2096,10 +2097,10 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
         axis_size=p.local_axis_size, global_axis_size=axis_size,
         devices=None if devices is None else tuple(devices),
         name=p.flat_fun.__name__,
-        in_axes=tuple(p.in_axes_flat),
+        in_axes=p.in_axes_flat,
         out_axes_thunk=p.out_axes_thunk,
         donated_invars=p.donated_invars,
-        global_arg_shapes=tuple(p.global_arg_shapes_flat),
+        global_arg_shapes=p.global_arg_shapes_flat,
         avals=abstract_args)
     return Lowered(computation, p.in_tree, p.out_tree(), donate_tuple)
 
