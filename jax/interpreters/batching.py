@@ -420,8 +420,6 @@ def _batch_jaxpr_inner(axis_size, out_axes_dest, main, in_axes, *in_vals):
   if len(out_axes_dest) != len(out_axes):
     out_axis_dest, = out_axes_dest
     out_axes_dest = [out_axis_dest] * len(out_axes)
-  if len(out_axes) != len(out_axes_dest):
-    breakpoint()
   out_vals = map(partial(matchaxis, trace.axis_name, axis_size),
                  out_axes, out_axes_dest, out_vals)
   out_batched = [dst is not None for dst in out_axes_dest]
