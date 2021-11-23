@@ -875,15 +875,16 @@ class TensorFlowTrace(core.Trace):
             store_tf_res_avals = None
             def f_tf(*tf_args):
               nonlocal store_tf_res_avals
-              tf_res_out: Sequence[Tuple[TfVal, core.ShapedArray]] = _call_wrapped_with_new_constant_cache(fun, tf_args,
-                                                                                                           fresh_constant_cache=False)
+              tf_res_out: Sequence[Tuple[TfVal, core.ShapedArray]] = \
+                _call_wrapped_with_new_constant_cache(fun, tf_args,
+                                                      fresh_constant_cache=False)
               tf_res_vals, tf_res_avals = util.unzip2(tf_res_out)
               store_tf_res_avals = tf_res_avals
               return tf_res_vals
             tf_vals_out = tf.function(f_tf, autograph=False, jit_compile=True)(*vals)
             vals_out = zip(tf_vals_out, store_tf_res_avals)
           else:
-            vals_out: Sequence[Tuple[TfVal, core.ShapedArray]] = fun.call_wrapped(*vals)
+            vals_out = fun.call_wrapped(*vals)
         else:
           vals_out = fun.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
