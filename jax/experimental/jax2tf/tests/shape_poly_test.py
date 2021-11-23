@@ -1105,6 +1105,9 @@ def _make_harness(group_name: str, name: str,
   `check_result` specifies if we want to check that the result of the shape
   polymorphic conversion produces the same result and the JAX function.
 
+  `expect_error` is a pair of an Exception type and a regular expression to
+  match the expected exception string.
+
   enable_and_diable_xla=True means that we generate two harnesses,
   one with enable_xla=False.
   """
@@ -1157,8 +1160,22 @@ _POLY_SHAPE_TEST_HARNESSES = [
     _make_harness("arange", "start_no_dtype",
                   lambda op: jnp.arange(op.shape[0]),
                   [RandArg((3,), _f32)],
+                  poly_axes=[0]),
+    _make_harness("arange", "error1",
+                  lambda op: jnp.arange(op.shape[0], 10),
+                  [RandArg((3,), _f32)],
                   poly_axes=[0],
-                  enable_and_diable_xla=True),
+                  expect_error=(ValueError, "jax.numpy.arange supports non-constant arguments only in single-argument form")),
+    _make_harness("arange", "error2",
+                  lambda op: jnp.arange(1, op.shape[0]),
+                  [RandArg((3,), _f32)],
+                  poly_axes=[0],
+                  expect_error=(ValueError, "jax.numpy.arange supports non-constant arguments only in single-argument form")),
+    _make_harness("arange", "error3",
+                  lambda op: jnp.arange(1, 5, op.shape[0]),
+                  [RandArg((3,), _f32)],
+                  poly_axes=[0],
+                  expect_error=(ValueError, "jax.numpy.arange supports non-constant arguments only in single-argument form")),
     # Reduce the poly dimension
     _make_harness("argmax", "0",
                   lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
@@ -1759,7 +1776,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="arange_start_no_dtype"
+      #one_containing="arange_stop_error"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())

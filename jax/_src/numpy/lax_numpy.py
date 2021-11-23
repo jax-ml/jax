@@ -3761,12 +3761,16 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
   lax._check_user_dtype_supported(dtype, "arange")
   require = partial(core.concrete_or_error, None)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
+  if _any(core.is_special_dim_size(d) for d in (start, stop, step)):
+    if stop is not None or step is not None:
+      raise ValueError(
+          "jax.numpy.arange supports non-constant arguments only in single-argument form. "
+          f"Found jax.numpy.arange(start={start}, stop={stop}, step={step})")
+    return lax.iota(int_, start)
   dtype = dtype or result_type(start, *(x for x in [stop, step] if x is not None))
   if stop is None and step is None:
-    if not core.is_special_dim_size(start):
-      start = require(start, msg("stop"))
-      start = np.ceil(start).astype(int)
-
+    start = require(start, msg("stop"))
+    start = np.ceil(start).astype(int)
     return lax.iota(dtype, start)
   else:
     start = require(start, msg("start"))
