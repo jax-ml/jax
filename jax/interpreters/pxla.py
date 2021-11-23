@@ -787,7 +787,7 @@ def parallel_callable(fun: lu.WrappedFun,
 
 @dataclasses.dataclass(frozen=True)
 class ParallelCallableInfo:
-  backend: Any  # TODO(frostig): really xla.Backend, fix xla_bridge annotations
+  backend: xla.Backend
   axis_name: core.AxisName
   axis_size: int
   global_axis_size: Optional[int]
