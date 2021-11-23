@@ -48,6 +48,7 @@ traceback_util.register_exclusion(__file__)
 
 
 xops = xla_client.ops
+XlaBackend = xla_client._xla.Client
 
 FLAGS = flags.FLAGS
 
@@ -303,7 +304,7 @@ def get_device_backend(device=None):
   return get_backend()
 
 
-def device_count(backend: Optional[str] = None) -> int:
+def device_count(backend: Optional[Union[str, XlaBackend]] = None) -> int:
   """Returns the total number of devices.
 
   On most platforms, this is the same as :py:func:`jax.local_device_count`.
@@ -323,12 +324,12 @@ def device_count(backend: Optional[str] = None) -> int:
   return int(get_backend(backend).device_count())
 
 
-def local_device_count(backend: Optional[str] = None) -> int:
+def local_device_count(backend: Optional[Union[str, XlaBackend]] = None) -> int:
   """Returns the number of devices addressable by this process."""
   return int(get_backend(backend).local_device_count())
 
 
-def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
+def devices(backend: Optional[Union[str, XlaBackend]] = None) -> List[xla_client.Device]:
   """Returns a list of all devices for a given backend.
 
   .. currentmodule:: jaxlib.xla_extension
@@ -360,7 +361,7 @@ def default_backend() -> str:
 
 
 def local_devices(process_index: Optional[int] = None,
-                  backend: Optional[str] = None,
+                  backend: Optional[Union[str, XlaBackend]] = None,
                   host_id: Optional[int] = None) -> List[xla_client.Device]:
   """Like :py:func:`jax.devices`, but only returns devices local to a given process.
 
@@ -389,7 +390,7 @@ def local_devices(process_index: Optional[int] = None,
   return [d for d in devices(backend) if d.process_index == process_index]
 
 
-def process_index(backend: Optional[str] = None) -> int:
+def process_index(backend: Optional[Union[str, XlaBackend]] = None) -> int:
   """Returns the integer process index of this process.
 
   On most platforms, this will always be 0. This will vary on multi-process
@@ -414,7 +415,7 @@ def host_id(backend=None):
   return process_index(backend)
 
 
-def process_count(backend: Optional[str] = None) -> int:
+def process_count(backend: Optional[Union[str, XlaBackend]] = None) -> int:
   """Returns the number of JAX processes associated with the backend."""
   return max(d.process_index for d in devices(backend)) + 1
 
