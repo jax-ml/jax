@@ -322,6 +322,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
 
 
 core._SPECIAL_DIMENSION_HANDLERS[Poly] = DimensionHandlerPoly()
+dtypes.python_scalar_dtypes[Poly] = dtypes.python_scalar_dtypes[int]
 
 class Mon(dict):
   # TODO: move this before Poly in the file
