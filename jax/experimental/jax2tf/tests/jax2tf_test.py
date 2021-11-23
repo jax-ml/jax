@@ -15,7 +15,6 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 
-import re
 from typing import Dict, Tuple
 
 from absl.testing import absltest
