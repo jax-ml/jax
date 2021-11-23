@@ -121,7 +121,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_no_jit = lambda x: x
     self.assertFalse(has_xla_must_compile(jax2tf.convert(f_no_jit), x))
     f_jit = lambda x: jax.jit(jnp.sin)(x)
-    self.assertTrue(has_xla_must_compile(jax2tf.convert(f_jit), x))
+    # TODO(b/207464757): TF compilation is disabled
+    self.assertFalse(has_xla_must_compile(jax2tf.convert(f_jit), x))
 
   def test_converts_jax_arrays(self):
     f_tf = tf.function(lambda x: x)
@@ -813,7 +814,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return g_jit(x) + const + const
 
     f_tf_graph_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f), const)
-    self.assertEqual(f_tf_graph_nr_consts, 2)
+    # TODO(b/207464757): TF compilation is disabled
+    self.assertEqual(f_tf_graph_nr_consts, 1)
 
   def test_weak_types(self):
     mul = jax.jit(jnp.multiply)

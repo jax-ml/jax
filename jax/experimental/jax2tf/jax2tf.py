@@ -69,8 +69,8 @@ PolyShape = shape_poly.PolyShape
 # with tf.function(jit_compile=True). See #7389. This change has triggered a
 # number of failures in TF. We keep this until we are confident that it does
 # not create problems.
-# TODO(necula): remove this flag
-_WRAP_JAX_JIT_WITH_TF_FUNCTION = True
+# TODO(b/207464757): figure out why this change breaks test
+_WRAP_JAX_JIT_WITH_TF_FUNCTION = False
 
 # The scope name need to be a valid TensorFlow name. See
 # https://github.com/tensorflow/tensorflow/blob/r2.3/tensorflow/core/framework/node_def_util.cc#L731
