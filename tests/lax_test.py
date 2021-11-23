@@ -2493,7 +2493,8 @@ class LaxTest(jtu.JaxTestCase):
       val = lax._convert_element_type(0, dtype, weak_type=weak_type)
 
     const = lax._const(val, 0)
-    self.assertEqual(dtypes.result_type(val), dtypes.result_type(const))
+    self.assertEqual(dtypes.dtype(val, canonicalize=True),
+                     dtypes.dtype(const, canonicalize=True))
 
 
   def testIgammaSpecial(self):
@@ -2556,7 +2557,7 @@ class LazyConstantTest(jtu.JaxTestCase):
   def testFilledConstant(self, shape, fill_value, dtype):
     make_const = lambda: lax.full(shape, fill_value, dtype)
     expected = np.full(shape, fill_value,
-                        dtype or dtypes.result_type(fill_value))
+                        dtype or dtypes.dtype(fill_value))
     self._Check(make_const, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(

@@ -55,6 +55,8 @@ scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                 jnp.complex64, jnp.complex128]
 
+python_scalar_types = [bool, int, float, complex]
+
 _EXPECTED_CANONICALIZE_X64 = {value: value for value in scalar_types}
 
 _EXPECTED_CANONICALIZE_X32 = {value: value for value in scalar_types}
@@ -80,15 +82,14 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertEqual(dtypes.canonicalize_dtype(in_dtype), expected_dtype)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_type={}".format(type.__name__), "type": type,
-     "dtype": dtype}
-    for type, dtype in [(bool, jnp.bool_), (int, jnp.int_), (float, jnp.float_),
-                        (complex, jnp.complex_)])
-  def testDefaultTypes(self, type, dtype):
+    {"testcase_name": "_type={}".format(type.__name__), "type": type}
+    for type in python_scalar_types)
+  def testDefaultTypes(self, type):
+    expected_dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type])
     for f in [jnp.array, jax.jit(jnp.array), jax.jit(lambda x: x)]:
       y = f(type(0))
       self.assertTrue(isinstance(y, jnp.ndarray), msg=(f, y))
-      self.assertEqual(y.dtype, dtypes.canonicalize_dtype(dtype), msg=(f, y))
+      self.assertEqual(y.dtype, expected_dtype, msg=(f, y))
 
   def testUnsupportedType(self):
     with self.assertRaisesRegex(TypeError, "nonsense.* not understood"):
@@ -102,8 +103,8 @@ class DtypesTest(jtu.JaxTestCase):
                       message="Explicitly requested dtype.*")
   def testBinaryPromotion(self, swap, jit):
     testcases = [
-      (jnp.array(1.), 0., jnp.float_),
-      (jnp.array(1.), jnp.array(0.), jnp.float_),
+      (jnp.array(1.), 0., jnp.float64),
+      (jnp.array(1.), jnp.array(0.), jnp.float64),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float16),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float32),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float64), jnp.float64),
@@ -202,6 +203,22 @@ class DtypesTest(jtu.JaxTestCase):
     # jnp.int32(tracer) should work.
     self.assertEqual(jnp.int32(101),
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
+
+  @parameterized.parameters(python_scalar_types)
+  def testDtypeFromScalarType(self, typ):
+    self.assertEqual(dtypes.dtype(typ), dtypes.python_scalar_dtypes[typ])
+
+  @parameterized.parameters(python_scalar_types)
+  def testDtypeFromScalarValue(self, typ):
+    self.assertEqual(dtypes.dtype(typ(0)), dtypes.python_scalar_dtypes[typ])
+
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromValue(self, dtype):
+    self.assertEqual(dtypes.dtype(dtype.type(0)), dtype)
+
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromDtype(self, dtype):
+    self.assertEqual(dtypes.dtype(dtype), dtype)
 
   @parameterized.parameters(all_dtypes)
   def testDtypeFromString(self, dtype):

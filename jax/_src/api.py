@@ -88,6 +88,8 @@ from .._src.config import (flags, config, bool_env, disable_jit as _disable_jit,
 
 traceback_util.register_exclusion(__file__)
 
+_dtype = partial(dtypes.dtype, canonicalize=True)
+
 AxisName = Any
 
 # These TypeVars are used below to express the fact that function types
@@ -1022,7 +1024,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
       ans, vjp_py, aux = _vjp(
           f_partial, *dyn_args, has_aux=True, reduce_axes=reduce_axes)
     _check_scalar(ans)
-    dtype = dtypes.result_type(ans)
+    dtype = _dtype(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
     g = vjp_py(np.ones((), dtype=dtype))
     g = g[0] if isinstance(argnums, int) else g
@@ -1312,9 +1314,6 @@ def _split(x, indices, axis):
     return np.split(x, indices, axis)
   else:
     return x.split(indices, axis)
-
-def _dtype(x):
-  return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
 
 def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
