@@ -14,8 +14,6 @@
 
 # flake8: noqa: F401
 from jax._src.lax.lax import (
-  ConvDimensionNumbers as ConvDimensionNumbers,
-  ConvGeneralDilatedDimensionNumbers as ConvGeneralDilatedDimensionNumbers,
   DotDimensionNumbers as DotDimensionNumbers,
   GatherDimensionNumbers as GatherDimensionNumbers,
   GatherScatterMode as GatherScatterMode,
@@ -86,16 +84,6 @@ from jax._src.lax.lax import (
   concatenate_p as concatenate_p,
   conj as conj,
   conj_p as conj_p,
-  conv as conv,
-  conv_dimension_numbers as conv_dimension_numbers,
-  conv_general_dilated as conv_general_dilated,
-  conv_general_dilated_p as conv_general_dilated_p,
-  conv_general_permutations as conv_general_permutations,
-  conv_general_shape_tuple as conv_general_shape_tuple,
-  conv_shape_tuple as conv_shape_tuple,
-  conv_transpose as conv_transpose,
-  conv_transpose_shape_tuple as conv_transpose_shape_tuple,
-  conv_with_general_padding as conv_with_general_padding,
   convert_element_type as convert_element_type,
   _convert_element_type as _convert_element_type,
   convert_element_type_p as convert_element_type_p,
@@ -293,6 +281,20 @@ from jax._src.lax.lax import (
   _check_user_dtype_supported, _one, _zero,
   _upcast_fp16_for_computation, _broadcasting_shape_rule,
   _eye, _tri, _delta, _ones, _zeros, _dilate_shape)
+from jax._src.lax.convolution import (
+  ConvDimensionNumbers as ConvDimensionNumbers,
+  ConvGeneralDilatedDimensionNumbers as ConvGeneralDilatedDimensionNumbers,
+  conv as conv,
+  conv_dimension_numbers as conv_dimension_numbers,
+  conv_general_dilated as conv_general_dilated,
+  conv_general_dilated_p as conv_general_dilated_p,
+  conv_general_permutations as conv_general_permutations,
+  conv_general_shape_tuple as conv_general_shape_tuple,
+  conv_shape_tuple as conv_shape_tuple,
+  conv_transpose as conv_transpose,
+  conv_transpose_shape_tuple as conv_transpose_shape_tuple,
+  conv_with_general_padding as conv_with_general_padding,
+)
 from jax._src.lax.windowed_reductions import (
   _reduce_window_sum,
   _reduce_window_max,

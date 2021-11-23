@@ -16,7 +16,8 @@
 from typing import Any, Optional, Sequence, Tuple, Union
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.util import prod
-from . import lax
+from jax._src.lax import lax
+from jax._src.lax import convolution
 
 DType = Any
 
@@ -27,7 +28,7 @@ def conv_general_dilated_patches(
     padding: Union[str, Sequence[Tuple[int, int]]],
     lhs_dilation: Optional[Sequence[int]] = None,
     rhs_dilation: Optional[Sequence[int]] = None,
-    dimension_numbers: Optional[lax.ConvGeneralDilatedDimensionNumbers] = None,
+    dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
     precision: Optional[lax.PrecisionType] = None,
     preferred_element_type: Optional[DType] = None,
 ) -> lax.Array:
@@ -84,7 +85,7 @@ def conv_general_dilated_patches(
 
   """
   filter_shape = tuple(filter_shape)
-  dimension_numbers = lax.conv_dimension_numbers(
+  dimension_numbers = convolution.conv_dimension_numbers(
       lhs.shape, (1, 1) + filter_shape, dimension_numbers)
 
   lhs_spec, rhs_spec, out_spec = dimension_numbers
@@ -99,7 +100,7 @@ def conv_general_dilated_patches(
   rhs = jnp.tile(rhs, (n_channels,) + (1,) * (rhs.ndim - 1))
   rhs = jnp.moveaxis(rhs, (0, 1), (rhs_spec[0], rhs_spec[1]))
 
-  out = lax.conv_general_dilated(
+  out = convolution.conv_general_dilated(
       lhs=lhs,
       rhs=rhs,
       window_strides=window_strides,

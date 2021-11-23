@@ -29,12 +29,7 @@ from jax import tree_util
 from jax._src import ad_util
 from jax._src import dtypes
 import jax._src.lax.lax as lax
-from jax._src.lax.lax import (
-  _dilate_shape,
-  _get_max_identity,
-  _get_min_identity,
-  _input_dtype,
-)
+import jax._src.lax.convolution as convolution
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 import jax._src.util as util
@@ -69,8 +64,9 @@ def reduce_window(operand, init_value, computation: Callable,
     raise ValueError('Must have same total number of operands as init_values: '
                      f' {len(flat_operands)} vs. {len(flat_init_values)}')
   if isinstance(padding, str):
-    dilated_window_dims = (window_dimensions if window_dilation is None else
-                           _dilate_shape(window_dimensions, window_dilation))
+    dilated_window_dims = (
+        window_dimensions if window_dilation is None else
+        lax._dilate_shape(window_dimensions, window_dilation))
     padding = tuple(lax.padtype_to_pads(
         flat_operands[0].shape, dilated_window_dims, window_strides, padding))
   else:
@@ -109,9 +105,11 @@ def _get_monoid_window_reducer(monoid_op: Callable,
     if monoid_op is lax.add:
       return aval.val == 0 and _reduce_window_sum
     elif monoid_op is lax.max:
-      return aval.val == _get_max_identity(aval.dtype) and _reduce_window_max
+      return (aval.val == lax._get_max_identity(aval.dtype)
+              and _reduce_window_max)
     elif monoid_op is lax.min:
-      return aval.val == _get_min_identity(aval.dtype) and _reduce_window_min
+      return (aval.val == lax._get_min_identity(aval.dtype)
+              and _reduce_window_min)
   return None
 
 def _reduce_window_sum(operand: Array, window_dimensions: core.Shape,
@@ -210,8 +208,8 @@ def _select_and_gather_add(tangents: Array, operand: Array,
                            padding: Sequence[Tuple[int, int]],
                            base_dilation: Sequence[int],
                            window_dilation: Sequence[int]) -> Array:
-  """Extracts the tangent corresponding to the minimum or maximum element in each
-  window of the `operand` array.
+  """Extracts the tangent corresponding to the minimum or maximum element in
+  each window of the `operand` array.
 
   Wraps XLA's `ReduceWindow
   <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
@@ -333,7 +331,7 @@ def _reduce_window_sum_transpose_rule(cotangent, operand, *, window_dimensions,
                                       window_dilation):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
-  pads = lax._conv_general_vjp_lhs_padding(
+  pads = convolution._conv_general_vjp_lhs_padding(
       input_shape, window_dimensions, window_strides, cotangent.shape, padding,
       base_dilation, window_dilation)
   ones = [1] * len(input_shape)
@@ -366,7 +364,7 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
   return operand, bdim
 
 reduce_window_sum_p = lax.standard_primitive(
-    _reduce_window_sum_shape_rule, _input_dtype, 'reduce_window_sum',
+    _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum',
     _reduce_window_sum_translation_rule)
 ad.deflinear2(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
 batching.primitive_batchers[reduce_window_sum_p] = partial(
@@ -429,17 +427,17 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
                               padding, base_dilation=None,
                               window_dilation=None):
   if base_dilation is not None:
-    operand_shape = _dilate_shape(operand_shape, base_dilation)
+    operand_shape = lax._dilate_shape(operand_shape, base_dilation)
   if window_dilation is not None:
-    window_dimensions = _dilate_shape(window_dimensions, window_dilation)
+    window_dimensions = lax._dilate_shape(window_dimensions, window_dilation)
   pads_lo, pads_hi = zip(*padding)
   operand_padded = core.sum_shapes(operand_shape, pads_lo, pads_hi)
   return core.stride_shape(operand_padded, window_dimensions, window_strides)
 
 _reduce_window_max_translation_rule = partial(
-    _reduce_window_chooser_translation_rule, lax.max_p, _get_max_identity)
+    _reduce_window_chooser_translation_rule, lax.max_p, lax._get_max_identity)
 reduce_window_max_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, _input_dtype, 'reduce_window_max',
+    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_max',
     _reduce_window_max_translation_rule)
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule,
                                        lax.max_p))
@@ -447,9 +445,9 @@ batching.primitive_batchers[reduce_window_max_p] = partial(
   _reduce_window_batch_rule, _reduce_window_max)
 
 _reduce_window_min_translation_rule = partial(
-    _reduce_window_chooser_translation_rule, lax.min_p, _get_min_identity)
+    _reduce_window_chooser_translation_rule, lax.min_p, lax._get_min_identity)
 reduce_window_min_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, _input_dtype, 'reduce_window_min',
+    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_min',
     _reduce_window_min_translation_rule)
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule,
                                        lax.min_p))
@@ -485,7 +483,7 @@ def _select_and_scatter_translation(
     init_value, scatter)]
 
 select_and_scatter_p = lax.standard_primitive(
-    _select_and_scatter_shape_rule, _input_dtype, 'select_and_scatter',
+    _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter',
     _select_and_scatter_translation)
 
 
@@ -512,8 +510,8 @@ def _select_and_scatter_add_translation(
                     not all(lo == 0 and hi == 0 for (lo, hi) in padding))
   if expand_padding:
     original_padding = padding
-    identity = (_get_max_identity if select_prim is lax.ge_p
-                else _get_min_identity)
+    identity = (lax._get_max_identity if select_prim is lax.ge_p
+                else lax._get_min_identity)
     pads = [(lo, hi, 0) for (lo, hi) in padding]
     operand = xops.Pad(operand, xla.pyval_to_ir_constant(c, identity(dtype)),
                        xc.make_padding_config(pads))
@@ -575,7 +573,8 @@ def _select_and_scatter_add_batch_rule(
   return out, 0
 
 select_and_scatter_add_p = lax.standard_primitive(
-    _select_and_scatter_add_shape_rule, _input_dtype, 'select_and_scatter_add',
+    _select_and_scatter_add_shape_rule, lax._input_dtype,
+    'select_and_scatter_add',
     partial(_select_and_scatter_add_translation, expand_padding=False))
 
 ad.primitive_transposes[select_and_scatter_add_p] = \
@@ -746,7 +745,8 @@ def _select_and_gather_add_transpose(
     t, tangents, operand, *, select_prim, window_dimensions, window_strides,
     padding, base_dilation, window_dilation):
   assert select_prim in (lax.le_p, lax.ge_p)
-  assert ad.is_undefined_primal(tangents) and not ad.is_undefined_primal(operand)
+  assert (ad.is_undefined_primal(tangents) and
+          not ad.is_undefined_primal(operand))
   if any(d != 1 for d in window_dilation):
     msg = ("VJP not implemented for select_and_gather (MaxPool) with window "
            "dilation, got window_dilation={}.")
@@ -755,8 +755,8 @@ def _select_and_gather_add_transpose(
     return [ad_util.Zero(tangents.aval), None]
   has_base_dilation = any(d != 1 for d in base_dilation)
   if has_base_dilation:
-    select_identity = (_get_max_identity if select_prim is lax.ge_p
-                       else _get_min_identity)
+    select_identity = (lax._get_max_identity if select_prim is lax.ge_p
+                       else lax._get_min_identity)
     operand = lax.pad(operand, select_identity(operand.dtype),
                       tuple((0, 0, d - 1) for d in base_dilation))
   result = _select_and_scatter_add(t, operand, select_prim, window_dimensions,
@@ -787,7 +787,8 @@ def _select_and_gather_add_batching_rule(
 
 
 select_and_gather_add_p = lax.standard_primitive(
-    _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
+    _select_and_gather_add_shape_rule, lax._input_dtype,
+    'select_and_gather_add',
     xla.lower_fun(_select_and_gather_add_using_variadic_reducewindow,
                   new_style=True, multiple_results=False))
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
