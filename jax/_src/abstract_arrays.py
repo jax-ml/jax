@@ -37,8 +37,9 @@ def make_shaped_array(x):
   return ShapedArray(np.shape(x), dtype)
 
 def zeros_like_array(x):
-  dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  aval = ShapedArray(np.shape(x), dtype)
+  dtype, weak_type = dtypes._lattice_result_type(x)
+  dtype = dtypes.canonicalize_dtype(dtype)
+  aval = ShapedArray(np.shape(x), dtype, weak_type=weak_type)
   return ad_util.zeros_like_aval(aval)
 
 array_types = {np.ndarray, np.bool_,
@@ -55,7 +56,8 @@ for t in array_types:
 core.literalable_types.update(array_types)
 
 def _zeros_like_python_scalar(t, x):
-  return np.array(0, dtypes.python_scalar_dtypes[t])
+  aval = core.ShapedArray((), dtypes.python_scalar_dtypes[t], weak_type=True)
+  return ad_util.zeros_like_aval(aval)
 
 def _make_concrete_python_scalar(t, x):
   return ConcreteArray(
