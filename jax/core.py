@@ -2122,12 +2122,16 @@ def pp_eqn(eqn, context: JaxprPpContext, *, print_shapes=True, source_info=False
   lhs = pp_vars(eqn.outvars, context, print_shapes=print_shapes)
   annotation = (source_info_util.summarize(eqn.source_info)
                 if source_info else None)
-  return pp.concat([
-    lhs, pp.text(" = ", annotation=annotation), pp.text(eqn.primitive.name),
-    pp_kv_pairs(sorted(eqn.params.items()), context),
-    pp.text(" ") + pp_vars(eqn.invars, context)
-  ])
-
+  rule = pp_eqn_rules.get(eqn.primitive)
+  if rule:
+    rhs = rule(eqn, context)
+  else:
+    rhs = [pp.text(eqn.primitive.name),
+           pp_kv_pairs(sorted(eqn.params.items()), context),
+           pp.text(" ") + pp_vars(eqn.invars, context)]
+  return pp.concat([lhs, pp.text(" = ", annotation=annotation), *rhs])
+CustomPpEqnRule = Callable[[JaxprEqn, JaxprPpContext], Sequence[pp.Doc]]
+pp_eqn_rules: Dict[Primitive, CustomPpEqnRule]  = {}
 
 def pp_eqns(eqns, context: JaxprPpContext, *, print_shapes=True, source_info=False
            ) -> pp.Doc:

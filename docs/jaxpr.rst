@@ -415,7 +415,6 @@ which the computation should run. For example
 { lambda ; a:f32[]. let
     b:f32[] = sub a 2.0
     c:f32[1] = xla_call[
-      backend=None
       call_jaxpr={ lambda ; d:f32[] e:f32[]. let
           f:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
           g:f32[] = convert_element_type[new_dtype=float32 weak_type=False] d
@@ -423,9 +422,6 @@ which the computation should run. For example
           i:f32[] = convert_element_type[new_dtype=float32 weak_type=False] e
           j:f32[1] = add i h
         in (j,) }
-      device=None
-      donated_invars=(False, False)
-      inline=False
       name=inner
     ] a b
     k:f32[] = convert_element_type[new_dtype=float32 weak_type=False] a
