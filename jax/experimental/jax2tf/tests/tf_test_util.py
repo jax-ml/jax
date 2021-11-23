@@ -389,7 +389,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       enable_xla: Whether to enable XLA conversion for jax2tf.convert.
     """
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
-                             enable_xla=enable_xla)
+                          enable_xla=enable_xla)
     f_tf_func = tf.function(f_tf, autograph=False, input_signature=input_signature)
     concrete_f_tf = f_tf_func.get_concrete_function(*input_signature)
     if expected_output_signature:
@@ -422,9 +422,15 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)
 
-  def CountTfConstants(self, tf_fun: Callable, *args):
+  def CountLargeTfConstants(self, tf_fun: Callable, *args,
+                            at_least=256):
+    # A hacky way to count how many "large" constants are embedded in the
+    # graph. We count the number of characters in the textual representation
+    # of the constant.
     f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
-    return len(re.findall("tensor_content", str(f_tf_graph)))
+    matches = re.findall(r"tensor_content\s*:\s*\"([^\"]+)\"", str(f_tf_graph))
+    large_matches = [m for m in matches if len(m) >= at_least]
+    return len(large_matches)
 
   def CheckOpMetadata(self, jax_fun, x,
                       expected: Sequence[OpMetadataGraph],
