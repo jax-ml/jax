@@ -39,6 +39,7 @@ class TreeMathTest(jtu.JaxTestCase):
   def test_vector(self):
     tree = {'a': 0, 'b': jnp.array([1, 2], dtype=jnp.int32)}
     vector = tm.Vector(tree)
+    self.assertEqual(vector.size, 3)
     self.assertEqual(len(vector), 3)
     self.assertEqual(vector.shape, (3,))
     self.assertEqual(vector.ndim, 1)
@@ -112,11 +113,21 @@ class TreeMathTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     tree1 = {'a': rng((), jnp.float32), 'b': rng((2, 3), jnp.float32)}
     tree2 = {'a': rng((), jnp.float32), 'b': rng((2, 3), jnp.float32)}
+
     expected = tree1['a'] * tree2['a'] + tree1['b'].ravel() @ tree2['b'].ravel()
+
     vector1 = tm.Vector(tree1)
     vector2 = tm.Vector(tree2)
+
     actual = vector1 @ vector2
     self.assertAllClose(actual, expected, check_dtypes=True)
+
+    actual = tm.dot(vector1, vector2)
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+    actual = vector1.dot(vector2)
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
     with self.assertRaisesRegex(
         TypeError, "matmul arguments must both be tree_math.Vector objects",
     ):

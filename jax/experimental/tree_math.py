@@ -97,7 +97,13 @@ def _unary_method(func, name):
   return wrapper
 
 
-def matmul(left, right, *, precision=None):
+def matmul(left, right, *, precision="highest"):
+  """Dot product between tree math vectors.
+
+  Note that unlike jax.numpy.matmul, tree_math.matmul defaults to full (highest)
+  precision. This is more useful for numerical algorithms and will be the
+  default for jax.numpy in the future: https://github.com/google/jax/pull/7859
+  """
   if not isinstance(left, Vector) or not isinstance(right, Vector):
     raise TypeError("matmul arguments must both be tree_math.Vector objects")
 
@@ -107,6 +113,8 @@ def matmul(left, right, *, precision=None):
   (left_values, right_values), _ = _flatten_together(left.tree, right.tree)
   parts = map(_vector_dot, left_values, right_values)
   return functools.reduce(operator.add, parts)
+
+dot = matmul
 
 
 @tree_util.register_pytree_node_class
@@ -131,13 +139,17 @@ class Vector:
   def tree_unflatten(cls, _, args):
     return cls(*args)
 
-  def __len__(self):
+  @property
+  def size(self):
     values = tree_util.tree_leaves(self.tree)
     return sum(prod(jnp.shape(value)) for value in values)
 
+  def __len__(self):
+    return self.size
+
   @property
   def shape(self):
-    return (len(self),)
+    return (self.size,)
 
   @property
   def ndim(self):
@@ -187,6 +199,7 @@ class Vector:
 
   # numpy methods
   conj = _unary_method(jnp.conj, 'conj')
+  dot = matmul
 
   def sum(self):
     parts = map(jnp.sum, tree_util.tree_leaves(self))
