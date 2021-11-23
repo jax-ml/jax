@@ -83,19 +83,18 @@ Shape = core.Shape
 def _array_copy(arr):
   """Return an on-device copy of a DeviceArray.
 
-  This is a private method; users can access this via ``jnp.array(x, copy=True)``.
+  This is a private method; users should write ``jnp.array(x, copy=True)``.
 
   Why do we need copies in a purely functional langauge? Well, JAX is *almost*
-  purely functional: the semantics of `donate_argnums` mean that sometimes buffers
-  are consumed, and you actually need to ensure a copy is generated on device.
+  purely functional: the semantics of ``donate_argnums`` mean that sometimes
+  buffers are consumed. So we need a way to copy on-device.
   """
-  # TODO(jakevdp): There is no XLA copy operation, so for the time being we rely
-  # on an implementation detail: although XLA will optimize away non-operations like
-  # adding zero, it still results in a copied buffer. Eventually, we should move to
-  # a more direct method that avoids inserting a spurious add_p/or_p into the jaxpr.
-  if arr.dtype == bool:
-    return bitwise_or(arr, _const(arr, False))
-  return add(arr, _const(arr, 0))
+  # This jit-based implementation must avoid hitting _execute_trivial in
+  # dispatch.py, and so its body needs to be one which JAX optimizations don't
+  # simplify away (which could evolve!). An alternative would be to have an
+  # identity primitive with an impl that performs a runtime copy-on-device
+  # operation, but such an operation doesn't currently exist in the runtime.
+  return jax.jit(lambda x: x, inline=False)(arr)
 
 def _try_broadcast_shapes(shapes):
   assert shapes
