@@ -30,11 +30,12 @@
 
 from contextlib import contextmanager
 from collections import defaultdict, OrderedDict
+import dataclasses
 from functools import partial
 import itertools as it
 import operator as op
 import threading
-from typing import (Any, Callable, Dict, List, Optional,
+from typing import (Any, Callable, Dict, List, NamedTuple, Optional,
                     Sequence, Set, Tuple, Type, Union, Iterable)
 import sys
 
@@ -737,15 +738,22 @@ _register_handlers_for_sharded_device_array(pmap_lib.ShardedDeviceArray)
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
-def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
-                  global_axis_size, devices, name, in_axes, out_axes_thunk,
-                  donated_invars, global_arg_shapes):
+def xla_pmap_impl(fun: lu.WrappedFun, *args,
+                  backend: Optional[str],
+                  axis_name: core.AxisName,
+                  axis_size: int,
+                  global_axis_size: Optional[int],
+                  devices: Optional[Sequence[Any]],
+                  name: str,
+                  in_axes: Sequence[Optional[int]],
+                  out_axes_thunk: Callable[[], Sequence[Optional[int]]],
+                  donated_invars: Sequence[bool],
+                  global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
   abstract_args = unsafe_map(xla.abstractify, args)
-  compiled_fun, fingerprint = parallel_callable(fun, backend, axis_name, axis_size,
-                                   global_axis_size, devices, name,
-                                   in_axes, out_axes_thunk,
-                                   donated_invars, global_arg_shapes,
-                                   *abstract_args)
+  compiled_fun, fingerprint = parallel_callable(
+      fun, backend, axis_name, axis_size, global_axis_size, devices, name,
+      in_axes, out_axes_thunk, donated_invars, global_arg_shapes,
+      *abstract_args)
 
   # Don't re-abstractify args unless logging is enabled for performance.
   if config.jax_distributed_debug:
@@ -756,19 +764,139 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
                           ("fingerprint", fingerprint))
   return compiled_fun(*args)
 
+
 @lu.cache
 def parallel_callable(fun: lu.WrappedFun,
                       backend_name: Optional[str],
-                      axis_name,
+                      axis_name: core.AxisName,
                       axis_size: int,
                       global_axis_size: Optional[int],
                       devices: Optional[Sequence[Any]],
                       name: str,
-                      in_axes: Iterable[Optional[int]],
+                      in_axes: Sequence[Optional[int]],
                       out_axes_thunk: Callable[[], Sequence[Optional[int]]],
-                      donated_invars: Iterable[bool],
-                      global_arg_shapes,
+                      donated_invars: Sequence[bool],
+                      global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
                       *avals):
+  pmap_computation = lower_parallel_callable(
+      fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
+      in_axes, out_axes_thunk, donated_invars, global_arg_shapes, avals)
+  pmap_executable = pmap_computation.compile()
+  return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
+
+
+@dataclasses.dataclass(frozen=True)
+class ParallelCallableInfo:
+  backend: Any  # TODO(frostig): really xla.Backend, fix xla_bridge annotations
+  axis_name: core.AxisName
+  axis_size: int
+  global_axis_size: Optional[int]
+  devices: Optional[Sequence[xla.Device]]
+  in_axes: Iterable[Optional[int]]
+  out_axes_thunk: Callable[[], Sequence[Optional[int]]]
+  avals: Sequence[core.AbstractValue]
+
+  @maybe_cached_property
+  def local_devices(self):
+    if self.devices:
+      out = [d for d in self.devices
+             if d.process_index == xb.process_index(self.backend)]
+      assert len(out) > 0
+    else:
+      out = None  # type: ignore
+    return out
+
+  @maybe_cached_property
+  def out_axes(self):
+    return self.out_axes_thunk()
+
+
+class ShardInfo(NamedTuple):
+  sharded_avals: Sequence[core.AbstractValue]
+  out_sharded_avals: Sequence[core.AbstractValue]
+  global_sharded_avals: Sequence[core.AbstractValue]
+  num_local_shards: int
+  num_global_shards: int
+
+
+class ReplicaInfo(NamedTuple):
+  jaxpr_replicas: int
+  num_local_replicas: int
+  num_global_replicas: int
+
+
+def find_replicas(jaxpr, axis_size, global_axis_size):
+  # TODO(skyewm): replace this with a chain of pmaps and/or sharded_jits
+  jaxpr_replicas = dispatch.jaxpr_replicas(jaxpr)
+  num_local_replicas = axis_size * jaxpr_replicas
+  num_global_replicas = global_axis_size * jaxpr_replicas
+  return ReplicaInfo(jaxpr_replicas, num_local_replicas, num_global_replicas)
+
+
+def tuple_args(shards: ShardInfo):
+  # tuplify long arg lists for TPU
+  return len(shards.global_sharded_avals) > 100
+
+
+def stage_parallel_callable(
+    pci: ParallelCallableInfo,
+    fun: lu.WrappedFun,
+    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
+  sharded_avals = tuple(
+      shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
+      for axis, aval in safe_zip(pci.in_axes, pci.avals))
+  if any(s is not None for s in global_arg_shapes):
+    # TODO(skye): we could take this branch unconditionally if we handled
+    # grad of global_arg_shapes correctly.
+    global_sharded_avals = [
+        aval.update(shape=shape) if shape is not None else aval
+        for shape, aval in safe_zip(global_arg_shapes, sharded_avals)]
+  else:
+    global_sharded_avals = sharded_avals  # type: ignore
+
+  with core.extend_axis_env(pci.axis_name, pci.global_axis_size, None):  # type: ignore
+    jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
+        fun, global_sharded_avals, pe.debug_info_final(fun, "pmap"))
+  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
+
+  assert len(out_sharded_avals) == len(pci.out_axes), (
+      len(out_sharded_avals), len(pci.out_axes))
+
+  # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
+  # for now raise an error
+  if pci.devices is not None:
+    is_multi_host_pmap = len(pci.local_devices) != len(pci.devices)
+  else:
+    is_multi_host_pmap = xb.process_count(pci.backend) > 1
+  if is_multi_host_pmap:
+    check_multihost_collective_allowlist(jaxpr)
+
+  replicas = find_replicas(jaxpr, pci.axis_size, pci.global_axis_size)
+  parts = find_partitions(jaxpr)
+
+  num_local_shards = replicas.num_local_replicas * parts.local_num_partitions
+  num_global_shards = replicas.num_global_replicas * parts.num_partitions
+
+  shards = ShardInfo(
+      sharded_avals, out_sharded_avals, global_sharded_avals,
+      num_local_shards, num_global_shards)
+
+  return jaxpr, consts, replicas, parts, shards
+
+
+def lower_parallel_callable(
+    fun: lu.WrappedFun,
+    backend_name: Optional[str],
+    axis_name: core.AxisName,
+    axis_size: int,
+    global_axis_size: Optional[int],
+    devices: Optional[Sequence[xla.Device]],
+    name: str,
+    in_axes: Iterable[Optional[int]],
+    out_axes_thunk: Callable[[], Sequence[Optional[int]]],
+    donated_invars: Sequence[bool],
+    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+    avals: Sequence[core.AbstractValue]):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
@@ -804,81 +932,34 @@ def parallel_callable(fun: lu.WrappedFun,
       # (and making the further assumption that each host has the same number of
       # devices). Nested sharding is ok in this case.
       global_axis_size = axis_size * xb.process_count(backend)
-      assert all(len(xb.local_devices(process_index, backend)) == xb.local_device_count(backend)
-                 for process_index in range(xb.process_count(backend)))
+      assert all(
+          len(xb.local_devices(process_index, backend)) == xb.local_device_count(backend)
+          for process_index in range(xb.process_count(backend)))
       must_run_on_all_devices = True
 
-  if devices:
-    local_devices = [d for d in devices if d.process_index == xb.process_index(backend)]
-    assert len(local_devices) > 0
-  else:
-    local_devices = None  # type: ignore
-
-  sharded_avals = tuple(shard_aval(axis_size, axis, aval) if axis is not None else aval
-                        for axis, aval in safe_zip(in_axes, avals))
-  if any(s is not None for s in global_arg_shapes):
-    # TODO(skye): we could take this branch unconditionally if we handled
-    # grad of global_arg_shapes correctly.
-    global_sharded_avals = [
-        aval.update(shape=shape) if shape is not None else aval
-        for shape, aval in safe_zip(global_arg_shapes, sharded_avals)]
-  else:
-    global_sharded_avals = sharded_avals  # type: ignore
-  if logging.vlog_is_on(2):
-    logging.vlog(2, "sharded_avals: %s", sharded_avals)
-    logging.vlog(2, "global_sharded_avals: %s", global_sharded_avals)
-
-  with core.extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
-        fun, global_sharded_avals, pe.debug_info_final(fun, "pmap"))
-  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
-
-  out_axes = out_axes_thunk()
-  assert len(out_sharded_avals) == len(out_axes), (len(out_sharded_avals), len(out_axes))
-
-  # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
-  # for now raise an error
-  if devices is not None:
-    is_multi_host_pmap = len(local_devices) != len(devices)
-  else:
-    is_multi_host_pmap = xb.process_count(backend) > 1
-  if is_multi_host_pmap:
-    check_multihost_collective_allowlist(jaxpr)
-
-  # TODO(skyewm): replace this with a chain of pmaps and/or sharded_jits
-  jaxpr_replicas = dispatch.jaxpr_replicas(jaxpr)
-  num_local_replicas = axis_size * jaxpr_replicas
-  num_global_replicas = global_axis_size * jaxpr_replicas
-
-  (arg_parts, out_parts, num_partitions, local_arg_parts, local_out_parts,
-   local_num_partitions) = _find_partitions(jaxpr)
-
-  if local_num_partitions is None:
-    local_num_partitions = num_partitions
-
-  if local_arg_parts is None:
-    local_arg_parts = arg_parts
-  if local_out_parts is None:
-    local_out_parts = out_parts
+  pci = ParallelCallableInfo(
+      backend, axis_name, axis_size, global_axis_size, devices, in_axes,
+      out_axes_thunk, avals)
+  jaxpr, consts, replicas, parts, shards = stage_parallel_callable(
+      pci, fun, global_arg_shapes)
 
   if logging.vlog_is_on(2):
+    logging.vlog(2, "sharded_avals: %s", shards.sharded_avals)
+    logging.vlog(2, "global_sharded_avals: %s", shards.global_sharded_avals)
     logging.vlog(2, "num_replicas: %d  num_local_replicas: %d",
-                 num_global_replicas, num_local_replicas)
+                 replicas.num_global_replicas, replicas.num_local_replicas)
     logging.vlog(2, "num_partitions: %d  local_num_partitions: %d",
-                 num_partitions, local_num_partitions)
-    logging.vlog(2, "arg_parts: %s", arg_parts)
-    logging.vlog(2, "local_arg_parts: %s", local_arg_parts)
-    logging.vlog(2, "out_parts: %s", out_parts)
-    logging.vlog(2, "local_out_parts: %s", local_out_parts)
+                 parts.num_partitions, parts.local_num_partitions)
+    logging.vlog(2, "arg_parts: %s", parts.arg_parts)
+    logging.vlog(2, "local_arg_parts: %s", parts.local_arg_parts)
+    logging.vlog(2, "out_parts: %s", parts.out_parts)
+    logging.vlog(2, "local_out_parts: %s", parts.local_out_parts)
     logging.vlog(2, "devices: %s", devices)
-    logging.vlog(2, "local_devices: %s", local_devices)
-
-  num_local_shards = num_local_replicas * local_num_partitions
-  num_global_shards = num_global_replicas * num_partitions
+    logging.vlog(2, "local_devices: %s", pci.local_devices)
 
   if (xb.process_count(backend) > 1 and must_run_on_all_devices and
-      num_local_shards != xb.local_device_count(backend)):
-    if num_local_shards == axis_size:
+      shards.num_local_shards != xb.local_device_count(backend)):
+    if shards.num_local_shards == axis_size:
       raise ValueError(
          f"On multi-host platforms, the input to pmapped functions must have "
          f"leading axis size equal to the number of local devices if no "
@@ -888,150 +969,204 @@ def parallel_callable(fun: lu.WrappedFun,
       raise ValueError(
         f"On multi-host platforms, pmapped functions must run across all "
         f"devices, i.e. num_replicas * num_partitions should equal the "
-        f"number of local devices. Got num_replicas={num_local_replicas}, "
-        f"num_partitions={num_partitions}, and "
+        f"number of local devices. Got "
+        f"num_replicas={replicas.num_local_replicas}, "
+        f"num_partitions={parts.num_partitions}, and "
         f"num_local_devices={xb.local_device_count(backend)}")
 
-  if no_nested_sharding and (jaxpr_replicas > 1 or num_partitions > 1):
+  if no_nested_sharding and (
+      replicas.jaxpr_replicas > 1 or parts.num_partitions > 1):
     raise ValueError(
       f"On multi-host platforms, pmapped functions that both have `devices` "
       f"specified and contain an inner_pmap or sharded_jit must specify an "
       f"`axis_size` (or remove the `devices` argument). Got nested_replicas="
-      f"{jaxpr_replicas} and nested_partitions={num_partitions}")
+      f"{replicas.jaxpr_replicas} and nested_partitions={parts.num_partitions}")
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               "Compiling %s (%d) for %d devices with args %s. (num_replicas=%d"
-              " num_partitions=%d)", fun.__name__, id(fun), num_global_shards,
-              avals, num_global_replicas, num_partitions)
+              " num_partitions=%d)", fun.__name__, id(fun),
+              shards.num_global_shards, avals, replicas.num_global_replicas,
+              parts.num_partitions)
 
-  axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,))
-
-  tuple_args = len(global_sharded_avals) > 100  # pass long arg lists as tuple for TPU
+  axis_env = xla.AxisEnv(
+      replicas.num_global_replicas, (axis_name,), (global_axis_size,))
 
   c = xc.XlaBuilder("pmap_{}".format(fun.__name__))
   xla_consts = map(partial(xla.pyval_to_ir_constant, c), consts)
   replicated_args = [axis is None for axis in in_axes]
-  xla_args, donated_invars = xla._xla_callable_args(c, global_sharded_avals, tuple_args,
-                                                    replicated=replicated_args,
-                                                    partitions=arg_parts,
-                                                    donated_invars=donated_invars)
+  xla_args, donated_invars = xla._xla_callable_args(
+      c, shards.global_sharded_avals, tuple_args(shards),
+      replicated=replicated_args,
+      partitions=parts.arg_parts,
+      donated_invars=donated_invars)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     ctx = xla.TranslationContext(c, backend.platform, axis_env,
                                  extend_name_stack(wrap_name(name, 'pmap')))
     out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   build_out_tuple = partial(xops.Tuple, c, out_nodes)
-  if out_parts is not None:
-    out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
+  if parts.out_parts is not None:
+    out_tuple = xb.with_sharding(c, parts.out_parts, build_out_tuple)
   else:
     out_tuple = build_out_tuple()
 
   if backend.platform in ("gpu", "tpu"):
     donated_invars = xla.set_up_aliases(c, xla_args, c.GetShape(out_tuple),
-                                        donated_invars, tuple_args)
+                                        donated_invars, tuple_args(shards))
   built = c.Build(out_tuple)
 
-  if devices is None:
-    if num_global_shards > xb.device_count(backend):
-      msg = ("compiling computation that requires {} logical devices, but only {} XLA "
-             "devices are available (num_replicas={}, num_partitions={})")
-      raise ValueError(msg.format(num_global_shards, xb.device_count(backend),
-                                  num_global_replicas, num_partitions))
+  return PmapComputation(built, pci, replicas, parts, shards)
 
-    # On a single host, we use the platform's default device assignment to
-    # potentially take advantage of device locality. On multiple hosts, the
-    # default device assignment may interleave different hosts' replicas,
-    # violating pmap's semantics where data is sharded across replicas in
-    # row-major order. Instead, manually create a device assignment that ensures
-    # each host is responsible for a continguous set of replicas.
-    if num_global_shards > num_local_shards:
-      # TODO(skye): use a locality-aware assignment that satisfies the above
-      # constraint.
-      devices = [d for process_index in range(xb.process_count(backend))
-                 for d in xb.local_devices(process_index, backend)]
-    else:
-      devices = xb.get_backend(backend).get_default_device_assignment(
-          num_global_replicas, num_partitions)
-  else:
-    if num_local_shards != len(local_devices):
-      local_devices_str = ", ".join(map(str, local_devices))
-      if num_local_shards == axis_size:
-        raise ValueError(
-            f"Leading axis size of input to pmapped function must equal the "
-            f"number of local devices passed to pmap. Got axis_size="
-            f"{axis_size}, num_local_devices={len(local_devices)}.\n(Local "
-            f"devices available to pmap: {local_devices_str})")
+
+class PmapComputation:
+  def __init__(self, hlo, *compile_args):
+    self._executable = None
+    self.hlo = hlo
+    self.compile_args = compile_args
+
+  def compile(self):
+    if self._executable is None:
+      self._executable = PmapExecutable.from_hlo(self.hlo, *self.compile_args)
+    return self._executable
+
+
+class PmapExecutable:
+  __slots__ = ['xla_executable', 'unsafe_call', 'fingerprint', 'in_avals']
+
+  def __init__(self, xla_executable, unsafe_call, fingerprint, in_avals):
+    self.xla_executable = xla_executable
+    self.unsafe_call = unsafe_call
+    self.fingerprint = fingerprint
+    self.in_avals = in_avals
+
+  @staticmethod
+  def from_hlo(xla_computation,
+               pci: ParallelCallableInfo,
+               replicas: ReplicaInfo,
+               parts: 'PartitionInfo',
+               shards: ShardInfo):
+    devices = pci.devices
+    if devices is None:
+      if shards.num_global_shards > xb.device_count(pci.backend):
+        msg = ("compiling computation that requires {} logical devices, but only {} XLA "
+              "devices are available (num_replicas={}, num_partitions={})")
+        raise ValueError(msg.format(shards.num_global_shards,
+                                    xb.device_count(pci.backend),
+                                    replicas.num_global_replicas,
+                                    parts.num_partitions))
+      # On a single host, we use the platform's default device assignment to
+      # potentially take advantage of device locality. On multiple hosts, the
+      # default device assignment may interleave different hosts' replicas,
+      # violating pmap's semantics where data is sharded across replicas in
+      # row-major order. Instead, manually create a device assignment that ensures
+      # each host is responsible for a continguous set of replicas.
+      if shards.num_global_shards > shards.num_local_shards:
+        # TODO(skye): use a locality-aware assignment that satisfies the above
+        # constraint.
+        devices = [d for process_index in range(xb.process_count(pci.backend))
+                  for d in xb.local_devices(process_index, pci.backend)]
       else:
-        raise ValueError(
-            f"pmapped function requires {num_local_shards} local devices to "
-            f"run due to nested pmapped or other parallel functions, but only "
-            f"{len(local_devices)} are available.\n(outer axis size: "
-            f"{axis_size}, local devices available to pmap: "
-            f"{local_devices_str})")
-    if num_global_shards != len(devices):
-      raise ValueError("compiling computation that creates %s shards, "
-                       "but %s devices were specified" %
-                       (num_global_shards, len(devices)))
+        devices = xb.get_backend(pci.backend).get_default_device_assignment(
+            replicas.num_global_replicas, parts.num_partitions)
+    else:
+      if shards.num_local_shards != len(pci.local_devices):
+        local_devices_str = ", ".join(map(str, pci.local_devices))
+        if shards.num_local_shards == pci.axis_size:
+          raise ValueError(
+              f"Leading axis size of input to pmapped function must equal the "
+              f"number of local devices passed to pmap. Got axis_size="
+              f"{pci.axis_size}, num_local_devices={len(pci.local_devices)}.\n"
+              f"(Local devices available to pmap: {local_devices_str})")
+        else:
+          raise ValueError(
+              f"pmapped function requires {shards.num_local_shards} local "
+              f"devices to run due to nested pmapped or other parallel "
+              f"functions, but only {len(pci.local_devices)} are available.\n"
+              f"(outer axis size: {pci.axis_size}, local devices available to "
+              f"pmap: {local_devices_str})")
+      if shards.num_global_shards != len(devices):
+        raise ValueError("compiling computation that creates %s shards, "
+                        "but %s devices were specified" %
+                        (shards.num_global_shards, len(devices)))
 
-  # 'devices' may be 1D or 2D at this point (e.g.
-  # get_default_device_assignment() returns 2D assignment, caller may have
-  # provided 1D list of devices).
-  device_assignment = tree_map(lambda d: d.id, devices)
-  # Convert to 2D in case it's 1D and we have > 1 partitions.
-  device_assignment = np.array(device_assignment).reshape(
-      (num_global_replicas, num_partitions))
-  # TODO(b/162356737): Enabling SPMD partitioning causes issues with some
-  # non-partitioned workloads, so disable unless needed.
-  use_spmd_partitioning = num_partitions > 1
-  compile_options = xb.get_compile_options(
-      num_replicas=num_global_replicas,
-      num_partitions=num_partitions,
-      device_assignment=device_assignment,
-      use_spmd_partitioning=use_spmd_partitioning,
-  )
-  compile_options.parameter_is_tupled_arguments = tuple_args
+    # 'devices' may be 1D or 2D at this point (e.g.
+    # get_default_device_assignment() returns 2D assignment, caller may have
+    # provided 1D list of devices).
+    device_assignment = tree_map(lambda d: d.id, devices)
+    # Convert to 2D in case it's 1D and we have > 1 partitions.
+    device_assignment = np.array(device_assignment).reshape(
+        (replicas.num_global_replicas, parts.num_partitions))
+    # TODO(b/162356737): Enabling SPMD partitioning causes issues with some
+    # non-partitioned workloads, so disable unless needed.
+    use_spmd_partitioning = parts.num_partitions > 1
+    compile_options = xb.get_compile_options(
+        num_replicas=replicas.num_global_replicas,
+        num_partitions=parts.num_partitions,
+        device_assignment=device_assignment,
+        use_spmd_partitioning=use_spmd_partitioning,
+    )
+    compile_options.parameter_is_tupled_arguments = tuple_args(shards)
 
-  local_arg_parts_ = local_arg_parts or [None] * len(avals)
-  input_sharding_specs = [
-      _pmap_sharding_spec(num_local_replicas, axis_size, local_num_partitions,
-                          parts, aval, in_axis)
-      if aval is not core.abstract_unit else None
-      for aval, parts, in_axis in safe_zip(sharded_avals, local_arg_parts_, in_axes)]
-  input_indices = [spec_to_indices(aval.shape, spec)
-                   if spec is not None else None
-                   for aval, spec in safe_zip(avals, input_sharding_specs)]
-  nouts = len(out_sharded_avals)
-  if out_parts is None:
-    out_parts = (None,) * nouts
-  if local_out_parts is None:
-    local_out_parts = (None,) * nouts
+    local_arg_parts_ = parts.local_arg_parts or [None] * len(pci.avals)
+    input_sharding_specs = [
+        _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
+                            parts.local_num_partitions, arg_parts, aval, in_axis)
+        if aval is not core.abstract_unit else None
+        for aval, arg_parts, in_axis in safe_zip(
+            shards.sharded_avals, local_arg_parts_, pci.in_axes)]
+    input_indices = [spec_to_indices(aval.shape, spec)
+                    if spec is not None else None
+                    for aval, spec in safe_zip(pci.avals, input_sharding_specs)]
+    nouts = len(shards.out_sharded_avals)
 
-  local_out_avals = [get_local_aval(aval, parts, lparts)
-                     for aval, parts, lparts
-                     in safe_zip(out_sharded_avals, out_parts, local_out_parts)]
-  local_unmapped_avals = [core.unmapped_aval(axis_size, axis_name, out_axis, aval)
-                          if out_axis is not None else aval
-                          for aval, out_axis in safe_zip(local_out_avals, out_axes)]
+    out_parts, local_out_parts = parts.out_parts, parts.local_out_parts
+    if parts.out_parts is None:
+      out_parts = (None,) * nouts
+    if parts.local_out_parts is None:
+      local_out_parts = (None,) * nouts
 
-  out_specs = [_pmap_sharding_spec(num_local_replicas, axis_size, local_num_partitions,
-                                    parts, aval, out_axis)
-               if aval is not core.abstract_unit else None
-               for parts, aval, out_axis in safe_zip(local_out_parts, local_out_avals, out_axes)]
-  handle_outs = avals_to_results_handler(
-      num_local_replicas, local_num_partitions, out_specs, local_unmapped_avals)
+    local_out_avals = [
+        get_local_aval(aval, parts, lparts)
+        for aval, parts, lparts
+        in safe_zip(shards.out_sharded_avals, out_parts, local_out_parts)]
+    local_unmapped_avals = [
+        core.unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval)
+        if out_axis is not None else aval
+        for aval, out_axis in safe_zip(local_out_avals, pci.out_axes)]
 
-  if hasattr(backend, "compile_replicated"):
-    execute_fun = backend.compile_replicated(built, compile_options,
-                                      input_indices, input_sharding_specs,
-                                      handle_outs)
-    return WeakRefList([execute_fun, None])
+    out_specs = [
+        _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
+                            parts.local_num_partitions, out_parts, aval, out_axis)
+        if aval is not core.abstract_unit else None
+        for out_parts, aval, out_axis in safe_zip(
+            local_out_parts, local_out_avals, pci.out_axes)]
+    handle_outs = avals_to_results_handler(
+        replicas.num_local_replicas, parts.local_num_partitions, out_specs,
+        local_unmapped_avals)
 
-  compiled = dispatch.compile_or_get_cached(backend, built, compile_options)
-  handle_args = InputsHandler(compiled.local_devices(), input_sharding_specs,
-                              input_indices)
-  execute_fun = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
-  fingerprint = getattr(compiled, "fingerprint", None)
-  return WeakRefList([execute_fun, fingerprint])
+    if hasattr(pci.backend, "compile_replicated"):
+      execute_fun = pci.backend.compile_replicated(
+          xla_computation, compile_options, input_indices, input_sharding_specs,
+          handle_outs)
+      # TODO(frostig): need `compile_replicated` to give us the XLA executable
+      return PmapExecutable(None, execute_fun, None, pci.avals)
+
+    compiled = dispatch.compile_or_get_cached(
+        pci.backend, xla_computation, compile_options)
+    handle_args = InputsHandler(
+        compiled.local_devices(), input_sharding_specs, input_indices)
+    execute_fun = partial(
+        execute_replicated, compiled, pci.backend, handle_args, handle_outs)
+    fingerprint = getattr(compiled, "fingerprint", None)
+
+    return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
+
+  def call(self, *args):
+    # TODO(frostig): do we need to check sharding and sharded avals?
+    arg_avals = map(xla.abstractify, args)
+    dispatch.check_arg_avals_for_call(self.in_avals, arg_avals)
+    return self.unsafe_call(*args)
+
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
 
@@ -1046,13 +1181,15 @@ def check_multihost_collective_allowlist(jaxpr):
 
 PartitionsOrReplicated = Optional[Tuple[int, ...]]
 
-def _find_partitions(jaxpr) -> Tuple[
-    Optional[Tuple[PartitionsOrReplicated, ...]],
-    Optional[Tuple[PartitionsOrReplicated, ...]],
-    int,
-    Optional[Tuple[PartitionsOrReplicated, ...]],
-    Optional[Tuple[PartitionsOrReplicated, ...]],
-    Optional[int]]:
+class PartitionInfo(NamedTuple):
+  arg_parts: Optional[Tuple[PartitionsOrReplicated, ...]]
+  out_parts: Optional[Tuple[PartitionsOrReplicated, ...]]
+  num_partitions: int
+  local_arg_parts: Optional[Tuple[PartitionsOrReplicated, ...]]
+  local_out_parts: Optional[Tuple[PartitionsOrReplicated, ...]]
+  local_num_partitions: Optional[int]
+
+def _find_partitions(jaxpr):
   """Returns (in_partitions, out_partitions, num_partitions, local_in_parts,
               local_out_parts, local_num_partitions).
   """
@@ -1070,6 +1207,21 @@ def _find_partitions(jaxpr) -> Tuple[
               eqn.params["local_out_parts_thunk"](),
               eqn.params["local_nparts"])
   return None, None, 1, None, None, None
+
+def find_partitions(jaxpr) -> PartitionInfo:
+  (arg_parts, out_parts, num_partitions, local_arg_parts, local_out_parts,
+   local_num_partitions) = _find_partitions(jaxpr)
+
+  if local_num_partitions is None:
+    local_num_partitions = num_partitions
+  if local_arg_parts is None:
+    local_arg_parts = arg_parts
+  if local_out_parts is None:
+    local_out_parts = out_parts
+
+  return PartitionInfo(arg_parts, out_parts, num_partitions,
+                       local_arg_parts, local_out_parts, local_num_partitions)
+
 
 def reconcile_num_partitions(jaxpr, outer_num_parts: Optional[int]):
   """Returns the total number of partitions to use.
@@ -1704,7 +1856,7 @@ class MeshComputation:
               _allow_propagation_to_outputs : bool = False,
               _allow_compile_replicated : bool = True) -> 'MeshExecutable':
     if self._executable is None:
-      self._executable = MeshExecutable(
+      self._executable = MeshExecutable.from_hlo(
           self._hlo, *self.compile_args,
           _allow_propagation_to_outputs=_allow_propagation_to_outputs,
           _allow_compile_replicated=_allow_compile_replicated)  # type: ignore
@@ -1714,8 +1866,13 @@ class MeshComputation:
 class MeshExecutable:
   __slots__ = ['xla_executable', 'unsafe_call', '_local_in_untiled_avals']
 
-  def __init__(self,
-               computation: xc.XlaComputation,
+  def __init__(self, xla_executable, unsafe_call, local_in_untiled_avals):
+    self.xla_executable = xla_executable
+    self.unsafe_call = unsafe_call
+    self._local_in_untiled_avals = local_in_untiled_avals
+
+  @staticmethod
+  def from_hlo(computation: xc.XlaComputation,
                mesh: Mesh,
                local_in_untiled_avals: Sequence[ShapedArray],
                local_out_untiled_avals: Sequence[ShapedArray],
@@ -1763,18 +1920,19 @@ class MeshExecutable:
                                            global_out_avals, out_axis_resources, mesh)
 
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
-      self.unsafe_call = backend.compile_replicated(
+      unsafe_call = backend.compile_replicated(
           computation, compile_options,
           input_indices, local_input_specs,
           handle_outs)
+      xla_executable = None
     else:
       compiled = dispatch.compile_or_get_cached(backend, computation, compile_options)
       handle_args = InputsHandler(compiled.local_devices(), local_input_specs,
                                   input_indices)
-      self.unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
-      self.xla_executable = compiled
+      unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
+      xla_executable = compiled
 
-    self._local_in_untiled_avals = local_in_untiled_avals
+    return MeshExecutable(xla_executable, unsafe_call, local_in_untiled_avals)
 
   def call(self, *args):
     arg_avals = map(xla.abstractify, args)
