@@ -19,7 +19,6 @@ from typing import Tuple
 
 from jax import tree_util
 from jax._src import api
-from jax._src.util import prod
 import jax.numpy as jnp
 
 
@@ -142,7 +141,7 @@ class Vector:
   @property
   def size(self):
     values = tree_util.tree_leaves(self.tree)
-    return sum(prod(jnp.shape(value)) for value in values)
+    return sum(jnp.size(value) for value in values)
 
   def __len__(self):
     return self.size
