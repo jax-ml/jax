@@ -79,23 +79,6 @@ Array = Any
 DType = Any
 Shape = core.Shape
 
-@functools.partial(jax.jit, inline=True)
-def _array_copy(arr):
-  """Return an on-device copy of a DeviceArray.
-
-  This is a private method; users should write ``jnp.array(x, copy=True)``.
-
-  Why do we need copies in a purely functional langauge? Well, JAX is *almost*
-  purely functional: the semantics of ``donate_argnums`` mean that sometimes
-  buffers are consumed. So we need a way to copy on-device.
-  """
-  # This jit-based implementation must avoid hitting _execute_trivial in
-  # dispatch.py, and so its body needs to be one which JAX optimizations don't
-  # simplify away (which could evolve!). An alternative would be to have an
-  # identity primitive with an impl that performs a runtime copy-on-device
-  # operation, but such an operation doesn't currently exist in the runtime.
-  return jax.jit(lambda x: x, inline=False)(arr)
-
 def _try_broadcast_shapes(shapes):
   assert shapes
   if len(shapes) == 1: return shapes[0]
@@ -4126,6 +4109,20 @@ xla.register_translation(rng_bit_generator_p,
 RandomAlgorithm = xops.RandomAlgorithm
 RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
 
+
+def _array_copy(arr):
+  return copy_p.bind(arr)
+
+# The copy_p primitive exists for expressing making copies of runtime arrays.
+# For that reason we don't simplify it out of jaxprs (e.g. for jit invariance).
+# It's used in jnp.array(x, copy=True), which is the user-facing API.
+copy_p = core.Primitive('copy_p')
+copy_p.def_impl(partial(xla.apply_primitive, copy_p))
+copy_p.def_abstract_eval(lambda x: x)
+xla.register_translation(copy_p, lambda ctx, avals_in, avals_out, x: [x])
+ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
+batching.defvectorized(copy_p)
+masking.defvectorized(copy_p)
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT):
