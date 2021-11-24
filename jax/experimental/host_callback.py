@@ -480,7 +480,6 @@ def _inline_host_callback() -> bool:
 def _use_outfeed(platform: str) -> bool:
   return (platform in ("tpu", "gpu") or FLAGS.jax_host_callback_outfeed)
 
-
 xops = xla_client._xla.ops
 
 XlaOp = xla_client.XlaOp
