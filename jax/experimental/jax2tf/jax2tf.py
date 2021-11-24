@@ -34,6 +34,7 @@ from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
+from jax._src.lax import slicing as lax_slicing
 from jax._src import source_info_util
 from jax._src import util
 import jax._src.prng
@@ -2051,7 +2052,7 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
             _out_aval: core.ShapedArray):
   """Tensorflow implementation of gather."""
   if mode == lax.GatherScatterMode.FILL_OR_DROP:
-    gather_fill_fn = _convert_jax_impl(lax_internal._gather_fill,
+    gather_fill_fn = _convert_jax_impl(lax_slicing._gather_fill,
                                        multiple_results=False)
     return gather_fill_fn(
         operand, start_indices, dimension_numbers=dimension_numbers,

@@ -30,6 +30,7 @@ from jax._src import ad_util
 from jax._src import dtypes
 import jax._src.lax.lax as lax
 import jax._src.lax.convolution as convolution
+import jax._src.lax.slicing as slicing
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 import jax._src.util as util
@@ -762,8 +763,8 @@ def _select_and_gather_add_transpose(
   result = _select_and_scatter_add(t, operand, select_prim, window_dimensions,
                                    window_strides, padding)
   if has_base_dilation:
-    result = lax.slice(result, (0,) * len(result.shape), result.shape,
-                       base_dilation)
+    result = slicing.slice(result, (0,) * len(result.shape), result.shape,
+                           base_dilation)
   return [result, None]
 
 def _select_and_gather_add_batching_rule(

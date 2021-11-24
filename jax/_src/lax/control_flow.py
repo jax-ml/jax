@@ -35,6 +35,7 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lax import lax
+from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
 from jax import linear_util as lu
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
@@ -1517,20 +1518,20 @@ def _split_leading_dim(i, aval, x):
     return (core.unit, core.unit)
   else:
     assert x.ndim >= 1
-    return (lax.slice_in_dim(x, 0, i),
-            lax.slice_in_dim(x, i, x.shape[0]))
+    return (slicing.slice_in_dim(x, 0, i),
+            slicing.slice_in_dim(x, i, x.shape[0]))
 
 def _dynamic_index_array(i, aval, x):
   if aval is core.abstract_unit:
     return core.unit
   else:
-    return lax.dynamic_index_in_dim(x, i, keepdims=False)
+    return slicing.dynamic_index_in_dim(x, i, keepdims=False)
 
 def _index_array(i, aval, x):
   if aval is core.abstract_unit:
     return core.unit
   else:
-    return lax.index_in_dim(x, i, keepdims=False)
+    return slicing.index_in_dim(x, i, keepdims=False)
 
 def _empty_array(sz, aval):
   if aval is core.abstract_unit:
@@ -1542,7 +1543,7 @@ def _update_array(i, aval, xs, x):
   if aval is core.abstract_unit:
     return core.unit
   else:
-    return lax.dynamic_update_index_in_dim(xs, x, i, 0)
+    return slicing.dynamic_update_index_in_dim(xs, x, i, 0)
 
 def _partition_leading(sz0, sz1, aval, x):
   if aval is core.abstract_unit:
@@ -2013,8 +2014,8 @@ def _concat_masking_rule(padded_vals, logical_shapes, dimension):
 
 def _memcpy(axis, num, src, dst, offset):
   def body(i, dst):
-    update = lax.dynamic_index_in_dim(src, i, axis)
-    return lax.dynamic_update_index_in_dim(dst, update, i + offset, axis)
+    update = slicing.dynamic_index_in_dim(src, i, axis)
+    return slicing.dynamic_update_index_in_dim(dst, update, i + offset, axis)
   return fori_loop(0, num, body, dst)
 
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule  # type: ignore
@@ -2649,25 +2650,26 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
 
     # Combine adjacent pairs of elements.
     reduced_elems = combine(
-      [lax.slice_in_dim(elem, 0, -1, stride=2, axis=axis) for elem in elems],
-      [lax.slice_in_dim(elem, 1, None, stride=2, axis=axis) for elem in elems])
+      [slicing.slice_in_dim(elem, 0, -1, stride=2, axis=axis) for elem in elems],
+      [slicing.slice_in_dim(elem, 1, None, stride=2, axis=axis)
+       for elem in elems])
 
     # Recursively compute scan for partially reduced tensors.
     odd_elems = _scan(reduced_elems)
 
     if num_elems % 2 == 0:
       even_elems = combine(
-        [lax.slice_in_dim(e, 0, -1, axis=axis) for e in odd_elems],
-        [lax.slice_in_dim(e, 2, None, stride=2, axis=axis) for e in elems])
+        [slicing.slice_in_dim(e, 0, -1, axis=axis) for e in odd_elems],
+        [slicing.slice_in_dim(e, 2, None, stride=2, axis=axis) for e in elems])
     else:
       even_elems = combine(
         odd_elems,
-        [lax.slice_in_dim(e, 2, None, stride=2, axis=axis) for e in elems])
+        [slicing.slice_in_dim(e, 2, None, stride=2, axis=axis) for e in elems])
 
     # The first element of a scan is the same as the first element
     # of the original `elems`.
     even_elems = [
-      lax.concatenate([lax.slice_in_dim(elem, 0, 1, axis=axis), result],
+      lax.concatenate([slicing.slice_in_dim(elem, 0, 1, axis=axis), result],
                       dimension=axis)
       for (elem, result) in zip(elems, even_elems)]
     return list(_map(partial(_interleave, axis=axis), even_elems, odd_elems))

@@ -24,13 +24,14 @@ import numpy as np
 
 from jax import core
 from jax import tree_util
-from . import lax
 from jax.core import ShapedArray, AxisName, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
 from jax._src import dtypes
+from jax._src.lax import lax
+from jax._src.lax import slicing
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import lax_numpy
 from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, moveaxis
@@ -835,7 +836,8 @@ def _index_in_group(axis_name, axis_index_groups):
   # We use argsort to invert the axis_index_groups permutation
   flat_groups = np.array(axis_index_groups).flatten()
   device_id_to_idx = flat_groups.argsort() % len(axis_index_groups[0])
-  return lax.squeeze(lax.dynamic_slice_in_dim(device_id_to_idx, cur_device_id, 1), [0])
+  return lax.squeeze(
+      slicing.dynamic_slice_in_dim(device_id_to_idx, cur_device_id, 1), [0])
 
 def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis, axis_index_groups):
   idx = _index_in_group(axis_name, axis_index_groups)
@@ -843,7 +845,8 @@ def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis, axis_in
   axis_size = full.shape[0]
   tile_size = x.shape[split_axis] // axis_size
   tile_base_idx = idx * tile_size
-  sliced = lax.dynamic_slice_in_dim(full, tile_base_idx, tile_size, split_axis + 1)
+  sliced = slicing.dynamic_slice_in_dim(full, tile_base_idx, tile_size,
+                                        split_axis + 1)
   return _foldaxis(concat_axis, _moveaxis(0, concat_axis, sliced))
 
 def _all_to_all_translation_rule(ctx, avals_in, avals_out, x, *, split_axis,
@@ -1046,11 +1049,11 @@ def _expand(dim, size, index, tiled, x):
     tile_size = shape[dim]
     shape[dim] *= size
     out = lax.full(shape, lax._const(x, 0))
-    return lax.dynamic_update_slice_in_dim(out, x, index * tile_size, dim)
+    return slicing.dynamic_update_slice_in_dim(out, x, index * tile_size, dim)
   else:
     shape.insert(dim, size)
     out = lax.full(shape, lax._const(x, 0))
-    return lax.dynamic_update_index_in_dim(out, x, index, dim)
+    return slicing.dynamic_update_index_in_dim(out, x, index, dim)
 
 def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   index = _index_in_group(axis_name, axis_index_groups)
@@ -1174,7 +1177,7 @@ def _reduce_scatter_via_reducer(x, *, reducer, scatter_dimension, axis_name,
   scatter_dim_output_size = scatter_dim_input_size // axis_size
 
   outs = reducer(x, axis_name=axis_name, axis_index_groups=axis_index_groups)
-  outs = lax.dynamic_slice_in_dim(
+  outs = slicing.dynamic_slice_in_dim(
       outs,
       start_index=index * scatter_dim_output_size,
       slice_size=scatter_dim_output_size,
@@ -1469,12 +1472,12 @@ def _pgather_impl(src, idx, *, axes):
   slice_sizes = (1,) + non_axes_shape
   idx = lax.reshape(idx, idx.shape + (1,))
   offset_dims = tuple(range(idx.ndim - 1, idx.ndim + src_one_axis_front.ndim - 2))
-  dnums = lax.GatherDimensionNumbers(
+  dnums = slicing.GatherDimensionNumbers(
       offset_dims=offset_dims,
       collapsed_slice_dims=(0,),
       start_index_map=(0,))
-  return lax.gather(src_one_axis_front, idx, dimension_numbers=dnums,
-                    slice_sizes=tuple(slice_sizes))
+  return slicing.gather(src_one_axis_front, idx, dimension_numbers=dnums,
+                        slice_sizes=tuple(slice_sizes))
 
 def _pgather_abstract_eval(src, idx, *, axes):
   # TODO: Avals with names rule: remove all axes from src, insert those from idx
