@@ -40,8 +40,8 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import core, dtypes, lax
-from jax._src import api
+from jax import core, lax
+from jax._src import api, dtypes
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
@@ -846,6 +846,13 @@ class APITest(jtu.JaxTestCase):
     assert len(side) == 1
     assert g(2.0) == 4.0
     assert len(side) == 1
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{transform.__name__}", "transform": transform}
+      for transform in [grad, jacfwd, jacrev])
+  def test_ad_weak_types(self, transform):
+    out = transform(lambda x: x)(1.0)
+    self.assertTrue(dtypes.is_weakly_typed(out))
 
   def test_bad_input(self):
     def f(x):
@@ -2325,25 +2332,31 @@ class APITest(jtu.JaxTestCase):
     if not hasattr(self, "assertLogs"):
       raise unittest.SkipTest("test requires assertLogs (python 3)")
 
-    lax.add(1, 2)  # make sure some initial warnings are already printed
+    # make sure some initial warnings & cached operations already happen.
+    api.grad(api.jit(lambda x: x))(1.0)
 
-    sin = api.jit(jnp.sin)
+    @api.jit
+    def f(x):
+      return jnp.sin(x)
 
     prev_level = logging.get_verbosity()
     try:
       logging.set_verbosity('DEBUG')
       with self.assertLogs(level=logging.DEBUG) as l:
-        ans1 = api.grad(sin)(2.)
-        ans2 = api.grad(sin)(3.)
+        ans1 = api.grad(f)(2.)
+        ans2 = api.grad(f)(3.)
     finally:
       logging.set_verbosity(prev_level)
-    self.assertLen(l.output, 2)
-
+    self.assertLen(l.output, 2)  # one for fwd, one for bwd
     self.assertAllClose(ans1, np.cos(2.), check_dtypes=False)
     self.assertAllClose(ans2, np.cos(3.), check_dtypes=False)
 
   def test_grad_of_jit_compilation_caching2(self):
     # Like the above test, but instead of logging use our compile counters.
+
+    # make sure some initial convert element type operations are pre-cached.
+    api.grad(api.jit(lambda x: x))(1.0)
+
     @api.jit
     def f(x):
       return jnp.sin(x)

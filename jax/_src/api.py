@@ -1024,9 +1024,8 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
       ans, vjp_py, aux = _vjp(
           f_partial, *dyn_args, has_aux=True, reduce_axes=reduce_axes)
     _check_scalar(ans)
-    dtype = _dtype(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(np.ones((), dtype=dtype))
+    g = vjp_py(jax.lax._one(ans))
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -1277,26 +1276,28 @@ def _std_basis(pytree):
 
 def _jacfwd_unravel(input_pytree, output_pytree_leaf, arr):
   return _unravel_array_into_pytree(
-    input_pytree, -1, _dtype(output_pytree_leaf), arr)
+    input_pytree, -1, output_pytree_leaf, arr)
 
 def _jacrev_unravel(output_pytree, input_pytree_leaf, arr):
   return _unravel_array_into_pytree(
-    output_pytree, 0, _dtype(input_pytree_leaf), arr)
+    output_pytree, 0, input_pytree_leaf, arr)
 
-def _possible_downcast(x, dtype):
+def _possible_downcast(x, example):
   if (dtypes.issubdtype(x.dtype, np.complexfloating) and
-      not dtypes.issubdtype(dtype, np.complexfloating)):
+      not dtypes.issubdtype(_dtype(example), np.complexfloating)):
     x = x.real
-  return x.astype(dtype)
+  dtype = None if example is None else _dtype(example)
+  weak_type = None if example is None else dtypes.is_weakly_typed(example)
+  return jax._src.lax.lax._convert_element_type(x, dtype, weak_type)
 
-def _unravel_array_into_pytree(pytree, axis, cast_to_type, arr):
+def _unravel_array_into_pytree(pytree, axis, example, arr):
   """Unravel an array into a PyTree with a given structure.
   Args:
       pytree: The pytree that provides the structure.
       axis: The parameter axis is either -1, 0, or 1.  It controls the
         resulting shapes.
-      cast_to_type: Cast the components to the given dtype, or else use the
-        pytree leaf type if cast_to_type is None.
+      example: If specified, cast the components to the matching dtype/weak_type,
+        or else use the pytree leaf type if example is None.
       arr: The array to be unraveled.
   """
   leaves, treedef = tree_flatten(pytree)
@@ -1304,8 +1305,7 @@ def _unravel_array_into_pytree(pytree, axis, cast_to_type, arr):
   shapes = [arr.shape[:axis] + np.shape(l) + arr.shape[axis+1:] for l in leaves]
   parts = _split(arr, np.cumsum(map(np.size, leaves[:-1])), axis)
   reshaped_parts = [
-      _possible_downcast(np.reshape(x, shape),
-                         _dtype(leaf) if cast_to_type is None else cast_to_type)
+      _possible_downcast(np.reshape(x, shape), leaf if example is None else example)
       for x, shape, leaf in zip(parts, shapes, leaves)]
   return tree_unflatten(treedef, reshaped_parts)
 
@@ -2994,7 +2994,7 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
   ...   return z
   ...
   >>> jax.value_and_grad(g)(2.0)
-  (DeviceArray(0.78907233, dtype=float32, weak_type=True), DeviceArray(-0.2556391, dtype=float32))
+  (DeviceArray(0.78907233, dtype=float32, weak_type=True), DeviceArray(-0.2556391, dtype=float32, weak_type=True))
 
   Here, the same value is produced whether or not the :func:`jax.checkpoint`
   decorator is present. When the decorator is not present, the values

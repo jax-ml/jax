@@ -1177,9 +1177,9 @@ class ConcreteArray(ShapedArray):
   __slots__ = ['val']
   array_abstraction_level = 0
 
-  def __init__(self, val, weak_type=False):
+  def __init__(self, val, weak_type=None):
     super().__init__(np.shape(val), np.result_type(val),
-                     weak_type=weak_type)
+                     weak_type=dtypes.is_weakly_typed(val) if weak_type is None else weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
     assert self.dtype != np.dtype('O'), val

@@ -1022,11 +1022,10 @@ def _device_put_raw(x, weak_type=None):
 
 def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
-  scalar_zero = np.array(0).astype(aval.dtype)
-  if scalar_zero.dtype != aval.dtype:
-    # For numpy 1.17.5 we get here for float0. We use an alternate construction.
-    assert aval.dtype == dtypes.float0
+  if aval.dtype == dtypes.float0:
     scalar_zero = np.zeros((), dtype=aval.dtype)
+  else:
+    scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   return broadcast(scalar_zero, aval.shape)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
@@ -1088,13 +1087,13 @@ def stop_gradient(x):
   For example:
 
   >>> jax.grad(lambda x: x**2)(3.)
-  DeviceArray(6., dtype=float32)
+  DeviceArray(6., dtype=float32, weak_type=True)
   >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
-  DeviceArray(0., dtype=float32)
+  DeviceArray(0., dtype=float32, weak_type=True)
   >>> jax.grad(jax.grad(lambda x: x**2))(3.)
-  DeviceArray(2., dtype=float32)
+  DeviceArray(2., dtype=float32, weak_type=True)
   >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
-  DeviceArray(0., dtype=float32)
+  DeviceArray(0., dtype=float32, weak_type=True)
   """
   def stop(x):
     if (dtypes.issubdtype(_dtype(x), np.floating) or

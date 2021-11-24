@@ -170,7 +170,7 @@ def checkpoint(fun: Callable, prevent_cse: bool = True,
   ...   return z
   ...
   >>> jax.value_and_grad(g)(2.0)
-  (DeviceArray(0.78907233, dtype=float32, weak_type=True), DeviceArray(-0.2556391, dtype=float32))
+  (DeviceArray(0.78907233, dtype=float32, weak_type=True), DeviceArray(-0.2556391, dtype=float32, weak_type=True))
 
   Here, the same value is produced whether or not the :func:`jax.checkpoint`
   decorator is present. When the decorator is not present, the values
