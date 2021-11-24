@@ -1230,6 +1230,7 @@ def _make_scatter_harness(name,
                           f_lax=lax.scatter_min,
                           indices_are_sorted=False,
                           unique_indices=False,
+                          mode=lax.GatherScatterMode.FILL_OR_DROP,
                           scatter_indices=np.array([[0], [2]]),
                           update_shape=(2,),
                           dtype=np.float32,
@@ -1237,12 +1238,13 @@ def _make_scatter_harness(name,
   dimension_numbers = lax.ScatterDimensionNumbers(*dimension_numbers)
   define(
       f_lax.__name__,
-      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}"
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}_mode={mode}"
       .replace(" ", ""),
       partial(
           f_lax,
           indices_are_sorted=indices_are_sorted,
-          unique_indices=unique_indices), [
+          unique_indices=unique_indices,
+          mode=mode), [
               RandArg(shape, dtype),
               StaticArg(scatter_indices),
               RandArg(update_shape, dtype),
@@ -1261,7 +1263,8 @@ def _make_scatter_harness(name,
       update_shape=update_shape,
       dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted,
-      unique_indices=unique_indices)
+      unique_indices=unique_indices,
+      mode=mode)
 
 
 # Validate dtypes
@@ -1271,7 +1274,7 @@ for dtype in jtu.dtypes.all:
   ]:
     #if f_lax in [lax.scatter_add, lax.scatter_mul] and dtype == np.bool_:
     #  continue
-    _make_scatter_harness("dtypes", dtype=dtype, f_lax=f_lax)
+    _make_scatter_harness("dtypes", dtype=dtype, f_lax=f_lax, mode=lax.GatherScatterMode.CLIP)
 
 # Validate f_lax/update_jaxpr
 # We explicitly decide against testing lax.scatter, as its reduction function
@@ -1281,14 +1284,14 @@ for dtype in jtu.dtypes.all:
 # Validate shapes, dimension numbers and scatter indices
 for shape, scatter_indices, update_shape, dimension_numbers in [
     ((10,), [[0], [0], [0]], (3, 2), ((1,), (), (0,))),
-    ((10, 5), [[0], [2], [1]], (3, 3), ((1,), (0,), (0,)))
+    ((10, 5), [[0], [5], [1]], (3, 3), ((1,), (0,), (0,)))
 ]:
   _make_scatter_harness(
       "shapes_and_dimension_numbers",
       shape=shape,
       update_shape=update_shape,
       scatter_indices=np.array(scatter_indices),
-      dimension_numbers=dimension_numbers)
+      dimension_numbers=dimension_numbers, mode=lax.GatherScatterMode.CLIP)
 
 # Validate sorted indices
 _make_scatter_harness("indices_are_sorted", indices_are_sorted=True)
@@ -1300,6 +1303,10 @@ _make_scatter_harness("indices_are_sorted", indices_are_sorted=True)
 # when all the indices to be updated are pairwise non-overlapping. Identifying
 # such cases is non-trivial.
 _make_scatter_harness("unique_indices", unique_indices=False)
+
+_make_scatter_harness("fill_or_drop", mode=lax.GatherScatterMode.FILL_OR_DROP,
+                      scatter_indices=np.array([[3], [77]]))
+
 
 for dtype in jtu.dtypes.all:
   arg_shape = (2, 3)
