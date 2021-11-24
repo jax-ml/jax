@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Pytype is too slow to check this file.
-# pytype: skip-file
-
 import builtins
 import enum
 import functools
@@ -72,6 +69,7 @@ from jax._src.lax import slicing
 xb = xla_bridge
 xc = xla_client
 xops = xla_client.ops
+xe = xla_client._xla
 
 _max = builtins.max
 _min = builtins.min
@@ -1119,7 +1117,7 @@ def reduce_precision(operand, exponent_bits, mantissa_bits):
     operator.index, mantissa_bits, "mantissa_bits argument of lax.reduce_precision")
   return reduce_precision_p.bind(operand, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits)
 
-def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
+def squeeze(array: Array, dimensions: Sequence[int]) -> Array:
   """Squeeze any number of size 1 dimensions from an array."""
   ndim = np.ndim(array)
   dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
@@ -1127,7 +1125,7 @@ def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
     return array
   return squeeze_p.bind(array, dimensions=dimensions)
 
-def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
+def expand_dims(array: Array, dimensions: Sequence[int]) -> Array:
   """Insert any number of size 1 dimensions into an array."""
   ndim_out = np.ndim(array) + len(dimensions)
   dims_set = frozenset(canonicalize_axis(i, ndim_out) for i in dimensions)
@@ -3980,7 +3978,7 @@ def _infeed_lowering(ctx, avals_in, avals_out, token, *, shapes, partitions):
                                  mlir.i32_attr(1)).result
   outs = [mhlo.GetTupleElementOp(typ, outs_tuple, mlir.i32_attr(i)).result
           for i, typ in enumerate(flat_output_types)]
-  return util.unflatten(outs, map(len, output_types)) + [[token,]]
+  return util.unflatten(outs, safe_map(len, output_types)) + [[token,]]
 
 mlir.register_lowering(infeed_p, _infeed_lowering)
 

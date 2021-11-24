@@ -1395,7 +1395,7 @@ core.axis_substitution_rules[pdot_p] = partial(_subst_all_names_in_param, 'axis_
 @pdot_p.def_impl
 def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch, precision):
   if axis_name: raise NameError(f"unbound axis name: {axis_name[0]}")
-  return lax.dot_general(x, y, [pos_contract, pos_batch], precision=precision)
+  return lax.dot_general(x, y, (pos_contract, pos_batch), precision=precision)
 
 @pdot_p.def_abstract_eval
 def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch, precision):
@@ -1440,7 +1440,7 @@ batching.primitive_batchers[pdot_p] = _pdot_vmap_batching_rule
 
 
 def _pdot_lowering(x, y, *, axis_name, pos_contract, pos_batch, precision):
-  local_out = lax.dot_general(x, y, dimension_numbers=[pos_contract, pos_batch],
+  local_out = lax.dot_general(x, y, dimension_numbers=(pos_contract, pos_batch),
                               precision=precision, preferred_element_type=None)
   return psum(local_out, axis_name) if axis_name is not None else local_out
 
