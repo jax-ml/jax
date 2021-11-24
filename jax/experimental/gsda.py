@@ -118,6 +118,14 @@ class GlobalShardedDeviceArray:
         f"got: {[db.dtype for db in device_buffers]}")
     self.dtype = dtype
 
+  def __str__(self):
+    return f'GlobalShardedDeviceArray(shape={self.shape}, dtype={self.dtype})'
+
+  def __repr__(self):
+    return (f'GlobalShardedDeviceArray(shape={self.shape}, dtype={self.dtype}, '
+            f'global_mesh_shape={dict(self._global_mesh.shape)}, '
+            f'mesh_axes={self._mesh_axes})')
+
   @property
   def shape(self) -> Shape:
     return self._global_shape

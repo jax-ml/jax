@@ -252,6 +252,23 @@ class GSDATest(jtu.JaxTestCase):
     self.assertArraysEqual(gsda.local_data(1).to_py(),
                            expected_second_shard_value)
 
+  def test_gsda_str_repr(self):
+    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = [('x', 'y')]
+    global_input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return global_input_data[index]
+    gsda = GlobalShardedDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+    self.assertEqual(str(gsda),
+                     'GlobalShardedDeviceArray(shape=(8, 2), dtype=int32)')
+    self.assertEqual(
+        repr(gsda),
+        ("GlobalShardedDeviceArray(shape=(8, 2), dtype=int32, "
+        "global_mesh_shape={'x': 4, 'y': 2}, mesh_axes=[('x', 'y')])"))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
