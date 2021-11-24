@@ -1453,7 +1453,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans =                scan(f, c, as_)
     expected = scan_reference(f, c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(
+        ans,
+        expected,
+        check_dtypes=False,
+        rtol={np.float64: 1.4e-15},
+        atol={np.float64: 8e-15})
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
@@ -1797,19 +1802,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testIssue757(self):
     # code from https://github.com/google/jax/issues/757
     def fn(a):
-        return jnp.cos(a)
+      return jnp.cos(a)
 
     def loop(val):
-        iterations = 10
-        def apply_carry(x, i):
-            return jax.grad(fn, argnums=(0,))(x)[0], i
+      iterations = 10
 
-        final_val, _ = lax.scan(
-            apply_carry,
-            val,
-            jnp.arange(iterations)
-        )
-        return final_val
+      def apply_carry(x, i):
+        return jax.grad(fn, argnums=(0,))(x)[0], i
+
+      final_val, _ = lax.scan(apply_carry, val, jnp.arange(iterations))
+      return final_val
 
     arg = 0.5
     jax.jit(jax.jacfwd(loop, argnums=(0,)))(arg)  # doesn't crash
@@ -2045,8 +2047,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = jax.jit(sqrt_cubed)(5.0)
-    self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
-                        rtol={np.float64:1e-7})
+    self.assertAllClose(
+        results, 5.0**1.5, check_dtypes=False, rtol={np.float64: 1e-7})
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_root_vector_with_solve_closure(self):
