@@ -629,7 +629,7 @@ def _execute_compiled(name: str, compiled: xla.XlaExecutable,
   out_bufs = compiled.execute(input_bufs)
   dispatch.check_special(name, out_bufs)
   return [handler(device, *bs) for handler, bs in
-          zip(result_handlers, xla._partition_outputs(buffer_counts, out_bufs))]
+          zip(result_handlers, util.unflatten(out_bufs, buffer_counts))]
 
 
 def _execute_replicated(name: str, compiled: xla.XlaExecutable,
@@ -649,7 +649,7 @@ def _execute_replicated(name: str, compiled: xla.XlaExecutable,
   ]
   dispatch.check_special(name, out_bufs)
   return [handler(device, *bs) for handler, bs in
-          zip(result_handlers, xla._partition_outputs(buffer_counts, out_bufs))]
+          zip(result_handlers, util.unflatten(out_bufs, buffer_counts))]
 
 
 def _execute_trivial(jaxpr, device: Optional[xla.Device], consts, buffer_counts,

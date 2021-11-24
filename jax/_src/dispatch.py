@@ -424,7 +424,7 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
     return (handlers[0](*out_bufs),)
   return tuple(
       handler(*bs) for handler, bs in
-      unsafe_zip(handlers, xla._partition_outputs(output_buffer_counts, out_bufs)))
+      unsafe_zip(handlers, util.unflatten(out_bufs, output_buffer_counts)))
 
 
 def _execute_replicated(name: str, compiled: XlaExecutable,
@@ -447,7 +447,7 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
     return (handlers[0](*out_bufs),)
   return tuple(
       handler(*bs) for handler, bs in
-      unsafe_zip(handlers, xla._partition_outputs(output_buffer_counts, out_bufs)))
+      unsafe_zip(handlers, util.unflatten(out_bufs, output_buffer_counts)))
 
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,

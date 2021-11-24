@@ -40,6 +40,7 @@ from jax.core import (ConcreteArray, ShapedArray,
                       Literal, pp_eqn_compact, JaxprPpContext,
                       abstract_token)
 import jax._src.pretty_printer as pp
+from jax._src import util
 from jax._src.util import (prod, extend_name_stack, wrap_name,
                            safe_zip, safe_map, partition_list)
 from jax._src.lib import xla_bridge as xb
@@ -334,17 +335,6 @@ pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
 
 
-
-
-def _partition_outputs(nouts: Sequence[int], outs):
-  if len(nouts) == 1:
-    return [outs]
-  outs = iter(outs)
-  return [[next(outs) for _ in range(nout)] for nout in nouts]
-
-
-
-
 def primitive_subcomputation(platform: str, prim: core.Primitive,
                              *avals: core.AbstractValue, **params):
   c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
@@ -434,8 +424,8 @@ def _flatmap(func: Callable, vars: Sequence):
 
 def _partitionmap(func: Callable, vars: Sequence, nodes: Sequence):
   return map(func, vars,
-             _partition_outputs([len(aval_to_xla_shapes(v.aval)) for v in vars],
-                                nodes))
+             util.unflatten(nodes,
+                            [len(aval_to_xla_shapes(v.aval)) for v in vars]))
 
 class AxisEnv(NamedTuple):
   """Represents a pmap mesh (only along the replica axes)."""
