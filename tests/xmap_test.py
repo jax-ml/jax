@@ -591,6 +591,32 @@ class XMapTest(XMapTestCase):
     # Make sure this doesn't crash
     xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...]).lower(x)
 
+  def testLowerCompile(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f_exe = f.lower(x).compile()
+    self.assertAllClose(f_exe(x), f(x))
+
+  def testLowerCompileInTreeMismatch(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f_exe = f.lower(x).compile()
+    self.assertRaisesRegex(
+        TypeError, "function compiled for .*, called with .*",
+        lambda: f_exe([x]))
+
+  def testLowerCompileArgTypeMismatch(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    x_f32 = x.astype(jnp.float32)
+    x_i32 = x.astype(jnp.int32)
+    f_exe = f.lower(x_f32).compile()
+    self.assertRaisesRegex(
+        TypeError,
+        "Computation compiled for input types:\n.*float32.*\n"
+        "called with:\n.*int32.*",
+        lambda: f_exe(x_i32))
+
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):
   """Re-executes all basic tests with the SPMD partitioner enabled"""
