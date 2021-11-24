@@ -42,6 +42,7 @@ from jax.experimental.jax2tf.examples_eval import examples_converter
 
 
 CONVERTERS = {
+    'jax2tf_xla': converters.jax2tf_xla,
     'jax2tf_to_tfjs': converters.jax2tf_to_tfjs,
     'jax2tf_to_tflite': converters.jax2tf_to_tflite
 }

@@ -86,9 +86,17 @@ def make_module(spec: all_examples.ModuleSpec) -> ModuleToConvert:
 
   def apply(variables, inputs):
     replace_map.update({Arg.VARS: variables, Arg.INPUT: inputs})
+    mutable = spec.apply_kwargs.get("mutable", None)
     result = module.apply(*replace(spec.apply_args),
                           **replace(spec.apply_kwargs))
-    return result
+    # If any variables are mutable, `apply` returns a pair
+    # `(output, mutated_vars)`. In that case we only return the output, because
+    # `mutated_vars` is a `FrozenDict` and TFLite returns only some of the leafs
+    # in this dict, so it is not clear how to compare these.
+    if mutable:
+      return result[0]
+    else:
+      return result
 
   return ModuleToConvert(spec.input_shape, apply, variables, spec.dtype)
 
@@ -204,6 +212,8 @@ def test_convert(converter_name: str,
           logging.info('OK!')
         except Exception as e:  # pylint: disable=broad-except
           error_msg = repr(e)
+          if len(error_msg) > 250:
+            error_msg = error_msg[:250] + "... (CROPPED)"
           logging.info('ERROR %s', error_msg)
 
       errors[example_name] = error_msg
