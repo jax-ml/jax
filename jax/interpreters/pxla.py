@@ -1021,12 +1021,16 @@ def lower_parallel_callable(
 class PmapComputation:
   def __init__(self, hlo, *compile_args):
     self._executable = None
-    self.hlo = hlo
+    self._hlo = hlo
     self.compile_args = compile_args
+
+  def hlo(self):
+    # this is a method for api consistency with dispatch.XlaComputation
+    return self._hlo
 
   def compile(self):
     if self._executable is None:
-      self._executable = PmapExecutable.from_hlo(self.hlo, *self.compile_args)
+      self._executable = PmapExecutable.from_hlo(self._hlo, *self.compile_args)
     return self._executable
 
 
@@ -1849,7 +1853,7 @@ class MeshComputation:
     self.compile_args = compile_args
 
   def hlo(self):
-    # this is a method for api consistency with xla.XlaComputation
+    # this is a method for api consistency with dispatch.XlaComputation
     return self._hlo
 
   def compile(self,
