@@ -27,6 +27,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+from jax import ad_checkpoint
 from jax import core
 from jax.config import config
 from jax import dtypes
@@ -1458,6 +1459,19 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       transforms: [('batch', {'batch_dims': (0, 0)})] what: cotangents
       ( [4. 9.] [2. 3.] )"""
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+    testing_stream.reset()
+
+    print(f"grad o remat = {jax.grad(lambda x: power3(ad_checkpoint.checkpoint(power3)(x)))(3.)}")
+    hcb.barrier_wait()
+    expected = """
+      what: x,x^2
+      ( 3. 9. )
+      what: x,x^2
+      ( 27. 729. )
+      what: x,x^2
+      ( 3. 9. )"""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+    testing_stream.reset()
 
   def test_tap_pmap(self):
     if len(local_devices()) < 2:
@@ -2024,8 +2038,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
                use_result=use_result, use_remat=use_remat, grad_func=grad_func)
           for use_result in [True, False]
           for grad_func in ["grad", "value_and_grad"]
-          for use_remat in ["old", "none"]))
-  def test_tap_remat(self, use_result=False, grad_func="grad", use_remat="old"):
+          for use_remat in ["old", "new", "none"]))
+  def test_tap_remat(self, use_result=False, grad_func="grad", use_remat="new"):
     def f(x):
       id_print_result = hcb.id_print(x, output_stream=testing_stream)
       if use_result:
@@ -2034,6 +2048,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     grad_f = jax.grad if grad_func == "grad" else jax.value_and_grad
     if use_remat == "old":
       trans_f = jax.remat(f)
+    elif use_remat == "new":
+      trans_f = ad_checkpoint.checkpoint(f)
     else:
       assert use_remat == "none"
       trans_f = f
@@ -2068,8 +2084,14 @@ class HostCallbackTapTest(jtu.JaxTestCase):
             2.
             2."""
       else:
-        # TODO: we should see two callbacks
-        expected = ""
+        if use_remat == "old":
+          # TODO: we should see two callbacks
+          expected = ""
+        else:
+          # Good: we see two callbacks, whether or not we use the result.
+          expected = """
+            2.
+            2."""
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
   def test_tap_named_call(self):
