@@ -41,12 +41,14 @@ from jax.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                       raise_to_shaped, abstract_token, canonicalize_shape)
 from jax._src.abstract_arrays import array_types
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import ad
 from jax.interpreters import invertible_ad as iad
 from jax.interpreters import batching
 from jax.interpreters import masking
+from jax._src import util
 from jax._src.util import (cache, safe_zip, prod, safe_map, canonicalize_axis,
                            split_list)
 from jax.tree_util import tree_map
@@ -54,6 +56,9 @@ import jax._src.lib
 from jax._src.lib import pytree
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import chlo
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lax.utils import (
   _argnum_weak_type,
   _input_dtype,
@@ -1103,6 +1108,35 @@ def stop_gradient(x):
       return x  # only bind primitive on inexact dtypes, to avoid some staging
   return tree_map(stop, x)
 
+def reduce_precision(operand, exponent_bits, mantissa_bits):
+  """Wraps XLA's `ReducePrecision
+  <https://www.tensorflow.org/xla/operation_semantics#reduceprecision>`_
+  operator.
+  """
+  exponent_bits = core.concrete_or_error(
+    operator.index, exponent_bits, "exponent_bits argument of lax.reduce_precision")
+  mantissa_bits = core.concrete_or_error(
+    operator.index, mantissa_bits, "mantissa_bits argument of lax.reduce_precision")
+  return reduce_precision_p.bind(operand, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits)
+
+def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
+  """Squeeze any number of size 1 dimensions from an array."""
+  ndim = np.ndim(array)
+  dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
+  if not dimensions:
+    return array
+  return squeeze_p.bind(array, dimensions=dimensions)
+
+def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
+  """Insert any number of size 1 dimensions into an array."""
+  ndim_out = np.ndim(array) + len(dimensions)
+  dims_set = frozenset(canonicalize_axis(i, ndim_out) for i in dimensions)
+  result_shape = list(np.shape(array))
+  for i in sorted(dims_set):
+    result_shape.insert(i, 1)
+  broadcast_dims = [i for i in range(ndim_out) if i not in dims_set]
+  return broadcast_in_dim(array, result_shape, broadcast_dims)
+
 
 ### convenience wrappers around traceables
 
@@ -1390,6 +1424,42 @@ def _maybe_broadcast(target_shape, x):
     squeeze_shape = [x_shape[i] for i in dims]
     return broadcast_in_dim(reshape(x, squeeze_shape), target_shape, dims)
 
+def broadcast_mhlo(
+    aval_out: core.ShapedArray, avals: Sequence[core.ShapedArray],
+    args: Sequence[ir.Value]) -> Sequence[ir.Value]:
+  """Broadcasts MHLO values with broadcast-compatible shapes to the same shape.
+  """
+  out = []
+  for aval, arg in zip(avals, args):
+    if aval.shape != aval_out.shape:
+      assert len(aval.shape) <= len(aval_out.shape), (aval, aval_out)
+      dims = mlir.dense_int_elements(
+          range(len(aval_out.shape) - len(aval.shape), len(aval_out.shape)))
+      arg = mhlo.BroadcastInDimOp(
+          mlir.aval_to_ir_type(aval.update(shape=aval_out.shape)), arg,
+          dims).result
+    out.append(arg)
+  return out
+
+def _nary_lower_mhlo(op: Callable, ctx: mlir.LoweringContext,
+                     avals_in: Sequence[core.ShapedArray],
+                     avals_out: Sequence[core.ShapedArray],
+                     *args: Union[ir.Value, Sequence[ir.Value]],
+                     explicit_type=False, **params):
+  """Lowers an elementwise operator to its MHLO/CHLO equivalent.
+
+  Args:
+    explicit_type: does the MHLO/CHLO operator require its output type to be
+      provided?
+  """
+  del params
+  aval_out, = avals_out
+  broadcasted_args = broadcast_mhlo(aval_out, avals_in, args)
+  if explicit_type:
+    return op(mlir.aval_to_ir_type(aval_out), *broadcasted_args).results
+  else:
+    return op(*broadcasted_args).results
+
 
 _float = {np.floating}
 _complex = {np.complexfloating}
@@ -1403,6 +1473,7 @@ _bool_or_int = _int | _bool
 
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
+mlir.register_lowering(neg_p, partial(_nary_lower_mhlo, mhlo.NegOp))
 
 def _sign_translation_rule(ctx, avals_in, avals_out, x):
   c = ctx.builder
@@ -1420,15 +1491,32 @@ def _sign_translation_rule(ctx, avals_in, avals_out, x):
 sign_p = standard_unop(_num, 'sign', translation_rule=_sign_translation_rule)
 ad.defjvp_zero(sign_p)
 
+def _sign_lower_mhlo(ctx, avals_in, avals_out, x):
+  x_aval, = avals_in
+  if dtypes.issubdtype(x_aval.dtype, np.unsignedinteger):
+    return mhlo.SelectOp(
+        mhlo.CompareOp(
+            mlir.aval_to_ir_type(x_aval.update(dtype=np.dtype(np.bool_))),
+            x, mlir.full_like_aval(0, x_aval), ir.StringAttr.get("EQ"),
+            ir.StringAttr.get("UNSIGNED")).result,
+        mlir.full_like_aval(0, x_aval),
+        mlir.full_like_aval(1, x_aval)).results
+  return mhlo.SignOp(x).results
+
+mlir.register_lowering(sign_p, _sign_lower_mhlo)
+
 _nextafter_translation_rule = partial(_broadcast_translate, xops.NextAfter)
 nextafter_p = standard_naryop([_float, _float], 'nextafter',
                               translation_rule=_nextafter_translation_rule)
+mlir.register_lowering(nextafter_p, partial(_nary_lower_mhlo, chlo.NextAfterOp))
 
 floor_p = standard_unop(_float, 'floor')
 ad.defjvp_zero(floor_p)
+mlir.register_lowering(floor_p, partial(_nary_lower_mhlo, mhlo.FloorOp))
 
 ceil_p = standard_unop(_float, 'ceil')
 ad.defjvp_zero(ceil_p)
+mlir.register_lowering(ceil_p, partial(_nary_lower_mhlo, mhlo.CeilOp))
 
 def _round_to_nearest_even(x):
   half = _const(x, 0.5)
@@ -1455,8 +1543,19 @@ round_p = standard_unop(_float, 'round')
 xla.register_translation(round_p, _round_translation_rule)
 ad.defjvp_zero(round_p)
 
+def _round_lower(ctx, avals_in, avals_out, x, *, rounding_method):
+  if rounding_method is RoundingMethod.AWAY_FROM_ZERO:
+    return mhlo.RoundOp(x).results
+  else:
+    assert rounding_method is RoundingMethod.TO_NEAREST_EVEN
+    round_nearest = mlir.lower_fun(_round_to_nearest_even,
+                                   multiple_results=False)
+    return round_nearest(ctx, avals_in, avals_out, x)
+mlir.register_lowering(round_p, _round_lower)
+
 is_finite_p = unop(_fixed_dtype(np.bool_), _float, 'is_finite')
 ad.defjvp_zero(is_finite_p)
+mlir.register_lowering(is_finite_p, partial(_nary_lower_mhlo, mhlo.IsFiniteOp))
 
 exp_p = standard_unop(_float | _complex, 'exp')
 ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
@@ -1464,26 +1563,33 @@ iad.definverse(exp_p, lambda r, x: log(r))
 # For exp_p it is more efficient to use the reconstructed output for the vjp
 # rule instead of computing it again from the input.
 iad.primitive_ivjps[exp_p] = lambda x, y, ct: [[log(y[0])], [ct[0] * y[0]]]
+mlir.register_lowering(exp_p, partial(_nary_lower_mhlo, mhlo.ExpOp))
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
 iad.definverse(log_p, lambda r, x: exp(r))
+mlir.register_lowering(log_p, partial(_nary_lower_mhlo, mhlo.LogOp))
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
+mlir.register_lowering(expm1_p, partial(_nary_lower_mhlo, mhlo.Expm1Op))
 
 log1p_p = standard_unop(_float | _complex, 'log1p')
 ad.defjvp(log1p_p, lambda g, x: div(g, add(x, _one(x))))
+mlir.register_lowering(log1p_p, partial(_nary_lower_mhlo, mhlo.Log1pOp))
 
 tanh_p = standard_unop(_float | _complex, 'tanh')
 ad.defjvp2(tanh_p, lambda g, ans, x: mul(add(g, mul(g, ans)),
                                          sub(_one(x), ans)))
+mlir.register_lowering(tanh_p, partial(_nary_lower_mhlo, mhlo.TanhOp))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
+mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SinOp))
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
+mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosOp))
 
 @partial(xla.lower_fun, multiple_results=False, new_style=True)
 @_upcast_fp16_for_computation
@@ -1545,9 +1651,11 @@ atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
           lambda g, x, y: g * (y / (square(x) + square(y))),
           lambda g, x, y: g * -x / (square(x) + square(y)))
+mlir.register_lowering(atan2_p, partial(_nary_lower_mhlo, mhlo.Atan2Op))
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
 ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))
+mlir.register_lowering(sinh_p, partial(_nary_lower_mhlo, chlo.SinhOp))
 
 cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
@@ -1584,8 +1692,10 @@ ad.defjvp(regularized_incomplete_beta_p,
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
+mlir.register_lowering(lgamma_p, partial(_nary_lower_mhlo, chlo.LgammaOp))
 
 digamma_p = standard_unop(_float, 'digamma')
+mlir.register_lowering(digamma_p, partial(_nary_lower_mhlo, chlo.DigammaOp))
 
 igamma_p = standard_naryop(
   [_float, _float], 'igamma',
@@ -1643,9 +1753,11 @@ ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
 
 real_p = unop(_complex_basetype, _complex, 'real')
 ad.deflinear2(real_p, lambda t, _: [complex(t, np.zeros((), _dtype(t)))])
+mlir.register_lowering(real_p, partial(_nary_lower_mhlo, mhlo.RealOp))
 
 imag_p = unop(_complex_basetype, _complex, 'imag')
 ad.deflinear2(imag_p, lambda t, _: [complex(np.zeros((), _dtype(t)), neg(t))])
+mlir.register_lowering(imag_p, partial(_nary_lower_mhlo, mhlo.ImagOp))
 
 
 def _complex_transpose_rule(t, x, y):
@@ -1670,8 +1782,19 @@ _complex_dtype = lambda dtype, *args: (np.zeros((), dtype) + np.zeros((), np.com
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear2(complex_p, _complex_transpose_rule)
+mlir.register_lowering(complex_p, partial(_nary_lower_mhlo, mhlo.ComplexOp))
 
 conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
+
+def _conj_impl(x, *, input_dtype):
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    return complex(real(x), -imag(x))
+  else:
+    return complex(x, _zeros(x))
+
+mlir.register_lowering(conj_p,
+                       mlir.lower_fun(_conj_impl, multiple_results=False))
+
 
 def _conj_transpose_rule(t, x, *, input_dtype):
   assert ad.is_undefined_primal(x)
@@ -1686,6 +1809,7 @@ ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
 abs_p = unop(_complex_basetype, _num, 'abs')
+mlir.register_lowering(abs_p, partial(_nary_lower_mhlo, mhlo.AbsOp))
 
 def _abs_jvp_rule(g, ans, x):
   if _iscomplex(x):
@@ -1699,15 +1823,18 @@ _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
 ad.defjvp2(sqrt_p, lambda g, ans, x: mul(g, div(_const(x, 0.5), ans)))
+mlir.register_lowering(sqrt_p, partial(_nary_lower_mhlo, mhlo.SqrtOp))
 
 rsqrt_p = standard_unop(_float | _complex, 'rsqrt')
 ad.defjvp2(rsqrt_p,
            lambda g, ans, x:
            mul(g, mul(_const(x, -0.5), div(ans, x))))
+mlir.register_lowering(rsqrt_p, partial(_nary_lower_mhlo, mhlo.RsqrtOp))
 
 cbrt_p = standard_unop(_float, 'cbrt')
 ad.defjvp2(cbrt_p,
            lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
+mlir.register_lowering(cbrt_p, partial(_nary_lower_mhlo, mhlo.CbrtOp))
 
 pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
 
@@ -1719,6 +1846,7 @@ def _pow_jvp_rhs(g, ans, x, y):
   return mul(g, mul(log(_replace_zero(x)), ans))
 
 ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
+mlir.register_lowering(pow_p, partial(_nary_lower_mhlo, mhlo.PowOp))
 
 
 def _integer_pow_dtype_rule(x, *, y):
@@ -1756,23 +1884,50 @@ batching.defvectorized(integer_pow_p)
 masking.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
 
+def _integer_pow(x, *, y):
+  # This should be kept in sync with the jax2tf translation rule.
+  if y == 0:
+    return full_like(x, 1)
+  is_reciprocal = y < 0
+  if is_reciprocal:
+    y = -y
+  acc = None
+  while y > 0:
+    if y & 1:
+      acc = x if acc is None else mul(acc, x)
+    y >>= 1
+    if y > 0:
+      # We don't call square because it calls integer_pow.
+      x = mul(x, x)
+  return div(full_like(acc, 1), acc) if is_reciprocal else acc
+
+mlir.register_lowering(integer_pow_p,
+                       mlir.lower_fun(_integer_pow, multiple_results=False))
+
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_bool_or_int, 'not')
 ad.defjvp_zero(not_p)
+mlir.register_lowering(not_p, partial(_nary_lower_mhlo, mhlo.NotOp))
 
 and_p = standard_naryop([_bool_or_int, _bool_or_int], 'and')
 ad.defjvp_zero(and_p)
+mlir.register_lowering(and_p, partial(_nary_lower_mhlo, mhlo.AndOp))
 
 or_p = standard_naryop([_bool_or_int, _bool_or_int], 'or')
 ad.defjvp_zero(or_p)
+mlir.register_lowering(or_p, partial(_nary_lower_mhlo, mhlo.OrOp))
 
 xor_p = standard_naryop([_bool_or_int, _bool_or_int], 'xor')
 ad.defjvp_zero(xor_p)
+mlir.register_lowering(xor_p, partial(_nary_lower_mhlo, mhlo.XorOp))
 
 population_count_p = standard_unop(_int, 'population_count')
+mlir.register_lowering(population_count_p,
+                       partial(_nary_lower_mhlo, mhlo.PopulationCountOp))
 
 clz_p = standard_unop(_int, 'clz')
+mlir.register_lowering(clz_p, partial(_nary_lower_mhlo, mhlo.ClzOp))
 
 def _add_jvp(primals, tangents):
   x, y = primals
@@ -1809,6 +1964,7 @@ add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 iad.definverse(add_p, _add_inverse)
+mlir.register_lowering(add_p, partial(_nary_lower_mhlo, mhlo.AddOp))
 
 def _sub_jvp(primals, tangents):
   x, y = primals
@@ -1837,6 +1993,7 @@ def _sub_transpose(t, x, y):
 sub_p = standard_naryop([_num, _num], 'sub')
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
+mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubOp))
 
 
 def _mul_transpose(ct, x, y):
@@ -1863,6 +2020,7 @@ ad.defjvp(mul_p,
           lambda ydot, x, y: mul(x, ydot))
 ad.primitive_transposes[mul_p] = _mul_transpose
 iad.definverse(mul_p, _mul_inverse)
+mlir.register_lowering(mul_p, partial(_nary_lower_mhlo, mhlo.MulOp))
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
@@ -1875,12 +2033,14 @@ ad.defjvp(div_p,
           lambda g, x, y: div(g, y),
           lambda g, x, y: mul(mul(neg(g), x), integer_pow(y, -2)))
 ad.primitive_transposes[div_p] = _div_transpose_rule
+mlir.register_lowering(div_p, partial(_nary_lower_mhlo, mhlo.DivOp))
 
 rem_p = standard_naryop([_num, _num], 'rem')
 ad.defjvp(
     rem_p,
     lambda g, x, y: _maybe_broadcast(broadcast_shapes(np.shape(x), np.shape(y)), g),
     lambda g, x, y: mul(neg(g), floor(div(x, y))))
+mlir.register_lowering(rem_p, partial(_nary_lower_mhlo, mhlo.RemOp))
 
 
 def _broadcasting_select(c, which, x, y):
@@ -1917,12 +2077,38 @@ def _minmax_translation_rule(ctx, avals_in, avals_out, x, y, *, op_minmax=None,
   else:
     return [op_minmax(x, y)]
 
+def _minmax_mhlo(op, cmp, x, y):
+  """Min/max that compares complex values lexicographically as pairs."""
+  tensor_type = ir.RankedTensorType(x.type)
+  if ir.ComplexType.isinstance(tensor_type.element_type):
+    rx = mhlo.RealOp(x).result
+    ry = mhlo.RealOp(y).result
+    dims = [tensor_type.get_dim_size(i) for i in range(tensor_type.rank)]
+    bool_shape = ir.RankedTensorType.get(dims, ir.IntegerType.get_signless(1))
+    real_eq = mhlo.CompareOp(bool_shape, rx, ry, ir.StringAttr.get("EQ"),
+                             ir.StringAttr.get("FLOAT"))
+    real_cmp = mhlo.CompareOp(bool_shape, rx, ry,
+                              ir.StringAttr.get(cmp),
+                              ir.StringAttr.get("FLOAT"))
+    imag_cmp = mhlo.CompareOp(bool_shape, mhlo.ImagOp(x).result,
+                              mhlo.ImagOp(y).result,
+                              ir.StringAttr.get(cmp),
+                              ir.StringAttr.get("FLOAT"))
+    which = mhlo.SelectOp(real_eq, imag_cmp, real_cmp).result
+    return mhlo.SelectOp(which, x, y)
+  else:
+    return op(x, y)
+
+_min_mhlo = partial(_minmax_mhlo, mhlo.MinOp, "LT")
+_max_mhlo = partial(_minmax_mhlo, mhlo.MaxOp, "GT")
+
 max_p: core.Primitive = standard_naryop(
   [_any, _any], 'max', translation_rule=partial(
     _minmax_translation_rule, op_minmax=xops.Max, lax_cmp_pick_x=gt))
 ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
+mlir.register_lowering(max_p, partial(_nary_lower_mhlo, _max_mhlo))
 
 min_p: core.Primitive = standard_naryop(
   [_any, _any], 'min', translation_rule=partial(
@@ -1930,33 +2116,59 @@ min_p: core.Primitive = standard_naryop(
 ad.defjvp2(min_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
+mlir.register_lowering(min_p, partial(_nary_lower_mhlo, _min_mhlo))
 
 shift_left_p = standard_naryop([_int, _int], 'shift_left')
 ad.defjvp_zero(shift_left_p)
+mlir.register_lowering(shift_left_p, partial(_nary_lower_mhlo, mhlo.ShiftLeftOp))
 
 shift_right_arithmetic_p = standard_naryop([_int, _int], 'shift_right_arithmetic')
 ad.defjvp_zero(shift_right_arithmetic_p)
+mlir.register_lowering(shift_right_arithmetic_p,
+                       partial(_nary_lower_mhlo, mhlo.ShiftRightArithmeticOp))
 
 shift_right_logical_p = standard_naryop([_int, _int], 'shift_right_logical')
 ad.defjvp_zero(shift_right_logical_p)
+mlir.register_lowering(shift_right_logical_p,
+                       partial(_nary_lower_mhlo, mhlo.ShiftRightLogicalOp))
+
+def _compare_lower_mhlo(direction: str, ctx, avals_in, avals_out, x, y):
+  x_aval, y_aval = avals_in
+  aval_out, = avals_out
+  x, y = broadcast_mhlo(aval_out.update(dtype=x_aval.dtype), avals_in, (x, y))
+  if dtypes.issubdtype(x_aval.dtype, np.inexact):
+    compare_type = "FLOAT"
+  elif dtypes.issubdtype(x_aval.dtype, np.signedinteger):
+    compare_type = "SIGNED"
+  else:
+    compare_type = "UNSIGNED"
+  return mhlo.CompareOp(mlir.aval_to_ir_type(aval_out), x, y,
+                        ir.StringAttr.get(direction),
+                        ir.StringAttr.get(compare_type)).results
 
 eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq')
 ad.defjvp_zero(eq_p)
+mlir.register_lowering(eq_p, partial(_compare_lower_mhlo, "EQ"))
 
 ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne')
 ad.defjvp_zero(ne_p)
+mlir.register_lowering(ne_p, partial(_compare_lower_mhlo, "NE"))
 
 ge_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ge')
 ad.defjvp_zero(ge_p)
+mlir.register_lowering(ge_p, partial(_compare_lower_mhlo, "GE"))
 
 gt_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'gt')
 ad.defjvp_zero(gt_p)
+mlir.register_lowering(gt_p, partial(_compare_lower_mhlo, "GT"))
 
 le_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'le')
 ad.defjvp_zero(le_p)
+mlir.register_lowering(le_p, partial(_compare_lower_mhlo, "LE"))
 
 lt_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'lt')
 ad.defjvp_zero(lt_p)
+mlir.register_lowering(lt_p, partial(_compare_lower_mhlo, "LT"))
 
 
 def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
@@ -2027,6 +2239,17 @@ masking.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 
+def _convert_element_type_lower(ctx, avals_in, avals_out, operand, *,
+                                new_dtype, weak_type):
+  aval_in, = avals_in
+  aval_out, = avals_out
+  if (dtypes.issubdtype(aval_in.dtype, np.complexfloating) and
+      not dtypes.issubdtype(new_dtype, np.complexfloating)):
+    operand = mhlo.RealOp(operand).result
+  return mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), operand).results
+
+mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
+
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
   return operand.shape
@@ -2052,6 +2275,13 @@ bitcast_convert_type_p = standard_primitive(
 ad.defjvp_zero(bitcast_convert_type_p)
 batching.defvectorized(bitcast_convert_type_p)
 masking.defvectorized(bitcast_convert_type_p)
+
+def _bitcast_convert_type_lower(ctx, avals_in, avals_out, operand, *,
+                                new_dtype):
+  aval_out, = avals_out
+  return mhlo.BitcastConvertOp(mlir.aval_to_ir_type(aval_out), operand).results
+
+mlir.register_lowering(bitcast_convert_type_p, _bitcast_convert_type_lower)
 
 
 def _validate_preferred_element_type(input_dtype, preferred_element_type):
@@ -2301,6 +2531,28 @@ masking.masking_rules[dot_general_p] = _dot_general_masking_rule
 xla.register_translation(dot_general_p, _dot_general_cpu_translation_rule,
                          platform="cpu")
 
+def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
+  if precision is None:
+    precision = (Precision.DEFAULT, Precision.DEFAULT)
+  elif not isinstance(precision, tuple):
+    precision = (precision, precision)
+  return ir.ArrayAttr.get([ir.StringAttr.get(str(p)) for p in precision])
+
+def _dot_general_lower(ctx, avals_in, avals_out, lhs, rhs, *, dimension_numbers,
+                       precision, preferred_element_type: Optional[np.dtype]):
+  del preferred_element_type  # Implied by the output aval.
+  aval_out, = avals_out
+  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  dot_dnums = mhlo.DotDimensionNumbers.get(
+      lhs_batching_dimensions=list(lhs_batch),
+      rhs_batching_dimensions=list(rhs_batch),
+      lhs_contracting_dimensions=list(lhs_contracting),
+      rhs_contracting_dimensions=list(rhs_contracting))
+  return mhlo.DotGeneralOp(mlir.aval_to_ir_type(aval_out), lhs, rhs, dot_dnums,
+                           precision_attr(precision)).results
+
+mlir.register_lowering(dot_general_p, _dot_general_lower)
+
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
   _check_shapelike('broadcast_in_dim', 'shape', shape)
@@ -2366,6 +2618,16 @@ ad.deflinear2(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 
+def _broadcast_in_dim_lower(ctx, avals_in, avals_out, x, *, shape,
+                            broadcast_dimensions):
+  del shape
+  aval_out, = avals_out
+  return mhlo.BroadcastInDimOp(
+      mlir.aval_to_ir_type(aval_out), x,
+      mlir.dense_int_elements(broadcast_dimensions)
+  ).results
+mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+
 
 def _clamp_shape_rule(min, operand, max):
   if min.shape and min.shape != operand.shape:
@@ -2429,6 +2691,8 @@ ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(lt(max, operand), g, _zeros(operand)))
 batching.primitive_batchers[clamp_p] = _clamp_batch_rule
+mlir.register_lowering(
+    clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp, explicit_type=True))
 
 def _concatenate_shape_rule(*operands, **kwargs):
   dimension = kwargs.pop('dimension')
@@ -2499,6 +2763,10 @@ concatenate_p = standard_primitive(
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
+
+def _concatenate_lower(ctx, avals_in, avals_out, *xs, dimension):
+  return mhlo.ConcatenateOp(xs, mlir.i64_attr(dimension)).results
+mlir.register_lowering(concatenate_p, _concatenate_lower)
 
 
 def _pad_dtype_rule(operand, padding_value, *, padding_config):
@@ -2588,6 +2856,15 @@ ad.deflinear2(pad_p, _pad_transpose)
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 masking.masking_rules[pad_p] = _pad_masking_rule
 
+def _pad_lower(ctx, avals_in, avals_out, x, padding_value, *, padding_config):
+  aval_out, = avals_out
+  low, high, interior = util.unzip3(padding_config)
+  return mhlo.PadOp(mlir.aval_to_ir_type(aval_out), x, padding_value,
+                    mlir.dense_int_elements(low),
+                    mlir.dense_int_elements(high),
+                    mlir.dense_int_elements(interior)).results
+mlir.register_lowering(pad_p, _pad_lower)
+
 
 # The squeeze primitive exists for the benefit of masking and other
 # transformations that need to keep track of axis identity.
@@ -2599,13 +2876,6 @@ masking.masking_rules[pad_p] = _pad_masking_rule
 # JAXpr is that we are reshaping from (1, 1) to (1,).
 # In constrast, squeeze[ dimensions=(0,) ] is unambiguous.
 
-def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
-  """Squeeze any number of size 1 dimensions from an array."""
-  ndim = np.ndim(array)
-  dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
-  if not dimensions:
-    return array
-  return squeeze_p.bind(array, dimensions=dimensions)
 
 def _squeeze_dtype_rule(operand, *, dimensions):
   return operand.dtype
@@ -2644,16 +2914,14 @@ squeeze_p = standard_primitive(_squeeze_shape_rule, _squeeze_dtype_rule,
 ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 
+def _squeeze_lower(ctx, avals_in, avals_out, operand, *, dimensions):
+  del dimensions  # Implied by the output aval.
+  aval_out, = avals_out
+  return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), operand).results
 
-def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
-  """Insert any number of size 1 dimensions into an array."""
-  ndim_out = np.ndim(array) + len(dimensions)
-  dims_set = frozenset(canonicalize_axis(i, ndim_out) for i in dimensions)
-  result_shape = list(np.shape(array))
-  for i in sorted(dims_set):
-    result_shape.insert(i, 1)
-  broadcast_dims = [i for i in range(ndim_out) if i not in dims_set]
-  return broadcast_in_dim(array, result_shape, broadcast_dims)
+mlir.register_lowering(squeeze_p, _squeeze_lower)
+
+
 
 def _shape_as_value(shape):
   """Converts a shape that may contain Poly values into a JAX value."""
@@ -2750,6 +3018,16 @@ ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
 masking.masking_rules[reshape_p] = _reshape_masking_rule
 
+def _reshape_lower(ctx, avals_in, avals_out, x, *, new_sizes, dimensions):
+  aval_in, = avals_in
+  aval_out, = avals_out
+  if dimensions is not None:
+    aval = core.ShapedArray(np.take(aval_in.shape, dimensions), aval_in.dtype)
+    x = mhlo.TransposeOp(mlir.aval_to_ir_type(aval), x,
+                         mlir.dense_int_elements(dimensions)).result
+  return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), x).results
+mlir.register_lowering(reshape_p, _reshape_lower)
+
 def _rev_shape_rule(operand, *, dimensions):
   _check_shapelike('rev', 'dimensions', dimensions)
   if len(set(dimensions)) != len(dimensions):
@@ -2770,6 +3048,10 @@ def _rev_batch_rule(batched_args, batch_dims, *, dimensions):
 rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev')
 ad.deflinear2(rev_p, lambda t, _, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
+
+def _rev_lower(ctx, avals_in, avals_out, x, *, dimensions):
+  return mhlo.ReverseOp(x, mlir.dense_int_elements(dimensions)).results
+mlir.register_lowering(rev_p, _rev_lower)
 
 
 def _transpose_shape_rule(operand, *, permutation):
@@ -2797,6 +3079,12 @@ ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])  # type: ignore[arg-type]
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
 masking.masking_rules[transpose_p] = _transpose_masking_rule
+
+def _transpose_lower(ctx, avals_in, avals_out, x, *, permutation):
+  aval_out, = avals_out
+  return mhlo.TransposeOp(mlir.aval_to_ir_type(aval_out), x,
+                          mlir.dense_int_elements(permutation)).results
+mlir.register_lowering(transpose_p, _transpose_lower)
 
 
 def _select_shape_rule(pred, on_true, on_false):
@@ -2893,6 +3181,7 @@ ad.primitive_jvps[select_p] = _select_jvp
 ad.primitive_transposes[select_p] = _select_transpose_rule
 batching.primitive_batchers[select_p] = _select_batch_rule
 masking.masking_rules[select_p] = _select_masking_rule
+mlir.register_lowering(select_p, partial(_nary_lower_mhlo, mhlo.SelectOp))
 
 
 def _reduce_shape_rule(*avals, computation, jaxpr, consts, dimensions):
@@ -3053,6 +3342,25 @@ xla.register_translation(reduce_p, _reduce_translation_rule)
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
+def _reduce_lower(ctx, avals_in, avals_out, *values, computation, jaxpr,
+                  consts, dimensions):
+  assert all(isinstance(x, core.ShapedArray) for x in avals_in), avals_in
+  operands, init_values = util.split_list(values, [len(values) // 2])
+  init_value_avals = avals_in[len(values) // 2:]
+  op = mhlo.ReduceOp([mlir.aval_to_ir_type(aval) for aval in avals_out],
+                     operands, init_values, mlir.dense_int_elements(dimensions))
+  ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
+  reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
+  with ir.InsertionPoint(reducer):
+    ctx = ctx.replace(name_stack='')
+    out_nodes = mlir.jaxpr_subcomp(ctx, jaxpr, consts,
+                                   *([a] for a in reducer.arguments))
+    mhlo.ReturnOp(util.flatten(out_nodes))
+  return op.results
+
+mlir.register_lowering(reduce_p, _reduce_lower)
+
+
 def _reduce_number_dtype_rule(name, operand, *args, **kw):
   if not dtypes.issubdtype(operand.dtype, np.number):
     raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
@@ -3160,7 +3468,6 @@ _masking_defreducer(reduce_min_p,
                     lambda shape, dtype: np.broadcast_to(np.array(np.inf, dtype), shape))
 
 
-
 def _argminmax_shape_rule(operand, *, axes, index_dtype):
   axis, = axes
   if not (0 <= axis < len(operand.shape)):
@@ -3220,6 +3527,14 @@ argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 
+mlir.register_lowering(argmin_p, mlir.lower_fun(
+  partial(_compute_argminmax, lt, _get_min_identity),
+  multiple_results=False))
+
+mlir.register_lowering(argmax_p, mlir.lower_fun(
+  partial(_compute_argminmax, gt, _get_max_identity),
+  multiple_results=False))
+
 
 def _reduce_logical_shape_rule(operand, *, axes):
   if operand.dtype != np.bool_:
@@ -3251,6 +3566,36 @@ reduce_and_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(np.bo
 batching.defreducer(reduce_and_p)
 
 
+def _unary_reduce_lower(reducer, unit_factory, ctx, avals_in, avals_out, x, *,
+                        axes):
+  aval_out, = avals_out
+  dtype = aval_out.dtype
+  op = mhlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
+                     mlir.ir_constants(unit_factory(aval_out.dtype)),
+                     mlir.dense_int_elements(axes))
+  scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
+  reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
+  with ir.InsertionPoint(reducer_region):
+    add = reducer(*reducer_region.arguments)
+    mhlo.ReturnOp(add.results)
+  return op.results
+
+mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, mhlo.AddOp,
+                                         lambda dtype: np.array(0, dtype)))
+mlir.register_lowering(reduce_prod_p, partial(_unary_reduce_lower, mhlo.MulOp,
+                                          lambda dtype: np.array(1, dtype)))
+mlir.register_lowering(reduce_or_p, partial(_unary_reduce_lower, mhlo.OrOp,
+                                         lambda dtype: np.array(False, dtype)))
+mlir.register_lowering(reduce_and_p, partial(_unary_reduce_lower, mhlo.AndOp,
+                                          lambda dtype: np.array(True, dtype)))
+mlir.register_lowering(reduce_min_p, partial(_unary_reduce_lower, _min_mhlo,
+                                         _get_min_identity))
+mlir.register_lowering(reduce_max_p, partial(_unary_reduce_lower, _max_mhlo,
+                                         _get_max_identity))
+
+
+
+
 def _reduce_precision_shape_rule(operand, *, exponent_bits, mantissa_bits):
   exponent_bits = operator.index(exponent_bits)
   mantissa_bits = operator.index(mantissa_bits)
@@ -3268,17 +3613,15 @@ reduce_precision_p = standard_primitive(
 batching.defvectorized(reduce_precision_p)
 masking.defvectorized(reduce_precision_p)
 
+def _reduce_precision_lower(ctx, avals_in, avals_out, operand, *, exponent_bits,
+                            mantissa_bits):
+  aval_out, = avals_out
+  return mhlo.ReducePrecisionOp(mlir.aval_to_ir_type(aval_out), operand,
+                                mlir.i32_attr(exponent_bits),
+                                mlir.i32_attr(mantissa_bits)).results
 
-def reduce_precision(operand, exponent_bits, mantissa_bits):
-  """Wraps XLA's `ReducePrecision
-  <https://www.tensorflow.org/xla/operation_semantics#reduceprecision>`_
-  operator.
-  """
-  exponent_bits = core.concrete_or_error(
-    operator.index, exponent_bits, "exponent_bits argument of lax.reduce_precision")
-  mantissa_bits = core.concrete_or_error(
-    operator.index, mantissa_bits, "mantissa_bits argument of lax.reduce_precision")
-  return reduce_precision_p.bind(operand, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits)
+mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
+
 
 
 _UINT_DTYPES = {
@@ -3411,6 +3754,29 @@ ad.primitive_jvps[sort_p] = _sort_jvp
 batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 
+def _sort_lower(ctx, avals_in, avals_out, *operands, dimension, is_stable,
+                num_keys):
+  assert all(isinstance(x, core.ShapedArray) for x in avals_in), avals_in
+  sort = mhlo.SortOp([mlir.aval_to_ir_type(aval) for aval in avals_out],
+                     mlir.flatten_lowering_ir_args(operands),
+                     mlir.i64_attr(dimension), ir.BoolAttr.get(is_stable))
+  scalar_avals = [aval.update(shape=()) for aval in avals_in]
+  scalar_types = safe_map(mlir.aval_to_ir_type, scalar_avals)
+  comparator = sort.comparator.blocks.append(
+      *util.flatten(zip(scalar_types, scalar_types)))
+  with ir.InsertionPoint(comparator):
+    lower_comparator = mlir.lower_fun(partial(_sort_lt_comparator),
+                                      multiple_results=False)
+    out = lower_comparator(ctx, util.flatten(zip(scalar_avals, scalar_avals)),
+                           [core.ShapedArray((), np.bool_)],
+                           *[[a] for a in comparator.arguments],
+                           num_keys=num_keys)
+    mhlo.ReturnOp(util.flatten(out))
+  return sort.results
+
+mlir.register_lowering(sort_p, _sort_lower)
+
+
 def _top_k_abstract_eval(operand, *, k):
   if k < 0:
     raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
@@ -3504,6 +3870,13 @@ create_token_p.def_abstract_eval(lambda *_: abstract_token)
 xla.register_translation(create_token_p,
                          lambda ctx, *_: [xops.CreateToken(ctx.builder)])
 
+def _create_token_lowering(ctx, avals_in, avals_out, *operands):
+  aval_out, = avals_out
+  return mhlo.CreateTokenOp(mlir.aval_to_ir_type(aval_out)).results
+
+mlir.register_lowering(create_token_p, _create_token_lowering)
+
+
 def after_all(*operands):
   """Merges one or more XLA token values. Experimental.
 
@@ -3523,6 +3896,12 @@ after_all_p = Primitive("after_all")
 after_all_p.def_impl(partial(xla.apply_primitive, after_all_p))
 after_all_p.def_abstract_eval(_after_all_abstract_eval)
 xla.register_translation(after_all_p, _after_all_translation_rule)
+
+def _after_all_lowering(ctx, avals_in, avals_out, *operands):
+  aval_out, = avals_out
+  return mhlo.AfterAllOp(mlir.aval_to_ir_type(aval_out), operands).results
+
+mlir.register_lowering(after_all_p, _after_all_lowering)
 
 
 def infeed(token, shape=None, partitions=None):
@@ -3576,6 +3955,36 @@ infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
 infeed_p.def_abstract_eval(_infeed_abstract_eval)
 xla.register_translation(infeed_p, _infeed_translation_rule)
 
+
+def _infeed_lowering(ctx, avals_in, avals_out, token, *, shapes, partitions):
+  assert partitions is None, partitions  # TODO(phawkins): implement me.
+  output_types = map(mlir.aval_to_ir_types, avals_out[:-1])
+  flat_output_types = util.flatten(output_types)
+  output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+  # TODO(phawkins): verify `shapes` have a major-to-minor layout.
+  layouts = ir.ArrayAttr.get([
+      ir.ArrayAttr.get(
+          [ir.ArrayAttr.get(
+              [mlir.i64_attr(i) for i in range(len(aval.shape) - 1, -1, -1)])
+           for aval in shapes]),
+      ir.UnitAttr.get(),
+  ])
+  output_and_token_tuple_type = ir.TupleType.get_tuple(
+      [output_tuple_type, mhlo.TokenType.get()])
+  outs_and_token = mhlo.InfeedOp(
+      output_and_token_tuple_type, token, ir.StringAttr.get(""),
+      layouts).result
+  outs_tuple = mhlo.GetTupleElementOp(output_tuple_type, outs_and_token,
+                                      mlir.i32_attr(0)).result
+  token = mhlo.GetTupleElementOp(mhlo.TokenType.get(), outs_and_token,
+                                 mlir.i32_attr(1)).result
+  outs = [mhlo.GetTupleElementOp(typ, outs_tuple, mlir.i32_attr(i)).result
+          for i, typ in enumerate(flat_output_types)]
+  return util.unflatten(outs, map(len, output_types)) + [[token,]]
+
+mlir.register_lowering(infeed_p, _infeed_lowering)
+
+
 def outfeed(token, xs, partitions = None):
   """Outfeeds value `xs` to the host. Experimental.
 
@@ -3608,6 +4017,21 @@ outfeed_p = Primitive("outfeed")
 outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
 outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 xla.register_translation(outfeed_p, _outfeed_translation_rule)
+
+
+def _outfeed_lowering(ctx, avals_in, avals_out, token, *xs, partitions):
+  assert partitions is None, partitions  # TODO(phawkins): implement me.
+  token_aval = avals_in[0]
+  xs_avals = avals_in[1:]
+  input_types = map(mlir.aval_to_ir_types, xs_avals)
+  flat_input_types = util.flatten(input_types)
+  input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
+  tup = mhlo.TupleOp(input_tuple_type, mlir.flatten_lowering_ir_args(xs)).result
+  return mhlo.OutfeedOp(mlir.aval_to_ir_type(token_aval), tup, token,
+                        ir.StringAttr.get("")).results
+
+mlir.register_lowering(outfeed_p, _outfeed_lowering)
+
 
 def rng_uniform(a, b, shape):
   """Stateful PRNG generator. Experimental and its use is discouraged.
@@ -3642,6 +4066,14 @@ rng_uniform_p = Primitive("rng_uniform")
 rng_uniform_p.def_impl(partial(xla.apply_primitive, rng_uniform_p))
 rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
 xla.register_translation(rng_uniform_p, _rng_uniform_translation_rule)
+
+def _rng_uniform_lowering(ctx, avals_in, avals_out, a, b, *, shape):
+  aval_out, = avals_out
+  shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64),
+                        canonicalize_types=False)
+  return mhlo.RngUniformOp(a, b, shape).results
+
+mlir.register_lowering(rng_uniform_p, _rng_uniform_lowering)
 
 
 def _rng_bit_generator_shape_rule(key, *, shape, dtype, algorithm):
@@ -3741,6 +4173,13 @@ iota_p = Primitive('iota')
 iota_p.def_impl(partial(xla.apply_primitive, iota_p))
 iota_p.def_abstract_eval(_iota_abstract_eval)
 xla.register_translation(iota_p, _iota_translation_rule)
+
+def _iota_lower(ctx, avals_in, avals_out, *, dtype, shape, dimension):
+  del dtype, shape
+  aval_out, = avals_out
+  return mhlo.IotaOp(mlir.aval_to_ir_type(aval_out),
+                     mlir.i64_attr(dimension)).results
+mlir.register_lowering(iota_p, _iota_lower)
 
 
 ### util

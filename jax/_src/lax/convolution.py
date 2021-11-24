@@ -20,11 +20,13 @@ import numpy as np
 
 from jax import core
 from jax._src.lax import lax
-from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import masking
+from jax.interpreters import mlir
+from jax.interpreters import xla
 from jax._src.util import safe_zip
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 
 xops = xla_client.ops
@@ -696,6 +698,80 @@ batching.primitive_batchers[conv_general_dilated_p] = \
     _conv_general_dilated_batch_rule
 masking.masking_rules[conv_general_dilated_p] = \
   _conv_general_dilated_masking_rule
+
+def _complex_mul(mul, x, y):
+  # We use a trick for complex multiplication sometimes attributed to Gauss
+  # which uses three multiplications and five additions; instead of the naive
+  # method of four multiplications and two additions.
+  # https://en.wikipedia.org/wiki/Multiplication_algorithm#Complex_multiplication_algorithm
+  #
+  # This performance win comes with a trade-off in accuracy; especially in
+  # cases when the real and imaginary differ hugely in magnitude. The relative
+  # error bound (e.g. 1p-24 in case of float32) would be relative to the
+  # maximum of real and imaginary parts of the result instead of being
+  # satisfied by the real and imaginary parts independently of each other.
+  x_re, x_im = lax.real(x), lax.imag(x)
+  y_re, y_im = lax.real(y), lax.imag(y)
+  k1 = mul(lax.add(x_re, x_im), y_re)
+  k2 = mul(x_re, lax.sub(y_im, y_re))
+  k3 = mul(x_im, lax.add(y_re, y_im))
+  return lax.complex(lax.sub(k1, k3), lax.add(k1, k2))
+
+def _conv_general_dilated_lower(
+    ctx, avals_in, avals_out, lhs, rhs, *, window_strides, padding,
+    lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
+    batch_group_count, precision, expand_complex_convolutions=False,
+    **unused_kwargs):
+  lhs_aval, rhs_aval = avals_in
+  aval_out, = avals_out
+  assert isinstance(dimension_numbers, ConvDimensionNumbers)
+  dtype = lhs_aval.dtype
+  if expand_complex_convolutions and np.issubdtype(dtype, np.complexfloating):
+    complex_conv = mlir.lower_fun(
+      partial(
+        _complex_mul,
+        partial(conv_general_dilated, window_strides=window_strides,
+                padding=padding, lhs_dilation=lhs_dilation,
+                rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
+                feature_group_count=feature_group_count,
+                batch_group_count=batch_group_count, precision=precision)),
+      multiple_results=False)
+    return complex_conv(ctx, avals_in, avals_out, lhs, rhs)
+
+  lhs_spec, rhs_spec, out_spec = dimension_numbers
+  dnums = mhlo.ConvDimensionNumbers.get(
+    input_batch_dimension=lhs_spec[0],
+    input_feature_dimension=lhs_spec[1],
+    input_spatial_dimensions=list(lhs_spec[2:]),
+    kernel_output_feature_dimension=rhs_spec[0],
+    kernel_input_feature_dimension=rhs_spec[1],
+    kernel_spatial_dimensions=list(rhs_spec[2:]),
+    output_batch_dimension=out_spec[0],
+    output_feature_dimension=out_spec[1],
+    output_spatial_dimensions=list(out_spec[2:]))
+  num_spatial_dims = len(rhs_spec) - 2
+  window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
+
+  return mhlo.ConvOp(mlir.aval_to_ir_type(aval_out), lhs, rhs,
+                     mlir.dense_int_elements(window_strides),
+                     mlir.dense_int_elements(padding),
+                     mlir.dense_int_elements(lhs_dilation),
+                     mlir.dense_int_elements(rhs_dilation),
+                     window_reversal,
+                     dnums, mlir.i64_attr(feature_group_count),
+                     mlir.i64_attr(batch_group_count),
+                     lax.precision_attr(precision)).results
+
+mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
+mlir.register_lowering(
+    conv_general_dilated_p,
+    partial(_conv_general_dilated_lower, expand_complex_convolutions=True),
+    platform='cpu')
+mlir.register_lowering(
+    conv_general_dilated_p,
+    partial(_conv_general_dilated_lower, expand_complex_convolutions=True),
+    platform='gpu')
+
 
 def _reshape_axis_into(src, dst, x):
   perm = [i for i in range(x.ndim) if i != src]

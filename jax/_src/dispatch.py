@@ -669,3 +669,12 @@ xla.translations[device_put_p] = lambda c, x, device=None: x
 ad.deflinear2(device_put_p, lambda cotangent, _, **kwargs: [cotangent])
 masking.defvectorized(device_put_p)
 batching.defvectorized(device_put_p)
+
+# TODO(phawkins): remove mlir->dispatch dependency and move this to the top.
+import jax.interpreters.mlir as mlir
+
+def _device_put_lowering(ctx, avals_in, avals_out, x, *, device):
+  return [x]
+
+
+mlir.register_lowering(device_put_p, _device_put_lowering)

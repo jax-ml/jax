@@ -32,6 +32,7 @@ from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
 from jax.interpreters import batching
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters.batching import not_mapped
 from jax.config import config
@@ -311,6 +312,10 @@ custom_jvp_call_jaxpr_p.multiple_results = True
 custom_jvp_call_jaxpr_p.def_impl(_custom_jvp_call_jaxpr_impl)
 custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 CustomJVPCallPrimitive.initial_style = custom_jvp_call_jaxpr_p
+
+mlir.register_lowering(custom_jvp_call_jaxpr_p, mlir.lower_fun(
+    _custom_jvp_call_jaxpr_impl, multiple_results=True))
+
 
 def _custom_jvp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
@@ -630,6 +635,10 @@ custom_vjp_call_jaxpr_p.multiple_results = True
 custom_vjp_call_jaxpr_p.def_impl(_custom_vjp_call_jaxpr_impl)
 custom_vjp_call_jaxpr_p.def_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
 CustomVJPCallPrimitive.initial_style = custom_vjp_call_jaxpr_p
+
+mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
+    _custom_vjp_call_jaxpr_impl, multiple_results=True))
+
 
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
@@ -1077,3 +1086,5 @@ xla.register_translation(linear_call_p,
                          xla.lower_fun(_linear_call_impl, new_style=True,
                                        multiple_results=True),
                          initial_style=True)
+mlir.register_lowering(linear_call_p, mlir.lower_fun(
+    _linear_call_impl, multiple_results=True))

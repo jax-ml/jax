@@ -42,9 +42,12 @@ from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import masking
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.traceback_util import api_boundary
@@ -612,6 +615,106 @@ xla.register_translation(while_p, _while_loop_translation_rule,
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
+
+
+def _pred_bcast_select_mhlo(
+    pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
+    ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
+  if x_y_aval is core.abstract_unit:
+    return []
+  elif x_y_aval is core.abstract_token:
+    x, = xs
+    y, = ys
+    return [mhlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
+  else:
+    assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
+    x, = xs
+    y, = ys
+    assert x.type == y.type, (x.type, y.type)
+    assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
+            pred_aval.shape, x_y_aval)
+    bcast_pred = mhlo.BroadcastInDimOp(
+        mlir.aval_to_ir_type(x_y_aval.update(dtype=np.dtype(np.bool_))),
+        pred, mlir.dense_int_elements(list(range(len(pred_aval.shape))))).result
+    return mhlo.SelectOp(bcast_pred, x, y).results
+
+
+def _while_lowering(ctx, avals_in, avals_out, *args, cond_jaxpr,
+                    body_jaxpr, cond_nconsts, body_nconsts):
+  pred_aval = cond_jaxpr.out_avals[0]
+  batched = bool(pred_aval.shape)
+
+  # Since jaxprs don't have tuples and have multiple return values, but we need
+  # the HLO While loop to take a single tuple input and output a single boolean
+  # (for the cond computation) or a single tuple output (for the body
+  # computation), we build XLA computations that handle the tuple munging before
+  # generating a Call into the computations formed from the jaxprs.
+
+  loop_carry_types = _map(mlir.aval_to_ir_types, avals_in)
+  flat_loop_carry_types = util.flatten(loop_carry_types)
+  loop_carry_tuple_type = ir.TupleType.get_tuple(flat_loop_carry_types)
+
+  flat_args = mlir.flatten_lowering_ir_args(args)
+  init_carry = mhlo.TupleOp(loop_carry_tuple_type, flat_args)
+  while_op = mhlo.WhileOp([loop_carry_tuple_type], [init_carry.result])
+
+  # Loop condition
+  cond_block = while_op.regions[0].blocks.append(loop_carry_tuple_type)
+  with ir.InsertionPoint(cond_block):
+    flat_cond_args = [
+        mhlo.GetTupleElementOp(input_type, cond_block.arguments[0],
+                               mlir.i32_attr(i)).result
+        for i, input_type in enumerate(flat_loop_carry_types)]
+    cond_args = util.unflatten(flat_cond_args, _map(len, loop_carry_types))
+    x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
+    cond_ctx = ctx.replace(
+        name_stack=xla.extend_name_stack(ctx.name_stack, 'cond'))
+    (pred,), = mlir.jaxpr_subcomp(
+        cond_ctx, cond_jaxpr.jaxpr, _map(mlir.ir_constants, cond_jaxpr.consts),
+        *(x + z))
+    if batched:
+      pred, = lax._unary_reduce_lower(
+          mhlo.OrOp, lambda dtype: np.array(False, dtype), ctx, [pred_aval],
+          [pred_aval.update(shape=())], pred,
+          axes=tuple(range(len(pred_aval.shape))))
+    mhlo.ReturnOp([pred])
+
+  # Loop body
+  body_block = while_op.regions[1].blocks.append(loop_carry_tuple_type)
+  with ir.InsertionPoint(body_block):
+    flat_body_args = [
+        mhlo.GetTupleElementOp(input_type, body_block.arguments[0],
+                               mlir.i32_attr(i)).result
+        for i, input_type in enumerate(flat_loop_carry_types)]
+    body_args = util.unflatten(flat_body_args, _map(len, loop_carry_types))
+    x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
+    body_ctx = ctx.replace(
+        name_stack=xla.extend_name_stack(ctx.name_stack, 'body'))
+    new_z = mlir.jaxpr_subcomp(
+        body_ctx, body_jaxpr.jaxpr, _map(mlir.ir_constants, body_jaxpr.consts),
+        *(y + z))
+    if batched:
+      body_pred_ctx = ctx.replace(
+          name_stack=xla.extend_name_stack(ctx.name_stack, 'body_pred'))
+      (body_pred,), = mlir.jaxpr_subcomp(
+          body_pred_ctx, cond_jaxpr.jaxpr,
+          _map(mlir.ir_constants, cond_jaxpr.consts), *(x + z))
+      new_z = _map(partial(_pred_bcast_select_mhlo, pred_aval, body_pred), new_z, z,
+                   body_jaxpr.out_avals)
+
+    new_carry = mhlo.TupleOp(
+        loop_carry_tuple_type,
+        [*util.flatten(x), *util.flatten(y), *util.flatten(new_z)])
+    mhlo.ReturnOp([new_carry.result])
+
+  outputs = util.unflatten([
+    mhlo.GetTupleElementOp(output_type, while_op.result, mlir.i32_attr(i)).result
+    for i, output_type in enumerate(flat_loop_carry_types)
+  ], _map(len, loop_carry_types))
+  _,  _, z = util.split_list(outputs, [cond_nconsts, body_nconsts])
+  return z
+
+mlir.register_lowering(while_p, _while_lowering)
 
 
 ### cond and switch
@@ -1213,6 +1316,41 @@ batching.axis_primitive_batchers[cond_p] = _cond_batching_rule
 xla.register_translation(cond_p, _cond_translation_rule, initial_style=True)
 core.custom_typechecks[cond_p] = _cond_typecheck
 pe.partial_eval_jaxpr_custom_rules[cond_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
+
+def _cond_lowering(ctx, avals_in, avals_out, index, *args, branches, linear):
+  del linear  # Unused.
+  arg_avals = avals_in[1:]
+  input_types = _map(mlir.aval_to_ir_types, arg_avals)
+  output_types = _map(mlir.aval_to_ir_types, avals_out)
+  flat_input_types = util.flatten(input_types)
+  flat_output_types = util.flatten(output_types)
+  input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
+  output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+  op = mhlo.TupleOp(input_tuple_type,
+                    mlir.flatten_lowering_ir_args(args)).result
+  # TODO(phawkins): avoid build_generic when CaseOp is fixed.
+  case_op = mhlo.CaseOp.build_generic([output_tuple_type],
+                                      [index] + [op] * len(branches),
+                                      regions=len(branches))
+  for i, jaxpr in enumerate(branches):
+    branch = case_op.regions[i].blocks.append(input_tuple_type)
+    with ir.InsertionPoint(branch):
+      args = [mhlo.GetTupleElementOp(input_type, branch.arguments[0],
+                                     mlir.i32_attr(i)).result
+              for i, input_type in enumerate(flat_input_types)]
+      unflattened_args = util.unflatten(args, _map(len, input_types))
+      out_vals = mlir.jaxpr_subcomp(ctx, jaxpr.jaxpr, jaxpr.consts,
+                               *unflattened_args)
+      out = mhlo.TupleOp(output_tuple_type, util.flatten(out_vals)).results
+      mhlo.ReturnOp(out)
+
+  results = [mhlo.GetTupleElementOp(output_type, case_op.result,
+                                    mlir.i32_attr(i)).result
+             for i, output_type in enumerate(flat_output_types)]
+  return util.unflatten(results, _map(len, output_types))
+
+mlir.register_lowering(cond_p, _cond_lowering)
+
 
 
 ### scan
@@ -1969,6 +2107,9 @@ batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
 masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
+
+mlir.register_lowering(scan_p,
+                       mlir.lower_fun(_scan_impl, multiple_results=True))
 
 
 @api_boundary
@@ -2738,6 +2879,7 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
                     "of number.".format(name, np.dtype(operand.dtype).name))
   return dtypes.canonicalize_dtype(operand.dtype)
 
+
 def _cumulative_reduction_primitive(name,
                                     reduce_fn,
                                     tpu_reduce_window_fn):
@@ -2752,6 +2894,14 @@ def _cumulative_reduction_primitive(name,
       multiple_results=False, new_style=True), platform='tpu')
   batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
                                                    reducer_p)
+  mlir.register_lowering(
+      reducer_p, mlir.lower_fun(partial(associative_scan, reduce_fn),
+                                multiple_results=False))
+  mlir.register_lowering(
+      reducer_p,
+      mlir.lower_fun(partial(_cumred_tpu_translation_rule,
+                             tpu_reduce_window_fn), multiple_results=False),
+      platform='tpu')
   return reducer_p
 
 cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, windowed_reductions._reduce_window_sum)

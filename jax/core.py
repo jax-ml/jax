@@ -988,7 +988,7 @@ pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
 
 class Unit:
   def __repr__(self): return '*'
-unit = Unit()
+unit: Unit = Unit()
 literalable_types.add(Unit)
 
 class UnitVar(Var):
@@ -1247,7 +1247,7 @@ abstract_token: AbstractToken = AbstractToken()
 
 # Concrete token object
 class Token(object): pass
-token = Token()
+token: Token = Token()
 pytype_aval_mappings[Token] = lambda _: abstract_token
 
 
@@ -1663,11 +1663,11 @@ def call_impl(f: lu.WrappedFun, *args, **params):
   with new_sublevel():
     return f.call_wrapped(*args)
 
-call_p = CallPrimitive('call')
+call_p: CallPrimitive = CallPrimitive('call')
 call = call_p.bind
 call_p.def_impl(call_impl)
 
-named_call_p = CallPrimitive('named_call')
+named_call_p: CallPrimitive = CallPrimitive('named_call')
 named_call_p.def_impl(call_impl)
 
 # ------------------- Map -------------------

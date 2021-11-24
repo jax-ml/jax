@@ -20,6 +20,7 @@ import numpy as np
 
 from jax.interpreters import ad
 from jax.interpreters import batching
+from jax.interpreters import mlir
 from jax.interpreters import xla
 
 from jax import core
@@ -31,6 +32,8 @@ from jax._src import dtypes
 import jax._src.lax.lax as lax
 import jax._src.lax.convolution as convolution
 import jax._src.lax.slicing as slicing
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 import jax._src.util as util
@@ -305,6 +308,29 @@ reduce_window_p.def_abstract_eval(_reduce_window_abstract_eval_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 xla.register_translation(reduce_window_p, _reduce_window_translation_rule)
 
+def _generic_reduce_window_lower(ctx, avals_in, avals_out, *args, jaxpr, consts,
+                                 window_dimensions, window_strides, padding,
+                                 base_dilation, window_dilation):
+  operands, init_values = util.split_list(args, [len(args) // 2])
+  _, init_value_avals = util.split_list(avals_in, [len(operands)])
+  scalar_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
+  rw = mhlo.ReduceWindowOp(
+      map(mlir.aval_to_ir_type, avals_out), operands, init_values,
+      mlir.dense_int_elements(window_dimensions),
+      mlir.dense_int_elements(window_strides),
+      mlir.dense_int_elements(base_dilation),
+      mlir.dense_int_elements(window_dilation),
+      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
+  reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
+  with ir.InsertionPoint(reducer):
+    out_nodes = mlir.jaxpr_subcomp(ctx, jaxpr, consts,
+                                   *([a] for a in reducer.arguments))
+    mhlo.ReturnOp(util.flatten(out_nodes))
+  return rw.results
+
+mlir.register_lowering(reduce_window_p, _generic_reduce_window_lower)
+
+
 def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
                                   padding, base_dilation, window_dilation):
   if not dtypes.issubdtype(operand.dtype, np.number):
@@ -459,6 +485,35 @@ batching.primitive_batchers[reduce_window_min_p] = partial(
   _reduce_window_batch_rule, _reduce_window_min)
 
 
+def _reduce_window_lower(
+    reduce_op, init_value, ctx, avals_in, avals_out, operand, *,
+    window_dimensions, window_strides, padding, base_dilation, window_dilation):
+  aval_out, = avals_out
+  operand_aval, = avals_in
+  scalar_aval = operand_aval.update(shape=())
+  scalar_type = mlir.aval_to_ir_type(scalar_aval)
+  rw = mhlo.ReduceWindowOp(
+      mlir.aval_to_ir_types(aval_out), [operand],
+      [mlir.full_like_aval(init_value(scalar_aval.dtype), scalar_aval)],
+      mlir.dense_int_elements(window_dimensions),
+      mlir.dense_int_elements(window_strides),
+      mlir.dense_int_elements(base_dilation),
+      mlir.dense_int_elements(window_dilation),
+      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
+  reducer = rw.regions[0].blocks.append(scalar_type, scalar_type)
+  with ir.InsertionPoint(reducer):
+    mhlo.ReturnOp(reduce_op(*reducer.arguments))
+  return rw.results
+
+mlir.register_lowering(reduce_window_sum_p, partial(
+    _reduce_window_lower, mhlo.AddOp, lambda _: 0))
+mlir.register_lowering(reduce_window_min_p, partial(
+    _reduce_window_lower, mhlo.MinOp, lax._get_min_identity))
+mlir.register_lowering(reduce_window_max_p, partial(
+    _reduce_window_lower, mhlo.MaxOp, lax._get_max_identity))
+
+
+
 def _select_and_scatter_shape_rule(
     operand, source, init_value, *, select_jaxpr, select_consts, scatter_jaxpr,
     scatter_consts, window_dimensions, window_strides, padding):
@@ -487,6 +542,32 @@ select_and_scatter_p = lax.standard_primitive(
     _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter',
     _select_and_scatter_translation)
 
+def _select_and_scatter_lower(
+    ctx, avals_in, avals_out, operand, source, init_value, *, select_jaxpr,
+    select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
+    window_strides, padding):
+  operand_aval, source_aval, init_value_aval = avals_in
+  aval_out, = avals_out
+  scalar_aval = operand_aval.update(shape=())
+  scalar_type = mlir.aval_to_ir_type(scalar_aval)
+  op = mhlo.SelectAndScatterOp(
+      mlir.aval_to_ir_type(aval_out), operand, source,
+      init_value, mlir.dense_int_elements(window_dimensions),
+      mlir.dense_int_elements(window_strides),
+      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
+  select = op.select.blocks.append(scalar_type, scalar_type)
+  with ir.InsertionPoint(select):
+    out_nodes = mlir.jaxpr_subcomp(ctx, select_jaxpr, select_consts,
+                                   *([a] for a in select.arguments))
+    mhlo.ReturnOp(util.flatten(out_nodes))
+  scatter = op.scatter.blocks.append(scalar_type, scalar_type)
+  with ir.InsertionPoint(scatter):
+    out_nodes = mlir.jaxpr_subcomp(ctx, scatter_jaxpr, scatter_consts,
+                                   *([a] for a in scatter.arguments))
+    mhlo.ReturnOp(util.flatten(out_nodes))
+  return op.results
+
+mlir.register_lowering(select_and_scatter_p, _select_and_scatter_lower)
 
 def _select_and_scatter_add_shape_rule(
     source, operand, *, select_prim, window_dimensions, window_strides,
@@ -594,6 +675,41 @@ xla.register_translation(
     select_and_scatter_add_p,
     partial(_select_and_scatter_add_translation, expand_padding=True),
     platform='gpu')
+
+
+def _select_and_scatter_add_impl(source, operand, *, select_prim, window_dimensions,
+                            window_strides, padding, expand_padding):
+  dtype = source.dtype
+  select = lambda x, y: select_prim.bind(x, y)
+  scatter = lax.bitwise_or if dtype == np.bool_ else lax.add
+  if expand_padding:
+    operand_shape = operand.shape
+    original_padding = padding
+    identity = (lax._get_max_identity if select_prim is lax.ge_p
+                else lax._get_min_identity)
+    pads = [(lo, hi, 0) for (lo, hi) in padding]
+    operand = lax.pad(operand, identity(dtype), pads)
+    padding = [(0, 0) for _ in padding]
+  out = _select_and_scatter(
+      operand, select, window_dimensions, window_strides, padding, source,
+      lax._zero(operand), scatter)
+  if expand_padding:
+    start_indices = [lo for (lo, hi) in original_padding]
+    stop_indices = [lo + d for ((lo, hi), d) in zip(original_padding,
+                                                    operand_shape)]
+    out = slicing.slice(out, start_indices, stop_indices)
+  return out
+
+mlir.register_lowering(select_and_scatter_add_p, mlir.lower_fun(
+    partial(_select_and_scatter_add_impl, expand_padding=False),
+    multiple_results=False))
+mlir.register_lowering(select_and_scatter_add_p, mlir.lower_fun(
+    partial(_select_and_scatter_add_impl, expand_padding=True),
+    multiple_results=False), platform='cpu')
+mlir.register_lowering(select_and_scatter_add_p, mlir.lower_fun(
+    partial(_select_and_scatter_add_impl, expand_padding=True),
+    multiple_results=False), platform='gpu')
+
 
 def _select_and_gather_add_shape_rule(
     tangents, operand, *, select_prim, window_dimensions, window_strides,
@@ -802,3 +918,12 @@ xla.register_translation(
     select_and_gather_add_p,
     _select_and_gather_add_translation,
     platform='gpu')
+
+mlir.register_lowering(select_and_gather_add_p, mlir.lower_fun(
+    _select_and_gather_add_using_variadic_reducewindow,
+    multiple_results=False))
+
+mlir.register_lowering(
+    select_and_gather_add_p,
+    partial(mlir.xla_fallback_lowering, select_and_gather_add_p),
+    platform="gpu")

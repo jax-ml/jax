@@ -30,13 +30,9 @@ from jax import core
 from jax import linear_util as lu
 from jax._src.config import config
 from jax._src import ad_util
-from jax._src import custom_derivatives
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src.lax import lax
-from jax._src.lax import control_flow
-from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import chlo
@@ -44,7 +40,6 @@ from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import std
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-import jax._src.prng as prng
 from jax._src import source_info_util
 import jax._src.util as util
 from jax.errors import UnexpectedTracerError
@@ -64,18 +59,18 @@ MYPY = False
 
 
 # IR Helpers
-def _dense_int_elements(xs: Sequence[int]) -> ir.DenseIntElementsAttr:
+
+def dense_int_elements(xs: Sequence[int]) -> ir.DenseIntElementsAttr:
   return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
 
-def _dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
+def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
   return ir.DenseElementsAttr.get(
       np.packbits(np.array(xs, np.bool_), bitorder='little'),
       type=ir.IntegerType.get_signless(1), shape=[len(xs)])
 
-def _i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
-def _i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
+def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
+def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 
-def _real_dtype(dtype): return np.finfo(dtype).dtype
 
 # IR Types
 
@@ -215,7 +210,7 @@ def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
     out = mhlo.BroadcastInDimOp(
         aval_to_ir_type(xla.abstractify(val)),
         _numpy_array_constant(collapsed_val, canonicalize_types)[0],
-        _dense_int_elements(other_axes)).result
+        dense_int_elements(other_axes)).result
     return (out,)
   else:
     return _numpy_array_constant(val, canonicalize_types)
@@ -289,7 +284,7 @@ class LoweringContext:
 
 
 if not MYPY:
-  class TranslationRule(Protocol):
+  class LoweringRule(Protocol):
     def __call__(self, ctx: LoweringContext,
                  avals_in: Sequence[core.AbstractValue],
                  avals_out: Sequence[core.AbstractValue],
@@ -297,11 +292,17 @@ if not MYPY:
                  **kw) -> Sequence[Union[ir.Value, Sequence[ir.Value]]]:
       """Converts a JAX primitive invocation into MLIR."""
 else:
-  TranslationRule = Any
+  LoweringRule = Any
 
-translations: Dict[core.Primitive, TranslationRule] = {}
-platform_specific_translations: Dict[str, Dict[core.Primitive, TranslationRule]]
-platform_specific_translations = collections.defaultdict(dict)
+_lowerings: Dict[core.Primitive, LoweringRule] = {}
+_platform_specific_lowerings: Dict[str, Dict[core.Primitive, LoweringRule]]
+_platform_specific_lowerings = collections.defaultdict(dict)
+
+def register_lowering(prim: core.Primitive, rule: LoweringRule,
+                      platform: Optional[str] = None):
+  ts = (_lowerings if platform is None
+        else _platform_specific_lowerings[platform])
+  ts[prim] = rule
 
 
 def _unwrap_singleton_ir_values(x): return x[0] if len(x) == 1 else x
@@ -309,7 +310,7 @@ def _wrap_singleton_ir_values(x: Union[ir.Value, Sequence[ir.Value]]
                              ) -> Sequence[ir.Value]:
   return (x,) if isinstance(x, ir.Value) else tuple(x)
 
-def _flatten_lowering_ir_args(
+def flatten_lowering_ir_args(
     xs: Sequence[Union[ir.Value, Sequence[ir.Value]]]
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(_wrap_singleton_ir_values, xs))
@@ -426,12 +427,12 @@ def jaxpr_subcomp(ctx: LoweringContext, jaxpr: core.Jaxpr,
     # metadata.
     loc = _source_info_to_location(eqn.source_info)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
-      if eqn.primitive in platform_specific_translations[ctx.platform]:
-        rule = platform_specific_translations[ctx.platform][eqn.primitive]
-      elif eqn.primitive in translations:
-        rule = translations[eqn.primitive]
+      if eqn.primitive in _platform_specific_lowerings[ctx.platform]:
+        rule = _platform_specific_lowerings[ctx.platform][eqn.primitive]
+      elif eqn.primitive in _lowerings:
+        rule = _lowerings[eqn.primitive]
       elif eqn.primitive in xla._translations:
-        rule = partial(_fallback_lowering, eqn.primitive)
+        rule = partial(xla_fallback_lowering, eqn.primitive)
       else:
         raise NotImplementedError(
             f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
@@ -495,10 +496,10 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
                                    core.ClosedJaxpr(call_jaxpr, ()))
   call = std.CallOp(call_output_types,
                     ir.FlatSymbolRefAttr.get(symbol_name),
-                    _flatten_lowering_ir_args(args))
+                    flatten_lowering_ir_args(args))
   if ctx.tuple_results:
     flat_results = [
-        mhlo.GetTupleElementOp(typ, call.result, _i32_attr(i)).result
+        mhlo.GetTupleElementOp(typ, call.result, i32_attr(i)).result
         for i, typ in enumerate(flat_output_types)]
   else:
     flat_results = call.results
@@ -511,41 +512,35 @@ def _xla_call_lower(ctx, avals_in, avals_out, *args,
   return _call_lowering(f"jit_{name}", xla.wrap_name(name, "jit"), call_jaxpr,
                         backend, ctx, avals_in, avals_out, *args)
 
-translations[xla.xla_call_p] = _xla_call_lower
-
+register_lowering(xla.xla_call_p, _xla_call_lower)
 
 def _named_call_lowering(ctx, avals_in, avals_out, *args, name, backend=None,
                          call_jaxpr):
   return _call_lowering(name, name, call_jaxpr, backend, ctx, avals_in,
                         avals_out, *args)
 
-translations[core.named_call_p] = _named_call_lowering
-translations[core.call_p] = partial(_named_call_lowering, name="core_call")
+register_lowering(core.named_call_p, _named_call_lowering)
+register_lowering(core.call_p, partial(_named_call_lowering, name="core_call"))
 
 
-def _device_put_lowering(ctx, avals_in, avals_out, x, *, device):
-  return [x]
-
-translations[dispatch.device_put_p] = _device_put_lowering
-
-
-def _full_like_aval(value, aval: core.ShapedArray) -> ir.Value:
+def full_like_aval(value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
   zero, = ir_constants(np.array(value, aval.dtype))
   return mhlo.BroadcastOp(aval_to_ir_type(aval), zero,
-                          _dense_int_elements(aval.shape)).result
+                          dense_int_elements(aval.shape)).result
 
 def zeros_like_lowering(ctx, avals_in, avals_out, x):
   aval, = avals_in
   assert isinstance(aval, core.ShapedArray), aval
-  return [_full_like_aval(0, aval)]
-translations[ad_util.zeros_like_p] = zeros_like_lowering
+  return [full_like_aval(0, aval)]
+register_lowering(ad_util.zeros_like_p, zeros_like_lowering)
 
 def add_jaxvals_lowering(ctx, avals_in, avals_out, x, y):
   return mhlo.AddOp(x, y).results
-translations[ad_util.add_jaxvals_p] = add_jaxvals_lowering
+register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
-translations[ad_util.stop_gradient_p] = lambda ctx, avals_in, avals_out, x: [x]
+register_lowering(ad_util.stop_gradient_p,
+                  lambda ctx, avals_in, avals_out, x: [x])
 
 
 # # Computation dispatch
@@ -619,7 +614,7 @@ def _array_result_handler(aval: core.ShapedArray) -> ResultHandler:
   return lambda device, buffer: xla.make_device_array(aval, device, buffer)
 
 _aval_to_result_handler[core.AbstractUnit] = lambda _: lambda _: core.unit
-_aval_to_result_handler[core.AbstractToken] = lambda _: lambda _: xla.token
+_aval_to_result_handler[core.AbstractToken] = lambda _: lambda _: core.token
 _aval_to_result_handler[core.ShapedArray] = _array_result_handler
 _aval_to_result_handler[core.ConcreteArray] = _array_result_handler
 
@@ -887,9 +882,9 @@ def apply_primitive(prim, *args, **params):
   return compiled_fun(*args)
 
 
-# Translation rules for lax primitives
+# MLIR lowerings for lax primitives
 
-def _fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
+def xla_fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
                        avals_in, avals_out, *args, **params):
   xla_computation = xla.primitive_subcomputation(ctx.platform, prim, *avals_in,
                                                  **params)
@@ -910,978 +905,20 @@ def _fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
                  if prim.multiple_results else flat_output_types[0])
 
   call = std.CallOp([output_type], ir.FlatSymbolRefAttr.get(callee_name),
-                    _flatten_lowering_ir_args(args)).result
+                    flatten_lowering_ir_args(args)).result
   if not prim.multiple_results:
     return [call]
-  flat_results = [mhlo.GetTupleElementOp(typ, call, _i32_attr(i)).result
+  flat_results = [mhlo.GetTupleElementOp(typ, call, i32_attr(i)).result
                   for i, typ in enumerate(flat_output_types)]
   return util.unflatten(flat_results, map(len, output_types))
 
 
-def _broadcast(aval_out: core.ShapedArray, avals: Sequence[core.ShapedArray],
-               args: Sequence[ir.Value]) -> Sequence[ir.Value]:
-  out = []
-  for aval, arg in zip(avals, args):
-    if aval.shape != aval_out.shape:
-      assert len(aval.shape) <= len(aval_out.shape), (aval, aval_out)
-      dims = _dense_int_elements(
-          range(len(aval_out.shape) - len(aval.shape), len(aval_out.shape)))
-      arg = mhlo.BroadcastInDimOp(
-          aval_to_ir_type(aval.update(shape=aval_out.shape)), arg, dims).result
-    out.append(arg)
-  return out
-
-
-def _nary_lower(op: Callable, ctx: LoweringContext,
-                avals_in: Sequence[core.ShapedArray],
-                avals_out: Sequence[core.ShapedArray],
-                *args: Union[ir.Value, Sequence[ir.Value]],
-                explicit_type=False, **params):
-  del params
-  aval_out, = avals_out
-  broadcasted_args = _broadcast(aval_out, avals_in, args)
-  if explicit_type:
-    return op(aval_to_ir_type(aval_out), *broadcasted_args).results
-  else:
-    return op(*broadcasted_args).results
-
-translations[lax.neg_p] = partial(_nary_lower, mhlo.NegOp)
-translations[lax.floor_p] = partial(_nary_lower, mhlo.FloorOp)
-translations[lax.ceil_p] = partial(_nary_lower, mhlo.CeilOp)
-translations[lax.is_finite_p] = partial(_nary_lower, mhlo.IsFiniteOp)
-translations[lax.log_p] = partial(_nary_lower, mhlo.LogOp)
-translations[lax.exp_p] = partial(_nary_lower, mhlo.ExpOp)
-translations[lax.log1p_p] = partial(_nary_lower, mhlo.Log1pOp)
-translations[lax.expm1_p] = partial(_nary_lower, mhlo.Expm1Op)
-translations[lax.tanh_p] = partial(_nary_lower, mhlo.TanhOp)
-translations[lax.sinh_p] = partial(_nary_lower, chlo.SinhOp)
-translations[lax.sin_p] = partial(_nary_lower, mhlo.SinOp)
-translations[lax.cos_p] = partial(_nary_lower, mhlo.CosOp)
-translations[lax.lgamma_p] = partial(_nary_lower, chlo.LgammaOp)
-translations[lax.digamma_p] = partial(_nary_lower, chlo.DigammaOp)
-translations[lax.real_p] = partial(_nary_lower, mhlo.RealOp)
-translations[lax.imag_p] = partial(_nary_lower, mhlo.ImagOp)
-
-def _conj_impl(x, *, input_dtype):
-  if dtypes.issubdtype(x.dtype, np.complexfloating):
-    return lax.complex(lax.real(x), -lax.imag(x))
-  else:
-    return lax.complex(x, lax._zeros(x))
-
-translations[lax.conj_p] = lower_fun(_conj_impl, multiple_results=False)
-translations[lax.abs_p] = partial(_nary_lower, mhlo.AbsOp)
-translations[lax.sqrt_p] = partial(_nary_lower, mhlo.SqrtOp)
-translations[lax.rsqrt_p] = partial(_nary_lower, mhlo.RsqrtOp)
-translations[lax.cbrt_p] = partial(_nary_lower, mhlo.CbrtOp)
-translations[lax.not_p] = partial(_nary_lower, mhlo.NotOp)
-
-
-translations[lax.add_p] = partial(_nary_lower, mhlo.AddOp)
-translations[lax.sub_p] = partial(_nary_lower, mhlo.SubOp)
-translations[lax.mul_p] = partial(_nary_lower, mhlo.MulOp)
-translations[lax.div_p] = partial(_nary_lower, mhlo.DivOp)
-translations[lax.rem_p] = partial(_nary_lower, mhlo.RemOp)
-
-def _minmax(op, cmp, x, y):
-  """Min/max that compares complex values lexicographically as pairs."""
-  tensor_type = ir.RankedTensorType(x.type)
-  if ir.ComplexType.isinstance(tensor_type.element_type):
-    rx = mhlo.RealOp(x).result
-    ry = mhlo.RealOp(y).result
-    dims = [tensor_type.get_dim_size(i) for i in range(tensor_type.rank)]
-    bool_shape = ir.RankedTensorType.get(dims, ir.IntegerType.get_signless(1))
-    real_eq = mhlo.CompareOp(bool_shape, rx, ry, ir.StringAttr.get("EQ"),
-                             ir.StringAttr.get("FLOAT"))
-    real_cmp = mhlo.CompareOp(bool_shape, rx, ry,
-                              ir.StringAttr.get(cmp),
-                              ir.StringAttr.get("FLOAT"))
-    imag_cmp = mhlo.CompareOp(bool_shape, mhlo.ImagOp(x).result,
-                              mhlo.ImagOp(y).result,
-                              ir.StringAttr.get(cmp),
-                              ir.StringAttr.get("FLOAT"))
-    which = mhlo.SelectOp(real_eq, imag_cmp, real_cmp).result
-    return mhlo.SelectOp(which, x, y)
-  else:
-    return op(x, y)
-
-_min_op = partial(_minmax, mhlo.MinOp, "LT")
-_max_op = partial(_minmax, mhlo.MaxOp, "GT")
-
-translations[lax.min_p] = partial(_nary_lower, _min_op)
-translations[lax.max_p] = partial(_nary_lower, _max_op)
-
-translations[lax.shift_left_p] = partial(_nary_lower, mhlo.ShiftLeftOp)
-translations[lax.shift_right_logical_p] = partial(
-    _nary_lower, mhlo.ShiftRightLogicalOp)
-translations[lax.shift_right_arithmetic_p] = partial(
-    _nary_lower, mhlo.ShiftRightArithmeticOp)
-translations[lax.nextafter_p] = partial(_nary_lower, chlo.NextAfterOp)
-translations[lax.exp_p] = partial(_nary_lower, mhlo.ExpOp)
-translations[lax.atan2_p] = partial(_nary_lower, mhlo.Atan2Op)
-translations[lax.complex_p] = partial(_nary_lower, mhlo.ComplexOp)
-translations[lax.pow_p] = partial(_nary_lower, mhlo.PowOp)
-translations[lax.and_p] = partial(_nary_lower, mhlo.AndOp)
-translations[lax.or_p] = partial(_nary_lower, mhlo.OrOp)
-translations[lax.xor_p] = partial(_nary_lower, mhlo.XorOp)
-translations[lax.population_count_p] = partial(_nary_lower,
-                                               mhlo.PopulationCountOp)
-translations[lax.clz_p] = partial(_nary_lower, mhlo.ClzOp)
-
-translations[lax.clamp_p] = partial(_nary_lower, mhlo.ClampOp,
-                                    explicit_type=True)
-translations[lax.select_p] = partial(_nary_lower, mhlo.SelectOp)
-
-def _sign_lower(ctx, avals_in, avals_out, x):
-  x_aval, = avals_in
-  if dtypes.issubdtype(x_aval.dtype, np.unsignedinteger):
-    return mhlo.SelectOp(
-        mhlo.CompareOp(aval_to_ir_type(x_aval.update(dtype=np.dtype(np.bool_))),
-                       x, _full_like_aval(0, x_aval),
-                       ir.StringAttr.get("EQ"),
-                       ir.StringAttr.get("UNSIGNED")).result,
-        _full_like_aval(0, x_aval),
-        _full_like_aval(1, x_aval)).results
-  return mhlo.SignOp(x).results
-
-translations[lax.sign_p] = _sign_lower
-
-def _compare_lower(direction: str, ctx, avals_in, avals_out, x, y):
-  x_aval, y_aval = avals_in
-  aval_out, = avals_out
-  x, y = _broadcast(aval_out.update(dtype=x_aval.dtype), avals_in, (x, y))
-  if dtypes.issubdtype(x_aval.dtype, np.inexact):
-    compare_type = "FLOAT"
-  elif dtypes.issubdtype(x_aval.dtype, np.signedinteger):
-    compare_type = "SIGNED"
-  else:
-    compare_type = "UNSIGNED"
-  return mhlo.CompareOp(aval_to_ir_type(aval_out), x, y,
-                        ir.StringAttr.get(direction),
-                        ir.StringAttr.get(compare_type)).results
-
-translations[lax.eq_p] = partial(_compare_lower, "EQ")
-translations[lax.ne_p] = partial(_compare_lower, "NE")
-translations[lax.ge_p] = partial(_compare_lower, "GE")
-translations[lax.gt_p] = partial(_compare_lower, "GT")
-translations[lax.le_p] = partial(_compare_lower, "LE")
-translations[lax.lt_p] = partial(_compare_lower, "LT")
-
-
-def _convert_element_type_lower(ctx, avals_in, avals_out, operand, *,
-                                new_dtype, weak_type):
-  aval_in, = avals_in
-  aval_out, = avals_out
-  if (dtypes.issubdtype(aval_in.dtype, np.complexfloating) and
-      not dtypes.issubdtype(new_dtype, np.complexfloating)):
-    operand = mhlo.RealOp(operand).result
-  return mhlo.ConvertOp(aval_to_ir_type(aval_out), operand).results
-
-translations[lax.convert_element_type_p] = _convert_element_type_lower
-
-
-def _bitcast_convert_type_lower(ctx, avals_in, avals_out, operand, *,
-                                new_dtype):
-  aval_out, = avals_out
-  return mhlo.BitcastConvertOp(aval_to_ir_type(aval_out), operand).results
-
-translations[lax.bitcast_convert_type_p] = _bitcast_convert_type_lower
-
-
-def _reduce_precision_lower(ctx, avals_in, avals_out, operand, *, exponent_bits,
-                            mantissa_bits):
-  aval_out, = avals_out
-  return mhlo.ReducePrecisionOp(aval_to_ir_type(aval_out), operand,
-                                _i32_attr(exponent_bits),
-                                _i32_attr(mantissa_bits)).results
-
-translations[lax.reduce_precision_p] = _reduce_precision_lower
-
-
-
-def _precision_attr(precision: lax.PrecisionType) -> ir.ArrayAttr:
-  if precision is None:
-    precision = (lax.Precision.DEFAULT, lax.Precision.DEFAULT)
-  elif not isinstance(precision, tuple):
-    precision = (precision, precision)
-  return ir.ArrayAttr.get([ir.StringAttr.get(str(p)) for p in precision])
-
-def _dot_general_lower(ctx, avals_in, avals_out, lhs, rhs, *, dimension_numbers,
-                       precision, preferred_element_type: Optional[np.dtype]):
-  del preferred_element_type  # Implied by the output aval.
-  aval_out, = avals_out
-  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  dot_dnums = mhlo.DotDimensionNumbers.get(
-      lhs_batching_dimensions=list(lhs_batch),
-      rhs_batching_dimensions=list(rhs_batch),
-      lhs_contracting_dimensions=list(lhs_contracting),
-      rhs_contracting_dimensions=list(rhs_contracting))
-  return mhlo.DotGeneralOp(aval_to_ir_type(aval_out), lhs, rhs, dot_dnums,
-                           _precision_attr(precision)).results
-
-translations[lax.dot_general_p] = _dot_general_lower
-
-
-def _complex_mul(mul, x, y):
-  # We use a trick for complex multiplication sometimes attributed to Gauss
-  # which uses three multiplications and five additions; instead of the naive
-  # method of four multiplications and two additions.
-  # https://en.wikipedia.org/wiki/Multiplication_algorithm#Complex_multiplication_algorithm
-  #
-  # This performance win comes with a trade-off in accuracy; especially in
-  # cases when the real and imaginary differ hugely in magnitude. The relative
-  # error bound (e.g. 1p-24 in case of float32) would be relative to the
-  # maximum of real and imaginary parts of the result instead of being
-  # satisfied by the real and imaginary parts independently of each other.
-  x_re, x_im = lax.real(x), lax.imag(x)
-  y_re, y_im = lax.real(y), lax.imag(y)
-  k1 = mul(lax.add(x_re, x_im), y_re)
-  k2 = mul(x_re, lax.sub(y_im, y_re))
-  k3 = mul(x_im, lax.add(y_re, y_im))
-  return lax.complex(lax.sub(k1, k3), lax.add(k1, k2))
-
-def _conv_general_dilated_lower(
-    ctx, avals_in, avals_out, lhs, rhs, *, window_strides, padding,
-    lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
-    batch_group_count, precision, expand_complex_convolutions=False,
-    **unused_kwargs):
-  lhs_aval, rhs_aval = avals_in
-  aval_out, = avals_out
-  assert isinstance(dimension_numbers, lax.ConvDimensionNumbers)
-  dtype = lhs_aval.dtype
-  if expand_complex_convolutions and np.issubdtype(dtype, np.complexfloating):
-    complex_conv = lower_fun(
-      partial(
-        _complex_mul,
-        partial(lax.conv_general_dilated, window_strides=window_strides,
-                padding=padding, lhs_dilation=lhs_dilation,
-                rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
-                feature_group_count=feature_group_count,
-                batch_group_count=batch_group_count, precision=precision)),
-      multiple_results=False)
-    return complex_conv(ctx, avals_in, avals_out, lhs, rhs)
-
-  lhs_spec, rhs_spec, out_spec = dimension_numbers
-  dnums = mhlo.ConvDimensionNumbers.get(
-    input_batch_dimension=lhs_spec[0],
-    input_feature_dimension=lhs_spec[1],
-    input_spatial_dimensions=list(lhs_spec[2:]),
-    kernel_output_feature_dimension=rhs_spec[0],
-    kernel_input_feature_dimension=rhs_spec[1],
-    kernel_spatial_dimensions=list(rhs_spec[2:]),
-    output_batch_dimension=out_spec[0],
-    output_feature_dimension=out_spec[1],
-    output_spatial_dimensions=list(out_spec[2:]))
-  num_spatial_dims = len(rhs_spec) - 2
-  window_reversal = _dense_bool_elements([False] * num_spatial_dims)
-
-  return mhlo.ConvOp(aval_to_ir_type(aval_out), lhs, rhs,
-                     _dense_int_elements(window_strides),
-                     _dense_int_elements(padding),
-                     _dense_int_elements(lhs_dilation),
-                     _dense_int_elements(rhs_dilation),
-                     window_reversal,
-                     dnums, _i64_attr(feature_group_count),
-                     _i64_attr(batch_group_count),
-                     _precision_attr(precision)).results
-
-translations[lax.conv_general_dilated_p] = _conv_general_dilated_lower
-platform_specific_translations['cpu'][lax.conv_general_dilated_p] = partial(
-    _conv_general_dilated_lower, expand_complex_convolutions=True)
-platform_specific_translations['gpu'][lax.conv_general_dilated_p] = partial(
-    _conv_general_dilated_lower, expand_complex_convolutions=True)
-
-
-def _integer_pow(x, *, y):
-  # This should be kept in sync with the jax2tf translation rule.
-  if y == 0:
-    return lax.full_like(x, 1)
-  is_reciprocal = y < 0
-  if is_reciprocal:
-    y = -y
-  acc = None
-  while y > 0:
-    if y & 1:
-      acc = x if acc is None else lax.mul(acc, x)
-    y >>= 1
-    if y > 0:
-      # We don't call lax.square because it calls lax.integer_pow.
-      x = lax.mul(x, x)
-  return lax.div(lax.full_like(acc, 1), acc) if is_reciprocal else acc
-
-translations[lax.integer_pow_p] = lower_fun(
-            _integer_pow, multiple_results=False)
-
-
-def _round_lower(ctx, avals_in, avals_out, x, *, rounding_method):
-  if rounding_method is lax.RoundingMethod.AWAY_FROM_ZERO:
-    return mhlo.RoundOp(x).results
-  else:
-    assert rounding_method is lax.RoundingMethod.TO_NEAREST_EVEN
-    round_nearest = lower_fun(lax._round_to_nearest_even,
-                              multiple_results=False)
-    return round_nearest(ctx, avals_in, avals_out, x)
-translations[lax.round_p] = _round_lower
-
-
-# iota_p
-def _iota_lower(ctx, avals_in, avals_out, *, dtype, shape, dimension):
-  del dtype, shape
-  aval_out, = avals_out
-  return mhlo.IotaOp(aval_to_ir_type(aval_out), _i64_attr(dimension)).results
-translations[lax.iota_p] = _iota_lower
-
-# Array origami
-
-def _broadcast_in_dim_lower(ctx, avals_in, avals_out, x, *, shape,
-                            broadcast_dimensions):
-  del shape
-  aval_out, = avals_out
-  return mhlo.BroadcastInDimOp(
-      aval_to_ir_type(aval_out), x, _dense_int_elements(broadcast_dimensions)
-  ).results
-translations[lax.broadcast_in_dim_p] = _broadcast_in_dim_lower
-
-
-def _concatenate_lower(ctx, avals_in, avals_out, *xs, dimension):
-  return mhlo.ConcatenateOp(xs, _i64_attr(dimension)).results
-translations[lax.concatenate_p] = _concatenate_lower
-
-
-def _dynamic_slice_lower(ctx, avals_in, avals_out, x, *start_indices,
-                         slice_sizes):
-  aval_out, = avals_out
-  return mhlo.DynamicSliceOp(aval_to_ir_type(aval_out), x,
-                             start_indices,
-                             _dense_int_elements(slice_sizes)).results
-
-translations[lax.dynamic_slice_p] = _dynamic_slice_lower
-
-
-def _dynamic_update_slice_lower(ctx, avals_in, avals_out, x, update,
-                                *start_indices):
-  aval_out, = avals_out
-  return mhlo.DynamicUpdateSliceOp(aval_to_ir_type(aval_out), x, update,
-                                   start_indices).results
-
-translations[lax.dynamic_update_slice_p] = _dynamic_update_slice_lower
-
-
-def _gather_lower(ctx, avals_in, avals_out, operand, indices, *,
-                  dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value):
-  aval_out, = avals_out
-  if mode == lax.GatherScatterMode.FILL_OR_DROP:
-    gather_fill_fn = lower_fun(lax._gather_fill, multiple_results=False)
-    return gather_fill_fn(
-        ctx, avals_in, avals_out, operand, indices,
-        dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
-        unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-        fill_value=fill_value, output_shape=aval_out.shape)
-
-  assert mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
-                  lax.GatherScatterMode.CLIP), mode
-  dnums = mhlo.GatherDimensionNumbers.get(
-    collapsed_slice_dims=list(dimension_numbers.collapsed_slice_dims),
-    index_vector_dim=len(avals_in[1].shape) - 1,
-    offset_dims=list(dimension_numbers.offset_dims),
-    start_index_map=list(dimension_numbers.start_index_map))
-  return mhlo.GatherOp(operand, indices, dnums,
-                       _dense_int_elements(slice_sizes),
-                       ir.BoolAttr.get(indices_are_sorted)).results
-
-translations[lax.gather_p] = _gather_lower
-
-
-
-def _scatter_lower(ctx, avals_in, avals_out, operand, indices, updates, *,
-                   update_jaxpr, update_consts, dimension_numbers,
-                   indices_are_sorted, unique_indices, mode):
-  if mode == lax.GatherScatterMode.CLIP:
-    clip_fn = lower_fun(lax._clamp_scatter_indices, multiple_results=False)
-    (indices,), = clip_fn(ctx, avals_in, None, operand, indices, updates,
-                          dnums=dimension_numbers)
-
-  aval_out, = avals_out
-  dnums = dimension_numbers
-  scatter_dnums = mhlo.ScatterDimensionNumbers.get(
-    update_window_dims=list(dnums.update_window_dims),
-    inserted_window_dims=list(dnums.inserted_window_dims),
-    scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
-    index_vector_dim=len(avals_in[1].shape) - 1)
-  op = mhlo.ScatterOp(aval_to_ir_type(aval_out), operand, indices, updates,
-                      scatter_dnums, ir.BoolAttr.get(indices_are_sorted),
-                      ir.BoolAttr.get(unique_indices))
-  scalar_type = aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
-  update = op.update_computation.blocks.append(scalar_type, scalar_type)
-  with ir.InsertionPoint(update):
-    ctx = ctx.replace(name_stack='')
-    out_nodes = jaxpr_subcomp(
-        ctx, update_jaxpr, update_consts,
-        (update.arguments[0],), (update.arguments[1],))
-    mhlo.ReturnOp(util.flatten(out_nodes))
-  return op.results
-
-translations[lax.scatter_p] = _scatter_lower
-translations[lax.scatter_add_p] = _scatter_lower
-translations[lax.scatter_mul_p] = _scatter_lower
-translations[lax.scatter_min_p] = _scatter_lower
-translations[lax.scatter_max_p] = _scatter_lower
-
-
-def _scatter_add_lower_gpu(ctx, avals_in, avals_out, operand, indices, updates, *,
-                           update_jaxpr, update_consts, dimension_numbers,
-                           indices_are_sorted, unique_indices, mode):
-  if operand.dtype != np.complex128:
-    return _scatter_lower(ctx, avals_in, avals_out, operand, indices, updates,
-                          update_jaxpr=update_jaxpr,
-                          update_consts=update_consts,
-                          dimension_numbers=dimension_numbers,
-                          indices_are_sorted=indices_are_sorted,
-                          unique_indices=unique_indices, mode=mode)
-  assert mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS, mode
-  _, _, updates_aval_in = avals_in
-  aval_out, = avals_out
-  dnums = dimension_numbers
-  scatter_dnums = mhlo.ScatterDimensionNumbers.get(
-    update_window_dims=list(dnums.update_window_dims),
-    inserted_window_dims=list(dnums.inserted_window_dims),
-    scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
-    index_vector_dim=len(avals_in[1].shape) - 1)
-  real_dtype = _real_dtype(aval_out.dtype)
-  operand_type_part = aval_to_ir_type(
-      core.ShapedArray(aval_out.shape, real_dtype))
-  updates_type_part = aval_to_ir_type(
-      core.ShapedArray(updates_aval_in.shape, real_dtype))
-
-  def _scatter(operand_part, updates_part):
-    scatter = mhlo.ScatterOp(operand_type_part, operand_part, indices,
-                             updates_part, scatter_dnums,
-                             ir.BoolAttr.get(indices_are_sorted),
-                             ir.BoolAttr.get(unique_indices))
-    scalar_type = aval_to_ir_type(core.ShapedArray((), real_dtype))
-    reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
-    with ir.InsertionPoint(reducer):
-      add = mhlo.AddOp(scalar_type, *reducer.arguments).result
-      mhlo.ReturnOp([add])
-    return scatter.result
-
-  real = _scatter(mhlo.RealOp(operand_type_part, operand).result,
-                  mhlo.RealOp(updates_type_part, updates).result)
-  imag = _scatter(mhlo.ImagOp(operand_type_part, operand).result,
-                  mhlo.ImagOp(updates_type_part, updates).result)
-  return mhlo.ComplexOp(aval_to_ir_type(aval_out), real, imag).results
-
-platform_specific_translations["gpu"][lax.scatter_add_p] = _scatter_add_lower_gpu
-
-
-def _pad_lower(ctx, avals_in, avals_out, x, padding_value, *, padding_config):
-  aval_out, = avals_out
-  low, high, interior = util.unzip3(padding_config)
-  return mhlo.PadOp(aval_to_ir_type(aval_out), x, padding_value,
-                    _dense_int_elements(low),
-                    _dense_int_elements(high),
-                    _dense_int_elements(interior)).results
-translations[lax.pad_p] = _pad_lower
-
-
-def _reshape_lower(ctx, avals_in, avals_out, x, *, new_sizes, dimensions):
-  aval_in, = avals_in
-  aval_out, = avals_out
-  if dimensions is not None:
-    aval = core.ShapedArray(np.take(aval_in.shape, dimensions), aval_in.dtype)
-    x = mhlo.TransposeOp(aval_to_ir_type(aval), x,
-                         _dense_int_elements(dimensions)).result
-  return mhlo.ReshapeOp(aval_to_ir_type(aval_out), x).results
-translations[lax.reshape_p] = _reshape_lower
-
-def _rev_lower(ctx, avals_in, avals_out, x, *, dimensions):
-  return mhlo.ReverseOp(x, _dense_int_elements(dimensions)).results
-translations[lax.rev_p] = _rev_lower
-
-def _slice_lower(ctx, avals_in, avals_out, x, *, start_indices,
-                 limit_indices, strides):
-  aval_out, = avals_out
-  strides = strides or [1] * len(start_indices)
-  return mhlo.SliceOp(x,
-                      _dense_int_elements(start_indices),
-                      _dense_int_elements(limit_indices),
-                      _dense_int_elements(strides)).results
-
-translations[lax.slice_p] = _slice_lower
-
-def _squeeze_lower(ctx, avals_in, avals_out, operand, *, dimensions):
-  del dimensions  # Implied by the output aval.
-  aval_out, = avals_out
-  return mhlo.ReshapeOp(aval_to_ir_type(aval_out), operand).results
-
-translations[lax.squeeze_p] = _squeeze_lower
-
-def _transpose_lower(ctx, avals_in, avals_out, x, *, permutation):
-  aval_out, = avals_out
-  return mhlo.TransposeOp(aval_to_ir_type(aval_out), x,
-                          _dense_int_elements(permutation)).results
-translations[lax.transpose_p] = _transpose_lower
-
-
-# Reductions
-
-def _unary_reduce_lower(reducer, unit_factory, ctx, avals_in, avals_out, x, *,
-                        axes):
-  aval_out, = avals_out
-  dtype = aval_out.dtype
-  op = mhlo.ReduceOp([aval_to_ir_type(aval_out)], [x],
-                     ir_constants(unit_factory(aval_out.dtype)),
-                     _dense_int_elements(axes))
-  scalar_type = aval_to_ir_type(core.ShapedArray((), dtype))
-  reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
-  with ir.InsertionPoint(reducer_region):
-    add = reducer(*reducer_region.arguments)
-    mhlo.ReturnOp(add.results)
-  return op.results
-
-translations[lax.reduce_sum_p] = partial(_unary_reduce_lower, mhlo.AddOp,
-                                         lambda dtype: np.array(0, dtype))
-translations[lax.reduce_prod_p] = partial(_unary_reduce_lower, mhlo.MulOp,
-                                          lambda dtype: np.array(1, dtype))
-translations[lax.reduce_or_p] = partial(_unary_reduce_lower, mhlo.OrOp,
-                                         lambda dtype: np.array(False, dtype))
-translations[lax.reduce_and_p] = partial(_unary_reduce_lower, mhlo.AndOp,
-                                          lambda dtype: np.array(True, dtype))
-translations[lax.reduce_min_p] = partial(_unary_reduce_lower, _min_op,
-                                         lax._get_min_identity)
-translations[lax.reduce_max_p] = partial(_unary_reduce_lower, _max_op,
-                                         lax._get_max_identity)
-
-
-def _reduce_lower(ctx, avals_in, avals_out, *values, computation, jaxpr,
-                  consts, dimensions):
-  assert all(isinstance(x, core.ShapedArray) for x in avals_in), avals_in
-  operands, init_values = util.split_list(values, [len(values) // 2])
-  init_value_avals = avals_in[len(values) // 2:]
-  op = mhlo.ReduceOp([aval_to_ir_type(aval) for aval in avals_out], operands,
-                     init_values, _dense_int_elements(dimensions))
-  ir_types = [aval_to_ir_type(aval) for aval in init_value_avals]
-  reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
-  with ir.InsertionPoint(reducer):
-    ctx = ctx.replace(name_stack='')
-    out_nodes = jaxpr_subcomp(ctx, jaxpr, consts,
-                              *([a] for a in reducer.arguments))
-    mhlo.ReturnOp(util.flatten(out_nodes))
-  return op.results
-
-translations[lax.reduce_p] = _reduce_lower
-
-translations[lax.argmin_p] = lower_fun(
-  partial(lax._compute_argminmax, lax.lt, lax._get_min_identity),
-  multiple_results=False)
-
-translations[lax.argmax_p] = lower_fun(
-  partial(lax._compute_argminmax, lax.gt, lax._get_max_identity),
-  multiple_results=False)
-
-
-def _generic_reduce_window_lower(ctx, avals_in, avals_out, *args, jaxpr, consts,
-                                 window_dimensions, window_strides, padding,
-                                 base_dilation, window_dilation):
-  operands, init_values = util.split_list(args, [len(args) // 2])
-  _, init_value_avals = util.split_list(avals_in, [len(operands)])
-  scalar_types = [aval_to_ir_type(aval) for aval in init_value_avals]
-  rw = mhlo.ReduceWindowOp(
-      map(aval_to_ir_type, avals_out), operands, init_values,
-      _dense_int_elements(window_dimensions),
-      _dense_int_elements(window_strides), _dense_int_elements(base_dilation),
-      _dense_int_elements(window_dilation),
-      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
-  reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
-  with ir.InsertionPoint(reducer):
-    out_nodes = jaxpr_subcomp(ctx, jaxpr, consts,
-                              *([a] for a in reducer.arguments))
-    mhlo.ReturnOp(util.flatten(out_nodes))
-  return rw.results
-
-translations[lax_windowed_reductions.reduce_window_p] = _generic_reduce_window_lower
-
-
-def _reduce_window_lower(
-    reduce_op, init_value, ctx, avals_in, avals_out, operand, *,
-    window_dimensions, window_strides, padding, base_dilation, window_dilation):
-  aval_out, = avals_out
-  operand_aval, = avals_in
-  scalar_aval = operand_aval.update(shape=())
-  scalar_type = aval_to_ir_type(scalar_aval)
-  rw = mhlo.ReduceWindowOp(
-      aval_to_ir_types(aval_out), [operand],
-      [_full_like_aval(init_value(scalar_aval.dtype), scalar_aval)],
-      _dense_int_elements(window_dimensions),
-      _dense_int_elements(window_strides), _dense_int_elements(base_dilation),
-      _dense_int_elements(window_dilation),
-      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
-  reducer = rw.regions[0].blocks.append(scalar_type, scalar_type)
-  with ir.InsertionPoint(reducer):
-    mhlo.ReturnOp(reduce_op(*reducer.arguments))
-  return rw.results
-
-translations[lax_windowed_reductions.reduce_window_sum_p] = partial(
-    _reduce_window_lower, mhlo.AddOp, lambda _: 0)
-translations[lax_windowed_reductions.reduce_window_min_p] = partial(
-    _reduce_window_lower, mhlo.MinOp, lax._get_min_identity)
-translations[lax_windowed_reductions.reduce_window_max_p] = partial(
-    _reduce_window_lower, mhlo.MaxOp, lax._get_max_identity)
-
-
-def _select_and_scatter_lower(
-    ctx, avals_in, avals_out, operand, source, init_value, *, select_jaxpr,
-    select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
-    window_strides, padding):
-  operand_aval, source_aval, init_value_aval = avals_in
-  aval_out, = avals_out
-  scalar_aval = operand_aval.update(shape=())
-  scalar_type = aval_to_ir_type(scalar_aval)
-  op = mhlo.SelectAndScatterOp(
-      aval_to_ir_type(aval_out), operand, source,
-      init_value, _dense_int_elements(window_dimensions),
-      _dense_int_elements(window_strides),
-      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
-  select = op.select.blocks.append(scalar_type, scalar_type)
-  with ir.InsertionPoint(select):
-    out_nodes = jaxpr_subcomp(ctx, select_jaxpr, select_consts,
-                              *([a] for a in select.arguments))
-    mhlo.ReturnOp(util.flatten(out_nodes))
-  scatter = op.scatter.blocks.append(scalar_type, scalar_type)
-  with ir.InsertionPoint(scatter):
-    out_nodes = jaxpr_subcomp(ctx, scatter_jaxpr, scatter_consts,
-                              *([a] for a in scatter.arguments))
-    mhlo.ReturnOp(util.flatten(out_nodes))
-  return op.results
-
-translations[lax_windowed_reductions.select_and_scatter_p] = _select_and_scatter_lower
-
-translations[lax_windowed_reductions.select_and_gather_add_p] = lower_fun(
-    lax_windowed_reductions._select_and_gather_add_using_variadic_reducewindow,
-    multiple_results=False)
-
-platform_specific_translations["gpu"][lax_windowed_reductions.select_and_gather_add_p] = (
-    partial(_fallback_lowering, lax_windowed_reductions.select_and_gather_add_p))
-
-def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
-                            window_strides, padding, expand_padding):
-  dtype = source.dtype
-  select = lambda x, y: select_prim.bind(x, y)
-  scatter = lax.bitwise_or if dtype == np.bool_ else lax.add
-  if expand_padding:
-    operand_shape = operand.shape
-    original_padding = padding
-    identity = (lax._get_max_identity if select_prim is lax.ge_p
-                else lax._get_min_identity)
-    pads = [(lo, hi, 0) for (lo, hi) in padding]
-    operand = lax.pad(operand, identity(dtype), pads)
-    padding = [(0, 0) for _ in padding]
-  out = lax_windowed_reductions._select_and_scatter(
-      operand, select, window_dimensions, window_strides, padding, source,
-      lax._zero(operand), scatter)
-  if expand_padding:
-    start_indices = [lo for (lo, hi) in original_padding]
-    stop_indices = [lo + d for ((lo, hi), d) in zip(original_padding,
-                                                    operand_shape)]
-    out = lax.slice(out, start_indices, stop_indices)
-  return out
-
-translations[lax_windowed_reductions.select_and_scatter_add_p] = lower_fun(
-    partial(_select_and_scatter_add, expand_padding=False),
-    multiple_results=False)
-platform_specific_translations['cpu'][lax_windowed_reductions.select_and_scatter_add_p] = lower_fun(
-    partial(_select_and_scatter_add, expand_padding=True),
-    multiple_results=False)
-platform_specific_translations['gpu'][lax_windowed_reductions.select_and_scatter_add_p] = lower_fun(
-    partial(_select_and_scatter_add, expand_padding=True),
-    multiple_results=False)
-
-
-def _sort_lower(ctx, avals_in, avals_out, *operands, dimension, is_stable,
-                num_keys):
-  assert all(isinstance(x, core.ShapedArray) for x in avals_in), avals_in
-  sort = mhlo.SortOp([aval_to_ir_type(aval) for aval in avals_out],
-                     _flatten_lowering_ir_args(operands), _i64_attr(dimension),
-                     ir.BoolAttr.get(is_stable))
-  scalar_avals = [aval.update(shape=()) for aval in avals_in]
-  scalar_types = map(aval_to_ir_type, scalar_avals)
-  comparator = sort.comparator.blocks.append(
-      *util.flatten(zip(scalar_types, scalar_types)))
-  with ir.InsertionPoint(comparator):
-    lower_comparator = lower_fun(partial(lax._sort_lt_comparator),
-                                 multiple_results=False)
-    out = lower_comparator(ctx, util.flatten(zip(scalar_avals, scalar_avals)),
-                           [core.ShapedArray((), np.bool_)],
-                           *[[a] for a in comparator.arguments],
-                           num_keys=num_keys)
-    mhlo.ReturnOp(util.flatten(out))
-  return sort.results
-
-translations[lax.sort_p] = _sort_lower
-
-
-def _create_token_lowering(ctx, avals_in, avals_out, *operands):
-  aval_out, = avals_out
-  return mhlo.CreateTokenOp(aval_to_ir_type(aval_out)).results
-
-translations[lax.create_token_p] = _create_token_lowering
-
-
-def _after_all_lowering(ctx, avals_in, avals_out, *operands):
-  aval_out, = avals_out
-  return mhlo.AfterAllOp(aval_to_ir_type(aval_out), operands).results
-
-translations[lax.after_all_p] = _after_all_lowering
-
-def _infeed_lowering(ctx, avals_in, avals_out, token, *, shapes, partitions):
-  assert partitions is None, partitions  # TODO(phawkins): implement me.
-  output_types = map(aval_to_ir_types, avals_out[:-1])
-  flat_output_types = util.flatten(output_types)
-  output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
-  # TODO(phawkins): verify `shapes` have a major-to-minor layout.
-  layouts = ir.ArrayAttr.get([
-      ir.ArrayAttr.get(
-          [ir.ArrayAttr.get(
-              [_i64_attr(i) for i in range(len(aval.shape) - 1, -1, -1)])
-           for aval in shapes]),
-      ir.UnitAttr.get(),
-  ])
-  output_and_token_tuple_type = ir.TupleType.get_tuple(
-      [output_tuple_type, mhlo.TokenType.get()])
-  outs_and_token = mhlo.InfeedOp(
-      output_and_token_tuple_type, token, ir.StringAttr.get(""),
-      layouts).result
-  outs_tuple = mhlo.GetTupleElementOp(output_tuple_type, outs_and_token,
-                                      _i32_attr(0)).result
-  token = mhlo.GetTupleElementOp(mhlo.TokenType.get(), outs_and_token,
-                                 _i32_attr(1)).result
-  outs = [mhlo.GetTupleElementOp(typ, outs_tuple, _i32_attr(i)).result
-          for i, typ in enumerate(flat_output_types)]
-  return util.unflatten(outs, map(len, output_types)) + [[token,]]
-
-translations[lax.infeed_p] = _infeed_lowering
-
-def _outfeed_lowering(ctx, avals_in, avals_out, token, *xs, partitions):
-  assert partitions is None, partitions  # TODO(phawkins): implement me.
-  token_aval = avals_in[0]
-  xs_avals = avals_in[1:]
-  input_types = map(aval_to_ir_types, xs_avals)
-  flat_input_types = util.flatten(input_types)
-  input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
-  tup = mhlo.TupleOp(input_tuple_type, _flatten_lowering_ir_args(xs)).result
-  return mhlo.OutfeedOp(aval_to_ir_type(token_aval), tup, token,
-                        ir.StringAttr.get("")).results
-
-translations[lax.outfeed_p] = _outfeed_lowering
-
-
-def _rng_uniform_lowering(ctx, avals_in, avals_out, a, b, *, shape):
-  aval_out, = avals_out
-  shape, = ir_constants(np.array(aval_out.shape, np.int64),
-                        canonicalize_types=False)
-  return mhlo.RngUniformOp(a, b, shape).results
-
-translations[lax.rng_uniform_p] = _rng_uniform_lowering
-
-
-# def _rng_bit_generator_lower(
-#     ctx, avals_in, avals_out, key, *, shape, dtype, algorithm):
-#   key_aval, = avals_in
-#   c = ctx.builder
-#   backend_is_gpu = ctx.platform == "gpu"
-#   key_shape, key_dtype = c.get_shape(key).dimensions(), c.get_shape(key).numpy_dtype()
-#   # While the RngBitGenerator HLO accepts a u64[2] key on all backends, we
-#   # typically represent the key argument to this primitive as a u32[4] so as to
-#   # sidestep issues with the jax_enable_x64=False configuration. As a result, we
-#   # need to convert u32[4] -> u64[2] here in the translation rule. However, we
-#   # also polymorphically allow a u64[2] for backward compatibility.
-#   assert ((key_aval.shape == (4,) and key_aval.dtype == np.dtype('uint32')) or
-#           (key_aval.shape == (2,) and key_aval.dtype == np.dtype('uint64'))), key_aval.shape
-#   xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
-#   if key_dtype == np.dtype('uint32'):
-#     # TODO(mattjj): the BitcastConvertType segfaults on GPU
-#     u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
-#     key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
-#   out_key, out_vals = xla.xla_destructure(
-#       c, xops.RngBitGenerator(algorithm, key, xla_shape))
-#   if key_dtype == np.dtype('uint32'):
-#     u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
-#     out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
-#   return [out_key, out_vals]
-
-
-
-translations[prng.threefry2x32_p] = lower_fun(
-    partial(prng._threefry2x32_lowering, use_rolled_loops=False),
-    multiple_results=True)
-
-# TODO(phawkins): add CPU and GPU specializations of threefry2x32_p
-
-
-
-def _cond_lowering(ctx, avals_in, avals_out, index, *args, branches, linear):
-  del linear  # Unused.
-  arg_avals = avals_in[1:]
-  input_types = map(aval_to_ir_types, arg_avals)
-  output_types = map(aval_to_ir_types, avals_out)
-  flat_input_types = util.flatten(input_types)
-  flat_output_types = util.flatten(output_types)
-  input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
-  output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
-  op = mhlo.TupleOp(input_tuple_type, _flatten_lowering_ir_args(args)).result
-  # TODO(phawkins): avoid build_generic when CaseOp is fixed.
-  case_op = mhlo.CaseOp.build_generic([output_tuple_type],
-                                      [index] + [op] * len(branches),
-                                      regions=len(branches))
-  for i, jaxpr in enumerate(branches):
-    branch = case_op.regions[i].blocks.append(input_tuple_type)
-    with ir.InsertionPoint(branch):
-      args = [mhlo.GetTupleElementOp(input_type, branch.arguments[0],
-                                     _i32_attr(i)).result
-              for i, input_type in enumerate(flat_input_types)]
-      unflattened_args = util.unflatten(args, map(len, input_types))
-      out_vals = jaxpr_subcomp(ctx, jaxpr.jaxpr, jaxpr.consts,
-                               *unflattened_args)
-      out = mhlo.TupleOp(output_tuple_type, util.flatten(out_vals)).results
-      mhlo.ReturnOp(out)
-
-  results = [mhlo.GetTupleElementOp(output_type, case_op.result,
-                                    _i32_attr(i)).result
-             for i, output_type in enumerate(flat_output_types)]
-  return util.unflatten(results, map(len, output_types))
-
-translations[control_flow.cond_p] = _cond_lowering
-
-translations[control_flow.scan_p] = lower_fun(
-    control_flow._scan_impl, multiple_results=True)
-
-def _pred_bcast_select(pred_aval: core.ShapedArray,
-                       pred: ir.Value, xs: Sequence[ir.Value],
-                       ys: Sequence[ir.Value],
-                       x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
-  if x_y_aval is core.abstract_unit:
-    return []
-  elif x_y_aval is core.abstract_token:
-    x, = xs
-    y, = ys
-    return [mhlo.AfterAllOp(aval_to_ir_type(x_y_aval), [x, y]).result]
-  else:
-    assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
-    x, = xs
-    y, = ys
-    assert x.type == y.type, (x.type, y.type)
-    assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
-            pred_aval.shape, x_y_aval)
-    bcast_pred = mhlo.BroadcastInDimOp(
-        aval_to_ir_type(x_y_aval.update(dtype=np.dtype(np.bool_))),
-        pred, _dense_int_elements(list(range(len(pred_aval.shape))))).result
-    return mhlo.SelectOp(bcast_pred, x, y).results
-
-
-def _while_lowering(ctx, avals_in, avals_out, *args, cond_jaxpr,
-                    body_jaxpr, cond_nconsts, body_nconsts):
-  pred_aval = cond_jaxpr.out_avals[0]
-  batched = bool(pred_aval.shape)
-
-  # Since jaxprs don't have tuples and have multiple return values, but we need
-  # the HLO While loop to take a single tuple input and output a single boolean
-  # (for the cond computation) or a single tuple output (for the body
-  # computation), we build XLA computations that handle the tuple munging before
-  # generating a Call into the computations formed from the jaxprs.
-
-  loop_carry_types = map(aval_to_ir_types, avals_in)
-  flat_loop_carry_types = util.flatten(loop_carry_types)
-  loop_carry_tuple_type = ir.TupleType.get_tuple(flat_loop_carry_types)
-
-  flat_args = _flatten_lowering_ir_args(args)
-  init_carry = mhlo.TupleOp(loop_carry_tuple_type, flat_args)
-  while_op = mhlo.WhileOp([loop_carry_tuple_type], [init_carry.result])
-
-  # Loop condition
-  cond_block = while_op.regions[0].blocks.append(loop_carry_tuple_type)
-  with ir.InsertionPoint(cond_block):
-    flat_cond_args = [
-        mhlo.GetTupleElementOp(input_type, cond_block.arguments[0],
-                               _i32_attr(i)).result
-        for i, input_type in enumerate(flat_loop_carry_types)]
-    cond_args = util.unflatten(flat_cond_args, map(len, loop_carry_types))
-    x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
-    cond_ctx = ctx.replace(
-        name_stack=xla.extend_name_stack(ctx.name_stack, 'cond'))
-    (pred,), = jaxpr_subcomp(cond_ctx, cond_jaxpr.jaxpr,
-                             map(ir_constants, cond_jaxpr.consts), *(x + z))
-    if batched:
-      pred, = _unary_reduce_lower(
-          mhlo.OrOp, lambda dtype: np.array(False, dtype), ctx, [pred_aval],
-          [pred_aval.update(shape=())], pred,
-          axes=tuple(range(len(pred_aval.shape))))
-    mhlo.ReturnOp([pred])
-
-  # Loop body
-  body_block = while_op.regions[1].blocks.append(loop_carry_tuple_type)
-  with ir.InsertionPoint(body_block):
-    flat_body_args = [
-        mhlo.GetTupleElementOp(input_type, body_block.arguments[0],
-                               _i32_attr(i)).result
-        for i, input_type in enumerate(flat_loop_carry_types)]
-    body_args = util.unflatten(flat_body_args, map(len, loop_carry_types))
-    x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
-    body_ctx = ctx.replace(
-        name_stack=xla.extend_name_stack(ctx.name_stack, 'body'))
-    new_z = jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr,
-                          map(ir_constants, body_jaxpr.consts), *(y + z))
-    if batched:
-      body_pred_ctx = ctx.replace(
-          name_stack=xla.extend_name_stack(ctx.name_stack, 'body_pred'))
-      (body_pred,), = jaxpr_subcomp(
-          body_pred_ctx, cond_jaxpr.jaxpr, map(ir_constants, cond_jaxpr.consts),
-          *(x + z))
-      new_z = map(partial(_pred_bcast_select, pred_aval, body_pred), new_z, z,
-                   body_jaxpr.out_avals)
-
-    new_carry = mhlo.TupleOp(
-        loop_carry_tuple_type,
-        [*util.flatten(x), *util.flatten(y), *util.flatten(new_z)])
-    mhlo.ReturnOp([new_carry.result])
-
-  outputs = util.unflatten([
-    mhlo.GetTupleElementOp(output_type, while_op.result, _i32_attr(i)).result
-    for i, output_type in enumerate(flat_loop_carry_types)
-  ], map(len, loop_carry_types))
-  _,  _, z = util.split_list(outputs, [cond_nconsts, body_nconsts])
-  return z
-
-translations[control_flow.while_p] = _while_lowering
-
-
-def _add_cumulative_reduce(prim, reducer, tpu_reduce_window_fn):
-  translations[prim] = lower_fun(
-      partial(control_flow.associative_scan, reducer), multiple_results=False)
-  platform_specific_translations['tpu'] = lower_fun(
-      partial(control_flow._cumred_tpu_translation_rule, tpu_reduce_window_fn),
-      multiple_results=False)
-
-_add_cumulative_reduce(control_flow.cumsum_p, lax.add,
-                       lax_windowed_reductions._reduce_window_sum)
-_add_cumulative_reduce(control_flow.cumprod_p, lax.mul,
-                       lax_windowed_reductions._reduce_window_prod)
-_add_cumulative_reduce(control_flow.cummin_p, lax.min,
-                       lax_windowed_reductions._reduce_window_min)
-_add_cumulative_reduce(control_flow.cummax_p, lax.max,
-                       lax_windowed_reductions._reduce_window_max)
-
-translations[custom_derivatives.custom_jvp_call_jaxpr_p] = lower_fun(
-    custom_derivatives._custom_jvp_call_jaxpr_impl, multiple_results=True)
-translations[custom_derivatives.custom_vjp_call_jaxpr_p] = lower_fun(
-    custom_derivatives._custom_vjp_call_jaxpr_impl, multiple_results=True)
-translations[custom_derivatives.linear_call_p] = lower_fun(
-    custom_derivatives._linear_call_impl, multiple_results=True)
-translations[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
+register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 
 
 def _dummy_like_aval(aval: core.AbstractValue) -> Sequence[ir.Value]:
   if isinstance(aval, core.ShapedArray):
-    return [_full_like_aval(0, aval)]
+    return [full_like_aval(0, aval)]
   elif isinstance(aval, core.AbstractToken):
     return mhlo.CreateTokenOp(aval_to_ir_type(aval)).results
   elif isinstance(aval, core.AbstractUnit):
@@ -1897,7 +934,7 @@ def _remat_using_while(ctx, avals_in, avals_out, *args, name, call_jaxpr):
   loop_carry_types = [(int32_scalar_type,)] + input_types + output_types
   flat_loop_carry_types = util.flatten(loop_carry_types)
   counter_init = ir_constants(np.array(0, np.int32))
-  flat_args = _flatten_lowering_ir_args(
+  flat_args = flatten_lowering_ir_args(
       (counter_init,) + args +
       tuple(_dummy_like_aval(aval) for aval in avals_out))
   loop_carry_tuple_type = ir.TupleType.get_tuple(flat_loop_carry_types)
@@ -1914,7 +951,7 @@ def _remat_using_while(ctx, avals_in, avals_out, *args, name, call_jaxpr):
     shape, = ir_constants(np.array((), np.int64), canonicalize_types=False)
     rng = mhlo.RngUniformOp(one, two, shape).result
     i = mhlo.GetTupleElementOp(int32_scalar_type, cond_block.arguments[0],
-                               _i32_attr(0))
+                               i32_attr(0))
     cmp = mhlo.CompareOp(bool_scalar_type, i, rng, ir.StringAttr.get("LT"),
                          ir.StringAttr.get("SIGNED")).result
     mhlo.ReturnOp([cmp])
@@ -1923,7 +960,7 @@ def _remat_using_while(ctx, avals_in, avals_out, *args, name, call_jaxpr):
   with ir.InsertionPoint(body_block):
     flat_body_args = [
         mhlo.GetTupleElementOp(input_type, body_block.arguments[0],
-                               _i32_attr(i)).result
+                               i32_attr(i)).result
         for i, input_type in enumerate(flat_loop_carry_types)]
     body_args = util.unflatten(flat_body_args, map(len, loop_carry_types))
     ((i,),), y, _ = util.split_list(body_args, [1, len(avals_in)])
@@ -1938,7 +975,7 @@ def _remat_using_while(ctx, avals_in, avals_out, *args, name, call_jaxpr):
     mhlo.ReturnOp([new_carry.result])
 
   outputs = [mhlo.GetTupleElementOp(output_type, while_op.result,
-                                    _i32_attr(1 + len(avals_in) + i)
+                                    i32_attr(1 + len(avals_in) + i)
                                    ).result
              for i, output_type in enumerate(flat_output_types)]
   return util.unflatten(outputs, map(len, output_types))
@@ -1960,43 +997,37 @@ def _remat_lowering(ctx, avals_in, avals_out, *args,
     return jaxpr_subcomp(
         ctx, call_jaxpr, (), *map(_wrap_singleton_ir_values, args))
 
-translations[pe.remat_call_p] = _remat_lowering
+register_lowering(pe.remat_call_p, _remat_lowering)
 
+# Lax ops missing MLIR lowerings.
+# # TODO(b/203775215): these are missing from the cHLO dialect. Either add
+# # them or port them to Python.
+# lax.igamma_p,
+# lax.igammac_p,
+# lax.igamma_grad_a,
+# lax.random_gamma_grad_p,
+# lax.bessel_i0e_p,
+# lax.bessel_i1e_p,
+# lax.erf_inv_p,
+# lax.regularized_incomplete_beta_p,
 
-def add_fallback_lowering(prim: core.Primitive):
-  translations[prim] = partial(_fallback_lowering, prim)
+# # CHLO doesn't have complex lowerings of these primitives (b/203718937)
+# lax.acos_p,
+# lax.acosh_p,
+# lax.asin_p,
+# lax.asinh_p,
+# lax.atan_p,
+# lax.atanh_p,
+# lax.cosh_p,
+# lax.tan_p,
 
+# # CHLO doesn't have a legalization for bf16 (b/203774470)
+# lax.erf_p,
+# lax.erfc_p,
 
-map(add_fallback_lowering, [
-    # TODO(b/203775215): these are missing from the cHLO dialect. Either add
-    # them or port them to Python.
-    lax.igamma_p,
-    lax.igammac_p,
-    lax.igamma_grad_a,
-    lax.random_gamma_grad_p,
-    lax.bessel_i0e_p,
-    lax.bessel_i1e_p,
-    lax.erf_inv_p,
-    lax.regularized_incomplete_beta_p,
+# # Not present in cHLO or mHLO (b/203798239), although we could just emit the
+# # lowered pattern ourselves.
+# lax.top_k_p,
 
-    # CHLO doesn't have complex lowerings of these primitives (b/203718937)
-    lax.acos_p,
-    lax.acosh_p,
-    lax.asin_p,
-    lax.asinh_p,
-    lax.atan_p,
-    lax.atanh_p,
-    lax.cosh_p,
-    lax.tan_p,
-
-    # CHLO doesn't have a legalization for bf16 (b/203774470)
-    lax.erf_p,
-    lax.erfc_p,
-
-    # Not present in cHLO or mHLO (b/203798239), although we could just emit the
-    # lowered pattern ourselves.
-    lax.top_k_p,
-
-    # TODO(phawkins): implement these lax ops:
-    lax.rng_bit_generator_p,
-])
+# # TODO(phawkins): implement these lax ops:
+# lax.rng_bit_generator_p,

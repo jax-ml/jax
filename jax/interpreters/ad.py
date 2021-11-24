@@ -675,7 +675,7 @@ def _interleave(xs, ys):
   return [e for pair in zip(xs, ys) for l in pair for e in l]
 
 
-custom_lin_p = core.Primitive('custom_lin')
+custom_lin_p: core.Primitive = core.Primitive('custom_lin')
 custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
 custom_lin_p.multiple_results = True
 
