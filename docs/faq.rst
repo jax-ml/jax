@@ -214,6 +214,39 @@ JAX/accelerators vs NumPy/CPU. For example, if we switch this example to use
 .. _`%time and %timeit magics`: https://ipython.readthedocs.io/en/stable/interactive/magics.html#magic-time
 .. _Colab: https://colab.research.google.com/
 
+.. _faq-jax-vs-numpy:
+
+Is JAX faster than NumPy?
+~~~~~~~~~~~~~~~~~~~~~~~~~
+One question users frequently attempt to answer with such benchmarks is whether JAX
+is faster than NumPy; due to the difference in the two packages, there is not a
+simple answer.
+
+Broadly speaking:
+
+- NumPy operations are executed eagerly, synchronously, and only on CPU.
+- JAX operations may be executed eagerly or after compilation (if inside :func:`jit`);
+  they are dispatched asynchronously (see :ref:`async-dispatch`); and they can
+  be executed on CPU, GPU, or TPU, each of which have vastly different and continuously
+  evolving performance characteristics.
+  
+These architectural differences make meaningful direct benchmark comparisons between
+NumPy and JAX difficult.
+
+Additionally, these differences have led to different engineering focus between the
+packages: for example, NumPy has put significant effort into decreasing the per-call
+dispatch overhead for individual array operations, because in NumPy's computational
+model that overhead cannot be avoided.
+JAX, on the other hand, has several ways to avoid dispatch overhead (e.g. JIT
+compilation, asynchronous dispatch, batching transforms, etc.), and so reducing
+per-call overhead has been less of a priority.
+
+Keeping all that in mind, in summary: if you're doing microbenchmarks of individual
+array operations on CPU, you can generally expect NumPy to outperform JAX due to its
+lower per-operation dispatch overhead. If you're running your code on GPU or TPU,
+or are benchmarking more complicated JIT-compiled sequences of operations on CPU, you
+can generally expect JAX to outperform NumPy.
+
 .. comment We refer to the anchor below in JAX error messages
 
 ``Abstract tracer value encountered where concrete value is expected`` error

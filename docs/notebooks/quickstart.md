@@ -117,13 +117,7 @@ The output of {func}`~jax.device_put` still acts like an NDArray, but it only co
 +++ {"id": "ghkfKNQttDpg"}
 
 If you have a GPU (or TPU!) these calls run on the accelerator and have the potential to be much faster than on CPU.
-
-```{code-cell} ipython3
-:id: RzXK8GnIs7VV
-
-x = np.random.normal(size=(size, size)).astype(np.float32)
-%timeit np.dot(x, x.T)
-```
+See {ref}`faq-jax-vs-numpy` for more comparison of performance characteristics of NumPy and JAX
 
 +++ {"id": "iOzp0P_GoJhb"}
 
