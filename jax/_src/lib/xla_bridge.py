@@ -32,8 +32,8 @@ logging._warn_preinit_stderr = 0
 
 import jax._src.lib
 from jax._src.config import flags, bool_env
-from . import tpu_driver_client
-from . import xla_client
+from jax._src.lib import tpu_driver_client
+from jax._src.lib import xla_client
 from jax._src import util, traceback_util
 import numpy as np
 

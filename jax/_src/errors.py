@@ -11,8 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from jax import core
 
+from jax import core
 
 class _JAXErrorMixin:
   """Mixin for JAX-specific errors"""

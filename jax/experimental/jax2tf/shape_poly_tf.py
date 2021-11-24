@@ -21,7 +21,7 @@ from typing import Any, Optional, Sequence, Tuple, Union
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
-from . import shape_poly
+from jax.experimental.jax2tf import shape_poly
 
 TfVal = Any
 

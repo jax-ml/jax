@@ -28,24 +28,24 @@ from typing_extensions import Protocol
 
 import numpy as np
 
-from ..config import config
-from .. import core
+from jax.config import config
+from jax import core
 from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
-from .. import linear_util as lu
+from jax import linear_util as lu
 from jax._src import source_info_util
 from jax._src.abstract_arrays import (make_shaped_array, array_types)
-from ..core import (ConcreteArray, ShapedArray,
-                    Literal, pp_eqn_compact, JaxprPpContext,
-                    abstract_token)
+from jax.core import (ConcreteArray, ShapedArray,
+                      Literal, pp_eqn_compact, JaxprPpContext,
+                      abstract_token)
 import jax._src.pretty_printer as pp
-from .._src.util import (prod, extend_name_stack, wrap_name,
-                         safe_zip, safe_map, partition_list)
+from jax._src.util import (prod, extend_name_stack, wrap_name,
+                           safe_zip, safe_map, partition_list)
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from . import partial_eval as pe
-from . import ad
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import ad
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip

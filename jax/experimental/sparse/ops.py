@@ -757,7 +757,7 @@ def _todense_transpose(ct, *bufs, tree):
 
   standin = object()
   obj = tree_util.tree_unflatten(tree, [standin] * len(bufs))
-  from . import BCOO, bcoo_extract
+  from jax.experimental.sparse import BCOO, bcoo_extract
   if obj is standin:
     return (ct,)
   elif isinstance(obj, BCOO):

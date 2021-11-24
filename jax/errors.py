@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from ._src.errors import (
+from jax._src.errors import (
   JAXTypeError as JAXTypeError,
   JAXIndexError as JAXIndexError,
   ConcretizationTypeError as ConcretizationTypeError,

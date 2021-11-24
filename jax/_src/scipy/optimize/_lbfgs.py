@@ -18,7 +18,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 from jax import lax
-from .line_search import line_search
+from jax._src.scipy.optimize.line_search import line_search
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 

@@ -20,27 +20,27 @@ from warnings import warn
 import itertools as it
 from functools import partial
 
-from . import maps
-from .gsda import GlobalShardedDeviceArray as GSDA
-from .. import core
-from .. import linear_util as lu
-from .._src.api import _check_callable, _check_arg, Lowered
-from .._src import source_info_util
-from .._src.api_util import (argnums_partial_except, flatten_axes,
-                             flatten_fun_nokwargs, _ensure_index_tuple,
-                             donation_vector, rebase_donate_argnums,
-                             shaped_abstractify)
-from ..errors import JAXTypeError
-from ..interpreters import ad
-from ..interpreters import pxla
-from ..interpreters import xla
-from ..interpreters import batching
-from ..interpreters import partial_eval as pe
-from ..interpreters.sharded_jit import PartitionSpec
+from jax.experimental import maps
+from jax.experimental.gsda import GlobalShardedDeviceArray as GSDA
+from jax import core
+from jax import linear_util as lu
+from jax._src.api import _check_callable, _check_arg, Lowered
+from jax._src import source_info_util
+from jax._src.api_util import (argnums_partial_except, flatten_axes,
+                               flatten_fun_nokwargs, _ensure_index_tuple,
+                               donation_vector, rebase_donate_argnums,
+                               shaped_abstractify)
+from jax.errors import JAXTypeError
+from jax.interpreters import ad
+from jax.interpreters import pxla
+from jax.interpreters import xla
+from jax.interpreters import batching
+from jax.interpreters import partial_eval as pe
+from jax.interpreters.sharded_jit import PartitionSpec
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from ..tree_util import tree_map, tree_flatten, tree_unflatten, tree_leaves
-from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
+from jax.tree_util import tree_map, tree_flatten, tree_unflatten, tree_leaves
+from jax._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
                          split_list, cache, tuple_insert)
 xops = xc._xla.ops

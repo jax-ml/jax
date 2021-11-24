@@ -39,8 +39,8 @@ import opt_einsum
 
 import jax
 from jax import jit, custom_jvp
-from .vectorize import vectorize
-from .util import _wraps
+from jax._src.numpy.vectorize import vectorize
+from jax._src.numpy.util import _wraps
 from jax import core
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
@@ -1698,7 +1698,7 @@ def polyfit(x, y, deg, rcond=None, full=False, w=None, cov=False):
   # scale lhs to improve condition number and solve
   scale = sqrt((lhs*lhs).sum(axis=0))
   lhs /= scale[newaxis,:]
-  from . import linalg
+  from jax._src.numpy import linalg
   c, resids, rank, s = linalg.lstsq(lhs, rhs, rcond)
   c = (c.T/scale).T  # broadcast scale coefficients
 
@@ -4547,7 +4547,7 @@ def poly(seq_of_zeros):
   sh = seq_of_zeros.shape
   if len(sh) == 2 and sh[0] == sh[1] and sh[0] != 0:
     # import at runtime to avoid circular import
-    from . import linalg
+    from jax._src.numpy import linalg
     seq_of_zeros = linalg.eigvals(seq_of_zeros)
 
   if seq_of_zeros.ndim != 1:

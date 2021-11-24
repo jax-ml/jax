@@ -31,20 +31,20 @@ from weakref import ref
 
 import numpy as np
 
-from ._src import dtypes
-from ._src import config as jax_config
-from ._src.config import FLAGS, config
-from .errors import (ConcretizationTypeError, TracerArrayConversionError,
-                     TracerIntegerConversionError, UnexpectedTracerError)
-from . import linear_util as lu
+from jax._src import dtypes
+from jax._src import config as jax_config
+from jax._src.config import FLAGS, config
+from jax.errors import (ConcretizationTypeError, TracerArrayConversionError,
+                        TracerIntegerConversionError, UnexpectedTracerError)
+from jax import linear_util as lu
 
 from jax._src import source_info_util
-from ._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,
+from jax._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,
                         tuple_delete, cache, as_hashable_function,
                         HashableFunction)
 import jax._src.pretty_printer as pp
 
-from ._src import traceback_util
+from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip

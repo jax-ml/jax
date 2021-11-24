@@ -19,13 +19,13 @@ from typing import Dict, Any, Callable
 import jax
 from jax import core
 from jax import linear_util as lu
-from . import ad
-from . import partial_eval as pe
-from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
-from .._src.api_util import flatten_fun_nokwargs
-from ..tree_util import tree_flatten, tree_unflatten, register_pytree_node
-from .._src.util import safe_map, safe_zip, split_list
-from .._src import custom_derivatives
+from jax.interpreters import ad
+from jax.interpreters import partial_eval as pe
+from jax.core import raise_to_shaped, get_aval, Literal, Jaxpr
+from jax._src.api_util import flatten_fun_nokwargs
+from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
+from jax._src.util import safe_map, safe_zip, split_list
+from jax._src import custom_derivatives
 
 map = safe_map
 zip = safe_zip

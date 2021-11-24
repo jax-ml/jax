@@ -18,16 +18,17 @@ from typing import Any, Dict, Iterable, Tuple, Union, Optional
 
 import numpy as np
 
-from .. import core
-from . import dtypes
-from .tree_util import (PyTreeDef, tree_flatten, tree_unflatten, tree_multimap,
-                        tree_structure, treedef_children, treedef_is_leaf)
-from .tree_util import _replace_nones
-from .. import linear_util as lu
-from .util import safe_map, WrapKwArgs, Hashable, Unhashable
-from ..core import unit
+from jax import core
+from jax._src import dtypes
+from jax._src.tree_util import (
+    PyTreeDef, tree_flatten, tree_unflatten, tree_multimap, tree_structure,
+    treedef_children, treedef_is_leaf)
+from jax._src.tree_util import _replace_nones
+from jax import linear_util as lu
+from jax._src.util import safe_map, WrapKwArgs, Hashable, Unhashable
+from jax.core import unit
 
-from . import traceback_util
+from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 map = safe_map

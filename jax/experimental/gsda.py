@@ -18,14 +18,14 @@ import dataclasses
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict
 
-from . import maps
-from .. import core
+from jax.experimental import maps
+from jax import core
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from ..interpreters import pxla, xla
-from .._src.util import prod, safe_zip
-from .._src.api import device_put
-from ..interpreters.sharded_jit import PartitionSpec
+from jax.interpreters import pxla, xla
+from jax._src.util import prod, safe_zip
+from jax._src.api import device_put
+from jax.interpreters.sharded_jit import PartitionSpec
 
 Shape = Tuple[int, ...]
 MeshAxes = Sequence[Union[str, Tuple[str], None]]
@@ -49,7 +49,7 @@ class _HashableIndex:
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   # Import here to avoid cyclic import error when importing gsda in pjit.py.
-  from .pjit import get_array_mapping, _prepare_axis_resources
+  from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
 
   if not isinstance(mesh_axes, PartitionSpec):
     pspec = PartitionSpec(*mesh_axes)

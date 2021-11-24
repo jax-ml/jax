@@ -25,21 +25,21 @@ from weakref import ref
 
 import numpy as np
 
-from .. import core
-from .._src import dtypes
-from .. import linear_util as lu
+from jax import core
+from jax._src import dtypes
+from jax import linear_util as lu
 from jax._src.ad_util import Zero
-from .._src.api_util import flattened_fun_in_tree
-from .._src.tree_util import PyTreeDef, tree_unflatten, tree_leaves
-from .._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
-                         partition_list, cache, OrderedSet,
-                         as_hashable_function)
-from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
-                    unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
-                    ConcreteArray, raise_to_shaped, Var, Atom,
-                    JaxprEqn, Primitive)
+from jax._src.api_util import flattened_fun_in_tree
+from jax._src.tree_util import PyTreeDef, tree_unflatten, tree_leaves
+from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
+                           partition_list, cache, OrderedSet,
+                           as_hashable_function)
+from jax.core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
+                      unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
+                      ConcreteArray, raise_to_shaped, Var, Atom,
+                      JaxprEqn, Primitive)
 from jax._src import source_info_util
-from ..config import config
+from jax.config import config
 
 map = safe_map
 zip = safe_zip

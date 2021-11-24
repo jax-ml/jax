@@ -36,7 +36,7 @@ from jax._src import ad_util
 from jax._src.lax.lax import _device_put_raw
 from jax.interpreters import xla
 from jax._src.lib import xla_client
-from . import jax2tf as jax2tf_internal
+from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]

@@ -19,21 +19,21 @@ import itertools as it
 from typing import Any, Callable, Dict
 
 import jax
-from . import partial_eval as pe
-from ..config import config
-from .. import core
-from .._src.dtypes import dtype, float0
-from ..core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
+from jax.interpreters import partial_eval as pe
+from jax.config import config
+from jax import core
+from jax._src.dtypes import dtype, float0
+from jax.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                     raise_to_shaped)
-from .._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
+from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_aval, zeros_like_p, Zero)
-from .._src.util import (unzip2, safe_map, safe_zip, split_list,
+from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
                          wrap_name, as_hashable_function)
-from ..tree_util import register_pytree_node
-from .. import linear_util as lu
-from .._src.api_util import flatten_fun, flatten_fun_nokwargs
-from ..tree_util import tree_flatten, tree_unflatten, Partial
-from .._src import source_info_util
+from jax.tree_util import register_pytree_node
+from jax import linear_util as lu
+from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
+from jax.tree_util import tree_flatten, tree_unflatten, Partial
+from jax._src import source_info_util
 
 zip = safe_zip
 map = safe_map

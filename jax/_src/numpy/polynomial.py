@@ -15,11 +15,11 @@
 
 import numpy as np
 from jax import lax
-from . import lax_numpy as jnp
+from jax._src.numpy import lax_numpy as jnp
 
 from jax import jit
-from .util import _wraps
-from .linalg import eigvals as _eigvals
+from jax._src.numpy.util import _wraps
+from jax._src.numpy.linalg import eigvals as _eigvals
 
 
 def _to_inexact_type(type):

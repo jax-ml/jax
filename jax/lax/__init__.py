@@ -367,4 +367,4 @@ from jax._src.lax.other import (
   conv_general_dilated_patches as conv_general_dilated_patches
 )
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
-from . import linalg as linalg
+from jax.lax import linalg as linalg

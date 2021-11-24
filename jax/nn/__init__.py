@@ -17,7 +17,7 @@
 # flake8: noqa: F401
 
 from jax.numpy import tanh as tanh
-from . import initializers as initializers
+from jax.nn import initializers as initializers
 from jax._src.nn.functions import (
   celu as celu,
   elu as elu,

@@ -35,7 +35,7 @@ from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
 from jax._src.numpy.lax_numpy import _unique
-from . import ops
+from jax.experimental.sparse import ops
 
 Dtype = Any
 Shape = Tuple[int, ...]

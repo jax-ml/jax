@@ -17,4 +17,4 @@ from jax._src.lib import (
   xla_client as xla_client,
   xla_extension as xla_extension,
 )
-from . import xla_bridge as xla_bridge
+from jax.lib import xla_bridge as xla_bridge

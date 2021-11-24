@@ -67,13 +67,13 @@ from functools import partial
 from typing import Any, Tuple, Callable
 import weakref
 
-from . import core
-from ._src.util import curry
-from .tree_util import tree_map
+from jax import core
+from jax._src.util import curry
+from jax.tree_util import tree_map
 
-from ._src import traceback_util
+from jax._src import traceback_util
 
-from .config import config
+from jax.config import config
 
 traceback_util.register_exclusion(__file__)
 

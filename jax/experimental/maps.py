@@ -23,32 +23,32 @@ from warnings import warn
 from functools import wraps, partial, partialmethod
 from enum import Enum
 
-from .. import numpy as jnp
-from .. import core
-from .. import linear_util as lu
-from .._src.api import _check_callable, _check_arg
+from jax import numpy as jnp
+from jax import core
+from jax import linear_util as lu
+from jax._src.api import _check_callable, _check_arg
 from jax._src import dispatch
-from ..tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
-                         tree_leaves)
-from .._src.tree_util import _replace_nones
-from .._src.api_util import (flatten_fun_nokwargs, flatten_axes,
-                             _ensure_index_tuple, donation_vector,
-                             shaped_abstractify)
-from .._src import source_info_util
-from .._src.config import config
-from ..errors import JAXTypeError
-from ..interpreters import partial_eval as pe
-from ..interpreters import pxla
-from ..interpreters import xla
-from ..interpreters import batching
-from ..interpreters import ad
+from jax.tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
+                           tree_leaves)
+from jax._src.tree_util import _replace_nones
+from jax._src.api_util import (flatten_fun_nokwargs, flatten_axes,
+                               _ensure_index_tuple, donation_vector,
+                               shaped_abstractify)
+from jax._src import source_info_util
+from jax._src.config import config
+from jax.errors import JAXTypeError
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import pxla
+from jax.interpreters import xla
+from jax.interpreters import batching
+from jax.interpreters import ad
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from .._src.util import (safe_map, safe_zip, HashableFunction,
-                         as_hashable_function, unzip2, distributed_debug_log,
-                         tuple_insert, moveaxis, split_list, wrap_name)
-from .._src.lax.parallel import _build_axis_index_lowering
-from .. import lax
+from jax._src.util import (safe_map, safe_zip, HashableFunction,
+                           as_hashable_function, unzip2, distributed_debug_log,
+                           tuple_insert, moveaxis, split_list, wrap_name)
+from jax._src.lax.parallel import _build_axis_index_lowering
+from jax import lax
 
 class _PositionalSemantics(Enum):
   """Indicates whether the positional shapes of inputs should be interpreted as

@@ -18,21 +18,22 @@ from typing import Callable, Iterable, Optional, Tuple, Union
 from absl import logging
 import numpy as np
 
-from .. import core
-from . import ad
-from . import partial_eval as pe
+from jax import core
+from jax.interpreters import ad
+from jax.interpreters import partial_eval as pe
 # TODO(skye): separate pmap into it's own module?
-from . import pxla
-from . import xla
-from .. import linear_util as lu
+from jax.interpreters import pxla
+from jax.interpreters import xla
+from jax import linear_util as lu
 from jax._src import dispatch
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from .._src.api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index_tuple
-from ..tree_util import tree_flatten, tree_unflatten
-from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
-                         HashableFunction)
-from .._src.config import config
+from jax._src.api_util import (argnums_partial, flatten_axes, flatten_fun,
+                               _ensure_index_tuple)
+from jax.tree_util import tree_flatten, tree_unflatten
+from jax._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
+                           HashableFunction)
+from jax._src.config import config
 
 xops = xc._xla.ops
 

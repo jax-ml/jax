@@ -48,9 +48,9 @@ from jax.interpreters import sharded_jit
 from jax.interpreters import xla
 from jax._src.lib import xla_client
 
-from . import shape_poly
-from . import shape_poly_tf
-from . import impl_no_xla
+from jax.experimental.jax2tf import shape_poly
+from jax.experimental.jax2tf import shape_poly_tf
+from jax.experimental.jax2tf import impl_no_xla
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from typing import Any, Callable, Mapping, Optional, Tuple, Union
-from .bfgs import minimize_bfgs
-from ._lbfgs import _minimize_lbfgs
+from jax._src.scipy.optimize.bfgs import minimize_bfgs
+from jax._src.scipy.optimize._lbfgs import _minimize_lbfgs
 from typing import NamedTuple
 import jax.numpy as jnp
 

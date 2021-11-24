@@ -24,7 +24,7 @@ from jax._src.lax import slicing as lax_slicing
 from jax._src import dtypes
 from jax._src import util
 
-from . import jax2tf
+from jax.experimental.jax2tf import jax2tf
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]

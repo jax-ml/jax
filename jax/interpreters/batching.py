@@ -19,17 +19,17 @@ from typing import (Any, Callable, Dict, Set, Optional, Tuple, Union, Iterable,
 import numpy as np
 
 import jax
-from ..config import config
-from .. import core
-from ..core import raise_to_shaped, Trace, Tracer
+from jax.config import config
+from jax import core
+from jax.core import raise_to_shaped, Trace, Tracer
 from jax._src.tree_util import tree_unflatten, tree_flatten
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero)
-from .. import linear_util as lu
-from .._src.util import (unzip2, safe_map, safe_zip, wrap_name, split_list,
-                         canonicalize_axis, moveaxis, as_hashable_function,
-                         curry, memoize)
-from . import partial_eval as pe
+from jax import linear_util as lu
+from jax._src.util import (unzip2, safe_map, safe_zip, wrap_name, split_list,
+                           canonicalize_axis, moveaxis, as_hashable_function,
+                           curry, memoize)
+from jax.interpreters import partial_eval as pe
 
 map = safe_map
 

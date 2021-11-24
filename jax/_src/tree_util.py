@@ -21,9 +21,9 @@ from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, Type,
 
 from jax._src.lib import pytree
 
-from .._src.util import safe_zip, unzip2
+from jax._src.util import safe_zip, unzip2
 
-from .._src import traceback_util
+from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")

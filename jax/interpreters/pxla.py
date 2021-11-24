@@ -42,26 +42,26 @@ import sys
 from absl import logging
 import numpy as np
 
-from .._src.config import config
-from .. import core
-from .. import linear_util as lu
+from jax._src.config import config
+from jax import core
+from jax import linear_util as lu
 from jax._src.abstract_arrays import array_types
-from ..core import ConcreteArray, ShapedArray
+from jax.core import ConcreteArray, ShapedArray
 from jax._src import device_array
-from .._src import source_info_util
-from .._src.util import (unzip3, prod, safe_map, safe_zip,
-                         extend_name_stack, wrap_name, assert_unreachable,
-                         tuple_insert, tuple_delete, distributed_debug_log)
-from ..errors import JAXTypeError
+from jax._src import source_info_util
+from jax._src.util import (unzip3, prod, safe_map, safe_zip,
+                           extend_name_stack, wrap_name, assert_unreachable,
+                           tuple_insert, tuple_delete, distributed_debug_log)
+from jax.errors import JAXTypeError
 from jax._src import dispatch
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
-from ..tree_util import tree_flatten, tree_map
-from . import batching
-from . import partial_eval as pe
-from . import xla
-from . import ad
+from jax.tree_util import tree_flatten, tree_map
+from jax.interpreters import batching
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
+from jax.interpreters import ad
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
@@ -458,7 +458,7 @@ def sda_array_result_handler(sharding_spec, indices, aval: ShapedArray):
                                                 indices)
 
 def gsda_array_result_handler(global_aval, global_mesh, out_axis_resources):
-  from ..experimental.gsda import GlobalShardedDeviceArray
+  from jax.experimental.gsda import GlobalShardedDeviceArray
 
   return lambda bufs: GlobalShardedDeviceArray(
       global_aval.shape, global_mesh, out_axis_resources, bufs)

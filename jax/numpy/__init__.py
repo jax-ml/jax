@@ -16,8 +16,8 @@
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 # flake8: noqa: F401
-from . import fft as fft
-from . import linalg as linalg
+from jax.numpy import fft as fft
+from jax.numpy import linalg as linalg
 
 from jax._src.device_array import DeviceArray as DeviceArray
 

@@ -39,23 +39,24 @@ import numpy as np
 from contextlib import contextmanager, ExitStack
 
 import jax
-from .. import core
-from .. import linear_util as lu
-from . import dtypes
-from ..core import eval_jaxpr
-from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2, argnums_partial,
-                       argnums_partial_except, flatten_axes, donation_vector,
-                       rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-                       shaped_abstractify, _ensure_str_tuple,
-                       argnames_partial_except)
-from . import traceback_util
-from .traceback_util import api_boundary
-from ..tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
-                         tree_transpose, tree_leaves, tree_multimap,
-                         treedef_is_leaf, treedef_children, Partial, PyTreeDef)
-from .util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
-                   extend_name_stack, wrap_name, cache, wraps, HashableFunction)
+from jax import core
+from jax import linear_util as lu
+from jax._src import dtypes
+from jax.core import eval_jaxpr
+from jax._src.api_util import (
+    flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
+    argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
+    rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
+    shaped_abstractify, _ensure_str_tuple, argnames_partial_except)
+from jax._src import traceback_util
+from jax._src.traceback_util import api_boundary
+from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
+                           tree_structure, tree_transpose, tree_leaves,
+                           tree_multimap, treedef_is_leaf, treedef_children,
+                           Partial, PyTreeDef)
+from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
+                           extend_name_stack, wrap_name, cache, wraps,
+                           HashableFunction)
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src.lib import jax_jit
@@ -65,25 +66,27 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 # Unused imports to be exported
 from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
-                              local_devices, process_index, process_count,
-                              host_id, host_ids, host_count, default_backend)
-from ..core import ConcreteArray, ShapedArray, raise_to_shaped
-from ..interpreters import partial_eval as pe
-from ..interpreters import xla
-from ..interpreters import pxla
-from ..interpreters import ad
-from ..interpreters import batching
-from ..interpreters import masking
-from ..interpreters import invertible_ad as iad
-from ..interpreters.invertible_ad import custom_ivjp
-from ..custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
-                                  custom_vjp, linear_call)
-from ..ad_checkpoint import checkpoint_policies
+                                     local_devices, process_index,
+                                     process_count, host_id, host_ids,
+                                     host_count, default_backend)
+from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
+from jax.interpreters import pxla
+from jax.interpreters import ad
+from jax.interpreters import batching
+from jax.interpreters import masking
+from jax.interpreters import invertible_ad as iad
+from jax.interpreters.invertible_ad import custom_ivjp
+from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
+                                    custom_vjp, linear_call)
+from jax.ad_checkpoint import checkpoint_policies
 
-from .._src.config import (flags, config, bool_env, disable_jit as _disable_jit,
-                           debug_nans as config_debug_nans,
-                           debug_infs as config_debug_infs,
-                           _thread_local_state as config_thread_local_state)
+from jax._src.config import (flags, config, bool_env,
+                             disable_jit as _disable_jit,
+                             debug_nans as config_debug_nans,
+                             debug_infs as config_debug_infs,
+                             _thread_local_state as config_thread_local_state)
 
 
 traceback_util.register_exclusion(__file__)

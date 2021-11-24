@@ -183,11 +183,11 @@ To fit the same model on sparse data, we can apply the :func:`sparsify` transfor
 """
 
 # flake8: noqa: F401
-from .ad import (
+from jax.experimental.sparse.ad import (
     grad as grad,
     value_and_grad as value_and_grad,
 )
-from .bcoo import (
+from jax.experimental.sparse.bcoo import (
     bcoo_dot_general as bcoo_dot_general,
     bcoo_dot_general_p as bcoo_dot_general_p,
     bcoo_dot_general_sampled as bcoo_dot_general_sampled,
@@ -207,7 +207,7 @@ from .bcoo import (
     BCOO as BCOO,
 )
 
-from .ops import (
+from jax.experimental.sparse.ops import (
     coo_fromdense as coo_fromdense,
     coo_fromdense_p as coo_fromdense_p,
     coo_matmat as coo_matmat,
@@ -232,8 +232,8 @@ from .ops import (
     CSR as CSR,
 )
 
-from .random import random_bcoo as random_bcoo
-from .transform import (
+from jax.experimental.sparse.random import random_bcoo as random_bcoo
+from jax.experimental.sparse.transform import (
     sparsify as sparsify,
     SparseTracer as SparseTracer,
 )

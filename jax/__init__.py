@@ -18,7 +18,7 @@ _os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
 del _os
 
 # Set Cloud TPU env vars if necessary before transitively loading C++ backend
-from .cloud_tpu_init import cloud_tpu_init as _cloud_tpu_init
+from jax._src.cloud_tpu_init import cloud_tpu_init as _cloud_tpu_init
 try:
   _cloud_tpu_init()
 except Exception as exc:
@@ -34,10 +34,10 @@ del _cloud_tpu_init
 # Confusingly there are two things named "config": the module and the class.
 # We want the exported object to be the class, so we first import the module
 # to make sure a later import doesn't overwrite the class.
-from . import config as _config_module
+from jax import config as _config_module
 del _config_module
 
-from ._src.config import (
+from jax._src.config import (
   config as config,
   enable_checks as enable_checks,
   check_tracer_leaks as check_tracer_leaks,
@@ -50,7 +50,7 @@ from ._src.config import (
   default_prng_impl as default_prng_impl,
   numpy_rank_promotion as numpy_rank_promotion,
 )
-from ._src.api import (
+from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
@@ -115,24 +115,24 @@ from ._src.api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation as xla_computation,
 )
-from .experimental.maps import soft_pmap as soft_pmap
-from .version import __version__ as __version__
+from jax.experimental.maps import soft_pmap as soft_pmap
+from jax.version import __version__ as __version__
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
-from . import abstract_arrays as abstract_arrays
-from . import api_util as api_util
-from . import distributed as distributed
-from . import dtypes as dtypes
-from . import errors as errors
-from . import image as image
-from . import lax as lax
-from . import nn as nn
-from . import numpy as numpy
-from . import ops as ops
-from . import profiler as profiler
-from . import random as random
-from . import tree_util as tree_util
-from . import util as util
+from jax import abstract_arrays as abstract_arrays
+from jax import api_util as api_util
+from jax import distributed as distributed
+from jax import dtypes as dtypes
+from jax import errors as errors
+from jax import image as image
+from jax import lax as lax
+from jax import nn as nn
+from jax import numpy as numpy
+from jax import ops as ops
+from jax import profiler as profiler
+from jax import random as random
+from jax import tree_util as tree_util
+from jax import util as util
 
 import jax.lib  # TODO(phawkins): remove this export.
