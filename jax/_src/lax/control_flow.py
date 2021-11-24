@@ -2616,7 +2616,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
     return c_flat
 
   # Check that all inputs have a consistent leading dimension `num_elems`.
-  axis = lax._canonicalize_axis(axis, elems_flat[0].ndim)
+  axis = util.canonicalize_axis(axis, elems_flat[0].ndim)
   num_elems = int(elems_flat[0].shape[axis])
   if not all(int(elem.shape[axis]) == num_elems for elem in elems_flat[1:]):
     raise ValueError('Array inputs to associative_scan must have the same '

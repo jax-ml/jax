@@ -5847,15 +5847,3 @@ def _check_user_dtype_supported(dtype, fun_name=None):
     fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = dtypes.canonicalize_dtype(dtype).name
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype), stacklevel=2)
-
-
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
-  axis = operator.index(axis)
-  if not -num_dims <= axis < num_dims:
-    raise ValueError(
-        "axis {} is out of bounds for array of dimension {}".format(
-            axis, num_dims))
-  if axis < 0:
-    axis = axis + num_dims
-  return axis

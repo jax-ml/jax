@@ -16,7 +16,7 @@ from functools import partial
 
 import scipy.fftpack as osp_fft  # TODO use scipy.fft once scipy>=1.4.0 is used
 from jax import lax, numpy as jnp
-from jax._src.lax.lax import _canonicalize_axis
+from jax._src.util import canonicalize_axis
 from jax._src.numpy.util import _wraps
 
 def _W4(N, k):
@@ -40,7 +40,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None):
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
 
-  axis = _canonicalize_axis(axis, x.ndim)
+  axis = canonicalize_axis(axis, x.ndim)
   if n is not None:
     x = lax.pad(x, jnp.array(0, x.dtype),
                 [(0, n - x.shape[axis] if a == axis else 0, 0)
@@ -58,7 +58,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None):
 
 
 def _dct2(x, axes, norm):
-  axis1, axis2 = map(partial(_canonicalize_axis, num_dims=x.ndim), axes)
+  axis1, axis2 = map(partial(canonicalize_axis, num_dims=x.ndim), axes)
   N1, N2 = x.shape[axis1], x.shape[axis2]
   v = _dct_interleave(_dct_interleave(x, axis1), axis2)
   V = jnp.fft.fftn(v, axes=axes)
