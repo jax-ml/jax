@@ -478,20 +478,7 @@ def _inline_host_callback() -> bool:
 
 
 def _use_outfeed(platform: str) -> bool:
-  if platform in ("tpu", "gpu") or FLAGS.jax_host_callback_outfeed:
-    return True
-
-  else:
-    backend = xb.get_backend(platform)
-    # TODO: remove this check once we bump the minimum required jaxlib
-    if getattr(backend, "emit_python_callback", None) is None:
-      logging.warning(
-          "jax_host_callback_outfeed is False, but the CustomCall features "
-          "for host_callback are not available in this version of jaxlib.")
-      return True
-    else:
-      return False
-
+  return (platform in ("tpu", "gpu") or FLAGS.jax_host_callback_outfeed)
 
 xops = xla_client._xla.ops
 
