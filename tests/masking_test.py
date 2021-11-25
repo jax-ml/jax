@@ -232,7 +232,8 @@ class MaskingTest(jtu.JaxTestCase):
       out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
       return out
 
-    ans = cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=3))
+    n = np.uint8(3)  # Test non-default integer type for dynamic length.
+    ans = cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=n))
     expected = 16
     self.assertAllClose(ans, expected, check_dtypes=False)
 
