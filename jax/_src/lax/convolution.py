@@ -319,7 +319,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
   k_sdims = k_shape[2:]  # type: ignore[index]
   # Calculate correct output shape given padding and strides.
   pads: Union[str, Sequence[Tuple[int, int]]]
-  if padding in {'SAME', 'VALID'}:
+  if isinstance(padding, str) and padding in {'SAME', 'VALID'}:
     if rhs_dilation is None:
       rhs_dilation = (1,) * (rhs.ndim - 2)
     effective_k_size = map(lambda k, r: (k-1) * r + 1, k_sdims, rhs_dilation)
