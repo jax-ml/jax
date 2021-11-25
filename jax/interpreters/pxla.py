@@ -458,10 +458,10 @@ def sda_array_result_handler(sharding_spec, indices, aval: ShapedArray):
                                                 indices)
 
 def gsda_array_result_handler(global_aval, global_mesh, out_axis_resources):
-  from jax.experimental.gsda import GlobalShardedDeviceArray
+  from jax.experimental.global_device_array import GlobalDeviceArray
 
-  return lambda bufs: GlobalShardedDeviceArray(
-      global_aval.shape, global_mesh, out_axis_resources, bufs)
+  return lambda bufs: GlobalDeviceArray(global_aval.shape, global_mesh,
+                                        out_axis_resources, bufs)
 
 ### lazy device-memory persistence and result handling
 
