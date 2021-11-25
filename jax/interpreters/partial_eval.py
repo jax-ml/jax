@@ -162,18 +162,19 @@ class JaxprTrace(Trace):
       return primitive.bind(*consts, **params)
     tracers = map(self.instantiate_const, tracers)
     avals = [t.aval for t in tracers]
-    out_aval = primitive.abstract_eval(*avals, **params)
+    out_aval, effects = primitive.abstract_eval(*avals, **params)
     source = source_info_util.current()
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
-      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params, source)
+      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params, effects,
+                           source)
       for t in out_tracers: t.recipe = eqn
       return out_tracers
     else:
       out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
       out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive,
-                                         params, source)
+                                         params, effects, source)
       return out_tracer
 
   def process_call(self, primitive, f: lu.WrappedFun, tracers, params):
@@ -215,7 +216,7 @@ class JaxprTrace(Trace):
                    for a in out_avals]
     eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),
                          out_tracers, primitive, staged_params,
-                         source_info_util.current())
+                         jaxpr.effects, source_info_util.current())
     for t in out_tracers: t.recipe = eqn
 
     return merge_lists(out_knowns, out_tracers, out_consts)
@@ -306,7 +307,7 @@ class JaxprTrace(Trace):
       new_params = update_params(params, [], len(in_tracers))
       new_params = dict(new_params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
       eqn = new_eqn_recipe(in_tracers, out_tracers, primitive, new_params,
-                           source_info_util.current())
+                           jaxpr.effects, source_info_util.current())
       for t in out_tracers: t.recipe = eqn
       return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -398,7 +399,7 @@ class JaxprTrace(Trace):
                          dict(fun_jaxpr=closed_jaxpr,
                               jvp_jaxpr_thunk=jvp_jaxpr_thunk,
                               num_consts=len(consts) + len(env)),
-                         source_info_util.current())
+                         jaxpr.effects, source_info_util.current())
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
@@ -439,7 +440,7 @@ class JaxprTrace(Trace):
                               fwd_jaxpr_thunk=fwd_jaxpr_thunk,
                               num_consts=len(consts) + len(env),
                               bwd=bwd, out_trees=out_trees),
-                         source_info_util.current())
+                         jaxpr.effects, source_info_util.current())
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
@@ -601,12 +602,14 @@ class JaxprEqnRecipe(NamedTuple):
   outvars: 'Sequence[ref[JaxprTracer]]'
   primitive: Primitive
   params: Dict[str, Any]
+  effects: bool
   source_info: source_info_util.SourceInfo
 
 def new_eqn_recipe(invars: Sequence[JaxprTracer],
                    outvars: Sequence[JaxprTracer],
                    primitive: Primitive,
                    params: Dict[str, Any],
+                   effects: bool,
                    source_info: source_info_util.SourceInfo
                   ) -> JaxprEqnRecipe:
   """Constructs a new JaxEqnRecipe.
@@ -630,17 +633,17 @@ def new_eqn_recipe(invars: Sequence[JaxprTracer],
     assert ("donated_invars" in params and
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   return JaxprEqnRecipe(object(), tuple(invars), map(ref, outvars), primitive,
-                        params, source_info)
+                        params, effects, source_info)
 
 
 def recipe_to_eqn(getvar: Callable[[JaxprTracer], Atom],
                   recipe: JaxprEqnRecipe) -> core.JaxprEqn:
-  _, in_tracers, out_tracer_refs, primitive, params, source_info = recipe
+  _, in_tracers, out_tracer_refs, prim, params, effects, source_info = recipe
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   invars  = [getvar(t) for t in in_tracers]
   outvars = [core.DropVar(core.abstract_unit) if t is None
              else cast(Var, getvar(t)) for t in out_tracers]
-  return new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
+  return new_jaxpr_eqn(invars, outvars, prim, params, effects, source_info)
 
 def tracers_to_jaxpr(
   in_tracers: Sequence[JaxprTracer],
@@ -703,7 +706,8 @@ def tracers_to_jaxpr(
   env_vars, env_vals = unzip2(env.items())
   const_vars, const_vals = unzip2(consts.items())
   # The env_vars are pre-pended to the invars
-  jaxpr = Jaxpr(const_vars, [*env_vars, *invars], map(getvar, out_tracers), eqns)
+  jaxpr = Jaxpr(const_vars, [*env_vars, *invars], map(getvar, out_tracers),
+                eqns, False)
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
 
@@ -713,7 +717,8 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   lifted_jaxpr = Jaxpr(constvars=(),
                        invars=jaxpr.constvars + jaxpr.invars,
-                       outvars=jaxpr.outvars, eqns=jaxpr.eqns)
+                       outvars=jaxpr.outvars, eqns=jaxpr.eqns,
+                       effects=jaxpr.effects)
   config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
@@ -721,7 +726,8 @@ def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   env_vars, invars = split_list(jaxpr.invars, [num_env_vars])
   converted_jaxpr = Jaxpr(constvars=jaxpr.constvars + env_vars,
-                          invars=invars, outvars=jaxpr.outvars, eqns=jaxpr.eqns)
+                          invars=invars, outvars=jaxpr.outvars, eqns=jaxpr.eqns,
+                          effects=jaxpr.effects)
   config.jax_enable_checks and core.check_jaxpr(converted_jaxpr)
   return converted_jaxpr
 
@@ -810,6 +816,8 @@ def _partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   out_avals_1 = [*out_avals_1, *res_avals]
   in_avals_2 = [*in_avals_2, *res_avals]
 
+  assert jaxpr.jaxpr.effects == jaxpr_1.effects
+  assert not jaxpr_2.effects
   return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
 
 
@@ -878,7 +886,8 @@ def _remat_partial_eval(trace, _, f, tracers, params):
                          for x in jaxpr_unknown.outvars]
     new_params = dict(params, call_jaxpr=jaxpr_unknown, differentiated=True)
     recipe = new_eqn_recipe(in_jaxpr_tracers, out_jaxpr_tracers, remat_call_p,
-                            new_params, source_info_util.current())
+                            new_params, jaxpr_unknown.effects,
+                            source_info_util.current())
     for t in out_jaxpr_tracers: t.recipe = recipe
     return _zip_knowns(out_known_tracers, out_jaxpr_tracers, out_unknowns)
   else:
@@ -925,7 +934,8 @@ def _remat_partial_eval(trace, _, f, tracers, params):
     const_tracers = map(trace.new_instantiated_const, consts)
     in_tracers = (*const_tracers, *env_tracers, *instantiated_tracers)
     eqn = new_eqn_recipe(in_tracers, unknown_output_tracers, remat_call_p,
-                         new_params, source_info_util.current())
+                         new_params, new_jaxpr.effects,
+                         source_info_util.current())
     for t in unknown_output_tracers: t.recipe = eqn
     return _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
 call_partial_eval_rules[remat_call_p] = _remat_partial_eval
@@ -943,7 +953,7 @@ def _zip_knowns(known_list, unknown_list, which_unknown: Sequence[bool]):
 def _partial_eval_jaxpr_custom(
     jaxpr: Jaxpr, in_unknowns: Sequence[bool], saveable: Callable[..., bool],
   ) -> Tuple[Jaxpr, Jaxpr, Sequence[bool], Sequence[bool], int]:
-  if jaxpr.constvars: raise NotImplementedError  # TODO(mattjj)
+  if jaxpr.constvars or jaxpr.effects: raise NotImplementedError  # TODO(mattjj)
   env: Dict[Var, Tuple[bool, bool]] = {}
   residuals: OrderedSet[Var] = OrderedSet()
 
@@ -975,7 +985,7 @@ def _partial_eval_jaxpr_custom(
     elif any(unks_in):
       inputs = map(ensure_instantiated, inst_in, eqn.invars)
       staged_eqns.append(new_jaxpr_eqn(inputs, eqn.outvars, eqn.primitive,
-                                       eqn.params, eqn.source_info))
+                                       eqn.params, eqn.effects, eqn.source_info))
       map(partial(write, True, True), eqn.outvars)
     else:
       known_eqns.append(eqn)
@@ -984,7 +994,7 @@ def _partial_eval_jaxpr_custom(
       else:
         inputs = map(ensure_instantiated, inst_in, eqn.invars)
         staged_eqns.append(new_jaxpr_eqn(inputs, eqn.outvars, eqn.primitive,
-                                         eqn.params, eqn.source_info))
+                                         eqn.params, eqn.effects, eqn.source_info))
         map(partial(write, False, True), eqn.outvars)
   out_unknowns, out_inst = unzip2(map(read, jaxpr.outvars))
   assert all(type(v) is Var for v in residuals), residuals
@@ -992,11 +1002,13 @@ def _partial_eval_jaxpr_custom(
   ins_known, _ = partition_list(in_unknowns, jaxpr.invars)
   outs_known_, _ = partition_list(out_unknowns, jaxpr.outvars)
   outs_known = [x for x in outs_known_ if x.aval is not abstract_unit]
-  jaxpr_known = Jaxpr((), ins_known, [*outs_known, *residuals], known_eqns)
+  jaxpr_known = Jaxpr((), ins_known, [*outs_known, *residuals], known_eqns,
+                      False)
   config.jax_enable_checks and core.check_jaxpr(jaxpr_known)
 
   _, outs_staged = partition_list(out_inst, jaxpr.outvars)
-  jaxpr_staged = Jaxpr((), [*residuals, *jaxpr.invars], outs_staged, staged_eqns)
+  jaxpr_staged = Jaxpr((), [*residuals, *jaxpr.invars], outs_staged,
+                       staged_eqns, False)
   config.jax_enable_checks and core.check_jaxpr(jaxpr_staged)
 
   return jaxpr_known, jaxpr_staged, out_unknowns, out_inst, len(residuals)
@@ -1052,9 +1064,11 @@ def call_partial_eval_custom_rule(
   params_known, params_staged = params_updater(
       unks_in, kept_outs_known, kept_outs_staged, num_res, params_known, params_staged)
   eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
-                            eqn.primitive, params_known, eqn.source_info)
+                            eqn.primitive, params_known, jaxpr_known.effects,
+                            eqn.source_info)
   eqn_staged = new_jaxpr_eqn([*residuals, *eqn.invars], out_binders_staged,
-                             eqn.primitive, params_staged, eqn.source_info)
+                             eqn.primitive, params_staged, jaxpr_staged.effects,
+                             eqn.source_info)
   assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
@@ -1073,7 +1087,7 @@ partial_eval_jaxpr_custom_rules[remat_call_p] = \
 # TODO(mattjj): unify with dce code below
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
               ) -> Tuple[Jaxpr, List[bool]]:
-  if jaxpr.constvars: raise NotImplementedError  # TODO(mattjj)
+  if jaxpr.constvars or jaxpr.effects: raise NotImplementedError  # TODO(mattjj)
   env: Dict[Var, bool] = {}
 
   def read(v: Var) -> bool:
@@ -1084,12 +1098,14 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
       env[x] = read(x) or b
 
   new_eqns = []
+  effects = False
   map(write, jaxpr.outvars, used_outputs)
   for eqn in jaxpr.eqns[::-1]:
     used_outs = map(read, eqn.outvars)
-    # If any outputs are used, then we need to keep a version of the eqn and
-    # potentially mark some inputs as used. Otherwise mark all inputs as unused.
-    if any(used_outs) or core.primitive_uses_outfeed(eqn.primitive, eqn.params):
+    # If any outputs are used, or if the application has an effect, then we need
+    # to keep a version of the eqn and potentially mark some inputs as used.
+    # Otherwise mark all inputs as unused.
+    if any(used_outs) or eqn.effects:
       # If there's a rule for modifying the eqn and computing used inputs, apply
       # it. Otherwise, keep the eqn unmodified and mark all inputs as used.
       rule = dce_rules.get(eqn.primitive)
@@ -1099,6 +1115,7 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
         used_ins = [True] * len(eqn.invars)
         new_eqn = eqn
       new_eqns.append(new_eqn)
+      effects |= new_eqn.effects
     else:
       used_ins = [False] * len(eqn.invars)
     map(write, eqn.invars, used_ins)
@@ -1107,7 +1124,7 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
   new_jaxpr = Jaxpr((),
                     [v for v, b in zip(jaxpr.invars, used_inputs)   if b],
                     [v for v, b in zip(jaxpr.outvars, used_outputs) if b],
-                    new_eqns[::-1])
+                    new_eqns[::-1], effects)
   config.jax_enable_checks and core.check_jaxpr(new_jaxpr)
 
   return new_jaxpr, used_inputs
@@ -1125,7 +1142,8 @@ def dce_jaxpr_call_rule(used_outputs: List[bool], eqn: JaxprEqn
     new_params = update_params(new_params, used_inputs, 0)
   new_eqn = new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs) if used],
                           [v for v, used in zip(eqn.outvars, used_outputs) if used],
-                          eqn.primitive, new_params, eqn.source_info)
+                          eqn.primitive, new_params, new_jaxpr.effects,
+                          eqn.source_info)
   return used_inputs, new_eqn
 dce_rules[core.call_p] = dce_jaxpr_call_rule
 dce_rules[core.named_call_p] = dce_jaxpr_call_rule
@@ -1154,14 +1172,15 @@ def _dce_open_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False)
       new_eqns.append(eqn)
       needed_vars.update(v for v in eqn.invars if type(v) is not Literal)
   new_eqns = new_eqns[::-1]
-  return Jaxpr(jaxpr.constvars, jaxpr.invars, new_outvars, new_eqns)
+  return Jaxpr(jaxpr.constvars, jaxpr.invars, new_outvars, new_eqns, jaxpr.effects)
 
 @cache()
 def _drop_vars(jaxpr: Jaxpr, drop_ins: Tuple[bool, ...], drop_outs: Tuple[bool, ...]):
   return Jaxpr(jaxpr.constvars,
                [v for v, d in zip(jaxpr.invars, drop_ins) if not d],
                [v for v, d in zip(jaxpr.outvars, drop_outs) if not d],
-               jaxpr.eqns)
+               jaxpr.eqns,
+               jaxpr.effects)
 
 
 def _reconstruct_pval(pval1: PartialVal, const2: core.Value):
@@ -1181,7 +1200,7 @@ def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]) ->
   assert len(closed_jaxpr.in_avals) == len(to_move)
   new_invars = _move_to_front(closed_jaxpr.jaxpr.invars, to_move)
   new_jaxpr = Jaxpr((), new_invars, closed_jaxpr.jaxpr.outvars,
-                    closed_jaxpr.jaxpr.eqns)
+                    closed_jaxpr.jaxpr.eqns, closed_jaxpr.jaxpr.effects)
   new_closed_jaxpr = core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
   return new_closed_jaxpr
 
@@ -1252,6 +1271,7 @@ class JaxprStackFrame:
   tracers: List[DynamicJaxprTracer]  # hold onto strong refs for all tracers
   eqns: List[JaxprEqn]
   invars: List[Var]
+  effects: bool
 
   def __init__(self):
     self.gensym = core.gensym()
@@ -1261,13 +1281,18 @@ class JaxprStackFrame:
     self.tracers = []   # circ refs, frame->tracer->trace->main->frame,
     self.eqns = []      # cleared when we pop frame from main
     self.invars = []
+    self.effects = False
+
+  def add_eqn(self, eqn: JaxprEqn):
+    self.eqns.append(eqn)
+    self.effects |= eqn.effects
 
   def to_jaxpr(self, out_tracers):
     # It's not necessary, but we keep the tracer-to-var mapping injective:
     assert len(self.tracer_to_var) == len(set(self.tracer_to_var.values()))
     outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.items())
-    jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns)
+    jaxpr = Jaxpr(constvars, invars, outvars, self.eqns, self.effects)
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     return jaxpr, constvals
@@ -1302,7 +1327,7 @@ def _const_folding_and_forwarding(jaxpr, constvals):
   for eqn in jaxpr.eqns:
     # always apply invar substitutions
     eqn = JaxprEqn([var_subs.get(v, v) for v in eqn.invars], eqn.outvars,
-                    eqn.primitive, eqn.params, eqn.source_info)
+                   eqn.primitive, eqn.params, eqn.effects, eqn.source_info)
     # if any inputs are constants and we have a constant-folding rule, apply it
     if eqn.primitive in const_fold_rules and any(v in consts for v in eqn.invars):
       consts_in = [consts.get(v) for v in eqn.invars]
@@ -1323,7 +1348,8 @@ def _const_folding_and_forwarding(jaxpr, constvals):
     new_eqns.append(eqn)
   new_constvars, new_constvals = unzip2(consts.items())
   new_outvars = [var_subs.get(v, v) for v in jaxpr.outvars]
-  new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, new_outvars, new_eqns)
+  new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, new_outvars, new_eqns,
+                    jaxpr.effects)
   return new_jaxpr, new_constvals
 
 ConstFoldRule = Callable[[List[Optional[Any]], JaxprEqn],
@@ -1369,9 +1395,10 @@ def _inline_literals(jaxpr, constvals):
     outvars = [var(v) if v in used else core.DropVar(v.aval)
                for v in eqn.outvars]
     new_eqns.append(new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
-                                  eqn.source_info))
+                                  eqn.effects, eqn.source_info))
   new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
-  new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns)
+  new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns,
+                    jaxpr.effects)
   return new_jaxpr, new_constvals
 
 class DynamicJaxprTrace(core.Trace):
@@ -1451,14 +1478,14 @@ class DynamicJaxprTrace(core.Trace):
 
   def default_process_primitive(self, primitive, tracers, params):
     avals = [t.aval for t in tracers]
-    out_avals = primitive.abstract_eval(*avals, **params)
+    out_avals, effects = primitive.abstract_eval(*avals, **params)
     out_avals = [out_avals] if not primitive.multiple_results else out_avals
     source_info = source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
     outvars = map(self.makevar, out_tracers)
-    eqn = new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
-    self.frame.eqns.append(eqn)
+    eqn = new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info)
+    self.frame.add_eqn(eqn)
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
   def process_call(self, call_primitive, f, tracers, params):
@@ -1485,9 +1512,9 @@ class DynamicJaxprTrace(core.Trace):
     if update_params:
       new_params = update_params(new_params, [True] * len(tracers),
                                  len(consts) + len(dim_tracers))
-    eqn = new_jaxpr_eqn([*constvars, *invars], outvars,
-                        call_primitive, new_params, source_info)
-    self.frame.eqns.append(eqn)
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, call_primitive,
+                        new_params, jaxpr.effects, source_info)
+    self.frame.add_eqn(eqn)
     return out_tracers
 
   def post_process_call(self, call_primitive, out_tracers, params):
@@ -1520,8 +1547,8 @@ class DynamicJaxprTrace(core.Trace):
       if update_params:
         new_params = update_params(new_params, [True] * len(tracers), len(consts))
       eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
-                          new_params, source_info)
-      self.frame.eqns.append(eqn)
+                          new_params, jaxpr.effects, source_info)
+      self.frame.add_eqn(eqn)
     return out_tracers
 
   def post_process_map(self, map_primitive, out_tracers, params):
@@ -1543,7 +1570,7 @@ class DynamicJaxprTrace(core.Trace):
                         dict(fun_jaxpr=closed_fun_jaxpr,
                              jvp_jaxpr_thunk=jvp_jaxpr_thunk,
                              num_consts=len(consts)),
-                        source_info_util.current())
+                        fun_jaxpr.effects, source_info_util.current())
     self.frame.eqns.append(eqn)
     return out_tracers
 
@@ -1567,6 +1594,7 @@ class DynamicJaxprTrace(core.Trace):
                              fwd_jaxpr_thunk=fwd_jaxpr_thunk,
                              num_consts=len(consts),
                              bwd=bwd, out_trees=out_trees),
+                        fun_jaxpr.effects,
                         source_info_util.current())
     self.frame.eqns.append(eqn)
     return out_tracers

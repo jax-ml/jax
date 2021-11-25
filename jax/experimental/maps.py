@@ -974,7 +974,7 @@ def _typecheck_xmap(
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [_insert_aval_axes(a, a_out_axes, local_axis_sizes)
                for a, a_out_axes in zip(mapped_out_avals, out_axes)]
-  return out_avals
+  return out_avals, call_jaxpr.effects
 core.custom_typechecks[xmap_p] = _typecheck_xmap
 
 
@@ -2072,7 +2072,8 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
       new_eqns.append(core.JaxprEqn([tmpvar], [outvar], sharding_constraint_p,
                       dict(resource_env=resource_env, axis_resources=ParsedPartitionSpec((), ())),
                       eqn.source_info))
-  return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, new_eqns)
+  return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, new_eqns,
+                    jaxpr.effects)
 
 def _flatten_axes(what, tree, axes, tupled_args):
   try:

@@ -1418,7 +1418,7 @@ def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch, precision):
 def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch, precision):
   # TODO(frostig,mattjj,jekbradbury): check inputs have given axis names?
   if not len(set(axis_name)) == len(axis_name): raise ValueError
-  pos_aval = lax.dot_general_p.abstract_eval(
+  pos_aval, _ = lax.dot_general_p.abstract_eval(
       x, y, dimension_numbers=[pos_contract, pos_batch],
       precision=precision, preferred_element_type=None)
   common_named_shape = core.join_named_shapes(x.named_shape, y.named_shape)

@@ -110,7 +110,8 @@ def _initial_style_jaxprs_with_common_consts(
     suffix = util.concatenate(unused_const_vars[i + 1:])
     constvars = [*prefix, *jaxpr.constvars, *suffix]
     return core.Jaxpr(constvars=constvars, invars=jaxpr.invars,
-                      outvars=jaxpr.outvars, eqns=jaxpr.eqns)
+                      outvars=jaxpr.outvars, eqns=jaxpr.eqns,
+                      effects=jaxpr.effects)
 
   consts = util.concatenate(all_consts)
   jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
@@ -515,7 +516,8 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
-                                    cond_jaxpr.jaxpr.eqns)
+                                    cond_jaxpr.jaxpr.eqns,
+                                    cond_jaxpr.jaxpr.effects)
   cond_jaxpr_augmented = core.ClosedJaxpr(cond_jaxpr_augmented, cond_jaxpr.consts)
 
   out = while_p.bind(
@@ -884,6 +886,9 @@ def switch(index, branches: Sequence[Callable], *operands,
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       branches, ops_tree, ops_avals, primitive_name='switch')
 
+  if any(jaxpr.effects for jaxpr in jaxprs):
+    raise NotImplementedError  # TODO(mattjj)
+
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
     _check_tree_and_avals(f"branch 0 and {i + 1} outputs",
                           out_trees[0], jaxprs[0].out_avals,
@@ -1203,7 +1208,7 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   params = dict(branches=branches_2, linear=linear_2)
   eqn = pe.new_eqn_recipe(
       [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
-      source_info_util.current())
+      False, source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -1278,7 +1283,8 @@ def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
     aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))
     aug_invars = aug_res_vars + non_res_vars
     jaxpr_aug = core.Jaxpr(jaxpr.jaxpr.constvars, aug_invars,
-                           jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns)
+                           jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns,
+                           jaxpr.jaxpr.effects)
     jaxpr_aug = core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
     return jaxpr_aug
 
@@ -1347,6 +1353,7 @@ def _cond_typecheck(*avals, branches, linear):
     raise core.JaxprTypeError(f'cond given {len(linear)} linear flags for '
                               f'{len(avals) - 1} non-predicate operands')
 
+  # TODO(mattjj,froystig): this should recursively check branch jaxprs
   jaxpr0 = branches[0]
   jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
   jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
@@ -1368,6 +1375,10 @@ def _cond_typecheck(*avals, branches, linear):
       raise core.JaxprTypeError(
         f'cond branches 0 and {i+1} have mismatching output types: '
         f'{jaxpr0_out_avals_str} vs {_avals_short(jaxpr.out_avals)}')
+    core.typecheck_assert(
+        jaxpr.jaxpr.effects == jaxpr0.jaxpr.effects,
+        f'cond branches 0 and {i+1} have mismatching effect types: '
+        f'{jaxpr0.jaxpr.effects} vs {jaxpr.jaxpr.effects}')
 
   if len(avals) != 1 + len(jaxpr0.in_avals):
     raise core.JaxprTypeError(
@@ -1382,6 +1393,8 @@ def _cond_typecheck(*avals, branches, linear):
     raise core.JaxprTypeError(
       f'cond branches take input types {jaxpr0_in_avals_str}, '
       f'called with operands of type {_avals_short(op_avals)}')
+
+  return jaxpr0.out_avals, jaxpr0.jaxpr.effects
 
 def cond_bind(*args, branches, linear):
   if config.jax_enable_checks:
@@ -2162,6 +2175,7 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
 
 def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
                     jaxpr, linear, unroll):
+  # TODO(mattjj,froystig): this should recursively check jaxpr
   tc = partial(_typecheck_param, 'scan')
   tc(reverse, 'reverse', 'bool', type(reverse) is bool)
   tc(num_consts, 'num_consts', 'non-negative int',
@@ -2184,6 +2198,7 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
   const_avals, init_avals, x_avals = split_list(avals, [num_consts, num_carry])
   const_avals_jaxpr, init_avals_jaxpr, x_avals_jaxpr = split_list(
       jaxpr.in_avals, [num_consts, num_carry])
+  # TODO(mattjj, froystig): check output avals
   carry_avals_jaxpr, _ = split_list(jaxpr.out_avals, [num_carry])
   x_avals_mapped = _map(partial(core.mapped_aval, length, 0), x_avals)
 
@@ -2203,6 +2218,8 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
     raise core.JaxprTypeError(
       f'scan jaxpr takes input sequence types\n{_avals_short(x_avals_jaxpr)},\n'
       f'called with sequence of type\n{_avals_short(x_avals)}')
+
+  return None, jaxpr.jaxpr.effects
 
 def scan_bind(*args, **params):
   if config.jax_enable_checks:

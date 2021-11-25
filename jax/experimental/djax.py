@@ -954,7 +954,7 @@ def partial_eval_jaxpr(jaxpr, in_unknowns):
     if any(unks):
       invars = [v if unk else new_res(v) for unk, v in zip(unks, eqn.invars)]
       eqns2.append(pe.new_jaxpr_eqn(invars, eqn.outvars, eqn.primitive,
-                                    eqn.params,
+                                    eqn.params, False,
                                     source_info_util.new_source_info()))
       map(partial(write, True), eqn.outvars)
     else:
@@ -1042,7 +1042,7 @@ def _sin_abstract_eval(x):
   if isinstance(x, AbsArray):
     return AbsArray(x.shape, x._eltTy)
   else:
-    return lax.sin_p.abstract_eval(x)
+    return lax.sin_p.abstract_eval(x)[0]
 
 def _sin_typecheck_rule(invar):
   return [invar.aval]
@@ -1067,7 +1067,7 @@ def _cos_abstract_eval(x):
   if isinstance(x, AbsArray):
     return AbsArray(x.shape, x._eltTy)
   else:
-    return lax.cos_p.abstract_eval(x)
+    return lax.cos_p.abstract_eval(x)[0]
 
 def _cos_typecheck_rule(invar):
   return [invar.aval]
@@ -1101,7 +1101,7 @@ def _sum_abstract_eval(operand, *, axes):
     return lax.reduce_sum_p.reduce_sum_abstract_eval(operand, axes=axes)
 
 def _reduce_sum_typecheck_rule(x, *, axes):
-  return [reduce_sum_p.abstract_eval(x.aval, axes=axes)]
+  return [reduce_sum_p.abstract_eval(x.aval, axes=axes)[0]]
 typecheck_rules[reduce_sum_p] = _reduce_sum_typecheck_rule
 
 def _reduce_sum_translation_traceable(logical_shapes, x, *, axes):
@@ -1141,10 +1141,10 @@ def _lt_abstract_eval(x, y):
     map(_dims_must_equal, x.shape, y.shape)
     return AbsArray(x.shape, BaseType(np.dtype('bool')))
   else:
-    return lax.lt_p.abstract_eval(x, y)
+    return lax.lt_p.abstract_eval(x, y)[0]
 
 def _lt_typecheck_rule(x, y):
-  return [lt_p.abstract_eval(x.aval, y.aval)]
+  return [lt_p.abstract_eval(x.aval, y.aval)[0]]
 
 def _lt_translation_rule(c, dims, avals, operands):
   (x,), (y,) = operands
@@ -1199,7 +1199,7 @@ def _add_abstract_eval(x, y):
     map(_dims_must_equal, x.shape, y.shape)  # TODO broadcasting?
     return AbsArray(x.shape, x._eltTy)
   else:
-    return lax.add_p.abstract_eval(x, y)
+    return lax.add_p.abstract_eval(x, y)[0]
 
 def _dims_must_equal(d1, d2):
   if isinstance(d1, (Tracer, Var)) and isinstance(d2, (Tracer, Var)):
@@ -1209,7 +1209,7 @@ def _dims_must_equal(d1, d2):
   raise Exception("can't prove shapes equal (or unequal)!")
 
 def _add_typecheck_rule(x, y):
-  return [add_p.abstract_eval(x.aval, y.aval)]
+  return [add_p.abstract_eval(x.aval, y.aval)[0]]
 typecheck_rules[add_p] = _add_typecheck_rule
 
 def _add_translation_rule(c, dims, avals, operands):
@@ -1230,10 +1230,10 @@ def _mul_abstract_eval(x, y):
     map(_dims_must_equal, x.shape, y.shape)  # TODO broadcasting?
     return AbsArray(x.shape, x._eltTy)
   else:
-    return lax.mul_p.abstract_eval(x, y)
+    return lax.mul_p.abstract_eval(x, y)[0]
 
 def _mul_typecheck_rule(x, y):
-  return [mul_p.abstract_eval(x.aval, y.aval)]
+  return [mul_p.abstract_eval(x.aval, y.aval)[0]]
 typecheck_rules[mul_p] = _mul_typecheck_rule
 
 def _mul_translation_rule(c, dims, avals, operands):
@@ -1270,8 +1270,8 @@ def _nonzero_staging_rule(trace, tracers, params):
   out_val_tracer = pe.DynamicJaxprTracer(trace, out_val_aval, None)
   invars = map(trace.getvar, tracers)
   outvars = map(trace.makevar, [out_dim_tracer, out_val_tracer])
-  eqn = pe.new_jaxpr_eqn(invars, outvars, nonzero_p, {},
-      source_info_util.new_source_info())
+  eqn = pe.new_jaxpr_eqn(invars, outvars, nonzero_p, {}, False,
+                         source_info_util.new_source_info())
   trace.frame.eqns.append(eqn)
   return out_val_tracer
 custom_staging_rules[nonzero_p] = _nonzero_staging_rule
@@ -1325,8 +1325,8 @@ def _iota_staging_rule(trace, tracers, params):
     out_aval = core.ShapedArray((n,), np.dtype('int32'))
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     outvar = trace.makevar(out_tracer)
-    eqn = pe.new_jaxpr_eqn([], [outvar], iota_p, dict(size=n),
-        source_info_util.new_source_info())
+    eqn = pe.new_jaxpr_eqn([], [outvar], iota_p, dict(size=n), False,
+                           source_info_util.new_source_info())
   else:
     aval = tracer.aval
     if not isinstance(aval, AbsArray): raise TypeError
@@ -1339,8 +1339,8 @@ def _iota_staging_rule(trace, tracers, params):
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     outvar = trace.makevar(out_tracer)
     invar = trace.getvar(tracer)
-    eqn = pe.new_jaxpr_eqn([invar], [outvar], iota_p, {},
-        source_info_util.new_source_info())
+    eqn = pe.new_jaxpr_eqn([invar], [outvar], iota_p, {}, False,
+                           source_info_util.new_source_info())
   trace.frame.eqns.append(eqn)
   return out_tracer
 custom_staging_rules[iota_p] = _iota_staging_rule
@@ -1389,7 +1389,7 @@ def _broadcast_staging_rule(trace, tracers, params):
     out_aval = AbsArray((d, *x.shape), BaseType(dtype))
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     eqn = pe.new_jaxpr_eqn([trace.getvar(x), trace.getvar(d)],
-                           [trace.makevar(out_tracer)], broadcast_p, {},
+                           [trace.makevar(out_tracer)], broadcast_p, {}, False,
                            source_info_util.new_source_info())
     trace.frame.eqns.append(eqn)
     return out_tracer

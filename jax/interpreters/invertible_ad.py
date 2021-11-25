@@ -271,7 +271,7 @@ def synthesize_ivjp(eqn, unknown_primals, primals_in, primals_out, cts_in):
   # Compute the VJP of eqn
   variable_invars = [v for v in eqn.invars if type(v) is not Literal]
   variable_primals_in = [p for p, v in zip(primals_in, eqn.invars) if type(v) is not Literal]
-  eqn_jaxpr = Jaxpr([], variable_invars, eqn.outvars, [eqn])
+  eqn_jaxpr = Jaxpr([], variable_invars, eqn.outvars, [eqn], False)
   eqn_callable = lambda args: core.eval_jaxpr(eqn_jaxpr, (), *args)
   _, eqn_vjp = jax.vjp(eqn_callable, variable_primals_in)
   # TODO: Instantiate zeros or (better) figure out how to avoid it!

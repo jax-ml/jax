@@ -1420,10 +1420,12 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
     # We need tokens but none is given in input; make one depending on all invars
     eqns.append(
         core.new_jaxpr_eqn(jaxpr.invars, [last_token_var],
-                           lax.create_token_p, {}, source_info_util.current()))
+                           lax.create_token_p, {}, False,
+                           source_info_util.current()))
     eqns.append(
         core.new_jaxpr_eqn(jaxpr.invars, [last_itoken_var],
-                           lax.create_token_p, {}, source_info_util.current()))
+                           lax.create_token_p, {}, False,
+                           source_info_util.current()))
 
   for eqn in jaxpr.eqns:
     if not core.primitive_uses_outfeed(eqn.primitive, eqn.params):
@@ -1437,7 +1439,7 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
       last_itoken_var = output_itoken_var
 
   outvars = jaxpr.outvars + ([last_token_var, last_itoken_var] if has_output_token else [])
-  new_jaxpr = core.Jaxpr(jaxpr.constvars, invars, outvars, eqns)
+  new_jaxpr = core.Jaxpr(jaxpr.constvars, invars, outvars, eqns, jaxpr.effects)
   return new_jaxpr
 
 
@@ -1665,7 +1667,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
       [mk_new_var(input_token_var.aval),
        mk_new_var(input_itoken_var.aval)])
   new_cond_jaxpr = core.ClosedJaxpr(
-      core.Jaxpr([], new_cond_invars, [new_cond_pred_invar], []), [])
+      core.Jaxpr([], new_cond_invars, [new_cond_pred_invar], [], False), [])
   # Make a new body:
   #   "lambda cond_constvars, body_constvars, pred, carry, token, itoken:
   #        carry2, token2, itoken2 = rewrite(BODY)(body_constvars, carry, token, itoken)
@@ -1718,7 +1720,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                       new_body_invars_body_constvars + [new_body_invars_pred] +
                       new_body_invars_carry + [new_body_invars_token, new_body_invars_itoken]),
                  ([new_body_pred2] + new_body_carry2 + [new_body_token3, new_body_itoken3]),
-                 new_body_eqns), [])
+                 new_body_eqns, False), [])
 
   pred_out = mk_new_var(cond_jaxpr.out_avals[0])
   eqns.append(

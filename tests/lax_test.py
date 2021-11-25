@@ -2866,20 +2866,20 @@ class LaxNamedShapeTest(jtu.JaxTestCase):
 
   def test_abstract_eval(self):
     aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
-    out = lax.sin_p.abstract_eval(aval1)
+    out, _ = lax.sin_p.abstract_eval(aval1)
     self.assertEqual(out, aval1)
 
     aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
     aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
     expected = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
-    out = lax.add_p.abstract_eval(aval1, aval2)
+    out, _ = lax.add_p.abstract_eval(aval1, aval2)
     self.assertEqual(out, expected)
 
   def test_abstract_eval_collective(self):
     with core.extend_axis_env('i', 10, None):
       aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
       expected = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
-      out, = lax.psum_p.abstract_eval(aval1, axes=('i',), axis_index_groups=None)
+      (out,), _ = lax.psum_p.abstract_eval(aval1, axes=('i',), axis_index_groups=None)
       self.assertEqual(out, expected)
 
 if __name__ == '__main__':

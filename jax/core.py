@@ -59,9 +59,11 @@ class Jaxpr:
   invars: List['Var']
   outvars: List['Atom']
   eqns: List['JaxprEqn']
+  effects: bool
 
   def __init__(self, constvars: Sequence['Var'], invars: Sequence['Var'],
-               outvars: Sequence['Atom'], eqns: Sequence['JaxprEqn']):
+               outvars: Sequence['Atom'], eqns: Sequence['JaxprEqn'],
+               effects: bool):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -75,6 +77,7 @@ class Jaxpr:
     self.invars = list(invars)
     self.outvars = list(outvars)
     self.eqns = list(eqns)
+    self.effects = effects
 
   def __str__(self):
     return str(pp_jaxpr(self, JaxprPpContext(), custom_pp_eqn_rules=True))
@@ -159,17 +162,19 @@ class JaxprEqn(NamedTuple):
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
+  effects: bool
   source_info: source_info_util.SourceInfo
 
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), custom_pp_eqn_rules=False)
                ).rstrip()
 
-def new_jaxpr_eqn(invars, outvars, primitive, params, source_info=None):
+def new_jaxpr_eqn(invars, outvars, primitive, params, effects,
+                  source_info=None) -> JaxprEqn:
   if primitive.call_primitive:
     assert len(outvars) == len(params["call_jaxpr"].outvars)
   source_info = source_info or source_info_util.new_source_info()
-  return JaxprEqn(invars, outvars, primitive, params, source_info)
+  return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
 
 @total_ordering
@@ -287,7 +292,7 @@ class Primitive:
     return impl
 
   def def_abstract_eval(self, abstract_eval):
-    self.abstract_eval = abstract_eval
+    self.abstract_eval = _effect_free_abstract_eval(abstract_eval)
     return abstract_eval
 
   def def_custom_bind(self, bind):
@@ -304,6 +309,11 @@ class Primitive:
 
   def get_bind_params(self, params):
     return [], params
+
+def _effect_free_abstract_eval(abstract_eval):
+  def abstract_eval_(*args, **kwargs):
+    return abstract_eval(*args, **kwargs), False
+  return abstract_eval_
 
 
 # -------------------- lifting --------------------
@@ -1995,7 +2005,8 @@ def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: Dict[Var, Var
     e.eqn = eqn
     raise
   params = subst_axis_names(eqn.primitive, eqn.params, subst)
-  return new_jaxpr_eqn(invars, outvars, eqn.primitive, params, eqn.source_info)
+  return new_jaxpr_eqn(invars, outvars, eqn.primitive, params, eqn.effects,
+                       eqn.source_info)
 
 def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   consts = None
@@ -2007,7 +2018,7 @@ def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst
   constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]
   eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]
   outvars: List[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]
-  new_jaxpr = Jaxpr(constvars, invars, outvars, eqns)
+  new_jaxpr = Jaxpr(constvars, invars, outvars, eqns, jaxpr.effects)
   if consts is not None:
     return ClosedJaxpr(new_jaxpr, consts)
   return new_jaxpr
@@ -2108,6 +2119,7 @@ def check_jaxpr(jaxpr: Jaxpr):
     msg = "\n\n".join([msg, "while checking jaxpr:", jaxpr_str])
     raise JaxprTypeError(msg) from None
 
+# TODO(dougalm,mattjj): update me to check effects
 def _check_jaxpr(ctx_factory: Callable[[], 'JaxprPpContext'], jaxpr: Jaxpr,
                  in_avals: Sequence[AbstractValue]) -> None:
 
@@ -2145,15 +2157,17 @@ def _check_jaxpr(ctx_factory: Callable[[], 'JaxprPpContext'], jaxpr: Jaxpr,
       if any(isinstance(ina, ConcreteArray) for ina in in_avals):
         raise JaxprTypeError("Equation given ConcreteArray type inputs")
       if prim in custom_typechecks:
-        out_avals = custom_typechecks[prim](*in_avals, **eqn.params)
+        out_avals, eff = custom_typechecks[prim](*in_avals, **eqn.params)
         if out_avals is None:
           out_avals = [v.aval for v in eqn.outvars]
       elif prim.call_primitive:
-        out_avals = check_call(ctx_factory, prim, in_avals, eqn.params)
+        out_avals, eff = check_call(ctx_factory, prim, in_avals, eqn.params)
       elif prim.map_primitive:
-        out_avals = check_map(ctx_factory, prim, in_avals, eqn.params)
+        out_avals, eff = check_map(ctx_factory, prim, in_avals, eqn.params)
       else:
-        out_avals = check_eqn(prim, in_avals, eqn.params)
+        out_avals, eff = check_eqn(prim, in_avals, eqn.params)
+      typecheck_effects(eff, jaxpr.effects)
+      typecheck_effects(eqn.effects, jaxpr.effects)
       map(write, eqn.outvars, out_avals)
     except JaxprTypeError as e:
       ctx = ctx_factory()
@@ -2165,14 +2179,17 @@ def _check_jaxpr(ctx_factory: Callable[[], 'JaxprPpContext'], jaxpr: Jaxpr,
 
   map(read, jaxpr.outvars)
 
+def typecheck_effects(application_effects: bool, allowed_effects: bool) -> None:
+  if not allowed_effects and application_effects: raise TypeError
+
 def check_eqn(prim, in_avals, params):
   for jaxpr in jaxprs_in_params(params):
     check_jaxpr(jaxpr)
 
-  out_avals = prim.abstract_eval(*in_avals, **params)
+  out_avals, eff = prim.abstract_eval(*in_avals, **params)
   if not prim.multiple_results:
     out_avals = [out_avals]
-  return out_avals
+  return out_avals, eff
 
 def check_call(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
@@ -2194,14 +2211,16 @@ def check_call(ctx_factory, prim, in_avals, params):
   _check_jaxpr(ctx_factory, call_jaxpr, in_avals)
 
   out_avals = [v.aval for v in call_jaxpr.outvars]
-  return out_avals
+  return out_avals, call_jaxpr.effects
 
 def check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
-  if "axis_size" not in params:
-    raise JaxprTypeError(f"Map primitive {prim} missing 'axis_size' parameter")
+  typecheck_assert(not call_jaxpr.effects,
+                   f"Map primitive {prim} mapping an effectful function")
+  typecheck_assert("axis_size" in params,
+                   f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
   if "axis_name" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'axis_name' parameter")
@@ -2230,7 +2249,7 @@ def check_map(ctx_factory, prim, in_avals, params):
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval) if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
-  return out_avals
+  return out_avals, False
 
 
 # ------------------- Jaxpr printed representation -------------------

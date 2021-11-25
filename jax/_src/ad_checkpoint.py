@@ -328,7 +328,8 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
                        for x in jaxpr_unknown.outvars]
   new_params = dict(params, jaxpr=jaxpr_unknown, differentiated=True)
   recipe = pe.new_eqn_recipe(in_jaxpr_tracers, out_jaxpr_tracers, remat_p,
-                             new_params, source_info_util.current())
+                             new_params, jaxpr_unknown.effects,
+                             source_info_util.current())
   for t in out_jaxpr_tracers: t.recipe = recipe
 
   # zip together known and unknown outputs
