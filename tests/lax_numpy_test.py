@@ -3634,27 +3634,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertFalse(x_copy.is_deleted())
     self.assertFalse(x_copy_jit.is_deleted())
 
-  def testArrayCopyAutodiff(self):
-    f = lambda x: jnp.array(x, copy=True)
-
-    x = jnp.ones(10)
-    xdot = jnp.ones(10)
-    y, ydot = jax.jvp(f, (x,), (xdot,))
-    self.assertIsNot(x, y)
-    self.assertIsNot(xdot, ydot)
-
-    ybar = jnp.ones(10)
-    y, f_vjp = jax.vjp(f, x)
-    xbar, = f_vjp(ybar)
-    self.assertIsNot(x, y)
-    self.assertIsNot(xbar, ybar)
-
-  def testArrayCopyVmap(self):
-    f = lambda x: jnp.array(x, copy=True)
-    x = jnp.ones(10)
-    y = jax.vmap(f)(x)
-    self.assertIsNot(x, y)
-
   def testArrayUnsupportedDtypeError(self):
     with self.assertRaisesRegex(TypeError,
                                 "JAX only supports number and bool dtypes.*"):
