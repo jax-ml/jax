@@ -1430,10 +1430,6 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
 
 def _clamp_scatter_indices(operand, indices, updates, *, dnums):
   """Clamps `indices` to be in-range for a scatter."""
-  intarray = partial(np.array, dtype=np.int64)
-  operand_dims = intarray(operand.shape)
-  upper_bound = operand_dims[intarray(dnums.scatter_dims_to_operand_dims)]
-
   slice_sizes = []
   pos = 0
   for i in range(len(operand.shape)):
@@ -1443,7 +1439,9 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
       slice_sizes.append(updates.shape[dnums.update_window_dims[pos]])
       pos += 1
 
-  upper_bound -= intarray(slice_sizes)[intarray(dnums.scatter_dims_to_operand_dims)]
+  upper_bound = np.array([operand.shape[i] - slice_sizes[i]
+                          for i in dnums.scatter_dims_to_operand_dims],
+                         np.int64)
   upper_bound = np.minimum(upper_bound, np.iinfo(indices.dtype).max)
   upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,
                                      (len(indices.shape) - 1,))

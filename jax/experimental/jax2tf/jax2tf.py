@@ -2132,10 +2132,14 @@ def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
              dimension_numbers, indices_are_sorted, unique_indices, mode,
              _in_avals: Sequence[core.ShapedArray],
              _out_aval: core.ShapedArray):
-  del unique_indices, _in_avals
+  del unique_indices
 
   if mode == lax.GatherScatterMode.CLIP:
-    raise NotImplementedError("CLIP scatter mode not implemented in jax2tf")
+    clip_fn = _convert_jax_impl(lax_slicing._clamp_scatter_indices,
+                                multiple_results=False)
+    scatter_indices = clip_fn(
+        operand, scatter_indices, updates, dnums=dimension_numbers,
+        _in_avals=_in_avals, _out_aval=_in_avals[1])
 
   assert len(update_consts) == 0, "Update computation cannot have constants"
 
