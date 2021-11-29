@@ -657,7 +657,7 @@ def tracers_to_jaxpr(
   return jaxpr, const_vals, env_vals
 
 @cache()
-def convert_constvars_jaxpr(jaxpr: Jaxpr):
+def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   lifted_jaxpr = Jaxpr(constvars=(),
@@ -666,7 +666,7 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr):
   config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
-def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int):
+def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   env_vars, invars = split_list(jaxpr.invars, [num_env_vars])
   converted_jaxpr = Jaxpr(constvars=jaxpr.constvars + env_vars,
