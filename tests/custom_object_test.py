@@ -132,7 +132,8 @@ core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
 xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
 dispatch.device_put_handlers[SparseArray] = sparse_array_device_put_handler
-dispatch.xla_result_handlers[AbstractSparseArray] = sparse_array_result_handler
+dispatch.result_handlers[AbstractSparseArray] = sparse_array_result_handler
+dispatch.num_buffers_handlers[AbstractSparseArray] = lambda _: 2
 xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
 xla.register_constant_handler(SparseArray, sparse_array_constant_handler)
 
@@ -260,7 +261,8 @@ core.raise_to_shaped_mappings[AbstractEmpty] = lambda aval, _: aval
 xla.pytype_aval_mappings[Empty] = lambda x: AbstractEmpty()
 xla.canonicalize_dtype_handlers[Empty] = lambda x: x
 dispatch.device_put_handlers[Empty] = lambda _, __: ()
-dispatch.xla_result_handlers[AbstractEmpty] = lambda _, __: lambda: Empty(AbstractEmpty())
+dispatch.result_handlers[AbstractEmpty] = lambda _, __: lambda: Empty(AbstractEmpty())
+dispatch.num_buffers_handlers[AbstractEmpty] = lambda _: 0
 xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 

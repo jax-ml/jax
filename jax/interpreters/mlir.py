@@ -19,30 +19,24 @@ import collections
 import dataclasses
 from functools import partial
 import io
-import itertools
 import typing
-from typing import (Any, Callable, Dict, Optional, Sequence, Type, Union, Tuple)
+from typing import (Any, Callable, Dict, List, Optional, Sequence, Type, Union,
+                    Tuple)
 from typing_extensions import Protocol
-import warnings
 
-from absl import logging
 from jax import core
 from jax import linear_util as lu
-from jax._src.config import config
 from jax._src import ad_util
 from jax._src import device_array
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import std
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src import source_info_util
 import jax._src.util as util
-from jax.errors import UnexpectedTracerError
 import jax.interpreters.ad as ad
 import jax.interpreters.partial_eval as pe
 import jax.interpreters.xla as xla
@@ -315,10 +309,33 @@ def flatten_lowering_ir_args(
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(_wrap_singleton_ir_values, xs))
 
+def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
+                          axis_env: xla.AxisEnv, name_stack: str) -> str:
+  """Lowers a top-level jaxpr to an MHLO module.
+
+  Handles the quirks of the argument/return value passing conventions of the
+  runtime."""
+  ctx = LoweringContext(platform, axis_env, name_stack)
+  if platform == "iree":
+    ctx = ctx.replace(tuple_results=False)
+  with ctx.context, ir.Location.unknown(ctx.context):
+    # TODO(phawkins): represent units with zero buffers at the runtime level.
+    lower_jaxpr_to_fun(
+        ctx, "main", jaxpr, public=True, replace_units_with_dummy=True,
+        replace_tokens_with_dummy=True)
+
+  ctx.module.operation.verify()
+  output = io.StringIO()
+  ctx.module.operation.print(file=output, #enable_debug_info=True,
+                             print_generic_op_form=False)
+  return output.getvalue()
+
+
 def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
                        jaxpr: core.ClosedJaxpr, *,
                        public: bool = False,
-                       prune_tokens: bool = False) -> str:
+                       replace_units_with_dummy: bool = False,
+                       replace_tokens_with_dummy: bool = False) -> str:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -329,22 +346,21 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
       so it is ok to use the same name multiple times.
     jaxpr: the jaxpr to lower.
     public: if true, the function's visibility is set to "public".
-    prune_tokens: if true, tokens are pruned from the arguments and return
-      values.
+    replace_units_with_dummy: if true, unit arguments/return values are
+      replaced with bool arrays of size [0].
+    replace_tokens_with_dummy: if true, token arguments/return values are
+      replaced with bool arrays of size [0].
   Returns the name of the function.
   """
-  # print(jaxpr.jaxpr)
-  if prune_tokens:
-    pruned_in_avals = [aval for aval in jaxpr.in_avals
-                       if aval is not core.abstract_token]
-    pruned_out_avals = [aval for aval in jaxpr.out_avals
-                        if aval is not core.abstract_token]
-  else:
-    pruned_in_avals = jaxpr.in_avals
-    pruned_out_avals = jaxpr.out_avals
+  def aval_to_types(aval):
+    if replace_units_with_dummy and aval is core.abstract_unit:
+      aval = core.ShapedArray((), np.dtype(np.bool_))
+    elif replace_tokens_with_dummy and aval is core.abstract_token:
+      aval = core.ShapedArray((), np.dtype(np.bool_))
+    return aval_to_ir_types(aval)
 
-  input_types = map(aval_to_ir_types, pruned_in_avals)
-  output_types = map(aval_to_ir_types, pruned_out_avals)
+  input_types = map(aval_to_types, jaxpr.in_avals)
+  output_types = map(aval_to_types, jaxpr.out_avals)
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
   if ctx.tuple_results:
@@ -361,27 +377,28 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
   with ir.InsertionPoint(entry_block):
     unflattened_args = util.unflatten(entry_block.arguments,
                                       map(len, input_types))
-    # If we pruned tokens out of the parameter list, create a new token and add
-    # it here.
-    if prune_tokens and len(pruned_in_avals) != len(jaxpr.in_avals):
-      token = mhlo.CreateTokenOp(mhlo.TokenType.get()).results
-      arg_iter = iter(unflattened_args)
-      unflattened_args = [
-          token if aval is core.abstract_token else next(arg_iter)
-          for aval in jaxpr.in_avals
-      ]
-      done = object()
-      assert next(arg_iter, done) is done
-
+    args: List[List[ir.Value]] = []
+    for aval, arg in zip(jaxpr.in_avals, unflattened_args):
+      if replace_units_with_dummy and aval is core.abstract_unit:
+        args.append([])
+      elif replace_tokens_with_dummy and aval is core.abstract_token:
+        args.append(mhlo.CreateTokenOp(mhlo.TokenType.get()).results)
+      else:
+        args.append(arg)
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
                                               xla.wrap_name(name, 'jit'))
     out_vals = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
                              jaxpr.jaxpr, map(ir_constants, jaxpr.consts),
-                             *unflattened_args)
-    if prune_tokens:
-      out_vals = [v for v, aval in zip(out_vals, jaxpr.out_avals)
-                  if aval is not core.abstract_token]
-    flat_outputs = util.flatten(out_vals)
+                             *args)
+    outs = []
+    for aval, out in zip(jaxpr.out_avals, out_vals):
+      if replace_units_with_dummy and aval is core.abstract_unit:
+        outs.append(ir_constants(np.zeros((), np.bool_)))
+      elif replace_tokens_with_dummy and aval is core.abstract_token:
+        outs.append(ir_constants(np.zeros((), np.bool_)))
+      else:
+        outs.append(out)
+    flat_outputs = util.flatten(outs)
     if ctx.tuple_results:
       std.ReturnOp([mhlo.TupleOp(output_tuple_type, flat_outputs).result])
     else:
@@ -541,345 +558,6 @@ register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
 register_lowering(ad_util.stop_gradient_p,
                   lambda ctx, avals_in, avals_out, x: [x])
-
-
-# # Computation dispatch
-
-_aval_to_num_buffers: Dict[Type[core.AbstractValue],
-                           Callable[[core.AbstractValue], int]] = {}
-
-def aval_to_num_buffers(aval: core.AbstractValue) -> int:
-  """Returns the number of buffers in the runtime representation of `aval`.
-
-  Note: the compile-time representation may have more buffers! This is a small
-  hack to deal with tokens that have no true runtime representation but have an
-  IR type.
-
-  Must match the arity of the result of `aval_to_ir_types`."""
-  try:
-    return _aval_to_num_buffers[type(aval)](aval)
-  except KeyError as err:
-    raise TypeError(f"No num_buffers handler for type: {type(aval)}") from err
-
-_aval_to_num_buffers[core.AbstractUnit] = lambda _: 0
-_aval_to_num_buffers[core.AbstractToken] = lambda _: 0
-_aval_to_num_buffers[core.ShapedArray] = lambda _: 1
-_aval_to_num_buffers[core.ConcreteArray] = lambda _: 1
-
-
-class ArgHandler(Protocol):
-  def __call__(self, device: xla.Device, arg: Any) -> Sequence[xla.Buffer]:
-    """A argument handler unboxes raw buffers into their Python representation."""
-
-_aval_to_arg_handler: Dict[
-    Type[core.AbstractValue], Callable[[Any], ArgHandler]] = {}
-
-def aval_to_arg_handler(aval: core.AbstractValue) -> ArgHandler:
-  try:
-    return _aval_to_arg_handler[type(aval)](aval)
-  except KeyError as err:
-    raise TypeError(f"No arg_handler for type: {type(aval)}") from err
-
-def _array_arg_handler(aval: core.ShapedArray) -> ArgHandler:
-  return lambda device, val: xla.device_put(val, device)
-
-_aval_to_arg_handler[core.AbstractUnit] = lambda _: lambda _device, _: ()
-_aval_to_arg_handler[core.AbstractToken] = lambda _: lambda _device, _: ()
-_aval_to_arg_handler[core.ShapedArray] = _array_arg_handler
-_aval_to_arg_handler[core.ConcreteArray] = _array_arg_handler
-
-
-if not MYPY:
-  class ResultHandler(Protocol):
-    def __call__(self, device: xla.Device, *args: xla.Buffer) -> Any:
-      """A result handler boxes raw buffers into their Python representation.
-
-      Inverse of ArgHandler."""
-else:
-  ResultHandler = Any
-
-_aval_to_result_handler: Dict[
-    Type[core.AbstractValue], Callable[[Any], ResultHandler]] = {}
-
-def aval_to_result_handler(aval: core.AbstractValue) -> ResultHandler:
-  try:
-    return _aval_to_result_handler[type(aval)](aval)
-  except KeyError as err:
-    raise TypeError(f"No result_handler for type: {type(aval)}") from err
-
-def _array_result_handler(aval: core.ShapedArray) -> ResultHandler:
-  if aval.dtype is dtypes.float0:
-    return lambda _device, _: np.zeros(aval.shape, dtypes.float0)
-  aval = core.raise_to_shaped(aval)
-  return lambda device, buffer: xla.make_device_array(aval, device, buffer)
-
-_aval_to_result_handler[core.AbstractUnit] = lambda _: lambda _: core.unit
-_aval_to_result_handler[core.AbstractToken] = lambda _: lambda _: core.token
-_aval_to_result_handler[core.ShapedArray] = _array_result_handler
-_aval_to_result_handler[core.ConcreteArray] = _array_result_handler
-
-
-def _execute_compiled(name: str, compiled: xla.XlaExecutable,
-                      device: xla.Device, buffer_counts,
-                      arg_handlers, result_handlers, kept_var_idx, *args):
-  input_bufs = util.flatten(
-      arg_handler(device, x) for arg_handler, x in
-      unsafe_zip(arg_handlers,
-                 (x for i, x in enumerate(args) if i in kept_var_idx)))
-  out_bufs = compiled.execute(input_bufs)
-  dispatch.check_special(name, out_bufs)
-  return [handler(device, *bs) for handler, bs in
-          zip(result_handlers, util.unflatten(out_bufs, buffer_counts))]
-
-
-def _execute_replicated(name: str, compiled: xla.XlaExecutable,
-                        device: xla.Device,
-                        buffer_counts, arg_handlers, result_handlers,
-                        kept_var_idx, *args):
-  input_bufs = [
-      util.flatten(
-        arg_handler(device, x) for arg_handler, x in
-        unsafe_zip(arg_handlers,
-                   (x for i, x in enumerate(args) if i in kept_var_idx)))
-      for device in compiled.local_devices()
-  ]
-  out_bufs = [
-      buf[0] for buf in compiled.execute_sharded_on_local_devices(
-          list(zip(*input_bufs)))
-  ]
-  dispatch.check_special(name, out_bufs)
-  return [handler(device, *bs) for handler, bs in
-          zip(result_handlers, util.unflatten(out_bufs, buffer_counts))]
-
-
-def _execute_trivial(jaxpr, device: Optional[xla.Device], consts, buffer_counts,
-                     result_handlers, kept_var_idx, *args):
-  env = {core.unitvar: core.unit}
-  pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
-  map(env.setdefault, jaxpr.invars, pruned_args)
-  map(env.setdefault, jaxpr.constvars, consts)
-  outs = [xla.canonicalize_dtype(v.val) if type(v) is core.Literal else env[v]
-          for v in jaxpr.outvars]
-  return [dispatch.device_put_p.bind(x, device=device) for x in outs]
-
-
-class XlaCompiledComputation:
-  def __init__(self, xla_executable, unsafe_call):
-    self._xla_executable = xla_executable
-    self.unsafe_call = unsafe_call
-
-  @staticmethod
-  def from_xla_computation(
-      name: str,
-      xla_computation,
-      nreps: int,
-      device,
-      backend,
-      tuple_args: bool,
-      avals_in: Sequence[core.AbstractValue],
-      avals_out: Sequence[core.AbstractValue],
-      kept_var_idx) -> 'XlaCompiledComputation':
-    arg_handlers = map(aval_to_arg_handler, avals_in)
-    result_handlers = map(aval_to_result_handler, avals_out)
-    options = xb.get_compile_options(
-        num_replicas=nreps,
-        num_partitions=1,
-        device_assignment=(device.id,) if device else None)
-    options.parameter_is_tupled_arguments = tuple_args
-    compiled = dispatch.compile_or_get_cached(backend, xla_computation, options)
-    buffer_counts = [aval_to_num_buffers(aval) for aval in avals_out]
-    if nreps == 1:
-      return XlaCompiledComputation(compiled, partial(
-          _execute_compiled, name, compiled, device, buffer_counts,
-          arg_handlers, result_handlers, kept_var_idx))
-    else:
-      return XlaCompiledComputation(compiled, partial(
-          _execute_replicated, name, compiled, device, buffer_counts,
-          arg_handlers, result_handlers, kept_var_idx))
-
-  def is_trivial(self):
-    return self._xla_executable == None
-
-  def xla_executable(self):
-    if self.is_trivial():
-      raise ValueError('A trivial compiled computation has no XLA executable')
-    return self._xla_executable
-
-  @staticmethod
-  def from_trivial_jaxpr(jaxpr, consts, device, avals_in, avals_out,
-                         kept_var_idx)  -> 'XlaCompiledComputation':
-    result_handlers = map(aval_to_result_handler, avals_out)
-    return XlaCompiledComputation(None, partial(
-        _execute_trivial, jaxpr, device, consts, avals_out,
-        result_handlers, kept_var_idx))
-
-  def call(self, *args):
-    # TODO(apaszke,frostig): Check that args are compatible with input avals!
-    return self.unsafe_call(*args)
-
-  def __call__(self, *args):
-    return self.call(*args)
-
-
-class XlaComputation:
-  name: str
-  _is_trivial: bool
-  _executable: Optional['XlaCompiledComputation']
-
-  def __init__(self, name: str, hlo, is_trivial: bool, *compile_args):
-    self.name = name
-    self._hlo = hlo
-    self._is_trivial = is_trivial
-    self._executable = None
-    self.compile_args = compile_args
-
-  def is_trivial(self):
-    return self._is_trivial
-
-  def hlo(self):
-    if self.is_trivial():
-      raise ValueError('A trivial computation has no HLO')
-    return self._hlo
-
-  def compile(self) -> 'XlaCompiledComputation':
-    if self._executable is None:
-      if self.is_trivial():
-        self._executable = XlaCompiledComputation.from_trivial_jaxpr(
-            *self.compile_args)
-      else:
-        self._executable = XlaCompiledComputation.from_xla_computation(
-            self.name, self.hlo(), *self.compile_args)
-    return self._executable
-
-
-def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
-  return lower_xla_callable(fun, device, backend, name, donated_invars, *arg_specs).compile().unsafe_call
-
-_xla_callable = lu.cache(_xla_callable_uncached)
-
-# TODO(phawkins): refactor this code to share more with the xla.py version.
-def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
-  if device is not None and backend is not None:
-    raise ValueError("can't specify both a device and a backend for jit, "
-                     "got device={} and backend={}".format(device, backend))
-
-  avals_in, arg_devices = util.unzip2(arg_specs)
-  jaxpr, avals_out, consts = pe.trace_to_jaxpr_final(
-      fun, avals_in, pe.debug_info_final(fun, "jit"))
-  if any(isinstance(c, core.Tracer) for c in consts):
-    raise UnexpectedTracerError("Encountered an unexpected tracer.")
-
-  jaxpr, kept_const_idx, kept_var_idx = dispatch._prune_unused_inputs(jaxpr)
-  consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
-  pruned_arg_specs = (a for i, a in enumerate(arg_specs) if i in kept_var_idx)
-  avals_in, arg_devices = util.unzip2(pruned_arg_specs)
-  donated_invars = [
-      x for i, x in enumerate(donated_invars) if i in kept_var_idx
-  ]
-  map(dispatch.prefetch, itertools.chain(consts, dispatch.jaxpr_literals(jaxpr)))
-  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
-
-  nreps = dispatch.jaxpr_replicas(jaxpr)
-  device = dispatch._xla_callable_device(nreps, backend, device, arg_devices)
-  backend = xb.get_device_backend(device) if device else xb.get_backend(backend)
-
-  # Computations that only produce constants and/or only rearrange their inputs,
-  # which are often produced from partial evaluation, don't need compilation,
-  # and don't need to evaluate their arguments.
-  if not jaxpr.eqns:
-    return XlaComputation(name, None, True, jaxpr, consts, device, avals_in,
-                          avals_out, kept_var_idx)
-
-  if not dispatch._on_exit:
-    log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
-    logging.log(log_priority, "Compiling %s (%s) for args %s.",
-                fun.__name__, id(fun), avals_in)
-
-  if nreps > 1:
-    warnings.warn(f"The jitted function {fun.__name__} includes a pmap. Using "
-         "jit-of-pmap can lead to inefficient data movement, as the outer jit "
-         "does not preserve sharded data representations and instead collects "
-         "input and output arrays onto a single device. "
-         "Consider removing the outer jit unless you know what you're doing. "
-         "See https://github.com/google/jax/issues/2926.")
-
-  if nreps > xb.device_count(backend):
-    raise ValueError(
-        f"compiling computation that requires {nreps} replicas, but only "
-        f"{xb.device_count(backend)} XLA devices are available")
-
-  if xb.process_count() > 1 and (nreps > 1 or dispatch.jaxpr_has_pmap(jaxpr)):
-    raise NotImplementedError(
-        "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
-        "extra data movement anyway, so maybe you don't want it after all).")
-
-  ctx = LoweringContext(backend.platform, xla.AxisEnv(nreps, (), ()), "")
-  if backend.runtime_type == "iree":
-    tuple_args = False
-    ctx = ctx.replace(tuple_results=False)
-  else:
-    tuple_args = len(avals_in) > 100  # pass long arg lists as tuple for TPU
-
-  with ctx.context, ir.Location.unknown(ctx.context):
-    # XLA doesn't have a runtime representation of tokens, so we prune them out
-    # of the arguments and return values of the top-level function. This is fine
-    # since the purpose of tokens is to preserve ordering inside compiled
-    # functions.
-    lower_jaxpr_to_fun(ctx, "main", core.ClosedJaxpr(jaxpr, consts),
-                       public=True, prune_tokens=True)
-
-  assert not any(donated_invars), donated_invars
-  # TODO(b/203122001): implement buffer donation.
-  # if backend.platform in ("gpu", "tpu"):
-  #   donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
-  # if any(donated_invars):
-  #   # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-  #   unused_donations = [str(c.GetShape(a))
-  #                       for a, d in zip(xla_args, donated_invars) if d]
-  #   warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
-  ctx.module.operation.verify()
-  output = io.StringIO()
-  ctx.module.operation.print(file=output, #enable_debug_info=True,
-                             print_generic_op_form=False)
-  module = output.getvalue()
-  # print("MLIR module to be compiled:")
-  # print(module)
-  return XlaComputation(
-      name, module, False, nreps, device, backend, tuple_args, avals_in,
-      avals_out, kept_var_idx)
-
-
-def _xla_call_impl_mlir(fun: lu.WrappedFun, *args, device, backend, name,
-                        donated_invars, inline):
-  del inline  # Only used at tracing time
-  compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
-                               *unsafe_map(dispatch.arg_spec, args))
-  return compiled_fun(*args)
-
-
-@util.cache()
-def _xla_primitive_callable(prim, *arg_specs: dispatch.ArgSpec, **params):
-  avals, arg_devices = util.unzip2(arg_specs)
-  donated_invars = (False,) * len(arg_specs)
-  device = dispatch._device_from_arg_devices(arg_devices)
-  def prim_fun(*args):
-    out = prim.bind(*args, **params)
-    if prim.multiple_results:
-      return out
-    else:
-      return out,
-  compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), device, None,
-                                    prim.name, donated_invars, *arg_specs)
-  if not prim.multiple_results:
-    return lambda *args, **kw: compiled(*args, **kw)[0]
-  else:
-    return compiled
-
-def apply_primitive(prim, *args, **params):
-  """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = _xla_primitive_callable(prim, *unsafe_map(dispatch.arg_spec, args),
-                                         **params)
-  return compiled_fun(*args)
 
 
 # MLIR lowerings for lax primitives

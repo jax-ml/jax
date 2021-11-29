@@ -54,7 +54,7 @@ complex_: type = np.complex128
 _default_types = {'b': bool_, 'i': int_, 'u': uint, 'f': float_, 'c': complex_}
 
 # Trivial vectorspace datatype needed for tangent values of int/bool primals
-float0 = np.dtype([('float0', np.void, 0)])
+float0: np.dtype = np.dtype([('float0', np.void, 0)])
 
 _dtype_to_32bit_dtype = {
     np.dtype('int64'): np.dtype('int32'),

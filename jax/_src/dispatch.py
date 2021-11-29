@@ -18,6 +18,7 @@ from functools import partial
 import itertools
 from typing import (
     Any, Callable, Dict, Optional, Sequence, Set, Tuple, Type, Union)
+from typing_extensions import Protocol
 import warnings
 
 from absl import logging
@@ -28,6 +29,7 @@ from jax import linear_util as lu
 import jax.interpreters.ad as ad
 import jax.interpreters.batching as batching
 import jax.interpreters.masking as masking
+import jax.interpreters.mlir as mlir
 import jax.interpreters.xla as xla
 import jax.interpreters.partial_eval as pe
 from jax.errors import UnexpectedTracerError
@@ -42,6 +44,7 @@ from jax._src import traceback_util
 
 traceback_util.register_exclusion(__file__)
 
+MYPY = False  # Are we currently type checking with mypy?
 
 xe = xc._xla
 
@@ -71,9 +74,6 @@ def arg_spec(x: Any) -> ArgSpec:
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  if config.jax_enable_mlir:
-    import jax.interpreters.mlir
-    return jax.interpreters.mlir.apply_primitive(prim, *args, **params)
   compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
                                         **params)
   return compiled_fun(*args)
@@ -123,12 +123,6 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
 
 def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
                    donated_invars, inline):
-  if config.jax_enable_mlir:
-    import jax.interpreters.mlir
-    return jax.interpreters.mlir._xla_call_impl_mlir(
-        fun, *args, device=device, backend=backend, name=name,
-        donated_invars=donated_invars, inline=inline)
-
   del inline  # Only used at tracing time
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
                                *unsafe_map(arg_spec, args))
@@ -220,31 +214,48 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")
 
-  tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
+  # pass long arg lists as tuple for TPU
+  tuple_args = len(abstract_args) > 100
+  axis_env = xla.AxisEnv(nreps, (), ())
+  name_stack = xla.extend_name_stack(xla.wrap_name(name, 'jit'))
+  module: Any
+  if config.jax_enable_mlir:
+    # TODO(b/203122001): implement buffer donation.
+    assert not any(donated_invars), donated_invars
+    module = mlir.lower_jaxpr_to_module(
+        core.ClosedJaxpr(jaxpr, consts), backend.platform, axis_env, name_stack)
+  else:
+    # XLA HLO lowering path
+    c = xc.XlaBuilder(f"jit_{fun.__name__}")
+    xla_consts = xla._xla_consts(c, consts)
+    xla_args, donated_invars = xla._xla_callable_args(
+        c, abstract_args, tuple_args, donated_invars=donated_invars)
+    platform = backend.platform
+    ctx = xla.TranslationContext(c, platform, axis_env, name_stack)
+    out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
+    # Replace tokens with a dummy array value, because the runtime cannot
+    # handle token arguments.
+    out_aval_lens = [len(xla.aval_to_xla_shapes(a)) for a in out_avals]
+    out_nodes = util.flatten(
+        [[xla._make_token_return_value(c)] if a is core.abstract_token
+         else v
+         for a, v in zip(out_avals, util.unflatten(out_nodes, out_aval_lens))])
 
-  c = xc.XlaBuilder(f"jit_{fun.__name__}")
-  xla_consts = xla._xla_consts(c, consts)
-  xla_args, donated_invars = xla._xla_callable_args(c, abstract_args, tuple_args,
-                                                donated_invars=donated_invars)
-  platform = backend.platform
-  ctx = xla.TranslationContext(c, platform, xla.AxisEnv(nreps, (), ()),
-                               xla.extend_name_stack(xla.wrap_name(name, 'jit')))
-  out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-  # There is a non-zero cost to building an output tuple, particularly on TPU.
-  # Avoid it if the output arity is 1.
-  output = out_nodes[0] if len(out_nodes) == 1 else xc.ops.Tuple(c, out_nodes)
-  if platform in ("gpu", "tpu"):
-    donated_invars = xla.set_up_aliases(
-        c, xla_args, c.GetShape(output), donated_invars, tuple_args)
-  if any(donated_invars):
-    # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-    unused_donations = [str(c.GetShape(a))
-                        for a, d in zip(xla_args, donated_invars) if d]
-    warnings.warn("Some donated buffers were not usable: {}".format(
-        ", ".join(unused_donations)))
-  built = c.build(output)
+    # There is a non-zero cost to building an output tuple, particularly on TPU.
+    # Avoid it if the output arity is 1.
+    output = out_nodes[0] if len(out_nodes) == 1 else xc.ops.Tuple(c, out_nodes)
+    if platform in ("gpu", "tpu"):
+      donated_invars = xla.set_up_aliases(
+          c, xla_args, c.GetShape(output), donated_invars, tuple_args)
+    if any(donated_invars):
+      # TODO(tomhennigan): At call time we should mark these buffers as deleted.
+      unused_donations = [str(c.GetShape(a))
+                          for a, d in zip(xla_args, donated_invars) if d]
+      warnings.warn("Some donated buffers were not usable: {}".format(
+          ", ".join(unused_donations)))
+    module = c.build(output)
   return XlaComputation(
-      name, built, False, donated_invars, nreps, device, backend, tuple_args,
+      name, module, False, donated_invars, nreps, device, backend, tuple_args,
       abstract_args, out_avals, kept_var_idx)
 
 
@@ -369,27 +380,58 @@ def _xla_callable_device(nreps, backend, device, arg_devices):
       assert False  # Unreachable given the error check in _xla_callable
 
 
-# Result handlers
+# Argument and result handlers
 
-def aval_to_result_handler(device: Optional[Device],
-                           aval: core.AbstractValue) -> Callable:
+num_buffers_handlers: Dict[Type[core.AbstractValue],
+                           Callable[[core.AbstractValue], int]] = {}
+
+def aval_to_num_buffers(aval: core.AbstractValue) -> int:
+  """Returns the number of buffers in the runtime representation of `aval`.
+
+  In general this may differ from the number of buffers in the compiler-IR
+  representation of the same value.
+  """
   try:
-    return xla_result_handlers[type(aval)](device, aval)
+    return num_buffers_handlers[type(aval)](aval)
   except KeyError as err:
-    raise TypeError(f"No xla_result_handler for type: {type(aval)}") from err
+    raise TypeError(f"No num_buffers handler for type: {type(aval)}") from err
 
-def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
+# TODO(phawkins): use zero buffers to represent a unit.
+num_buffers_handlers[core.AbstractUnit] = lambda _: 1
+num_buffers_handlers[core.AbstractToken] = lambda _: 1
+num_buffers_handlers[core.ShapedArray] = lambda _: 1
+num_buffers_handlers[core.ConcreteArray] = lambda _: 1
+
+
+if MYPY:
+  ResultHandler = Any
+else:
+  class ResultHandler(Protocol):
+    def __call__(self, *args: xla.Buffer) -> Any:
+      """Boxes raw buffers into their user-facing representation."""
+
+def aval_to_result_handler(sticky_device: Optional[Device],
+                           aval: core.AbstractValue) -> ResultHandler:
+  try:
+    return result_handlers[type(aval)](sticky_device, aval)
+  except KeyError as err:
+    raise TypeError(f"No result handler for type: {type(aval)}") from err
+
+def array_result_handler(sticky_device: Optional[Device],
+                          aval: core.ShapedArray):
   if aval.dtype is dtypes.float0:
     return lambda _: np.zeros(aval.shape, dtypes.float0)
-  return partial(device_array.make_device_array, core.raise_to_shaped(aval), device)
+  return partial(device_array.make_device_array, core.raise_to_shaped(aval),
+                 sticky_device)
 
 
-xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
-    core.AbstractUnit: lambda _, __: lambda _: core.unit,
-    core.ShapedArray: array_result_handler,
-    core.ConcreteArray: array_result_handler,
-}
-xla_result_handlers[core.AbstractToken] = lambda _, __: lambda _: core.token
+result_handlers: Dict[
+    Type[core.AbstractValue],
+    Callable[[Optional[Device], Any], ResultHandler]] = {}
+result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
+result_handlers[core.AbstractToken] = lambda _, __: lambda _: core.token
+result_handlers[core.ShapedArray] = array_result_handler
+result_handlers[core.ConcreteArray] = array_result_handler
 
 
 def needs_check_special():
@@ -410,32 +452,26 @@ def _check_special(name, xla_shape, buf):
 
 
 def _execute_compiled(name: str, compiled: XlaExecutable,
-                      output_buffer_counts: Optional[Sequence[int]], handlers,
-                      kept_var_idx, *args):
+                      output_buffer_counts: Optional[Sequence[int]],
+                      result_handlers, kept_var_idx, *args):
   device, = compiled.local_devices()
-  input_bufs = list(
-      itertools.chain.from_iterable(
-          device_put(x, device)
-          for i, x in enumerate(args)
-          if x is not core.token and i in kept_var_idx))
+  input_bufs = util.flatten(
+      device_put(x, device) for i, x in enumerate(args) if i in kept_var_idx)
   out_bufs = compiled.execute(input_bufs)
   check_special(name, out_bufs)
   if output_buffer_counts is None:
-    return (handlers[0](*out_bufs),)
+    return (result_handlers[0](*out_bufs),)
   return tuple(
       handler(*bs) for handler, bs in
-      unsafe_zip(handlers, util.unflatten(out_bufs, output_buffer_counts)))
+      unsafe_zip(result_handlers, util.unflatten(out_bufs, output_buffer_counts)))
 
 
 def _execute_replicated(name: str, compiled: XlaExecutable,
-                        output_buffer_counts: Optional[Sequence[int]], handlers,
-                        kept_var_idx, *args):
+                        output_buffer_counts: Optional[Sequence[int]],
+                        result_handlers, kept_var_idx, *args):
   input_bufs = [
-      list(
-          itertools.chain.from_iterable(
-              device_put(x, device)
-              for i, x in enumerate(args)
-              if x is not core.token and i in kept_var_idx))
+      util.flatten(
+        device_put(x, device) for i, x in enumerate(args) if i in kept_var_idx)
       for device in compiled.local_devices()
   ]
   out_bufs = [
@@ -444,10 +480,10 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
   ]
   check_special(name, out_bufs)
   if output_buffer_counts is None:
-    return (handlers[0](*out_bufs),)
+    return (result_handlers[0](*out_bufs),)
   return tuple(
       handler(*bs) for handler, bs in
-      unsafe_zip(handlers, util.unflatten(out_bufs, output_buffer_counts)))
+      unsafe_zip(result_handlers, util.unflatten(out_bufs, output_buffer_counts)))
 
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
@@ -532,21 +568,23 @@ class XlaCompiledComputation:
       name: str,
       xla_computation,
       nreps: int,
-      device,
+      device: Optional[Device],
       backend,
       tuple_args: bool,
       in_avals,
       out_avals,
       kept_var_idx) -> 'XlaCompiledComputation':
-    result_handlers = map(partial(aval_to_result_handler, device), out_avals)
+    sticky_device = device
+    result_handlers = map(partial(aval_to_result_handler, sticky_device),
+                          out_avals)
     options = xb.get_compile_options(
         num_replicas=nreps,
         num_partitions=1,
-        device_assignment=(device.id,) if device else None)
+        device_assignment=(sticky_device.id,) if sticky_device else None)
     options.parameter_is_tupled_arguments = tuple_args
     compiled = compile_or_get_cached(backend, xla_computation, options)
     buffer_counts = (None if len(out_avals) == 1 else
-                     [len(xla.aval_to_xla_shapes(aval)) for aval in out_avals])
+                     [aval_to_num_buffers(aval) for aval in out_avals])
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     unsafe_call = partial(execute, name, compiled, buffer_counts,
                           result_handlers, kept_var_idx)
@@ -610,17 +648,21 @@ def _device_put_scalar(x, device):
 
 def _device_put_unit(_, device):
   backend = xb.get_device_backend(device)
-  return (backend.buffer_from_pyval(np.zeros((), dtype=np.dtype('bool')),
+  return (backend.buffer_from_pyval(np.zeros((), dtype=np.dtype(np.bool_)),
+                                    device),)
+
+def _device_put_token(_, device):
+  backend = xb.get_device_backend(device)
+  return (backend.buffer_from_pyval(np.zeros((), dtype=np.dtype(np.bool_)),
                                     device),)
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
-device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]], Tuple[Any]]] = {
-  core.Unit: _device_put_unit
-}
+device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]], Tuple[Any]]] = {}
 device_put_handlers.update((t, _device_put_array) for t in array_types)
 device_put_handlers.update((t, _device_put_scalar) for t in _scalar_types)
-device_put_handlers[core.Token] = lambda x, _: (x,)
+device_put_handlers[core.Unit] = _device_put_unit
+device_put_handlers[core.Token] = _device_put_token
 
 
 def _device_put_device_array(x: Union[device_array.DeviceArrayProtocol, device_array._DeviceArray], device: Optional[Device]):
@@ -669,9 +711,6 @@ xla.translations[device_put_p] = lambda c, x, device=None: x
 ad.deflinear2(device_put_p, lambda cotangent, _, **kwargs: [cotangent])
 masking.defvectorized(device_put_p)
 batching.defvectorized(device_put_p)
-
-# TODO(phawkins): remove mlir->dispatch dependency and move this to the top.
-import jax.interpreters.mlir as mlir
 
 def _device_put_lowering(ctx, avals_in, avals_out, x, *, device):
   return [x]

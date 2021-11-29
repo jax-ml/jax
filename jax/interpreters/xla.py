@@ -356,6 +356,14 @@ def primitive_subcomputation(platform: str, prim: core.Primitive,
 # sharding annotation set) and replicated.
 _replicated_param = object()
 
+def _token_param_shape():
+  """Shape used in place of tokens as top-level computation arguments."""
+  return xc.Shape.array_shape(np.dtype(np.bool_), [])
+
+def _make_token_return_value(c):
+  """Value used in place of tokens as a top-level computation return value."""
+  return xops.Constant(c, np.zeros((), dtype=np.dtype(np.bool_)))
+
 def _xla_callable_args(
     c, avals, tuple_args, *,
     replicated=None,
@@ -375,8 +383,8 @@ def _xla_callable_args(
       parts = [_replicated_param if part is None else part
                for part in partitions]
     counts = it.count()
-    xla_args = [_xla_param(c, next(counts), xla_shape, r, p, partitions_proto)
-                if not (filter_tokens and a is abstract_token) else xops.CreateToken(c)
+    xla_args = [_xla_param(c, next(counts), xla_shape, r, p, partitions_proto,
+                           filter_tokens)
                 for (a, r, p) in safe_zip(avals, replicated, parts)
                 for xla_shape in aval_to_xla_shapes(a)]
     if donated_invars is not None:
@@ -395,25 +403,33 @@ def _xla_callable_args(
     else:
       tuple_parts = tuple(partitions)
     tuple_shape = xc.Shape.tuple_shape(
-        [shape for a in avals for shape in aval_to_xla_shapes(a)
-         if not (filter_tokens and a is abstract_token)])
-    tuple_param = _xla_param(c, 0, tuple_shape, replicated, tuple_parts, partitions_proto)
-    xla_inputs = iter(xla_destructure(c, tuple_param))
-    xla_args = [next(xla_inputs) if not (filter_tokens and a is abstract_token)
-                else xops.CreateToken(c) for a in avals]
-    assert next(xla_inputs, None) is None
+        [shape if not (filter_tokens and a is abstract_token)
+         else _token_param_shape()
+         for a in avals for shape in aval_to_xla_shapes(a)])
+    tuple_param = _xla_param(c, 0, tuple_shape, replicated, tuple_parts,
+                             partitions_proto, filter_tokens)
+    xla_args = [v if not (filter_tokens and a is abstract_token)
+                else xops.CreateToken(c)
+                for a, v in zip(avals, xla_destructure(c, tuple_param))]
     return xla_args, donated_invars
 
-def _xla_param(builder, param_num, xla_shape, replicated, partitions, parts_proto):
+def _xla_param(builder, param_num, xla_shape, replicated, partitions,
+               parts_proto, filter_tokens):
+  is_token = xla_shape.is_token()
+  if filter_tokens and is_token:
+    xla_shape = _token_param_shape()
   make_param = partial(xb.parameter, builder, param_num, xla_shape,
                        replicated=replicated)
   with_sharding = xb.with_sharding_proto if parts_proto else xb.with_sharding
   if partitions is None:
-    return make_param()
+    out = make_param()
   elif partitions is _replicated_param:
-    return with_sharding(builder, None, make_param)
+    out = with_sharding(builder, None, make_param)
   else:
-    return with_sharding(builder, partitions, make_param)
+    out = with_sharding(builder, partitions, make_param)
+  if filter_tokens and is_token:
+    out = xops.CreateToken(builder)
+  return out
 
 
 ### compiling jaxprs
