@@ -141,6 +141,13 @@ class TreeMathTest(jtu.JaxTestCase):
     expected = tm.Vector({"a": jnp.array([1, -1j])})
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+  def test_real_imag(self):
+    vector = tm.Vector({"a": jnp.array([1, 1j])})
+    real_part = tm.Vector({"a": jnp.array([1.0, 0.0])})
+    imag_part = tm.Vector({"a": jnp.array([0.0, 1.0])})
+    self.assertTreeEqual(vector.real, real_part, check_dtypes=True)
+    self.assertTreeEqual(vector.imag, imag_part, check_dtypes=True)
+
   def test_sum_mean_min_max(self):
     vector = tm.Vector({"a": 1, "b": jnp.array([2, 3, 4])})
     self.assertTreeEqual(vector.sum(), 10, check_dtypes=True)

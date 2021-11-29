@@ -199,6 +199,8 @@ class Vector:
   # numpy methods
   conj = _unary_method(jnp.conj, 'conj')
   dot = matmul
+  real = property(_unary_method(jnp.real, 'real'))
+  imag = property(_unary_method(jnp.imag, 'imag'))
 
   def sum(self):
     parts = map(jnp.sum, tree_util.tree_leaves(self))
@@ -246,7 +248,6 @@ def _apply_argnums(wrapper, args, argnums):
 def _apply_argnames(wrapper, kwargs, argnames):
   return {k: wrapper(arg) if argnames is None or k in argnames else arg
           for k, arg in kwargs.items()}
-
 
 
 def _maybe_get_tree(arg):
