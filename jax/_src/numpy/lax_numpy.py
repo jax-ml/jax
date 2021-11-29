@@ -3049,7 +3049,7 @@ def _check_no_padding(axis_padding, mode):
 def _pad_constant(array, pad_width, constant_values):
   nd = ndim(array)
   constant_values = broadcast_to(asarray(constant_values), (nd, 2))
-  constant_values = lax.convert_element_type(constant_values, array.dtype)
+  constant_values = lax._convert_element_type(constant_values, array.dtype, dtypes.is_weakly_typed(array))
   for i in range(nd):
     widths = [(0, 0, 0)] * nd
     widths[i] = (pad_width[i, 0], 0, 0)
@@ -3160,6 +3160,7 @@ def _pad_linear_ramp(array, pad_width, end_values):
         dtype=array.dtype,
         axis=axis
     )
+    ramp_before = lax._convert_element_type(ramp_before, weak_type=dtypes.is_weakly_typed(array))
     ramp_after = linspace(
         start=end_values[axis][1],
         stop=edge_after.squeeze(axis), # Dimension is replaced by linspace
@@ -3168,6 +3169,7 @@ def _pad_linear_ramp(array, pad_width, end_values):
         dtype=array.dtype,
         axis=axis
     )
+    ramp_after = lax._convert_element_type(ramp_after, weak_type=dtypes.is_weakly_typed(array))
 
     # Reverse linear space in appropriate dimension
     ramp_after = flip(ramp_after, axis)
@@ -3201,8 +3203,8 @@ def _pad_stats(array, pad_width, stat_length, stat_func):
       stat_before = round(stat_before)
       stat_after = round(stat_after)
 
-    stat_before = stat_before.astype(array.dtype)
-    stat_after = stat_after.astype(array.dtype)
+    stat_before = lax._convert_element_type(stat_before, array.dtype, dtypes.is_weakly_typed(array))
+    stat_after = lax._convert_element_type(stat_after, array.dtype, dtypes.is_weakly_typed(array))
 
     npad_before, npad_after = pad_width[i]
     pad_before = repeat(stat_before, npad_before, axis=i)
@@ -3216,10 +3218,10 @@ def _pad_empty(array, pad_width):
   # Note: jax.numpy.empty = jax.numpy.zeros
   for i in range(ndim(array)):
     shape_before = array.shape[:i] + (pad_width[i][0],) + array.shape[i + 1:]
-    pad_before = empty(shape_before, dtype=array.dtype)
+    pad_before = empty_like(array, shape=shape_before)
 
     shape_after = array.shape[:i] + (pad_width[i][1],) + array.shape[i + 1:]
-    pad_after = empty(shape_after, dtype=array.dtype)
+    pad_after = empty_like(array, shape=shape_after)
     array = lax.concatenate([pad_before, array, pad_after], dimension=i)
   return array
 
