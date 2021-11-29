@@ -385,8 +385,8 @@ def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors):
                         compute_left_eigenvectors=compute_left_eigenvectors,
                         compute_right_eigenvectors=compute_right_eigenvectors))
 
-def eig_translation_rule(c, operand, *, compute_left_eigenvectors,
-                         compute_right_eigenvectors):
+def eig_translation_rule(ctx, avals_in, avals_out, operand, *,
+                         compute_left_eigenvectors, compute_right_eigenvectors):
   raise NotImplementedError(
     "Nonsymmetric eigendecomposition is only implemented on the CPU backend")
 
