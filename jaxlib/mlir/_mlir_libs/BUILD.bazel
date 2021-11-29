@@ -15,6 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "py_extension",
+    "windows_cc_shared_mlir_library",
 )
 
 package(
@@ -69,6 +70,10 @@ cc_library(
         "@org_tensorflow//tensorflow:macos": [":libjaxlib_mlir_capi.dylib"],
         "//conditions:default": [":libjaxlib_mlir_capi.so"],
     }),
+    deps = select({
+        "@org_tensorflow//tensorflow:windows": [":jaxlib_mlir_capi_dll"],
+        "//conditions:default": [],
+    }),
 )
 
 cc_library(
@@ -99,8 +104,8 @@ cc_binary(
     deps = [":jaxlib_mlir_capi_objects"],
 )
 
-cc_binary(
-    name = "jaxlib_mlir_capi.dll",
-    linkshared = 1,
+windows_cc_shared_mlir_library(
+    name = "jaxlib_mlir_capi_dll",
+    out = "jaxlib_mlir_capi.dll",
     deps = [":jaxlib_mlir_capi_objects"],
 )
