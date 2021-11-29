@@ -973,6 +973,13 @@ class LaxTest(jtu.JaxTestCase):
     # NB: below just checks for agreement, we're not calling numpy.
     self._CheckAgainstNumpy(fun_via_grad, fun, args_maker)
 
+  def testConvTransposePaddingList(self):
+    # Regression test for https://github.com/google/jax/discussions/8695
+    a = jnp.ones((28,28))
+    b = jnp.ones((3,3))
+    c = lax.conv_general_dilated(a[None, None], b[None, None], (1,1), [(0,0),(0,0)], (1,1))
+    self.assertArraysEqual(c, 9 * jnp.ones((1, 1, 26, 26)))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_precision={}".format(
           jtu.format_shape_dtype_string(lhs_shape, dtype),
