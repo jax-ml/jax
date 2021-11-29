@@ -444,9 +444,7 @@ import functools
 import itertools
 import threading
 import traceback
-import typing
-from typing import (Any, Callable, Dict, List, Optional, Sequence,
-                    Tuple, TypeVar, cast)
+from typing import (Any, Callable, Dict, List, Optional, Sequence, Tuple, cast)
 from absl import logging
 
 from jax._src import api
@@ -488,27 +486,6 @@ XlaBuilder = xla_client.XlaBuilder
 XlaDevice = xla_client.Device
 XlaLocalClient = xla_client.Client
 DType = Any
-
-T = TypeVar('T')
-U = TypeVar('U')
-_Transforms = Sequence[Tuple[str, Dict[str, Any]]]
-_TapFunc = Callable[[T, _Transforms], Any]
-
-
-@typing.overload
-def id_tap(tap_func: _TapFunc, arg: T) -> T:
-  ...
-
-
-@typing.overload
-def id_tap(tap_func: _TapFunc, arg: T, *, result: U) -> U:
-  ...
-
-
-@typing.overload
-def id_tap(tap_func: _TapFunc, arg: T, *, result: U, tap_with_device: bool) -> U:
-  ...
-
 
 def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
   """Host-callback tap primitive, like identity function with a call to ``tap_func``.
