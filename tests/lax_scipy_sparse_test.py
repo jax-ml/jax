@@ -23,6 +23,7 @@ import scipy.sparse.linalg
 from jax import jit
 import jax.numpy as jnp
 from jax import lax
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax.tree_util import register_pytree_node_class
 import jax.scipy.sparse.linalg
@@ -197,6 +198,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual, _ = jax.scipy.sparse.linalg.cg(A, b)
     self.assertAllClose(expected, actual.value)
 
+  def test_cg_weak_types(self):
+    x, _ = jax.scipy.sparse.linalg.bicgstab(lambda x: x, 1.0)
+    self.assertTrue(dtypes.is_weakly_typed(x))
+
   # BICGSTAB
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -305,6 +310,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAlmostEqual(expected["a"], actual["a"], places=5)
     self.assertAlmostEqual(expected["b"], actual["b"], places=5)
 
+  def test_bicgstab_weak_types(self):
+    x, _ = jax.scipy.sparse.linalg.bicgstab(lambda x: x, 1.0)
+    self.assertTrue(dtypes.is_weakly_typed(x))
 
   # GMRES
   @parameterized.named_parameters(jtu.cases_from_list(
