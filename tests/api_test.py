@@ -786,6 +786,20 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f_com = f_low.compile()
     f_low.donate_argnums == f_com.donate_argnums == (0,)
 
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 45,
+                   "requires jaxlib >= 0.1.75")
+  def test_jit_enum_as_dict_keys_fails(self):
+    class E(enum.Enum):
+      A = 0
+      B = 1
+
+    @self.jit
+    def f(d) -> float:
+      return d[E.A]
+
+    with self.assertRaisesRegex(TypeError, "'<' not supported.*"):
+      f({E.A: 1.0, E.B: 2.0})
+
 
 class PythonJitTest(CPPJitTest):
 
