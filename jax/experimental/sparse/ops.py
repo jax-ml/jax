@@ -872,6 +872,17 @@ class CSR(JAXSparse):
       nse = (mat != 0).sum()
     return cls(csr_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape)
 
+  @classmethod
+  def _empty(cls, shape, *, dtype=None, index_dtype='int32'):
+    """Create an empty CSR instance. Public method is sparse.empty()."""
+    shape = tuple(shape)
+    if len(shape) != 2:
+      raise ValueError(f"CSR must have ndim=2; got shape={shape}")
+    data = jnp.empty(0, dtype)
+    indices = jnp.empty(0, index_dtype)
+    indptr = jnp.zeros(shape[0] + 1, index_dtype)
+    return cls((data, indices, indptr), shape=shape)
+
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape)
 
@@ -910,6 +921,17 @@ class CSC(JAXSparse):
     if nse is None:
       nse = (mat != 0).sum()
     return cls(csr_fromdense(mat.T, nse=nse, index_dtype=index_dtype), shape=mat.shape)
+
+  @classmethod
+  def _empty(cls, shape, *, dtype=None, index_dtype='int32'):
+    """Create an empty CSC instance. Public method is sparse.empty()."""
+    shape = tuple(shape)
+    if len(shape) != 2:
+      raise ValueError(f"CSC must have ndim=2; got shape={shape}")
+    data = jnp.empty(0, dtype)
+    indices = jnp.empty(0, index_dtype)
+    indptr = jnp.zeros(shape[1] + 1, index_dtype)
+    return cls((data, indices, indptr), shape=shape)
 
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape[::-1]).T
@@ -950,6 +972,16 @@ class COO(JAXSparse):
       nse = (mat != 0).sum()
     return cls(coo_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape)
 
+  @classmethod
+  def _empty(cls, shape, *, dtype=None, index_dtype='int32'):
+    """Create an empty COO instance. Public method is sparse.empty()."""
+    shape = tuple(shape)
+    if len(shape) != 2:
+      raise ValueError(f"COO must have ndim=2; got shape={shape}")
+    data = jnp.empty(0, dtype)
+    row = col = jnp.empty(0, index_dtype)
+    return cls((data, row, col), shape=shape)
+
   def todense(self):
     return coo_todense(self.data, self.row, self.col, shape=self.shape)
 
@@ -967,3 +999,25 @@ class COO(JAXSparse):
 
   def tree_flatten(self):
     return (self.data, self.row, self.col), {"shape": self.shape}
+
+
+def empty(shape, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
+  """Create an empty sparse array.
+
+  Args:
+    shape: sequence of integers giving the array shape.
+    dtype: (optional) dtype of the array.
+    index_dtype: (optional) dtype of the index arrays.
+    format: string specifying the matrix format (e.g. ['bcoo']).
+    **kwds: additional keywords passed to the format-specific _empty constructor.
+  Returns:
+    mat: empty sparse matrix.
+  """
+  # TODO(jakevdp): restructure this module to avoid local imports
+  from jax.experimental.sparse.bcoo import BCOO
+  formats = {'bcoo': BCOO, 'coo': COO, 'csr': CSR, 'csc': CSC}
+  if sparse_format not in formats:
+    raise ValueError(f"sparse_format={sparse_format!r} not recognized; "
+                     f"must be one of {list(formats.keys())}")
+  cls = formats[sparse_format]
+  return cls._empty(shape, dtype=dtype, index_dtype=index_dtype, **kwds)

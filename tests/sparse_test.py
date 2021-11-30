@@ -561,6 +561,23 @@ class BCOOTest(jtu.JaxTestCase):
       for dtype in all_dtypes
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_empty(self, shape, dtype, n_batch, n_dense):
+    M = sparse.empty(shape, dtype=dtype, n_batch=n_batch, n_dense=n_dense)
+    self.assertIsInstance(M, sparse.BCOO)
+    self.assertEqual(M.nse, 0)
+    self.assertEqual(M.n_batch, n_batch)
+    self.assertEqual(M.n_dense, n_dense)
+    self.assertEqual(M.dtype, dtype)
+    self.assertArraysEqual(M.todense(), jnp.empty(shape, dtype))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in all_dtypes
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)))
   def test_bcoo_dense_round_trip(self, shape, dtype, n_batch, n_dense):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
@@ -1419,6 +1436,17 @@ class SparseObjectTest(jtu.JaxTestCase):
 
     M_invalid = sparse.BCOO(([], []), shape=(100,))
     self.assertEqual(repr(M_invalid), "BCOO(<invalid>)")
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_{}{}".format(cls.__name__, shape), "cls": cls, "shape": shape}
+    for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]
+    for shape in ([2, 5], [5, 3]))
+  def test_empty(self, cls, shape):
+    sparse_format = cls.__name__.lower()
+    M = sparse.empty(shape, sparse_format=sparse_format)
+    self.assertIsInstance(M, cls)
+    self.assertEqual(M.nse, 0)
+    self.assertArraysEqual(M.todense(), jnp.empty(shape))
 
   @parameterized.named_parameters(
     {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
