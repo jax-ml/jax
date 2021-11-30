@@ -128,21 +128,19 @@ def abs2(x):
   else:
     return x ** 2
 
-def error_ratio(error_estimate, rtol, atol, y0, y1):
+def mean_error_ratio(error_estimate, rtol, atol, y0, y1):
   err_tol = atol + rtol * jnp.maximum(jnp.abs(y0), jnp.abs(y1))
   err_ratio = error_estimate / err_tol
-  return jnp.mean(abs2(err_ratio))
+  return jnp.sqrt(jnp.mean(abs2(err_ratio)))
 
 def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       dfactor=0.2, order=5.0):
   """Compute optimal Runge-Kutta stepsize."""
-  mean_error_ratio = jnp.max(mean_error_ratio)
   dfactor = jnp.where(mean_error_ratio < 1, 1.0, dfactor)
 
-  err_ratio = jnp.sqrt(mean_error_ratio)
-  factor = jnp.maximum(1.0 / ifactor,
-                      jnp.minimum(err_ratio**(1.0 / order) / safety, 1.0 / dfactor))
-  return jnp.where(mean_error_ratio == 0, last_step * ifactor, last_step / factor)
+  factor = jnp.minimum(ifactor,
+                      jnp.maximum(mean_error_ratio**(-1.0 / order) * safety, dfactor))
+  return jnp.where(mean_error_ratio == 0, last_step * ifactor, last_step * factor)
 
 def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
   """Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
@@ -195,13 +193,13 @@ def _odeint(func, rtol, atol, mxstep, y0, ts, *args):
       i, y, f, t, dt, last_t, interp_coeff = state
       next_y, next_f, next_y_error, k = runge_kutta_step(func_, y, f, t, dt)
       next_t = t + dt
-      error_ratios = error_ratio(next_y_error, rtol, atol, y, next_y)
+      error_ratio = mean_error_ratio(next_y_error, rtol, atol, y, next_y)
       new_interp_coeff = interp_fit_dopri(y, next_y, k, dt)
-      dt = optimal_step_size(dt, error_ratios)
+      dt = optimal_step_size(dt, error_ratio)
 
       new = [i + 1, next_y, next_f, next_t, dt,      t, new_interp_coeff]
       old = [i + 1,      y,      f,      t, dt, last_t,     interp_coeff]
-      return map(partial(jnp.where, jnp.all(error_ratios <= 1.)), new, old)
+      return map(partial(jnp.where, error_ratio <= 1.), new, old)
 
     _, *carry = lax.while_loop(cond_fun, body_fun, [0] + carry)
     _, _, t, _, last_t, interp_coeff = carry
