@@ -335,15 +335,16 @@ pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
 
 
-def primitive_subcomputation(platform: str, prim: core.Primitive,
+def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',
+                             prim: core.Primitive,
                              *avals: core.AbstractValue, **params):
   c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
   f = lower_fun(prim.bind, multiple_results=prim.multiple_results,
                 new_style=True)
   xla_args, _ = _xla_callable_args(c, avals, tuple_args=False,
                                    filter_tokens=False)
-  ctx = TranslationContext(builder=c, platform=platform,
-                           axis_env=AxisEnv(1, (), ()), name_stack="")
+  ctx = TranslationContext(builder=c, platform=platform, axis_env=axis_env,
+                           name_stack="")
   ans = f(ctx.replace(builder=c), avals, None, *xla_args, **params)
   if prim.multiple_results:
     ans = xops.Tuple(c, ans)
@@ -534,7 +535,7 @@ def axis_read(axis_env, axis_name):
   except ValueError:
     raise NameError("unbound axis name: {}".format(axis_name)) from None
 
-def axis_groups(axis_env: AxisEnv, name):
+def axis_groups(axis_env: AxisEnv, name) -> Tuple[Tuple[int, ...]]:
   if not isinstance(name, (list, tuple)):
     name = (name,)
   mesh_axes = tuple(unsafe_map(partial(axis_read, axis_env), name))

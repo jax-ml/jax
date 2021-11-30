@@ -666,7 +666,7 @@ def _allreduce_translation_rule(prim, pos_fn, ctx, avals_in, avals_out, *args,
         _replica_groups(ctx.axis_env, named_axes, axis_index_groups))
     scalar = ShapedArray((), c.get_shape(x).numpy_dtype())
     computation = xla.primitive_subcomputation(
-        ctx.platform, prim, scalar, scalar)
+        ctx.platform, ctx.axis_env, prim, scalar, scalar)
     return xops.AllReduce(x, computation, replica_groups_protos, None, None)
 
   if prim is not lax.add_p:
@@ -1194,7 +1194,7 @@ def _reduce_scatter_translation_rule(prim, reducer, ctx, avals_in, avals_out, x,
   if ctx.platform in ("tpu", "gpu"):
     scalar = ShapedArray((), c.get_shape(x).numpy_dtype())
     computation = xla.primitive_subcomputation(
-        ctx.platform, prim, scalar, scalar)
+        ctx.platform, ctx.axis_env, prim, scalar, scalar)
     replica_groups = _replica_groups(ctx.axis_env, axis_name, axis_index_groups)
     x = xops.ReduceScatter(
         x,

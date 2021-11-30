@@ -349,7 +349,8 @@ def _reduce_window_sum_translation_rule(ctx, avals_in, avals_out, operand, *,
   return [xops.ReduceWindowWithGeneralPadding(
     operand,
     xla.pyval_to_ir_constant(ctx.builder, np.array(0, operand_aval.dtype)),
-    xla.primitive_subcomputation(ctx.platform, lax.add_p, scalar, scalar),
+    xla.primitive_subcomputation(ctx.platform, ctx.axis_env, lax.add_p, scalar,
+                                 scalar),
       window_dimensions,
     window_strides, base_dilation, window_dilation, padding)]
 
@@ -405,7 +406,8 @@ def _reduce_window_chooser_translation_rule(
   return [xops.ReduceWindowWithGeneralPadding(
     operand,
     xla.pyval_to_ir_constant(ctx.builder, identity(operand_aval.dtype)),
-    xla.primitive_subcomputation(ctx.platform, prim, scalar, scalar),
+    xla.primitive_subcomputation(ctx.platform, ctx.axis_env, prim, scalar,
+                                 scalar),
       window_dimensions,
     window_strides, base_dilation, window_dilation, padding)]
 
@@ -582,10 +584,10 @@ def _select_and_scatter_add_translation(
   dtype = operand_aval.dtype
   scalar = ShapedArray((), dtype)
   select = xla.primitive_subcomputation(
-      ctx.platform, select_prim, scalar, scalar)
+      ctx.platform, ctx.axis_env, select_prim, scalar, scalar)
   scatter = xla.primitive_subcomputation(
-      ctx.platform, lax.or_p if dtype == np.bool_ else lax.add_p, scalar,
-      scalar)
+      ctx.platform, ctx.axis_env, lax.or_p if dtype == np.bool_ else lax.add_p,
+      scalar, scalar)
   zero = xla.pyval_to_ir_constant(c, np.array(0, dtype))
   # TODO(b/161704903): remove this workaround when XLA:CPU bug is fixed.
   expand_padding = (expand_padding and

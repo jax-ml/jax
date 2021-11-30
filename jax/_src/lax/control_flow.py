@@ -353,7 +353,8 @@ def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
       *(x + z))
   if batched:
     scalar = ShapedArray((), np.bool_)
-    or_ = xla.primitive_subcomputation(ctx.platform, lax.or_p, scalar, scalar)
+    or_ = xla.primitive_subcomputation(ctx.platform, ctx.axis_env, lax.or_p,
+                                       scalar, scalar)
     pred = xops.Reduce(cond_c, [pred], [xops.Constant(cond_c, np.array(False))],
                        or_, list(range(cond_jaxpr.out_avals[0].ndim)))
 

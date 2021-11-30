@@ -54,7 +54,7 @@ MYPY = False
 
 # IR Helpers
 
-def dense_int_elements(xs: Sequence[int]) -> ir.DenseIntElementsAttr:
+def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
   return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
 
 def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
@@ -156,6 +156,14 @@ def ir_constants(val: Any,
   if hasattr(val, '__jax_array__'):
     return ir_constants(val.__jax_array__(), canonicalize_types)
   raise TypeError("No constant handler for type: {}".format(type(val)))
+
+def ir_constant(val: Any, canonicalize_types: bool = True) -> ir.Value:
+  """Convenience wrapper around ir_constants for singleton values."""
+  values = ir_constants(val)
+  if len(values) != 1:
+    raise TypeError(f"ir_constant called on {val} which corresponds to "
+                    f"multiple IR values {values}")
+  return values[0]
 
 register_constant_handler(core.Unit, lambda val, canonicalize_types: ())
 
@@ -300,14 +308,14 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
 
 
 def _unwrap_singleton_ir_values(x): return x[0] if len(x) == 1 else x
-def _wrap_singleton_ir_values(x: Union[ir.Value, Sequence[ir.Value]]
+def wrap_singleton_ir_values(x: Union[ir.Value, Sequence[ir.Value]]
                              ) -> Sequence[ir.Value]:
   return (x,) if isinstance(x, ir.Value) else tuple(x)
 
 def flatten_lowering_ir_args(
     xs: Sequence[Union[ir.Value, Sequence[ir.Value]]]
 ) -> Sequence[Sequence[ir.Value]]:
-  return util.flatten(map(_wrap_singleton_ir_values, xs))
+  return util.flatten(map(wrap_singleton_ir_values, xs))
 
 def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
                           axis_env: xla.AxisEnv, name_stack: str) -> str:
@@ -460,7 +468,7 @@ def jaxpr_subcomp(ctx: LoweringContext, jaxpr: core.Jaxpr,
                  **eqn.params)
 
     try:
-      out_nodes = tuple(map(_wrap_singleton_ir_values, ans))
+      out_nodes = tuple(map(wrap_singleton_ir_values, ans))
     except TypeError as e:
       raise ValueError("Output of translation rule must be iterable: "
                        f"{eqn}") from e
@@ -491,7 +499,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
     with core.extend_axis_env_nd(zip(ctx.axis_env.names, ctx.axis_env.sizes)):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals_in)
     return jaxpr_subcomp(ctx, jaxpr, _ir_consts(consts),
-                         *map(_wrap_singleton_ir_values, args))
+                         *map(wrap_singleton_ir_values, args))
 
   return f_lowered
 
@@ -542,7 +550,7 @@ register_lowering(core.call_p, partial(_named_call_lowering, name="core_call"))
 
 def full_like_aval(value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
-  zero, = ir_constants(np.array(value, aval.dtype))
+  zero = ir_constant(np.array(value, aval.dtype))
   return mhlo.BroadcastOp(aval_to_ir_type(aval), zero,
                           dense_int_elements(aval.shape)).result
 
@@ -564,8 +572,8 @@ register_lowering(ad_util.stop_gradient_p,
 
 def xla_fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
                        avals_in, avals_out, *args, **params):
-  xla_computation = xla.primitive_subcomputation(ctx.platform, prim, *avals_in,
-                                                 **params)
+  xla_computation = xla.primitive_subcomputation(
+      ctx.platform, ctx.axis_env, prim, *avals_in, **params)
   submodule_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
   submodule = ir.Module.parse(submodule_str)
   callee_name = None
@@ -618,15 +626,15 @@ def _remat_using_while(ctx, avals_in, avals_out, *args, name, call_jaxpr):
   loop_carry_tuple_type = ir.TupleType.get_tuple(flat_loop_carry_types)
   init_carry = mhlo.TupleOp(loop_carry_tuple_type, flat_args)
 
-  one, = ir_constants(np.array(1, np.int32))
+  one = ir_constant(np.array(1, np.int32))
   while_op = mhlo.WhileOp([loop_carry_tuple_type], [init_carry.result])
 
   # Loop condition
   cond_block = while_op.regions[0].blocks.append(loop_carry_tuple_type)
   with ir.InsertionPoint(cond_block):
     bool_scalar_type = aval_to_ir_type(core.ShapedArray((), np.dtype(np.bool_)))
-    two, = ir_constants(np.array(2, np.int32))
-    shape, = ir_constants(np.array((), np.int64), canonicalize_types=False)
+    two = ir_constant(np.array(2, np.int32))
+    shape = ir_constant(np.array((), np.int64), canonicalize_types=False)
     rng = mhlo.RngUniformOp(one, two, shape).result
     i = mhlo.GetTupleElementOp(int32_scalar_type, cond_block.arguments[0],
                                i32_attr(0))
@@ -673,7 +681,7 @@ def _remat_lowering(ctx, avals_in, avals_out, *args,
       #return _remat_using_cond(ctx, args, name, call_jaxpr)
   else:
     return jaxpr_subcomp(
-        ctx, call_jaxpr, (), *map(_wrap_singleton_ir_values, args))
+        ctx, call_jaxpr, (), *map(wrap_singleton_ir_values, args))
 
 register_lowering(pe.remat_call_p, _remat_lowering)
 

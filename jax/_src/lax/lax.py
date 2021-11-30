@@ -3374,7 +3374,8 @@ def _reduce_sum_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
   return [xops.Reduce(
       ctx.builder, [operand],
       [xla.pyval_to_ir_constant(ctx.builder, np.array(0, operand_aval.dtype))],
-      xla.primitive_subcomputation(ctx.platform, add_p, scalar, scalar), axes)]
+      xla.primitive_subcomputation(ctx.platform, ctx.axis_env, add_p, scalar,
+                                   scalar), axes)]
 
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
@@ -3407,7 +3408,8 @@ def _reduce_prod_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
   return [xops.Reduce(
       ctx.builder, [operand],
       [xla.pyval_to_ir_constant(ctx.builder, np.array(1, operand_aval.dtype))],
-      xla.primitive_subcomputation(ctx.platform, mul_p, scalar, scalar), axes)]
+      xla.primitive_subcomputation(ctx.platform, ctx.axis_env, mul_p, scalar,
+                                   scalar), axes)]
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   reducer = lambda x, y: [mul(x, y)]
@@ -3434,7 +3436,8 @@ def _reduce_chooser_translation_rule(prim, identity, ctx, avals_in, avals_out,
   return [xops.Reduce(
       ctx.builder, [operand],
       [xla.pyval_to_ir_constant(ctx.builder, identity(operand_aval.dtype))],
-      xla.primitive_subcomputation(ctx.platform, prim, scalar, scalar), axes)]
+      xla.primitive_subcomputation(ctx.platform, ctx.axis_env, prim, scalar,
+                                   scalar), axes)]
 
 def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -3546,7 +3549,8 @@ def _reduce_logical_translation_rule(prim, identity, ctx, avals_in, avals_out,
   return [xops.Reduce(
       ctx.builder, [operand],
       [xla.pyval_to_ir_constant(ctx.builder, identity(np.bool_))],
-      xla.primitive_subcomputation(ctx.platform, prim, scalar, scalar), axes)]
+      xla.primitive_subcomputation(ctx.platform, ctx.axis_env, prim, scalar,
+                                   scalar), axes)]
 
 _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
                                       or_p, _get_max_identity)
