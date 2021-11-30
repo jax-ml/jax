@@ -1557,7 +1557,14 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True),
                   [RandArg((7, 4), _f32),
                    np.array([[1], [2]], np.int32),  # indices
-                   RandArg((7, 2), _f32),  # upd
+                   RandArg((7, 2), _f32),  # updates
+                   StaticArg(lax.ScatterDimensionNumbers((0,), (1,), (1,)))],
+                  poly_axes=[0, None, 0]),
+    _make_harness("scatter_add", "clip",
+                  partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True, mode=lax.GatherScatterMode.CLIP),
+                  [RandArg((7, 4), _f32),
+                   np.array([[1], [2]], np.int32),  # indices
+                   RandArg((7, 2), _f32),  # updates
                    StaticArg(lax.ScatterDimensionNumbers((0,), (1,), (1,)))],
                   poly_axes=[0, None, 0]),
     _make_harness("select", "0",
@@ -1776,7 +1783,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="arange_stop_error"
+      #one_containing="scatter_add_clip_poly_axes"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())

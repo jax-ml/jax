@@ -1133,8 +1133,8 @@ for indices, index_oob, indices_name in [
             lax.gather_p,
             f"from_take_indices_name={indices_name}_axis={axis}"
             f"_enable_xla={enable_xla}_mode={mode}",
-            lambda a, i, axis: jnp.take(a, i, axis=axis, mode=mode),
-            [_gather_input, indices, StaticArg(axis)],
+            lambda a, i, axis, mode: jnp.take(a, i, axis=axis, mode=mode),
+            [_gather_input, indices, StaticArg(axis), StaticArg(mode)],
             dtype=_gather_input.dtype,
             enable_xla=enable_xla,
             index_oob=index_oob,
@@ -1232,17 +1232,19 @@ def _make_scatter_harness(name,
                           unique_indices=False,
                           scatter_indices=np.array([[0], [2]]),
                           update_shape=(2,),
+                          mode=lax.GatherScatterMode.FILL_OR_DROP,
                           dtype=np.float32,
                           dimension_numbers=((), (0,), (0,))):
   dimension_numbers = lax.ScatterDimensionNumbers(*dimension_numbers)
   define(
       f_lax.__name__,
-      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}"
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}_mode={mode}"
       .replace(" ", ""),
       partial(
           f_lax,
           indices_are_sorted=indices_are_sorted,
-          unique_indices=unique_indices), [
+          unique_indices=unique_indices,
+          mode=mode), [
               RandArg(shape, dtype),
               StaticArg(scatter_indices),
               RandArg(update_shape, dtype),
@@ -1261,7 +1263,8 @@ def _make_scatter_harness(name,
       update_shape=update_shape,
       dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted,
-      unique_indices=unique_indices)
+      unique_indices=unique_indices,
+      mode=mode)
 
 
 # Validate dtypes
@@ -1269,8 +1272,6 @@ for dtype in jtu.dtypes.all:
   for f_lax in [
       lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min
   ]:
-    #if f_lax in [lax.scatter_add, lax.scatter_mul] and dtype == np.bool_:
-    #  continue
     _make_scatter_harness("dtypes", dtype=dtype, f_lax=f_lax)
 
 # Validate f_lax/update_jaxpr
@@ -1278,7 +1279,7 @@ for dtype in jtu.dtypes.all:
 # is lambda x, y: y, which is not commutative and thus makes results
 # non-deterministic when an index into the operand is updated several times.
 
-# Validate shapes, dimension numbers and scatter indices
+# Validate shapes, dimension numbers and scatter indices. All are in bounds.
 for shape, scatter_indices, update_shape, dimension_numbers in [
     ((10,), [[0], [0], [0]], (3, 2), ((1,), (), (0,))),
     ((10, 5), [[0], [2], [1]], (3, 3), ((1,), (0,), (0,)))
@@ -1299,7 +1300,19 @@ _make_scatter_harness("indices_are_sorted", indices_are_sorted=True)
 # regards to the choice of parameters, as the results are only predictable
 # when all the indices to be updated are pairwise non-overlapping. Identifying
 # such cases is non-trivial.
-_make_scatter_harness("unique_indices", unique_indices=False)
+# _make_scatter_harness("unique_indices", unique_indices=False)
+
+# Validate different out-of-bounds modes
+for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+             lax.GatherScatterMode.FILL_OR_DROP,
+             lax.GatherScatterMode.CLIP):
+  # Test with the indices in bounds
+  _make_scatter_harness("modes_in_bounds", mode=mode)
+  _make_scatter_harness("modes_out_of_bounds", mode=mode,
+                        shape=(5,),
+                        scatter_indices=np.array([[4], [77]]),
+                        update_shape=(2,))
+
 
 for dtype in jtu.dtypes.all:
   arg_shape = (2, 3)
@@ -2990,9 +3003,10 @@ if config.jax_enable_x64:
         define(
             lax.rng_bit_generator_p,
             f"shape={jtu.format_shape_dtype_string(shape, dtype)}_algorithm={algorithm}",
-            lambda key: lax.rng_bit_generator(key, shape, dtype=dtype,
-                                              algorithm=algorithm),
-            [RandArg((2,), np.uint64)],
+            lambda key, shape, dtype, algorithm: lax.rng_bit_generator(key, shape, dtype=dtype,
+                                                                       algorithm=algorithm),
+            [RandArg((2,), np.uint64),
+             StaticArg(shape), StaticArg(dtype), StaticArg(algorithm)],
             shape=shape,
             dtype=dtype,
             algorithm=algorithm)
