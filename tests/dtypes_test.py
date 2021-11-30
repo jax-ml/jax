@@ -224,6 +224,8 @@ class DtypesTest(jtu.JaxTestCase):
   def testDtypeFromString(self, dtype):
     self.assertEqual(dtypes.dtype(str(dtype)), dtype)
 
+  def testDtypeFromNone(self):
+    self.assertEqual(dtypes.dtype(None), dtypes.float_)
 
 class TestPromotionTables(jtu.JaxTestCase):
 
@@ -244,6 +246,9 @@ class TestPromotionTables(jtu.JaxTestCase):
     except TypeError:
       val = jaxtype.type(0)
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(val)), jaxtype)
+
+  def testResultTypeNone(self):
+    self.assertEqual(dtypes.result_type(None), dtypes.canonicalize_dtype(dtypes.float_))
 
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")
