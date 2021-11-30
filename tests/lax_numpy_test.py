@@ -1793,6 +1793,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             mode="constant",
             constant_values=(4, 6)))
 
+  def testPadWeakType(self):
+    x = jnp.array(1.0)[None]
+    for mode in ['constant', 'edge', 'linear_ramp', 'maximum', 'mean', 'median',
+                 'minimum', 'reflect', 'symmetric', 'wrap', 'empty']:
+      y = jnp.pad(x, 0, mode=mode)
+      self.assertTrue(dtypes.is_weakly_typed(y))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape=[{}]_reps={}".format(
           jtu.format_shape_dtype_string(shape, dtype), reps),
