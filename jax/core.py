@@ -793,6 +793,8 @@ def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]):
   """
   if not getattr(threading.current_thread(), 'pydev_do_not_trace', True):
     warnings.warn(TRACER_LEAK_DEBUGGER_WARNING)
+  # Trigger garbage collection to filter out cyclical dependency false positives
+  gc.collect()
   traces = list(filter(lambda x: isinstance(x, Trace), gc.get_referrers(x)))
   tracers = list(filter(lambda x: isinstance(x, Tracer), gc.get_referrers(*traces)))
   return tracers
