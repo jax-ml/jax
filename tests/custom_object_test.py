@@ -26,6 +26,7 @@ from jax.interpreters import xla
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge, xla_client
 xops = xla_client.ops
+xc = xla_client
 xb = xla_bridge
 
 from jax.config import config
@@ -113,14 +114,14 @@ def sparse_array_result_handler(device, aval):
 
 def sparse_array_shape_handler(a):
   return (
-    xla.xc.Shape.array_shape(a.data_aval.dtype, a.data_aval.shape),
-    xla.xc.Shape.array_shape(a.indices_aval.dtype, a.indices_aval.shape),
+    xc.Shape.array_shape(a.data_aval.dtype, a.data_aval.shape),
+    xc.Shape.array_shape(a.indices_aval.dtype, a.indices_aval.shape),
   )
 
 def sparse_array_device_put_handler(a, device):
   return (
-    xla.xb.get_device_backend(device).buffer_from_pyval(a.data, device),
-    xla.xb.get_device_backend(device).buffer_from_pyval(a.indices, device)
+    xb.get_device_backend(device).buffer_from_pyval(a.data, device),
+    xb.get_device_backend(device).buffer_from_pyval(a.indices, device)
   )
 
 def sparse_array_constant_handler(c, val, canonicalize_dtypes):

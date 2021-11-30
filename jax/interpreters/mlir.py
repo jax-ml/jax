@@ -23,6 +23,7 @@ import typing
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Type, Union,
                     Tuple)
 from typing_extensions import Protocol
+import warnings
 
 from jax import core
 from jax import linear_util as lu
@@ -319,11 +320,22 @@ def flatten_lowering_ir_args(
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
 def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
-                          axis_env: xla.AxisEnv, name_stack: str) -> str:
+                          axis_env: xla.AxisEnv, name_stack: str,
+                          donated_invars: Sequence[bool]) -> str:
   """Lowers a top-level jaxpr to an MHLO module.
 
   Handles the quirks of the argument/return value passing conventions of the
   runtime."""
+  if platform in ("gpu", "tpu"):
+    # TODO(b/203122001): implement buffer donation.
+    assert not any(donated_invars), donated_invars
+  if any(donated_invars):
+    # TODO(tomhennigan): At call time we should mark these buffers as deleted.
+    unused_donations = [str(a) for a, d in zip(jaxpr.in_avals, donated_invars)
+                        if d]
+    warnings.warn("Some donated buffers were not usable: {}".format(
+        ", ".join(unused_donations)))
+
   ctx = LoweringContext(platform, axis_env, name_stack)
   if platform == "iree":
     ctx = ctx.replace(tuple_results=False)

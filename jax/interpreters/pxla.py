@@ -995,31 +995,23 @@ def lower_parallel_callable(
 
   axis_env = xla.AxisEnv(
       replicas.num_global_replicas, (axis_name,), (global_axis_size,))
-
-  c = xc.XlaBuilder("pmap_{}".format(fun.__name__))
-  xla_consts = map(partial(xla.pyval_to_ir_constant, c), consts)
+  name_stack = extend_name_stack(wrap_name(name, 'pmap'))
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   replicated_args = [axis is None for axis in in_axes]
-  xla_args, donated_invars = xla._xla_callable_args(
-      c, shards.global_sharded_avals, tuple_args(shards),
-      replicated=replicated_args,
-      partitions=parts.arg_parts,
-      donated_invars=donated_invars)
+  module: Union[str, xc.XlaComputation]
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    ctx = xla.TranslationContext(c, backend.platform, axis_env,
-                                 extend_name_stack(wrap_name(name, 'pmap')))
-    out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-  build_out_tuple = partial(xops.Tuple, c, out_nodes)
-  if parts.out_parts is not None:
-    out_tuple = xb.with_sharding(c, parts.out_parts, build_out_tuple)
-  else:
-    out_tuple = build_out_tuple()
+    if config.jax_enable_mlir:
+      # TODO(phawkins): handle replicated_args.
+      # TODO(phawkins): handle sharding.
+      module = mlir.lower_jaxpr_to_module(
+          closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars)
+    else:
+      module = xla.lower_jaxpr_to_xla_module(
+          f"pmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+          name_stack, tuple_args(shards), donated_invars, replicated_args,
+          parts.arg_parts, parts.out_parts)
 
-  if backend.platform in ("gpu", "tpu"):
-    donated_invars = xla.set_up_aliases(c, xla_args, c.GetShape(out_tuple),
-                                        donated_invars, tuple_args(shards))
-  built = c.Build(out_tuple)
-
-  return PmapComputation(built, pci, replicas, parts, shards)
+  return PmapComputation(module, pci, replicas, parts, shards)
 
 
 class PmapComputation:
@@ -1917,8 +1909,6 @@ def lower_mesh_computation(
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   # 3. Build up the HLO
-  c = xc.XlaBuilder(f"xmap_{fun.__name__}")
-  xla_consts = map(partial(xla.pyval_to_ir_constant, c), consts)
   tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
   in_partitions: Optional[List]
   if spmd_lowering:
@@ -1929,40 +1919,29 @@ def lower_mesh_computation(
                      for aval, aval_in_axes in safe_zip(global_in_untiled_avals, in_axes)]
     out_partitions = [global_sharding_spec(aval, aval_out_axes).sharding_proto()
                       for aval, aval_out_axes in safe_zip(global_out_untiled_avals, out_axes)]
+    out_partitions_t = xla.tuple_sharding_proto(out_partitions)
     partitions_proto = True
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
   else:
     replicated_args = [not axis for axis in in_axes]
     in_partitions = None
+    out_partitions_t = None
     partitions_proto = False
     axis_env = xla.AxisEnv(nreps=mesh.size,
                            names=tuple(global_axis_sizes.keys()),
                            sizes=tuple(global_axis_sizes.values()))
-  xla_args, donated_invars = xla._xla_callable_args(
-      c, in_jaxpr_avals, tuple_args,
-      replicated=replicated_args,
-      partitions=in_partitions,
-      partitions_proto=partitions_proto,
-      donated_invars=donated_invars)
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+  name_stack = extend_name_stack(wrap_name(transformed_name, 'xmap'))
   with core.extend_axis_env_nd(mesh.shape.items()):
-    ctx = xla.TranslationContext(
-        c, backend.platform, axis_env,
-        extend_name_stack(wrap_name(transformed_name, 'xmap')))
-    out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-  if spmd_lowering:
-    out_partitions_t = xb.tuple_sharding_proto(out_partitions)
-    out_tuple = xb.with_sharding_proto(c, out_partitions_t, xops.Tuple, c, out_nodes)
-  else:
-    out_tuple = xops.Tuple(c, out_nodes)
+    # TODO(phawkins): add MLIR lowering.
+    module = xla.lower_jaxpr_to_xla_module(
+        f"xmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+        name_stack, tuple_args, donated_invars, replicated_args,
+        in_partitions, out_partitions_t,
+        partitions_are_protos=partitions_proto)
 
-  if backend.platform in ("gpu", "tpu"):
-    xla.set_up_aliases(c, xla_args, c.GetShape(out_tuple), donated_invars,
-                       tuple_args)
-    # TODO: Warn about unused donations?
-
-  built = c.Build(out_tuple)
   return MeshComputation(
-      built, donated_invars, mesh, local_in_untiled_avals,
+      module, donated_invars, mesh, local_in_untiled_avals,
       local_out_untiled_avals, (out_jaxpr_avals if spmd_lowering else None),
       in_axes, out_axes, spmd_lowering, tuple_args)
 

@@ -946,7 +946,7 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
 
         token_sharding_proto = xla_client.OpSharding()
         token_sharding_proto.type = xla_client.OpSharding.Type.REPLICATED
-        infeed_sharding_proto = xb.tuple_sharding_proto(
+        infeed_sharding_proto = xla.tuple_sharding_proto(
             [array_sharding_proto] * len(non_empty_flat_results_aval) +
             [token_sharding_proto])
 
@@ -959,8 +959,8 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
         build_infeed = functools.partial(xops.InfeedWithToken,
                                          after_outfeed_itoken,
                                          xla_client.Shape.tuple_shape(shape))
-        outs_and_token = xb.with_sharding_proto(comp, infeed_sharding_proto,
-                                                build_infeed)
+        outs_and_token = xla.with_sharding_proto(comp, infeed_sharding_proto,
+                                                 build_infeed)
         outs = xops.GetTupleElement(outs_and_token, 0)
         next_itoken = xops.GetTupleElement(outs_and_token, 1)
         non_empty_results = [

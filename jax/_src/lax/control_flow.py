@@ -48,7 +48,6 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip,
@@ -342,7 +341,7 @@ def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
   init_carry = xops.Tuple(c, cond_consts + body_consts + init_vals)
 
   cond_c = xla_client.XlaBuilder("cond_computation")
-  cond_carry = xb.parameter(cond_c, 0, c.get_shape(init_carry))
+  cond_carry = xla.parameter(cond_c, 0, c.get_shape(init_carry))
   cond_carry_elts = [xops.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
   cond_ctx = ctx.replace(builder=cond_c,
@@ -359,7 +358,7 @@ def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
                        or_, list(range(cond_jaxpr.out_avals[0].ndim)))
 
   body_c = xla_client.XlaBuilder("body_computation")
-  body_carry = xb.parameter(body_c, 0, c.get_shape(init_carry))
+  body_carry = xla.parameter(body_c, 0, c.get_shape(init_carry))
   body_carry_elts = [xops.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
   body_ctx = ctx.replace(builder=body_c,
@@ -931,7 +930,7 @@ def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
   name_stack = extend_name_stack(ctx.name_stack, "cond")
   def make_computation(name, jaxpr, op_shape):
     c = xla_client.XlaBuilder(name + '_comp')
-    op = xb.parameter(c, 0, op_shape)
+    op = xla.parameter(c, 0, op_shape)
     ops = [xops.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
     subctx = ctx.replace(
         builder=c, name_stack=extend_name_stack(name_stack, name + '_fun'))

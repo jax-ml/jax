@@ -63,7 +63,6 @@ from typing import (Any, Tuple)
 
 import numpy as np
 from jax import lax, core
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src import ad_util, dtypes
 
@@ -167,10 +166,10 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
 def _comparator_builder(operand, op_type, is_max_k):
   c = xc.XlaBuilder(
       'top_k_{}_comparator'.format('gt' if is_max_k else 'lt'))
-  p0 = xb.parameter(c, 0, xc.Shape.scalar_shape(op_type))
-  p1 = xb.parameter(c, 1, xc.Shape.scalar_shape(op_type))
-  xb.parameter(c, 2, xc.Shape.scalar_shape(np.dtype(np.int32)))
-  xb.parameter(c, 3, xc.Shape.scalar_shape(np.dtype(np.int32)))
+  p0 = xla.parameter(c, 0, xc.Shape.scalar_shape(op_type))
+  p1 = xla.parameter(c, 1, xc.Shape.scalar_shape(op_type))
+  xla.parameter(c, 2, xc.Shape.scalar_shape(np.dtype(np.int32)))
+  xla.parameter(c, 3, xc.Shape.scalar_shape(np.dtype(np.int32)))
   if is_max_k:
     cmp_result = xc.ops.Gt(p0, p1)
   else:

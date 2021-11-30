@@ -1487,7 +1487,7 @@ def _scatter_add_translation_rule(
   def _make_reducer(dtype):
     subc = xc.XlaBuilder("scatter_add_reducer")
     shape = xc.Shape.array_shape(np.dtype(dtype), ())
-    args = [xb.parameter(subc, 0, shape), xb.parameter(subc, 1, shape)]
+    args = [xla.parameter(subc, 0, shape), xla.parameter(subc, 1, shape)]
     out = xops.Add(args[0], args[1])
     return subc.build(out)
 

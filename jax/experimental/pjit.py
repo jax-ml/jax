@@ -37,7 +37,6 @@ from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.sharded_jit import PartitionSpec
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.tree_util import tree_map, tree_flatten, tree_unflatten, tree_leaves
 from jax._src.util import (extend_name_stack, HashableFunction, safe_zip,
@@ -514,8 +513,8 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
   for i, (n, axis_resources) in enumerate(safe_zip(in_nodes, in_axis_resources)):
     # N.B. inlined calls shouldn't have shardings set directly on the inputs or
     # outputs (set_sharding_proto adds an identity operation).
-    arg = xb.parameter(subc, i, c.GetShape(n))
-    args.append(xb.set_sharding_proto(subc, arg,
+    arg = xla.parameter(subc, i, c.GetShape(n))
+    args.append(xla.set_sharding_proto(subc, arg,
                                       get_sharding_proto(c, n, axis_resources, mesh)))
 
   # TODO: Think about how to avoid duplicating constants with the outer jaxpr
@@ -525,7 +524,7 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
   out_nodes = xla.jaxpr_subcomp(
       ctx, jaxpr.jaxpr, xla._xla_consts(subc, jaxpr.consts), *args)
   out_nodes = [
-      xb.set_sharding_proto(subc, out,
+      xla.set_sharding_proto(subc, out,
                             get_sharding_proto(subc, out, axis_resources, mesh))
       for out, axis_resources in safe_zip(out_nodes, out_axis_resources)
   ]
@@ -815,7 +814,7 @@ ad.deflinear2(sharding_constraint_p,
 def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node, *,
                                           axis_resources, resource_env):
   mesh = resource_env.physical_mesh
-  return [xb.set_sharding_proto(
+  return [xla.set_sharding_proto(
       ctx.builder, x_node,
       get_sharding_proto(ctx.builder, x_node, axis_resources, mesh))]
 xla.register_translation(sharding_constraint_p, _sharding_constraint_translation_rule)

@@ -22,9 +22,10 @@ from functools import partial
 import itertools as it
 import operator
 import re
-from typing import (Any, Callable, Deque, Dict, List, Optional, Sequence, Set,
-                    Type, Tuple, NamedTuple)
+from typing import (Any, Callable, Deque, Dict, List, NamedTuple, Optional,
+                    Sequence, Set, Type, Tuple, Union)
 from typing_extensions import Protocol
+import warnings
 
 import numpy as np
 
@@ -43,7 +44,6 @@ import jax._src.pretty_printer as pp
 from jax._src import util
 from jax._src.util import (prod, extend_name_stack, wrap_name,
                            safe_zip, safe_map, partition_list)
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
@@ -112,6 +112,84 @@ def make_op_metadata(primitive: core.Primitive,
         op_name=eqn_str,
         source_file=_get_canonical_source_file(frame) if frame else None,
         source_line=frame.line_num if frame else None)
+
+# Utilities
+
+def parameter(builder, num, shape, name=None, replicated=None):
+  if name is None:
+    name = ''
+  if replicated is None:
+    replicated = []
+  elif isinstance(replicated, bool):
+    replicated = [replicated] * shape.leaf_count()
+
+  return xops.Parameter(builder, num,
+                        shape.with_major_to_minor_layout_if_absent(), name,
+                        replicated)
+
+# HLO instructions optionally can be annotated to say how the output should be
+# spatially partitioned (represented in XLA as OpSharding protos, see
+# _sharding_to_proto). For array outputs, the annotation is either an int per
+# dimension specifying the number of ways that dimension divided (i.e. the total
+# number of shards is the product), or None to indicate the array should be
+# replicated. Tuple outputs are represented as tuples thereof. XLA supports
+# arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
+# checkers don't support recursive types), so we only represent one level of
+# nesting in this type definition.
+SpatialSharding = Union[Tuple[int, ...],
+                        None,
+                        Tuple[Union[Tuple[int, ...], None], ...]]
+
+def _sharding_to_proto(sharding: SpatialSharding):
+  """Converts a SpatialSharding to an OpSharding.
+
+  See
+  https://github.com/tensorflow/tensorflow/blob/main/tensorflow/compiler/xla/xla_data.proto#L601
+  for details on the OpSharding proto.
+  """
+  proto = xc.OpSharding()
+  if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
+    assert all(s is None or isinstance(s, tuple) for s in sharding)
+    return tuple_sharding_proto(list(map(_sharding_to_proto, sharding)))  # type: ignore
+
+  if sharding is None:
+    proto.type = xc.OpSharding.Type.REPLICATED
+  else:
+    proto.type = xc.OpSharding.Type.OTHER
+    proto.tile_assignment_dimensions = list(sharding)
+    proto.tile_assignment_devices = list(range(np.product(sharding)))
+  return proto
+
+def tuple_sharding_proto(elems):
+  proto = xc.OpSharding()
+  assert all(isinstance(e, type(proto)) for e in elems)
+  proto.type = xc.OpSharding.Type.TUPLE
+  proto.tuple_shardings = elems
+  return proto
+
+def set_sharding_proto(builder, op, sharding_proto):
+  """Uses CustomCall to annotate a value as sharded."""
+  # "Sharding" is a built-in custom call target that acts like an identity
+  # function, and is used to attach an OpSharding to.
+  return with_sharding_proto(builder, sharding_proto, xops.CustomCall,
+                             builder, b"Sharding", [op], builder.get_shape(op))
+
+def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
+  """Builds op_fn(*args, **kwargs) with sharding annotation."""
+  builder.set_sharding(sharding_proto)
+  try:
+    return op_fn(*args, **kwargs)
+  finally:
+    builder.clear_sharding()
+
+def set_sharding(builder, op, sharding: SpatialSharding):
+  """Uses CustomCall to annotate a value as sharded."""
+  return set_sharding_proto(builder, op, _sharding_to_proto(sharding))
+
+def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
+  """Builds op_fn(*args, **kwargs) with sharding annotation."""
+  return with_sharding_proto(builder, _sharding_to_proto(sharding), op_fn, *args, **kwargs)
+
 
 ### handlers
 
@@ -400,7 +478,7 @@ def _xla_callable_args(
     if partitions is None:
       tuple_parts = None
     elif partitions_proto:
-      tuple_parts = xb.tuple_sharding_proto(partitions)
+      tuple_parts = tuple_sharding_proto(partitions)
     else:
       tuple_parts = tuple(partitions)
     tuple_shape = xc.Shape.tuple_shape(
@@ -419,15 +497,15 @@ def _xla_param(builder, param_num, xla_shape, replicated, partitions,
   is_token = xla_shape.is_token()
   if filter_tokens and is_token:
     xla_shape = _token_param_shape()
-  make_param = partial(xb.parameter, builder, param_num, xla_shape,
+  make_param = partial(parameter, builder, param_num, xla_shape,
                        replicated=replicated)
-  with_sharding = xb.with_sharding_proto if parts_proto else xb.with_sharding
+  with_sharding_fn = with_sharding_proto if parts_proto else with_sharding
   if partitions is None:
     out = make_param()
   elif partitions is _replicated_param:
-    out = with_sharding(builder, None, make_param)
+    out = with_sharding_fn(builder, None, make_param)
   else:
-    out = with_sharding(builder, partitions, make_param)
+    out = with_sharding_fn(builder, partitions, make_param)
   if filter_tokens and is_token:
     out = xops.CreateToken(builder)
   return out
@@ -583,9 +661,9 @@ def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
   Given the following computation:
 
   >>> c = xc.XlaBuilder("example")
-  >>> p0 = xb.parameter(c, 1, xc.shape_from_pyval(jnp.ones([1])))
-  >>> p1 = xb.parameter(c, 2, xc.shape_from_pyval(jnp.ones([2])))
-  >>> p2 = xb.parameter(c, 3, xc.shape_from_pyval(jnp.ones([3])))
+  >>> p0 = parameter(c, 1, xc.shape_from_pyval(jnp.ones([1])))
+  >>> p1 = parameter(c, 2, xc.shape_from_pyval(jnp.ones([2])))
+  >>> p2 = parameter(c, 3, xc.shape_from_pyval(jnp.ones([3])))
   >>> o = xops.Tuple(c, [p0, p1, p2])
 
   We can query the arrays in the output tuple:
@@ -659,6 +737,55 @@ def set_up_aliases(c, xla_args, out_shape: XlaShape, donated_args, tuple_args):
 
 
 
+def lower_jaxpr_to_xla_module(
+    fn_name: str, jaxpr: core.ClosedJaxpr, platform: str, axis_env: AxisEnv,
+    name_stack: str, tuple_args: bool, donated_invars: Sequence[bool],
+    replicated_args: Optional[Sequence[bool]],
+    arg_partitions: Optional[Any],
+    out_partitions: Optional[Any],
+    partitions_are_protos: bool = False
+    ) -> xc.XlaComputation:
+  """Lowers a closed jaxpr to a top-level XLA module."""
+  c = xc.XlaBuilder(fn_name)
+  xla_consts = _xla_consts(c, jaxpr.consts)
+  xla_args, donated_invars = _xla_callable_args(
+      c, jaxpr.in_avals, tuple_args, donated_invars=donated_invars,
+      replicated=replicated_args, partitions=arg_partitions,
+      partitions_proto=partitions_are_protos)
+  ctx = TranslationContext(c, platform, axis_env, name_stack)
+  out_nodes = jaxpr_subcomp(ctx, jaxpr.jaxpr, xla_consts, *xla_args)
+  # Replace tokens with a dummy array value, because the runtime cannot
+  # handle token arguments.
+  out_aval_lens = [len(aval_to_xla_shapes(a)) for a in jaxpr.out_avals]
+  out_nodes = util.flatten(
+      [[_make_token_return_value(c)] if a is core.abstract_token
+       else v for a, v in zip(jaxpr.out_avals,
+                              util.unflatten(out_nodes, out_aval_lens))])
+
+  # There is a non-zero cost to building an output tuple, particularly on TPU.
+  # Avoid it if the output arity is 1.
+  if out_partitions is None:
+    output = out_nodes[0] if len(out_nodes) == 1 else xc.ops.Tuple(c, out_nodes)
+  else:
+    build_out_tuple = partial(xops.Tuple, c, out_nodes)
+    if partitions_are_protos:
+      output = with_sharding_proto(c, out_partitions, build_out_tuple)
+    else:
+      output = with_sharding(c, out_partitions, build_out_tuple)
+
+  if platform in ("gpu", "tpu"):
+    donated_invars = set_up_aliases(
+        c, xla_args, c.GetShape(output), donated_invars, tuple_args)
+  if any(donated_invars):
+    # TODO(tomhennigan): At call time we should mark these buffers as deleted.
+    unused_donations = [str(c.GetShape(a))
+                        for a, d in zip(xla_args, donated_invars) if d]
+    warnings.warn("Some donated buffers were not usable: {}".format(
+        ", ".join(unused_donations)))
+  return c.build(output)
+
+
+
 xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
 xla_call = xla_call_p.bind
 
@@ -698,7 +825,7 @@ def _xla_call_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
   c = ctx.builder
   check_backend_matches(backend, ctx.platform)
   subc = xc.XlaBuilder(f"jit_{name}")
-  args = [xb.parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
+  args = [parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
   sub_ctx = ctx.replace(
       builder=subc,
       name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'jit')))
@@ -934,7 +1061,7 @@ def _remat_using_cond(ctx, in_nodes, name, call_jaxpr):
 
   true_op = xops.Tuple(c, in_nodes)
   remat_subc = xc.XlaBuilder("remat_call_subcomputation")
-  input_op = xb.parameter(remat_subc, 0, c.get_shape(true_op), replicated=[])
+  input_op = parameter(remat_subc, 0, c.get_shape(true_op), replicated=[])
   args = xla_destructure(remat_subc, input_op)
   sub_ctx = ctx.replace(
       builder=remat_subc,
@@ -945,7 +1072,7 @@ def _remat_using_cond(ctx, in_nodes, name, call_jaxpr):
 
   false_op = true_op
   dummy_subc = xc.XlaBuilder("remat_call_dummy_subcomputation")
-  xb.parameter(dummy_subc, 0, c.get_shape(false_op), replicated=[])
+  parameter(dummy_subc, 0, c.get_shape(false_op), replicated=[])
   out_nodes = [_zeros(dummy_subc, s) for s in out_node_shapes]
   dummy_subc = dummy_subc.build(xops.Tuple(dummy_subc, out_nodes))
 
@@ -959,7 +1086,7 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   # Dummy subc for getting subcomp shapes.
   dummy_inputs = xops.Tuple(c, in_nodes)
   dummy_subc = xc.XlaBuilder("remat_dummy_subcomputation")
-  dummy_input_op = xb.parameter(dummy_subc, 0, c.get_shape(dummy_inputs), replicated=[])
+  dummy_input_op = parameter(dummy_subc, 0, c.get_shape(dummy_inputs), replicated=[])
   dummy_args = xla_destructure(dummy_subc, dummy_input_op)
   dummy_ctx = ctx.replace(
       builder=dummy_subc,
@@ -972,7 +1099,7 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   inputs = xops.Tuple(c, [i_init] + list(in_nodes) + zeros_like_outs)
 
   cond_subc = xc.XlaBuilder("remat_cond_subcomputation")
-  input_op = xb.parameter(cond_subc, 0, c.get_shape(inputs), replicated=[])
+  input_op = parameter(cond_subc, 0, c.get_shape(inputs), replicated=[])
   i = xops.GetTupleElement(input_op, 0)
   rng = xops.RngUniform(xops.Constant(cond_subc, np.array(1, dtype=np.int32)),
                         xops.Constant(cond_subc, np.array(2, dtype=np.int32)),
@@ -980,7 +1107,7 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   cond_subc = cond_subc.build(xops.Lt(i, rng))
 
   body_subc = xc.XlaBuilder("remat_body_subcomputation")
-  input_op = xb.parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
+  input_op = parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
   i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes)+1]
   i_next = xops.Add(i, xops.Constant(body_subc, np.array(1, dtype=np.int32)))
   body_ctx = ctx.replace(
@@ -1019,7 +1146,7 @@ def _named_call_translation_rule(ctx, avals_in, avals_out, *in_nodes,
   check_backend_matches(backend, ctx.platform)
   c = ctx.builder
   subc = xc.XlaBuilder(name)
-  args = [xb.parameter(subc, i, c.GetShape(n)) for i, n in enumerate(in_nodes)]
+  args = [parameter(subc, i, c.GetShape(n)) for i, n in enumerate(in_nodes)]
   sub_ctx = ctx.replace(builder=subc,
                         name_stack=extend_name_stack(ctx.name_stack, name))
   out_nodes = jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)

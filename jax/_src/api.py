@@ -860,7 +860,7 @@ def xla_computation(fun: Callable,
       out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
     build_out_tuple = partial(xc.ops.Tuple, c, out_nodes)
     if out_parts is not None:
-      out_tuple = xb.with_sharding(c, out_parts_flat, build_out_tuple)
+      out_tuple = xla.with_sharding(c, out_parts_flat, build_out_tuple)
     else:
       out_tuple = build_out_tuple()
 

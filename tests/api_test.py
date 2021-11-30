@@ -244,8 +244,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   # Jit and Donate arguments
 
   def test_jit_donate_argnums_warning_raised(self):
-    if jax.config.jax_enable_mlir:
-      raise unittest.SkipTest("Buffer donation not yet implemented via MLIR")
     x = jnp.array([1.0, 2.0], jnp.float32)
     y = jnp.array([1, 2], jnp.int32)
     f = self.jit(lambda x, y: x.sum() + y.sum(), donate_argnums=(0, 1))
@@ -256,7 +254,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertLen(w, 1)
       self.assertTrue(issubclass(w[-1].category, UserWarning))
       self.assertIn(
-          "Some donated buffers were not usable: f32[2]{0}, s32[2]{0}",
+          "Some donated buffers were not usable:",
           str(w[-1].message))
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.

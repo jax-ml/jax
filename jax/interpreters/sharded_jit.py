@@ -147,7 +147,7 @@ def _sharded_callable(
   ctx = xla.TranslationContext(
       c, platform, axis_env, extend_name_stack(wrap_name(name, "sharded_jit")))
   out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-  out_tuple = xb.with_sharding(c, out_parts, xops.Tuple, c, out_nodes)
+  out_tuple = xla.with_sharding(c, out_parts, xops.Tuple, c, out_nodes)
   built = c.Build(out_tuple)
 
   if nparts <= xb.local_device_count():
@@ -191,10 +191,10 @@ def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
 
   args = []
   for i, (n, sharding) in enumerate(safe_zip(in_nodes, in_parts)):
-    # We use xb.set_sharding instead of xb.with_sharding because inlined calls
+    # We use xla.set_sharding instead of xla.with_sharding because inlined calls
     # shouldn't have shardings set directly on the inputs or outputs.
-    arg = xb.parameter(subc, i, c.GetShape(n))
-    args.append(xb.set_sharding(subc, arg, sharding))
+    arg = xla.parameter(subc, i, c.GetShape(n))
+    args.append(xla.set_sharding(subc, arg, sharding))
 
   ctx = xla.TranslationContext(
       subc, backend, axis_env,
@@ -202,7 +202,7 @@ def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
   out_nodes = xla.jaxpr_subcomp(ctx, call_jaxpr, (), *args)
   out_parts = out_parts_thunk()
   assert len(out_parts) == len(out_nodes)
-  out_nodes = [xb.set_sharding(subc, out, sharding)
+  out_nodes = [xla.set_sharding(subc, out, sharding)
                for out, sharding in safe_zip(out_nodes, out_parts)]
 
   subc = subc.build(xops.Tuple(subc, out_nodes))
@@ -218,7 +218,7 @@ def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
 def _xla_sharded_args(c, avals, in_parts):
   xla_args = []
   for i, (sharding, aval) in enumerate(safe_zip(in_parts, avals)):
-    param = xb.with_sharding(c, sharding, xb.parameter, c, i,
+    param = xla.with_sharding(c, sharding, xla.parameter, c, i,
                              *xla.aval_to_xla_shapes(aval))
     xla_args.append(param)
   return xla_args
@@ -413,7 +413,7 @@ def _sharding_constraint_impl(x, partitions):
 
 def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node,
                                           partitions):
-  return [xb.set_sharding(ctx.builder, x_node, partitions)]
+  return [xla.set_sharding(ctx.builder, x_node, partitions)]
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)

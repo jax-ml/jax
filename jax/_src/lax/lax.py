@@ -3224,7 +3224,7 @@ def _reduction_computation(ctx, jaxpr, consts, init_values, singleton=True):
   axis_env = xla.AxisEnv(1, (), ())  # no parallel primitives inside reductions
   subc = xc.XlaBuilder("reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
-  args = [xb.parameter(subc, i, shape) for i, shape in enumerate(shapes)]
+  args = [xla.parameter(subc, i, shape) for i, shape in enumerate(shapes)]
   ctx = xla.TranslationContext(subc, platform, axis_env, '')
   out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, consts, *args)
   if singleton:
@@ -3684,7 +3684,7 @@ def _sort_translation_rule(ctx, avals_in, avals_out, *operands, dimension,
   c = ctx.builder
   types = [c.get_shape(x).xla_element_type() for x in operands]
   subc = xc.XlaBuilder("sort_lt_comparator")
-  params = [xb.parameter(subc, 2 * i + j, xc.Shape.array_shape(typ, ()))
+  params = [xla.parameter(subc, 2 * i + j, xc.Shape.array_shape(typ, ()))
             for i, typ in enumerate(types) for j in range(2)]
   result = xla.lower_fun(partial(_sort_lt_comparator, num_keys=num_keys),
                          backend=ctx.platform,
@@ -3918,7 +3918,7 @@ def _infeed_translation_rule(ctx, avals_in, avals_out, token, *, shapes,
   build_infeed = partial(xops.InfeedWithToken, token,
                          xla_client.Shape.tuple_shape(shape))
   if partitions:
-    xs_and_token = xb.with_sharding(c, partitions, build_infeed)
+    xs_and_token = xla.with_sharding(c, partitions, build_infeed)
   else:
     # Note that infeed will default to replication if inside a sharded
     # computation and no sharding is specified.
@@ -3986,8 +3986,8 @@ def _outfeed_translation_rule(ctx, avals_in, avals_out, token, *xs, partitions):
   c = ctx.builder
   t = xops.Tuple(c, xs)
   if partitions is not None:
-    return [xb.with_sharding(c, partitions, xops.OutfeedWithToken,
-                             t, token, c.get_shape(t))]
+    return [xla.with_sharding(c, partitions, xops.OutfeedWithToken,
+                              t, token, c.get_shape(t))]
   else:
     return [xops.OutfeedWithToken(t, token, c.get_shape(t))]
 

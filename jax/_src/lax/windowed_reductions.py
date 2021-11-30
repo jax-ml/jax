@@ -806,9 +806,9 @@ def _select_and_gather_add_translation(
 
   def reducer():
     c = xc.XlaBuilder("select_and_gather_pair_reducer")
-    x = xb.parameter(c, 0,
+    x = xla.parameter(c, 0,
       xla_client.Shape.array_shape(np.dtype(double_word_dtype), ()))
-    y = xb.parameter(c, 1,
+    y = xla.parameter(c, 1,
       xla_client.Shape.array_shape(np.dtype(double_word_dtype), ()))
     assert select_prim is lax.ge_p or select_prim is lax.le_p
     which = xops.Ge if select_prim is lax.ge_p else xops.Le

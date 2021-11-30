@@ -23,7 +23,7 @@ XLA. There are also a handful of related casting utilities.
 from functools import partial, lru_cache
 import os
 import threading
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 import warnings
 
 from absl import logging
@@ -435,81 +435,3 @@ def host_ids(backend=None):
       "instead. jax.host_ids will eventually be removed; please update your "
       "code.")
   return list(range(process_count(backend)))
-
-
-### utility functions
-
-def parameter(builder, num, shape, name=None, replicated=None):
-  if name is None:
-    name = ''
-  if replicated is None:
-    replicated = []
-  elif isinstance(replicated, bool):
-    replicated = [replicated] * shape.leaf_count()
-
-  return xops.Parameter(builder, num,
-                        shape.with_major_to_minor_layout_if_absent(), name,
-                        replicated)
-
-# HLO instructions optionally can be annotated to say how the output should be
-# spatially partitioned (represented in XLA as OpSharding protos, see
-# _sharding_to_proto). For array outputs, the annotation is either an int per
-# dimension specifying the number of ways that dimension divided (i.e. the total
-# number of shards is the product), or None to indicate the array should be
-# replicated. Tuple outputs are represented as tuples thereof. XLA supports
-# arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
-# checkers don't support recursive types), so we only represent one level of
-# nesting in this type definition.
-SpatialSharding = Union[Tuple[int, ...],
-                        None,
-                        Tuple[Union[Tuple[int, ...], None], ...]]
-
-def _sharding_to_proto(sharding: SpatialSharding):
-  """Converts a SpatialSharding to an OpSharding.
-
-  See
-  https://github.com/tensorflow/tensorflow/blob/main/tensorflow/compiler/xla/xla_data.proto#L601
-  for details on the OpSharding proto.
-  """
-  proto = xla_client.OpSharding()
-  if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
-    assert all(s is None or isinstance(s, tuple) for s in sharding)
-    return tuple_sharding_proto(list(map(_sharding_to_proto, sharding)))  # type: ignore
-
-  if sharding is None:
-    proto.type = xla_client.OpSharding.Type.REPLICATED
-  else:
-    proto.type = xla_client.OpSharding.Type.OTHER
-    proto.tile_assignment_dimensions = list(sharding)
-    proto.tile_assignment_devices = list(range(np.product(sharding)))
-  return proto
-
-def tuple_sharding_proto(elems):
-  proto = xla_client.OpSharding()
-  assert all(isinstance(e, type(proto)) for e in elems)
-  proto.type = xla_client.OpSharding.Type.TUPLE
-  proto.tuple_shardings = elems
-  return proto
-
-def set_sharding_proto(builder, op, sharding_proto):
-  """Uses CustomCall to annotate a value as sharded."""
-  # "Sharding" is a built-in custom call target that acts like an identity
-  # function, and is used to attach an OpSharding to.
-  return with_sharding_proto(builder, sharding_proto, xops.CustomCall,
-                             builder, b"Sharding", [op], builder.get_shape(op))
-
-def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
-  """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  builder.set_sharding(sharding_proto)
-  try:
-    return op_fn(*args, **kwargs)
-  finally:
-    builder.clear_sharding()
-
-def set_sharding(builder, op, sharding: SpatialSharding):
-  """Uses CustomCall to annotate a value as sharded."""
-  return set_sharding_proto(builder, op, _sharding_to_proto(sharding))
-
-def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
-  """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  return with_sharding_proto(builder, _sharding_to_proto(sharding), op_fn, *args, **kwargs)

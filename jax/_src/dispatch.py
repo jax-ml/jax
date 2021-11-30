@@ -218,42 +218,16 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   tuple_args = len(abstract_args) > 100
   axis_env = xla.AxisEnv(nreps, (), ())
   name_stack = xla.extend_name_stack(xla.wrap_name(name, 'jit'))
-  module: Any
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+  module: Union[str, xc.XlaComputation]
   if config.jax_enable_mlir:
-    # TODO(b/203122001): implement buffer donation.
-    assert not any(donated_invars), donated_invars
     module = mlir.lower_jaxpr_to_module(
-        core.ClosedJaxpr(jaxpr, consts), backend.platform, axis_env, name_stack)
+        closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars)
   else:
-    # XLA HLO lowering path
-    c = xc.XlaBuilder(f"jit_{fun.__name__}")
-    xla_consts = xla._xla_consts(c, consts)
-    xla_args, donated_invars = xla._xla_callable_args(
-        c, abstract_args, tuple_args, donated_invars=donated_invars)
-    platform = backend.platform
-    ctx = xla.TranslationContext(c, platform, axis_env, name_stack)
-    out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-    # Replace tokens with a dummy array value, because the runtime cannot
-    # handle token arguments.
-    out_aval_lens = [len(xla.aval_to_xla_shapes(a)) for a in out_avals]
-    out_nodes = util.flatten(
-        [[xla._make_token_return_value(c)] if a is core.abstract_token
-         else v
-         for a, v in zip(out_avals, util.unflatten(out_nodes, out_aval_lens))])
-
-    # There is a non-zero cost to building an output tuple, particularly on TPU.
-    # Avoid it if the output arity is 1.
-    output = out_nodes[0] if len(out_nodes) == 1 else xc.ops.Tuple(c, out_nodes)
-    if platform in ("gpu", "tpu"):
-      donated_invars = xla.set_up_aliases(
-          c, xla_args, c.GetShape(output), donated_invars, tuple_args)
-    if any(donated_invars):
-      # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-      unused_donations = [str(c.GetShape(a))
-                          for a, d in zip(xla_args, donated_invars) if d]
-      warnings.warn("Some donated buffers were not usable: {}".format(
-          ", ".join(unused_donations)))
-    module = c.build(output)
+    module = xla.lower_jaxpr_to_xla_module(
+        f"jit_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+        name_stack, tuple_args, donated_invars, replicated_args=None,
+        arg_partitions=None, out_partitions=None)
   return XlaComputation(
       name, module, False, donated_invars, nreps, device, backend, tuple_args,
       abstract_args, out_avals, kept_var_idx)

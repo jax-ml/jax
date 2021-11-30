@@ -1464,7 +1464,7 @@ def _xmap_translation_rule_spmd(c, axis_env,
 
   global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
   sharded_global_in_nodes = [
-    xb.set_sharding_proto(c, node, global_sharding_spec(aval, aval_axes).sharding_proto())
+    xla.set_sharding_proto(c, node, global_sharding_spec(aval, aval_axes).sharding_proto())
     if aval_axes else node
     for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
   ]
@@ -1478,7 +1478,7 @@ def _xmap_translation_rule_spmd(c, axis_env,
                                        *sharded_global_in_nodes)
 
   sharded_global_out_nodes = [
-    xb.set_sharding_proto(c, node, global_sharding_spec(aval, aval_axes).sharding_proto())
+    xla.set_sharding_proto(c, node, global_sharding_spec(aval, aval_axes).sharding_proto())
     if aval_axes else node
     for node, aval, aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
   ]

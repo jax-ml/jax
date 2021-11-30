@@ -640,7 +640,7 @@ xla.canonicalize_dtype_handlers[BoundedInt] = _bdint_canoncalize_dtype
 
 def _make_params(c, dim_in_avals, in_avals):
   n = it.count()
-  make = lambda a: [xb.parameter(c, next(n), s) for s in xla.aval_to_xla_shapes(a)]
+  make = lambda a: [xla.parameter(c, next(n), s) for s in xla.aval_to_xla_shapes(a)]
   return map(make, dim_in_avals), map(make, in_avals)
 
 def _xla_consts(c, consts):

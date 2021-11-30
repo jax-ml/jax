@@ -19,6 +19,7 @@ from absl.testing import absltest
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax.interpreters import xla
 
 from jax._src.config import config
 config.parse_flags_with_absl()
@@ -47,13 +48,13 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_parameter_replication_default(self):
     c = xc.XlaBuilder("test")
-    _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
+    _ = xla.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
     built_c = c.Build()
     assert "replication" not in built_c.as_hlo_text()
 
   def test_parameter_replication(self):
     c = xc.XlaBuilder("test")
-    _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "",
+    _ = xla.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "",
                      False)
     built_c = c.Build()
     assert "parameter_replication={false}" in built_c.as_hlo_text()

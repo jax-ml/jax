@@ -1577,7 +1577,7 @@ def _xla_consts(c: xe.XlaBuilder, consts: List[Any]) -> List[xe.XlaOp]:
   return [xla_consts[id(cnst)] for cnst in consts]
 
 def _xla_params(c: xe.XlaBuilder, avals_in: List[ShapedArray]) -> List[xe.XlaOp]:
-  return [xb.parameter(c, i, _xla_shape(a)) for i, a in enumerate(avals_in)]
+  return [xops.Parameter(c, i, _xla_shape(a)) for i, a in enumerate(avals_in)]
 
 def _xla_shape(aval: ShapedArray) -> xe.Shape:
   return xc.Shape.array_shape(xc.dtype_to_etype(aval.dtype), aval.shape)
@@ -2844,7 +2844,7 @@ def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr):
 
   def make_comp(name: str, jaxpr: Jaxpr) -> xe.XlaComputation:
     c = xc.XlaBuilder(name)
-    operand = xb.parameter(c, 0, operand_shape)
+    operand = xops.Parameter(c, 0, operand_shape)
     operands = tree_unflatten(in_tree, destructure_tuple(c, operand))
     outs = jaxpr_subcomp(c, jaxpr, operands)
     return c.build(xops.Tuple(c, outs))
