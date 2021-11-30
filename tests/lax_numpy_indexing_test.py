@@ -27,9 +27,10 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import dtypes
+from jax import lax
 from jax import numpy as jnp
 from jax import ops
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
 
@@ -895,6 +896,21 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertArraysEqual(
       x.at[idx].get(mode="fill", fill_value=7),
       jnp.array([7, 7, 1, 2, 1, 4, 5, 7, 7, 7], jnp.int32))
+
+  def testIndexingWeakTypes(self):
+    x = lax._convert_element_type(jnp.arange(5), int, weak_type=True)
+
+    a = x.at[0].set(1.0)
+    self.assertEqual(a.dtype, x.dtype)
+    self.assertTrue(dtypes.is_weakly_typed(a))
+
+    b = x.at[0].add(1.0)
+    self.assertEqual(b.dtype, x.dtype)
+    self.assertTrue(dtypes.is_weakly_typed(b))
+
+    c = x.at[0].mul(1.0)
+    self.assertEqual(c.dtype, x.dtype)
+    self.assertTrue(dtypes.is_weakly_typed(c))
 
 
 def _broadcastable_shapes(shape):
