@@ -181,7 +181,7 @@ of the computation, if all the callbacks are :func:`call`::
 
    res1 = jax.jit(device_fun)(1.)
    res2 = jax.jit(device_fun)(1.)
-   res2.block_until_ready()
+   res1.block_until_ready()
    res2.block_until_ready()
 
 
