@@ -84,7 +84,10 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
   #   num_consts=0 ]"
   # TODO(skye): in theory this could cause us to scrub meaningful binary proto
   # data. Do something more robust.
-  serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
+  if isinstance(xla_computation, str):
+    serialized_hlo = xla_computation.encode()  # MLIR module
+  else:
+    serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
   scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
   hash_obj.update(scrubbed_hlo)
   _log_cache_key_hash(hash_obj, "computation")

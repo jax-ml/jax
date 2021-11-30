@@ -2003,8 +2003,6 @@ def _scatter_add_lower_gpu(ctx, avals_in, avals_out, operand, indices, updates,
   real_dtype = _real_dtype(aval_out.dtype)
   operand_type_part = mlir.aval_to_ir_type(
       core.ShapedArray(aval_out.shape, real_dtype))
-  updates_type_part = mlir.aval_to_ir_type(
-      core.ShapedArray(updates_aval_in.shape, real_dtype))
 
   def _scatter(operand_part, updates_part):
     scatter = mhlo.ScatterOp(operand_type_part, operand_part, indices,
@@ -2014,15 +2012,13 @@ def _scatter_add_lower_gpu(ctx, avals_in, avals_out, operand, indices, updates,
     scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), real_dtype))
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
-      add = mhlo.AddOp(scalar_type, *reducer.arguments).result
+      add = mhlo.AddOp(*reducer.arguments).result
       mhlo.ReturnOp([add])
     return scatter.result
 
-  real = _scatter(mhlo.RealOp(operand_type_part, operand).result,
-                  mhlo.RealOp(updates_type_part, updates).result)
-  imag = _scatter(mhlo.ImagOp(operand_type_part, operand).result,
-                  mhlo.ImagOp(updates_type_part, updates).result)
-  return mhlo.ComplexOp(mlir.aval_to_ir_type(aval_out), real, imag).results
+  real = _scatter(mhlo.RealOp(operand).result, mhlo.RealOp(updates).result)
+  imag = _scatter(mhlo.ImagOp(operand).result, mhlo.ImagOp(updates).result)
+  return mhlo.ComplexOp(real, imag).results
 
 mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 
