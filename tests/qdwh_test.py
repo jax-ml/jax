@@ -13,6 +13,7 @@
 # limitations under the License
 
 """Tests for the library of QDWH-based polar decomposition."""
+import functools
 
 from jax import test_util as jtu
 from jax.config import config
@@ -28,14 +29,14 @@ from absl.testing import parameterized
 config.parse_flags_with_absl()
 _JAX_ENABLE_X64 = config.x64_enabled
 
-# Input matrix data type for PolarTest.
-_POLAR_TEST_DTYPE = np.float64 if _JAX_ENABLE_X64 else np.float32
+# Input matrix data type for QdwhTest.
+_QDWH_TEST_DTYPE = np.float64 if _JAX_ENABLE_X64 else np.float32
 
-# Machine epsilon used by PolarTest.
-_POLAR_TEST_EPS = jnp.finfo(_POLAR_TEST_DTYPE).eps
+# Machine epsilon used by QdwhTest.
+_QDWH_TEST_EPS = jnp.finfo(_QDWH_TEST_DTYPE).eps
 
-# Largest log10 value of condition numbers used by PolarTest.
-_MAX_LOG_CONDITION_NUM = np.log10(int(1 / _POLAR_TEST_EPS))
+# Largest log10 value of condition numbers used by QdwhTest.
+_MAX_LOG_CONDITION_NUM = np.log10(int(1 / _QDWH_TEST_EPS))
 
 
 def _check_symmetry(x: jnp.ndarray) -> bool:
@@ -50,8 +51,14 @@ def _check_symmetry(x: jnp.ndarray) -> bool:
 
   return is_symmetric
 
+def _compute_relative_diff(actual, expected):
+  """Computes relative difference between two matrices."""
+  return np.linalg.norm(actual - expected) / np.linalg.norm(expected)
 
-class PolarTest(jtu.JaxTestCase):
+_dot = functools.partial(jnp.dot, precision="highest")
+
+
+class QdwhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {    # pylint:disable=g-complex-comprehension
@@ -85,38 +92,42 @@ class PolarTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([8, 10, 20], [6, 10, 18])
       for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
-  # TODO(tianjianlu): Fails on A100 GPU and TPU.
-  @jtu.skip_on_devices("gpu", "tpu")
+  # TODO(tianjianlu): Fails on A100 GPU.
+  @jtu.skip_on_devices("gpu")
   def testQdwhWithUpperTriangularInputAllOnes(self, m, n, log_cond):
     """Tests qdwh with upper triangular input of all ones."""
-    a = jnp.triu(jnp.ones((m, n)))
+    a = jnp.triu(jnp.ones((m, n))).astype(_QDWH_TEST_DTYPE)
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
     s = jnp.linspace(cond, 1, min(m, n))
     a = (u * s) @ v
     is_symmetric = _check_symmetry(a)
     max_iterations = 10
+
     actual_u, actual_h, _, _ = qdwh.qdwh(a, is_symmetric, max_iterations)
     expected_u, expected_h = osp_linalg.polar(a)
 
     # Sets the test tolerance.
-    rtol = 1E6 * _POLAR_TEST_EPS
+    rtol = 1E6 * _QDWH_TEST_EPS
 
     with self.subTest('Test u.'):
-      self.assertAllClose(actual_u, expected_u, rtol=rtol)
+      relative_diff_u = _compute_relative_diff(actual_u, expected_u)
+      np.testing.assert_almost_equal(relative_diff_u, 1E-6, decimal=5)
 
     with self.subTest('Test h.'):
-      self.assertAllClose(actual_h, expected_h, rtol=rtol)
+      relative_diff_h = _compute_relative_diff(actual_h, expected_h)
+      np.testing.assert_almost_equal(relative_diff_h, 1E-6, decimal=5)
 
     with self.subTest('Test u.dot(h).'):
-      a_round_trip = actual_u.dot(actual_h)
-      self.assertAllClose(a_round_trip, a, rtol=rtol)
+      a_round_trip = _dot(actual_u, actual_h)
+      relative_diff_a = _compute_relative_diff(a_round_trip, a)
+      np.testing.assert_almost_equal(relative_diff_a, 1E-6, decimal=5)
 
     with self.subTest('Test orthogonality.'):
-      actual_results = actual_u.T.dot(actual_u)
+      actual_results = _dot(actual_u.T, actual_u)
       expected_results = np.eye(n)
       self.assertAllClose(
-          actual_results, expected_results, rtol=rtol, atol=1E-4)
+          actual_results, expected_results, rtol=rtol, atol=1E-5)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {  # pylint:disable=g-complex-comprehension
@@ -125,12 +136,10 @@ class PolarTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([6, 8], [6, 4])
       for log_cond in np.linspace(1, 4, 4)))
-  # TODO(tianjianlu): Fails on TPU.
-  @jtu.skip_on_devices("gpu", "tpu")
   def testQdwhWithRandomMatrix(self, m, n, log_cond):
     """Tests qdwh with random input."""
     rng = jtu.rand_uniform(self.rng(), low=0.3, high=0.9)
-    a = rng((m, n), _POLAR_TEST_DTYPE)
+    a = rng((m, n), _QDWH_TEST_DTYPE)
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
     s = jnp.linspace(cond, 1, min(m, n))
@@ -146,7 +155,7 @@ class PolarTest(jtu.JaxTestCase):
     args_maker = lambda: [a]
 
     # Sets the test tolerance.
-    rtol = 1E6 * _POLAR_TEST_EPS
+    rtol = 1E6 * _QDWH_TEST_EPS
 
     with self.subTest('Test JIT compatibility'):
       self._CompileAndCheck(lsp_linalg_fn, args_maker)
@@ -157,15 +166,16 @@ class PolarTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {   # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}'.format(m, n, log_cond),
+          'testcase_name': '_m={}_by_n={}_log_cond={}'.format(
+              m, n, log_cond),
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([10, 12], [10, 12])
       for log_cond in np.linspace(1, 4, 4)))
-  # TODO(tianjianlu): Fails on A100 GPU and TPU.
-  @jtu.skip_on_devices("gpu", "tpu")
+  # TODO(tianjianlu): Fails on A100 GPU.
+  @jtu.skip_on_devices("gpu")
   def testQdwhWithOnRankDeficientInput(self, m, n, log_cond):
     """Tests qdwh with rank-deficient input."""
-    a = jnp.triu(jnp.ones((m, n))).astype(_POLAR_TEST_DTYPE)
+    a = jnp.triu(jnp.ones((m, n))).astype(_QDWH_TEST_DTYPE)
 
     # Generates a rank-deficient input.
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
@@ -180,21 +190,23 @@ class PolarTest(jtu.JaxTestCase):
     _, expected_h = osp_linalg.polar(a)
 
     # Sets the test tolerance.
-    rtol = 1E6 * _POLAR_TEST_EPS
+    rtol = 1E6 * _QDWH_TEST_EPS
 
     # For rank-deficient matrix, `u` is not unique.
     with self.subTest('Test h.'):
-      self.assertAllClose(actual_h, expected_h, rtol=rtol)
+      relative_diff_h = _compute_relative_diff(actual_h, expected_h)
+      np.testing.assert_almost_equal(relative_diff_h, 1E-6, decimal=5)
 
     with self.subTest('Test u.dot(h).'):
-      a_round_trip = actual_u.dot(actual_h)
-      self.assertAllClose(a_round_trip, a, rtol=rtol)
+      a_round_trip = _dot(actual_u, actual_h)
+      relative_diff_a = _compute_relative_diff(a_round_trip, a)
+      np.testing.assert_almost_equal(relative_diff_a, 1E-6, decimal=5)
 
     with self.subTest('Test orthogonality.'):
-      actual_results = actual_u.T.dot(actual_u)
+      actual_results = _dot(actual_u.T, actual_u)
       expected_results = np.eye(n)
       self.assertAllClose(
-          actual_results, expected_results, rtol=rtol, atol=1E-5)
+          actual_results, expected_results, rtol=rtol, atol=1E-3)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
