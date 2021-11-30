@@ -2770,6 +2770,8 @@ def _device_get(x):
 def device_get(x: Any):
   """Transfer ``x`` to host.
 
+  If ``x`` is a pytree, then the individual buffers are copied in parallel.
+
   Args:
     x: An array, scalar, DeviceArray or (nested) standard Python container thereof
       representing the array to be transferred to host.
