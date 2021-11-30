@@ -39,6 +39,7 @@ from jax._src.util import prod, unzip2
 from jax.tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from jax._src.lib import xla_bridge
 from jax._src import dispatch
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.experimental.maps import mesh
 
@@ -368,18 +369,25 @@ def count_jit_and_pmap_compiles():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
-  jaxpr_subcomp = xla.jaxpr_subcomp
+  xla_jaxpr_subcomp = xla.jaxpr_subcomp
+  mlir_jaxpr_subcomp = mlir.jaxpr_subcomp
   count = [0]
 
-  def jaxpr_subcomp_and_count(*args, **kwargs):
+  def xla_jaxpr_subcomp_and_count(*args, **kwargs):
     count[0] += 1
-    return jaxpr_subcomp(*args, **kwargs)
+    return xla_jaxpr_subcomp(*args, **kwargs)
 
-  xla.jaxpr_subcomp = jaxpr_subcomp_and_count
+  def mlir_jaxpr_subcomp_and_count(*args, **kwargs):
+    count[0] += 1
+    return mlir_jaxpr_subcomp(*args, **kwargs)
+
+  xla.jaxpr_subcomp = xla_jaxpr_subcomp_and_count
+  mlir.jaxpr_subcomp = mlir_jaxpr_subcomp_and_count
   try:
     yield count
   finally:
-    xla.jaxpr_subcomp = jaxpr_subcomp
+    xla.jaxpr_subcomp = xla_jaxpr_subcomp
+    mlir.jaxpr_subcomp = mlir_jaxpr_subcomp
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):

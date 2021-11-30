@@ -717,16 +717,23 @@ def _complex_mul(mul, x, y):
   k3 = mul(x_im, lax.add(y_re, y_im))
   return lax.complex(lax.sub(k1, k3), lax.add(k1, k2))
 
+
+_real_dtype = lambda dtype: np.finfo(dtype).dtype
+
 def _conv_general_dilated_lower(
     ctx, avals_in, avals_out, lhs, rhs, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
-    batch_group_count, precision, expand_complex_convolutions=False,
-    **unused_kwargs):
+    batch_group_count, precision, preferred_element_type,
+    expand_complex_convolutions=False, **unused_kwargs):
   lhs_aval, rhs_aval = avals_in
   aval_out, = avals_out
   assert isinstance(dimension_numbers, ConvDimensionNumbers)
   dtype = lhs_aval.dtype
   if expand_complex_convolutions and np.issubdtype(dtype, np.complexfloating):
+    if preferred_element_type is not None:
+      # Convert complex dtype to types used for real and imaginary parts
+      assert np.issubdtype(preferred_element_type, np.complexfloating)
+      preferred_element_type = _real_dtype(preferred_element_type)
     complex_conv = mlir.lower_fun(
       partial(
         _complex_mul,
@@ -734,7 +741,8 @@ def _conv_general_dilated_lower(
                 padding=padding, lhs_dilation=lhs_dilation,
                 rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
                 feature_group_count=feature_group_count,
-                batch_group_count=batch_group_count, precision=precision)),
+                batch_group_count=batch_group_count, precision=precision,
+                preferred_element_type=preferred_element_type)),
       multiple_results=False)
     return complex_conv(ctx, avals_in, avals_out, lhs, rhs)
 

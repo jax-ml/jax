@@ -21,7 +21,9 @@ import jax.numpy as jnp
 from jax import core, jit, lax, make_jaxpr
 from jax._src import device_array
 from jax._src import dispatch
+from jax.interpreters import mlir
 from jax.interpreters import xla
+from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge, xla_client
 xops = xla_client.ops
 xb = xla_bridge
@@ -137,6 +139,15 @@ dispatch.num_buffers_handlers[AbstractSparseArray] = lambda _: 2
 xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
 xla.register_constant_handler(SparseArray, sparse_array_constant_handler)
 
+def sparse_array_mlir_type_handler(a):
+  return (
+    ir.RankedTensorType.get(
+          a.data_aval.shape, mlir.dtype_to_ir_type[a.data_aval.dtype]()),
+    ir.RankedTensorType.get(
+          a.indices_aval.shape, mlir.dtype_to_ir_type[a.indices_aval.dtype]()),
+  )
+
+mlir.ir_type_handlers[AbstractSparseArray] = sparse_array_mlir_type_handler
 
 sp_indices_p = core.Primitive('sp_indices')
 
@@ -155,6 +166,11 @@ def _sp_indices_translation_rule(ctx, avals_in, avals_out, data, indices):
 # because it leads to infinite recursion.
 xla.register_translation(sp_indices_p, _sp_indices_translation_rule)
 
+def _sp_indices_mhlo_lowering(ctx, avals_in, avals_out, data_and_indices):
+  return [data_and_indices[1]]
+
+mlir.register_lowering(sp_indices_p, _sp_indices_mhlo_lowering)
+
 sp_data_p = core.Primitive('sp_data')
 
 @sp_data_p.def_impl
@@ -172,6 +188,11 @@ def _sp_data_translation_rule(ctx, avals_in, avals_out, data, indices):
 # because it leads to infinite recursion.
 xla.register_translation(sp_data_p, _sp_data_translation_rule)
 
+def _sp_data_mhlo_lowering(ctx, avals_in, avals_out, data_and_indices):
+  return [data_and_indices[0]]
+
+mlir.register_lowering(sp_data_p, _sp_data_mhlo_lowering)
+
 def identity(x):
   return identity_p.bind(x)
 
@@ -188,6 +209,10 @@ def _identity_abstract_eval(mat):
 xla.register_translation(
     identity_p, xla.lower_fun(_identity_impl, multiple_results=False,
                               new_style=True))
+
+
+mlir.register_lowering(
+    identity_p, mlir.lower_fun(_identity_impl, multiple_results=False))
 
 def split(x):
   return split_p.bind(x)

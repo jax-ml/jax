@@ -45,6 +45,7 @@ from jax._src import api, dtypes
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters.sharded_jit import PartitionSpec as P
@@ -243,6 +244,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   # Jit and Donate arguments
 
   def test_jit_donate_argnums_warning_raised(self):
+    if jax.config.jax_enable_mlir:
+      raise unittest.SkipTest("Buffer donation not yet implemented via MLIR")
     x = jnp.array([1.0, 2.0], jnp.float32)
     y = jnp.array([1, 2], jnp.int32)
     f = self.jit(lambda x, y: x.sum() + y.sum(), donate_argnums=(0, 1))
@@ -984,8 +987,8 @@ class APITest(jtu.JaxTestCase):
 
     foo_p.def_abstract_eval(lambda x: x)
 
-    jtu.check_raises(lambda: jit(foo)(1.0), NotImplementedError,
-                     "XLA translation rule for primitive 'foo' not found")
+    jtu.check_raises_regexp(lambda: jit(foo)(1.0), NotImplementedError,
+                     ".* rule for primitive 'foo' not found.*")
 
     foo_p.def_impl(lambda x: x)
     ad.defjvp(foo_p, lambda g, x: foo(g))
@@ -2406,18 +2409,24 @@ class APITest(jtu.JaxTestCase):
     def g(x):
       return f(2, x)
 
-    jaxpr_subcomp = xla.jaxpr_subcomp
+    xla_jaxpr_subcomp = xla.jaxpr_subcomp
+    mlir_jaxpr_subcomp = mlir.jaxpr_subcomp
 
     jaxprs = []
-    def jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
+    def xla_jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
       jaxprs.append(jaxpr)
-      return jaxpr_subcomp(c, jaxpr, *args, **kwargs)
+      return xla_jaxpr_subcomp(c, jaxpr, *args, **kwargs)
+    def mlir_jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
+      jaxprs.append(jaxpr)
+      return mlir_jaxpr_subcomp(c, jaxpr, *args, **kwargs)
 
     try:
-      xla.jaxpr_subcomp = jaxpr_subcomp_and_collect
+      xla.jaxpr_subcomp = xla_jaxpr_subcomp_and_collect
+      mlir.jaxpr_subcomp = mlir_jaxpr_subcomp_and_collect
       ans = g(3)
     finally:
-      xla.jaxpr_subcomp = jaxpr_subcomp
+      xla.jaxpr_subcomp = xla_jaxpr_subcomp
+      mlir.jaxpr_subcomp = mlir_jaxpr_subcomp
 
     self.assertEqual(ans, (7, 3))
     self.assertLen(jaxprs, 2)

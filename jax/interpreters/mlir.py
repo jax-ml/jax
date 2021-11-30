@@ -69,7 +69,7 @@ def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 # IR Types
 
 # Non-canonicalized dtype to IR type mapping.
-_dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
+dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float0): partial(ir.IntegerType.get_signless, 1),
   np.dtype(np.bool_): partial(ir.IntegerType.get_signless, 1),
   np.dtype(np.int8): partial(ir.IntegerType.get_signless, 8),
@@ -91,13 +91,13 @@ _dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
 
 def _array_ir_types(aval: core.ShapedArray) -> ir.Type:
   try:
-    ir_type_factory = _dtype_to_ir_type[aval.dtype]
+    ir_type_factory = dtype_to_ir_type[aval.dtype]
   except KeyError as err:
     raise TypeError(
         f"No dtype_to_ir_type handler for dtype: {aval.dtype}") from err
   return (ir.RankedTensorType.get(aval.shape, ir_type_factory()),)
 
-_ir_type_handlers: Dict[Type[core.AbstractValue],
+ir_type_handlers: Dict[Type[core.AbstractValue],
                         Callable[[Any], Sequence[ir.Type]]] = {}
 
 def aval_to_ir_types(aval: core.AbstractValue) -> Sequence[ir.Type]:
@@ -106,14 +106,14 @@ def aval_to_ir_types(aval: core.AbstractValue) -> Sequence[ir.Type]:
   In general, a JAX value may be represented by multiple IR values, so this
   function returns multiple types."""
   try:
-    return _ir_type_handlers[type(aval)](aval)
+    return ir_type_handlers[type(aval)](aval)
   except KeyError as err:
     raise TypeError(f"No ir_type_handler for aval type: {type(aval)}") from err
 
-_ir_type_handlers[core.AbstractUnit] = lambda _: ()
-_ir_type_handlers[core.ShapedArray] = _array_ir_types
-_ir_type_handlers[core.ConcreteArray] = _array_ir_types
-_ir_type_handlers[core.AbstractToken] = lambda _: [mhlo.TokenType.get()]
+ir_type_handlers[core.AbstractUnit] = lambda _: ()
+ir_type_handlers[core.ShapedArray] = _array_ir_types
+ir_type_handlers[core.ConcreteArray] = _array_ir_types
+ir_type_handlers[core.AbstractToken] = lambda _: [mhlo.TokenType.get()]
 
 def aval_to_ir_type(aval: core.AbstractValue) -> ir.Type:
   """Convenience wrapper around aval_to_ir_types for single types.
@@ -310,6 +310,7 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
 def _unwrap_singleton_ir_values(x): return x[0] if len(x) == 1 else x
 def wrap_singleton_ir_values(x: Union[ir.Value, Sequence[ir.Value]]
                              ) -> Sequence[ir.Value]:
+  """Adds a consistent tuples to a mixture of tupled and untuple values."""
   return (x,) if isinstance(x, ir.Value) else tuple(x)
 
 def flatten_lowering_ir_args(
@@ -566,6 +567,32 @@ register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
 register_lowering(ad_util.stop_gradient_p,
                   lambda ctx, avals_in, avals_out, x: [x])
+
+
+def _minmax_mhlo(op, cmp, x, y):
+  """Min/max that compares complex values lexicographically as pairs."""
+  tensor_type = ir.RankedTensorType(x.type)
+  if ir.ComplexType.isinstance(tensor_type.element_type):
+    rx = mhlo.RealOp(x).result
+    ry = mhlo.RealOp(y).result
+    dims = [tensor_type.get_dim_size(i) for i in range(tensor_type.rank)]
+    bool_shape = ir.RankedTensorType.get(dims, ir.IntegerType.get_signless(1))
+    real_eq = mhlo.CompareOp(bool_shape, rx, ry, ir.StringAttr.get("EQ"),
+                             ir.StringAttr.get("FLOAT"))
+    real_cmp = mhlo.CompareOp(bool_shape, rx, ry,
+                              ir.StringAttr.get(cmp),
+                              ir.StringAttr.get("FLOAT"))
+    imag_cmp = mhlo.CompareOp(bool_shape, mhlo.ImagOp(x).result,
+                              mhlo.ImagOp(y).result,
+                              ir.StringAttr.get(cmp),
+                              ir.StringAttr.get("FLOAT"))
+    which = mhlo.SelectOp(real_eq, imag_cmp, real_cmp).result
+    return mhlo.SelectOp(which, x, y)
+  else:
+    return op(x, y)
+
+min_mhlo = partial(_minmax_mhlo, mhlo.MinOp, "LT")
+max_mhlo = partial(_minmax_mhlo, mhlo.MaxOp, "GT")
 
 
 # MLIR lowerings for lax primitives

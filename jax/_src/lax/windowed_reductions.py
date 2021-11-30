@@ -510,9 +510,9 @@ def _reduce_window_lower(
 mlir.register_lowering(reduce_window_sum_p, partial(
     _reduce_window_lower, mhlo.AddOp, lambda _: 0))
 mlir.register_lowering(reduce_window_min_p, partial(
-    _reduce_window_lower, mhlo.MinOp, lax._get_min_identity))
+    _reduce_window_lower, mlir.min_mhlo, lax._get_min_identity))
 mlir.register_lowering(reduce_window_max_p, partial(
-    _reduce_window_lower, mhlo.MaxOp, lax._get_max_identity))
+    _reduce_window_lower, mlir.max_mhlo, lax._get_max_identity))
 
 
 

@@ -1784,7 +1784,7 @@ mlir.register_lowering(complex_p, partial(_nary_lower_mhlo, mhlo.ComplexOp))
 
 conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
 
-def _conj_impl(x, *, input_dtype):
+def _conj_impl(x, **kw):
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     return complex(real(x), -imag(x))
   else:
@@ -2075,30 +2075,6 @@ def _minmax_translation_rule(ctx, avals_in, avals_out, x, y, *, op_minmax=None,
   else:
     return [op_minmax(x, y)]
 
-def _minmax_mhlo(op, cmp, x, y):
-  """Min/max that compares complex values lexicographically as pairs."""
-  tensor_type = ir.RankedTensorType(x.type)
-  if ir.ComplexType.isinstance(tensor_type.element_type):
-    rx = mhlo.RealOp(x).result
-    ry = mhlo.RealOp(y).result
-    dims = [tensor_type.get_dim_size(i) for i in range(tensor_type.rank)]
-    bool_shape = ir.RankedTensorType.get(dims, ir.IntegerType.get_signless(1))
-    real_eq = mhlo.CompareOp(bool_shape, rx, ry, ir.StringAttr.get("EQ"),
-                             ir.StringAttr.get("FLOAT"))
-    real_cmp = mhlo.CompareOp(bool_shape, rx, ry,
-                              ir.StringAttr.get(cmp),
-                              ir.StringAttr.get("FLOAT"))
-    imag_cmp = mhlo.CompareOp(bool_shape, mhlo.ImagOp(x).result,
-                              mhlo.ImagOp(y).result,
-                              ir.StringAttr.get(cmp),
-                              ir.StringAttr.get("FLOAT"))
-    which = mhlo.SelectOp(real_eq, imag_cmp, real_cmp).result
-    return mhlo.SelectOp(which, x, y)
-  else:
-    return op(x, y)
-
-_min_mhlo = partial(_minmax_mhlo, mhlo.MinOp, "LT")
-_max_mhlo = partial(_minmax_mhlo, mhlo.MaxOp, "GT")
 
 max_p: core.Primitive = standard_naryop(
   [_any, _any], 'max', translation_rule=partial(
@@ -2106,7 +2082,7 @@ max_p: core.Primitive = standard_naryop(
 ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
-mlir.register_lowering(max_p, partial(_nary_lower_mhlo, _max_mhlo))
+mlir.register_lowering(max_p, partial(_nary_lower_mhlo, mlir.max_mhlo))
 
 min_p: core.Primitive = standard_naryop(
   [_any, _any], 'min', translation_rule=partial(
@@ -2114,7 +2090,7 @@ min_p: core.Primitive = standard_naryop(
 ad.defjvp2(min_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
-mlir.register_lowering(min_p, partial(_nary_lower_mhlo, _min_mhlo))
+mlir.register_lowering(min_p, partial(_nary_lower_mhlo, mlir.min_mhlo))
 
 shift_left_p = standard_naryop([_int, _int], 'shift_left')
 ad.defjvp_zero(shift_left_p)
@@ -3590,9 +3566,9 @@ mlir.register_lowering(reduce_or_p, partial(_unary_reduce_lower, mhlo.OrOp,
                                          lambda dtype: np.array(False, dtype)))
 mlir.register_lowering(reduce_and_p, partial(_unary_reduce_lower, mhlo.AndOp,
                                           lambda dtype: np.array(True, dtype)))
-mlir.register_lowering(reduce_min_p, partial(_unary_reduce_lower, _min_mhlo,
+mlir.register_lowering(reduce_min_p, partial(_unary_reduce_lower, mlir.min_mhlo,
                                          _get_min_identity))
-mlir.register_lowering(reduce_max_p, partial(_unary_reduce_lower, _max_mhlo,
+mlir.register_lowering(reduce_max_p, partial(_unary_reduce_lower, mlir.max_mhlo,
                                          _get_max_identity))
 
 
@@ -3960,7 +3936,7 @@ xla.register_translation(infeed_p, _infeed_translation_rule)
 
 def _infeed_lowering(ctx, avals_in, avals_out, token, *, shapes, partitions):
   assert partitions is None, partitions  # TODO(phawkins): implement me.
-  output_types = map(mlir.aval_to_ir_types, avals_out[:-1])
+  output_types = safe_map(mlir.aval_to_ir_types, avals_out[:-1])
   flat_output_types = util.flatten(output_types)
   output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
   # TODO(phawkins): verify `shapes` have a major-to-minor layout.

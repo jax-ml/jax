@@ -1984,7 +1984,8 @@ def _real_dtype(dtype): return np.finfo(dtype).dtype
 def _scatter_add_lower_gpu(ctx, avals_in, avals_out, operand, indices, updates,
                            *, update_jaxpr, update_consts, dimension_numbers,
                            indices_are_sorted, unique_indices, mode):
-  if operand.dtype != np.complex128:
+  operand_aval_in, _, updates_aval_in = avals_in
+  if operand_aval_in.dtype != np.complex128:
     return _scatter_lower(ctx, avals_in, avals_out, operand, indices, updates,
                           update_jaxpr=update_jaxpr,
                           update_consts=update_consts,
@@ -1992,7 +1993,6 @@ def _scatter_add_lower_gpu(ctx, avals_in, avals_out, operand, indices, updates,
                           indices_are_sorted=indices_are_sorted,
                           unique_indices=unique_indices, mode=mode)
   assert mode == GatherScatterMode.PROMISE_IN_BOUNDS, mode
-  _, _, updates_aval_in = avals_in
   aval_out, = avals_out
   dnums = dimension_numbers
   scatter_dnums = mhlo.ScatterDimensionNumbers.get(
