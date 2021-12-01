@@ -343,7 +343,9 @@ def is_python_scalar(x):
 
 def dtype(x, *, canonicalize=False):
   """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
-  if isinstance(x, type) and x in python_scalar_dtypes:
+  if x is None:
+    return float_
+  elif isinstance(x, type) and x in python_scalar_dtypes:
     dt = python_scalar_dtypes[x]
   elif type(x) in python_scalar_dtypes:
     dt = python_scalar_dtypes[type(x)]

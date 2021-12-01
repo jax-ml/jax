@@ -3998,6 +3998,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  def testAstypeNone(self):
+    rng = np.random.RandomState(0)
+    args_maker = lambda: [rng.randn(3, 4).astype("int32")]
+    np_op = lambda x: np.asarray(x).astype(None)
+    jnp_op = lambda x: jnp.asarray(x).astype(None)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(
           jtu.format_shape_dtype_string(shape, dtype)),

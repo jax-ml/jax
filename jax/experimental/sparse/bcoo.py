@@ -1044,7 +1044,7 @@ class BCOO(ops.JAXSparse):
       raise NotImplementedError("BCOO.fromscipy with nonzero n_dense/n_batch")
     mat = mat.tocoo()
     data = jnp.asarray(mat.data)
-    indices = jnp.column_stack((mat.row, mat.col)).astype(index_dtype)
+    indices = jnp.column_stack((mat.row, mat.col)).astype(index_dtype or jnp.int32)
     return cls((data, indices), shape=mat.shape)
 
   def _unbatch(self):
