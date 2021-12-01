@@ -22,6 +22,7 @@ from jax import scipy as jsp
 from jax import lax, device_put
 from jax.tree_util import (tree_leaves, tree_map, tree_multimap, tree_structure,
                            tree_reduce, Partial)
+from jax._src import dtypes
 from jax._src.util import safe_map as map
 
 
@@ -169,7 +170,8 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
     return x_, r_, rhat, alpha_, omega_, rho_, p_, q_, k_
 
   r0 = _sub(b, A(x0))
-  rho0 = alpha0 = omega0 = jnp.ones(1, dtype=jnp.result_type(*tree_leaves(b)))[0]
+  rho0 = alpha0 = omega0 = lax._convert_element_type(
+      1, *dtypes._lattice_result_type(*tree_leaves(b)))
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
@@ -516,8 +518,8 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
       lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
       unit_residual,
   )
-  dtype = jnp.result_type(*tree_leaves(b))
-  H = jnp.eye(restart, restart + 1, dtype=dtype)
+  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(b))
+  H = lax._convert_element_type(jnp.eye(restart, restart + 1, dtype=dtype), weak_type=weak_type)
 
   def loop_cond(carry):
     _, _, breakdown, k = carry
