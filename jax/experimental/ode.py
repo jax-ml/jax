@@ -92,7 +92,7 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
 
 def runge_kutta_step(func, y0, f0, t0, dt):
   # Dopri5 Butcher tableaux
-  alpha = jnp.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0], dtype=f0.dtype)
+  alpha = jnp.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0], dtype=dt.dtype)
   beta = jnp.array(
       [[1 / 5, 0, 0, 0, 0, 0, 0], [3 / 40, 9 / 40, 0, 0, 0, 0, 0],
        [44 / 45, -56 / 15, 32 / 9, 0, 0, 0, 0],
@@ -165,9 +165,10 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
   """
   for arg in tree_leaves(args):
     if not isinstance(arg, core.Tracer) and not core.valid_jaxtype(arg):
-      msg = ("The contents of odeint *args must be arrays or scalars, but got "
-             "\n{}.")
-      raise TypeError(msg.format(arg))
+      raise TypeError(
+        f"The contents of odeint *args must be arrays or scalars, but got {arg}.")
+  if not jnp.issubdtype(t.dtype, jnp.floating):
+    raise TypeError(f"t must be an array of floats, but got {t}.")
 
   converted, consts = custom_derivatives.closure_convert(func, y0, t[0], *args)
   return _odeint_wrapper(converted, rtol, atol, mxstep, y0, t, *args, *consts)
