@@ -4737,9 +4737,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(jnp.arange(53, 5, -3),
                         np.arange(53, 5, -3, dtype=jnp.int_))
     self.assertAllClose(jnp.arange(77, dtype=float),
-                        np.arange(77, dtype=float))
+                        np.arange(77, dtype=jnp.float_))
     self.assertAllClose(jnp.arange(2, 13, dtype=int),
-                        np.arange(2, 13, dtype=int))
+                        np.arange(2, 13, dtype=jnp.int_))
     self.assertAllClose(jnp.arange(0, 1, -0.5),
                         np.arange(0, 1, -0.5, dtype=jnp.float_))
 
