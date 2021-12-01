@@ -15,14 +15,12 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 
-import unittest
 from typing import Dict, Tuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import ad_checkpoint
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
@@ -637,33 +635,25 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, "grad")
     self.TransformConvertAndCompare(f, arg, "grad_vmap")
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_{flavor}", flavor=flavor)
-    for flavor in ["old", "new"]))
-  def test_remat(self, flavor="old"):
+  def test_remat1(self):
+    @jax.remat
     def f(x1):
       x2 = jnp.sin(x1)
       x3 = jnp.sin(x2)
       x4 = jnp.sin(x3)
-      return x4
-    remat_f = jax.remat(f) if flavor == "old" else ad_checkpoint.checkpoint(f)
+      return jnp.sum(x4)
 
     # The computation of grad_f computes "sin" 5 times, 3 for the forward pass
     # and then to rematerialize "x2" and "x3" in the backward pass.
-    arg = np.array(3.)
-    # Check that we have a Sin under a conditional
-    f_tf = tf.function(jax2tf.convert(jax.grad(remat_f)), autograph=False)
-    f_tf_graph = f_tf.get_concrete_function(arg).graph.as_graph_def()
-    if flavor == "old":
-      raise unittest.SkipTest("TODO: CSE widget not yet implemented for old-style remat")
-    self.assertRegex(str(f_tf_graph),
-                     r'remat_checkpoint_/switch_case/indexed_case/Sin')
+    arg = np.arange(3.)
+    self.TransformConvertAndCompare(f, arg, "grad")
+    # TODO: check that the TF code also computes "sin" 5 times
 
   def test_remat_free_var(self):
     def f(x):
       y = 2 * x
 
-      @ad_checkpoint.checkpoint
+      @jax.remat
       def g():
         return y
 

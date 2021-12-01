@@ -31,7 +31,6 @@ import numpy as np
 import jax
 from jax._src import api
 from jax import core
-from jax._src import ad_checkpoint
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
@@ -52,7 +51,7 @@ from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip,
-                           split_list, cache, extend_name_stack, wrap_name)
+                           split_list, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves, tree_structure)
@@ -2925,92 +2924,3 @@ def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,
 ad.primitive_jvps[cumprod_p] = partial(_cumulative_jvp_rule, combine_fn=lax.mul)
 ad.primitive_jvps[cummin_p] = partial(_cumulative_jvp_rule, combine_fn=lax.min)
 ad.primitive_jvps[cummax_p] = partial(_cumulative_jvp_rule, combine_fn=lax.max)
-
-
-def _dummy_remat_result(aval: core.AbstractValue):
-  """A result that will be discarded"""
-  if aval is core.AbstractToken:
-    return lax.create_token()
-  elif aval is core.abstract_unit:
-    return core.unit
-  else:
-    return lax.broadcast(np.array(0, dtype=aval.dtype), aval.shape)  # type: ignore
-
-def _remat_translation_using_cond(*args,
-                                  jaxpr: core.Jaxpr):
-  # Implements:
-  #  if(rng(0, 1) < 2)
-  #    return eval_jaxpr(*args)
-  #  else:
-  #    return 0
-  avals_out = tuple(ov.aval for ov in jaxpr.outvars)
-
-  def remat_comp(*args):
-    return tuple(core.eval_jaxpr(jaxpr, (), *args))
-  def dummy_comp(*args):
-    return tuple(_map(_dummy_remat_result, avals_out))
-
-  cond_pred = (lax.rng_uniform(np.int32(0), np.int32(1), shape=()) < np.int32(2))
-  return cond(cond_pred, remat_comp, dummy_comp, *args)
-
-def _remat_translation_using_while(*args,
-                                   jaxpr: core.Jaxpr):
-  # Implements:
-  #  for(counter=0, result=0; counter < rng(1, 2); counter ++) {
-  #     result = eval_jaxpr(*args)
-  #  }
-  # The loop carry is a tuple: (counter, result, args)
-  avals_out = tuple(ov.aval for ov in jaxpr.outvars)
-  dummies_like_result = tuple(_map(_dummy_remat_result, avals_out))
-  carry_init = (np.int32(0), dummies_like_result, args)
-  def cond(carry):
-    counter, _, _ = carry
-    return counter < lax.rng_uniform(np.int32(1), np.int32(2), shape=())
-
-  def body(carry):
-    counter, _, args = carry
-    results = core.eval_jaxpr(jaxpr, (), *args)
-    return (counter + 1, tuple(results), args)
-
-  carry_res = while_loop(cond, body, carry_init)
-  return carry_res[1]
-
-def _remat_translation_rule(*args,
-                            call_jaxpr: Optional[core.Jaxpr] = None,
-                            jaxpr: Optional[core.Jaxpr] = None,
-                            platform: str,
-                            prevent_cse: bool, differentiated: bool,
-                            policy,
-                            concrete: bool = False,
-                            name: str = "checkpoint"):
-  # Support either "jaxpr" (for remat2) and "call_jaxpr" (for remat)
-  # name is not passed for remat2, defaults to "checkpoint"
-  # TODO: remove call_jaxpr once we drop the remat call primitive
-  if jaxpr is None:
-    jaxpr = call_jaxpr
-  assert jaxpr is not None
-  assert not jaxpr.constvars
-
-  del concrete, policy  # Unused.
-  if differentiated and prevent_cse:
-    if platform == "gpu":
-      translation_rule = _remat_translation_using_while
-    else:
-      translation_rule = _remat_translation_using_cond
-  else:
-    translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
-
-  return jax.named_call(translation_rule, name=wrap_name(name, "remat"))(*args, jaxpr=jaxpr)
-
-for platform in ("cpu", "gpu", "tpu"):
-  for remat_primitive in (pe.remat_call_p, ad_checkpoint.remat_p):  # type: ignore
-    xla.register_translation(remat_primitive,
-                             xla.lower_fun(partial(_remat_translation_rule,
-                                                   platform=platform),
-                                           new_style=True, multiple_results=True,
-                                           backend=platform),
-                            platform=platform)
-    mlir.register_lowering(remat_primitive,
-                           mlir.lower_fun(partial(_remat_translation_rule,
-                                                   platform=platform),
-                                          multiple_results=True))

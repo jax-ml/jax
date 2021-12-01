@@ -640,6 +640,90 @@ def xla_fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
 
 register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 
+
+def _dummy_like_aval(aval: core.AbstractValue) -> Sequence[ir.Value]:
+  if isinstance(aval, core.ShapedArray):
+    return [full_like_aval(0, aval)]
+  elif isinstance(aval, core.AbstractToken):
+    return mhlo.CreateTokenOp(aval_to_ir_type(aval)).results
+  elif isinstance(aval, core.AbstractUnit):
+    return ()
+  else:
+    raise TypeError(f"Unsupported abstract value {aval}")
+
+def _remat_using_while(ctx, avals_in, avals_out, *args, name, call_jaxpr):
+  input_types = map(aval_to_ir_types, avals_in)
+  output_types = map(aval_to_ir_types, avals_out)
+  flat_output_types = util.flatten(output_types)
+  int32_scalar_type = aval_to_ir_type(core.ShapedArray((), np.dtype(np.int32)))
+  loop_carry_types = [(int32_scalar_type,)] + input_types + output_types
+  flat_loop_carry_types = util.flatten(loop_carry_types)
+  counter_init = ir_constants(np.array(0, np.int32))
+  flat_args = flatten_lowering_ir_args(
+      (counter_init,) + args +
+      tuple(_dummy_like_aval(aval) for aval in avals_out))
+  loop_carry_tuple_type = ir.TupleType.get_tuple(flat_loop_carry_types)
+  init_carry = mhlo.TupleOp(loop_carry_tuple_type, flat_args)
+
+  one = ir_constant(np.array(1, np.int32))
+  while_op = mhlo.WhileOp([loop_carry_tuple_type], [init_carry.result])
+
+  # Loop condition
+  cond_block = while_op.regions[0].blocks.append(loop_carry_tuple_type)
+  with ir.InsertionPoint(cond_block):
+    bool_scalar_type = aval_to_ir_type(core.ShapedArray((), np.dtype(np.bool_)))
+    two = ir_constant(np.array(2, np.int32))
+    shape = ir_constant(np.array((), np.int64), canonicalize_types=False)
+    rng = mhlo.RngUniformOp(one, two, shape).result
+    i = mhlo.GetTupleElementOp(int32_scalar_type, cond_block.arguments[0],
+                               i32_attr(0))
+    cmp = mhlo.CompareOp(bool_scalar_type, i, rng, ir.StringAttr.get("LT"),
+                         ir.StringAttr.get("SIGNED")).result
+    mhlo.ReturnOp([cmp])
+
+  body_block = while_op.regions[1].blocks.append(loop_carry_tuple_type)
+  with ir.InsertionPoint(body_block):
+    flat_body_args = [
+        mhlo.GetTupleElementOp(input_type, body_block.arguments[0],
+                               i32_attr(i)).result
+        for i, input_type in enumerate(flat_loop_carry_types)]
+    body_args = util.unflatten(flat_body_args, map(len, loop_carry_types))
+    ((i,),), y, _ = util.split_list(body_args, [1, len(avals_in)])
+    body_ctx = ctx.replace(
+        name_stack=xla.extend_name_stack(ctx.name_stack,
+                                         xla.wrap_name(name, 'remat')))
+    z = jaxpr_subcomp(body_ctx, call_jaxpr, (), *y)
+    i_next = mhlo.AddOp(i, one).result
+    new_carry = mhlo.TupleOp(
+        loop_carry_tuple_type,
+        [i_next, *util.flatten(y), *util.flatten(z)])
+    mhlo.ReturnOp([new_carry.result])
+
+  outputs = [mhlo.GetTupleElementOp(output_type, while_op.result,
+                                    i32_attr(1 + len(avals_in) + i)
+                                   ).result
+             for i, output_type in enumerate(flat_output_types)]
+  return util.unflatten(outputs, map(len, output_types))
+
+
+def _remat_lowering(ctx, avals_in, avals_out, *args,
+                    name, call_jaxpr,
+                    prevent_cse, differentiated, concrete,
+                    policy, device=None):
+  del device, concrete, policy  # Unused.
+  if differentiated and prevent_cse:
+    if True: # ctx.platform == "gpu":
+      return _remat_using_while(ctx, avals_in, avals_out, *args, name=name,
+                                call_jaxpr=call_jaxpr)
+    else:
+      assert False
+      #return _remat_using_cond(ctx, args, name, call_jaxpr)
+  else:
+    return jaxpr_subcomp(
+        ctx, call_jaxpr, (), *map(wrap_singleton_ir_values, args))
+
+register_lowering(pe.remat_call_p, _remat_lowering)
+
 # Lax ops missing MLIR lowerings.
 # # TODO(b/203775215): these are missing from the cHLO dialect. Either add
 # # them or port them to Python.
