@@ -52,6 +52,10 @@ _parameterized_jit = parameterized.named_parameters(
     _named_test(with_jit=with_jit)
     for with_jit in [True, False])
 
+_call_tf_non_compileable_error = "Error compiling TensorFlow function. call_tf can used in a staged context .* only with compileable functions"
+_call_tf_dynamic_shape_error = "Compiled TensorFlow function has dynamic output shape.* call_tf can used in a staged context .* only with compileable functions"
+
+
 class CallTfTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):
@@ -125,7 +129,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = fun_jax(x, y)
     self.assertAllClose((np.float32(12.), np.float64(11.)), res)
 
-  call_tf_non_compileable = "Error compiling TensorFlow function. call_tf can used in a staged context .* only with compileable functions"
   def test_eval_non_compileable_strings(self):
     # Check that in op-by-op we call a function in eager mode.
     def f_tf_non_compileable(x):
@@ -135,29 +138,25 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     x = np.float32(0.7)
     self.assertAllClose(f_tf_non_compileable(x).numpy(), f_jax(x))
     with self.assertRaisesRegex(ValueError,
-                                CallTfTest.call_tf_non_compileable):
+                                _call_tf_non_compileable_error):
       jax.jit(f_jax)(x)
 
     with self.assertRaisesRegex(ValueError,
-                                CallTfTest.call_tf_non_compileable):
+                                _call_tf_non_compileable_error):
       lax.cond(True, lambda x: f_jax(x), lambda x: f_jax(x), x)
 
   def test_eval_non_compileable_dynamic_shape(self):
     # Check that in op-by-op we call a function in eager mode.
     def f_tf_non_compileable(x):
-      return tf.where(x)
+      return tf.cond(x[0], lambda: x[1:], lambda: x)
 
     f_jax = jax2tf.call_tf(f_tf_non_compileable)
     x = np.array([True, False], dtype=np.bool_)
-    self.assertAllClose(f_tf_non_compileable(x).numpy(), f_jax(x))
+    self.assertAllClose(f_tf_non_compileable(x), f_jax(x))
 
-    if jtu.device_under_test() == "tpu":
-      # TODO: This works on TPU!!!
-      self.assertAllClose(f_tf_non_compileable(x).numpy(), jax.jit(f_jax)(x))
-    else:
-      with self.assertRaisesRegex(ValueError,
-                                  CallTfTest.call_tf_non_compileable):
-        jax.jit(f_jax)(x)
+    with self.assertRaisesRegex(ValueError,
+                                _call_tf_dynamic_shape_error):
+      jax.jit(f_jax)(x)
 
   @_parameterized_jit
   def test_control_flow(self, with_jit=True):
@@ -900,31 +899,28 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(np.sin(x), res.numpy())
 
   def test_function_dynamic_shape(self):
-    if jtu.device_under_test() == "tpu":
-      raise unittest.SkipTest("TODO: why does this fail on TPU?")
     # Call a function for which shape inference does not give an output
     # shape.
     x = np.array([-1, 0, 1], dtype=np.int32)
     def fun_tf(x):  # x:i32[3]
       # The shape depends on the value of x
-      res = tf.where(x >= 0)
-      return res
+      return tf.cond(x[0] >= 0, lambda: x, lambda: x[1:])
 
     # Call in eager mode. Should work!
     res1 = jax2tf.call_tf(fun_tf)(x)
-    expected = np.array([[1], [2]])
+    expected = x[1:]
     self.assertAllClose(expected, res1, check_dtypes=False)
 
     # Now under jit, should fail because the function is not compileable
     with self.assertRaisesRegex(ValueError,
-                                "Error compiling TensorFlow function. call_tf can used in a staged context"):
+                                _call_tf_dynamic_shape_error):
       fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
       fun_jax(x)
 
     # TODO(necula): this should work in op-by-op mode, but it fails because
     # jax2tf.convert does abstract evaluation.
     with self.assertRaisesRegex(ValueError,
-                                "Error compiling TensorFlow function. call_tf can used in a staged context"):
+                                _call_tf_dynamic_shape_error):
       fun_tf_rt = jax2tf.convert(jax2tf.call_tf(fun_tf))
       fun_tf_rt(x)
 

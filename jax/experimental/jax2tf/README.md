@@ -988,6 +988,7 @@ The zero-copy does not yet work on TPU.
 ### Limitations of call_tf
 
 The TF function must be compileable (`tf.function(func, jit_compile=True`)
+and must have static output shapes
 when used in a JAX staging context, e.g., `jax.jit`, `lax.scan`, `lax.cond`,
 but not when used in a JAX op-by-op mode. For example, the following
 function uses strings operations that are not supported by XLA:
@@ -1020,6 +1021,14 @@ f_jax(x)
 
 # Fails in jit mode
 jax.jit(f_jax)(x)
+```
+Yet another unsupported situation is when the TF function
+is compileable but with dynamic output shapes:
+
+```
+def f_tf_dynamic_output_shape(x):
+  return tf.cond(x[0] >= 0, lambda: x, lambda: x[1:])
+x = np.array([1, 2], dtype=np.int32)
 ```
 
 ``call_tf`` works best with pure TF functions that do not capture
