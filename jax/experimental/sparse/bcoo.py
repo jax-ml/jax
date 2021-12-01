@@ -29,7 +29,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 import jax.numpy as jnp
 from jax.interpreters import ad
-from jax.util import safe_zip, unzip2
+from jax.util import safe_zip, unzip2, split_list
 from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
@@ -1046,6 +1046,18 @@ class BCOO(ops.JAXSparse):
     data = jnp.asarray(mat.data)
     indices = jnp.column_stack((mat.row, mat.col)).astype(index_dtype or jnp.int32)
     return cls((data, indices), shape=mat.shape)
+
+  @classmethod
+  def _empty(cls, shape, *, dtype=None, index_dtype='int32', n_dense=0, n_batch=0):
+    """Create an empty BCOO instance. Public method is sparse.empty()."""
+    shape = tuple(shape)
+    n_sparse = len(shape) - n_dense - n_batch
+    if n_sparse < 0 or n_dense < 0 or n_batch < 0:
+      raise ValueError("Invalid inputs: shape={shape}, n_dense={n_dense}, n_batch={n_batch}")
+    batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
+    data = jnp.empty((*batch_shape, 0, *dense_shape), dtype)
+    indices = jnp.empty((*batch_shape, 0, n_sparse), index_dtype)
+    return cls((data, indices), shape=shape)
 
   def _unbatch(self):
     """Return an unbatched representation of the BCOO matrix."""
