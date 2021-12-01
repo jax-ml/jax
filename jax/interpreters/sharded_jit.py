@@ -178,8 +178,8 @@ def _sharded_callable(
                  handle_outs)
 
 
-def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
-                                  in_parts, out_parts_thunk, nparts, backend,
+def _sharded_jit_translation_rule(ctx, avals_in, avals_out, *in_nodes,
+                                  in_parts, out_parts_thunk, nparts,
                                   name, call_jaxpr, local_in_parts,
                                   local_out_parts_thunk, local_nparts):
   subc = xc.XlaBuilder(f"sharded_jit_{name}")
@@ -193,20 +193,21 @@ def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
   for i, (n, sharding) in enumerate(safe_zip(in_nodes, in_parts)):
     # We use xla.set_sharding instead of xla.with_sharding because inlined calls
     # shouldn't have shardings set directly on the inputs or outputs.
-    arg = xla.parameter(subc, i, c.GetShape(n))
+    arg = xla.parameter(subc, i, ctx.builder.GetShape(n))
     args.append(xla.set_sharding(subc, arg, sharding))
 
-  ctx = xla.TranslationContext(
-      subc, backend, axis_env,
-      extend_name_stack(wrap_name(name, "sharded_jit")))
-  out_nodes = xla.jaxpr_subcomp(ctx, call_jaxpr, (), *args)
+  sub_ctx = ctx.replace(
+      builder=subc,
+      name_stack=extend_name_stack(wrap_name(name, "sharded_jit")))
+  out_nodes = xla.jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
   out_parts = out_parts_thunk()
   assert len(out_parts) == len(out_nodes)
   out_nodes = [xla.set_sharding(subc, out, sharding)
                for out, sharding in safe_zip(out_nodes, out_parts)]
 
   subc = subc.build(xops.Tuple(subc, out_nodes))
-  return xops.Call(c, subc, list(in_nodes))
+  return xla.xla_destructure(ctx.builder,
+                             xops.Call(ctx.builder, subc, list(in_nodes)))
 
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
@@ -237,7 +238,7 @@ def _sharded_call_impl(fun, *args, nparts, in_parts, out_parts_thunk,
 sharded_call_p = core.CallPrimitive("sharded_call")
 sharded_call = sharded_call_p.bind
 sharded_call_p.def_impl(_sharded_call_impl)
-xla.call_translations[sharded_call_p] = _sharded_jit_translation_rule
+xla.register_translation(sharded_call_p, _sharded_jit_translation_rule)
 
 
 class PartitionSpec(tuple):

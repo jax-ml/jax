@@ -502,7 +502,7 @@ def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env,
 pjit_p.def_abstract_eval(_pjit_abstract_eval)
 
 
-def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
+def _pjit_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
                            jaxpr, in_axis_resources, out_axis_resources,
                            resource_env, donated_invars, in_positional_semantics,
                            out_positional_semantics):
@@ -513,16 +513,17 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
   for i, (n, axis_resources) in enumerate(safe_zip(in_nodes, in_axis_resources)):
     # N.B. inlined calls shouldn't have shardings set directly on the inputs or
     # outputs (set_sharding_proto adds an identity operation).
-    arg = xla.parameter(subc, i, c.GetShape(n))
-    args.append(xla.set_sharding_proto(subc, arg,
-                                      get_sharding_proto(c, n, axis_resources, mesh)))
+    arg = xla.parameter(subc, i, ctx.builder.GetShape(n))
+    args.append(
+        xla.set_sharding_proto(
+            subc, arg, get_sharding_proto(ctx.builder, n, axis_resources, mesh)))
 
   # TODO: Think about how to avoid duplicating constants with the outer jaxpr
-  ctx = xla.TranslationContext(
-      subc, backend, axis_env,
-      extend_name_stack(name_stack, wrap_name(name, "pjit")))
+  sub_ctx = ctx.replace(
+      builder=subc,
+      name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, "pjit")))
   out_nodes = xla.jaxpr_subcomp(
-      ctx, jaxpr.jaxpr, xla._xla_consts(subc, jaxpr.consts), *args)
+      sub_ctx, jaxpr.jaxpr, xla._xla_consts(subc, jaxpr.consts), *args)
   out_nodes = [
       xla.set_sharding_proto(subc, out,
                             get_sharding_proto(subc, out, axis_resources, mesh))
@@ -530,8 +531,9 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
   ]
 
   subc = subc.build(xops.Tuple(subc, out_nodes))
-  return xops.Call(c, subc, list(in_nodes))
-xla.call_translations[pjit_p] = _pjit_translation_rule
+  return xla.xla_destructure(ctx.builder,
+                             xops.Call(ctx.builder, subc, list(in_nodes)))
+xla.register_translation(pjit_p, _pjit_translation_rule)
 
 
 def _pjit_batcher(insert_axis,

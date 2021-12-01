@@ -1484,36 +1484,39 @@ ad.call_param_updaters[xla_pmap_p] = ad.call_param_updaters[xla.xla_call_p]
 ad.call_transpose_param_updaters[xla_pmap_p] = \
     ad.call_transpose_param_updaters[xla.xla_call_p]
 
-def _pmap_translation_rule(c, axis_env,
-                           in_nodes, name_stack, axis_name, axis_size,
+def _pmap_translation_rule(ctx, avals_in, avals_out, *in_nodes,
+                           axis_name, axis_size,
                            global_axis_size, devices, name,
-                           call_jaxpr, *, backend=None, in_axes, out_axes,
+                           call_jaxpr, backend=None, in_axes, out_axes,
                            donated_invars, global_arg_shapes):
   del donated_invars  # Unused.
+  xla.check_backend_matches(backend, ctx.platform)
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  if axis_env.names and devices is not None:
+  if ctx.axis_env.names and devices is not None:
     raise ValueError("Nested pmap with explicit devices argument.")
   if global_axis_size is None:
     global_axis_size = axis_size
-  new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
+  new_env = xla.extend_axis_env(ctx.axis_env, axis_name, global_axis_size)
   # Shard the in_nodes that are mapped
   in_avals = [v.aval for v in call_jaxpr.invars]
   in_nodes_sharded = (
-    _xla_shard(c, aval, new_env, in_node, in_axis) if in_axis is not None else in_node
-    for aval, in_node, in_axis in safe_zip(in_avals, in_nodes, in_axes))
+      _xla_shard(ctx.builder, aval, new_env, in_node, in_axis)
+      if in_axis is not None else in_node
+      for aval, in_node, in_axis in safe_zip(in_avals, in_nodes, in_axes))
 
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    ctx = xla.TranslationContext(
-        c, backend, new_env,
-        extend_name_stack(name_stack, wrap_name(name, 'pmap')))
-    sharded_outs = xla.jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes_sharded)
+    sub_ctx = ctx.replace(
+        axis_env=new_env,
+        name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'pmap')))
+    sharded_outs = xla.jaxpr_subcomp(sub_ctx, call_jaxpr, (), *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
-  outs = [_xla_unshard(c, aval, new_env, out_axis, shard, backend=backend)
+  outs = [_xla_unshard(ctx.builder, aval, new_env, out_axis, shard,
+                       backend=backend)
           for aval, out_axis, shard in safe_zip(out_avals, out_axes, sharded_outs)]
-  return xops.Tuple(c, outs)
+  return outs
 
-xla.call_translations[xla_pmap_p] = _pmap_translation_rule
+xla.register_translation(xla_pmap_p, _pmap_translation_rule)
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 
 def _xla_shard(c, aval, axis_env, x, in_axis):
@@ -1685,7 +1688,7 @@ def _pmap_lowering(ctx, avals_in, avals_out, *in_nodes, axis_name,
 
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     sub_ctx = ctx.replace(
-        axis_env = new_env,
+        axis_env=new_env,
         name_stack=xla.extend_name_stack(ctx.name_stack,
                                          util.wrap_name(name, 'pmap')))
     sharded_outs = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, (),
