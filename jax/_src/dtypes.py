@@ -344,7 +344,7 @@ def is_python_scalar(x):
 def dtype(x, *, canonicalize=False):
   """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
   if x is None:
-    return float_
+    raise ValueError(f"Invalid argument to dtype: {x}.")
   elif isinstance(x, type) and x in python_scalar_dtypes:
     dt = python_scalar_dtypes[x]
   elif type(x) in python_scalar_dtypes:
@@ -375,7 +375,7 @@ def result_type(*args):
   """Convenience function to apply JAX argument dtype promotion."""
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
-  dtype, weak_type = _lattice_result_type(*args)
+  dtype, weak_type = _lattice_result_type(*(float_ if arg is None else arg for arg in args))
   if weak_type:
     dtype = _default_types['f' if dtype == _bfloat16_dtype else dtype.kind]
   return canonicalize_dtype(dtype)
