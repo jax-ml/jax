@@ -180,6 +180,7 @@ def qdwh(x, is_symmetric, max_iterations=10):
                        '`norm(x-x.H) / norm(x)` is {}, which is greater than '
                        'the tolerance {}.'.format(relative_diff, tol))
 
-  u, h, num_iters, is_converged = _qdwh(x, is_symmetric, max_iterations)
+  with jax.default_matmul_precision('float32'):
+     u, h, num_iters, is_converged = _qdwh(x, is_symmetric, max_iterations)
 
   return u, h, num_iters, is_converged
