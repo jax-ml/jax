@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-11-30*
+*Last generated on (YYYY-MM-DD): 2021-07-31*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -98,7 +98,6 @@ More detailed information can be found in the
 | reduce_min | TF error: op not defined for dtype | complex | cpu, gpu, tpu | compiled, eager, graph |
 | regularized_incomplete_beta | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | rem | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
-| rng_uniform | TF error: op not defined for dtype | uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | round | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | scatter_add | TF test skipped: Not implemented in JAX: unimplemented | bool | cpu, gpu, tpu | compiled, eager, graph |
 | scatter_mul | TF test skipped: Not implemented in JAX: unimplemented | bool | cpu, gpu, tpu | compiled, eager, graph |
@@ -143,7 +142,6 @@ with jax2tf. The following table lists that cases when this does not quite hold:
 | max | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
 | min | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
 | pow | custom numeric comparison | complex | cpu, gpu, tpu | eager, graph |
-| rng_uniform | disabled numeric comparison | all | cpu, gpu, tpu | compiled, eager, graph |
 | sort | Numeric comparison disabled: TODO: TF non-stable multiple-array sort | all | gpu | compiled, eager, graph |
 | svd | custom numeric comparison when compute_uv | all | cpu, gpu | compiled, eager, graph |
 | top_k | Produces different results when the array contains `inf` and `NaN` (they are sorted differently in TF vs. XLA). | floating | cpu, gpu, tpu | eager, graph |

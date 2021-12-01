@@ -1650,8 +1650,11 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
             lax.linalg.svd_p,
             f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",
             lambda *args: lax.linalg.svd_p.bind(
-                args[0], full_matrices=args[1], compute_uv=args[2]),
-            [ RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],
+                args[0], full_matrices=args[1], compute_uv=args[2]), [
+                    RandArg(shape, dtype),
+                    StaticArg(full_matrices),
+                    StaticArg(compute_uv)
+                ],
             jax_unimplemented=[
                 Limitation(
                     "unimplemented",
@@ -3000,23 +3003,10 @@ if config.jax_enable_x64:
         define(
             lax.rng_bit_generator_p,
             f"shape={jtu.format_shape_dtype_string(shape, dtype)}_algorithm={algorithm}",
-            partial(lax.rng_bit_generator, shape=shape, dtype=dtype, algorithm=algorithm),
-            [RandArg((2,), np.uint64)],
+            lambda key, shape, dtype, algorithm: lax.rng_bit_generator(key, shape, dtype=dtype,
+                                                                       algorithm=algorithm),
+            [RandArg((2,), np.uint64),
+             StaticArg(shape), StaticArg(dtype), StaticArg(algorithm)],
             shape=shape,
             dtype=dtype,
             algorithm=algorithm)
-
-for dtype in (set(jtu.dtypes.all) -
-              set(jtu.dtypes.complex) -
-              set([np.int16, np.int8, np.uint16, np.uint8, np.bool_])):
-  for shape in [(), (5, 7), (100, 100)]:
-    define(
-        lax.rng_uniform_p,
-        f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        lambda minval, maxval, shape: lax.rng_uniform(minval, maxval, shape=shape),
-        [StaticArg(np.array(0, dtype=dtype)),
-         StaticArg(np.array(5, dtype=dtype)),
-         StaticArg(shape)],
-        shape=shape,
-        dtype=dtype,
-    )

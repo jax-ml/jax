@@ -931,24 +931,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return []
 
   @classmethod
-  def rng_uniform(cls, harness: primitive_harness.Harness):
-    def custom_assert(tst, r_jax, r_tf, *, args, tol, err_msg):
-      # Since this is using a stateful RNG, we cannot expect to get the
-      # same result if we call repeatedly.
-      return True
-    return [
-        missing_tf_kernel(
-            dtypes=[np.uint32, np.uint64],
-            devices=("cpu", "gpu", "tpu"),
-            modes=("eager", "graph", "compiled")),
-        custom_numeric(
-            description="disabled numeric comparison",
-            custom_assert=custom_assert,
-            devices=("cpu", "gpu", "tpu"),
-            modes=("eager", "graph", "compiled"))
-    ]
-
-  @classmethod
   def round(cls, harness: primitive_harness.Harness):
     return [
         missing_tf_kernel(
