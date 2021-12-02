@@ -22,6 +22,7 @@ Subpackages
     jax.flatten_util
     jax.dlpack
     jax.profiler
+    jax.config
 
 .. toctree::
    :hidden:
