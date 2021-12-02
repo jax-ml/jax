@@ -262,15 +262,12 @@ class LoweringContext:
   axis_env: xla.AxisEnv
   name_stack: str
 
-  # Should function results be tupled?
-  tuple_results: bool
 
   def __init__(self, platform: str, axis_env: xla.AxisEnv, name_stack: str,
                context: Optional[ir.Context] = None,
                module: Optional[ir.Module] = None,
                ip: Optional[ir.InsertionPoint] = None,
-               symbol_table: Optional[ir.SymbolTable] = None,
-               tuple_results: bool = True):
+               symbol_table: Optional[ir.SymbolTable] = None):
     assert platform is not None
     self.context = context or ir.Context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -279,7 +276,6 @@ class LoweringContext:
     self.platform = platform
     self.axis_env = axis_env
     self.name_stack = name_stack
-    self.tuple_results = tuple_results
     mhlo.register_mhlo_dialect(self.context)
     chlo.register_chlo_dialect(self.context)
 
@@ -337,8 +333,6 @@ def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
         ", ".join(unused_donations)))
 
   ctx = LoweringContext(platform, axis_env, name_stack)
-  if platform == "iree":
-    ctx = ctx.replace(tuple_results=False)
   with ctx.context, ir.Location.unknown(ctx.context):
     # TODO(phawkins): represent units with zero buffers at the runtime level.
     lower_jaxpr_to_fun(
@@ -384,12 +378,7 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
   output_types = map(aval_to_types, jaxpr.out_avals)
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
-  if ctx.tuple_results:
-    output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
-    fn_output_types = [output_tuple_type]
-  else:
-    fn_output_types = flat_output_types
-  ftype = ir.FunctionType.get(flat_input_types, fn_output_types)
+  ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
   func_op = builtin.FuncOp(name, ftype, ip=ctx.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
       "public" if public else "private")
@@ -419,11 +408,7 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
         outs.append(ir_constants(np.zeros((), np.bool_)))
       else:
         outs.append(out)
-    flat_outputs = util.flatten(outs)
-    if ctx.tuple_results:
-      std.ReturnOp([mhlo.TupleOp(output_tuple_type, flat_outputs).result])
-    else:
-      std.ReturnOp(flat_outputs)
+    std.ReturnOp(util.flatten(outs))
 
   return symbol_name
 
@@ -523,25 +508,14 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   xla.check_backend_matches(backend, ctx.platform)
   output_types = map(aval_to_ir_types, avals_out)
   flat_output_types = util.flatten(output_types)
-  if ctx.tuple_results:
-    output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
-    call_output_types = [output_tuple_type]
-  else:
-    call_output_types = flat_output_types
   sub_ctx = ctx.replace(
       name_stack=xla.extend_name_stack(ctx.name_stack, stack_name))
   symbol_name = lower_jaxpr_to_fun(sub_ctx, fn_name,
                                    core.ClosedJaxpr(call_jaxpr, ()))
-  call = std.CallOp(call_output_types,
+  call = std.CallOp(flat_output_types,
                     ir.FlatSymbolRefAttr.get(symbol_name),
                     flatten_lowering_ir_args(args))
-  if ctx.tuple_results:
-    flat_results = [
-        mhlo.GetTupleElementOp(typ, call.result, i32_attr(i)).result
-        for i, typ in enumerate(flat_output_types)]
-  else:
-    flat_results = call.results
-  return util.unflatten(flat_results, map(len, output_types))
+  return util.unflatten(call.results, map(len, output_types))
 
 def _xla_call_lower(ctx, avals_in, avals_out, *args,
                     backend=None, name, call_jaxpr, donated_invars, inline=None,
