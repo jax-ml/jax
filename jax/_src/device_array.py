@@ -16,7 +16,7 @@
 
 from functools import partial, partialmethod
 import operator
-from typing import (Any, Optional, Union)
+from typing import (Any, List, Optional, Union)
 import weakref
 
 import numpy as np
@@ -303,7 +303,7 @@ class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()
 
 
-device_array_types = [xc.Buffer, _DeviceArray]
+device_array_types: List[type] = [xc.Buffer, _DeviceArray]
 for _device_array in device_array_types:
   core.literalable_types.add(_device_array)
   core.pytype_aval_mappings[device_array] = core.ConcreteArray

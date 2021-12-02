@@ -318,7 +318,7 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
 
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
-    lambda x, devices, _: device_put(core.unit, devices, replicate=True)
+    lambda x, devices, _: device_put(core.unit, devices, replicate=True)  # type: ignore[has-type]
 def _shard_array(x, devices, indices):
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
