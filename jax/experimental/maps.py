@@ -47,7 +47,6 @@ from jax._src.lib import xla_client as xc
 from jax._src.util import (safe_map, safe_zip, HashableFunction,
                            as_hashable_function, unzip2, distributed_debug_log,
                            tuple_insert, moveaxis, split_list, wrap_name)
-from jax._src.lax.parallel import _build_axis_index_lowering
 from jax import lax
 
 class _PositionalSemantics(Enum):
@@ -1341,9 +1340,12 @@ def _xmap_translation_rule_replica(ctx, avals_in, avals_out, *in_nodes,
   assert not consts
 
   tiled_ins = (
-    _xla_tile(ctx.builder, ctx.axis_env, in_node, arg_in_axes, local_mesh_shape)
-    if v.aval is not core.abstract_unit else in_node
-    for v, in_node, arg_in_axes in zip(call_jaxpr.invars, in_nodes, mesh_in_axes))
+      xla.lower_fun(
+          partial(_tile, in_axes=arg_in_axes, axis_sizes=local_mesh_shape),
+          new_style=True, multiple_results=False)(ctx, [aval], None, in_node)[0]
+      if aval is not core.abstract_unit else in_node
+      for aval, in_node, arg_in_axes
+      in zip(avals_in, in_nodes, mesh_in_axes))
 
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
@@ -1355,72 +1357,72 @@ def _xmap_translation_rule_replica(ctx, avals_in, avals_out, *in_nodes,
                                        xla.wrap_name(name, 'xmap')))
   tiled_outs = xla.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (), *tiled_ins)
 
-  outs = [_xla_untile(ctx.builder, ctx.axis_env, tiled_out, ans_out_axes,
-                      local_mesh_shape, backend)
-          if v.aval is not core.abstract_unit else tiled_out
-          for v, tiled_out, ans_out_axes
-          in zip(call_jaxpr.outvars, tiled_outs, mesh_out_axes)]
+  outs = [
+      xla.lower_fun(
+          partial(_untile, out_axes=ans_out_axes, axis_sizes=local_mesh_shape,
+                  platform=ctx.platform),
+          new_style=True, multiple_results=False)(
+          ctx, [v.aval], None, tiled_out
+      )[0]
+      if v.aval is not core.abstract_unit else tiled_out
+      for v, tiled_out, ans_out_axes
+      in zip(vectorized_jaxpr.outvars, tiled_outs, mesh_out_axes)]
   return outs
 
-def _xla_tile_base_indices(c, axis_env, tile_shape, axes, axis_sizes):
-  zero = xops.Constant(c, np.zeros((), dtype=np.int32))
+def _tile_base_indices(tile_shape, axes, axis_sizes):
+  zero = np.zeros((), dtype=np.int32)
   linear_idxs = [zero] * len(tile_shape)
   strides = [1] * len(tile_shape)
   for name, axis in reversed(axes.items()):
-    axis_index = _build_axis_index_lowering(
-        c, axis_name=name, axis_env=axis_env)
-    stride_c = xops.Constant(c, np.array(strides[axis], np.int32))
+    axis_index = lax.axis_index(name)
+    stride_c = np.array(strides[axis], np.int32)
     if linear_idxs[axis] is zero and strides[axis] == 1:
       linear_idxs[axis] = axis_index
     else:
-      linear_idxs[axis] = xops.Add(linear_idxs[axis], xops.Mul(axis_index, stride_c))
+      linear_idxs[axis] = lax.add(linear_idxs[axis],
+                                  lax.mul(axis_index, stride_c))
     strides[axis] *= axis_sizes[name]
   return [zero if linear_idx is zero else
-          xops.Mul(linear_idx,
-                   xops.Constant(c, np.array(tile_dim_size, np.int32)))
+          lax.mul(linear_idx, np.array(tile_dim_size, np.int32))
           for linear_idx, tile_dim_size in zip(linear_idxs, tile_shape)]
 
-def _xla_tile(c, axis_env, x, in_axes, axis_sizes):
+
+def _tile(x, in_axes, axis_sizes):
   if not in_axes:
     return x
-  shape = list(c.get_shape(x).dimensions())
-  tile_shape = list(shape)
+  tile_shape = list(x.shape)
   for name, axis in in_axes.items():
     axis_size = axis_sizes[name]
     assert tile_shape[axis] % axis_size == 0
     tile_shape[axis] //= axis_size
-  base_idxs = _xla_tile_base_indices(c, axis_env, tile_shape, in_axes, axis_sizes)
-  return xops.DynamicSlice(x, base_idxs, tile_shape)
+  base_idxs = _tile_base_indices(tile_shape, in_axes, axis_sizes)
+  return lax.dynamic_slice(x, base_idxs, tile_shape)
+
 
 # TODO(b/110096942): more efficient gather
-def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
-  xla_shape = c.get_shape(x)
-  x_dtype = xla_shape.numpy_dtype()
+def _untile(x, out_axes, axis_sizes, platform):
   # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
-  convert_bool = (np.issubdtype(x_dtype, np.bool_)
-                  and xb.get_backend(backend).platform in ('cpu', 'gpu'))
+  convert_bool = (np.issubdtype(x.dtype, np.bool_)
+                  and platform in ('cpu', 'gpu'))
   if convert_bool:
-    x = xops.ConvertElementType(
-        x, xla.dtype_to_primitive_type(np.dtype(np.float32)))
+    x = lax.convert_element_type(x, np.dtype(np.float32))
 
-  tile_shape = list(xla_shape.dimensions())
+  tile_shape = list(x.shape)
   shape = list(tile_shape)
   for name, axis in out_axes.items():
     shape[axis] *= axis_sizes[name]
-  base_idxs = _xla_tile_base_indices(c, axis_env, tile_shape, out_axes, axis_sizes)
+  base_idxs = _tile_base_indices(tile_shape, out_axes, axis_sizes)
 
-  padded = xops.Broadcast(xops.Constant(c, np.array(0, x_dtype)), shape)
-  padded = xops.DynamicUpdateSlice(padded, x, base_idxs)
-  replica_groups_protos = xc.make_replica_groups(
-    xla.axis_groups(axis_env, tuple(out_axes.keys())))
-  out = xops.CrossReplicaSum(padded, replica_groups_protos)
+  padded = lax.broadcast(np.array(0, x.dtype), shape)
+  padded = lax.dynamic_update_slice(padded, x, base_idxs)
+  out = lax.psum(padded, tuple(out_axes.keys()))
 
   # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
   if convert_bool:
-    nonzero = xops.Ne(out, xops.Constant(c, np.array(0, dtype=np.float32)))
-    out = xops.ConvertElementType(
-        nonzero, xla.dtype_to_primitive_type(np.dtype(np.bool_)))
+    nonzero = lax.ne(out, np.array(0, dtype=np.float32))
+    out = lax.convert_element_type(nonzero, np.dtype(np.bool_))
   return out
+
 
 def _xmap_translation_rule_spmd(ctx, avals_in, avals_out, *global_in_nodes,
                                 call_jaxpr, name,

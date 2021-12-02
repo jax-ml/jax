@@ -986,7 +986,7 @@ def lower_fun(fun: Callable, *, multiple_results: bool, backend=None,
               new_style: bool = False) -> Callable:
   if new_style:
     def f_new(ctx: TranslationContext, avals_in: Sequence[core.AbstractValue],
-              avals_out: Sequence[core.AbstractValue],
+              avals_out: Optional[Sequence[core.AbstractValue]],
               *xla_args: xc.XlaOp,
               **params) -> Sequence[xc.XlaOp]:
       wrapped_fun = lu.wrap_init(fun, params)
