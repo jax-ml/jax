@@ -22,6 +22,7 @@ import numpy as np
 
 from jax import core
 from jax import lax
+from jax._src import dtypes
 from jax._src.numpy import lax_numpy as jnp
 from jax._src import util
 
@@ -77,6 +78,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
                   indices_are_sorted, unique_indices, mode,
                   normalize_indices):
   dtype = lax.dtype(x)
+  weak_type = dtypes.is_weakly_typed(x)
 
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
@@ -108,7 +110,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
     unique_indices=indexer.unique_indices or unique_indices,
     mode=mode)
-  return lax.convert_element_type(out, dtype)
+  return lax._convert_element_type(out, dtype, weak_type)
 
 
 class _Indexable(object):
