@@ -48,6 +48,7 @@ def setnewattr(obj, name, val):
   assert getattr(obj, name, sentinel) is sentinel
   setattr(obj, name, val)
 
+
 ## Error value data type and functional assert.
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ def assert_func(error: Error, pred: Bool, msg: str) -> Error:
   out_err = error.err | jnp.logical_not(pred)
   out_code = lax.select(error.err, error.code, code)
   return Error(out_err, out_code, {code: msg, **error.msgs})
+
 
 ## Checkify transformation for plumbing functional error values.
 
@@ -212,6 +214,24 @@ def check_errors_traceable(msgs, err, code, *args):
   yield outs
 
 
+## assert primitive
+
+def assert_(pred: Bool, msg: str) -> None:
+  return assert_p.bind(pred, msg=msg)
+
+assert_p = core.Primitive('assert')
+assert_p.multiple_results = True  # zero results
+
+@assert_p.def_impl
+def assert_impl(pred, *, msg):
+  assert pred, msg
+  return []
+
+@assert_p.def_abstract_eval
+def assert_abstract_eval(pred, *, msg):
+  raise Exception("can't be staged!")
+
+
 ## checkify rules
 
 def nan_error_check(prim, error, *in_vals, **params):
@@ -254,6 +274,13 @@ def cond_error_check(error, index, *ops, branches, linear):
   new_msgs = {k:v for d in it.chain([error.msgs], msgs_) for k, v in d.items()}
   return outs, Error(err, code, new_msgs)
 error_checks[control_flow.cond_p] = cond_error_check
+
+# TODO(mattjj,lenamartens): currently we bundle effectful-assert-discharging
+# with the error-check-adding transformation (checkify), but the two could be
+# made orthogonal.
+def assert_discharge_rule(err: Error, pred: Bool, *, msg: str):
+  return [], assert_func(err, pred, msg)
+error_checks[assert_p] = assert_discharge_rule
 
 
 ## checkify api
