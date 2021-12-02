@@ -21,6 +21,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     indices will now be returned as 0. (#8634).
   * jax2tf will force the converted code to use XLA for the code fragments
     under jax.jit, e.g., most jax.numpy functions ({jax-issue}`#7839`).
+  * {func}`jax.lax.convert_element_type` now does stricter validation of the `new_dtype`
+    argument. In particular, it now normalizes the dtype with the stricter
+    `np.dtype(new_dtype)` in place of `np.result_type(new_dtype)` ({jax-issue}`#8754`).
 
 ## jaxlib 0.1.74 (Nov 17, 2021)
 * Enabled peer-to-peer copies between GPUs. Previously, GPU copies were bounced via
