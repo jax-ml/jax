@@ -464,10 +464,14 @@ def _convert_element_type(operand: Array, new_dtype: Optional[DType] = None,
                           weak_type: bool = False):
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
-  old_dtype = np.result_type(operand)
+  old_dtype = dtypes.dtype(operand, canonicalize=False)
   old_weak_type = dtypes.is_weakly_typed(operand)
 
-  new_dtype = dtypes.canonicalize_dtype(new_dtype or old_dtype)
+  if new_dtype is None:
+    new_dtype = old_dtype
+  else:
+    new_dtype = np.dtype(new_dtype)
+  new_dtype = dtypes.dtype(new_dtype, canonicalize=True)
   new_weak_type = bool(weak_type)
 
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and

@@ -225,7 +225,8 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.dtype(str(dtype)), dtype)
 
   def testDtypeFromNone(self):
-    self.assertEqual(dtypes.dtype(None), dtypes.float_)
+    with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
+      dtypes.dtype(None)
 
 class TestPromotionTables(jtu.JaxTestCase):
 
@@ -248,6 +249,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(val)), jaxtype)
 
   def testResultTypeNone(self):
+    # This matches the behavior of np.result_type(None) => np.float_
     self.assertEqual(dtypes.result_type(None), dtypes.canonicalize_dtype(dtypes.float_))
 
   @jtu.ignore_warning(category=UserWarning,

@@ -6549,8 +6549,10 @@ def nanmedian(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 
 
 def _astype(arr, dtype):
+  if dtype is None:
+    dtype = dtypes.canonicalize_dtype(float_)
   lax._check_user_dtype_supported(dtype, "astype")
-  return lax.convert_element_type(arr, float_ if dtype is None else dtype)
+  return lax.convert_element_type(arr, dtype)
 
 
 def _nbytes(arr):
