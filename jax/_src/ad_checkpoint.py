@@ -291,7 +291,8 @@ def remat_translation(ctx, avals_in, avals_out, *in_nodes,
       return xla._remat_using_cond(ctx, in_nodes, "checkpoint", jaxpr)
   else:
     return xla.jaxpr_subcomp(ctx, jaxpr, (), *in_nodes)
-xla.register_translation(remat_p, remat_translation)
+if not xla._USE_LAX_REMAT_LOWERING:
+  xla.register_translation(remat_p, remat_translation)
 
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars
@@ -347,14 +348,14 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
   return pe._zip_knowns(out_known_tracers, out_jaxpr_tracers, out_unknowns)
 pe.custom_partial_eval_rules[remat_p] = remat_partial_eval
 
-def remat_paratial_eval_custom_params_updater(_, __, params_known, params_staged):
+def remat_partial_eval_custom_params_updater(_, __, params_known, params_staged):
   jaxpr_known = params_known.pop('call_jaxpr')
   jaxpr_staged = params_staged.pop('call_jaxpr')
   return (dict(params_known, jaxpr=jaxpr_known),
           dict(params_staged, jaxpr=jaxpr_staged, differentiated=True))
 pe.partial_eval_jaxpr_custom_rules[remat_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr',
-            remat_paratial_eval_custom_params_updater)
+            remat_partial_eval_custom_params_updater)
 
 def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr, **params):
   assert not jaxpr.constvars
