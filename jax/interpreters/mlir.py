@@ -317,17 +317,18 @@ def flatten_lowering_ir_args(
 
 def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
                           axis_env: xla.AxisEnv, name_stack: str,
-                          donated_invars: Sequence[bool]) -> str:
+                          donated_args: Sequence[bool]) -> str:
   """Lowers a top-level jaxpr to an MHLO module.
 
   Handles the quirks of the argument/return value passing conventions of the
   runtime."""
+  input_output_aliases = None
   if platform in ("gpu", "tpu"):
-    # TODO(b/203122001): implement buffer donation.
-    assert not any(donated_invars), donated_invars
-  if any(donated_invars):
+    input_output_aliases, out_donated_args = _set_up_aliases(
+        jaxpr.in_avals, jaxpr.out_avals, donated_args)
+  if any(donated_args):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-    unused_donations = [str(a) for a, d in zip(jaxpr.in_avals, donated_invars)
+    unused_donations = [str(a) for a, d in zip(jaxpr.in_avals, donated_args)
                         if d]
     warnings.warn("Some donated buffers were not usable: {}".format(
         ", ".join(unused_donations)))
@@ -337,7 +338,8 @@ def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
     # TODO(phawkins): represent units with zero buffers at the runtime level.
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, public=True, replace_units_with_dummy=True,
-        replace_tokens_with_dummy=True)
+        replace_tokens_with_dummy=True,
+        input_output_aliases=input_output_aliases)
 
   ctx.module.operation.verify()
   output = io.StringIO()
@@ -346,11 +348,29 @@ def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
   return output.getvalue()
 
 
-def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
-                       jaxpr: core.ClosedJaxpr, *,
-                       public: bool = False,
-                       replace_units_with_dummy: bool = False,
-                       replace_tokens_with_dummy: bool = False) -> str:
+def _set_up_aliases(avals_in, avals_out, donated_args):
+  input_output_aliases = [None] * len(avals_in)
+
+  donations = collections.defaultdict(collections.deque)
+  for i, (aval, donated) in enumerate(zip(avals_in, donated_args)):
+    if donated:
+      donations[aval].append(i)
+
+  out_donated_args = list(donated_args)
+  for i, aval in enumerate(avals_out):
+    if donations.get(aval, ()):
+      input_id = donations[aval].popleft()
+      input_output_aliases[input_id] = i
+      out_donated_args[input_id] = False
+
+  return input_output_aliases, out_donated_args
+
+
+def lower_jaxpr_to_fun(
+    ctx: LoweringContext, name: str, jaxpr: core.ClosedJaxpr, *,
+    public: bool = False, replace_units_with_dummy: bool = False,
+    replace_tokens_with_dummy: bool = False,
+    input_output_aliases: Optional[Sequence[Optional[int]]] = None) -> str:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -365,6 +385,8 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
       replaced with bool arrays of size [0].
     replace_tokens_with_dummy: if true, token arguments/return values are
       replaced with bool arrays of size [0].
+    input_output_aliases: optional sequence that maps argument numbers to the
+      corresponding output that should alias them.
   Returns the name of the function.
   """
   def aval_to_types(aval):
@@ -383,6 +405,26 @@ def lower_jaxpr_to_fun(ctx: LoweringContext, name: str,
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
       "public" if public else "private")
   symbol_name = ir.StringAttr(ctx.symbol_table.insert(func_op)).value
+
+  if input_output_aliases is not None:
+    arg_attrs: List[Dict[str, ir.Attribute]] = [
+        {} for _ in range(len(flat_input_types))]
+    if input_output_aliases is not None:
+      output_ids = util.unflatten(list(range(len(flat_output_types))),
+                                  map(len, output_types))
+      aliases: List[Optional[int]] = []
+      for types, alias in zip(input_types, input_output_aliases):
+        if alias is None:
+          aliases.extend([None] * len(types))
+        else:
+          aliases.extend(output_ids[alias])
+
+      for attrs, alias in zip(arg_attrs, aliases):
+        if alias is not None:
+          attrs["tf.aliasing_output"] = i32_attr(alias)
+    func_op.arg_attrs = ir.ArrayAttr.get(
+        [ir.DictAttr.get(attrs) for attrs in arg_attrs])
+
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
     unflattened_args = util.unflatten(entry_block.arguments,
