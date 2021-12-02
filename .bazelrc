@@ -151,6 +151,8 @@ build:rbe_cpu_linux_py38 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG
 build:rbe_cpu_linux_py38 --python_path="/usr/local/bin/python3.8"
 build:rbe_cpu_linux_py39 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.9"
 build:rbe_cpu_linux_py39 --python_path="/usr/local/bin/python3.9"
+build:rbe_cpu_linux_py310 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.10"
+build:rbe_cpu_linux_py310 --python_path="/usr/local/bin/python3.10"
 
 build:rbe_linux_cuda_base --config=rbe_linux
 build:rbe_linux_cuda_base --config=cuda
@@ -200,6 +202,8 @@ build:rbe_linux_cuda11.4_nvcc_py3.8 --config=rbe_linux_cuda11.4_nvcc_base --repo
 build:rbe_linux_cuda11.4_nvcc_py3.8 --python_path="/usr/local/bin/python3.8"
 build:rbe_linux_cuda11.4_nvcc_py3.9 --config=rbe_linux_cuda11.4_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.2-tensorrt7.2_config_python3.9"
 build:rbe_linux_cuda11.4_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
+build:rbe_linux_cuda11.4_nvcc_py3.10 --config=rbe_linux_cuda11.4_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.2-tensorrt7.2_config_python3.10"
+build:rbe_linux_cuda11.4_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
 
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base --config=rbe_linux_cuda_base
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --action_env=TF_CUDA_VERSION=11
@@ -221,6 +225,8 @@ build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_py3.8 --config=rbe_linux_cuda11.4_cudnn
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_py3.8 --python_path="/usr/local/bin/python3.8"
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_py3.9 --config=rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.0.5-tensorrt7.2_config_python3.9"
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
+build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_py3.10 --config=rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.0.5-tensorrt7.2_config_python3.10"
+build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
 
 # These you may need to change for your own GCP project.
 build:tensorflow_testing_rbe --project_id=tensorflow-testing
