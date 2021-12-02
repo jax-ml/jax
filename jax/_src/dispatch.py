@@ -39,6 +39,7 @@ from jax._src import device_array
 from jax._src import dtypes
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.profiler import annotate_function
 import jax._src.util as util
 from jax._src import traceback_util
 
@@ -157,6 +158,7 @@ def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
 _xla_callable = lu.cache(_xla_callable_uncached)
 
 
+@annotate_function
 def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
                        donated_invars, *arg_specs):
   if device is not None and backend is not None:
@@ -505,6 +507,7 @@ class XlaComputation:
             self.name, self.hlo(), *self.compile_args)
     return self._executable
 
+@annotate_function
 def backend_compile(backend, built_c, options):
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results
@@ -601,6 +604,7 @@ def check_arg_avals_for_call(ref_avals, arg_avals):
         f"called with:\n  {arg_avals_fmt}")
 
 
+@partial(annotate_function, name="dispatch.device_put")
 def device_put(x, device: Optional[Device] = None) -> Tuple[Any]:
   x = xla.canonicalize_dtype(x)
   try:

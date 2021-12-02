@@ -25,6 +25,7 @@ from jax import core
 from jax._src.config import config
 from jax._src import dtypes
 from jax._src.lib import xla_client as xc
+from jax._src.profiler import annotate_function
 import jax._src.util as util
 
 ### device-persistent data
@@ -125,6 +126,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
     if self.device_buffer is deleted_buffer:
       raise RuntimeError("DeviceArray has been deleted.")
 
+  @annotate_function
   def block_until_ready(self):
     """Blocks the caller until the buffer's value has been computed on device.
 
