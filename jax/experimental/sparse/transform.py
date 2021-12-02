@@ -644,3 +644,29 @@ def _todense_sparse_rule(spenv, argspec, *, tree):
   return (out_argspec,)
 
 sparse_rules[sparse.todense_p] = _todense_sparse_rule
+
+
+#------------------------------------------------------------------------------
+# BCOO methods derived from sparsify
+# defined here to avoid circular imports
+
+def _sum(self, *args, **kwargs):
+  """Sum array along axis."""
+  return sparsify(lambda x: x.sum(*args, **kwargs))(self)
+
+_bcoo_methods = {
+  'sum': _sum,
+  "__neg__": sparsify(jnp.negative),
+  "__pos__": sparsify(jnp.positive),
+  "__matmul__": sparsify(jnp.matmul),
+  "__rmatmul__": sparsify(lambda self, other: jnp.matmul(other, self)),
+  "__mul__": sparsify(jnp.multiply),
+  "__rmul__": sparsify(lambda self, other: jnp.multiply(other, self)),
+  "__add__": sparsify(jnp.add),
+  "__radd__": sparsify(lambda self, other: jnp.add(other, self)),
+  "__sub__": sparsify(lambda self, other: jnp.add(self, jnp.negative(other))),
+  "__rsub__": sparsify(lambda self, other: jnp.add(other, jnp.negative(self))),
+}
+
+for method, impl in _bcoo_methods.items():
+  setattr(BCOO, method, impl)

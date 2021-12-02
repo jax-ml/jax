@@ -151,7 +151,7 @@ class cuSparseTest(jtu.JaxTestCase):
     rng = rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
     data, indices, indptr = sparse.csr_fromdense(M, nse=(M != 0).sum())
-    row, col = sparse.ops._csr_to_coo(indices, indptr)
+    row, col = sparse.util._csr_to_coo(indices, indptr)
     f = lambda data: sparse.csr_todense(data, indices, indptr, shape=M.shape)
 
     # Forward-mode

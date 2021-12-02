@@ -24,6 +24,8 @@ from jax import core
 from jax import lax
 from jax import tree_util
 from jax import vmap
+from jax.experimental.sparse._base import JAXSparse
+from jax.experimental.sparse.util import _safe_asarray
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -35,7 +37,6 @@ from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
 from jax._src.numpy.lax_numpy import _unique
-from jax.experimental.sparse import ops
 
 Dtype = Any
 Shape = Tuple[int, ...]
@@ -967,7 +968,7 @@ def bcoo_multiply_dense(data, indices, v, *, shape):
   return _mul(data, indices, v)
 
 @tree_util.register_pytree_node_class
-class BCOO(ops.JAXSparse):
+class BCOO(JAXSparse):
   """Experimental batched COO matrix implemented in JAX
 
   Args:
@@ -1017,6 +1018,8 @@ class BCOO(ops.JAXSparse):
                  [0., 3., 0.],
                  [0., 0., 5.]], dtype=float32)
   """
+  # Note: additional BCOO methods are defined in transform.py
+
   data: jnp.ndarray
   indices: jnp.ndarray
   shape: Shape
@@ -1029,7 +1032,7 @@ class BCOO(ops.JAXSparse):
   def __init__(self, args, *, shape):
     # JAX transforms will sometimes instantiate pytrees with null values, so we
     # must catch that in the initialization of inputs.
-    self.data, self.indices = self._safe_asarray(args)
+    self.data, self.indices = _safe_asarray(args)
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -1101,40 +1104,6 @@ class BCOO(ops.JAXSparse):
   def tree_flatten(self):
     return (self.data, self.indices), {"shape": self.shape}
 
-  # TODO(jakevdp): refactor to avoid circular imports - we can use the same strategy
-  #                we use when adding methods to DeviceArray within lax_numpy.py
-  def __neg__(self):
-    from jax.experimental.sparse import sparsify
-    return sparsify(jnp.negative)(self)
-
-  def __matmul__(self, other):
-    from jax.experimental.sparse import sparsify
-    return sparsify(jnp.matmul)(self, other)
-
-  def __rmatmul__(self, other):
-    from jax.experimental.sparse import sparsify
-    return sparsify(jnp.matmul)(other, self)
-
-  def __mul__(self, other):
-    from jax.experimental.sparse import sparsify
-    return sparsify(jnp.multiply)(self, other)
-
-  def __rmul__(self, other):
-    from jax.experimental.sparse import sparsify
-    return sparsify(jnp.multiply)(other, self)
-
-  def __add__(self, other):
-    from jax.experimental.sparse import sparsify
-    return sparsify(jnp.add)(self, other)
-
-  def __radd__(self, other):
-    from jax.experimental.sparse import sparsify
-    return sparsify(jnp.add)(other, self)
-
-  def sum(self, *args, **kwargs):
-    """Sum array along axis."""
-    from jax.experimental.sparse import sparsify
-    return sparsify(lambda x: x.sum(*args, **kwargs))(self)
 
 # vmappable handlers
 def _bcoo_to_elt(cont, _, val, axis):
