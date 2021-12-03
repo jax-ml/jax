@@ -349,7 +349,7 @@ def lower_jaxpr_to_module(
 
   ctx.module.operation.verify()
   output = io.StringIO()
-  ctx.module.operation.print(file=output, #enable_debug_info=True,
+  ctx.module.operation.print(file=output, enable_debug_info=True,
                              print_generic_op_form=False)
   return output.getvalue()
 

@@ -22,17 +22,21 @@ from jax import core
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 # TODO(skye): separate pmap into it's own module?
+from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax import linear_util as lu
 from jax._src import dispatch
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import std
 from jax._src.api_util import (argnums_partial, flatten_axes, flatten_fun,
                                _ensure_index_tuple)
+import jax._src.util as util
 from jax.tree_util import tree_flatten, tree_unflatten
-from jax._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
-                           HashableFunction)
+from jax._src.util import (extend_name_stack, wrap_name, wraps, safe_map,
+                           safe_zip, HashableFunction)
 from jax._src.config import config
 
 xops = xc._xla.ops
@@ -210,6 +214,49 @@ def _sharded_jit_translation_rule(ctx, avals_in, avals_out, *in_nodes,
                              xops.Call(ctx.builder, subc, list(in_nodes)))
 
 
+def _sharded_jit_lowering(ctx, avals_in, avals_out, *in_nodes,
+                          in_parts, out_parts_thunk, nparts,
+                          name, call_jaxpr, local_in_parts,
+                          local_out_parts_thunk, local_nparts):
+  # We assume any extra leading in_nodes are constants and replicate them.
+  num_extra_nodes = len(in_nodes) - len(in_parts)
+  assert num_extra_nodes >= 0
+  in_parts = (None,) * num_extra_nodes + in_parts
+
+  args = []
+  for ns, sharding in safe_zip(
+      safe_map(mlir.wrap_singleton_ir_values, in_nodes), in_parts):
+    if sharding is not None:
+      args.append(
+          [mlir.wrap_with_sharding_op(n, xla.sharding_to_proto(sharding))
+           for n in ns])
+    else:
+      args.append(ns)
+
+  sub_ctx = ctx.replace(
+      name_stack=extend_name_stack(wrap_name(name, "sharded_jit")))
+  fn = mlir.lower_jaxpr_to_fun(sub_ctx, f"sharded_jit_{name}",
+                               core.ClosedJaxpr(call_jaxpr, ()))
+
+  output_types = safe_map(mlir.aval_to_ir_types, avals_out)
+  flat_output_types = util.flatten(output_types)
+  call = std.CallOp(flat_output_types,
+                    ir.FlatSymbolRefAttr.get(fn.name.value),
+                    mlir.flatten_lowering_ir_args(args))
+  out_nodes = util.unflatten(call.results, safe_map(len, output_types))
+
+  out_parts = out_parts_thunk()
+  outputs = []
+  for ns, sharding in safe_zip(out_nodes, out_parts):
+    if sharding is not None:
+      outputs.append(
+          [mlir.wrap_with_sharding_op(n, xla.sharding_to_proto(sharding))
+           for n in ns])
+    else:
+      outputs.append(ns)
+  return outputs
+
+
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
@@ -239,6 +286,7 @@ sharded_call_p = core.CallPrimitive("sharded_call")
 sharded_call = sharded_call_p.bind
 sharded_call_p.def_impl(_sharded_call_impl)
 xla.register_translation(sharded_call_p, _sharded_jit_translation_rule)
+mlir.register_lowering(sharded_call_p, _sharded_jit_lowering)
 
 
 class PartitionSpec(tuple):
@@ -423,6 +471,13 @@ ad.deflinear2(sharding_constraint_p,
               lambda ct, _, partitions: (with_sharding_constraint(ct, partitions),))
 xla.register_translation(sharding_constraint_p,
                          _sharding_constraint_translation_rule)
+
+def _sharding_constraint_lowering(ctx, avals_in, avals_out, x_node,
+                                  partitions):
+  return [mlir.wrap_with_sharding_op(x_node, xla.sharding_to_proto(partitions))]
+
+mlir.register_lowering(sharding_constraint_p, _sharding_constraint_lowering)
+
 
 def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
   """Identity-like function that specifies how ``x`` should be sharded.
