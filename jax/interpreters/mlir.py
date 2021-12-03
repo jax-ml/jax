@@ -700,6 +700,7 @@ def xla_fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
   for op in submodule.body.operations:
     ctx.module.body.append(op)
     if op.name.value == "main":
+      op.attributes["sym_name"] = ir.StringAttr.get(f"xla_fallback_{prim.name}")
       callee_name = ir.StringAttr(ctx.symbol_table.insert(op)).value
       op.attributes["sym_visibility"] = ir.StringAttr.get("private")
     else:
