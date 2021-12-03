@@ -61,7 +61,7 @@ def _aval_to_result_handler(npart, parts, aval):
     indices = pxla.spec_to_indices(aval.shape, spec)
   else:
     spec = indices = None
-  return pxla.aval_to_result_handler(spec, indices, aval)
+  return pxla.aval_to_result_handler(aval, spec, indices)
 
 
 @lu.cache

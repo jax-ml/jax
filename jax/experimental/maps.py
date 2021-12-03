@@ -732,10 +732,13 @@ def make_xmap_callable(fun: lu.WrappedFun,
   if used_mesh_axes:
     assert spmd_in_axes is None and spmd_out_axes_thunk is None  # No outer xmaps, so should be None
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
+    mesh = resource_env.physical_mesh
+    global_in_avals = [mesh.local_to_global(ax, av)
+                       for ax, av in safe_zip(mesh_in_axes, in_avals)]
     return pxla.lower_mesh_computation(
-        f, name, resource_env.physical_mesh,
+        f, name, mesh,
         mesh_in_axes, mesh_out_axes, donated_invars,
-        use_spmd_lowering, in_avals,
+        use_spmd_lowering, global_in_avals,
         tile_by_mesh_axes=True)
   else:
     return dispatch.lower_xla_callable(

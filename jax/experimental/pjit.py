@@ -286,7 +286,7 @@ def flatten_axis_resources(what, tree, axis_resources, tupled_args):
 def _pjit_jaxpr(fun, mesh, local_in_avals,
                 in_tree, in_axis_resources_thunk,
                 out_tree, out_axis_resources_thunk,
-                in_positional_semantics, out_positional_semantics, is_gsda):
+                in_positional_semantics, out_positional_semantics, is_gda):
   # TODO(yashkatariya): Make this work with FROM_GDA special value.
   in_axis_resources_flat = flatten_axis_resources(
         "pjit in_axis_resources", in_tree,
@@ -295,9 +295,16 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   # `FROM_GDA` is passed to any input other than GDA, a ugly error message
   # will be raised because get_array_mapping (in local_to_global) of a
   # FROM_GDA cannot happen.
-  tree_map(_check_resources_mismatch, in_axis_resources_flat, is_gsda)
-  _check_shapes_against_resources("pjit arguments", False, mesh.local_mesh.shape,
-                                  local_in_avals, in_axis_resources_flat)
+  tree_map(_check_resources_mismatch, in_axis_resources_flat, is_gda)
+  # If all inputs are GDAs, then the avals are global and the mesh should also
+  # be global. This split is because non-contiguous mesh can only be used if all
+  # inputs are GDAs.
+  if all(is_gda):
+    _check_shapes_against_resources("pjit arguments", True, mesh.shape,
+                                    local_in_avals, in_axis_resources_flat)
+  else:
+    _check_shapes_against_resources("pjit arguments", False, mesh.local_mesh.shape,
+                                    local_in_avals, in_axis_resources_flat)
   global_in_avals = local_to_global(in_positional_semantics, mesh,
                                     local_in_avals, in_axis_resources_flat)
 
@@ -408,8 +415,8 @@ def _prepare_axis_resources(axis_resources, arg_name):
   _check_unique_resources(entries, arg_name)
   return tree_unflatten(treedef, entries), entries, treedef
 
-def _check_resources_mismatch(in_axis_resources_flat, is_gsda):
-  if not is_gsda and in_axis_resources_flat is FROM_GDA:
+def _check_resources_mismatch(in_axis_resources_flat, is_gda):
+  if not is_gda and in_axis_resources_flat is FROM_GDA:
     raise ValueError('For a non-GDA input, the corresponding resource in '
                      'in_axis_resources cannot be `pjit.FROM_GDA`.')
 
@@ -484,16 +491,10 @@ def _pjit_lower(
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
   fun = lu.wrap_init(f)
-  # TODO(yashkatariya): Passing in out_positional_semantics is a hack.
-  # This logic should get replaced with `is_global` attribute exists on aval.
-  local_in_avals = global_to_local(out_positional_semantics, resource_env.physical_mesh,
-                                   jaxpr.in_avals, in_axis_resources)
-  # TODO(yashkatariya): Passing positional_semantics is a hack. This should go
-  # away when avals have is_global attribute.
   return pxla.lower_mesh_computation(
       fun, name, resource_env.physical_mesh,
       in_axes, out_axes, donated_invars,
-      True, local_in_avals, tile_by_mesh_axes=False)
+      True, jaxpr.in_avals, tile_by_mesh_axes=False)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env,
