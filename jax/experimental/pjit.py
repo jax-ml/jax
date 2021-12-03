@@ -32,6 +32,7 @@ from jax._src.api_util import (argnums_partial_except, flatten_axes,
                                shaped_abstractify)
 from jax.errors import JAXTypeError
 from jax.interpreters import ad
+from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax.interpreters import batching
@@ -510,13 +511,14 @@ def _pjit_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
   subc = xc.XlaBuilder(f"pjit_{name}")
 
   args = []
-  for i, (n, axis_resources) in enumerate(safe_zip(in_nodes, in_axis_resources)):
+  for i, (n, aval, axis_resources) in enumerate(
+      safe_zip(in_nodes, avals_in, in_axis_resources)):
     # N.B. inlined calls shouldn't have shardings set directly on the inputs or
     # outputs (set_sharding_proto adds an identity operation).
     arg = xla.parameter(subc, i, ctx.builder.GetShape(n))
     args.append(
         xla.set_sharding_proto(
-            subc, arg, get_sharding_proto(ctx.builder, n, axis_resources, mesh)))
+            subc, arg, get_aval_sharding_proto(aval, axis_resources, mesh)))
 
   # TODO: Think about how to avoid duplicating constants with the outer jaxpr
   sub_ctx = ctx.replace(
@@ -526,8 +528,9 @@ def _pjit_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
       sub_ctx, jaxpr.jaxpr, xla._xla_consts(subc, jaxpr.consts), *args)
   out_nodes = [
       xla.set_sharding_proto(subc, out,
-                            get_sharding_proto(subc, out, axis_resources, mesh))
-      for out, axis_resources in safe_zip(out_nodes, out_axis_resources)
+                             get_aval_sharding_proto(aval, axis_resources, mesh))
+      for out, aval, axis_resources in safe_zip(
+          out_nodes, avals_out, out_axis_resources)
   ]
 
   subc = subc.build(xops.Tuple(subc, out_nodes))
@@ -815,11 +818,21 @@ ad.deflinear2(sharding_constraint_p,
 
 def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node, *,
                                           axis_resources, resource_env):
+  aval, = avals_in
   mesh = resource_env.physical_mesh
   return [xla.set_sharding_proto(
-      ctx.builder, x_node,
-      get_sharding_proto(ctx.builder, x_node, axis_resources, mesh))]
+      ctx.builder, x_node, get_aval_sharding_proto(aval, axis_resources, mesh))]
 xla.register_translation(sharding_constraint_p, _sharding_constraint_translation_rule)
+
+def _sharding_constraint_mhlo_lowering(ctx, avals_in, avals_out, x_node, *,
+                                       axis_resources, resource_env):
+  aval, = avals_in
+  mesh = resource_env.physical_mesh
+  return [mlir.wrap_with_sharding_op(
+      x_node, get_aval_sharding_proto(aval, axis_resources, mesh))]
+mlir.register_lowering(sharding_constraint_p,
+                       _sharding_constraint_mhlo_lowering)
+
 
 def _sharding_constraint_batcher(insert_axis, axis_size, axis_name, main_type, vals_in, dims_in,
                                  axis_resources, resource_env):
@@ -848,16 +861,6 @@ def get_array_mapping(axis_resources: ParsedPartitionSpec) -> pxla.ArrayMapping:
   return OrderedDict((axis, i)
                      for i, axes in enumerate(axis_resources)
                      for axis in axes)
-
-def get_sharding_proto(c, xla_op, axis_resources: ParsedPartitionSpec,
-                       mesh: maps.Mesh) -> xc.OpSharding:
-  xla_shape = c.GetShape(xla_op)
-  if xla_shape.is_token():
-    aval = core.abstract_token
-    assert axis_resources is REPLICATED
-  else:
-    aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.element_type())  # type: ignore
-  return get_aval_sharding_proto(aval, axis_resources, mesh)
 
 
 def get_aval_sharding_proto(aval: core.AbstractValue,

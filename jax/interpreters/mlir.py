@@ -315,9 +315,13 @@ def flatten_lowering_ir_args(
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
-def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
-                          axis_env: xla.AxisEnv, name_stack: str,
-                          donated_args: Sequence[bool]) -> str:
+def lower_jaxpr_to_module(
+    jaxpr: core.ClosedJaxpr, platform: str, axis_env: xla.AxisEnv,
+    name_stack: str, donated_args: Sequence[bool],
+    replicated_args: Optional[Sequence[bool]] = None,
+    arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
+    result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None
+    ) -> str:
   """Lowers a top-level jaxpr to an MHLO module.
 
   Handles the quirks of the argument/return value passing conventions of the
@@ -338,15 +342,16 @@ def lower_jaxpr_to_module(jaxpr: core.ClosedJaxpr, platform: str,
     # TODO(phawkins): represent units with zero buffers at the runtime level.
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, public=True, replace_units_with_dummy=True,
-        replace_tokens_with_dummy=True,
+        replace_tokens_with_dummy=True, replicated_args=replicated_args,
+        arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)
+
 
   ctx.module.operation.verify()
   output = io.StringIO()
   ctx.module.operation.print(file=output, #enable_debug_info=True,
                              print_generic_op_form=False)
   return output.getvalue()
-
 
 def _set_up_aliases(avals_in, avals_out, donated_args):
   input_output_aliases = [None] * len(avals_in)
@@ -365,12 +370,15 @@ def _set_up_aliases(avals_in, avals_out, donated_args):
 
   return input_output_aliases, out_donated_args
 
-
 def lower_jaxpr_to_fun(
     ctx: LoweringContext, name: str, jaxpr: core.ClosedJaxpr, *,
     public: bool = False, replace_units_with_dummy: bool = False,
     replace_tokens_with_dummy: bool = False,
-    input_output_aliases: Optional[Sequence[Optional[int]]] = None) -> str:
+    replicated_args: Optional[Sequence[bool]] = None,
+    arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
+    result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
+    input_output_aliases: Optional[Sequence[Optional[int]]] = None
+  ) -> builtin.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -385,6 +393,9 @@ def lower_jaxpr_to_fun(
       replaced with bool arrays of size [0].
     replace_tokens_with_dummy: if true, token arguments/return values are
       replaced with bool arrays of size [0].
+    replicated_args: if present, annotates arguments as replicated.
+    arg_shardings: sharding annotations for each argument (optional).
+    result_shardings: sharding annotations for each argument (optional).
     input_output_aliases: optional sequence that maps argument numbers to the
       corresponding output that should alias them.
   Returns the name of the function.
@@ -404,11 +415,27 @@ def lower_jaxpr_to_fun(
   func_op = builtin.FuncOp(name, ftype, ip=ctx.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
       "public" if public else "private")
-  symbol_name = ir.StringAttr(ctx.symbol_table.insert(func_op)).value
-
-  if input_output_aliases is not None:
+  ctx.symbol_table.insert(func_op)
+  if (replicated_args is not None or arg_shardings is not None
+      or input_output_aliases is not None):
     arg_attrs: List[Dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
+
+    if replicated_args is not None:
+      replicated_ir_args = [[replicated] * len(types) for replicated, types
+                            in zip(replicated_args, input_types)]
+      for attrs, replicated in zip(arg_attrs, util.flatten(replicated_ir_args)):
+        if replicated:
+          attrs["mhlo.is_same_data_across_replicas"] = ir.UnitAttr.get()
+
+    if arg_shardings is not None:
+      ir_arg_shardings = [[sharding] * len(types) for sharding, types
+                          in zip(arg_shardings, input_types)]
+      for attrs, sharding in zip(arg_attrs, util.flatten(ir_arg_shardings)):
+        if sharding is not None:
+          attrs["mhlo.sharding"] = ir.StringAttr.get(
+              sharding.SerializeToString())
+
     if input_output_aliases is not None:
       output_ids = util.unflatten(list(range(len(flat_output_types))),
                                   map(len, output_types))
@@ -422,8 +449,20 @@ def lower_jaxpr_to_fun(
       for attrs, alias in zip(arg_attrs, aliases):
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
+
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
+
+  if result_shardings is not None:
+    ir_result_shardings = util.flatten(
+        [[sharding] * len(types) for sharding, types
+         in zip(result_shardings, output_types)])
+    func_op.result_attrs = ir.ArrayAttr.get([
+        ir.DictAttr.get(
+            {} if sharding is None else
+            {"mhlo.sharding": ir.StringAttr.get(sharding.SerializeToString())}
+        ) for sharding in ir_result_shardings
+    ])
 
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
@@ -452,7 +491,7 @@ def lower_jaxpr_to_fun(
         outs.append(out)
     std.ReturnOp(util.flatten(outs))
 
-  return symbol_name
+  return func_op
 
 
 def jaxpr_subcomp(ctx: LoweringContext, jaxpr: core.Jaxpr,
@@ -553,7 +592,7 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   sub_ctx = ctx.replace(
       name_stack=xla.extend_name_stack(ctx.name_stack, stack_name))
   symbol_name = lower_jaxpr_to_fun(sub_ctx, fn_name,
-                                   core.ClosedJaxpr(call_jaxpr, ()))
+                                   core.ClosedJaxpr(call_jaxpr, ())).name.value
   call = std.CallOp(flat_output_types,
                     ir.FlatSymbolRefAttr.get(symbol_name),
                     flatten_lowering_ir_args(args))
@@ -623,10 +662,26 @@ min_mhlo = partial(_minmax_mhlo, mhlo.MinOp, "LT")
 max_mhlo = partial(_minmax_mhlo, mhlo.MaxOp, "GT")
 
 
+def wrap_with_sharding_op(x, sharding_proto: xc.OpSharding):
+  op = mhlo.CustomCallOp([x.type], [x],
+                         call_target_name=ir.StringAttr.get("Sharding"),
+                         has_side_effect=ir.BoolAttr.get(False),
+                         backend_config=ir.StringAttr.get(""),
+                         api_version=i32_attr(1),
+                         operand_layouts=None,
+                         result_layouts=None)
+  op.attributes["mhlo.sharding"] = ir.StringAttr.get(
+      sharding_proto.SerializeToString())
+  return op.result
+
+def set_sharding(op, sharding_proto: xc.OpSharding):
+  op.attributes["mhlo.sharding"] = ir.StringAttr.get(
+      sharding_proto.SerializeToString())
+
 # MLIR lowerings for lax primitives
 
 def xla_fallback_lowering(prim: core.Primitive, ctx: LoweringContext,
-                       avals_in, avals_out, *args, **params):
+                          avals_in, avals_out, *args, **params):
   xla_computation = xla.primitive_subcomputation(
       ctx.platform, ctx.axis_env, prim, *avals_in, **params)
   submodule_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)

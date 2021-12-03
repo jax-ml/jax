@@ -888,6 +888,13 @@ def stage_parallel_callable(
   return jaxpr, consts, replicas, parts, shards
 
 
+def _shardings_to_mlir_shardings(
+    shardings: Optional[Sequence['PartitionsOrReplicated']]
+    ) -> Optional[Sequence[Optional[xc.OpSharding]]]:
+  if shardings is None:
+    return None
+  return [xla.sharding_to_proto(s) for s in shardings]
+
 def lower_parallel_callable(
     fun: lu.WrappedFun,
     backend_name: Optional[str],
@@ -1001,10 +1008,11 @@ def lower_parallel_callable(
   module: Union[str, xc.XlaComputation]
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     if config.jax_enable_mlir:
-      # TODO(phawkins): handle replicated_args.
-      # TODO(phawkins): handle sharding.
       module = mlir.lower_jaxpr_to_module(
-          closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars)
+          closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars,
+          replicated_args=replicated_args,
+          arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
+          result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
     else:
       module = xla.lower_jaxpr_to_xla_module(
           f"pmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
@@ -1913,7 +1921,8 @@ def lower_mesh_computation(
 
   # 3. Build up the HLO
   tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
-  in_partitions: Optional[List]
+  in_partitions: Optional[List[Optional[xc.OpSharding]]]
+  out_partitions: Optional[List[Optional[xc.OpSharding]]]
   if spmd_lowering:
     replicated_args = [False] * len(in_jaxpr_avals)
     global_sharding_spec = mesh_sharding_specs(global_axis_sizes, mesh.axis_names)
@@ -1928,6 +1937,7 @@ def lower_mesh_computation(
   else:
     replicated_args = [not axis for axis in in_axes]
     in_partitions = None
+    out_partitions = None
     out_partitions_t = None
     partitions_proto = False
     axis_env = xla.AxisEnv(nreps=mesh.size,
@@ -1935,13 +1945,19 @@ def lower_mesh_computation(
                            sizes=tuple(global_axis_sizes.values()))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   name_stack = extend_name_stack(wrap_name(transformed_name, 'xmap'))
+  module: Union[str, xc.XlaComputation]
   with core.extend_axis_env_nd(mesh.shape.items()):
-    # TODO(phawkins): add MLIR lowering.
-    module = xla.lower_jaxpr_to_xla_module(
-        f"xmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
-        name_stack, tuple_args, donated_invars, replicated_args,
-        in_partitions, out_partitions_t,
-        partitions_are_protos=partitions_proto)
+    if config.jax_enable_mlir:
+      module = mlir.lower_jaxpr_to_module(
+          closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars,
+          replicated_args=replicated_args, arg_shardings=in_partitions,
+          result_shardings=out_partitions)
+    else:
+      module = xla.lower_jaxpr_to_xla_module(
+          f"xmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+          name_stack, tuple_args, donated_invars, replicated_args,
+          in_partitions, out_partitions_t,
+          partitions_are_protos=partitions_proto)
 
   return MeshComputation(
       module, donated_invars, mesh, local_in_untiled_avals,

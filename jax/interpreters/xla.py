@@ -129,7 +129,7 @@ def parameter(builder, num, shape, name=None, replicated=None):
 
 # HLO instructions optionally can be annotated to say how the output should be
 # spatially partitioned (represented in XLA as OpSharding protos, see
-# _sharding_to_proto). For array outputs, the annotation is either an int per
+# sharding_to_proto). For array outputs, the annotation is either an int per
 # dimension specifying the number of ways that dimension divided (i.e. the total
 # number of shards is the product), or None to indicate the array should be
 # replicated. Tuple outputs are represented as tuples thereof. XLA supports
@@ -138,9 +138,9 @@ def parameter(builder, num, shape, name=None, replicated=None):
 # nesting in this type definition.
 SpatialSharding = Union[Tuple[int, ...],
                         None,
-                        Tuple[Union[Tuple[int, ...], None], ...]]
+                        Tuple[Optional[Tuple[int, ...]], ...]]
 
-def _sharding_to_proto(sharding: SpatialSharding):
+def sharding_to_proto(sharding: SpatialSharding):
   """Converts a SpatialSharding to an OpSharding.
 
   See
@@ -150,7 +150,7 @@ def _sharding_to_proto(sharding: SpatialSharding):
   proto = xc.OpSharding()
   if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
     assert all(s is None or isinstance(s, tuple) for s in sharding)
-    return tuple_sharding_proto(list(map(_sharding_to_proto, sharding)))  # type: ignore
+    return tuple_sharding_proto(list(map(sharding_to_proto, sharding)))  # type: ignore
 
   if sharding is None:
     proto.type = xc.OpSharding.Type.REPLICATED
@@ -184,11 +184,12 @@ def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
 
 def set_sharding(builder, op, sharding: SpatialSharding):
   """Uses CustomCall to annotate a value as sharded."""
-  return set_sharding_proto(builder, op, _sharding_to_proto(sharding))
+  return set_sharding_proto(builder, op, sharding_to_proto(sharding))
 
 def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  return with_sharding_proto(builder, _sharding_to_proto(sharding), op_fn, *args, **kwargs)
+  return with_sharding_proto(builder, sharding_to_proto(sharding), op_fn, *args,
+                             **kwargs)
 
 
 ### handlers

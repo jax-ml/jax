@@ -37,6 +37,7 @@ from jax._src.api_util import (flatten_fun_nokwargs, flatten_axes,
 from jax._src import source_info_util
 from jax._src.config import config
 from jax.errors import JAXTypeError
+from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 from jax.interpreters import xla
@@ -851,7 +852,7 @@ class XMapPrimitive(core.MapPrimitive):  # Not really a map, but it gives us a f
     self.def_custom_bind(self.bind)
 
   def bind(self, fun, *args, **params):
-    assert len(params['in_axes']) == len(args)
+    assert len(params['in_axes']) == len(args), (params['in_axes'], args)
     return core.call_bind(self, fun, *args, **params)  # type: ignore
 
   def process(self, trace, fun, tracers, params):
@@ -1289,6 +1290,147 @@ def _xmap_initial_to_final_params(params):
 core.initial_to_final_param_rules[xmap_p] = _xmap_initial_to_final_params
 
 # -------- nested xmap handling --------
+
+def _xmap_lowering_rule(*args, **kwargs):
+  if config.experimental_xmap_spmd_lowering:
+    return _xmap_lowering_rule_spmd(*args, **kwargs)
+  else:
+    return _xmap_lowering_rule_replica(*args, **kwargs)
+mlir.register_lowering(xmap_p, _xmap_lowering_rule)
+
+def _xmap_lowering_rule_replica(ctx, avals_in, avals_out, *in_nodes,
+                                   call_jaxpr, name,
+                                   in_axes, out_axes, donated_invars,
+                                   global_axis_sizes,
+                                   spmd_in_axes, spmd_out_axes,
+                                   positional_semantics,
+                                   axis_resources, resource_env, backend):
+  xla.check_backend_matches(backend, ctx.platform)
+  # The only way for any of those two assertions to be violated is when xmap
+  # is using the SPMD lowering, but then this rule shouldn't even trigger.
+  assert positional_semantics == _PositionalSemantics.LOCAL
+  assert spmd_in_axes is None and spmd_out_axes is None
+  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env, global_axis_sizes)
+
+  axis_resource_count = _get_axis_resource_count(positional_semantics, axis_resources, resource_env)
+  if any(resource_count.distributed for resource_count in axis_resource_count.values()):
+    raise NotImplementedError
+  local_axis_sizes = {axis: axis_resource_count[axis].to_local(global_size)
+                      for axis, global_size in global_axis_sizes.items()}
+
+  local_mesh = resource_env.physical_mesh.local_mesh
+  local_mesh_shape = local_mesh.shape
+  mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
+
+  local_avals = [pxla.tile_aval_nd(
+                    local_mesh_shape, aval_mesh_in_axes,
+                    _insert_aval_axes(v.aval, aval_in_axes, local_axis_sizes))
+                 for v, aval_in_axes, aval_mesh_in_axes
+                 in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
+  # We have to substitute before tracing, because we want the vectorized
+  # axes to be used in the jaxpr.
+  resource_call_jaxpr = plan.subst_axes_with_resources(call_jaxpr)
+  f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
+  f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
+  f = plan.vectorize_and_loop(f, in_axes, out_axes)
+  # NOTE: We don't extend the resource env with the mesh shape, because those
+  #       resources are already in scope! It's the outermost xmap that introduces
+  #       them!
+  vectorized_jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(f, local_avals)
+  _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
+  assert not consts
+
+  tiled_ins = (
+      mlir.lower_fun(
+          partial(_tile, in_axes=arg_in_axes, axis_sizes=local_mesh_shape),
+          multiple_results=False)(ctx, [aval], None, in_node)[0]
+      if v.aval is not core.abstract_unit else in_node
+      for v, aval, in_node, arg_in_axes
+      in zip(call_jaxpr.invars, avals_in, in_nodes, mesh_in_axes))
+
+  # NOTE: We don't extend the resource env with the mesh shape, because those
+  #       resources are already in scope! It's the outermost xmap that introduces
+  #       them!
+  # We in-line here rather than generating a Call HLO as in the xla_call
+  # translation rule just because the extra tuple stuff is a pain.
+  sub_ctx = ctx.replace(
+      name_stack=xla.extend_name_stack(ctx.name_stack,
+                                       xla.wrap_name(name, 'xmap')))
+  tiled_outs = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (), *tiled_ins)
+
+  outs = [
+      mlir.lower_fun(
+          partial(_untile, out_axes=ans_out_axes, axis_sizes=local_mesh_shape,
+                  platform=ctx.platform),
+          multiple_results=False)(
+          ctx, [vectorized_outvar.aval], None, tiled_out
+      )[0]
+      if v.aval is not core.abstract_unit else tiled_out
+      for v, vectorized_outvar, tiled_out, ans_out_axes
+      in zip(call_jaxpr.outvars, vectorized_jaxpr.outvars, tiled_outs,
+             mesh_out_axes)]
+  return outs
+
+
+def _xmap_lowering_rule_spmd(ctx, avals_in, avals_out, *global_in_nodes,
+                             call_jaxpr, name, in_axes, out_axes,
+                             donated_invars, global_axis_sizes, spmd_in_axes,
+                             spmd_out_axes, positional_semantics,
+                             axis_resources, resource_env, backend):
+  xla.check_backend_matches(backend, ctx.platform)
+  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env, global_axis_sizes)
+
+  resource_call_jaxpr = plan.subst_axes_with_resources(call_jaxpr)
+  f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
+  f = hide_mapped_axes(f, in_axes, out_axes)
+  f = plan.vectorize_and_loop(f, in_axes, out_axes)
+  mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
+  mesh = resource_env.physical_mesh
+  f = pxla.vtile_by_mesh(f, mesh, mesh_in_axes, mesh_out_axes)
+
+  # XXX: We modify mesh_in_axes and mesh_out_axes here
+  def add_spmd_axes(flat_mesh_axes: Sequence[pxla.ArrayMapping],
+                    flat_extra_axes: Optional[Sequence[Sequence[Sequence[pxla.MeshAxisName]]]]):
+    if flat_extra_axes is None:
+      return
+    for axes, extra in zip(flat_mesh_axes, flat_extra_axes):
+      for dim, dim_extra_axis in enumerate(extra):
+        if dim_extra_axis is None: continue
+        assert dim_extra_axis not in axes
+        assert not config.jax_enable_checks or all(v != dim for v in axes.values())
+        axes[dim_extra_axis] = dim
+  add_spmd_axes(mesh_in_axes, spmd_in_axes)
+  add_spmd_axes(mesh_out_axes, spmd_out_axes)
+  # NOTE: We don't extend the resource env with the mesh shape, because those
+  #       resources are already in scope! It's the outermost xmap that introduces
+  #       them!
+  global_in_avals = avals_in
+  vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
+  assert not consts
+
+  global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
+  sharded_global_in_nodes = [
+    [mlir.wrap_with_sharding_op(node, global_sharding_spec(aval, aval_axes).sharding_proto())]
+    if aval_axes else [node]
+    for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
+  ]
+
+  # We in-line here rather than generating a Call HLO as in the xla_call
+  # translation rule just because the extra tuple stuff is a pain.
+  sub_ctx = ctx.replace(
+      name_stack=xla.extend_name_stack(ctx.name_stack,
+                                       xla.wrap_name(name, 'xmap')))
+  global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
+                                        *sharded_global_in_nodes)
+
+  sharded_global_out_nodes = [
+    mlir.wrap_with_sharding_op(node, global_sharding_spec(aval, aval_axes).sharding_proto())
+    if aval_axes else node
+    for (node,), aval, aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
+  ]
+
+  return sharded_global_out_nodes
+
 
 def _xmap_translation_rule(*args, **kwargs):
   if config.experimental_xmap_spmd_lowering:

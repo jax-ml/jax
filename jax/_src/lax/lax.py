@@ -3939,7 +3939,6 @@ xla.register_translation(infeed_p, _infeed_translation_rule)
 
 
 def _infeed_lowering(ctx, avals_in, avals_out, token, *, shapes, partitions):
-  assert partitions is None, partitions  # TODO(phawkins): implement me.
   output_types = safe_map(mlir.aval_to_ir_types, avals_out[:-1])
   flat_output_types = util.flatten(output_types)
   output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
@@ -3953,12 +3952,14 @@ def _infeed_lowering(ctx, avals_in, avals_out, token, *, shapes, partitions):
   ])
   output_and_token_tuple_type = ir.TupleType.get_tuple(
       [output_tuple_type, mhlo.TokenType.get()])
-  outs_and_token = mhlo.InfeedOp(
+  infeed = mhlo.InfeedOp(
       output_and_token_tuple_type, token, ir.StringAttr.get(""),
-      layouts).result
-  outs_tuple = mhlo.GetTupleElementOp(output_tuple_type, outs_and_token,
+      layouts)
+  if partitions is not None:
+    mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
+  outs_tuple = mhlo.GetTupleElementOp(output_tuple_type, infeed.result,
                                       mlir.i32_attr(0)).result
-  token = mhlo.GetTupleElementOp(mhlo.TokenType.get(), outs_and_token,
+  token = mhlo.GetTupleElementOp(mhlo.TokenType.get(), infeed.result,
                                  mlir.i32_attr(1)).result
   outs = [mhlo.GetTupleElementOp(typ, outs_tuple, mlir.i32_attr(i)).result
           for i, typ in enumerate(flat_output_types)]
@@ -4002,15 +4003,17 @@ xla.register_translation(outfeed_p, _outfeed_translation_rule)
 
 
 def _outfeed_lowering(ctx, avals_in, avals_out, token, *xs, partitions):
-  assert partitions is None, partitions  # TODO(phawkins): implement me.
   token_aval = avals_in[0]
   xs_avals = avals_in[1:]
   input_types = map(mlir.aval_to_ir_types, xs_avals)
   flat_input_types = util.flatten(input_types)
   input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
   tup = mhlo.TupleOp(input_tuple_type, mlir.flatten_lowering_ir_args(xs)).result
-  return mhlo.OutfeedOp(mlir.aval_to_ir_type(token_aval), tup, token,
-                        ir.StringAttr.get("")).results
+  outfeed = mhlo.OutfeedOp(mlir.aval_to_ir_type(token_aval), tup, token,
+                        ir.StringAttr.get(""))
+  if partitions is not None:
+    mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
+  return outfeed.results
 
 mlir.register_lowering(outfeed_p, _outfeed_lowering)
 
