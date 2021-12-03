@@ -514,15 +514,17 @@ class Lowered:
     self.donate_argnums = donate_argnums
     self._no_kwargs = no_kwargs
 
-  def _xla_computation(self):
-    # TODO(frostig): finalize API. For now, return the underlying
-    # computation directly via this method.
-    return self._lowering.hlo()
-
   def compile(self) -> 'Compiled':
     return Compiled(
         self._lowering.compile(), self.in_tree, self.out_tree,
         self.donate_argnums, self._no_kwargs)
+
+  def compiler_ir(self):
+    return self._lowering.hlo()
+
+  # TODO(frostig): remove this in favor of `compiler_ir`
+  def _xla_computation(self):
+    return self._lowering.hlo()
 
 
 class Compiled:
@@ -551,6 +553,19 @@ class Compiled:
     self.out_tree = out_tree
     self.donate_argnums = donate_argnums
     self._no_kwargs = no_kwargs
+
+  def compiler_ir(self):
+    """Post-compilation IR.
+
+    Compilation typically involves code transformation and
+    optimization. This method exists to reflect the compiler's
+    representation of the program after such passes, whenever
+    possible.
+    """
+    return self._executable.xla_executable().hlo_modules()
+
+  def runtime_executable(self):
+    return self._executable.xla_executable()
 
   def _xla_executable(self):
     # TODO(frostig): finalize API. For now, return the underlying
