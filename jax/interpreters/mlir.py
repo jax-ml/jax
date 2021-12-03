@@ -59,9 +59,13 @@ def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
   return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
 
 def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
+  a = np.packbits(np.array(xs, np.bool_), bitorder='little')
+  # TODO(b/209005197): Work around for MLIR crash for non-splat single element
+  # buffers.
+  if len(xs) == 1:
+    a = np.array(0 if a.item() == 0 else 0xff, np.uint8)
   return ir.DenseElementsAttr.get(
-      np.packbits(np.array(xs, np.bool_), bitorder='little'),
-      type=ir.IntegerType.get_signless(1), shape=[len(xs)])
+      a, type=ir.IntegerType.get_signless(1), shape=[len(xs)])
 
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
@@ -175,7 +179,12 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
   aval = xla.abstractify(x)
   ir_type = aval_to_ir_type(aval)
   if x.dtype == np.bool_:
+    nelems = x.size
     x = np.packbits(x, bitorder='little')
+    # TODO(b/209005197): Work around for MLIR crash for non-splat single element
+    # buffers.
+    if nelems == 1:
+      x = np.array(0 if x.item() == 0 else 0xff, np.uint8)
   elif x.dtype == dtypes.bfloat16:
     x = x.view(np.uint16)
   x = np.ascontiguousarray(x)
