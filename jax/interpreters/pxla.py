@@ -1651,8 +1651,8 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
       x = mhlo.ConvertOp(mlir.aval_to_ir_type(aval), x).result
 
     dims = list(aval.shape)
-    padded = mlir.full_like_aval(
-        0, aval.update(shape=[axis_env.sizes[-1]] + dims))
+    padded_aval = aval.update(shape=[axis_env.sizes[-1]] + dims)
+    padded = mlir.full_like_aval(0, padded_aval)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index_mhlo(axis_env)] + [zero] * len(dims)
     padded = mhlo.DynamicUpdateSliceOp(
@@ -1671,13 +1671,14 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
       transposed_dims = list(dims)
       transposed_dims.insert(out_axis, axis_env.sizes[-1])
       aval = aval.update(shape=transposed_dims)
-      out = mhlo.TransposeOp(aval, out, mlir.dense_int_elements(perm)).result
+      out = mhlo.TransposeOp(mlir.aval_to_ir_type(aval), out,
+                             mlir.dense_int_elements(perm)).result
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
-      float_zero, = mlir.full_like_aval(0, aval)
+      float_zero = mlir.full_like_aval(0, padded_aval)
       out = mhlo.CompareOp(
-          mlir.aval_to_ir_type(aval.update(dtype=np.dtype(np.bool_))),
+          mlir.aval_to_ir_type(padded_aval.update(dtype=np.dtype(np.bool_))),
           out, float_zero, ir.StringAttr.get("NE"),
           ir.StringAttr.get("FLOAT")).result
     return out

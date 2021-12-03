@@ -2196,6 +2196,23 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     expected = x * 2
     self.assertAllClose(ans, expected)
 
+  def testNestedPmapsBools(self):
+    if jax.device_count() % 2 != 0:
+      raise SkipTest
+
+    # Devices specified in outer pmap are OK
+    @partial(pmap, axis_name='i', devices=jax.devices())
+    def foo(x):
+      @partial(pmap, axis_name='j')
+      def bar(y):
+        return jnp.logical_not(y)
+      return bar(x)
+
+    x = jnp.ones((jax.device_count() // 2, 2), jnp.bool_)
+    ans = foo(x)
+    expected = jnp.zeros((jax.device_count() // 2, 2), jnp.bool_)
+    self.assertAllClose(ans, expected)
+
   def testNestedPmapsError(self):
     # Devices specified in inner pmap not OK
     @partial(pmap, axis_name='i')
