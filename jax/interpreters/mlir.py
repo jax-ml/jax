@@ -544,12 +544,13 @@ def jaxpr_subcomp(ctx: LoweringContext, jaxpr: core.Jaxpr,
         rule = _platform_specific_lowerings[ctx.platform][eqn.primitive]
       elif eqn.primitive in _lowerings:
         rule = _lowerings[eqn.primitive]
-      elif eqn.primitive in xla._translations:
+      elif (eqn.primitive in xla._translations or
+            eqn.primitive in xla._backend_specific_translations[ctx.platform]):
         rule = partial(xla_fallback_lowering, eqn.primitive)
       else:
         raise NotImplementedError(
             f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
-            "found")
+            f"found for platform {ctx.platform}")
 
       ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
                  *map(_unwrap_singleton_ir_values, in_nodes),
