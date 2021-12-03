@@ -101,9 +101,9 @@ def _generate_bcoo_dot_general_properties(shapes, dtypes) -> BcooDotGeneralPrope
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 
 
-def rand_sparse(rng, nse=0.5, post=lambda x: x):
+def rand_sparse(rng, nse=0.5, post=lambda x: x, rand_method=jtu.rand_default):
   def _rand_sparse(shape, dtype, nse=nse):
-    rand = jtu.rand_default(rng)
+    rand = rand_method(rng)
     size = np.prod(shape)
     if 0 <= nse < 1:
       nse = nse * size
@@ -1205,21 +1205,23 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(result_dense, result_sparse_jit.todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_nbatch={}_ndense={}_nse={}".format(
-        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, nse),
-       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense, "nse": nse}
+      {"testcase_name": "_{}_nbatch={}_ndense={}_nse={}_remove_zeros={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, nse, remove_zeros),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense,
+       "nse": nse, "remove_zeros": remove_zeros}
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)
-      for nse in [None, np.prod(shape) - 1]))
-  def test_bcoo_sum_duplicates(self, shape, dtype, n_batch, n_dense, nse):
+      for nse in [None, np.prod(shape) - 1]
+      for remove_zeros in [True, False]))
+  def test_bcoo_sum_duplicates(self, shape, dtype, n_batch, n_dense, nse, remove_zeros):
     rng = self.rng()
-    rng_sparse = rand_sparse(self.rng())
+    rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
     M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
     for i, s in enumerate(shape[n_batch:len(shape) - n_dense]):
-      M.indices = M.indices.at[..., i, :].set(rng.randint(0, s, size=M.indices.shape[-1]))
-    dedupe = partial(M.sum_duplicates, nse=nse)
+      M.indices = M.indices.at[..., i].set(rng.randint(0, s, size=M.nse))
+    dedupe = partial(M.sum_duplicates, nse=nse, remove_zeros=remove_zeros)
     jit_dedupe = jax.jit(dedupe)
 
     M_dedup = dedupe()
@@ -1243,6 +1245,20 @@ class BCOOTest(jtu.JaxTestCase):
     y2 = y.sum_duplicates()
     self.assertEqual(y2.nse, 3)
     self.assertArraysEqual(y.todense(), y2.todense())
+
+  def test_bcoo_sum_duplicates_remove_zeros(self):
+    data = jnp.array([0, 1, 0, 0])
+    indices = jnp.array([[0], [1], [2], [3]])
+    x = sparse.BCOO((data, indices), shape=(4,))
+    self.assertEqual(x.nse, 4)
+
+    y1 = x.sum_duplicates(remove_zeros=True)
+    self.assertArraysEqual(x.todense(), y1.todense())
+    self.assertEqual(y1.nse, 1)
+
+    y2 = x.sum_duplicates(remove_zeros=False)
+    self.assertArraysEqual(x.todense(), y2.todense())
+    self.assertEqual(y2.nse, x.nse)
 
   def test_bcoo_sum_duplicates_padding(self):
     # Regression test for https://github.com/google/jax/issues/8163

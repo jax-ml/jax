@@ -5618,14 +5618,21 @@ def _unique(ar, axis, return_index=False, return_inverse=False, return_counts=Fa
   """
   Find the unique elements of an array along a particular axis.
   """
+  if ar.shape[axis] == 0 and size and fill_value is None:
+    raise ValueError(
+      "jnp.unique: for zero-sized input with nonzero size argument, fill_value must be specified")
+
   aux, mask, perm = _unique_sorted_mask(ar, axis)
   ind = mask if size is None else nonzero(mask, size=size)[0]
   result = aux[ind] if aux.size else aux
   if fill_value is not None:
     fill_value = asarray(fill_value, dtype=result.dtype)
   if size is not None and fill_value is not None:
-    valid = lax.expand_dims(arange(size) < mask.sum(), tuple(range(1, result.ndim)))
-    result = where(valid, result, fill_value)
+    if result.shape[0]:
+      valid = lax.expand_dims(arange(size) < mask.sum(), tuple(range(1, result.ndim)))
+      result = where(valid, result, fill_value)
+    else:
+      result = full_like(result, fill_value, shape=(size, *result.shape[1:]))
   result = moveaxis(result, 0, axis)
 
   ret = (result,)

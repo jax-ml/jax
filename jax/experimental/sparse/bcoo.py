@@ -73,12 +73,13 @@ def _bcoo_nse(mat, n_batch=0, n_dense=0):
   mask = mask.sum(list(range(n_batch, mask.ndim)))
   return mask.max()
 
-def _bcoo_sum_duplicates(data, indices, shape, nse=None):
+def _bcoo_sum_duplicates(data, indices, shape, nse=None, remove_zeros=True):
   if nse is None and isinstance(jnp.array(0), core.Tracer):
     raise ValueError("When used with JIT, vmap, or another transform, sum_duplicates() "
                      "requires passing a non-None value for the nse argument.")
   props = _validate_bcoo(data, indices, shape)
-  f = functools.partial(_bcoo_sum_duplicates_unbatched, shape=shape[props.n_batch:], nse=nse)
+  f = functools.partial(_bcoo_sum_duplicates_unbatched, shape=shape[props.n_batch:],
+                        nse=nse, remove_zeros=remove_zeros)
   for _ in range(props.n_batch):
     f = broadcasting_vmap(f)
   data_unique, indices_unique, nse_out = f(data, indices)
@@ -88,21 +89,29 @@ def _bcoo_sum_duplicates(data, indices, shape, nse=None):
     indices_unique = lax.slice_in_dim(indices_unique, 0, nse, axis=props.n_batch)
   return data_unique, indices_unique
 
-def _bcoo_sum_duplicates_unbatched(data, indices, *, shape, nse):
+def _bcoo_sum_duplicates_unbatched(data, indices, *, shape, nse, remove_zeros):
   props = _validate_bcoo(data, indices, shape)
+  assert props.n_batch == 0
   if not props.n_sparse:
     nse = 1 if nse is None else nse
     data_unique = jnp.zeros_like(data, shape=(nse, *data.shape[1:])).at[0].set(data.sum(0))
     indices_unique = jnp.zeros_like(indices, shape=(nse, 0))
     return data_unique, indices_unique, nse
+  fill_value = jnp.array(shape[:props.n_sparse], dtype=indices.dtype)
+  out_of_bounds = (indices >= fill_value).any(-1, keepdims=True)
+  if remove_zeros:
+    data_all_zero = (data == 0).all(range(props.n_batch + 1, data.ndim))[:, None]
+    out_of_bounds = out_of_bounds | data_all_zero
+  indices = jnp.where(out_of_bounds, fill_value, indices)
   if nse is None:
     indices_unique, inv_idx, nse = _unique(
       indices, axis=0, return_inverse=True, return_true_size=True,
-      size=props.nse, fill_value=jnp.array(shape[:props.n_sparse]))
+      size=props.nse, fill_value=fill_value)
+    nse = nse - (indices == fill_value).any()
   else:
     indices_unique, inv_idx = jnp.unique(
-      indices, axis=0, return_inverse=True, size=nse,
-      fill_value=jnp.array(shape[:props.n_sparse]))
+      indices, axis=0, return_inverse=True,
+      size=nse, fill_value=fill_value)
   data_shape = [indices_unique.shape[0], *data.shape[1:]]
   data_unique = jnp.zeros(data_shape, data.dtype).at[inv_idx].add(data)
   oob_mask = jnp.all(indices_unique == jnp.array(shape[:props.n_sparse]), 1)
@@ -1070,7 +1079,7 @@ class BCOO(JAXSparse):
     warnings.warn("_dedupe() is deprecated. Use sum_duplicates() instead.", FutureWarning)
     return self.sum_duplicates(nse=self.nse)
 
-  def sum_duplicates(self, nse=None):
+  def sum_duplicates(self, nse=None, remove_zeros=True):
     """Return a copy of the array with duplicate indices summed.
 
     Additionally, this operation will result in explicit zero entries removed, and
@@ -1086,8 +1095,12 @@ class BCOO(JAXSparse):
         the output sparse representation; if it is larger than the number required, data
         will be padded with zeros and indices will be padded with out-of-bounds values.
         If it is smaller than the number required, data will be silently discarded.
+      remove_zeros : bool (default=True). If True, remove explicit zeros from the data
+        as part of summing duplicates. If False, then explicit zeros at unique indices
+        will remain among the specified elements.
     """
-    data, indices = _bcoo_sum_duplicates(self.data, self.indices, self.shape, nse=nse)
+    data, indices = _bcoo_sum_duplicates(self.data, self.indices, self.shape,
+                                         nse=nse, remove_zeros=remove_zeros)
     return BCOO((data, indices), shape=self.shape)
 
   def todense(self):
