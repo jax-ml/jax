@@ -34,6 +34,7 @@ from jax import core
 from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src import profiler
 from jax import linear_util as lu
 from jax._src import source_info_util
 from jax._src.abstract_arrays import (make_shaped_array, array_types)
@@ -45,7 +46,6 @@ from jax._src import util
 from jax._src.util import (prod, extend_name_stack, wrap_name,
                            safe_zip, safe_map, partition_list)
 from jax._src.lib import xla_client as xc
-from jax._src.profiler import annotate_function
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
 
@@ -738,7 +738,7 @@ def set_up_aliases(c, xla_args, out_shape: XlaShape, donated_args, tuple_args):
   return tuple(out_donated_args)
 
 
-@annotate_function
+@profiler.annotate_function
 def lower_jaxpr_to_xla_module(
     fn_name: str, jaxpr: core.ClosedJaxpr, platform: str, axis_env: AxisEnv,
     name_stack: str, tuple_args: bool, donated_invars: Sequence[bool],
