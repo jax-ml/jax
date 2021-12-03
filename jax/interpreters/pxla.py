@@ -425,7 +425,8 @@ def aval_to_result_handler(
       for non-array avals.
     indices: The pre-computed result of spec_to_indices, or None for non-array
       avals.
-    aval: The output AbstractValue.
+    aval: The output AbstractValue. Can be global or local depending on whether
+      `jax_gsda_out` flag is enabled or not.
     out_axis_resources: A tuple specifying the sharding of outputs.
       Used for creating GSDAs.
     global_mesh: The global device mesh that generated this output. Used
@@ -1148,7 +1149,7 @@ class PmapExecutable:
         if aval is not core.abstract_unit else None
         for out_parts, aval, out_axis in safe_zip(
             local_out_parts, local_out_avals, pci.out_axes)]
-    handle_outs = avals_to_results_handler(out_specs, local_unmapped_avals)
+    handle_outs = local_avals_to_results_handler(out_specs, local_unmapped_avals)
 
     if hasattr(pci.backend, "compile_replicated"):
       execute_fun = pci.backend.compile_replicated(
@@ -1344,38 +1345,44 @@ class ResultsHandler:
     return [h(bufs) for h, bufs in safe_zip(self.handlers, out_bufs)]
 
 
-def avals_to_results_handler(
+def local_avals_to_results_handler(
     local_out_specs: Sequence[Optional[ShardingSpec]],
-    unmapped_local_out_avals: Sequence[Optional[ShapedArray]],
-    global_out_avals: Optional[Sequence[ShapedArray]] = None,
-    out_axes: Optional[Sequence[ArrayMapping]] = None,
-    global_mesh=None):
+    unmapped_local_out_avals: Sequence[Optional[ShapedArray]]):
+  out_indices = [spec_to_indices(aval.shape, spec)
+                 if aval is not core.abstract_unit else None
+                 for aval, spec in safe_zip(unmapped_local_out_avals, local_out_specs)]  # pytype: disable=attribute-error
+  handlers = [
+      aval_to_result_handler(aval, sharding_spec=spec, indices=idcs)
+      for aval, spec, idcs in safe_zip(unmapped_local_out_avals, local_out_specs, out_indices)
+  ]
+  return ResultsHandler(handlers, local_out_specs, out_indices, unmapped_local_out_avals)
 
-  if (config.jax_gsda_out and out_axes is not None and
-      global_out_avals is not None and global_mesh is not None):
-    global_out_specs = [mesh_sharding_specs(global_mesh.shape, global_mesh.axis_names)(aval, oa)
+
+def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
+                                    out_axes: Sequence[ArrayMapping],
+                                    global_mesh):
+  if config.jax_gsda_out:
+    global_sharding_spec = mesh_sharding_specs(global_mesh.shape, global_mesh.axis_names)
+    global_out_specs = [global_sharding_spec(aval, oa)
                         for aval, oa in safe_zip(global_out_avals, out_axes)]
+    out_indices = [spec_to_indices(aval.shape, spec)
+                   if aval is not core.abstract_unit else None
+                   for aval, spec in safe_zip(global_out_avals, global_out_specs)]
     out_axis_resources = [array_mapping_to_axis_resources(o) for o in out_axes]
     handlers = [
         aval_to_result_handler(global_aval, out_axis_resources=out_axis, global_mesh=global_mesh)
         for global_aval, out_axis in safe_zip(global_out_avals, out_axis_resources)
     ]
-    return ResultsHandler(
-        handlers,
-        global_out_specs,
-        [spec_to_indices(aval.shape, spec)
-         if aval is not core.abstract_unit else None
-         for aval, spec in safe_zip(global_out_avals, global_out_specs)],
-        global_out_avals)
+    return ResultsHandler(handlers, global_out_specs, out_indices, global_out_avals)
   else:
-    out_indices = [spec_to_indices(aval.shape, spec)
-                   if aval is not core.abstract_unit else None
-                   for aval, spec in safe_zip(unmapped_local_out_avals, local_out_specs)]  # pytype: disable=attribute-error
-    handlers = [
-        aval_to_result_handler(aval, sharding_spec=spec, indices=idcs)
-        for aval, spec, idcs in safe_zip(unmapped_local_out_avals, local_out_specs, out_indices)
-    ]
-    return ResultsHandler(handlers, local_out_specs, out_indices, unmapped_local_out_avals)
+    local_sharding_spec = mesh_sharding_specs(global_mesh.local_mesh.shape, global_mesh.axis_names)
+    local_out_untiled_avals = [global_mesh.global_to_local(axis, aval)
+                               for axis, aval in safe_zip(out_axes, global_out_avals)]
+    local_out_specs = [local_sharding_spec(aval, oa)
+                       for aval, oa in safe_zip(local_out_untiled_avals, out_axes)]
+    return local_avals_to_results_handler(
+        local_out_specs, local_out_untiled_avals)
+
 
 def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   """Replicates ``val`` across multiple devices.
@@ -1756,7 +1763,7 @@ class Mesh:
 
   @property
   def is_multi_process(self):
-    return len(self.devices.flat) != len(self.local_devices)
+    return self.devices.size != len(self.local_devices)
 
   @maybe_cached_property
   def local_mesh(self):
@@ -1811,19 +1818,17 @@ class Mesh:
                           tile_aval_nd(self.shape, axes, aval))
 
 
-def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval, tiling_sizes=None):
-  if tiling_sizes is None:
-    tiling_sizes = axis_sizes
+def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   if aval is core.abstract_unit:
     return aval
   assert isinstance(aval, ShapedArray)
   shape = list(aval.shape)
   named_shape = dict(aval.named_shape)
   for name, axis in in_axes.items():
-    assert shape[axis] % tiling_sizes[name] == 0
+    assert shape[axis] % axis_sizes[name] == 0
     assert name not in named_shape
     named_shape[name] = axis_sizes[name]
-    shape[axis] //= tiling_sizes[name]
+    shape[axis] //= axis_sizes[name]
   return aval.update(shape=tuple(shape), named_shape=named_shape)
 
 def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
@@ -1890,8 +1895,7 @@ def lower_mesh_computation(
               in_axes)
 
   # 1. Trace to jaxpr and preprocess/verify it
-  in_tiled_avals = [tile_aval_nd(global_axis_sizes, aval_in_axes, aval,
-                                 tiling_sizes=global_axis_sizes)
+  in_tiled_avals = [tile_aval_nd(global_axis_sizes, aval_in_axes, aval)
                     for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)]
   if spmd_lowering:
     # TODO: Consider handling xmap's 'vectorize' in here. We can vmap once instead of vtile twice!
@@ -1983,10 +1987,8 @@ class MeshComputation:
           _allow_compile_replicated=_allow_compile_replicated)  # type: ignore
     return self._executable
 
-def _calc_host_local_info(global_in_avals, global_out_avals, mesh, in_axes, out_axes):
+def _get_input_specs_and_indices(global_in_avals, global_out_avals, mesh, in_axes, out_axes):
   if config.jax_gsda_out:
-    local_output_specs = [None] * len(out_axes)
-    local_out_untiled_avals = [None] * len(out_axes)
     input_specs = [mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, aval_in_axes)
                    if aval is not core.abstract_unit else None
                    for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)]
@@ -2004,11 +2006,8 @@ def _calc_host_local_info(global_in_avals, global_out_avals, mesh, in_axes, out_
     input_indices = [spec_to_indices(aval.shape, spec)
                      if spec is not None else None
                      for aval, spec in safe_zip(local_in_untiled_avals, input_specs)]
-    local_out_untiled_avals = [mesh.global_to_local(axis, aval)
-                               for axis, aval in safe_zip(out_axes, global_out_avals)]
-    local_output_specs = [local_sharding_spec(aval, aval_out_axes)
-                          for aval, aval_out_axes in safe_zip(local_out_untiled_avals, out_axes)]
-  return input_specs, input_indices, local_output_specs, local_out_untiled_avals
+
+  return input_specs, input_indices
 
 
 class MeshExecutable:
@@ -2050,12 +2049,11 @@ class MeshExecutable:
     compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
         _allow_propagation_to_outputs
 
-    input_specs, input_indices, local_output_specs, local_out_untiled_avals = _calc_host_local_info(
+    input_specs, input_indices = _get_input_specs_and_indices(
         global_in_avals, global_out_avals, mesh, in_axes, out_axes)
     # Calculate local information here instead of calculating it in
     # `avals_to_results_handler` because pmap also uses this function.
-    handle_outs = avals_to_results_handler(local_output_specs, local_out_untiled_avals,
-                                           global_out_avals, out_axes, mesh)
+    handle_outs = global_avals_to_results_handler(global_out_avals, out_axes, mesh)
 
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       unsafe_call = backend.compile_replicated(

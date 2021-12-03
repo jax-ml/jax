@@ -300,8 +300,9 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   # be global. This split is because non-contiguous mesh can only be used if all
   # inputs are GDAs.
   if all(is_gda):
-    _check_shapes_against_resources("pjit arguments", True, mesh.shape,
-                                    local_in_avals, in_axis_resources_flat)
+    _check_shapes_against_resources(
+        "pjit arguments", mesh.is_multi_process, mesh.shape, local_in_avals,
+        in_axis_resources_flat)
   else:
     _check_shapes_against_resources("pjit arguments", False, mesh.local_mesh.shape,
                                     local_in_avals, in_axis_resources_flat)
