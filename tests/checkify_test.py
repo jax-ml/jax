@@ -185,6 +185,43 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "must be positive")
 
+  def test_assert2(self):
+    def f(pred):  # note: data dependence needed!
+      checkify.assert2_(pred, 0, {0: "hi"})
+
+    with self.assertRaisesRegex(AssertionError, "hi"):
+      f(False)
+
+    f = checkify.checkify(f)
+    err, none = f(False)
+
+    self.assertIsNone(none)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "hi")
+
+  def test_discharge_recharge(self):
+    def ejit(f):
+      f = checkify.checkify(f)
+      f = jax.jit(f)
+      def jitted_f(*args):
+        err, out = f(*args)
+        checkify.assert2_(~err.err, err.code, err.msgs)
+        return out
+      return jitted_f
+
+    @ejit
+    def f(pred):
+      assert python_should_be_running
+      checkify.assert_(pred, "foo")
+
+    python_should_be_running = True
+    f(True)
+
+    python_should_be_running = False
+    f(True)
+    with self.assertRaisesRegex(AssertionError, "foo"):
+      f(False)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
