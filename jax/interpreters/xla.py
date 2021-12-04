@@ -23,7 +23,8 @@ import itertools as it
 import operator
 import re
 from typing import (Any, Callable, Deque, Dict, List, NamedTuple, Optional,
-                    Sequence, Set, Type, Tuple, Union)
+                    Sequence, Set, Type, Tuple, Union, Hashable, Iterator,
+                    Iterable)
 from typing_extensions import Protocol
 import warnings
 
@@ -31,11 +32,11 @@ import numpy as np
 
 from jax.config import config
 from jax import core
+from jax import linear_util as lu
 from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import profiler
-from jax import linear_util as lu
 from jax._src import source_info_util
 from jax._src.abstract_arrays import (make_shaped_array, array_types)
 from jax.core import (ConcreteArray, ShapedArray,
@@ -43,8 +44,8 @@ from jax.core import (ConcreteArray, ShapedArray,
                       abstract_token)
 import jax._src.pretty_printer as pp
 from jax._src import util
-from jax._src.util import (prod, extend_name_stack, wrap_name,
-                           safe_zip, safe_map, partition_list)
+from jax._src.util import (prod, extend_name_stack, wrap_name, safe_zip,
+                           safe_map, partition_list, unzip2)
 from jax._src.lib import xla_client as xc
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
@@ -1071,3 +1072,82 @@ def _call_translation_rule(ctx, avals_in, avals_out, *in_nodes, backend=None,
       ctx, avals_in, avals_out, *in_nodes, name="core_call", backend=backend,
       call_jaxpr=call_jaxpr)
 register_translation(core.call_p, _call_translation_rule)
+
+
+JaxprType = Any
+Jittable = Any
+Flattener = Callable[[Jittable], Tuple[List[Jittable], Hashable]]
+Unflattener = Callable[[List[Jittable], Hashable], Jittable]
+
+def register_jittable(ty: Type, flattener: Flattener, unflattener: Unflattener
+                      ) -> None:
+  jittable_types[ty] = JittableSpec(ty, flattener, unflattener)
+
+class JittableSpec(NamedTuple):
+  ty: Type
+  flatten: Flattener
+  unflatten: Unflattener
+  def __repr__(self) -> str:
+    return f'JittableSpec(ty={self.ty.__name__})'
+
+class JittableMetadata(NamedTuple):
+  spec: JittableSpec
+  meta: Hashable
+  child_meta: Tuple  # Tuple[JittableMetadata, ...]
+
+jittable_types: Dict[Type, JittableSpec] = {}
+
+
+def flatten(x: Jittable) -> Tuple[List[JaxprType], JittableMetadata]:
+  children_iter, meta = _flatten(x)
+  return list(children_iter), meta
+
+def _flatten(x: Jittable) -> Tuple[Iterator[JaxprType], JittableMetadata]:
+  spec = jittable_types.get(type(x))
+  if spec:
+    children, meta = spec.flatten(x)
+    children_flat, child_meta = unzip2(map(_flatten, children))
+    flattened = it.chain.from_iterable(children_flat)
+    return flattened, JittableMetadata(spec, meta, child_meta)
+  else:
+    return iter([x]), leaf
+
+def unflatten(xs: Iterable[JaxprType], meta: JittableMetadata
+              ) -> Jittable:
+  xs_ = iter(xs)
+  x = _unflatten(xs_, meta)
+  assert next(xs_, sentinel) is sentinel
+  return x
+sentinel = object()
+
+def _unflatten(xs: Iterator[JaxprType], meta: JittableMetadata
+               ) -> Jittable:
+  if meta.spec.ty is Leaf:
+    return next(xs)
+  else:
+    children = [_unflatten(xs, m) for m in meta.child_meta]
+    return meta.spec.unflatten(children, meta.meta)
+
+class Leaf: pass
+def err(): assert False
+leaf = JittableMetadata(JittableSpec(Leaf, err, err), None, ())  # type: ignore
+
+register_jittable(list, lambda x: (x, None), lambda xs, _: xs)
+
+
+@lu.transformation_with_aux
+def flatten_fun(in_meta, *args_flat):
+  py_args = tuple(unflatten(args_flat, in_meta))
+  ans = yield py_args, {}
+  yield flatten(ans)
+
+def meta_is_trivial(meta: JittableMetadata) -> bool:
+  # 'trivial' means corresponding to a list of leaves, e.g. from flattening a
+  # pytree of arrays (i.e. jaxpr types)
+  return meta.spec.ty is list and all(m.spec.ty is Leaf for m in meta.child_meta)
+
+def metadata_list_concat(*metas: JittableMetadata) -> JittableMetadata:
+  assert all(isinstance(m, JittableMetadata) and m.spec.ty is list
+             for m in metas), metas
+  flat_child_metas = [child_meta for m in metas for child_meta in m.child_meta]
+  return JittableMetadata(jittable_types[list], None, tuple(flat_child_metas))

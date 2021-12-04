@@ -28,7 +28,7 @@ from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
 from jax import linear_util as lu
 from jax._src.util import (unzip2, safe_map, safe_zip, wrap_name, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
-                           curry, memoize)
+                           curry)
 from jax.interpreters import partial_eval as pe
 
 map = safe_map
@@ -40,60 +40,54 @@ Elt = Any
 MapSpec = Any
 AxisSize = Any
 Array = Any
-GetIdx = Callable[[], Tracer]  # TODO(mattjj): revise this laziness
-ToEltHandler = Callable[[Callable, GetIdx, Vmappable, MapSpec], Elt]
-FromEltHandler = Callable[[Callable, AxisSize, Elt, MapSpec], Vmappable]
-MakeIotaHandler = Callable[[AxisSize], Array]
+Idx = Any
+Indexer = Callable[[Callable, Idx, Vmappable, MapSpec], Elt]
+Builder = Callable[[Callable, AxisSize, Elt, MapSpec], Vmappable]
+IotaMaker = Callable[[AxisSize], Array]
 
-def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
-  handler = to_elt_handlers.get(type(x))
+def index(trace: Trace, i: Idx, x: Vmappable, spec: MapSpec) -> Elt:
+  handler = index_handlers.get(type(x))
   if handler:
-    return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
+    return handler(partial(index, trace), i, x, spec)
   else:
     spec = spec and canonicalize_axis(spec, len(np.shape(x)))
     return BatchTracer(trace, x, spec) if spec is not None else x
-to_elt_handlers: Dict[Type, ToEltHandler] = {}
+index_handlers: Dict[Type, Indexer] = {}
 
-def from_elt(trace: 'BatchTrace', axis_size: AxisSize, x: Elt, spec: MapSpec
-             ) -> Vmappable:
-  handler = from_elt_handlers.get(type(x))
+def build(trace: 'BatchTrace', axis_size: AxisSize, x: Elt, spec: MapSpec
+          ) -> Vmappable:
+  handler = build_handlers.get(type(x))
   if handler:
-    return handler(partial(from_elt, trace), axis_size, x, spec)
+    return handler(partial(build, trace), axis_size, x, spec)
   else:
     x_ = trace.full_raise(x)
     return matchaxis(trace.axis_name, axis_size, x_.batch_dim, spec, x_.val)
-from_elt_handlers: Dict[Type, FromEltHandler] = {}
+build_handlers: Dict[Type, Builder] = {}
 
 def make_iota(axis_size: AxisSize) -> Array:
   handler = make_iota_handlers.get(type(axis_size))
   if handler:
     return handler(axis_size)
   else:
-    return jax.lax.iota('int32', int(axis_size))
-make_iota_handlers: Dict[Type, MakeIotaHandler] = {}
+    try: axis_size = int(axis_size)
+    except: return None  # TODO(mattjj): jax2tf vmaps unbounded axes, revise?
+    else: return jax.lax.iota('int32', axis_size)
+make_iota_handlers: Dict[Type, IotaMaker] = {}
 
 def register_vmappable(data_type: Type, spec_type: Type, axis_size_type: Type,
-                       to_elt: Callable, from_elt: Callable,
-                       make_iota: Optional[Callable]):
+                       index: Callable, build: Callable,
+                       make_iota: Optional[Callable]) -> None:
   vmappables[data_type] = (spec_type, axis_size_type)
   spec_types.add(spec_type)
-  to_elt_handlers[data_type] = to_elt
-  from_elt_handlers[data_type] = from_elt
+  index_handlers[data_type] = index
+  build_handlers[data_type] = build
   if make_iota: make_iota_handlers[axis_size_type] = make_iota
 vmappables: Dict[Type, Tuple[Type, Type]] = {}
 spec_types: Set[Type] = set()
 
-def unregister_vmappable(data_type: Type) -> None:
-  spec_type, axis_size_type = vmappables.pop(data_type)
-  spec_types.remove(spec_type)
-  del to_elt_handlers[data_type]
-  del from_elt_handlers[data_type]
-  if axis_size_type in make_iota_handlers:
-    del make_iota_handlers[axis_size_type]
-
+# TODO(mattjj,jakevdp): remove these once BCOO is revised
 def is_vmappable(x: Any) -> bool:
   return type(x) in vmappables
-
 @lu.transformation_with_aux
 def flatten_fun_for_vmap(in_tree, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
@@ -327,11 +321,12 @@ def _batch_outer(axis_name, axis_size, in_dims, main_type, *in_vals):
 def _batch_inner(axis_size, out_dim_dests, main, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   trace = main.with_cur_sublevel()
-  idx = memoize(lambda: BatchTracer(trace, make_iota(axis_size), 0))
-  in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
+  iota = make_iota(axis_size)
+  idx = None if iota is None else BatchTracer(trace, iota, 0)
+  in_tracers = map(partial(index, trace, idx), in_vals, in_dims)
   outs = yield in_tracers, {}
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
-  out_vals = map(partial(from_elt, trace, axis_size), outs, out_dim_dests)
+  out_vals = map(partial(build, trace, axis_size), outs, out_dim_dests)
   yield out_vals
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.

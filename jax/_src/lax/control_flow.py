@@ -24,7 +24,8 @@ import inspect
 import itertools
 import operator
 import os
-from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar
+from typing import (Any, Callable, Optional, Sequence, Tuple, TypeVar, List,
+                    Set)
 
 import numpy as np
 
@@ -39,7 +40,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
 from jax import linear_util as lu
-from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
+from jax.core import AbstractValue, ConcreteArray, ShapedArray, raise_to_shaped
 from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
@@ -55,7 +56,7 @@ from jax._src.util import (unzip2, unzip3, safe_map, safe_zip,
                            split_list, cache, extend_name_stack, wrap_name)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
-                           tree_leaves, tree_structure)
+                           tree_leaves, tree_structure, PyTreeDef)
 from jax._src import ad_util
 from jax.config import config
 
@@ -127,6 +128,27 @@ def _typecheck_param(prim, param, name, msg_required, pred):
   sep = os.linesep if os.linesep in param_str else ' '
   msg = sep.join([msg, param_str])
   core.typecheck_assert(pred, msg)
+
+@cache()
+def _scan_jaxpr(
+    fun: Callable, init_tree: PyTreeDef, xs_tree: PyTreeDef,
+    init_meta: xla.JittableMetadata, xs_meta: xla.JittableMetadata,
+    init_avals: Tuple[AbstractValue, ...], xs_avals: Tuple[AbstractValue, ...],
+  ) -> Tuple[core.ClosedJaxpr, List[Any], PyTreeDef, xla.JittableMetadata, Optional[int]]:
+  lens: Set[int] = set()
+  x_avals, x_meta = xla.flatten([_vmappable_abstract_index(lens, 0, a, 0)
+                                 for a in xla.unflatten(xs_avals, xs_meta)])
+  length, = lens or (None,)  # None case handles when there are no arguments
+
+  in_avals = [*init_avals, *x_avals]
+  in_meta = xla.metadata_list_concat(init_meta, x_meta)
+  in_tree = treedef_tuple((init_tree, xs_tree))
+  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  wrapped_fun, out_meta = xla.flatten_fun(wrapped_fun, in_meta)
+  debug = pe.debug_info(fun, in_tree, False, "scan")
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals, debug)
+  closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+  return closed_jaxpr, consts, out_tree(), out_meta(), length
 
 
 ### fori_loop and while_loop
@@ -302,11 +324,12 @@ def while_loop(cond_fun: Callable[[T], bool],
       raise TypeError(msg.format(cond_jaxpr.out_avals))
     return init_vals, init_avals, body_jaxpr, in_tree, cond_jaxpr, cond_consts, body_consts, body_tree
 
-  # The body input and output avals must match exactly. However, we want to account for
-  # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
-  # may not match the output despite being compatible by virtue of their weak type.
-  # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
-  # necessary, a second time with modified init values.
+  # The body input and output avals must match exactly. However, we want to
+  # account for the case when init contains weakly-typed values (e.g. Python
+  # scalars), with avals that may not match the output despite being compatible
+  # by virtue of their weak type. To do this, we compute the jaxpr in two
+  # passes: first with the raw inputs, and if necessary, a second time with
+  # modified init values.
   init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(init_val)
   new_init_vals, changed = _promote_weak_typed_inputs(init_vals, init_avals, body_jaxpr.out_avals)
   if changed:
@@ -1609,6 +1632,71 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
                     unroll=unroll)
   return tree_unflatten(out_tree, out)
 
+# NOTE(mattjj): The _scan function below is a work-in-progress revision of scan
+# to support general element types, with some other tweaks. It should soon
+# replace the main scan above, but it needs some features added back.
+# TODO(mattjj): replace scan with _scan
+@api_boundary
+def _scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+          init: Carry,
+          xs: X,
+          length: Optional[int] = None,
+          reverse: bool = False,
+          unroll: int = 1) -> Tuple[Carry, Y]:
+  init_flat, init_tree = tree_flatten(init)
+  xs_flat, xs_tree = tree_flatten(xs)
+
+  init_jaxpr_vals, init_meta = xla.flatten(init_flat)
+  xs_jaxpr_vals, xs_meta = xla.flatten(xs_flat)
+
+  init_avals = _map(_abstractify, init_jaxpr_vals)
+  xs_avals = _map(_abstractify, xs_jaxpr_vals)
+  jaxpr, consts, out_tree, out_meta, length_ = _scan_jaxpr(
+      f, init_tree, xs_tree, init_meta, xs_meta, tuple(init_avals), tuple(xs_avals))
+
+  # TODO(mattjj): make error checks/messages consistent with main scan
+  if length is not None and length_ is not None and length != length_:
+    raise ValueError("scan length argument inconsistent with arguments: "
+                     f"got length argument {length} for arg lengths {length_}")
+  if length_ is None and length is None:
+    raise ValueError("scan with no extensive args requires 'length' argument")
+
+  out = scan_p.bind(
+    *consts, *init_jaxpr_vals, *xs_jaxpr_vals, reverse=reverse, length=length_,
+    jaxpr=jaxpr, num_consts=len(consts), num_carry=len(init_flat),
+    linear=(False,) * (len(consts) + len(init_jaxpr_vals) + len(xs_jaxpr_vals)),
+    unroll=unroll)
+  out_vmappables = [_vmappable_build(length, x, 0)
+                    for x in xla.unflatten(out, out_meta)]
+  return tree_unflatten(out_tree, out_vmappables)
+
+def _vmappable_abstract_index(
+    lens: Set[int], idx: batching.Idx, x: batching.Vmappable, spec: batching.MapSpec
+  ) -> batching.Elt:
+  handler = batching.index_handlers.get(type(x))
+  if handler:
+    spec_type, _ = batching.vmappables[type(x)]
+    if spec_type is not int: raise NotImplementedError  # TODO(mattjj,dougalm)
+    return handler(partial(_vmappable_abstract_index, lens), idx, x, spec)
+  else:
+    if not isinstance(spec, int) or spec != 0:
+      raise NotImplementedError  # TODO(mattjj,dougalm)
+    lens.add(x.shape[0])
+    if len(lens) > 1:
+      raise ValueError("inconsistent scan axis sizes: {} and {}".format(*lens))
+    return core.mapped_aval(x.shape[0], spec, x)
+
+def _vmappable_build(
+    axis_size: batching.AxisSize, x: batching.Elt, spec: batching.MapSpec
+  ) -> batching.Vmappable:
+  handler = batching.build_handlers.get(type(x))
+  if handler:
+    return handler(_vmappable_build, axis_size, x, spec)
+  else:
+    if not isinstance(spec, int) or spec != 0:
+      raise NotImplementedError  # TODO(mattjj,dougalm)
+    return x
+
 def _scan_impl_unrolled(*args, reverse, length, num_consts, num_carry, linear,
                         f_impl, x_avals, y_avals):
   consts, init, xs = split_list(args, [num_consts, num_carry])
@@ -2330,10 +2418,10 @@ def _promote_weak_typed_inputs(in_vals, in_avals, out_avals):
 def _stop_gradient_fun(f):
   """Create a version of f() that stops all gradients."""
   def wrapper(*args, **kwargs):
-    args_flat, in_args_tree = tree_flatten((args, kwargs))
+    args_flat, in_tree = tree_flatten((args, kwargs))
     args_avals = tuple(_map(_abstractify, args_flat))
     g = lambda a, b: f(*a, **b)
-    jaxpr, consts, out_tree = _initial_style_jaxpr(g, in_args_tree, args_avals)
+    jaxpr, consts, out_tree = _initial_style_jaxpr(g, in_tree, args_avals)
     all_args = _map(lax.stop_gradient, (*consts, *args_flat))
     out = core.jaxpr_as_fun(jaxpr)(*all_args)
     return tree_unflatten(out_tree, out)

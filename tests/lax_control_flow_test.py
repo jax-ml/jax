@@ -456,7 +456,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     body_fun = lambda carry: (carry[0] + 1, carry[1] + 1)
     f = lambda x: lax.while_loop(cond_fun, body_fun, (0, x))
     jaxpr = jax.make_jaxpr(jax.vmap(f))(jnp.arange(3))
-    eqn = jaxpr.jaxpr.eqns[0]
+    eqn = jaxpr.jaxpr.eqns[1]
     self.assertIs(eqn.primitive, lax.while_p)
     self.assertEqual(eqn.params['cond_jaxpr'].in_avals[0].shape, ())
 

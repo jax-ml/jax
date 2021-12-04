@@ -16,7 +16,9 @@
 import functools
 from functools import partial
 import itertools as it
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, TypeVar, Type, Tuple, Union
+
+import numpy as np
 
 import jax
 from jax.interpreters import partial_eval as pe
@@ -38,20 +40,92 @@ from jax._src import source_info_util
 zip = safe_zip
 map = safe_map
 def identity(x): return x
+_dtype = partial(dtype, canonicalize=True)
 
 
-def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True) -> Any:
-  if not has_aux:
-    return jvpfun(jvp_subtrace(fun), instantiate)
+PrimalTy = TypeVar('PrimalTy')
+TangentTy = TypeVar('TangentTy')
+PrimalTangentTypeChecker = Callable[[PrimalTy, TangentTy], bool]
+TangentMaker = Callable[[Callable, PrimalTy], TangentTy]
+EpsRetraction = Callable[[PrimalTy, TangentTy], PrimalTy]
+Section = Callable[[PrimalTy], Tuple[PrimalTy, TangentTy]]
+
+def register_tangent_type(
+    primal_ty: Type, tangent_ty: Type,
+    primal_tangent_type_checker: PrimalTangentTypeChecker,
+    tangent_space_at: TangentMaker,
+    eps_retraction: EpsRetraction, section: Section,
+  ) -> None:
+  primal_tangent_type_checkers[primal_ty] = primal_tangent_type_checker
+  eps_retractions[primal_ty] = eps_retraction
+  sections[primal_ty] = section
+  tangent_type_mappings[primal_ty] = (tangent_ty, tangent_space_at)
+
+primal_tangent_type_checkers: Dict[Type, PrimalTangentTypeChecker] = {}
+eps_retractions: Dict[Type, EpsRetraction] = {}
+sections: Dict[Type, Section] = {}
+tangent_type_mappings: Dict[Type, Tuple[Type, TangentMaker]] = {}
+
+def check_primal_tangent_type_agreement(primal: PrimalTy, tangent: TangentTy
+                                        ) -> None:
+  handler = primal_tangent_type_checkers.get(type(primal))
+  if handler:
+    return handler(check_primal_tangent_type_agreement, primal, tangent)
   else:
-    fun, aux = jvp_subtrace_aux(fun)
-    return jvpfun(fun, instantiate), aux
+    if core.primal_dtype_to_tangent_dtype(_dtype(primal)) != _dtype(tangent):
+      raise TypeError(
+        "primal and tangent arguments to jax.jvp do not match; dtypes must be "
+        "equal, or in case of int/bool primal dtype the tangent dtype must be "
+        f"float0. Got primal dtype {_dtype(primal)} and so expected tangent "
+        f"dtype {core.primal_dtype_to_tangent_dtype(_dtype(primal))}, but got "
+        f"tangent dtype {_dtype(tangent)} instead.")
+    if np.shape(primal) != np.shape(tangent):
+      raise ValueError("jvp called with different primal and tangent shapes;"
+                       f"Got primal shape {np.shape(primal)} and tangent shape "
+                       f"as {np.shape(tangent)}")
 
+def make_jvp_tracers(trace: core.Trace, primal: PrimalTy, tangent: TangentTy
+                     ) -> Union[core.Tracer, PrimalTy]:
+  handler = eps_retractions.get(type(primal))
+  if handler is not None:
+    return handler(partial(make_jvp_tracers, trace), primal, tangent)
+  else:
+    if not isinstance(tangent, Zero) and dtype(tangent) is float0:
+      tangent = Zero.from_value(tangent)
+    return JVPTracer(trace, primal, tangent)
+
+def unpack_jvp_tracers(trace: core.Trace, primal: PrimalTy
+                       ) -> Tuple[PrimalTy, TangentTy]:
+  handler = sections.get(type(primal))
+  if handler:
+    return handler(partial(unpack_jvp_tracers, trace), primal)
+  else:
+    tracer = trace.full_raise(primal)
+    return tracer.primal, tracer.tangent
+
+
+def jvp(fun: lu.WrappedFun, *, has_aux=False, instantiate=True
+        ) -> Union[lu.WrappedFun, Tuple[lu.WrappedFun, lu.Store]]:
+  fun, aux = jvp_inner(fun, has_aux)
+  fun = jvpfun(fun, instantiate)
+  return (fun, aux) if has_aux else fun
+
+@lu.transformation_with_aux
+def jvp_inner(has_aux: bool, main: core.MainTrace, primals, tangents):
+  trace = main.with_cur_sublevel()
+  in_tracers = map(partial(make_jvp_tracers, trace), primals, tangents)
+  out = yield in_tracers, {}
+  if not has_aux:
+    ans, aux = out, None
+  else:
+    ans, aux = out
+    aux = [core.full_lower(trace.full_raise(x).primal) if isinstance(x, Tracer)
+           else x for x in aux]
+  out_primals, out_tangents = unzip2(map(partial(unpack_jvp_tracers, trace), ans))
+  yield (out_primals, out_tangents), aux
 
 @lu.transformation
 def jvpfun(instantiate, primals, tangents):
-  tangents = [Zero.from_value(t) if not isinstance(t, Zero)
-              and dtype(t) is float0 else t for t in tangents]
   with core.new_main(JVPTrace) as main:
     out_primals, out_tangents = yield (main, primals, tangents), {}
     del main
@@ -64,37 +138,17 @@ def jvpfun(instantiate, primals, tangents):
 @lu.transformation
 def jvp_subtrace(main, primals, tangents):
   trace = JVPTrace(main, core.cur_sublevel())
-  for x in list(primals) + list(tangents):
-    if isinstance(x, Tracer):
-      assert x._trace.level < trace.level
   in_tracers = [JVPTracer(trace, x, t) if type(t) is not Zero else x
                 for x, t in zip(primals, tangents)]
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
-  yield unzip2([(out_tracer.primal, out_tracer.tangent)
-                for out_tracer in out_tracers])
+  yield unzip2((t.primal, t.tangent) for t in out_tracers)
 
-@lu.transformation_with_aux
-def jvp_subtrace_aux(main, primals, tangents):
-  trace = JVPTrace(main, core.cur_sublevel())
-  for x in list(primals) + list(tangents):
-    if isinstance(x, Tracer):
-      assert x._trace.level < trace.level
-  ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
-  ans_tracers = map(trace.full_raise, ans)
-  out_primals, out_tangents = unzip2((t.primal, t.tangent) for t in ans_tracers)
-  aux_primals = [core.full_lower(x.primal)
-                 if isinstance(x, JVPTracer) and x._trace.level == trace.level
-                 else x for x in aux]
-  yield (out_primals, out_tangents), aux_primals
-
-def linearize(traceable, *primals, **kwargs):
-  has_aux = kwargs.pop('has_aux', False)
-  if not has_aux:
-    jvpfun = jvp(traceable)
-  else:
+def linearize(traceable, *primals, has_aux=False):
+  if has_aux:
     jvpfun, aux = jvp(traceable, has_aux=True)
-
+  else:
+    jvpfun = jvp(traceable, has_aux=False)
   in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
               + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
                     for p in primals))
