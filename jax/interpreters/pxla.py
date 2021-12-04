@@ -1995,7 +1995,7 @@ class MeshComputation:
           _allow_compile_replicated=_allow_compile_replicated)  # type: ignore
     return self._executable
 
-def _get_input_specs_and_indices(global_in_avals, global_out_avals, mesh, in_axes, out_axes):
+def _get_input_specs_and_indices(global_in_avals, mesh, in_axes):
   if config.jax_gsda_out:
     input_specs = [mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, aval_in_axes)
                    if aval is not core.abstract_unit else None
@@ -2058,7 +2058,7 @@ class MeshExecutable:
         _allow_propagation_to_outputs
 
     input_specs, input_indices = _get_input_specs_and_indices(
-        global_in_avals, global_out_avals, mesh, in_axes, out_axes)
+        global_in_avals, mesh, in_axes)
     # Calculate local information here instead of calculating it in
     # `avals_to_results_handler` because pmap also uses this function.
     handle_outs = global_avals_to_results_handler(global_out_avals, out_axes, mesh)
