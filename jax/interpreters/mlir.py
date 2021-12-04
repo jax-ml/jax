@@ -678,6 +678,7 @@ def wrap_with_sharding_op(x, sharding_proto: xc.OpSharding):
                          has_side_effect=ir.BoolAttr.get(False),
                          backend_config=ir.StringAttr.get(""),
                          api_version=i32_attr(1),
+                         called_computations=None,
                          operand_layouts=None,
                          result_layouts=None)
   op.attributes["mhlo.sharding"] = ir.StringAttr.get(
