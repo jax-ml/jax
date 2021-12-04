@@ -176,8 +176,8 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
                          ) -> Sequence[ir.Value]:
   if canonicalize_types:
     x = np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
-  aval = xla.abstractify(x)
-  ir_type = aval_to_ir_type(aval)
+  ir_type = ir.RankedTensorType.get(x.shape, dtype_to_ir_type[x.dtype]())
+  shape = x.shape
   if x.dtype == np.bool_:
     nelems = x.size
     x = np.packbits(x, bitorder='little')
@@ -188,8 +188,7 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
   elif x.dtype == dtypes.bfloat16:
     x = x.view(np.uint16)
   x = np.ascontiguousarray(x)
-  attr = ir.DenseElementsAttr.get(x, type=ir_type.element_type,
-                                  shape=aval.shape)
+  attr = ir.DenseElementsAttr.get(x, type=ir_type.element_type, shape=shape)
   return (mhlo.ConstOp(ir_type, attr).result,)
 
 
@@ -220,7 +219,7 @@ def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
     out = mhlo.BroadcastInDimOp(
-        aval_to_ir_type(xla.abstractify(val)),
+        ir.RankedTensorType.get(val.shape, dtype_to_ir_type[val.dtype]()),
         _numpy_array_constant(collapsed_val, canonicalize_types)[0],
         dense_int_elements(other_axes)).result
     return (out,)
