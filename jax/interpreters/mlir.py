@@ -222,9 +222,13 @@ def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
     other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
+    if canonicalize_types:
+      collapsed_val = np.asarray(
+          collapsed_val, dtypes.canonicalize_dtype(collapsed_val.dtype))
     out = mhlo.BroadcastInDimOp(
-        ir.RankedTensorType.get(val.shape, dtype_to_ir_type(val.dtype)),
-        _numpy_array_constant(collapsed_val, canonicalize_types)[0],
+        ir.RankedTensorType.get(
+            val.shape, dtype_to_ir_type(collapsed_val.dtype)),
+        _numpy_array_constant(collapsed_val, canonicalize_types=False)[0],
         dense_int_elements(other_axes)).result
     return (out,)
   else:
