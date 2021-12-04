@@ -66,17 +66,21 @@ class CSR(JAXSparse):
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape)
 
-  def matvec(self, v):
-    data, v = _promote_dtypes(self.data, v)
-    return csr_matvec(data, self.indices, self.indptr, v, shape=self.shape)
-
-  def matmat(self, B):
-    data, B = _promote_dtypes(self.data, B)
-    return csr_matmat(data, self.indices, self.indptr, B, shape=self.shape)
-
   def transpose(self, axes=None):
     assert axes is None
     return CSC((self.data, self.indices, self.indptr), shape=self.shape[::-1])
+
+  def __matmul__(self, other):
+    if isinstance(other, JAXSparse):
+      raise NotImplementedError("matmul between two sparse objects.")
+    other = jnp.asarray(other)
+    data, other = _promote_dtypes(self.data, other)
+    if other.ndim == 1:
+      return csr_matvec(data, self.indices, self.indptr, other, shape=self.shape)
+    elif other.ndim == 2:
+      return csr_matmat(data, self.indices, self.indptr, other, shape=self.shape)
+    else:
+      raise NotImplementedError(f"matmul with object of shape {other.shape}")
 
   def tree_flatten(self):
     return (self.data, self.indices, self.indptr), {"shape": self.shape}
@@ -116,17 +120,21 @@ class CSC(JAXSparse):
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape[::-1]).T
 
-  def matvec(self, v):
-    data, v = _promote_dtypes(self.data, v)
-    return csr_matvec(data, self.indices, self.indptr, v, shape=self.shape[::-1], transpose=True)
-
-  def matmat(self, B):
-    data, B = _promote_dtypes(self.data, B)
-    return csr_matmat(data, self.indices, self.indptr, B, shape=self.shape[::-1], transpose=True)
-
   def transpose(self, axes=None):
     assert axes is None
     return CSR((self.data, self.indices, self.indptr), shape=self.shape[::-1])
+
+  def __matmul__(self, other):
+    if isinstance(other, JAXSparse):
+      raise NotImplementedError("matmul between two sparse objects.")
+    other = jnp.asarray(other)
+    data, other = _promote_dtypes(self.data, other)
+    if other.ndim == 1:
+      return csr_matvec(data, self.indices, self.indptr, other, shape=self.shape[::-1], transpose=True)
+    elif other.ndim == 2:
+      return csr_matmat(data, self.indices, self.indptr, other, shape=self.shape[::-1], transpose=True)
+    else:
+      raise NotImplementedError(f"matmul with object of shape {other.shape}")
 
   def tree_flatten(self):
     return (self.data, self.indices, self.indptr), {"shape": self.shape}
