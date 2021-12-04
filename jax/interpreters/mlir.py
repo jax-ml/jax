@@ -74,7 +74,7 @@ def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 # IR Types
 
 # Non-canonicalized dtype to IR type mapping.
-dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
+_dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float0): partial(ir.IntegerType.get_signless, 1),
   np.dtype(np.bool_): partial(ir.IntegerType.get_signless, 1),
   np.dtype(np.int8): partial(ir.IntegerType.get_signless, 8),
@@ -93,14 +93,18 @@ dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
 }
 
-
-def _array_ir_types(aval: core.ShapedArray) -> ir.Type:
+def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
+  assert isinstance(dtype, (np.dtype, np.generic)), type(dtype)
+  dtype = np.dtype(dtype)
   try:
-    ir_type_factory = dtype_to_ir_type[aval.dtype]
+    ir_type_factory = _dtype_to_ir_type[dtype]
   except KeyError as err:
     raise TypeError(
-        f"No dtype_to_ir_type handler for dtype: {aval.dtype}") from err
-  return (ir.RankedTensorType.get(aval.shape, ir_type_factory()),)
+        f"No dtype_to_ir_type handler for dtype: {dtype}") from err
+  return ir_type_factory()
+
+def _array_ir_types(aval: core.ShapedArray) -> ir.Type:
+  return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
 
 ir_type_handlers: Dict[Type[core.AbstractValue],
                         Callable[[Any], Sequence[ir.Type]]] = {}
@@ -176,7 +180,7 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
                          ) -> Sequence[ir.Value]:
   if canonicalize_types:
     x = np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
-  ir_type = ir.RankedTensorType.get(x.shape, dtype_to_ir_type[x.dtype]())
+  ir_type = ir.RankedTensorType.get(x.shape, dtype_to_ir_type(x.dtype))
   shape = x.shape
   if x.dtype == np.bool_:
     nelems = x.size
@@ -219,7 +223,7 @@ def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
     out = mhlo.BroadcastInDimOp(
-        ir.RankedTensorType.get(val.shape, dtype_to_ir_type[val.dtype]()),
+        ir.RankedTensorType.get(val.shape, dtype_to_ir_type(val.dtype)),
         _numpy_array_constant(collapsed_val, canonicalize_types)[0],
         dense_int_elements(other_axes)).result
     return (out,)

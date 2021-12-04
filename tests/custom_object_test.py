@@ -143,9 +143,9 @@ xla.register_constant_handler(SparseArray, sparse_array_constant_handler)
 def sparse_array_mlir_type_handler(a):
   return (
     ir.RankedTensorType.get(
-          a.data_aval.shape, mlir.dtype_to_ir_type[a.data_aval.dtype]()),
+          a.data_aval.shape, mlir.dtype_to_ir_type(a.data_aval.dtype)),
     ir.RankedTensorType.get(
-          a.indices_aval.shape, mlir.dtype_to_ir_type[a.indices_aval.dtype]()),
+          a.indices_aval.shape, mlir.dtype_to_ir_type(a.indices_aval.dtype)),
   )
 
 mlir.ir_type_handlers[AbstractSparseArray] = sparse_array_mlir_type_handler
