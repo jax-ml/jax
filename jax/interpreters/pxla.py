@@ -451,7 +451,7 @@ pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 
 def array_result_handler(sharding_spec, indices, aval: ShapedArray,
                          out_axis_resources, global_mesh):
-  if config.jax_gsda_out:
+  if config.jax_gsda_out and global_mesh is not None:
     return gsda_array_result_handler(aval, global_mesh, out_axis_resources)
   else:
     return sda_array_result_handler(sharding_spec, indices, aval)
@@ -2009,8 +2009,8 @@ def _get_input_specs_and_indices(global_in_avals, mesh, in_axes):
     local_in_untiled_avals = [mesh.global_to_local(axis, aval)
                               for axis, aval in safe_zip(in_axes, global_in_avals)]
     input_specs = [local_sharding_spec(aval, aval_in_axes)
-                         if aval is not core.abstract_unit else None
-                         for aval, aval_in_axes in safe_zip(local_in_untiled_avals, in_axes)]
+                   if aval is not core.abstract_unit else None
+                   for aval, aval_in_axes in safe_zip(local_in_untiled_avals, in_axes)]
     input_indices = [spec_to_indices(aval.shape, spec)
                      if spec is not None else None
                      for aval, spec in safe_zip(local_in_untiled_avals, input_specs)]
