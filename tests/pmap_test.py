@@ -237,6 +237,16 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testGatherBool(self):
+    f = self.pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = (x % 2).astype(np.bool_)
+    expected = np.array([x] * jax.device_count())
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testGatherTiled(self):
     f = self.pmap(lambda x: lax.all_gather(x, 'i', tiled=True), axis_name='i')
 
