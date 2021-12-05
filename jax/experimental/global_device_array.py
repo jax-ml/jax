@@ -154,10 +154,18 @@ class GlobalDeviceArray:
 
   @property
   def local_shards(self) -> Sequence[Shard]:
+    for s in self._local_shards:
+      # Ignore the type because mypy thinks data is None but local_shards
+      # cannot have data=None which is checked in `_create_shards`.
+      if s.data.aval is None:  # type: ignore
+        s.data.aval = core.ShapedArray(s.data.shape, s.data.dtype)  # type: ignore
     return self._local_shards
 
   @property
   def global_shards(self) -> Sequence[Shard]:
+    for g in self._global_shards:
+      if g.data is not None and g.data.aval is None:
+        g.data.aval = core.ShapedArray(g.data.shape, g.data.dtype)
     return self._global_shards
 
   def local_data(self, index) -> DeviceArray:

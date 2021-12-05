@@ -19,6 +19,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+from jax import core
 from jax._src import test_util as jtu
 from jax._src.util import prod, safe_zip
 
@@ -95,10 +96,14 @@ class GSDATest(jtu.JaxTestCase):
     self.assertListEqual(replica_ids, expected_replica_ids)
     self.assertListEqual([i.device.id for i in gda.local_shards],
                          [0, 1, 2, 3, 4, 5, 6, 7])
+    for s in gda.local_shards:
+      self.assertEqual(s.data.aval,
+                       core.ShapedArray(expected_shard_shape, s.data.dtype))
     for g, l in safe_zip(gda.global_shards, gda.local_shards):
       self.assertEqual(g.device, l.device)
       self.assertEqual(g.index, l.index)
       self.assertEqual(g.replica_id, l.replica_id)
+      self.assertEqual(g.data.aval, l.data.aval)
       self.assertArraysEqual(g.data, l.data)
 
 
