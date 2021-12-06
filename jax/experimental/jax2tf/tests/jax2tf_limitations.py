@@ -283,9 +283,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def conv_general_dilated(cls, harness: primitive_harness.Harness):
     return [
-        Jax2TfLimitation(
-            "jax2tf BUG: batch_group_count > 1 not yet converted",
-            enabled=(harness.params["batch_group_count"] > 1)),
         # Even in compiled mode, for GPU we see a bit of discrepancy but
         # very minor.
         custom_numeric(dtypes=np.float32, devices="gpu",
