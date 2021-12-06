@@ -26,6 +26,7 @@ from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.util import safe_zip
+from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 
@@ -760,15 +761,21 @@ def _conv_general_dilated_lower(
   num_spatial_dims = len(rhs_spec) - 2
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
 
-  return mhlo.ConvOp(mlir.aval_to_ir_type(aval_out), lhs, rhs,
-                     mlir.dense_int_elements(window_strides),
-                     mlir.dense_int_elements(padding),
-                     mlir.dense_int_elements(lhs_dilation),
-                     mlir.dense_int_elements(rhs_dilation),
-                     window_reversal,
-                     dnums, mlir.i64_attr(feature_group_count),
-                     mlir.i64_attr(batch_group_count),
-                     lax.precision_attr(precision)).results
+  if preferred_element_type is None:
+    preferred_element_type = aval_out.dtype
+  preferred_type = ir.RankedTensorType.get(
+      aval_out.shape, mlir.dtype_to_ir_type(preferred_element_type))
+  out = mhlo.ConvOp(preferred_type, lhs, rhs,
+                    mlir.dense_int_elements(window_strides),
+                    mlir.dense_int_elements(padding),
+                    mlir.dense_int_elements(lhs_dilation),
+                    mlir.dense_int_elements(rhs_dilation),
+                    window_reversal, dnums, mlir.i64_attr(feature_group_count),
+                    mlir.i64_attr(batch_group_count),
+                    lax.precision_attr(precision)).result
+  if preferred_element_type != aval_out.dtype:
+    out = mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), out).result
+  return [out]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
 mlir.register_lowering(
