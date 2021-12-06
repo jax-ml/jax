@@ -1658,7 +1658,9 @@ mlir.register_lowering(atan2_p, partial(_nary_lower_mhlo, mhlo.Atan2Op))
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
 ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))
-mlir.register_lowering(sinh_p, partial(_nary_lower_mhlo, chlo.SinhOp))
+# TODO(b/209505237): the CHLO lowering of chlo.sinh is less accurate than that
+# in the XLA client library. Use the fallback path for now.
+# mlir.register_lowering(sinh_p, partial(_nary_lower_mhlo, chlo.SinhOp))
 
 cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
