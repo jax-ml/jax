@@ -412,22 +412,49 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping) -> AxisResource
       tuple(reverse_map[i]) if reverse_map[i] else None for i in range(max_index + 1)
   )
 
-def aval_to_result_handler(
+def local_aval_to_result_handler(
     aval: core.AbstractValue,
-    sharding_spec: Optional[ShardingSpec] = None,
-    indices: Optional[Tuple[Index]] = None,
-    out_axis_resources: Optional[AxisResource] = None,
-    global_mesh = None,
+    sharding_spec: Optional[ShardingSpec],
+    indices: Optional[Tuple[Index]],
 ) -> Callable[[List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
   Args:
+    aval: The local output AbstractValue.
     sharding_spec: Indicates how the output is sharded across devices, or None
       for non-array avals.
     indices: The pre-computed result of spec_to_indices, or None for non-array
       avals.
-    aval: The output AbstractValue. Can be global or local depending on whether
-      `jax_gsda_out` flag is enabled or not.
+
+  Returns:
+    A function for handling the Buffers that will eventually be produced
+    for this output. The function will return an object suitable for returning
+    to the user, e.g. a ShardedDeviceArray.
+  """
+  try:
+    return local_result_handlers[type(aval)](aval, sharding_spec, indices)
+  except KeyError as err:
+    raise TypeError(
+        "No pxla_result_handler for type: {}".format(type(aval))) from err
+
+PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
+local_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
+local_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
+def sda_array_result_handler(aval: ShapedArray, sharding_spec, indices):
+  return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
+                                                indices)
+local_result_handlers[ShapedArray] = sda_array_result_handler
+local_result_handlers[ConcreteArray] = sda_array_result_handler
+
+
+def global_aval_to_result_handler(
+    aval: core.AbstractValue,
+    out_axis_resources: Optional[AxisResource], global_mesh,
+) -> Callable[[List[xb.xla_client.Buffer]], Any]:
+  """Returns a function for handling the raw buffers of a single output aval.
+
+  Args:
+    aval: The global output AbstractValue.
     out_axis_resources: A tuple specifying the sharding of outputs.
       Used for creating GSDAs.
     global_mesh: The global device mesh that generated this output. Used
@@ -439,35 +466,14 @@ def aval_to_result_handler(
     to the user, e.g. a ShardedDeviceArray.
   """
   try:
-    return pxla_result_handlers[type(aval)](sharding_spec, indices, aval,
-                                            out_axis_resources, global_mesh)
+    return global_result_handlers[type(aval)](aval, out_axis_resources,
+                                              global_mesh)
   except KeyError as err:
-    raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
-                    ) from err
+    raise TypeError(
+        "No pxla_result_handler for type: {}".format(type(aval))) from err
 
-PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
-pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
-pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
-
-def array_result_handler(sharding_spec, indices, aval: ShapedArray,
-                         out_axis_resources, global_mesh):
-  if config.jax_gsda_out and global_mesh is not None:
-    return gsda_array_result_handler(aval, global_mesh, out_axis_resources)
-  else:
-    return sda_array_result_handler(sharding_spec, indices, aval)
-
-pxla_result_handlers[ShapedArray] = array_result_handler
-pxla_result_handlers[ConcreteArray] = array_result_handler
-
-def sda_array_result_handler(sharding_spec, indices, aval: ShapedArray):
-  return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
-                                                indices)
-
-def gsda_array_result_handler(global_aval, global_mesh, out_axis_resources):
-  from jax.experimental.global_device_array import GlobalDeviceArray
-
-  return lambda bufs: GlobalDeviceArray(global_aval.shape, global_mesh,
-                                        out_axis_resources, bufs)
+global_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
+global_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 
 ### lazy device-memory persistence and result handling
 
@@ -1356,7 +1362,7 @@ def local_avals_to_results_handler(
                  if aval is not core.abstract_unit else None
                  for aval, spec in safe_zip(unmapped_local_out_avals, local_out_specs)]  # pytype: disable=attribute-error
   handlers = [
-      aval_to_result_handler(aval, sharding_spec=spec, indices=idcs)
+      local_aval_to_result_handler(aval, spec, idcs)
       for aval, spec, idcs in safe_zip(unmapped_local_out_avals, local_out_specs, out_indices)
   ]
   return ResultsHandler(handlers, local_out_specs, out_indices, unmapped_local_out_avals)
@@ -1374,7 +1380,7 @@ def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
                    for aval, spec in safe_zip(global_out_avals, global_out_specs)]
     out_axis_resources = [array_mapping_to_axis_resources(o) for o in out_axes]
     handlers = [
-        aval_to_result_handler(global_aval, out_axis_resources=out_axis, global_mesh=global_mesh)
+        global_aval_to_result_handler(global_aval, out_axis, global_mesh)
         for global_aval, out_axis in safe_zip(global_out_avals, out_axis_resources)
     ]
     return ResultsHandler(handlers, global_out_specs, out_indices, global_out_avals)

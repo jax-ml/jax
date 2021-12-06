@@ -40,7 +40,7 @@ def create_global_mesh(mesh_shape, axis_names):
   return global_mesh
 
 
-class GSDATest(jtu.JaxTestCase):
+class GDATest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ("mesh_x_y", ["x", "y"],
@@ -74,7 +74,7 @@ class GSDATest(jtu.JaxTestCase):
        (8, 2),
        [0, 1, 2, 3, 4, 5, 6, 7]),
   )
-  def test_gsda_2d_shard(self, mesh_axes, expected_index, expected_shard_shape,
+  def test_gda_2d_shard(self, mesh_axes, expected_index, expected_shard_shape,
                          expected_replica_ids):
     global_mesh = create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
@@ -123,7 +123,7 @@ class GSDATest(jtu.JaxTestCase):
        (4, 4, 2),
        [0, 0, 1, 1, 2, 2, 3, 3]),
   )
-  def test_gsda_3d_shard(self, mesh_axes, expected_index, expected_shard_shape,
+  def test_gda_3d_shard(self, mesh_axes, expected_index, expected_shard_shape,
                          expected_replica_ids):
     global_mesh = create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
     global_input_shape = (8, 4, 2)
@@ -157,7 +157,7 @@ class GSDATest(jtu.JaxTestCase):
        (16,),
        [0, 1, 2, 3, 4, 5, 6, 7]),
   )
-  def test_gsda_1d_shard(self, mesh_axes, expected_index, expected_shard_shape,
+  def test_gda_1d_shard(self, mesh_axes, expected_index, expected_shard_shape,
                          expected_replica_ids):
     global_mesh = create_global_mesh((8,), ('x'))
     global_input_shape = (16,)
@@ -185,7 +185,7 @@ class GSDATest(jtu.JaxTestCase):
        (4, 1),
        [0, 0, 0, 0]),
   )
-  def test_gsda_subset_devices(self, mesh_axes, expected_index,
+  def test_gda_subset_devices(self, mesh_axes, expected_index,
                                expected_shard_shape, expected_replica_ids):
     global_mesh = create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
@@ -211,7 +211,7 @@ class GSDATest(jtu.JaxTestCase):
       self.assertEqual(g.replica_id, l.replica_id)
       self.assertArraysEqual(g.data, l.data)
 
-  def test_gsda_batched_callback(self):
+  def test_gda_batched_callback(self):
     global_mesh = create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = [('x', 'y')]
@@ -231,7 +231,7 @@ class GSDATest(jtu.JaxTestCase):
     self.assertArraysEqual(gda.local_data(1).to_py(),
                            expected_second_shard_value)
 
-  def test_gsda_batched_callback_with_devices(self):
+  def test_gda_batched_callback_with_devices(self):
     global_mesh = create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = ['x']
@@ -257,7 +257,7 @@ class GSDATest(jtu.JaxTestCase):
     self.assertArraysEqual(gda.local_data(1).to_py(),
                            expected_second_shard_value)
 
-  def test_gsda_str_repr(self):
+  def test_gda_str_repr(self):
     global_mesh = create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = [('x', 'y')]

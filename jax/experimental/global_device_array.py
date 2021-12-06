@@ -225,5 +225,11 @@ def _gsda_shard_arg(x, devices, indices):
     raise ValueError("Pjit's mesh and GDA's mesh should be equal. Got Pjit "
                      f"mesh: {pjit_mesh},\n GDA mesh: {x._global_mesh}")
   return [s.data for s in x.local_shards]
-
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gsda_shard_arg
+
+
+def _gsda_array_result_handler(global_aval, out_axis_resources, global_mesh):
+  return lambda bufs: GlobalDeviceArray(global_aval.shape, global_mesh,
+                                        out_axis_resources, bufs)
+pxla.global_result_handlers[core.ShapedArray] = _gsda_array_result_handler
+pxla.global_result_handlers[core.ConcreteArray] = _gsda_array_result_handler
