@@ -739,7 +739,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, name, mesh,
         mesh_in_axes, mesh_out_axes, donated_invars,
         use_spmd_lowering, global_in_avals,
-        tile_by_mesh_axes=True)
+        tile_by_mesh_axes=True, in_is_gda=[False] * len(global_in_avals))
   else:
     return dispatch.lower_xla_callable(
         f, None, backend, name, donated_invars, *((a, None) for a in in_avals))

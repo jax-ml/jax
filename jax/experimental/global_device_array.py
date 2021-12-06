@@ -224,6 +224,11 @@ def _gsda_shard_arg(x, devices, indices):
   if x._global_mesh != pjit_mesh:
     raise ValueError("Pjit's mesh and GDA's mesh should be equal. Got Pjit "
                      f"mesh: {pjit_mesh},\n GDA mesh: {x._global_mesh}")
+  assert all(g.index == i for g, i in safe_zip(x.global_shards, indices)), (
+      "Indices calculated by GDA and pjit do not match. Please file a bug "
+      "on https://github.com/google/jax/issues. "
+      f"Got GDA indices: {[g.index for g in x.global_shards]},\n"
+      f"pjit indices: {indices}")
   return [s.data for s in x.local_shards]
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gsda_shard_arg
 

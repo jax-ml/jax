@@ -492,10 +492,13 @@ def _pjit_lower(
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
   fun = lu.wrap_init(f)
+  # TODO(yashkatariya): Use the `is_global` attribute on avals.
+  in_is_gda = [True if ips == maps._PositionalSemantics.GLOBAL else False
+               for ips in in_positional_semantics]
   return pxla.lower_mesh_computation(
       fun, name, resource_env.physical_mesh,
       in_axes, out_axes, donated_invars,
-      True, jaxpr.in_avals, tile_by_mesh_axes=False)
+      True, jaxpr.in_avals, tile_by_mesh_axes=False, in_is_gda=in_is_gda)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env,
