@@ -117,9 +117,14 @@ class ProfilerTest(unittest.TestCase):
 
   def testTraceFunction(self):
     @jax.profiler.annotate_function
-    def f(x):
-      return x + 2
-    self.assertEqual(f(7), 9)
+    def f(x, *, y):
+      return x + 2 * y
+    self.assertEqual(f(7, y=3), 13)
+
+    @jax.profiler.annotate_function
+    def f(x, *, name):
+      return x + 2 * len(name)
+    self.assertEqual(f(7, name="abc"), 13)
 
     @partial(jax.profiler.annotate_function, name="aname")
     def g(x):
