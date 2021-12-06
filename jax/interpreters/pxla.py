@@ -55,7 +55,6 @@ from jax._src.util import (unzip3, prod, safe_map, safe_zip,
                            tuple_insert, tuple_delete, distributed_debug_log)
 from jax.errors import JAXTypeError
 from jax._src import dispatch
-from jax._src import profiler
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
@@ -295,7 +294,7 @@ def _shard_arg(arg, devices, arg_indices):
     return shard_arg_handlers[type(arg)](arg, devices, arg_indices)
 
 
-@profiler.annotate_function
+
 def shard_args(devices: Sequence[xb.xla_client.Device],
                indices: Sequence[Sequence[Index]],
                args) -> Sequence[Sequence[xb.xla_client.Buffer]]:
@@ -318,7 +317,7 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
 
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
-    lambda x, devices, _: device_put(core.unit, devices, replicate=True)  # type: ignore[has-type]
+    lambda x, devices, _: device_put(core.unit, devices, replicate=True)
 def _shard_array(x, devices, indices):
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
@@ -903,7 +902,6 @@ def _shardings_to_mlir_shardings(
     return None
   return [xla.sharding_to_proto(s) for s in shardings]
 
-@profiler.annotate_function
 def lower_parallel_callable(
     fun: lu.WrappedFun,
     backend_name: Optional[str],
@@ -1041,7 +1039,6 @@ class PmapComputation:
     # this is a method for api consistency with dispatch.XlaComputation
     return self._hlo
 
-  @profiler.annotate_function
   def compile(self):
     if self._executable is None:
       self._executable = PmapExecutable.from_hlo(self._hlo, *self.compile_args)
@@ -1177,7 +1174,6 @@ class PmapExecutable:
 
     return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
 
-  @profiler.annotate_function
   def call(self, *args):
     # TODO(frostig): do we need to check sharding and sharded avals?
     arg_avals = map(xla.abstractify, args)
@@ -1394,7 +1390,6 @@ def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
         local_out_specs, local_out_untiled_avals)
 
 
-@profiler.annotate_function
 def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   """Replicates ``val`` across multiple devices.
 
@@ -1495,7 +1490,6 @@ def partitioned_sharding_spec(num_partitions: int,
         mesh_mapping=map(ShardedAxis, range(len(partitions))))
 
 
-@profiler.annotate_function
 def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
@@ -1884,7 +1878,6 @@ def vtile_by_mesh(fun: lu.WrappedFun,
                          main_type=SPMDBatchTrace)
   return fun
 
-@profiler.annotate_function
 def lower_mesh_computation(
     fun: lu.WrappedFun,
     transformed_name: str,
@@ -2221,7 +2214,6 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-@partial(profiler.annotate_function, name="pxla.device_put")
 def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> List[xb.xla_client.Buffer]:
   """Call device_put on a sequence of devices and return a flat sequence of buffers."""
   if replicate:
