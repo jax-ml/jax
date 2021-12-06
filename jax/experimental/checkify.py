@@ -30,7 +30,7 @@ from jax._src import source_info_util, traceback_util
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import control_flow
-from jax._src.util import as_hashable_function, unzip2
+from jax._src.util import as_hashable_function, unzip2, split_list
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -198,6 +198,7 @@ def check_errors_subtrace(main, msgs, err, code, *args):
   del main.error
   yield (err, code, *out_vals), msgs
 
+# TODO take (error_aval, code_aval) instead of error here?
 def checkify_jaxpr(jaxpr, error):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   f, msgs = check_errors_subtrace(f)
@@ -282,6 +283,20 @@ def cond_error_check(error, index, *ops, branches, linear):
   new_msgs = {k:v for d in it.chain([error.msgs], msgs_) for k, v in d.items()}
   return outs, Error(err, code, new_msgs)
 error_checks[control_flow.cond_p] = cond_error_check
+
+def scan_error_check(error, *in_flat, reverse, length, jaxpr, num_consts, num_carry, linear, unroll):
+  consts, carry, xs = split_list(in_flat, [num_consts, num_carry])
+  checked_jaxpr, msgs_ = checkify_jaxpr(jaxpr, error)
+  new_linear = (False, False, *linear)
+  new_in_flat = [*consts, error.err, error.code, *carry, *xs]
+  err, code, *outs = control_flow.scan_p.bind(
+      *consts, *new_in_flat,
+      reverse=reverse, length=length, jaxpr=checked_jaxpr,
+      num_consts=len(consts), num_carry=len(carry)+2,
+      linear=new_linear, unroll=unroll)
+  new_msgs = {**error.msgs, **msgs_}
+  return outs, Error(err, code, new_msgs)
+error_checks[control_flow.scan_p] = scan_error_check
 
 # TODO(mattjj,lenamartens): currently we bundle effectful-assert-discharging
 # with the error-check-adding transformation (checkify), but they could be
