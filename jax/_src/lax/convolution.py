@@ -19,6 +19,7 @@ from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from jax import core
+from jax._src import dtypes
 from jax._src.lax import lax
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -144,8 +145,9 @@ def conv_general_dilated(
     padding = lax.padtype_to_pads(
         np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,  # type: ignore[index]
         window_strides, padding)
-  preferred_element_type = (None if preferred_element_type is None else
-                            np.dtype(preferred_element_type))
+  preferred_element_type = (
+      None if preferred_element_type is None else
+      dtypes.canonicalize_dtype(np.dtype(preferred_element_type)))
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),

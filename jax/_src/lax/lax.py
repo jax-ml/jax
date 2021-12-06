@@ -664,8 +664,9 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
            api_util._ensure_index_tuple(rhs_contract))
   bdims = (api_util._ensure_index_tuple(lhs_batch),
            api_util._ensure_index_tuple(rhs_batch))
-  preferred_element_type = (None if preferred_element_type is None else
-                            np.dtype(preferred_element_type))
+  preferred_element_type = (
+      None if preferred_element_type is None else
+      dtypes.canonicalize_dtype(np.dtype(preferred_element_type)))
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(cdims, bdims),
                             precision=canonicalize_precision(precision),
