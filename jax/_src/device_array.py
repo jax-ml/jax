@@ -16,7 +16,7 @@
 
 from functools import partial, partialmethod
 import operator
-from typing import (Any, Optional, Union)
+from typing import (Any, List, Optional, Union)
 import weakref
 
 import numpy as np
@@ -24,6 +24,7 @@ import numpy as np
 from jax import core
 from jax._src.config import config
 from jax._src import dtypes
+from jax._src import profiler
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
 
@@ -125,6 +126,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
     if self.device_buffer is deleted_buffer:
       raise RuntimeError("DeviceArray has been deleted.")
 
+  @profiler.annotate_function
   def block_until_ready(self):
     """Blocks the caller until the buffer's value has been computed on device.
 
@@ -301,7 +303,7 @@ class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()
 
 
-device_array_types = [xc.Buffer, _DeviceArray]
+device_array_types: List[type] = [xc.Buffer, _DeviceArray]
 for _device_array in device_array_types:
   core.literalable_types.add(_device_array)
   core.pytype_aval_mappings[device_array] = core.ConcreteArray

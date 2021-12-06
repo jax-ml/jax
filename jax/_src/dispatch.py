@@ -37,6 +37,7 @@ from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src import profiler
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
@@ -157,6 +158,7 @@ def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
 _xla_callable = lu.cache(_xla_callable_uncached)
 
 
+@profiler.annotate_function
 def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
                        donated_invars, *arg_specs):
   if device is not None and backend is not None:
@@ -505,6 +507,7 @@ class XlaComputation:
             self.name, self.hlo(), *self.compile_args)
     return self._executable
 
+@profiler.annotate_function
 def backend_compile(backend, built_c, options):
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results

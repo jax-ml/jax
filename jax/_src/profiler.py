@@ -18,6 +18,9 @@ import threading
 from typing import Callable, Optional
 import warnings
 
+from jax._src import traceback_util
+traceback_util.register_exclusion(__file__)
+
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 
