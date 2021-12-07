@@ -811,6 +811,33 @@ class GDAPjitTest(jtu.JaxTestCase):
 
       f(gda_obj)
 
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_pjit_gda_caching(self):
+    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_data = np.arange(
+        prod(input_shape), dtype=np.float32).reshape(input_shape)
+    def cb(index):
+      return input_data[index]
+
+    gda_obj = global_device_array.GlobalDeviceArray.from_callback(
+        input_shape, global_mesh, mesh_axes, cb)
+
+    trace_counter = [0]
+    @partial(pjit, in_axis_resources=mesh_axes, out_axis_resources=P('x', 'y'))
+    def f(x, y):
+      trace_counter[0] += 1
+      return x @ y.T
+
+    f(gda_obj, gda_obj)
+    self.assertListEqual(trace_counter, [1])
+    f(gda_obj, gda_obj)
+    self.assertListEqual(trace_counter, [1])
+    f(input_data, input_data)
+    self.assertListEqual(trace_counter, [2])
+    f(gda_obj, input_data)
+    self.assertListEqual(trace_counter, [3])
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

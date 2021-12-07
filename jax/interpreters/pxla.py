@@ -2004,9 +2004,8 @@ class MeshComputation:
     return self._executable
 
 
-def _get_input_specs_and_indices(global_in_avals, global_mesh, in_axes,
-                                 in_is_gda):
-  input_specs, input_indices = [], []
+def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
+  input_specs, input_indices, input_avals = [], [], []
   for gaval, axis, is_gda in safe_zip(global_in_avals, in_axes, in_is_gda):
     if is_gda:
       aval = gaval
@@ -2020,21 +2019,19 @@ def _get_input_specs_and_indices(global_in_avals, global_mesh, in_axes,
     index = spec_to_indices(aval.shape, spec) if spec is not None else None
     input_specs.append(spec)
     input_indices.append(index)
-  return input_specs, input_indices
+    input_avals.append(aval)
+  return input_specs, input_indices, input_avals
 
 
 class MeshExecutable:
-  __slots__ = ['xla_executable', 'unsafe_call', '_global_in_avals', '_in_axes',
-               '_mesh', '_in_is_gda']
+  __slots__ = ['xla_executable', 'unsafe_call', '_input_avals']
 
-  def __init__(self, xla_executable, unsafe_call, global_in_avals, in_axes,
-               mesh, in_is_gda):
+  def __init__(self, xla_executable, unsafe_call, input_avals):
     self.xla_executable = xla_executable
     self.unsafe_call = unsafe_call
-    self._global_in_avals = global_in_avals
-    self._in_axes = in_axes
-    self._mesh = mesh
-    self._in_is_gda = in_is_gda
+    # input_avals is a list of global and local avals. Aval is global if input
+    # is a GDA else local.
+    self._input_avals = input_avals
 
   @staticmethod
   def from_hlo(computation: xc.XlaComputation,
@@ -2065,7 +2062,7 @@ class MeshExecutable:
     compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
         _allow_propagation_to_outputs
 
-    input_specs, input_indices = _get_input_specs_and_indices(
+    input_specs, input_indices, input_avals = _get_input_metadata(
         global_in_avals, mesh, in_axes, in_is_gda)
     # Calculate local information here instead of calculating it in
     # `avals_to_results_handler` because pmap also uses this function.
@@ -2083,15 +2080,12 @@ class MeshExecutable:
       unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
       xla_executable = compiled
 
-    return MeshExecutable(xla_executable, unsafe_call, global_in_avals, in_axes,
-                          mesh, in_is_gda)
+    return MeshExecutable(xla_executable, unsafe_call, input_avals)
 
   def call(self, *args):
-    avals = map(xla.abstractify, args)
     # TODO(yashkatariya): Add a AOT lowering test where GDA is an input.
-    arg_avals = [aval if ig else self._mesh.local_to_global(ax, aval)
-                 for aval, ax, ig in safe_zip(avals, self._in_axes, self._in_is_gda)]
-    ref_avals = self._global_in_avals
+    arg_avals = map(xla.abstractify, args)
+    ref_avals = self._input_avals
     dispatch.check_arg_avals_for_call(ref_avals, arg_avals)
     return self.unsafe_call(*args)
 
