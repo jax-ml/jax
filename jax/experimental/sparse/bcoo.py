@@ -894,6 +894,40 @@ xla.register_translation(bcoo_spdot_general_p, xla.lower_fun(
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
 
+def bcoo_broadcast_in_dim(data, indices, *, shape, new_shape, broadcast_dimensions):
+  """BCOO equivalent of lax.broadcast_in_dim"""
+  if len(shape) != len(broadcast_dimensions):
+    raise ValueError(f"shape={shape} and broadcast_dimensions={broadcast_dimensions} must have the same length")
+  props = _validate_bcoo(data, indices, shape)
+  batch_dims, sparse_dims, dense_dims = split_list(broadcast_dimensions, [props.n_batch, props.n_sparse])
+
+  if max(batch_dims, default=0) > min(sparse_dims, default=len(new_shape)):
+    raise ValueError("Cannot mix batch and sparse dimensions during broadcast_in_dim")
+  if max(sparse_dims, default=0) > min(dense_dims, default=len(new_shape)):
+    raise ValueError("Cannot mix sparse and dense dimensions during broadcast_in_dim")
+
+  new_n_batch = props.n_batch and 1 + max(broadcast_dimensions[:props.n_batch])
+  new_n_dense = props.n_dense and len(new_shape) - min(broadcast_dimensions[-props.n_dense:])
+  new_n_sparse = len(new_shape) - new_n_batch - new_n_dense
+
+  if np.prod(shape[props.n_batch: props.n_batch + props.n_sparse]) != np.prod(new_shape[new_n_batch:new_n_batch + new_n_sparse]):
+    raise NotImplementedError("Adding sparse dimensions with lengths != 1")
+  nse = props.nse
+
+  # batch & dense dimensions
+  new_data = lax.broadcast_in_dim(data,
+      shape=(*new_shape[:new_n_batch], nse, *new_shape[new_n_batch + new_n_sparse:]),
+      broadcast_dimensions=(*batch_dims, new_n_batch, *(b + 1 - new_n_sparse for b in dense_dims)))
+  new_indices = lax.broadcast_in_dim(indices,
+      shape=(*new_shape[:new_n_batch], nse, props.n_sparse),
+      broadcast_dimensions=(*batch_dims, new_n_batch, new_n_batch + 1))
+
+  # sparse dimensions
+  new_indices = (jnp.zeros_like(new_indices, shape=(*new_shape[:new_n_batch], nse, new_n_sparse))
+                   .at[..., jnp.array(sparse_dims, int) - new_n_batch].set(new_indices))
+
+  return new_data, new_indices
+
 def _tuple_replace(tup, ind, val):
   return tuple(val if i == ind else t for i, t in enumerate(tup))
 

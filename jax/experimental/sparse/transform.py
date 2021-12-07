@@ -63,6 +63,7 @@ from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax.util import safe_map, safe_zip, split_list
 from jax._src.lax.control_flow import _check_tree_and_avals
+from jax._src.numpy import lax_numpy
 from jax._src.util import canonicalize_axis
 from jax.experimental import sparse
 from jax.experimental.sparse import BCOO
@@ -509,6 +510,14 @@ def _reduce_sum_sparse(spenv, *argspecs, axes):
 
 sparse_rules[lax.reduce_sum_p] = _reduce_sum_sparse
 
+def _broadcast_in_dim_sparse(spenv, *argspecs, shape, broadcast_dimensions):
+  operand, = argspecs
+  data, indices = sparse.bcoo_broadcast_in_dim(operand.data(spenv), operand.indices(spenv),
+                                               shape=operand.shape, new_shape=shape,
+                                               broadcast_dimensions=broadcast_dimensions)
+  return (ArgSpec(shape, spenv.push(data), spenv.push(indices)),)
+
+sparse_rules[lax.broadcast_in_dim_p] = _broadcast_in_dim_sparse
 
 def _squeeze_sparse(spenv, *argspecs, dimensions):
   arr, = argspecs
@@ -654,6 +663,18 @@ def _sum(self, *args, **kwargs):
   """Sum array along axis."""
   return sparsify(lambda x: x.sum(*args, **kwargs))(self)
 
+def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
+                           mode=None, fill_value=None):
+  # mirrors lax_numpy._rewriting_take.
+  treedef, static_idx, dynamic_idx = lax_numpy._split_index_for_jit(idx, arr.shape)
+  result = sparsify(
+      lambda arr, idx: lax_numpy._gather(arr, treedef, static_idx, idx, indices_are_sorted,
+                                         unique_indices, mode, fill_value))(arr, dynamic_idx)
+  # Account for a corner case in the rewriting_take implementation.
+  if not isinstance(result, BCOO) and np.size(result) == 0:
+    result = BCOO.fromdense(result)
+  return result
+
 _bcoo_methods = {
   'sum': _sum,
   "__neg__": sparsify(jnp.negative),
@@ -666,6 +687,7 @@ _bcoo_methods = {
   "__radd__": sparsify(lambda self, other: jnp.add(other, self)),
   "__sub__": sparsify(lambda self, other: jnp.add(self, jnp.negative(other))),
   "__rsub__": sparsify(lambda self, other: jnp.add(other, jnp.negative(self))),
+  "__getitem__": _sparse_rewriting_take,
 }
 
 for method, impl in _bcoo_methods.items():

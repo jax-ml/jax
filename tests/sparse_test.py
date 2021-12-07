@@ -104,7 +104,7 @@ all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 def rand_sparse(rng, nse=0.5, post=lambda x: x, rand_method=jtu.rand_default):
   def _rand_sparse(shape, dtype, nse=nse):
     rand = rand_method(rng)
-    size = np.prod(shape)
+    size = np.prod(shape).astype(int)
     if 0 <= nse < 1:
       nse = nse * size
     nse = min(size, int(nse))
@@ -1360,6 +1360,27 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(out1, out2, rtol=tol)
     self.assertAllClose(out1, out3, rtol=tol)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_n_batch={}_n_dense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+       for shape in [(), (3,), (3, 5), (3, 5, 4)]
+       for dtype in all_dtypes
+       for n_batch in range(len(shape) + 1)
+       for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_bcoo_broadcast_in_dim(self, shape, dtype, n_batch, n_dense):
+    rng = rand_sparse(self.rng())
+    x = jnp.array(rng(shape, dtype))
+    xsp = sparse.BCOO.fromdense(x, n_batch=n_batch, n_dense=n_dense)
+
+    self.assertArraysEqual(xsp[None].todense(), x[None])
+    if len(shape) >= 1:
+      self.assertArraysEqual(xsp[:, None].todense(), x[:, None])
+      self.assertArraysEqual(xsp[:, None, None].todense(), x[:, None, None])
+    if len(shape) >= 2:
+      self.assertArraysEqual(xsp[:, :, None].todense(), x[:, :, None])
+      self.assertArraysEqual(xsp[:, None, :, None].todense(), x[:, None, :, None])
 
   def test_bcoo_vmap_shape(self, shape=(2, 3, 4, 5), dtype=np.float32):
     # This test checks that BCOO shape metadata interacts correctly with vmap.
