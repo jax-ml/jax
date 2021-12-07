@@ -63,20 +63,24 @@ class COO(JAXSparse):
   def todense(self):
     return coo_todense(self.data, self.row, self.col, shape=self.shape)
 
-  def matvec(self, v):
-    data, v = _promote_dtypes(self.data, v)
-    return coo_matvec(data, self.row, self.col, v, shape=self.shape)
-
-  def matmat(self, B):
-    data, B = _promote_dtypes(self.data, B)
-    return coo_matmat(data, self.row, self.col, B, shape=self.shape)
-
   def transpose(self, axes=None):
     assert axes is None
     return COO((self.data, self.col, self.row), shape=self.shape[::-1])
 
   def tree_flatten(self):
     return (self.data, self.row, self.col), {"shape": self.shape}
+
+  def __matmul__(self, other):
+    if isinstance(other, JAXSparse):
+      raise NotImplementedError("matmul between two sparse objects.")
+    other = jnp.asarray(other)
+    data, other = _promote_dtypes(self.data, other)
+    if other.ndim == 1:
+      return coo_matvec(data, self.row, self.col, other, shape=self.shape)
+    elif other.ndim == 2:
+      return coo_matmat(data, self.row, self.col, other, shape=self.shape)
+    else:
+      raise NotImplementedError(f"matmul with object of shape {other.shape}")
 
 #--------------------------------------------------------------------
 # coo_todense
