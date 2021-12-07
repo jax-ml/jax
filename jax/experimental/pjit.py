@@ -403,16 +403,29 @@ def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape
                        f"but it is {len(shape)}")
     for i, axis_resources in enumerate(aval_axis_resources):
       try:
-        size = int(np.prod([mesh_shape[resource] for resource in axis_resources], dtype=np.int64))
+        mesh_sizes = [mesh_shape[resource] for resource in axis_resources]
+        size = int(np.prod(mesh_sizes, dtype=np.int64))
       except KeyError as e:
         raise ValueError(f"One of {what} was given the resource assignment "
                          f"of {aval_axis_resources.user_spec}, but resource axis "
                          f"{e.args[0]} is undefined. Did you forget to declare the mesh?") from None
       if shape[i] % size != 0:
-        raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources.user_spec}, which implies that "
-                         f"the{global_str} size of its dimension {i} should be "
-                         f"divisible by {size}, but it is equal to {shape[i]}")
+        if len(axis_resources) == 1:
+          # Example: "x=2"
+          mesh_summary = f"{axis_resources[0]}={mesh_sizes[0]}"
+        else:
+          # Example: "x=2, y=3; 2*3=6"
+          mesh_summary = (
+              ", ".join(
+                  f"{axis_name}={mesh_size}" for axis_name, mesh_size
+                  in safe_zip(axis_resources, mesh_sizes))
+              + "; " + "*".join(str(s) for s in mesh_sizes) + f"={size}")
+
+        raise ValueError(
+            f"{what} with shape {aval.aval.str_short()} was given resource assignment "
+            f"{aval_axis_resources.user_spec}, which implies that "
+            f"the{global_str} size of its dimension {i} should be divisible "
+            f"by {size} ({mesh_summary}), but it is equal to {shape[i]}")
 
 # -------------------- pjit rules --------------------
 
@@ -729,7 +742,7 @@ def with_sharding_constraint(x, axis_resources):
   resource_env = maps.thread_resources.env
   mesh = resource_env.physical_mesh
   _check_shapes_against_resources(
-      "with_sharding_constraint arguments",
+      "with_sharding_constraint argument",
       mesh.is_multi_process, mesh.shape,
       x_flat, axis_resources_flat)
   outs = [sharding_constraint_p.bind(y, axis_resources=r, resource_env=resource_env)
