@@ -492,7 +492,6 @@ def _pjit_lower(
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
   fun = lu.wrap_init(f)
-  # TODO(yashkatariya): Use the `is_global` attribute on avals.
   in_is_gda = [True if ips == maps._PositionalSemantics.GLOBAL else False
                for ips in in_positional_semantics]
   return pxla.lower_mesh_computation(
