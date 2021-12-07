@@ -1019,6 +1019,7 @@ def lower_fun(fun: Callable, *, multiple_results: bool, backend=None,
       wrapped_fun = _tuple_output(wrapped_fun)
     with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+    jaxpr = core.apply_outfeed_rewriter(jaxpr)
     ctx = TranslationContext(c, backend, axis_env, '')
     outs = jaxpr_subcomp(ctx, jaxpr, _xla_consts(c, consts), *xla_args)
     if (multiple_results or
