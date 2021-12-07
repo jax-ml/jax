@@ -524,7 +524,8 @@ def compile_or_get_cached(backend, computation, compile_options):
     if cc.is_initialized() and backend.platform == 'tpu':
         cached_executable = cc.get_executable(computation, compile_options, backend)
         if cached_executable is not None:
-            logging.info('Persistent compilation cache hit')
+            logging.info('Persistent compilation cache hit for %s.',
+                         computation.name())
             return cached_executable
         else:
             compiled = backend_compile(backend, computation, compile_options)
