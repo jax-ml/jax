@@ -4225,6 +4225,62 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
     raise TypeError(msg.format(padding))
 
 
+# Map of lax function to equivalent jax.numpy function for use in error string below.
+_JNP_FUNCTION_EQUIVALENTS = {
+  'abs': 'fabs',
+  'acos': 'arccos',
+  'acosh': 'arccosh',
+  'add': 'add',
+  'asin': 'arcsin',
+  'asinh': 'arcsinh',
+  'atan': 'arctan',
+  'atan2': 'arctan2',
+  'atanh': 'arctanh',
+  'bitwise_and': 'bitwise_and',
+  'bitwise_not': 'bitwise_not',
+  'bitwise_or': 'bitwise_or',
+  'bitwise_xor': 'bitwise_xor',
+  'cbrt': 'cbrt',
+  'ceil': 'ceil',
+  'concatenate': 'concatenate',
+  'cos': 'cos',
+  'cosh': 'cosh',
+  'div': 'divide',
+  'eq': 'equal',
+  'exp': 'exp',
+  'expm1': 'expm1',
+  'floor': 'floor',
+  'greater': 'greater',
+  'greater_equal': 'greater_equal',
+  'less': 'less',
+  'less_equal': 'less_equal',
+  'log': 'log',
+  'logical_and': 'logical_and',
+  'logical_not': 'logical_not',
+  'logical_or': 'logical_or',
+  'logical_xor': 'logical_xor',
+  'log1p': 'log1p',
+  'max': 'maximum',
+  'min': 'minimum',
+  'mul': 'multiply',
+  'ne': 'not_equal',
+  'neg': 'negative',
+  'nextafter': 'nextafter',
+  'pow': 'float_power',
+  'rount': 'rount',
+  'select': 'where',
+  'shift_left': 'left_shift',
+  'shift_right_logical': 'right_shift',
+  'shift_right_arithmetic': 'right_shift',
+  'sign': 'sign',
+  'sin': 'sin',
+  'sinh': 'sinh',
+  'sqrt': 'sqrt',
+  'sub': 'subtract',
+  'tan': 'tan',
+  'tanh': 'tanh'
+}
+
 def _check_same_dtypes(name, ignore_fp_precision, *ttypes):
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
@@ -4237,10 +4293,13 @@ def _check_same_dtypes(name, ignore_fp_precision, *ttypes):
         else dtype for dtype in types]
   if len({dtypes.canonicalize_dtype(t) for t in types}) != 1:
     if ignore_fp_precision:
-      msg = ("{} requires arguments to have same dtypes up to floating point "
+      msg = ("lax.{} requires arguments to have same dtypes up to floating point "
              "precision, got {}.")
     else:
-      msg = "{} requires arguments to have the same dtypes, got {}."
+      msg = "lax.{} requires arguments to have the same dtypes, got {}."
+    if name in _JNP_FUNCTION_EQUIVALENTS:
+      equiv = _JNP_FUNCTION_EQUIVALENTS[name]
+      msg += f" (Tip: jnp.{equiv} is a similar function that does automatic type promotion on inputs)."
     raise TypeError(msg.format(name, ", ".join(map(str, types))))
 
 
