@@ -679,6 +679,24 @@ min_mhlo = partial(_minmax_mhlo, mhlo.MinOp, "LT")
 max_mhlo = partial(_minmax_mhlo, mhlo.MaxOp, "GT")
 
 
+def convert_mhlo(x, aval_in, aval_out):
+  """Variant of convert that has XLA HLO semantics.
+
+  In particular, treat casts to boolean as x != 0, rather than truncating
+  integer values (b/209440332)."""
+  if aval_out.dtype == np.dtype(np.bool_):
+    if dtypes.issubdtype(aval_in.dtype, np.inexact):
+      compare_type = "FLOAT"
+    elif dtypes.issubdtype(aval_in.dtype, np.signedinteger):
+      compare_type = "SIGNED"
+    else:
+      compare_type = "UNSIGNED"
+    return mhlo.CompareOp(
+        aval_to_ir_type(aval_out), x, full_like_aval(0, aval_in),
+        ir.StringAttr.get("NE"), ir.StringAttr.get(compare_type)).result
+  return mhlo.ConvertOp(aval_to_ir_type(aval_out), x).result
+
+
 def wrap_with_sharding_op(x, sharding_proto: xc.OpSharding):
   op = mhlo.CustomCallOp([x.type], [x],
                          call_target_name=ir.StringAttr.get("Sharding"),

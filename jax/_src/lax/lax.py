@@ -2220,6 +2220,8 @@ masking.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 
+def _real_dtype(dtype): return np.finfo(dtype).dtype
+
 def _convert_element_type_lower(ctx, avals_in, avals_out, operand, *,
                                 new_dtype, weak_type):
   aval_in, = avals_in
@@ -2227,7 +2229,8 @@ def _convert_element_type_lower(ctx, avals_in, avals_out, operand, *,
   if (dtypes.issubdtype(aval_in.dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     operand = mhlo.RealOp(operand).result
-  return mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), operand).results
+    aval_in = aval_in.update(dtype=_real_dtype(aval_in.dtype))
+  return [mlir.convert_mhlo(operand, aval_in, aval_out)]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
 
@@ -2521,6 +2524,7 @@ def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
 
 def _dot_general_lower(ctx, avals_in, avals_out, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: Optional[np.dtype]):
+  del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = avals_in
   aval_out, = avals_out
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
@@ -2540,15 +2544,8 @@ def _dot_general_lower(ctx, avals_in, avals_out, lhs, rhs, *, dimension_numbers,
       rhs_batching_dimensions=list(rhs_batch),
       lhs_contracting_dimensions=list(lhs_contracting),
       rhs_contracting_dimensions=list(rhs_contracting))
-  if preferred_element_type is None:
-    preferred_element_type = aval_out.dtype
-  preferred_type = ir.RankedTensorType.get(
-      aval_out.shape, mlir.dtype_to_ir_type(preferred_element_type))
-  out = mhlo.DotGeneralOp(preferred_type, lhs, rhs,
-                          dot_dnums, precision_attr(precision)).result
-  if preferred_element_type != aval_out.dtype:
-    out = mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), out).result
-  return [out]
+  return [mhlo.DotGeneralOp(mlir.aval_to_ir_type(aval_out), lhs, rhs,
+                            dot_dnums, precision_attr(precision)).result]
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
 
