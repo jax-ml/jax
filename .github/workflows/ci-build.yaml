@@ -132,4 +132,4 @@ jobs:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
       run: |
         pytest -n 1 --tb=short docs
-        pytest -n 1 --tb=short --doctest-modules --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py jax
+        pytest -n 1 --tb=short --doctest-modules jax --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py --ignore=jax/experimental/gda_serialization
