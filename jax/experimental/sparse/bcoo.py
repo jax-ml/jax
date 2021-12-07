@@ -983,6 +983,47 @@ def bcoo_reduce_sum(data, indices, *, shape, axes):
   out_shape = tuple(shape[i] for i in range(len(shape)) if i not in axes)
   return data, indices, out_shape
 
+def bcoo_multiply_sparse(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_shape):
+  lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
+  rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
+  if len(lhs_shape) != len(rhs_shape):
+    # Similar requirement as lax.mul:
+    raise TypeError("bcoo_multiply_sparse: arrays must have same number of dimensions, "
+                    f"got {lhs_shape}, {rhs_shape}")
+  if (lhs.n_batch, lhs.n_sparse, lhs.n_dense) != (rhs.n_batch, rhs.n_sparse, rhs.n_dense):
+    raise NotImplementedError("bcoo_multiply_sparse: arrays with differing numbers of "
+                              f"batch & dense dimensions: {lhs}, {rhs}")
+  _mul = functools.partial(_bcoo_multiply_sparse_unbatched,
+                           lhs_shape=lhs_shape[lhs.n_batch:],
+                           rhs_shape=rhs_shape[rhs.n_batch:])
+  for _ in range(lhs.n_batch):
+    _mul = broadcasting_vmap(_mul)
+  data, indices = _mul(lhs_data, lhs_indices, rhs_data, rhs_indices)
+  return data, indices, jnp.broadcast_shapes(lhs_shape, rhs_shape)
+
+def _bcoo_multiply_sparse_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_shape):
+  lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
+  rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
+  assert lhs.n_batch == rhs.n_batch == 0
+  result_shape = jnp.broadcast_shapes(lhs_shape, rhs_shape)
+  dims = jnp.array([i for i, (s1, s2) in enumerate(safe_zip(lhs_shape[:lhs.n_sparse], rhs_shape[:rhs.n_sparse]))
+                    if s1 != 1 and s2 != 1], dtype=int)
+
+  # TODO(jakevdp): this nse can be tightened to min(lhs.nse, rhs.nse) if there
+  # is no broadcasting and indices are unique.
+  nse = min(np.prod(result_shape[:lhs.n_sparse]), lhs.nse * rhs.nse)
+
+  # TODO(jakevdp): this is pretty inefficient. Can we do this membership check
+  # without constructing the full (lhs.nse, rhs.nse) masking matrix?
+  mask = jnp.all(lhs_indices[:, None, dims] == rhs_indices[:, dims], -1)
+  i_lhs, i_rhs = jnp.nonzero(mask, size=nse, fill_value=(lhs.nse, rhs.nse))
+  data = (lhs_data.at[i_lhs].get(mode='fill', fill_value=0) *
+          rhs_data.at[i_rhs].get(mode='fill', fill_value=0))
+  indices = jnp.maximum(
+      lhs_indices.at[i_lhs].get(mode='fill', fill_value=max(lhs_shape, default=0)),
+      rhs_indices.at[i_rhs].get(mode='fill', fill_value=max(rhs_shape, default=0)))
+  return data, indices
+
 def bcoo_multiply_dense(data, indices, v, *, shape):
   """Broadcasted elementwise multiplication between a BCOO array and a dense array."""
   # TODO(jakevdp): the logic here is similar to bcoo_extract... can we reuse that?

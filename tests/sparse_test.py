@@ -1359,6 +1359,38 @@ class BCOOTest(jtu.JaxTestCase):
            np.float32: 1E-6, np.complex64: 1E-6}
     self.assertAllClose(out1, out2, rtol=tol)
     self.assertAllClose(out1, out3, rtol=tol)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_n_batch={}_n_dense={}".format(
+        jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
+        jtu.format_shape_dtype_string(rhs_shape, rhs_dtype),
+        n_batch, n_dense),
+       "lhs_shape": lhs_shape, "lhs_dtype": lhs_dtype,
+       "rhs_shape": rhs_shape, "rhs_dtype": rhs_dtype,
+       "n_batch": n_batch, "n_dense": n_dense,
+      }
+      # TODO(jakevdp): add broadcasted shapes (from bcoo_mul_dense) once sparse-sparse mul
+      # supports inputs of differing rank.
+      for lhs_shape, rhs_shape in [[(3,), (1,)], [(3,), (3,)],
+                                   [(3, 4), (1, 1)], [(3, 4), (1, 4)], [(3, 4), (3, 1)], [(3, 4), (3, 4)],
+                                   [(3, 4, 5), (1, 4, 5)], [(3, 4, 5), (3, 1, 1)], [(3, 4, 5), (1, 4, 1)]]
+      # TODO(jakevdp): add tests for batch & dense dimensions.
+      for n_batch in range(len(lhs_shape) + 1)
+      for n_dense in range(len(lhs_shape) + 1 - n_batch)
+      for lhs_dtype in all_dtypes
+      for rhs_dtype in all_dtypes))
+  def test_bcoo_mul_sparse(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, n_batch, n_dense):
+    rng = rand_sparse(self.rng())
+    lhs = jnp.array(rng(lhs_shape, lhs_dtype))
+    rhs = jnp.array(rng(rhs_shape, rhs_dtype))
+
+    sp = lambda x: sparse.BCOO.fromdense(x, n_batch=n_batch, n_dense=n_dense)
+
+    out1 = lhs * rhs
+    out2 = (sp(lhs) * sp(rhs)).todense()
+
+    tol = {np.float64: 1E-13, np.complex128: 1E-13,
+           np.float32: 1E-6, np.complex64: 1E-6}
+    self.assertAllClose(out1, out2, rtol=tol)
 
 
   @parameterized.named_parameters(jtu.cases_from_list(

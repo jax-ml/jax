@@ -55,7 +55,7 @@ import numpy as np
 from jax import core
 from jax import lax
 from jax import linear_util as lu
-from jax.experimental.sparse.bcoo import bcoo_multiply_dense
+from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
@@ -478,15 +478,15 @@ sparse_rules[lax.add_p] = _add_sparse
 def _mul_sparse(spenv, *argspecs):
   X, Y = argspecs
   if X.is_sparse() and Y.is_sparse():
-    if X.shape != Y.shape:
-      raise NotImplementedError("Multiplication between sparse matrices of different shapes.")
     if X.indices_ref == Y.indices_ref:
+      # TODO(jakevdp): this is inaccurate if there are duplicate indices
       out_data = lax.mul(X.data(spenv), Y.data(spenv))
       out_argspec = ArgSpec(X.shape, spenv.push(out_data), X.indices_ref)
-    elif X.indices(spenv).ndim != Y.indices(spenv).ndim or X.data(spenv).ndim != Y.data(spenv).ndim:
-      raise NotImplementedError("Multiplication between sparse matrices with different batch/dense dimensions.")
     else:
-      raise NotImplementedError("Multiplication between sparse matrices with different sparsity patterns.")
+      data, indices, shape = bcoo_multiply_sparse(X.data(spenv), X.indices(spenv),
+                                                  Y.data(spenv), Y.indices(spenv),
+                                                  lhs_shape=X.shape, rhs_shape=Y.shape)
+      out_argspec = ArgSpec(shape, spenv.push(data), spenv.push(indices))
   else:
     if Y.is_sparse():
       X, Y = Y, X
