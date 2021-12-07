@@ -5713,6 +5713,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(_promote_like_jnp(np_op), jnp.logaddexp2, args_maker, tol=tol)
     self._CompileAndCheck(jnp.logaddexp2, args_maker, rtol=tol, atol=tol)
 
+  def testDefaultDtypes(self):
+    precision = config.jax_default_dtype_bits
+    assert precision in ['32', '64']
+    self.assertEqual(jnp.bool_, np.bool_)
+    self.assertEqual(jnp.int_, np.int32 if precision == '32' else np.int64)
+    self.assertEqual(jnp.uint, np.uint32 if precision == '32' else np.uint64)
+    self.assertEqual(jnp.float_, np.float32 if precision == '32' else np.float64)
+    self.assertEqual(jnp.complex_, np.complex64 if precision == '32' else np.complex128)
+
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 

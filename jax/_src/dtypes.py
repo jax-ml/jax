@@ -39,18 +39,11 @@ bfloat16: type = xla_client.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
-
 bool_: type = np.bool_
-int_: type = np.int64
-uint: type = np.uint64
-float_: type = np.float64
-complex_: type = np.complex128
-
-# TODO(phawkins): change the above defaults to:
-# int_ = np.int32
-# uint = np.uint32
-# float_ = np.float32
-# complex_ = np.complex64
+int_: type = np.int32 if config.jax_default_dtype_bits == '32' else np.int64
+uint: type = np.uint32 if config.jax_default_dtype_bits == '32' else np.uint64
+float_: type = np.float32 if config.jax_default_dtype_bits == '32' else np.float64
+complex_: type = np.complex64 if config.jax_default_dtype_bits == '32' else np.complex128
 _default_types = {'b': bool_, 'i': int_, 'u': uint, 'f': float_, 'c': complex_}
 
 # Trivial vectorspace datatype needed for tangent values of int/bool primals

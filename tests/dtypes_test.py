@@ -31,6 +31,8 @@ from jax._src import test_util as jtu
 from jax.config import config
 config.parse_flags_with_absl()
 
+FLAGS = config.FLAGS
+
 bool_dtypes = [np.dtype('bool')]
 
 signed_dtypes = [np.dtype('int8'), np.dtype('int16'), np.dtype('int32'),
@@ -227,6 +229,16 @@ class DtypesTest(jtu.JaxTestCase):
   def testDtypeFromNone(self):
     with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
       dtypes.dtype(None)
+
+  def testDefaultDtypes(self):
+    precision = config.jax_default_dtype_bits
+    assert precision in ['32', '64']
+    self.assertEqual(dtypes.bool_, np.bool_)
+    self.assertEqual(dtypes.int_, np.int32 if precision == '32' else np.int64)
+    self.assertEqual(dtypes.uint, np.uint32 if precision == '32' else np.uint64)
+    self.assertEqual(dtypes.float_, np.float32 if precision == '32' else np.float64)
+    self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
+
 
 class TestPromotionTables(jtu.JaxTestCase):
 
