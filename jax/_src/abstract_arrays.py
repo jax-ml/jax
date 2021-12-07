@@ -49,18 +49,23 @@ array_types = {np.ndarray, np.bool_,
                np.complex64, np.complex128,
                np.longlong, np.intc}
 
+def canonical_concrete_aval(val, weak_type=None):
+  return ConcreteArray(dtypes.canonicalize_dtype(np.result_type(val)), val,
+                       weak_type=weak_type)
+
 for t in array_types:
-  core.pytype_aval_mappings[t] = ConcreteArray
+  core.pytype_aval_mappings[t] = canonical_concrete_aval
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
 
 core.literalable_types.update(array_types)
 
 def _zeros_like_python_scalar(t, x):
-  aval = core.ShapedArray((), dtypes.python_scalar_dtypes[t], weak_type=True)
+  dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[t])
+  aval = core.ShapedArray((), dtype, weak_type=True)
   return ad_util.zeros_like_aval(aval)
 
 def _make_concrete_python_scalar(t, x):
-  return ConcreteArray(
+  return canonical_concrete_aval(
     np.array(x, dtype=dtypes._scalar_type_to_dtype(t, x)),
     weak_type=True)
 

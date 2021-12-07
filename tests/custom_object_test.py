@@ -21,6 +21,7 @@ import jax.numpy as jnp
 from jax import core, jit, lax, make_jaxpr
 from jax._src import device_array
 from jax._src import dispatch
+from jax._src import dtypes
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.lib.mlir import ir
@@ -66,13 +67,15 @@ class AbstractSparseArray(core.ShapedArray):
 
   def __init__(self, shape, dtype, index_dtype, nnz, weak_type=False,
                named_shape=None):
-    super().__init__(shape, dtype)
+    super().__init__(shape, dtypes.canonicalize_dtype(dtype))
     named_shape = {} if named_shape is None else named_shape
     self.index_dtype = index_dtype
     self.nnz = nnz
-    self.data_aval = core.ShapedArray((nnz,), dtype, weak_type, named_shape)
-    self.indices_aval = core.ShapedArray((nnz, len(shape)), index_dtype,
-                                         named_shape=named_shape)
+    self.data_aval = core.ShapedArray((nnz,), dtypes.canonicalize_dtype(dtype),
+                                      weak_type, named_shape)
+    self.indices_aval = core.ShapedArray(
+        (nnz, len(shape)), dtypes.canonicalize_dtype(index_dtype),
+        named_shape=named_shape)
 
   def update(self, shape=None, dtype=None, index_dtype=None, nnz=None,
              weak_type=None, named_shape=None):

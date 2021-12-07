@@ -69,7 +69,7 @@ from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                                      local_devices, process_index,
                                      process_count, host_id, host_ids,
                                      host_count, default_backend)
-from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
+from jax.core import ShapedArray, raise_to_shaped
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import pxla

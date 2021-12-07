@@ -2729,7 +2729,8 @@ class APITest(jtu.JaxTestCase):
 
     @jit
     def f():
-      core.lattice_join(core.ConcreteArray(x), core.ConcreteArray(y))
+      core.lattice_join(core.ConcreteArray(x.dtype, x),
+                        core.ConcreteArray(y.dtype, y))
 
     f()  # doesn't crash
 

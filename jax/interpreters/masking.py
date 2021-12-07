@@ -459,7 +459,8 @@ class MaskTracer(Tracer):
 
   @property
   def aval(self):
-    return ShapedArray(self.polymorphic_shape, self.dtype)
+    return ShapedArray(self.polymorphic_shape,
+                       dtypes.canonicalize_dtype(self.dtype))
 
   @property
   def dtype(self):

@@ -351,14 +351,14 @@ def _code_generator_and_avals(
   xla_comp_parameter_shapes = xla_comp.program_shape().parameter_shapes()
   found_parameter_avals = [
       core.ShapedArray(found_xla_shape.dimensions(),
-                       found_xla_shape.numpy_dtype())
+                       dtypes.canonicalize_dtype(found_xla_shape.numpy_dtype()))
       for found_xla_shape in xla_comp_parameter_shapes
   ]
   # Add the captured_inputs to args_flat_sig_tf
   expected_args_flat_sig_tf = list(args_flat_sig_tf) + list(captured_inputs)
   expected_parameter_avals = [
       core.ShapedArray(tuple(arg_sig.shape.as_list()),
-                       arg_sig.dtype.as_numpy_dtype)
+                       dtypes.canonicalize_dtype(arg_sig.dtype.as_numpy_dtype))
       for arg_sig in expected_args_flat_sig_tf]
   if found_parameter_avals != expected_parameter_avals:
     msg = ("Compiled TensorFlow function has unexpected parameter types " +

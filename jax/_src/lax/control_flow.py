@@ -1480,7 +1480,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     return carry, stacked_y
 
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
-  x_dtypes = [x.dtype for x in xs_flat]
+  x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
   x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
 
   def _create_jaxpr(init):
@@ -2038,7 +2038,7 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
                  for new_c, c in zip(new_carry, carry)]
     return [i + 1] + new_carry + ys
 
-  aval = ShapedArray((), dtypes.int_)
+  aval = ShapedArray((), dtypes.canonicalize_dtype(dtypes.int_))
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   return _make_closed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 

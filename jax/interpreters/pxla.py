@@ -45,6 +45,7 @@ import numpy as np
 from jax._src.config import config
 from jax import core
 from jax import linear_util as lu
+from jax._src import abstract_arrays
 from jax._src.abstract_arrays import array_types
 from jax.core import ConcreteArray, ShapedArray
 from jax._src import device_array
@@ -740,7 +741,7 @@ def _register_handlers_for_sharded_device_array(sda):
   shard_arg_handlers[sda] = _shard_sharded_device_array_slow_path
   xla.register_constant_handler(sda, _sharded_device_array_constant_handler)
 
-  core.pytype_aval_mappings[sda] = ConcreteArray
+  core.pytype_aval_mappings[sda] = abstract_arrays.canonical_concrete_aval
   dispatch.device_put_handlers[sda] = dispatch._device_put_array
   xla.pytype_aval_mappings[sda] = op.attrgetter("aval")
   xla.canonicalize_dtype_handlers[sda] = identity

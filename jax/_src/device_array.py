@@ -23,6 +23,7 @@ import numpy as np
 
 from jax import core
 from jax._src.config import config
+from jax._src import abstract_arrays
 from jax._src import dtypes
 from jax._src import profiler
 from jax._src.lib import xla_client as xc
@@ -306,4 +307,4 @@ deleted_buffer = DeletedBuffer()
 device_array_types: List[type] = [xc.Buffer, _DeviceArray]
 for _device_array in device_array_types:
   core.literalable_types.add(_device_array)
-  core.pytype_aval_mappings[device_array] = core.ConcreteArray
+  core.pytype_aval_mappings[device_array] = abstract_arrays.canonical_concrete_aval

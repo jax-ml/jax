@@ -1240,7 +1240,8 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     if core.symbolic_equal_dim(operand.shape[0], 0):
       output_shape = _gather_shape_rule(
           core.ShapedArray(operand.shape[1:], operand.dtype),
-          core.ShapedArray(indices.shape[1:], indices.dtype),
+          core.ShapedArray(indices.shape[1:],
+                           dtypes.canonicalize_dtype(indices.dtype)),
           dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
           unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
           mode=mode, fill_value=fill_value)
@@ -1456,8 +1457,8 @@ def _scatter_translation_rule(ctx, avals_in, avals_out, operand, indices,
   if mode == GatherScatterMode.CLIP:
     clip_fn = xla.lower_fun(_clamp_scatter_indices, multiple_results=False,
                             new_style=True)
-    indices, = clip_fn(ctx, avals_in, [indices_aval.update(dtype=np.int64)],
-                       operand, indices, updates, dnums=dimension_numbers)
+    indices, = clip_fn(ctx, avals_in, None, operand, indices, updates,
+                       dnums=dimension_numbers)
 
   c = ctx.builder
 
@@ -1477,8 +1478,8 @@ def _scatter_add_translation_rule(
   if mode == GatherScatterMode.CLIP:
     clip_fn = xla.lower_fun(_clamp_scatter_indices, multiple_results=False,
                             new_style=True)
-    indices, = clip_fn(ctx, avals_in, [indices_aval.update(dtype=np.int64)],
-                       operand, indices, updates, dnums=dimension_numbers)
+    indices, = clip_fn(ctx, avals_in, None, operand, indices, updates,
+                       dnums=dimension_numbers)
 
   dtype = operand_aval.dtype
   scatter_dims = _scatter_dimensions_proto(

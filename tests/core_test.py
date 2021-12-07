@@ -336,7 +336,8 @@ class CoreTest(jtu.JaxTestCase):
   def test_concrete_array_string_representation(self):
     # https://github.com/google/jax/issues/5364
     self.assertEqual(
-        str(core.ConcreteArray(np.array([1], dtype=np.int32))),
+        str(core.ConcreteArray(np.dtype(np.int32),
+                               np.array([1], dtype=np.int32))),
         'ConcreteArray([1], dtype=int32)')
 
 
