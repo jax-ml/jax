@@ -198,7 +198,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testSlogdetGrad(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     a = rng(shape, dtype)
-    jtu.check_grads(jnp.linalg.slogdet, (a,), 2, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(jnp.linalg.slogdet, (a,), 2, atol=1e-1, rtol=2e-1)
 
   def testIssue1213(self):
     for n in range(5):
