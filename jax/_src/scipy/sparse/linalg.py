@@ -533,8 +533,7 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
   carry = (V, H, False, 0)
   V, H, _, _ = lax.while_loop(loop_cond, arnoldi_process, carry)
 
-  beta_vec = jnp.zeros((restart + 1,), dtype=dtype)
-  beta_vec = beta_vec.at[0].set(residual_norm)
+  beta_vec = jnp.zeros_like(H, shape=(restart + 1,)).at[0].set(residual_norm)
   y = _lstsq(H.T, beta_vec)
   dx = tree_map(lambda X: _dot(X[..., :-1], y), V)
 

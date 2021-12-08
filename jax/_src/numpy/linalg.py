@@ -34,11 +34,11 @@ _H = lambda x: jnp.conjugate(jnp.swapaxes(x, -1, -2))
 
 def _promote_arg_dtypes(*args):
   """Promotes `args` to a common inexact type."""
-  def _to_inexact_type(type):
-    return type if jnp.issubdtype(type, jnp.inexact) else jnp.float_
-  inexact_types = [_to_inexact_type(jnp._dtype(arg)) for arg in args]
-  dtype = dtypes.canonicalize_dtype(jnp.result_type(*inexact_types))
-  args = [lax.convert_element_type(arg, dtype) for arg in args]
+  dtype, weak_type = dtypes._lattice_result_type(*args)
+  if not jnp.issubdtype(dtype, jnp.inexact):
+    dtype, weak_type = jnp.float_, False
+  dtype = dtypes.canonicalize_dtype(dtype)
+  args = [lax._convert_element_type(arg, dtype, weak_type) for arg in args]
   if len(args) == 1:
     return args[0]
   else:
