@@ -25,7 +25,7 @@ FLAX_EXAMPLES=/tmp/flax/examples
 python3 examples_test.py --flax_examples_path=$FLAX_EXAMPLES
 
 # Run only MNIST and WMT with the TFjs converter and don't write Markdown.
-python3 examples_test.py \
+python3 converters_eval_main.py \
     --examples=flax/mnist,flax/wmt \
     --converters=jax2tf_to_tfjs \
     --write_markdown=False \
@@ -37,8 +37,8 @@ from typing import Sequence
 
 from absl import app
 from absl import flags
-from jax.experimental.jax2tf.examples_eval import converters
-from jax.experimental.jax2tf.examples_eval import examples_converter
+from jax.experimental.jax2tf.converters_eval import converters
+from jax.experimental.jax2tf.converters_eval import converters_eval_lib as lib
 
 
 CONVERTERS = {
@@ -93,7 +93,7 @@ def main(argv: Sequence[str]) -> None:
   results = {}
 
   for converter_name in FLAGS.converters:
-    results[converter_name] = examples_converter.test_convert(
+    results[converter_name] = lib.test_convert(
         converter_name=converter_name,
         converter_fn=CONVERTERS[converter_name],
         suite_names=FLAGS.example_suites,
@@ -101,7 +101,7 @@ def main(argv: Sequence[str]) -> None:
         fail_on_error=FLAGS.fail_on_error)
 
   if FLAGS.write_markdown:
-    examples_converter.write_markdown(results)
+    lib.write_markdown(results)
 
 
 if __name__ == '__main__':

@@ -22,10 +22,10 @@ from absl import flags
 from absl import logging
 import jax
 from jax import random
-from jax.experimental.jax2tf.examples_eval import all_examples
+from jax.experimental.jax2tf.converters_eval import examples as examples_lib
 import jax.numpy as jnp
 
-Arg = all_examples.Arg
+Arg = examples_lib.Arg
 FLAGS = flags.FLAGS
 
 
@@ -41,7 +41,7 @@ class ModuleToConvert:
 @dataclasses.dataclass
 class ConvertSuiteResult:
   """Stores the result of converting an example."""
-  suite: all_examples.ExampleSuite
+  suite: examples_lib.ExampleSuite
   errors: Dict[str, str]  # {example_name -> error_msg}
   num_skipped: int
 
@@ -59,7 +59,7 @@ def _load_import_safe(path, module) -> Callable[..., Any]:
   return getattr(importlib.import_module(path), module)
 
 
-def make_module(spec: all_examples.ModuleSpec) -> ModuleToConvert:
+def make_module(spec: examples_lib.ModuleSpec) -> ModuleToConvert:
   """Builds a ModuleToConvert from the given arguments in `spec`."""
   path, module = spec.module_path.rsplit('.', 1)
   module = _load_import_safe(path, module)(*spec.module_args,
@@ -190,7 +190,7 @@ def test_convert(converter_name: str,
 
   results = {}
   for suite_name in suite_names:
-    suite = all_examples.get_suite(suite_name)
+    suite = examples_lib.get_suite(suite_name)
     if not suite:
       logging.error('Suite %s not found!', suite_name)
       continue

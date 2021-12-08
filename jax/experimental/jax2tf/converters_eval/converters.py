@@ -21,7 +21,7 @@ from jax._src import dtypes
 import jax.numpy as jnp
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.examples import saved_model_lib
-from jax.experimental.jax2tf.examples_eval import examples_converter
+from jax.experimental.jax2tf.converters_eval import converters_eval_lib as lib
 import tensorflow as tf
 from tensorflowjs.converters import converter as tfjs_converter
 
@@ -60,9 +60,12 @@ def _get_random_data(dtype: jnp.dtype, shape: Tuple[int, ...], seed=0) -> Any:
     raise ValueError(f"Unsupported dtype for numerical comparison: {dtype}")
 
 
-def _compare(jax_fn: Callable[..., Any], tf_fn: Callable[..., Any],
-    module: examples_converter.ModuleToConvert, comparison: str,
-    nr_runs: int = 5, rtol: float = 1e-05):
+def _compare(jax_fn: Callable[..., Any],
+             tf_fn: Callable[..., Any],
+             module: lib.ModuleToConvert,
+             comparison: str,
+             nr_runs: int = 5,
+             rtol: float = 1e-05):
   for i in range(nr_runs):
     input_data = _get_random_data(module.dtype, module.input_shape, seed=i)
     # A function may return multiple arrays, which may be of different shapes.
@@ -90,14 +93,14 @@ def _compare(jax_fn: Callable[..., Any], tf_fn: Callable[..., Any],
     del tf_results
 
 
-def jax2tf_xla(module: examples_converter.ModuleToConvert):
+def jax2tf_xla(module: lib.ModuleToConvert):
   """Converts the given `module` using the jax2tf emitter with enable_xla=True."""
   apply = functools.partial(module.apply, module.variables)
   _, apply_tf = _jax2tf(apply, module.input_shape, module.dtype)
   _compare(apply, apply_tf, module, "JAX vs TF (enable_xla=True)")
 
 
-def jax2tf_to_tfjs(module: examples_converter.ModuleToConvert):
+def jax2tf_to_tfjs(module: lib.ModuleToConvert):
   """Converts the given `module` using the TFjs converter."""
   with TempDir() as saved_model_path, TempDir() as converted_model_path:
     # the model must be converted with with_gradient set to True to be able to
@@ -118,8 +121,10 @@ def jax2tf_to_tfjs(module: examples_converter.ModuleToConvert):
     )
     tfjs_converter.convert([saved_model_path, converted_model_path])
 
+  # TODO(marcvanzee): Add numerical comparison for TFjs as well.
 
-def jax2tf_to_tflite(module: examples_converter.ModuleToConvert):
+
+def jax2tf_to_tflite(module: lib.ModuleToConvert):
   """Converts the given `module` using the TFLite converter."""
   apply = functools.partial(module.apply, module.variables)
   tf_fn, apply_tf = _jax2tf(apply, module.input_shape, module.dtype, enable_xla=False)
