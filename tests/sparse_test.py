@@ -1163,6 +1163,58 @@ class BCOOTest(jtu.JaxTestCase):
     # matrix-matrix product -> product of nse
     N = sparse.BCOO.fromdense(jnp.arange(12).reshape(3, 4))
     self.assertEqual((M @ N).nse, M.nse * N.nse)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}[n_batch={}]_rhs_shape={}[n_batch={}]_dimension_numbers={}"
+       .format(jtu.format_shape_dtype_string(lhs_shape, dtype), lhs_n_batch,
+               jtu.format_shape_dtype_string(rhs_shape, dtype), rhs_n_batch,
+               dimension_numbers),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "dimension_numbers": dimension_numbers,
+       "lhs_n_batch": lhs_n_batch, "rhs_n_batch": rhs_n_batch}
+      for lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dimension_numbers in [
+          ((4, 5), 0, (5,), 0, (([1], [0]), ([], []))),
+          ((2, 4, 5), 1, (5,), 0, (([2], [0]), ([], []))),
+          ((4, 5), 0, (5, 3), 0, (([1], [0]), ([], []))),
+          ((2, 4, 5), 1, (2, 5, 3), 1, (([2], [1]), ([0], [0]))),
+      ]
+      for dtype in jtu.dtypes.floating))
+  def test_bcoo_spdot_general_ad(self, lhs_shape, rhs_shape, dtype,
+                                 dimension_numbers, lhs_n_batch, rhs_n_batch):
+    rng = rand_sparse(self.rng())
+
+    lhs = rng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
+
+    lhs_sp = sparse.BCOO.fromdense(lhs, n_batch=lhs_n_batch)
+    rhs_sp = sparse.BCOO.fromdense(rhs, n_batch=rhs_n_batch)
+
+    def f_dense(lhs_data, rhs_data):
+      lhs = sparse.BCOO((lhs_data, lhs_sp.indices), shape=lhs_sp.shape).todense()
+      rhs = sparse.BCOO((rhs_data, rhs_sp.indices), shape=rhs_sp.shape).todense()
+      return (lhs @ rhs).sum()
+
+    def f_sparse(lhs_data, rhs_data):
+      lhs = sparse.BCOO((lhs_data, lhs_sp.indices), shape=lhs_sp.shape)
+      rhs = sparse.BCOO((rhs_data, rhs_sp.indices), shape=rhs_sp.shape)
+      return (lhs @ rhs).sum()
+
+    tol = {}
+    if jtu.device_under_test() == "tpu":
+      tol = {np.float32: 5E-2}
+
+    jf_dense_0 = jax.jacfwd(f_dense, argnums=0)(lhs_sp.data, rhs_sp.data)
+    jf_sparse_0 = jax.jacfwd(f_sparse, argnums=0)(lhs_sp.data, rhs_sp.data)
+    self.assertAllClose(jf_dense_0, jf_sparse_0, rtol=tol)
+
+    jf_dense_1 = jax.jacfwd(f_dense, argnums=1)(lhs_sp.data, rhs_sp.data)
+    jf_sparse_1 = jax.jacfwd(f_sparse, argnums=1)(lhs_sp.data, rhs_sp.data)
+    self.assertAllClose(jf_dense_1, jf_sparse_1, rtol=tol)
+
+    jf_dense_0, jf_dense_1 = jax.jacfwd(f_dense, argnums=(0, 1))(lhs_sp.data, rhs_sp.data)
+    jf_sparse_0, jf_sparse_1 = jax.jacfwd(f_sparse, argnums=(0, 1))(lhs_sp.data, rhs_sp.data)
+    self.assertAllClose(jf_dense_0, jf_sparse_0, rtol=tol)
+    self.assertAllClose(jf_dense_1, jf_sparse_1, rtol=tol)
 
   @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @parameterized.named_parameters(jtu.cases_from_list(
