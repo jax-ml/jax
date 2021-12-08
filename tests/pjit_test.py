@@ -799,12 +799,14 @@ class GDAPjitTest(jtu.JaxTestCase):
 
     gda_obj = global_device_array.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
-    with self.assertRaisesWithLiteralMatch(ValueError, (
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
         "Got an input GDA to pjit with different partitioning than specified "
-        "in the in_axis_resources argument to pjit. The paritioning must "
+        'in the in_axis_resources argument to pjit. The partitioning must '
         'match, or use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources`. '
-        "Got GDA spec: <partitions=(('x',),) sync=2>, "
-        "pjit spec: <partitions=(('x',), ('y',)) sync=2>")):
+        "Got GDA spec: PartitionSpec('x',) and "
+        "pjit spec: PartitionSpec('x', 'y') "
+        'for GDA: GlobalDeviceArray(shape=(8, 2), dtype=float32)'):
       @partial(pjit, in_axis_resources=P('x', 'y'), out_axis_resources=P('x', 'y'))
       def f(x):
         return x
@@ -839,6 +841,30 @@ class GDAPjitTest(jtu.JaxTestCase):
     f(gda_obj, input_data)
     self.assertListEqual(trace_counter, [3])
 
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_partition_spec_mismatch_semantically_equivalent(self):
+    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = [None]
+    global_input_data = np.arange(
+        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+
+    def cb(index):
+      return global_input_data[index]
+
+    with jax._src.config.gsda_out(True):
+      gda_obj = global_device_array.GlobalDeviceArray.from_callback(
+          global_input_shape, global_mesh, mesh_axes, cb)
+
+      @partial(pjit, in_axis_resources=P(None), out_axis_resources=P(None))
+      def f(x):
+        return x
+
+      output_gda = f(gda_obj)
+      # Ensure output_gda._mesh_axes = P() is matched with P(None).
+      self.assertEqual(output_gda._mesh_axes, ())
+      # P(None) is in_axis_resources.
+      f(output_gda)
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 

@@ -385,8 +385,20 @@ class ParsedPartitionSpec:
 
   def __eq__(self, other):
     return (self.partitions == other.partitions and
-            self.unsafe_user_spec == other.unsafe_user_spec and
             self.sync == other.sync)
+
+  def eq_given_rank(self, other, rank):
+    # ParsedPartitionSpecs may contain trailing empty tuples that don't change
+    # the semantic meaning of the spec but are still valid specs. For example,
+    # for a 2D array, (), ((),), and ((), ()) are all valid specs meaning the
+    # array is fully replicated (no dimension partitioned). This method compares
+    # two specs for semantic equivalence and asserts they are valid specs for
+    # the given array rank.
+    assert len(self.partitions) <= rank and len(other.partitions) <= rank
+    min_length = min(len(self.partitions), len(other.partitions))
+    return (self.partitions[:min_length] == other.partitions[:min_length] and
+            all(p == () for p in self.partitions[min_length:]) and
+            all(p == () for p in other.partitions[min_length:]))
 
   def __len__(self):
     return len(self.partitions)
@@ -398,8 +410,9 @@ class ParsedPartitionSpec:
     return iter(self.partitions)
 
   def __repr__(self):
-    return f"<partitions={self.partitions} sync={self.sync}>"
-
+    return (f"ParsedPartitionSpec(partitions={self.partitions}, "
+            f"unsafe_user_spec={self.unsafe_user_spec}, "
+            f"sync={self.sync})")
 
 REPLICATED = ParsedPartitionSpec(None, ())
 
@@ -894,12 +907,14 @@ def local_to_global(positional_semantics, mesh, avals, axes):
 def _canonicalize_spec(in_axis_resources_flat: ParsedPartitionSpec, arg):
   if isinstance(arg, GDA):
     gsda_ppspec = gsda_mesh_axes_to_parsed_pspec(arg._mesh_axes)
-    if in_axis_resources_flat is not FROM_GDA and in_axis_resources_flat != gsda_ppspec:
+    if (in_axis_resources_flat is not FROM_GDA and
+        not in_axis_resources_flat.eq_given_rank(gsda_ppspec, len(arg.shape))):
       raise ValueError(
           'Got an input GDA to pjit with different partitioning than specified in '
-          'the in_axis_resources argument to pjit. The paritioning must match, or '
+          "the in_axis_resources argument to pjit. The partitioning must match, or "
           "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources`. "
-          f'Got GDA spec: {gsda_ppspec}, pjit spec: {in_axis_resources_flat}')
+          f"Got GDA spec: {gsda_ppspec.user_spec} and "
+          f"pjit spec: {in_axis_resources_flat.user_spec} for GDA: {arg}")
     return gsda_ppspec
   return in_axis_resources_flat
 
