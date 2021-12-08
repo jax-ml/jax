@@ -198,16 +198,19 @@ def check_errors_subtrace(main, msgs, err, code, *args):
   del main.error
   yield (err, code, *out_vals), msgs
 
-# TODO take (error_aval, code_aval) instead of error here?
-def checkify_jaxpr(jaxpr, error):
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+def checkify_fun_to_jaxpr(f, error, in_avals):
   f, msgs = check_errors_subtrace(f)
   f = check_errors_traceable(f, tuple(error.msgs.items()))
   err_aval = core.raise_to_shaped(core.get_aval(error.err))
   code_aval = core.raise_to_shaped(core.get_aval(error.code))
-  avals_in = [err_aval, code_aval, *jaxpr.in_avals]
+  avals_in = [err_aval, code_aval, *in_avals]
   jaxpr_out, _, literals_out = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, literals_out), msgs()
+
+# TODO take (error_aval, code_aval) instead of error here?
+def checkify_jaxpr(jaxpr, error):
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+  return checkify_fun_to_jaxpr(f, error, jaxpr.in_avals)
 
 # TODO dedup with check_errors_toplevel
 @lu.transformation
@@ -297,6 +300,42 @@ def scan_error_check(error, *in_flat, reverse, length, jaxpr, num_consts, num_ca
   new_msgs = {**error.msgs, **msgs_}
   return outs, Error(err, code, new_msgs)
 error_checks[control_flow.scan_p] = scan_error_check
+
+def checkify_while_body_jaxpr(cond_jaxpr, body_jaxpr, error):
+  cond_f = core.jaxpr_as_fun(cond_jaxpr)
+  body_f = core.jaxpr_as_fun(body_jaxpr)
+  def new_body_f(*vals):
+    _ = cond_f(*vals)
+    return body_f(*vals)
+  return checkify_fun_to_jaxpr(lu.wrap_init(new_body_f), error, body_jaxpr.in_avals)
+
+def ignore_errors_jaxpr(jaxpr, error):
+  """Constructs a jaxpr which takes two extra args but ignores them."""
+  err_aval = core.raise_to_shaped(core.get_aval(error.err))
+  code_aval = core.raise_to_shaped(core.get_aval(error.code))
+  consts = jaxpr.consts
+  jaxpr = jaxpr.jaxpr
+  new_vars = core.gensym([jaxpr])
+  new_invars = (new_vars(err_aval), new_vars(code_aval), *jaxpr.invars)
+  new_jaxpr = core.Jaxpr(jaxpr.constvars, new_invars,
+                         jaxpr.outvars, jaxpr.eqns)
+  return core.ClosedJaxpr(new_jaxpr, consts)
+
+def while_loop_error_check(error, *in_flat, cond_nconsts, cond_jaxpr, body_nconsts, body_jaxpr):
+  # TODO(lenamartens): fix when an error occurs in the cond function and it then returns False.
+  checked_body_jaxpr, msgs_ = checkify_while_body_jaxpr(cond_jaxpr, body_jaxpr, error)
+  compat_cond_jaxpr = ignore_errors_jaxpr(cond_jaxpr, error)
+  c_consts, b_consts, carry = split_list(in_flat, [cond_nconsts, body_nconsts])
+  new_in_flat = [*c_consts, *b_consts, error.err, error.code, *carry]
+  err, code, *out = control_flow.while_p.bind(
+      *new_in_flat,
+      cond_nconsts=cond_nconsts,
+      cond_jaxpr=compat_cond_jaxpr,
+      body_nconsts=body_nconsts,
+      body_jaxpr=checked_body_jaxpr)
+  new_msgs = {**error.msgs, **msgs_}
+  return out, Error(err, code, new_msgs)
+error_checks[control_flow.while_p] = while_loop_error_check
 
 # TODO(mattjj,lenamartens): currently we bundle effectful-assert-discharging
 # with the error-check-adding transformation (checkify), but they could be
