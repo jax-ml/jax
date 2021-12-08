@@ -886,8 +886,23 @@ def _bcoo_spdot_general_batch_rule(batched_args, batch_dims, *, dimension_number
                                  lhs_shape=new_lhs_shape, rhs_shape=new_rhs_shape)
   return batched_out, (result_batch_dim, result_batch_dim)
 
-# TODO(JVP): jvp, transpose
+
+def _bcoo_spdot_general_jvp(primals, tangents, **kwds):
+  lhs_data, lhs_indices, rhs_data, rhs_indices = primals
+  lhs_data_dot, lhs_indices_dot, rhs_data_dot, rhs_indices_dot = tangents
+  primals_out = bcoo_spdot_general(*primals, **kwds)
+  assert type(lhs_indices_dot) is ad.Zero
+  assert type(rhs_indices_dot) is ad.Zero
+  data_dot_out = 0
+  if type(lhs_data_dot) is not ad.Zero:
+    data_dot_out += bcoo_spdot_general(lhs_data_dot, lhs_indices, rhs_data, rhs_indices, **kwds)[0]
+  if type(rhs_data_dot) is not ad.Zero:
+    data_dot_out += bcoo_spdot_general(lhs_data, lhs_indices, rhs_data_dot, rhs_indices, **kwds)[0]
+  return primals_out, [data_dot_out, ad.Zero.from_value(primals_out[1])]
+
+# TODO(JVP): transpose rule
 batching.primitive_batchers[bcoo_spdot_general_p] = _bcoo_spdot_general_batch_rule
+ad.primitive_jvps[bcoo_spdot_general_p] = _bcoo_spdot_general_jvp
 xla.register_translation(bcoo_spdot_general_p, xla.lower_fun(
     _bcoo_spdot_general_impl, multiple_results=True, new_style=True))
 
