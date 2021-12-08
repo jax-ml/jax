@@ -587,7 +587,25 @@ class Compiled:
       # and transformation
       raise TypeError(
           f'function compiled for {self.in_tree}, called with {in_tree}')
-    out_flat = self._executable.call(*args_flat)
+    try:
+      out_flat = self._executable.call(*args_flat)
+    except TypeError as e:
+      # We can't transform ahead-of-time compiled calls, since we've
+      # lowered and compiled for a fixed function signature, and JAX
+      # transformations change signatures. We interpret a Tracer
+      # argument as an indication of a transformation attempt. We
+      # could check this before the executable call, but we'd rather
+      # avoid isinstance checks on the call path. Seeing a TypeError
+      # might mean that arguments have JAX-invalid types, which in
+      # turn might mean some are Tracers.
+      for arg in args_flat:
+        if isinstance(arg, core.Tracer):
+          raise TypeError(
+              'Cannot apply JAX transformations to a function lowered and '
+              'compiled for a particular signature. Detected argument of '
+              f'Tracer type {type(arg)}.')
+      else:
+        raise
     return tree_unflatten(self.out_tree, out_flat)
 
 

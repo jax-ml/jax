@@ -784,6 +784,16 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f_com = f_low.compile()
     f_low.donate_argnums == f_com.donate_argnums == (0,)
 
+  def test_jit_lower_compile_vmap(self):
+    f = self.jit(lambda x: x + 4).lower(1.).compile()
+    def err():
+      return jax.vmap(lambda x: f(x) + 2)(jnp.ones(3))
+    self.assertRaisesRegex(
+        TypeError,
+        "Cannot apply JAX transformations to a function lowered and compiled "
+        "for a particular signature. Detected .*BatchTracer",
+        err)
+
   @unittest.skipIf(jax._src.lib._xla_extension_version < 45,
                    "requires jaxlib >= 0.1.75")
   def test_jit_enum_as_dict_keys_fails(self):
