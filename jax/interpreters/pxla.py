@@ -1781,9 +1781,11 @@ class Mesh:
 
   @maybe_cached_property
   def local_mesh(self):
+    return self._local_mesh(xb.process_index())
+
+  def _local_mesh(self, process_index):
     if self.empty:
       return self
-    process_index = xb.process_index()
     is_local_device = np.vectorize(
         lambda d: d.process_index == process_index, otypes=[bool])(self.devices)
     subcube_indices = []

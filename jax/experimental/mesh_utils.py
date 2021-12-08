@@ -16,7 +16,7 @@
 """Utils for building a device mesh."""
 
 import itertools
-from typing import Any, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 from absl import logging
 import jax
@@ -24,6 +24,44 @@ import numpy as np
 
 _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
+
+# Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
+# famous contiguous mesh trick.
+#
+# The trick only works for certain topologies and mesh shapes, which are chosen
+# to be representative of large language model workloads (the three axes are
+# [replica, data, model]).
+_TRANSPOSE_TRICKS: Dict[Tuple[int, ...],
+                        Dict[Tuple[int, ...], Tuple[int, ...]]] = {
+    (2, 2, 1): {
+        (1, 2, 2): (0, 1, 2),
+        (2, 2): (0, 1, 2),
+    },
+    (2, 2, 4): {
+        (1, 4, 4): (0, 1, 2),
+        (4, 4): (0, 1, 2),
+    },
+    (4, 4, 4): {
+        (1, 16, 4): (0, 2, 1),
+        (16, 4): (0, 2, 1),
+    },
+    (4, 8, 8): {
+        (1, 64, 4): (0, 2, 1),
+        (1, 4, 64): (0, 2, 1),
+        (64, 4): (0, 2, 1),
+        (4, 64): (0, 2, 1),
+    },
+    (8, 8, 8): {
+        (1, 64, 8): (0, 2, 1),
+        (64, 8): (0, 2, 1),
+    },
+    (8, 16, 16): {
+        (1, 256, 8): (0, 2, 1),
+        (1, 8, 256): (0, 2, 1),
+        (256, 8): (0, 2, 1),
+        (8, 256): (0, 2, 1),
+    },
+}
 
 
 def _create_device_mesh_for_tpu_v4(
@@ -156,24 +194,59 @@ def _jax_devices_order_normalized(
   return jax_devices_array.transpose()
 
 
-def create_device_mesh(mesh_shape: Sequence[int]) -> np.ndarray:
+# jekbradbury's famous trick for creating contiguous submeshes (where available)
+def _transpose_trick(physical_mesh: np.ndarray,
+                     mesh_shape: Sequence[int]) -> np.ndarray:
+  mesh_shape = tuple(mesh_shape)
+  topology = physical_mesh.shape
+  if topology not in _TRANSPOSE_TRICKS:
+    raise ValueError(
+        f"create_device_mesh cannot create contiguous submeshes for "
+        f"physical mesh topology {topology}")
+
+  if mesh_shape not in _TRANSPOSE_TRICKS[topology]:
+    raise ValueError(
+        f"create_device_mesh cannot create contiguous submeshes for "
+        f"mesh_shape {mesh_shape} and physical mesh topology {topology}. "
+        f"Available mesh_shapes: {list(_TRANSPOSE_TRICKS[topology].keys())}")
+
+  return physical_mesh.transpose(*_TRANSPOSE_TRICKS[topology][mesh_shape])
+
+
+def create_device_mesh(mesh_shape: Sequence[int],
+                       contiguous_submeshes: bool = False) -> np.ndarray:
   """Creates a performant device mesh for jax.experimental.maps.mesh.
 
   Args:
     mesh_shape: shape of logical mesh, ordered by increasing network-intensity
       e.g. [replica, data, mdl] where mdl has the most network communication
       requirements.
+    contiguous_submeshes: if True, this function will attempt to create a mesh
+      where each process's local devices form a contiguous submesh. This is
+      required when passing non-GlobalDeviceArrays to `pjit` (see the
+      "Multi-process platforms" note of the [pjit
+      documentation](https://jax.readthedocs.io/en/latest/jax.experimental.pjit.html)
+      for more information on this constraint). A ValueError will be raised if
+      this function can't produce a suitable mesh.
 
   Returns:
-    A np.ndarray of jax devices with mesh_shape as its shape that can be fed
-    into jax.experimental.maps.mesh with good collective performance.
+    A np.ndarray of jax global devices with mesh_shape as its shape that can be
+    fed into jax.experimental.maps.mesh with good collective performance.
+
   """
-  local_jax_devices_from_process_0 = jax.local_devices(process_index=0)
-  jax_devices = jax.devices()
-  device_kind = jax_devices[-1].device_kind
+  process_0_devices = jax.local_devices(process_index=0)
+  global_devices = jax.devices()
+  device_kind = global_devices[-1].device_kind
+  return _create_device_mesh(process_0_devices, global_devices, device_kind,
+                             mesh_shape, contiguous_submeshes)
+
+# Break out core logic for easier testing
+def _create_device_mesh(process_0_devices, global_devices, device_kind,
+                        mesh_shape: Sequence[int],
+                        contiguous_submeshes: bool = False) -> np.ndarray:
   # TODO(zhangqiaorjc): Handle TPU versions other than v4 more generally.
   if device_kind == _TPU_V3:
-    device_mesh = np.asarray(jax_devices).reshape(mesh_shape)
+    device_mesh = np.asarray(global_devices).reshape(mesh_shape)
     if mesh_shape[-1] == 8:
       logging.info('Re-order TPUv3 device mesh for better performance.')
       perm = np.array([0, 1, 2, 3, 6, 7, 4, 5])
@@ -181,11 +254,13 @@ def create_device_mesh(mesh_shape: Sequence[int]) -> np.ndarray:
     return device_mesh
   elif device_kind == _TPU_V4:
     physical_mesh = _jax_devices_order_normalized(
-        local_jax_devices_from_process_0, jax_devices)
+        process_0_devices, global_devices)
+    if contiguous_submeshes:
+      physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
     device_mesh, assignment = _create_device_mesh_for_tpu_v4(
         physical_mesh, mesh_shape)
     logging.info('_create_device_mesh_for_tpu_v4 assignment: %s', assignment)
     return device_mesh
   else:
-    device_mesh = np.asarray(jax_devices).reshape(mesh_shape)
+    device_mesh = np.asarray(global_devices).reshape(mesh_shape)
     return device_mesh

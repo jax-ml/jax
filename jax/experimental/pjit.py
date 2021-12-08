@@ -95,9 +95,14 @@ def pjit(fun: Callable,
     of ``pjit`` every process only "sees" its local piece of the input and output,
     corresponding to its local sub-mesh.
 
-    The SPMD model requires that the same multi-process ``pjit``'d functions must
-    be run in the same order on all processes, but they can be interspersed with
-    arbitrary operations running in a single process.
+    This means that each process's participating local devices must form a
+    _contiguous_ local sub-mesh within the full global mesh. A contiguous
+    sub-mesh is one where all of its devices are adjacent within the global
+    mesh, and form a rectangular prism.
+
+    The SPMD model also requires that the same multi-process ``pjit``'d
+    functions must be run in the same order on all processes, but they can be
+    interspersed with arbitrary operations running in a single process.
 
   Args:
     fun: Function to be compiled. Should be a pure function, as side-effects may
