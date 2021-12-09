@@ -42,6 +42,7 @@ class ModuleSpec:
   dtype: jnp.dtype = jnp.float32
   rng_key: int = 0
   apply_method_fn: str = '__call__'
+  rtol: Optional[float] = None
 
   def __post_init__(self):
     self.module_kwargs = self.module_kwargs or {}
@@ -107,13 +108,21 @@ def _flax_examples():
               apply_args=(Arg.VARS,),
               apply_kwargs=dict(inputs=Arg.INPUT, train=False)),
       'pixelcnn++':
+          # The tolerance for `lax.conv_general_dilated is 5e-3 for float32 on
+          # CPU for enable_xla=False, see:
+          # https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/jax2tf_limitations.py
+          # PixelCNN++ contains long chains of convolutions, so the `rtol` is
+          # higher here than the default. However, it could also be something
+          # else causing this high tolerance, so this should be investigated in
+          # more detail.
           ModuleSpec(
               module_path='pixelcnn.pixelcnn.PixelCNNPP',
               input_shape=(1, 32, 32, 3),
               init_kwargs=dict(train=False),
               module_kwargs=dict(
                   depth=1, features=2, logistic_components=2, dropout_p=0.),
-              apply_kwargs=dict(train=False)),
+              apply_kwargs=dict(train=False),
+              rtol=5e-2),
       'ppo':
           ModuleSpec(
               module_path='ppo.models.ActorCritic',

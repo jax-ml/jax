@@ -28,6 +28,8 @@ from tensorflowjs.converters import converter as tfjs_converter
 Array = Any
 TempDir = tempfile.TemporaryDirectory
 
+DEFAULT_RTOL = 1e-05
+
 
 def _jax2tf(jax_fn: Callable[..., Any], input_shape: Tuple[int, ...], dtype: Any, *, enable_xla: bool = True):
   """Converts the given `jax_fn` to TF using jax2tf and returns `(tf_fn, concrete_fn)`."""
@@ -64,8 +66,10 @@ def _compare(jax_fn: Callable[..., Any],
              tf_fn: Callable[..., Any],
              module: lib.ModuleToConvert,
              comparison: str,
-             nr_runs: int = 5,
-             rtol: float = 1e-05):
+             nr_runs: int = 5):
+  rtol = DEFAULT_RTOL
+  if module.rtol:
+    rtol = module.rtol
   for i in range(nr_runs):
     input_data = _get_random_data(module.dtype, module.input_shape, seed=i)
     # A function may return multiple arrays, which may be of different shapes.
@@ -82,10 +86,7 @@ def _compare(jax_fn: Callable[..., Any],
           f"{len(jax_results)}")
 
     for jax_result, tf_result in zip(jax_results, tf_results):
-      if not np.allclose(jax_result, tf_result, rtol):
-        raise ValueError(f"For {comparison}: Numerical difference "
-                          f"jax_result={jax_result} vs "
-                          f"tf_result={tf_result}")
+      np.testing.assert_allclose(jax_result, tf_result, rtol)
       # TFLite doesn't allow existing references to its data when it is
       # invoked. We therefore delete TF results so we can run multiple inputs on
       # the same interpreter.
