@@ -17,23 +17,26 @@ are supported in [impl_no_xla.py](../impl_no_xla.py).
 ## Summary Table
 
 The table below shows for each XLA ops by which JAX primitives it is used, and
-whether the ops is fully, partially, or not supported by the `jax2tf` emitted.
+whether the ops is fully, partially, or not supported by the `jax2tf` emitter.
 In the next section we provide more details on the ops for which we provide
 partial support.
 
-| XLA ops | JAX primitive(s) | Supported |
+For a detailed description of these XLA ops, please see the
+[XLA Operation Semantics documentation](https://www.tensorflow.org/xla/operation_semantics).
+
+| XLA ops ([documentation](https://www.tensorflow.org/xla/operation_semantics)) | JAX primitive(s) ([documentation](https://jax.readthedocs.io/en/latest/jax.lax.html)) | Supported |
 | ------- | ---------------- | ------- |
-| [XlaDot](https://www.tensorflow.org/xla/operation_semantics#dot)  | `lax.dot_general` | Full |
-| [XlaDynamicSlice](https://www.tensorflow.org/xla/operation_semantics#dynamicslice) | `lax.dynamic_slice` | Full |
-| [XlaDynamicUpdateSlice](https://www.tensorflow.org/xla/operation_semantics#dynamicupdateslice) | `lax.dynamic_update_slice` | Full |
-| [XlaPad](https://www.tensorflow.org/xla/operation_semantics#pad)  | `lax.pad` | Full |
-| [XlaConv](https://www.tensorflow.org/xla/operation_semantics#conv_convolution) | `lax.conv_general_dilated` | Partial |
-| [XlaGather](https://www.tensorflow.org/xla/operation_semantics#gather) | `lax.gather` | Partial |
-| [XlaReduceWindow](https://www.tensorflow.org/xla/operation_semantics#reducewindow) | `lax.reduce_window_sum_p`, `lax.reduce_window_min_p`, `lax.reduce_window_max_p`, and `lax.reduce_window_p` | Partial |
-| [XlaScatter](https://www.tensorflow.org/xla/operation_semantics#scatter) | `lax.scatter_p`, `lax.scatter_min_p`, `lax.scatter_max_p`, `lax.scatter_mul_p`, `lax.scatter_add_p` | Unsupported |
-| [XlaSelectAndScatter](https://www.tensorflow.org/xla/operation_semantics#selectandscatter) | `lax.select_and_scatter_add_p` | Unsupported |
-| [XlaReduce](https://www.tensorflow.org/xla/operation_semantics#reduce) | `lax.reduce`, `lax.argmin`, `lax.argmax` | Unsupported |
-| [XlaSort](https://www.tensorflow.org/xla/operation_semantics#sort) | `lax.sort` | Unsupported |
+| XlaDot  | `lax.dot_general` | Full |
+| XlaDynamicSlice | `lax.dynamic_slice` | Full |
+| XlaDynamicUpdateSlice | `lax.dynamic_update_slice` | Full |
+| XlaPad  | `lax.pad` | Full |
+| XlaConv | `lax.conv_general_dilated` | [Partial](#xlaconv) |
+| XlaGather | `lax.gather` | [Partial](#xlagather) |
+| XlaReduceWindow | `lax.reduce_window_sum_p`, `lax.reduce_window_min_p`, `lax.reduce_window_max_p`, and `lax.reduce_window_p` | [Partial](#xlareducewindow) |
+| XlaScatter | `lax.scatter_p`, `lax.scatter_min_p`, `lax.scatter_max_p`, `lax.scatter_mul_p`, `lax.scatter_add_p` | Unsupported |
+| XlaSelectAndScatter | `lax.select_and_scatter_add_p` | Unsupported |
+| XlaReduce | `lax.reduce`, `lax.argmin`, `lax.argmax` | Unsupported |
+| XlaSort | `lax.sort` | Unsupported |
 
 
 ## Partially Supported JAX Primitives
@@ -54,34 +57,99 @@ lax.conv_general_dilated(
 )
 ```
 
-We provide support for the following cases:
-
-* Any stride size (`window_strides`).
-* Any padding type (`padding`).
-* Atrous convolutions (`rhs_dilation != (1, 1, ...)`).
-* Transposed convolutions (`lhs_dilation != (1, 1, ...)`).
-* Depthwise convolutions (`in_channels == feature_group_count and feature_group_count > 1`).
-* Provide input in any order (specified using `dimension_numbers`).
-
-The implementation currently has the following limitations:
+We provide support for convolutions as follows:
 
 * Only 2D convolutions, i.e. `lhs.ndim == 4`.
-* No batch groups, i.e. `batch_group_count == 1`.
-* No feature groups, except for depth-wise convolutions (See above).
-* If using transposed convolutions, then `padding == 'VALID'`.
-* Only one of depthwise, atrous and tranposed convolutions.
+* Regular convolutions and atrous convolutions
+  (i.e., `rhs_dilation != (1, 1, ...)`) are supported through the TF op
+  [`tf.nn.conv2d`](https://www.tensorflow.org/api_docs/python/tf/nn/conv2d).
+* Transposed convolutions (i.e., `lhs_dilation != (1, 1, ...)`) are supported
+  through
+  [`tf.nn.conv2d_transpose`](https://www.tensorflow.org/api_docs/python/tf/nn/conv2d_transpose).
+  If using transposed convolutions, then `padding == 'VALID'`.
+* Depthwise convolutions (i.e.
+  `in_channels == feature_group_count and feature_group_count > 1`) are
+  supported through
+  [`tf.nn.depthwise_conv2d`](https://www.tensorflow.org/api_docs/python/tf/nn/depthwise_conv2d).
+* No support for batch groups, i.e. `batch_group_count == 1`.
+* No support for feature groups, except for depth-wise convolutions.
+* Input may be provided in any order (specified using `dimension_numbers`).
+* Only one of depthwise, atrous and tranposed convolutions may be used at the
+  same time.
 
 ### XlaGather
 
-`TODO(marcvanzee): Write this`
+XLA's gather op is complex and covers may use cases. It is called from JAX using
+`lax.gather`, but many other primitives and operations use it as well, for
+instance, parallelization primitives `vmap` and `pmap` use gather to specify a
+batch dimension, and it is used for slices or multidimensional indexing as well,
+e.g. `x[0, 1]`, `x[:, :1]`, or `x[[0], [1]]`.
+
+The signature of [`lax.gather`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.gather.html#jax.lax.gather)
+is as follows:
+
+```
+jax.lax.gather(
+    operand, start_indices, dimension_numbers, slice_sizes,
+    unique_indices=False, indices_are_sorted=False, mode=None,
+    fill_value=None
+)
+```
+
+We provide support for the following cases:
+
+* *Scalar indexing*. This means we are indexing into a single dimension,
+  retrieving either a partial slice or a single value from that dimension. For
+  all other dimensions we retrieve the full slice. Examples include `op[2]`,
+  `op[:, :5, :]`, and `jnp.take(op, 0, axis=0)`. This means that
+  `len(start_indices.shape) == 1`. We provide support for this path through the
+  TF op
+  [`tf.strided_slice`](https://www.tensorflow.org/api_docs/python/tf/strided_slice).
+
+* *Multi-dimensional indexing*. This means we index into multiple dimensions,
+  e.g., `jnp.take(op, [[0], [1]], axis=0)` or `op[[0], [4], [1]]`. We currently
+  only support multi-dimensional indexing if the last dimension is 1, which
+  means we can only retrieve a single value per dimension, and we can't retrieve
+  slices. We provide support for this path through the TF op
+  [`tf.gather`](https://www.tensorflow.org/api_docs/python/tf/gather).
+
+* *Gather with a batch dimension*. E.g., when doing
+  `jax.vmap(lax.dynamic_slice)`, which will result in a call to `lax.gather`
+  where the first dimension of the input is the batch dimension. This means that
+  `len(batch_dims) == 1`. We currently only support a single batch dimension
+  (i.e., `vmap(vmap))` does not work). We provide support for this path through
+  the TF op [`tf.slice`](https://www.tensorflow.org/api_docs/python/tf/slice).
+
+All other cases of `lax.gather` are currently not supported.
+
 
 ### XlaReduceWindow
 
-`TODO(marcvanzee): Write this`
+This op is called by `lax.reduce_window_sum_p`, `lax.reduce_window_max_p`,
+`lax.reduce_window_min_p` and `lax.reduce_window`.
 
+Of these ops, we currently only support `lax.reduce_window_sum_p` and
+`lax.reduce_window_max_p` through respectively the TF ops
+[`tf.nn.avg_pool`](https://www.tensorflow.org/api_docs/python/tf/nn/avg_pool) and
+[`tf.nn.max_pool`](https://www.tensorflow.org/api_docs/python/tf/nn/max_pool).
 
+Both functions have the following signature:
 
+```
+lax.reduce_window_{sum,max}(
+    operand, window_dimensions, window_strides,
+    padding, base_dilation, window_dilation)
+```
 
+We support these ops with the following limitations:
 
+* For `reduce_window_sum_p`, dtypes `jnp.bool`, `jnp.uint32`, `jnp.uint64`,
+  `jnp.complex64`, and `jnp.complex128` are not supported. 
+* For `reduce_window_max_p`, dtype `jnp.float16`, `jnp.float32`, and
+  `jnp.float64` are not supported.
+* We support at most 3 spatial dimension.
+* `base_dilation = (1, 1, ...)`.
+* `window_dilation == (1, 1, ...)`.
+* `padding` should either be `VALID` or `SAME`.
 
-
+`lax.reduce_window_min_p` and `lax.reduce_window` are currently not supported.
