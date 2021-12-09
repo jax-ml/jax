@@ -16,14 +16,13 @@ import hashlib
 import os
 import re
 import sys
-from typing import List
+from typing import List, Optional
 
 import jax
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
 import jax._src.lib
 from jax._src.lib import xla_client
 from absl import logging
-from typing import Optional
 
 _cache = None
 
@@ -57,6 +56,8 @@ def put_executable(xla_computation, compile_options, executable: xla_client.Exec
   """Adds 'executable' to the cache, possibly evicting older entries."""
   assert _cache is not None, "initialize_cache must be called before you can call put_executable()"
   cache_key = get_cache_key(xla_computation, compile_options, backend)
+  logging.info('Writing %s to persistent compilation cache with key %s.',
+               xla_computation.name(), cache_key)
   serialized_executable = backend.serialize_executable(executable)
   _cache.put(cache_key, serialized_executable)
 
