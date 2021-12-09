@@ -1372,7 +1372,7 @@ def local_avals_to_results_handler(
 def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
                                     out_axes: Sequence[ArrayMapping],
                                     global_mesh):
-  if config.jax_gsda_out:
+  if config.jax_parallel_functions_output_gda:
     global_sharding_spec = mesh_sharding_specs(global_mesh.shape, global_mesh.axis_names)
     global_out_specs = [global_sharding_spec(aval, oa)
                         for aval, oa in safe_zip(global_out_avals, out_axes)]

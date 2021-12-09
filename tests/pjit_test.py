@@ -609,7 +609,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     gda_obj = global_device_array.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
 
-    with jax._src.config.gsda_out(True):
+    with jax._src.config.parallel_functions_output_gda(True):
       @partial(pjit, in_axis_resources=FROM_GDA, out_axis_resources=P('x', 'y'))
       def f(x):
         return x @ x.T
@@ -650,7 +650,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     gda4 = global_device_array.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes4, cb)
 
-    with jax._src.config.gsda_out(True):
+    with jax._src.config.parallel_functions_output_gda(True):
       @partial(
           pjit,
           # `FROM_GDA` will be replicated for all the inputs.
@@ -714,7 +714,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     gda_obj = global_device_array.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
 
-    with jax._src.config.gsda_out(True):
+    with jax._src.config.parallel_functions_output_gda(True):
       @partial(pjit,
                in_axis_resources=(FROM_GDA, P('x', 'y')),
                out_axis_resources=(P('x', 'y'), P(('x', 'y'))))
@@ -742,7 +742,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     input_shape = (8, 2)
     input_data = np.arange(prod(input_shape)).reshape(input_shape)
 
-    with jax._src.config.gsda_out(True):
+    with jax._src.config.parallel_functions_output_gda(True):
       @partial(pjit,
                in_axis_resources=(None, P('x', 'y')),
                out_axis_resources=(P('x', 'y'), P(('x', 'y'))))
@@ -852,7 +852,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     def cb(index):
       return global_input_data[index]
 
-    with jax._src.config.gsda_out(True):
+    with jax._src.config.parallel_functions_output_gda(True):
       gda_obj = global_device_array.GlobalDeviceArray.from_callback(
           global_input_shape, global_mesh, mesh_axes, cb)
 

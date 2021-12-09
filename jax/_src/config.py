@@ -503,8 +503,8 @@ log_compiles = config.define_bool_state(
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
 
-gsda_out = config.define_bool_state(
-    name='jax_gsda_out',
+parallel_functions_output_gda = config.define_bool_state(
+    name='jax_parallel_functions_output_gda',
     default=False,
     help='If True, pjit will output GSDAs.')
 
