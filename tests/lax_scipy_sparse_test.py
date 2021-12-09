@@ -477,6 +477,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     QAQ = matmul_high_precision(QA, Q[:, :n])
     self.assertAllClose(QAQ, H.T[:n, :], rtol=1e-5, atol=1e-5)
 
+  def test_gmres_weak_types(self):
+    x, _ = jax.scipy.sparse.linalg.gmres(lambda x: x, 1.0)
+    self.assertTrue(dtypes.is_weakly_typed(x))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
