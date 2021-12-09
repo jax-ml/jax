@@ -659,7 +659,7 @@ def _call(callback_func: Callable, arg, *,
     # Turn abstract values into ShapesDtypeStruct
     flat_results_shape, result_treedef = pytree.flatten(result_shape)
     try:
-      flat_results_aval = [core.ShapedArray(np.shape(r), dtypes.result_type(r))
+      flat_results_aval = [core.ShapedArray(np.shape(r), dtypes.dtype(r, canonicalize=True), dtypes.is_weakly_typed(r))
                            for r in flat_results_shape]
     except Exception:
       msg = ("result_shape should be a pytree of values with structure "

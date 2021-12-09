@@ -1209,7 +1209,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     device_count = jax.device_count()
     shape = (device_count, 10)
     self.assertAllClose(f(jnp.ones(shape, dtype=int)),
-                        (np.arange(device_count) + 1) * 10)
+                        (jnp.arange(device_count) + 1) * 10)
 
   def testVmapOfPmap(self):
     device_count = jax.device_count()
@@ -2436,7 +2436,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
     y1, y2 = jax.device_put_sharded(x, devices)
     self.assertIsInstance(y1, pxla.ShardedDeviceArray)
-    self.assertArraysEqual(y1, jnp.array([a for a, _ in x]))
+    self.assertArraysEqual(y1, jnp.array([a for a, _ in x]), check_dtypes=False)
     self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
     self.assertIsInstance(y2, pxla.ShardedDeviceArray)
     self.assertArraysEqual(y2, jnp.vstack([b for _, b in x]))

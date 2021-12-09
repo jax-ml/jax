@@ -266,7 +266,7 @@ class XMapTest(XMapTestCase):
                   in_axes=['i', 'j', ...],
                   out_axes=['i', 'j', ...],
                   axis_resources={'i': 'x', 'j': 'y'})(x).reshape((-1,))
-    self.assertAllClose(result, perm)
+    self.assertAllClose(result, perm.astype(jnp.int_))
 
   def testCollectivePermute1D(self):
     perm = np.array([3, 1, 2, 0])
@@ -274,7 +274,7 @@ class XMapTest(XMapTestCase):
     result = xmap(lambda x: lax.pshuffle(x, 'i', perm),
                   in_axes=['i', ...],
                   out_axes=['i', ...])(x)
-    self.assertAllClose(result, perm)
+    self.assertAllClose(result, perm.astype(jnp.int_))
 
   def testCollectiveAllGather(self):
     x = jnp.arange(4)
@@ -547,13 +547,13 @@ class XMapTest(XMapTestCase):
 
   @jtu.with_and_without_mesh
   def testBroadcast(self, mesh, axis_resources):
-    x = jnp.asarray(2.0)
+    x = jnp.float_(2.0)
     f = xmap(lambda x: x, in_axes={}, out_axes=['i'],
              axis_sizes={'i': 4}, axis_resources=dict(axis_resources))
     self.assertAllClose(f(x), jnp.asarray([2.0, 2.0, 2.0, 2.0]))
 
   def testNestedBroadcast(self):
-    x = jnp.asarray(2.0)
+    x = jnp.float_(2.0)
     f = xmap(lambda x: x, in_axes={}, out_axes=['i'], axis_sizes={'i': 4})
     g = xmap(f, in_axes={}, out_axes=['j', ...], axis_sizes={'j': 7})
     self.assertAllClose(g(x), jnp.tile(x.reshape((1, 1)), (7, 4)))

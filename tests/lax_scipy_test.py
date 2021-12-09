@@ -199,14 +199,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
       args_maker = lambda: [rng(shapes[0], dtype)]
     tol = {np.float32: 1E-6, np.float64: 1E-14}
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
 
   def testLogSumExpZeros(self):
     # Regression test for https://github.com/google/jax/issues/5370
     scipy_fun = lambda a, b: osp_special.logsumexp(a, b=b)
     lax_fun = lambda a, b: lsp_special.logsumexp(a, b=b)
-    args_maker = lambda: [np.array([-1000, -2]), np.array([1, 0])]
+    args_maker = lambda: [np.array([-1000, -2], 'float32'), np.array([1, 0], 'float32')]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker)
 
@@ -335,7 +335,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
       return np.dstack(vals), np.dstack(derivs)
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-6, atol=1e-6)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-6, atol=1e-6, check_dtypes=False)
     self._CompileAndCheck(lax_fun, args_maker, rtol=1E-6, atol=1E-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -368,7 +368,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           a_normalized[m, l] = c2 * a[m, l]
       return a_normalized
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-5, atol=1e-5)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-5, atol=1e-5, check_dtypes=False)
     self._CompileAndCheck(lax_fun, args_maker, rtol=1E-6, atol=1E-6)
 
   def testSphHarmAccuracy(self):
@@ -380,7 +380,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     expected = lsp_special.sph_harm(m, n, theta, phi, n_max)
 
-    actual = osp_special.sph_harm(m, n, theta, phi)
+    actual = osp_special.sph_harm(m, n, theta, phi).astype(jnp.complex_)
 
     self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
 
@@ -446,7 +446,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self._CompileAndCheck(lsp_special_fn, args_maker)
 
     with self.subTest('Test against numpy.'):
-      self._CheckAgainstNumpy(osp_special.sph_harm, lsp_special_fn, args_maker)
+      self._CheckAgainstNumpy(osp_special.sph_harm, lsp_special_fn, args_maker, check_dtypes=False)
 
   def testSphHarmCornerCaseWithWrongNmax(self):
     """Tests the corner case where `n_max` is not the maximum value of `n`."""

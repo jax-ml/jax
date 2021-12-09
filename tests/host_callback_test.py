@@ -1801,8 +1801,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       x = hcb.id_print(x)
       return -k * x
 
-    def loss(k=1.0):
-      t = jnp.linspace(0, 0.001, num=2)
+    def loss(k):
+      t = jnp.linspace(0, 0.001, num=2, dtype=k.dtype)
       xs = odeint(f, 1.0, t, k)
       return xs[-1]
 

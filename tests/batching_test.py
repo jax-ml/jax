@@ -565,7 +565,7 @@ class BatchingTest(jtu.JaxTestCase):
   def testCumProd(self):
    x = jnp.arange(9).reshape(3, 3) + 1
    y = vmap(lambda x: jnp.cumprod(x, axis=-1))(x)
-   self.assertAllClose(np.cumprod(x, axis=1, dtype=int), y)
+   self.assertAllClose(np.cumprod(x, axis=1, dtype=jnp.int_), y)
 
   def testSelect(self):
     pred = np.array([True, False])
@@ -961,7 +961,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
     def scalar_f2(x):
-      return lax.dynamic_update_slice(x, 7, [])
+      return lax.dynamic_update_slice(x, lax._const(x, 7), [])
 
     xs = jnp.array([1, 2, 3, 4])
     ans = vmap(scalar_f2)(xs)

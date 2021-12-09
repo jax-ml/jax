@@ -968,7 +968,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testBlockDiag(self, args):
     args_maker = lambda: args
     self._CheckAgainstNumpy(osp.linalg.block_diag, jsp.linalg.block_diag,
-                            args_maker)
+                            args_maker, check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.block_diag, args_maker)
 
 

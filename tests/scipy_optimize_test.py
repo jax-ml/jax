@@ -109,7 +109,7 @@ class TestBFGS(jtu.JaxTestCase):
       answer = zakharovFromIndices(x=x, ii=ii)
       return answer
 
-    x0 = jnp.array([600.0, 700.0, 200.0, 100.0, 90.0, 1e4])
+    x0 = jnp.array([600.0, 700.0, 200.0, 100.0, 90.0, 1e4], dtype='float64')
     eval_func = jax.jit(zakharov_fn)
     jax_res = jax.scipy.optimize.minimize(fun=eval_func, x0=x0, method='BFGS')
     self.assertLess(jax_res.fun, 1e-6)

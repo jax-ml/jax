@@ -147,18 +147,18 @@ class ODETest(jtu.JaxTestCase):
       return 0.1 * x
 
     def f(x, y):
-      y0 = jnp.array([x, y])
-      t = jnp.array([0., 5.])
+      y0 = jnp.array([x, y], dtype=x.dtype)
+      t = jnp.array([0., 5.], dtype=y0.dtype)
       y = odeint(dx_dt, y0, t)
       return y[-1].sum()
 
     def g(x):
       # Two initial values for the ODE
       y0_arr = jnp.array([[x, 0.1],
-                         [x, 0.2]])
+                          [x, 0.2]], dtype=x.dtype)
 
       # Run ODE twice
-      t = jnp.array([0., 5.])
+      t = jnp.array([0., 5.], dtype=x.dtype)
       y = jax.vmap(lambda y0: odeint(dx_dt, y0, t))(y0_arr)
       return y[:,-1].sum()
 
@@ -214,10 +214,10 @@ class ODETest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/3558
 
     def f(k):
-      return odeint(lambda x, t: k*x, 1.,  jnp.linspace(0, 1., 50)).sum()
+      return odeint(lambda x, t: k*x, jnp.float_(1),  jnp.linspace(0, 1., 50)).sum()
 
     with self.assertRaisesRegex(TypeError, "can't apply forward-mode.*"):
-      jax.jacfwd(f)(3.)
+      jax.jacfwd(f)(jnp.float_(3))
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_closure_nondiff(self):
@@ -242,10 +242,10 @@ class ODETest(jtu.JaxTestCase):
     def f(y0, ts, alpha):
       return odeint(dy_dt, y0, ts, alpha).real
 
-    alpha = 3 + 4j
-    y0 = 1 + 2j
+    alpha = jnp.complex_(3 + 4j)
+    y0 = jnp.complex_(1 + 2j)
     ts = jnp.linspace(0., 1., 11)
-    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1
 
     jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
 

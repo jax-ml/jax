@@ -1300,7 +1300,7 @@ class APITest(jtu.JaxTestCase):
       api.jvp(fun, (jnp.array([1.,2.,3.], dtype=jnp.float32),), (jnp.float32(20.),))
     with self.assertRaisesRegex(
       ValueError, "jvp called with different primal and tangent shapes"):
-      api.jvp(fun, (jnp.array([1.,2.,3.]),), (20.,))
+      api.jvp(fun, (jnp.array([1.,2.,3.]),), (jnp.float_(20.),))
 
   def test_jvp_non_tuple_arguments(self):
     def f(x, y): return x + y
@@ -1743,8 +1743,8 @@ class APITest(jtu.JaxTestCase):
   @unittest.skipIf(numpy_version == (1, 21, 0),
                    "https://github.com/numpy/numpy/issues/19305")
   def test_vjp_of_int_index(self):
-    primal, fn_vjp = api.vjp(lambda x, i: x[i], np.ones(2)*2, 1)
-    tangent_x, tangent_i = fn_vjp(1.)
+    primal, fn_vjp = api.vjp(lambda x, i: x[i], jnp.ones(2)*2, 1)
+    tangent_x, tangent_i = fn_vjp(jnp.float32(1.))  # TODO(jakevdp[x64]) handle weak types in fn_vjp?
     self.assertEqual(primal, 2.)
     self.assertAllClose(tangent_x, jnp.array([0., 1.]))
     self.assertEqual(tangent_i, np.zeros(shape=(), dtype=float0))
@@ -1772,7 +1772,7 @@ class APITest(jtu.JaxTestCase):
     # Regression test for tangent and cotangent mismatch in convert_element_type
     # transpose rule wrt a ConstVar
     f = lax.full_like
-    out, vjp = api.vjp(f, np.zeros((2, 2)), 1)
+    out, vjp = api.vjp(f, jnp.zeros((2, 2)), 1)
     self.assertAllClose(out, jnp.ones((2, 2)))
     tangent_x, tangent_y = vjp(out)
     self.assertAllClose(tangent_x, jnp.zeros((2, 2)))
@@ -1798,7 +1798,7 @@ class APITest(jtu.JaxTestCase):
                    "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_int_index(self):
     grad_x, grad_i = api.grad(lambda x, i: x[i], argnums=(0, 1),
-                              allow_int=True)(np.ones(2), 1)
+                              allow_int=True)(jnp.ones(2), 1)
     self.assertAllClose(grad_x, jnp.array([0., 1.]))
     self.assertEqual(grad_i, np.zeros(shape=(), dtype=float0))
 
@@ -1806,7 +1806,7 @@ class APITest(jtu.JaxTestCase):
                    "https://github.com/numpy/numpy/issues/19305")
   def test_jit_grad_of_int(self):
     grad_f = api.grad(lambda x, i: x[i], argnums=(0, 1), allow_int=True)
-    grad_x, grad_i = jax.jit(grad_f)(np.ones(2), 1)
+    grad_x, grad_i = jax.jit(grad_f)(jnp.ones(2), 1)
     self.assertAllClose(grad_x, jnp.array([0., 1.]))
     self.assertEqual(grad_i, np.zeros(shape=(), dtype=float0))
 
@@ -2948,7 +2948,7 @@ class APITest(jtu.JaxTestCase):
 
     ans = f(jnp.arange(1))  # doesn't crash
     expected = jnp.arange(1) + 1
-    self.assertAllClose(ans, expected)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_large_python_ints(self):
     with self.assertRaises(OverflowError):
@@ -4659,7 +4659,8 @@ class CustomJVPTest(jtu.JaxTestCase):
       return [expit(c[0])] + [c[i-1] + c[i] for i in range(1, len(c))], None
 
     def foo(x):
-      c, _ = lax.scan(scanned_fun, [x, 0., 0., 0., 0.], None, length=10)
+      zero = jnp.zeros_like(x, shape=())
+      c, _ = lax.scan(scanned_fun, [x, zero, zero, zero, zero], None, length=10)
       return c[-1]
 
     # just make sure these don't crash
@@ -4704,7 +4705,8 @@ class CustomJVPTest(jtu.JaxTestCase):
       return [relu(c[0])] + [c[i-1] + c[i] for i in range(1, len(c))], None
 
     def f(x):
-      c, _ = lax.scan(scanned_fun, [x, 0., 0., 0., 0.], None, length=10)
+      zero = jnp.zeros_like(x, shape=())
+      c, _ = lax.scan(scanned_fun, [x, zero, zero, zero, zero], None, length=10)
       return c[-1]
 
     # don't crash
@@ -5736,7 +5738,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
       f.defvjp(fwd, bwd)
 
-      return jax.grad(f)(1.)
+      return jax.grad(f)(jnp.ones_like(y))
 
     ans = jax.jit(f)(2.)
     self.assertAllClose(ans, 2. * jnp.cos(2.))
@@ -5767,7 +5769,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
       f.defvjp(fwd, bwd)
 
-      return jax.grad(f)(1.)
+      return jax.grad(f)(jnp.ones_like(y))
 
     ans = jax.jit(f)(2.)
     self.assertAllClose(ans, 2. * jnp.cos(2.))
@@ -6106,7 +6108,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     key1, key2 = jax.random.split(key, 2)
     x_batch = jax.random.normal(key1, (3, 2))
     covector_batch = jax.random.normal(key2, (3, 2))
-    coeff = jnp.array(1.)
+    coeff = jnp.float_(1.)
 
     batched_scan_over_mul = jax.vmap(scan_over_mul, in_axes=(0, None), out_axes=0)
     res, vjp_fun = jax.vjp(batched_scan_over_mul, x_batch, coeff)
@@ -6247,7 +6249,7 @@ class InvertibleADTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message="Values that an @invertible function closes")
   def test_invertible_basic(self):
     def f(x):
-      return lax.mul(lax.mul(lax.exp(x), 4.), x)
+      return lax.mul(lax.mul(lax.exp(x), lax._const(x, 4)), x)
 
     finv = jax.invertible(f)
     x = jnp.ones((5,))
@@ -6442,7 +6444,7 @@ class NamedCallTest(jtu.JaxTestCase):
     }
     f = jit[jit_type](funcdict[func])
 
-    int_dtype = dtypes.canonicalize_dtype(jnp.int_)
+    int_dtype = dtypes.canonicalize_dtype(int)
     int_max = np.iinfo(int_dtype).max
     int_min = np.iinfo(int_dtype).min
 
