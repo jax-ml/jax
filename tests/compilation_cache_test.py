@@ -201,8 +201,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
       backend = jax._src.lib.xla_bridge.get_backend()
       executable1 = backend.compile(computation1, compile_options)
       executable2 = backend.compile(computation2, compile_options)
-      cc.put_executable(computation1, compile_options, executable1, backend)
-      cc.put_executable(computation2, compile_options, executable2, backend)
+      cc.put_executable("computation1", computation1, compile_options,
+                        executable1, backend)
+      cc.put_executable("computation2", computation2, compile_options,
+                        executable2, backend)
       self.assertNotEqual(cc.get_executable(computation1, compile_options, backend),
                           cc.get_executable(computation2, compile_options, backend))
 
@@ -214,7 +216,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
           num_replicas=1, num_partitions=1)
       backend = jax._src.lib.xla_bridge.get_backend()
       executable = backend.compile(computation, compile_options)
-      cc.put_executable(computation, compile_options, executable, backend)
+      cc.put_executable("alambda", computation, compile_options, executable,
+                        backend)
       deserialized_executable = cc.get_executable(computation, compile_options, backend)
       inputs_to_executable = (np.array(1, dtype=np.int32), np.array(2, dtype=np.int32))
       expected = jax._src.lib.xla_client.execute_with_python_values(executable, inputs_to_executable, backend)

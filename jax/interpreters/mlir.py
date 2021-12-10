@@ -332,12 +332,13 @@ def flatten_lowering_ir_args(
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
 def lower_jaxpr_to_module(
-    jaxpr: core.ClosedJaxpr, platform: str, axis_env: xla.AxisEnv,
+    module_name: str, jaxpr: core.ClosedJaxpr, platform: str,
+    axis_env: xla.AxisEnv,
     name_stack: str, donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None
-    ) -> str:
+    ) -> ir.Module:
   """Lowers a top-level jaxpr to an MHLO module.
 
   Handles the quirks of the argument/return value passing conventions of the
@@ -355,6 +356,7 @@ def lower_jaxpr_to_module(
 
   ctx = LoweringContext(platform, axis_env, name_stack)
   with ctx.context, ir.Location.unknown(ctx.context):
+    ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(module_name)
     # TODO(phawkins): represent units with zero buffers at the runtime level.
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, public=True, replace_units_with_dummy=True,
@@ -362,11 +364,13 @@ def lower_jaxpr_to_module(
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)
 
-
   ctx.module.operation.verify()
+  return ctx.module
+
+def module_to_string(module: ir.Module) -> str:
   output = io.StringIO()
-  ctx.module.operation.print(file=output, enable_debug_info=True,
-                             print_generic_op_form=False)
+  module.operation.print(file=output, enable_debug_info=True,
+                         print_generic_op_form=False)
   return output.getvalue()
 
 def _set_up_aliases(avals_in, avals_out, donated_args):

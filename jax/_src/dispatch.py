@@ -38,6 +38,7 @@ from jax._src.config import config
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import profiler
+from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
@@ -222,12 +223,14 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   name_stack = xla.extend_name_stack(xla.wrap_name(name, 'jit'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module: Union[str, xc.XlaComputation]
+  module_name = f"jit_{fun.__name__}"
   if config.jax_enable_mlir:
     module = mlir.lower_jaxpr_to_module(
-        closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars)
+        module_name, closed_jaxpr, backend.platform, axis_env, name_stack,
+        donated_invars)
   else:
     module = xla.lower_jaxpr_to_xla_module(
-        f"jit_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+        module_name, closed_jaxpr, backend.platform, axis_env,
         name_stack, tuple_args, donated_invars, replicated_args=None,
         arg_partitions=None, out_partitions=None)
   return XlaComputation(
@@ -497,17 +500,18 @@ class XlaComputation:
   def hlo(self) -> xc.XlaComputation:
     if self.is_trivial():
       raise ValueError("A trivial computation has no HLO")
-    if isinstance(self._hlo, str):
-      return xe.mlir.mlir_module_to_xla_computation(
-          self._hlo, use_tuple_args=self.compile_args["tuple_args"])
-    return self._hlo
+    if isinstance(self._hlo, xc.XlaComputation):
+      return self._hlo
+    return xe.mlir.mlir_module_to_xla_computation(
+        mlir.module_to_string(self._hlo),
+        use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> str:
     if self.is_trivial():
       raise ValueError("A trivial computation has no MHLO")
     if isinstance(self._hlo, xc.XlaComputation):
       return xe.mlir.xla_computation_to_mlir_module(self._hlo)
-    return self._hlo
+    return mlir.module_to_string(self._hlo)
 
   def compile(self) -> 'XlaCompiledComputation':
     if self._executable is None:
@@ -530,21 +534,28 @@ def backend_compile(backend, built_c, options):
 xla.backend_compile = backend_compile
 
 def compile_or_get_cached(backend, computation, compile_options):
-    # Avoid import cycle between jax and jax.experimental
-    from jax.experimental.compilation_cache import compilation_cache as cc
-    # Persistent compilation cache only implemented on TPU.
-    # TODO(skye): add warning when initializing cache on unsupported default platform
-    if cc.is_initialized() and backend.platform == 'tpu':
-        cached_executable = cc.get_executable(computation, compile_options, backend)
-        if cached_executable is not None:
-            logging.info('Persistent compilation cache hit for %s.',
-                         computation.name())
-            return cached_executable
-        else:
-            compiled = backend_compile(backend, computation, compile_options)
-            cc.put_executable(computation, compile_options, compiled, backend)
-            return compiled
-    return backend_compile(backend, computation, compile_options)
+  # Avoid import cycle between jax and jax.experimental
+  from jax.experimental.compilation_cache import compilation_cache as cc
+
+  if isinstance(computation, ir.Module):
+    module_name = computation.operation.name
+    computation = mlir.module_to_string(computation)
+  else:
+    module_name = computation.name()
+
+  # Persistent compilation cache only implemented on TPU.
+  # TODO(skye): add warning when initializing cache on unsupported default platform
+  if cc.is_initialized() and backend.platform == 'tpu':
+      cached_executable = cc.get_executable(computation, compile_options, backend)
+      if cached_executable is not None:
+          logging.info('Persistent compilation cache hit for %s.', module_name)
+          return cached_executable
+      else:
+          compiled = backend_compile(backend, computation, compile_options)
+          cc.put_executable(module_name, computation, compile_options, compiled,
+                            backend)
+          return compiled
+  return backend_compile(backend, computation, compile_options)
 
 
 class XlaCompiledComputation:

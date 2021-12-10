@@ -1018,16 +1018,17 @@ def lower_parallel_callable(
   replicated_args = [axis is None for axis in in_axes]
   module: Union[str, xc.XlaComputation]
   tuple_args = should_tuple_args(shards)
+  module_name = f"pmap_{fun.__name__}"
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     if config.jax_enable_mlir:
       module = mlir.lower_jaxpr_to_module(
-          closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars,
-          replicated_args=replicated_args,
+          module_name, closed_jaxpr, backend.platform, axis_env,
+          name_stack, donated_invars, replicated_args=replicated_args,
           arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
           result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
     else:
       module = xla.lower_jaxpr_to_xla_module(
-          f"pmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+          module_name, closed_jaxpr, backend.platform, axis_env,
           name_stack, tuple_args, donated_invars, replicated_args,
           parts.arg_parts, parts.out_parts)
   return PmapComputation(module, pci=pci, replicas=replicas, parts=parts,
@@ -1042,15 +1043,17 @@ class PmapComputation:
 
   def hlo(self):
     # this is a method for api consistency with dispatch.XlaComputation
-    if isinstance(self._hlo, str):
+    if isinstance(self._hlo, xc.XlaComputation):
+      return self._hlo
+    else:
       return xe.mlir.mlir_module_to_xla_computation(
-          self._hlo, use_tuple_args=self.compile_args["tuple_args"])
-    return self._hlo
+          mlir.module_to_string(self._hlo),
+          use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> str:
     if isinstance(self._hlo, xc.XlaComputation):
       return xe.mlir.xla_computation_to_mlir_module(self._hlo)
-    return self._hlo
+    return mlir.module_to_string(self._hlo)
 
   @profiler.annotate_function
   def compile(self):
@@ -1977,15 +1980,16 @@ def lower_mesh_computation(
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   name_stack = extend_name_stack(wrap_name(transformed_name, 'xmap'))
   module: Union[str, xc.XlaComputation]
+  module_name = f"xmap_{fun.__name__}"
   with core.extend_axis_env_nd(mesh.shape.items()):
     if config.jax_enable_mlir:
       module = mlir.lower_jaxpr_to_module(
-          closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars,
-          replicated_args=replicated_args, arg_shardings=in_partitions,
-          result_shardings=out_partitions)
+          module_name, closed_jaxpr, backend.platform, axis_env, name_stack,
+          donated_invars, replicated_args=replicated_args,
+          arg_shardings=in_partitions, result_shardings=out_partitions)
     else:
       module = xla.lower_jaxpr_to_xla_module(
-          f"xmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+          module_name, closed_jaxpr, backend.platform, axis_env,
           name_stack, tuple_args, donated_invars, replicated_args,
           in_partitions, out_partitions_t,
           partitions_are_protos=partitions_proto)
@@ -2008,15 +2012,16 @@ class MeshComputation:
 
   def hlo(self):
     # this is a method for api consistency with dispatch.XlaComputation
-    if isinstance(self._hlo, str):
-      return xe.mlir.mlir_module_to_xla_computation(
-          self._hlo, use_tuple_args=self.compile_args["tuple_args"])
-    return self._hlo
+    if isinstance(self._hlo, xc.XlaComputation):
+      return self._hlo
+    return xe.mlir.mlir_module_to_xla_computation(
+        mlir.module_to_string(self._hlo),
+        use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> str:
     if isinstance(self._hlo, xc.XlaComputation):
       return xe.mlir.xla_computation_to_mlir_module(self._hlo)
-    return self._hlo
+    return mlir.module_to_string(self._hlo)
 
   def compile(self,
               _allow_propagation_to_outputs : bool = False,
