@@ -1055,18 +1055,18 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   # TODO(mattjj): make this a more systematic test
   def testRemainder(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.uniform(-0.9, 9, size=(3, 4))
     y = rng.uniform(0.7, 1.9, size=(3, 1))
     assert not set(np.unique(x)) & set(np.unique(y))
-    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+    # TODO(jakevdp) try to make these tolerances tighter.
+    tol = 1e-1
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.uniform(-0.9, 9, size=(1, 4))
     y = rng.uniform(0.7, 1.9, size=(3, 4))
     assert not set(np.unique(x)) & set(np.unique(y))
-    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
   def testHigherOrderGradientOfReciprocal(self):

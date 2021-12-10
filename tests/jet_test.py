@@ -91,7 +91,7 @@ class JetTest(jtu.JaxTestCase):
   def test_dot(self):
     M, K, N = 2, 3, 4
     order = 3
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x1 = rng.randn(M, K)
     x2 = rng.randn(K, N)
     primals = (x1, x2)
@@ -109,7 +109,7 @@ class JetTest(jtu.JaxTestCase):
     init_fun, apply_fun = stax.Conv(3, (2, 2), padding='VALID')
     _, (W, b) = init_fun(key, input_shape)
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
 
     x = rng.randn(*input_shape)
     primals = (W, b, x)
@@ -125,10 +125,10 @@ class JetTest(jtu.JaxTestCase):
 
     self.check_jet(f, primals, series_in, check_dtypes=False)
 
-  def unary_check(self, fun, lims=(-2, 2), order=3, dtype=None, atol=1e-4,
-                  rtol=1e-4):
+  def unary_check(self, fun, lims=(-2, 2), order=3, dtype=None, atol=1e-3,
+                  rtol=1e-3):
     dims = 2, 3
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     if dtype is None:
       primal_in = transform(lims, rng.rand(*dims))
       terms_in = [rng.randn(*dims) for _ in range(order)]
@@ -141,7 +141,7 @@ class JetTest(jtu.JaxTestCase):
   def binary_check(self, fun, lims=None, order=3, finite=True, dtype=None):
     lims = lims or [-2, 2]
     dims = 2, 3
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     if isinstance(lims, tuple):
       x_lims, y_lims = lims
     else:
@@ -174,7 +174,7 @@ class JetTest(jtu.JaxTestCase):
 
   def expit_check(self, lims=(-2, 2), order=3):
     dims = 2, 3
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     primal_in = transform(lims, rng.rand(*dims))
     terms_in = [rng.randn(*dims) for _ in range(order)]
 
@@ -276,7 +276,7 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_tanh(self):       self.unary_check(jnp.tanh, lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
-  def test_expit(self):      self.unary_check(jax.scipy.special.expit, lims=[-500, 500], order=5)
+  def test_expit(self):      self.unary_check(jax.scipy.special.expit, lims=[-100, 100], order=5)
   @jtu.skip_on_devices("tpu")
   def test_expit2(self):     self.expit_check(lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
@@ -329,9 +329,12 @@ class JetTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")
   def test_clamp(self):
-    lims = [-2, 2]
+    lims = [-1, 1]
     order = 3
     dims = 2, 3
+    # TODO(jakevdp): This test is very sensitive to the inputs, so we use a known
+    # working seed. We should instead use self.rng(), and make sure that the primal
+    # points lie outside an epsilon ball of the two critical points in the function.
     rng = np.random.RandomState(0)
     primal_in = (transform(lims, rng.rand(*dims)),
                  transform(lims, rng.rand(*dims)),
@@ -356,7 +359,7 @@ class JetTest(jtu.JaxTestCase):
   def test_select(self):
     M, K = 2, 3
     order = 3
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     b = rng.rand(M, K) < 0.5
     x = rng.randn(M, K)
     y = rng.randn(M, K)

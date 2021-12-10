@@ -416,10 +416,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     for ninputs in [input_range_or_shape if is_range else input_range_or_shape[axis]]
     if replace or np.prod(shape) <= ninputs))
   def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis):
+    # This is the function API that we test against (note that self.rng().choice differs)
+    np_choice = np.random.default_rng(0).choice
+
     key = self.seed_prng(0)
     is_range = type(input_range_or_shape) is int
     x = (input_range_or_shape if is_range else
-         np.random.default_rng(0).permutation(jnp.arange(np.prod(
+         self.rng().permutation(jnp.arange(np.prod(
            input_range_or_shape), dtype=dtype)).reshape(input_range_or_shape))
     N = x if is_range else x.shape[axis]
     p = None if not weighted else (np.arange(N) + 1) / np.sum(np.arange(N) + 1)
@@ -427,8 +430,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     sample = rand(key, x)
     if not is_range:
       self.assertEqual(dtype, sample.dtype)
-    np_shape = np.shape(np.random.default_rng(0).choice(
-      x, shape or None, replace, p, axis))
+    np_shape = np.shape(np_choice(x, shape or None, replace, p, axis))
     self.assertEqual(np_shape, sample.shape)
     if not replace and shape:
       def lsort(x):
@@ -455,7 +457,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     is_range = type(range_or_shape) is int
     x = (range_or_shape if is_range else
-         np.random.default_rng(0).permutation(jnp.arange(
+         self.rng().permutation(jnp.arange(
            np.prod(range_or_shape), dtype=dtype)).reshape(range_or_shape))
     shape = ((range_or_shape,) if is_range else range_or_shape)
     x_ = np.copy(x)
@@ -795,7 +797,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dtype in float_dtypes
       for method in ['svd', 'eigh', 'cholesky']))
   def testMultivariateNormal(self, dim, dtype, method):
-    r = np.random.RandomState(dim)
+    r = self.rng()
     mean = r.randn(dim)
     cov_factor = r.randn(dim, dim)
     cov = np.dot(cov_factor, cov_factor.T) + dim * np.eye(dim)
@@ -833,7 +835,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for method in ['cholesky', 'svd', 'eigh']))
   def testMultivariateNormalShapes(self, dim, mean_batch_size, cov_batch_size,
                                    shape, method):
-    r = np.random.RandomState(0)
+    r = self.rng()
     key = self.seed_prng(0)
     eff_batch_size = mean_batch_size \
       if len(mean_batch_size) > len(cov_batch_size) else cov_batch_size
@@ -855,7 +857,7 @@ class LaxRandomTest(jtu.JaxTestCase):
                    [  0.00, -0.23,  0.00,  0.49]])
     mean = jnp.zeros(4)
 
-    out_np = np.random.RandomState(0).multivariate_normal(mean, cov, N)
+    out_np = self.rng().multivariate_normal(mean, cov, N)
 
     key = self.seed_prng(0)
     with jax.numpy_rank_promotion('allow'):

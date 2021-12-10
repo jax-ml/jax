@@ -95,7 +95,7 @@ class ODETest(jtu.JaxTestCase):
         return -_np.sqrt(t) - y + arg1 - _np.mean((y + arg2)**2)
 
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     args = (rng.randn(3), rng.randn(3))
     y0 = rng.randn(3)
     ts = np.linspace(0.1, 0.2, 4)

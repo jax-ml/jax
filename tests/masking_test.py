@@ -350,7 +350,7 @@ class MaskingTest(jtu.JaxTestCase):
       predicted, _ = lax.scan(step, jnp.zeros(n), xs)
       return predicted
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     W = jnp.eye(n)
     xs = rng.randn(10, n).astype(jnp.float_)
     ans = rnn([W, xs], dict(t=4))
@@ -368,7 +368,7 @@ class MaskingTest(jtu.JaxTestCase):
       predicted, _ = lax.scan(step, jnp.zeros(n), xs)
       return jnp.sum((predicted - target)**2)
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     W = rng.randn(n, n).astype(jnp.float_)
     xs = rng.randn(10, n).astype(jnp.float_)
     y = rng.randn(n).astype(jnp.float_)
@@ -398,7 +398,7 @@ class MaskingTest(jtu.JaxTestCase):
       predicted, _ = lax.scan(step, jnp.zeros(n), xs)
       return jnp.sum((predicted - target)**2)
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     W = rng.randn(n, n).astype(jnp.float_)
     seqs = rng.randn(3, 10, n).astype(jnp.float_)
     ts = jnp.array([2, 5, 4])
@@ -421,7 +421,7 @@ class MaskingTest(jtu.JaxTestCase):
 
     self.assertAllClose(
       ans, expected, check_dtypes=False,
-      rtol=2e-2 if jtu.device_under_test() == "tpu" else 1e-5)
+      rtol=0.1 if jtu.device_under_test() == "tpu" else 1e-5)
 
   def test_concatenate(self):
     self.check(lambda x, y, z: lax.concatenate([x, y, z], 0),

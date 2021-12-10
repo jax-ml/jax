@@ -47,7 +47,9 @@ class TestPolynomial(jtu.JaxTestCase):
   # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testRoots(self, dtype, length, leading, trailing):
-    rng = jtu.rand_default(np.random.RandomState(0))
+    # rng = jtu.rand_default(self.rng())
+    # This test is very fragile and breaks unless a "good" random seed is chosen.
+    rng = jtu.rand_default(self.rng())
 
     def args_maker():
       p = rng((length,), dtype)
@@ -69,6 +71,8 @@ class TestPolynomial(jtu.JaxTestCase):
   # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testRootsNostrip(self, length, dtype, trailing):
+    # rng = jtu.rand_default(self.rng())
+    # This test is very fragile and breaks unless a "good" random seed is chosen.
     rng = jtu.rand_default(np.random.RandomState(0))
 
     def args_maker():
@@ -95,6 +99,8 @@ class TestPolynomial(jtu.JaxTestCase):
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testRootsJit(self, length, dtype, trailing):
+    # rng = jtu.rand_default(self.rng())
+    # This test is very fragile and breaks unless a "good" random seed is chosen.
     rng = jtu.rand_default(np.random.RandomState(0))
 
     def args_maker():
@@ -124,7 +130,7 @@ class TestPolynomial(jtu.JaxTestCase):
   @jtu.skip_on_devices("gpu")
   @unittest.skip("getting segfaults on MKL")  # TODO(#3711)
   def testRootsInvalid(self, zeros, nonzeros, dtype):
-    rng = jtu.rand_default(np.random.RandomState(0))
+    rng = jtu.rand_default(self.rng())
 
     # The polynomial coefficients here start with zero and would have to
     # be stripped before computing eigenvalues of the companion matrix.

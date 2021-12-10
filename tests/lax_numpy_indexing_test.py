@@ -673,7 +673,7 @@ class IndexingTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testAdvancedIndexingManually(self):
-    x = np.random.RandomState(0).randn(3, 4, 5)
+    x = self.rng().randn(3, 4, 5)
     index_array = np.array([0, 2, -1, 0])
 
     op = lambda x, index_array: x[..., index_array, :]

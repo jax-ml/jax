@@ -1206,8 +1206,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testTensordotErrors(self):
-    a = np.random.random((3, 2, 2))
-    b = np.random.random((2,))
+    a = self.rng().random((3, 2, 2))
+    b = self.rng().random((2,))
     self.assertRaisesRegex(
       TypeError, "Number of tensordot axes.*exceeds input ranks.*",
       lambda: jnp.tensordot(a, b, axes=2))
@@ -3724,7 +3724,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     c_isclose_nan = jax.jit(partial(jnp.isclose, equal_nan=True))
     n = 2
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(n, 1)
     y = rng.randn(n, 1)
     inf = np.asarray(n * [np.inf]).reshape([n, 1])
@@ -3758,7 +3758,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testZeroStridesConstantHandler(self):
-    raw_const = np.random.RandomState(0).randn(1, 2, 1, 1, 5, 1)
+    raw_const = self.rng().randn(1, 2, 1, 1, 5, 1)
     const = np.broadcast_to(raw_const, (3, 2, 3, 4, 5, 6))
 
     def fun(x):
@@ -3892,7 +3892,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   # TODO(mattjj): test infix operator overrides
 
   def testRavel(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     self._CompileAndCheck(lambda x: x.ravel(), args_maker)
 
@@ -3996,7 +3996,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(jnp.unravel_index(-3, (2,)), (0,))
 
   def testAstype(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     np_op = lambda x: np.asarray(x).astype(jnp.int32)
     jnp_op = lambda x: jnp.asarray(x).astype(jnp.int32)
@@ -4004,7 +4004,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   def testAstypeNone(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     args_maker = lambda: [rng.randn(3, 4).astype("int32")]
     np_op = jtu.with_jax_dtype_defaults(lambda x: np.asarray(x).astype(None))
     jnp_op = lambda x: jnp.asarray(x).astype(None)

@@ -1107,10 +1107,10 @@ class UtilTest(jtu.JaxTestCase):
     for spec in special_specs:
       roundtrip(spec)
 
-    rng = np.random.default_rng(1)
+    rng = self.rng()
     for i in range(100):
       spec = [()] * dims
-      for axis in rng.permutation(mesh_axes)[:rng.integers(low=1, high=len(mesh_axes) + 1)]:
+      for axis in rng.permutation(mesh_axes)[:rng.randint(low=1, high=len(mesh_axes) + 1)]:
         spec[rng.choice(dims)] += (axis,)
       roundtrip(P(*spec))
 

@@ -304,7 +304,7 @@ class OptimizerTests(jtu.JaxTestCase):
 
   def testUnpackPackRoundTrip(self):
     opt_init, _, _ = optimizers.momentum(0.1, mass=0.9)
-    params = [{'w': np.random.randn(1, 2), 'bias': np.random.randn(2)}]
+    params = [{'w': self.rng().randn(1, 2), 'bias': self.rng().randn(2)}]
     expected = opt_init(params)
     ans = optimizers.pack_optimizer_state(
         optimizers.unpack_optimizer_state(expected))

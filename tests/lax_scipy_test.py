@@ -61,14 +61,14 @@ seeds = [1, 10]
 linear_sizes = [16, 128, 256]
 
 
-def _initialize_polar_test(shape, n_zero_svs, degeneracy, geometric_spectrum,
+def _initialize_polar_test(rng, shape, n_zero_svs, degeneracy, geometric_spectrum,
                            max_sv, nonzero_condition_number, dtype):
 
   n_rows, n_cols = shape
   min_dim = min(shape)
-  left_vecs = np.random.randn(n_rows, min_dim).astype(np.float64)
+  left_vecs = rng.randn(n_rows, min_dim).astype(np.float64)
   left_vecs, _ = np.linalg.qr(left_vecs)
-  right_vecs = np.random.randn(n_cols, min_dim).astype(np.float64)
+  right_vecs = rng.randn(n_cols, min_dim).astype(np.float64)
   right_vecs, _ = np.linalg.qr(right_vecs)
 
   min_nonzero_sv = max_sv / nonzero_condition_number
@@ -500,8 +500,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       if method == "svd":
         raise unittest.SkipTest("Can't use SVD mode on TPU/GPU.")
 
-    np.random.seed(seed)
-    matrix, _ = _initialize_polar_test(
+    matrix, _ = _initialize_polar_test(self.rng(),
       shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
       nonzero_condition_number, dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
@@ -555,8 +554,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       if jtu.device_under_test() != "cpu":
         raise unittest.SkipTest("Skip half precision off CPU.")
 
-    np.random.seed(seed)
-    H = np.random.randn(linear_size, linear_size)
+    rng = self.rng()
+    H = rng.randn(linear_size, linear_size)
     H = jnp.array(0.5 * (H + H.conj().T)).astype(dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
@@ -586,8 +585,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       if jtu.device_under_test() != "cpu":
         raise unittest.SkipTest("Skip half precision off CPU.")
 
-    np.random.seed(seed)
-    A = np.random.randn(linear_size, linear_size).astype(dtype)
+    rng = self.rng()
+    A = rng.randn(linear_size, linear_size).astype(dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
         NotImplementedError, jax._src.scipy.eigh.svd, A)
@@ -597,7 +596,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     recon = jnp.dot((U * jnp.expand_dims(S, 0)), V,
                     precision=lax.Precision.HIGHEST)
     eps = jnp.finfo(dtype).eps
-    eps = eps * jnp.linalg.norm(A) * 10
+    eps = eps * jnp.linalg.norm(A) * 15
     self.assertAllClose(np.sort(S), np.sort(S_expected), atol=eps)
     self.assertAllClose(A, recon, atol=eps)
 
