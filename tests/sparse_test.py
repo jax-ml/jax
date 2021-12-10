@@ -1444,6 +1444,13 @@ class BCOOTest(jtu.JaxTestCase):
            np.float32: 1E-6, np.complex64: 1E-6}
     self.assertAllClose(out1, out2, rtol=tol)
 
+  def test_bcoo_mul_sparse_with_duplicates(self):
+    # Regression test for https://github.com/google/jax/issues/8888
+    indices = jnp.array([[0, 1, 0, 0, 1, 1],
+                         [1, 0, 1, 2, 0, 2]]).T
+    data = jnp.array([1, 2, 3, 4, 5, 6])
+    mat = sparse.BCOO((data, indices), shape=(3, 3))
+    self.assertArraysEqual((mat * mat).todense(), mat.todense() * mat.todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_n_batch={}_n_dense={}".format(
