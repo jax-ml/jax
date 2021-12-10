@@ -15,13 +15,16 @@
 # ==============================================================================
 """Tests for mesh utils."""
 
+import collections
 import dataclasses
 from typing import Sequence
 
+from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 from jax import test_util
 from jax.experimental import mesh_utils
+from jax.experimental.maps import Mesh
 
 
 @dataclasses.dataclass
@@ -38,7 +41,6 @@ def mock_devices(x, y, z, dev_kind, two_cores_per_chip):
   """Hard-coded reproduction of jax.devices() output on 8x8, 4x4x4."""
   devices = []
   process_index = 0
-  device_id = 0
   for k in range(z):
     for j in range(0, y, 2):
       for i in range(0, x, 2):
@@ -57,10 +59,32 @@ def mock_devices(x, y, z, dev_kind, two_cores_per_chip):
           # Only include core_on_chip = 0.
           host_devices = host_devices[::2]
         devices.extend(host_devices)
-        device_id += len(host_devices)
+        # Simulate one process per host (1 host = 2x2x1 slice)
         process_index += 1
+  _validate_mocked_process_indices(devices, two_cores_per_chip)
   return devices
 
+# If this function raises, it's a bug in the test code!
+def _validate_mocked_process_indices(devices, two_cores_per_chip):
+  process_to_devices = collections.defaultdict(lambda: [])
+  for d in devices:
+    process_to_devices[d.process_index].append(d)
+
+  for local_devices in process_to_devices.values():
+    if two_cores_per_chip:
+      # 4 devices per process
+      assert len(local_devices) == 4, local_devices
+    else:
+      # 8 devices per process
+      assert len(local_devices) == 8, local_devices
+    # All devices have same z coord
+    assert len(set(d.coords[2] for d in local_devices)) == 1, local_devices
+    # All devices in a 2x2 subgrid
+    min_coords = min(d.coords for d in local_devices)
+    expected = set()
+    for x, y in [(0,0), (0,1), (1,0), (1,1)]:
+      expected.add((min_coords[0] + x, min_coords[1] + y, min_coords[2]))
+    assert set(d.coords for d in local_devices) == expected, local_devices
 
 def mock_8x8_devices():
   """Hard-coded reproduction of jax.devices() output on 8x8."""
@@ -160,6 +184,57 @@ class PartitioningTest(test_util.JaxTestCase):
     _, assignment = mesh_utils._create_device_mesh_for_tpu_v4(
         physical_mesh, mesh_shape)
     self.assertEqual(assignment, expected_assignment)
+
+  def _assert_contiguous_submeshes(self, global_device_mesh):
+    global_mesh = Mesh(global_device_mesh, list(range(global_device_mesh.ndim)))
+    max_process_index = max(d.process_index
+                            for d in global_device_mesh.flatten())
+    for p_idx in range(max_process_index + 1):
+      # Raises an error if non-contiguous
+      global_mesh._local_mesh(p_idx)
+
+  def test_create_contiguous_submeshes_for_tpu_v4(self):
+    v4 = mesh_utils._TPU_V4
+    process_0_devices = mock_2x2x1_devices(True)
+    for topology, mesh_shapes in mesh_utils._TRANSPOSE_TRICKS.items():
+      logging.vlog(1, "topology: %s", topology)
+      devices = mock_devices(topology[0], topology[1], topology[2], v4,
+                             two_cores_per_chip=True)
+      for mesh_shape in mesh_shapes:
+        logging.vlog(1, "  mesh_shape: %s", mesh_shape)
+        mesh = mesh_utils._create_device_mesh(
+            process_0_devices, devices, v4, mesh_shape,
+            contiguous_submeshes=True)
+        self._assert_contiguous_submeshes(mesh)
+
+  def test_create_contiguous_submeshes_errors(self):
+    process_0_devices = mock_2x2x1_devices(True)
+    v4 = mesh_utils._TPU_V4
+
+    topology = (4, 4, 8)
+    mesh_shape = (1, 16, 8)
+    devices = mock_devices(topology[0], topology[1], topology[2], v4,
+                             two_cores_per_chip=True)
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "create_device_mesh cannot create contiguous submeshes for "
+        "physical mesh topology (4, 4, 8)"):
+      mesh_utils._create_device_mesh(
+          process_0_devices, devices, v4, mesh_shape,
+          contiguous_submeshes=True)
+
+    topology = (4, 8, 8)
+    mesh_shape = (1, 128, 2)
+    devices = mock_devices(topology[0], topology[1], topology[2], v4,
+                             two_cores_per_chip=True)
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "create_device_mesh cannot create contiguous submeshes for mesh_shape "
+        "(1, 128, 2) and physical mesh topology (4, 8, 8). "
+        "Available mesh_shapes: [(1, 64, 4), (1, 4, 64), (64, 4), (4, 64)]"):
+      mesh_utils._create_device_mesh(
+          process_0_devices, devices, v4, mesh_shape,
+          contiguous_submeshes=True)
 
 
 if __name__ == '__main__':
