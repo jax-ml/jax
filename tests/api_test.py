@@ -1943,6 +1943,17 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(param_shapes[0].xla_element_type(),
                      xla_client.PrimitiveType.TUPLE)
 
+  def test_compiler_ir(self):
+    # TODO(phawkins): merge these tests with the `xla_computation` tests.
+    def e(x):
+      return jnp.sin(jnp.cos(x))
+    hlo = api.jit(e).lower(2.).compiler_ir(dialect="hlo").as_hlo_text()
+    self.assertIn(' cosine', hlo)
+    self.assertIn(' sine', hlo)
+    mhlo = api.jit(e).lower(2.).compiler_ir(dialect="mhlo")
+    self.assertIn('mhlo.cosine', mhlo)
+    self.assertIn('mhlo.sine', mhlo)
+
   def test_staging_out_multi_replica(self):
     def f(x):
       return api.pmap(jnp.mean)(x)

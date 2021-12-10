@@ -519,8 +519,13 @@ class Lowered:
         self._lowering.compile(), self.in_tree, self.out_tree,
         self.donate_argnums, self._no_kwargs)
 
-  def compiler_ir(self):
-    return self._lowering.hlo()
+  def compiler_ir(self, dialect: Optional[str] = None):
+    if dialect == "mhlo":
+      return self._lowering.mhlo()
+    elif dialect == "hlo" or dialect is None:
+      return self._lowering.hlo()
+    else:
+      raise ValueError(f"Unknown dialect {dialect}")
 
   # TODO(frostig): remove this in favor of `compiler_ir`
   def _xla_computation(self):

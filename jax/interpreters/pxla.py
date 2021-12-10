@@ -84,6 +84,7 @@ else:
   OrderedDictType = Dict
 
 xops = xc.ops
+xe = xc._xla
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -1029,23 +1030,34 @@ def lower_parallel_callable(
           name_stack, tuple_args(shards), donated_invars, replicated_args,
           parts.arg_parts, parts.out_parts)
 
-  return PmapComputation(module, pci, replicas, parts, shards)
+  return PmapComputation(name, module, pci=pci, replicas=replicas, parts=parts,
+                         shards=shards)
 
 
 class PmapComputation:
-  def __init__(self, hlo, *compile_args):
+  def __init__(self, name, hlo, **compile_args):
     self._executable = None
+    self._name = name
     self._hlo = hlo
     self.compile_args = compile_args
 
   def hlo(self):
     # this is a method for api consistency with dispatch.XlaComputation
+    if isinstance(self._hlo, str):
+      return xe.mlir.mlir_module_to_xla_computation(
+          self._hlo, use_tuple_args=self.compile_args["tuple_args"])
+    return self._hlo
+
+  def mhlo(self) -> str:
+    if isinstance(self._hlo, xc.XlaComputation):
+      return xe.mlir.xla_computation_to_mlir_module(self._hlo)
     return self._hlo
 
   @profiler.annotate_function
   def compile(self):
     if self._executable is None:
-      self._executable = PmapExecutable.from_hlo(self._hlo, *self.compile_args)
+      self._executable = PmapExecutable.from_hlo(self._name, self._hlo,
+                                                 **self.compile_args)
     return self._executable
 
 
@@ -1059,7 +1071,7 @@ class PmapExecutable:
     self.in_avals = in_avals
 
   @staticmethod
-  def from_hlo(xla_computation,
+  def from_hlo(name, xla_computation,
                pci: ParallelCallableInfo,
                replicas: ReplicaInfo,
                parts: 'PartitionInfo',
@@ -1169,7 +1181,7 @@ class PmapExecutable:
       return PmapExecutable(None, execute_fun, None, pci.avals)
 
     compiled = dispatch.compile_or_get_cached(
-        pci.backend, xla_computation, compile_options)
+        pci.backend, name, xla_computation, compile_options)
     handle_args = InputsHandler(
         compiled.local_devices(), input_sharding_specs, input_indices)
     execute_fun = partial(
@@ -1980,19 +1992,33 @@ def lower_mesh_computation(
           partitions_are_protos=partitions_proto)
 
   return MeshComputation(
-      module, donated_invars, mesh, global_in_avals, global_out_avals,
-      in_axes, out_axes, spmd_lowering, tuple_args, in_is_gda)
+      fun.__name__, module, donated_invars, mesh=mesh,
+      global_in_avals=global_in_avals, global_out_avals=global_out_avals,
+      in_axes=in_axes, out_axes=out_axes, spmd_lowering=spmd_lowering,
+      tuple_args=tuple_args, in_is_gda=in_is_gda)
 
 
 class MeshComputation:
-  def __init__(self, hlo, donated_invars, *compile_args):
-    self._executable = None
+  _executable: Optional['MeshExecutable']
+
+  def __init__(self, name: str, hlo: Union[str, xc.XlaComputation],
+               donated_invars: Sequence[bool], **compile_args):
+    self._name = name
     self._hlo = hlo
     self._donated_invars = donated_invars
     self.compile_args = compile_args
+    self._executable = None
 
   def hlo(self):
     # this is a method for api consistency with dispatch.XlaComputation
+    if isinstance(self._hlo, str):
+      return xe.mlir.mlir_module_to_xla_computation(
+          self._hlo, use_tuple_args=self.compile_args["tuple_args"])
+    return self._hlo
+
+  def mhlo(self) -> str:
+    if isinstance(self._hlo, xc.XlaComputation):
+      return xe.mlir.xla_computation_to_mlir_module(self._hlo)
     return self._hlo
 
   def compile(self,
@@ -2000,7 +2026,7 @@ class MeshComputation:
               _allow_compile_replicated : bool = True) -> 'MeshExecutable':
     if self._executable is None:
       self._executable = MeshExecutable.from_hlo(
-          self._hlo, *self.compile_args,
+          self._name, self._hlo, **self.compile_args,
           _allow_propagation_to_outputs=_allow_propagation_to_outputs,
           _allow_compile_replicated=_allow_compile_replicated)  # type: ignore
     return self._executable
@@ -2036,7 +2062,8 @@ class MeshExecutable:
     self._input_avals = input_avals
 
   @staticmethod
-  def from_hlo(computation: xc.XlaComputation,
+  def from_hlo(name: str,
+               computation: Union[str, xc.XlaComputation],
                mesh: Mesh,
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
@@ -2045,7 +2072,7 @@ class MeshExecutable:
                spmd_lowering: bool, tuple_args: bool,
                in_is_gda: Sequence[bool],
                _allow_propagation_to_outputs: bool,
-               _allow_compile_replicated: bool):
+               _allow_compile_replicated: bool) -> 'MeshExecutable':
     assert not mesh.empty
     backend = xb.get_device_backend(mesh.devices.flat[0])
 
@@ -2077,7 +2104,8 @@ class MeshExecutable:
           handle_outs)
       xla_executable = None
     else:
-      compiled = dispatch.compile_or_get_cached(backend, computation, compile_options)
+      compiled = dispatch.compile_or_get_cached(backend, name, computation,
+                                                compile_options)
       handle_args = InputsHandler(compiled.local_devices(), input_specs, input_indices)
       unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
       xla_executable = compiled

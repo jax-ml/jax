@@ -51,13 +51,13 @@ def get_executable(xla_computation, compile_options, backend) -> Optional[xla_cl
       compile_options)
   return xla_executable_deserialized
 
-def put_executable(xla_computation, compile_options, executable: xla_client.Executable,
-                   backend):
+def put_executable(name, xla_computation, compile_options,
+                   executable: xla_client.Executable, backend):
   """Adds 'executable' to the cache, possibly evicting older entries."""
   assert _cache is not None, "initialize_cache must be called before you can call put_executable()"
   cache_key = get_cache_key(xla_computation, compile_options, backend)
   logging.info('Writing %s to persistent compilation cache with key %s.',
-               xla_computation.name(), cache_key)
+               name, cache_key)
   serialized_executable = backend.serialize_executable(executable)
   _cache.put(cache_key, serialized_executable)
 
