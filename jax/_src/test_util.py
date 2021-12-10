@@ -92,7 +92,14 @@ def _dtype(x):
 def num_float_bits(dtype):
   return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
 
-def _to_default_dtype(arr):
+def to_default_dtype(arr):
+  """Convert a value to an array with JAX's default dtype.
+
+  This is generally used for type conversions of values returned by numpy functions,
+  to make their dtypes take into account the state of the ``jax_enable_x64`` and
+  ``jax_default_dtype_bits`` flags.
+  """
+  arr = np.asarray(arr)
   dtype = _dtypes._default_types.get(arr.dtype.kind)
   return arr.astype(_dtypes.canonicalize_dtype(dtype)) if dtype else arr
 
@@ -113,9 +120,9 @@ def with_jax_dtype_defaults(func, use_defaults=True):
   def wrapped(*args, **kwargs):
     result = func(*args, **kwargs)
     if isinstance(use_defaults, bool):
-      return tree_map(_to_default_dtype, result) if use_defaults else result
+      return tree_map(to_default_dtype, result) if use_defaults else result
     else:
-      f = lambda arr, use_default: _to_default_dtype(arr) if use_default else arr
+      f = lambda arr, use_default: to_default_dtype(arr) if use_default else arr
       return tree_map(f, result, use_defaults)
   return wrapped
 
