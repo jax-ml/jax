@@ -1020,13 +1020,12 @@ def _bcoo_multiply_sparse_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
   assert lhs.n_batch == rhs.n_batch == 0
-  result_shape = jnp.broadcast_shapes(lhs_shape, rhs_shape)
   dims = jnp.array([i for i, (s1, s2) in enumerate(safe_zip(lhs_shape[:lhs.n_sparse], rhs_shape[:rhs.n_sparse]))
                     if s1 != 1 and s2 != 1], dtype=int)
 
   # TODO(jakevdp): this nse can be tightened to min(lhs.nse, rhs.nse) if there
   # is no broadcasting and indices are unique.
-  nse = min(np.prod(result_shape[:lhs.n_sparse]), lhs.nse * rhs.nse)
+  nse = lhs.nse * rhs.nse
 
   # TODO(jakevdp): this is pretty inefficient. Can we do this membership check
   # without constructing the full (lhs.nse, rhs.nse) masking matrix?
