@@ -19,6 +19,7 @@ import collections
 import dataclasses
 from functools import partial
 import io
+import itertools
 import typing
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Type, Union,
                     Tuple)
@@ -38,6 +39,7 @@ from jax._src.lib.mlir.dialects import std
 from jax._src.lib import xla_client as xc
 from jax._src import source_info_util
 import jax._src.util as util
+from jax._src.lib import _xla_extension_version
 import jax.interpreters.ad as ad
 import jax.interpreters.partial_eval as pe
 import jax.interpreters.xla as xla
@@ -331,8 +333,11 @@ def flatten_lowering_ir_args(
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
+
+_unique_id = itertools.count()
+
 def lower_jaxpr_to_module(
-    jaxpr: core.ClosedJaxpr, platform: str, axis_env: xla.AxisEnv,
+    name: str, jaxpr: core.ClosedJaxpr, platform: str, axis_env: xla.AxisEnv,
     name_stack: str, donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
@@ -354,10 +359,16 @@ def lower_jaxpr_to_module(
         ", ".join(unused_donations)))
 
   ctx = LoweringContext(platform, axis_env, name_stack)
+  if _xla_extension_version < 47:
+    name = "main"
+  else:
+    # Some JAX users expect unique function names. Add a unique ID to
+    # top-level function names.
+    name = f"name.{next(_unique_id)}"
   with ctx.context, ir.Location.unknown(ctx.context):
     # TODO(phawkins): represent units with zero buffers at the runtime level.
     lower_jaxpr_to_fun(
-        ctx, "main", jaxpr, public=True, replace_units_with_dummy=True,
+        ctx, name, jaxpr, public=True, replace_units_with_dummy=True,
         replace_tokens_with_dummy=True, replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)

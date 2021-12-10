@@ -222,12 +222,13 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   name_stack = xla.extend_name_stack(xla.wrap_name(name, 'jit'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module: Union[str, xc.XlaComputation]
+  fun_name = f"jit_{fun.__name__}"
   if config.jax_enable_mlir:
     module = mlir.lower_jaxpr_to_module(
-        closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars)
+        fun_name, closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars)
   else:
     module = xla.lower_jaxpr_to_xla_module(
-        f"jit_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+        fun_name, closed_jaxpr, backend.platform, axis_env,
         name_stack, tuple_args, donated_invars, replicated_args=None,
         arg_partitions=None, out_partitions=None)
   return XlaComputation(

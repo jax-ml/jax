@@ -1017,15 +1017,16 @@ def lower_parallel_callable(
   replicated_args = [axis is None for axis in in_axes]
   module: Union[str, xc.XlaComputation]
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+    fun_name = f"pmap_{fun.__name__}"
     if config.jax_enable_mlir:
       module = mlir.lower_jaxpr_to_module(
-          closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars,
-          replicated_args=replicated_args,
+          fun_name, closed_jaxpr, backend.platform, axis_env, name_stack,
+          donated_invars, replicated_args=replicated_args,
           arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
           result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
     else:
       module = xla.lower_jaxpr_to_xla_module(
-          f"pmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+          fun_name, closed_jaxpr, backend.platform, axis_env,
           name_stack, tuple_args(shards), donated_invars, replicated_args,
           parts.arg_parts, parts.out_parts)
 
@@ -1966,15 +1967,16 @@ def lower_mesh_computation(
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   name_stack = extend_name_stack(wrap_name(transformed_name, 'xmap'))
   module: Union[str, xc.XlaComputation]
+  fun_name = f"xmap_{fun.__name__}"
   with core.extend_axis_env_nd(mesh.shape.items()):
     if config.jax_enable_mlir:
       module = mlir.lower_jaxpr_to_module(
-          closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars,
+          fun_name, closed_jaxpr, backend.platform, axis_env, name_stack, donated_invars,
           replicated_args=replicated_args, arg_shardings=in_partitions,
           result_shardings=out_partitions)
     else:
       module = xla.lower_jaxpr_to_xla_module(
-          f"xmap_{fun.__name__}", closed_jaxpr, backend.platform, axis_env,
+          fun_name, closed_jaxpr, backend.platform, axis_env,
           name_stack, tuple_args, donated_invars, replicated_args,
           in_partitions, out_partitions_t,
           partitions_are_protos=partitions_proto)
