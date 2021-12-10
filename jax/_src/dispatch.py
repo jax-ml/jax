@@ -189,8 +189,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
     return XlaComputation(
-        name, None, True, None, jaxpr, consts, device, abstract_args, out_avals,
-        kept_var_idx)
+        name, None, True, None, jaxpr=jaxpr, consts=consts, device=device,
+        in_avals=abstract_args, out_avals=out_avals, kept_var_idx=kept_var_idx)
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -231,8 +231,9 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
         name_stack, tuple_args, donated_invars, replicated_args=None,
         arg_partitions=None, out_partitions=None)
   return XlaComputation(
-      name, module, False, donated_invars, nreps, device, backend, tuple_args,
-      abstract_args, out_avals, kept_var_idx)
+      name, module, False, donated_invars, nreps=nreps, device=device,
+      backend=backend, tuple_args=tuple_args, in_avals=abstract_args,
+      out_avals=out_avals, kept_var_idx=kept_var_idx)
 
 
 def prefetch(x):
@@ -481,7 +482,8 @@ class XlaComputation:
   _donated_invars: Optional[Sequence[bool]]
 
   def __init__(self, name: str, hlo, is_trivial: bool,
-               donated_invars: Optional[Sequence[bool]], *compile_args):
+               donated_invars: Optional[Sequence[bool]],
+               **compile_args):
     self.name = name
     self._hlo = hlo
     self._is_trivial = is_trivial
@@ -492,19 +494,30 @@ class XlaComputation:
   def is_trivial(self):
     return self._is_trivial
 
-  def hlo(self):
+  def hlo(self) -> xc.XlaComputation:
     if self.is_trivial():
       raise ValueError("A trivial computation has no HLO")
+    if isinstance(self._hlo, str):
+      return xe.mlir.mlir_module_to_xla_computation(
+          self._hlo, use_tuple_args=self.compile_args["tuple_args"])
+    return self._hlo
+
+  def mhlo(self) -> str:
+    if self.is_trivial():
+      raise ValueError("A trivial computation has no MHLO")
+    if isinstance(self._hlo, xc.XlaComputation):
+      return xe.mlir.xla_computation_to_mlir_module(self._hlo)
     return self._hlo
 
   def compile(self) -> 'XlaCompiledComputation':
     if self._executable is None:
       if self.is_trivial():
         self._executable = XlaCompiledComputation.from_trivial_jaxpr(
-            *self.compile_args)
+            **self.compile_args)
       else:
         self._executable = XlaCompiledComputation.from_xla_computation(
-            self.name, self.hlo(), *self.compile_args)
+            self.name, self._hlo, **self.compile_args)
+
     return self._executable
 
 @profiler.annotate_function

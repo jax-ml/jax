@@ -29,5 +29,5 @@ def print_ir(*prototypes):
                            for x in flat_inputs])
     name = f.func.__name__ if hasattr(f, "func") else f.__name__
     print(f"\nTEST: {name} {shape_strs}")
-    print(jax.jit(f).lower(*inputs).compiler_ir())
+    print(jax.jit(f).lower(*inputs).compiler_ir(dialect="mhlo"))
   return lower
