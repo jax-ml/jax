@@ -808,7 +808,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     if dtype in (jnp.complex64, jnp.complex128, jnp.bool_):
       raise SkipTest(f"host_callback not implemented for {dtype}.")
     if dtype == np.bool_:
-      args = [np.random.choice(a=[True, False], size=shape)]
+      args = [self.rng().choice(a=[True, False], size=shape)]
     else:
       args = [jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
@@ -1950,7 +1950,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     def fun(x):
       return hcb.call(f_outside, x, result_shape=x)
 
-    arg = np.random.choice(a=[True, False], size=(2, 3, 4))
+    arg = self.rng().choice(a=[True, False], size=(2, 3, 4))
     self.assertAllClose(np.invert(arg), fun(arg))
 
   def test_call_tuples(self):

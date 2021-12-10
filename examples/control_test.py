@@ -15,9 +15,9 @@
 from functools import partial
 
 from absl.testing import absltest
-import numpy as np
 
 from jax import lax
+# TODO(jakevdp) avoid dependence on private test_util in examples
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 
@@ -138,7 +138,7 @@ class ControlExampleTest(jtu.JaxTestCase):
 
 
   def testLqrPredict(self):
-    randn = np.random.RandomState(0).randn
+    randn = self.rng().randn
     dim, T = 2, 10
     p = one_step_lqr(dim, T)
     x0 = randn(dim)
@@ -153,7 +153,7 @@ class ControlExampleTest(jtu.JaxTestCase):
 
 
   def testIlqrWithLqrProblem(self):
-    randn = np.random.RandomState(0).randn
+    randn = self.rng().randn
     dim, T, num_iters = 2, 10, 3
     lqr = one_step_lqr(dim, T)
     p = control_from_lqr(lqr)
@@ -166,7 +166,7 @@ class ControlExampleTest(jtu.JaxTestCase):
 
 
   def testIlqrWithLqrProblemSpecifiedGenerally(self):
-    randn = np.random.RandomState(0).randn
+    randn = self.rng().randn
     dim, T, num_iters = 2, 10, 3
     p = one_step_control(dim, T)
     x0 = randn(dim)
@@ -197,7 +197,7 @@ class ControlExampleTest(jtu.JaxTestCase):
 
 
   def testMpcWithLqrProblem(self):
-    randn = np.random.RandomState(0).randn
+    randn = self.rng().randn
     dim, T, num_iters = 2, 10, 3
     lqr = one_step_lqr(dim, T)
     p = control_from_lqr(lqr)
@@ -211,7 +211,7 @@ class ControlExampleTest(jtu.JaxTestCase):
 
 
   def testMpcWithLqrProblemSpecifiedGenerally(self):
-    randn = np.random.RandomState(0).randn
+    randn = self.rng().randn
     dim, T, num_iters = 2, 10, 3
     p = one_step_control(dim, T)
     x0 = randn(dim)

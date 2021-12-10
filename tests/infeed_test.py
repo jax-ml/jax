@@ -40,8 +40,8 @@ class InfeedTest(jtu.JaxTestCase):
       return x + y + z
 
     x = np.float32(1.5)
-    y = np.reshape(np.arange(12, dtype=np.float32), (3, 4)) # np.random.randn(3, 4).astype(np.float32)
-    z = np.random.randn(3, 1, 1).astype(np.float32)
+    y = np.reshape(np.arange(12, dtype=np.float32), (3, 4)) # self.rng().randn(3, 4).astype(np.float32)
+    z = self.rng().randn(3, 1, 1).astype(np.float32)
     device = jax.local_devices()[0]
     device.transfer_to_infeed((y,))
     device.transfer_to_infeed((z,))
@@ -78,7 +78,7 @@ class InfeedTest(jtu.JaxTestCase):
       return x - 1
 
     x = np.float32(7.5)
-    y = np.random.randn(3, 4).astype(np.float32)
+    y = self.rng().randn(3, 4).astype(np.float32)
     execution = threading.Thread(target=lambda: f(x))
     execution.start()
     device = jax.local_devices()[0]
@@ -107,7 +107,7 @@ class InfeedTest(jtu.JaxTestCase):
     execution = threading.Thread(target=lambda: f(n))
     execution.start()
     for _ in range(n):
-      x = np.random.randn(3, 4).astype(np.float32)
+      x = self.rng().randn(3, 4).astype(np.float32)
       device.transfer_to_infeed((x,))
       y, = device.transfer_from_outfeed(xla_client.shape_from_pyval((x,))
                                         .with_major_to_minor_layout_if_absent())

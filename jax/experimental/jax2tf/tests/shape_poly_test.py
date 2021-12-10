@@ -1868,7 +1868,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       y = jnp.sin(x)
       return y.reshape([x.shape[0], -1])
 
-    x = np.random.rand(4, 2, 3)
+    x = self.rng().rand(4, 2, 3)
     res_jax = f_jax(x)
 
     traced = False
@@ -1883,7 +1883,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_jax, f_tf(x))
     self.assertFalse(traced)  # We are not tracing again
 
-    x = np.random.rand(6, 2, 3)
+    x = self.rng().rand(6, 2, 3)
     res_jax = f_jax(x)
     traced = False
 

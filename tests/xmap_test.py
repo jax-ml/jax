@@ -507,7 +507,7 @@ class XMapTest(XMapTestCase):
     fm = do_vmap(xmap(f, in_axes=xmap_in_axes, out_axes=xmap_out_axes))
     fref = partial(jnp.einsum, f"{''.join(xind)},{''.join(yind)}->{''.join(zind)}")
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(*xshape)
     y = rng.randn(*yshape)
     self.assertAllClose(fm(x, y), fref(x, y))
@@ -683,7 +683,7 @@ class NamedNumPyTest(XMapTestCase):
                     in_axes={mapped_axis: 'i'},
                     out_axes=({} if 'i' in axes_t else {mapped_axis_after_red: 'i'}))
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(2, 5, 6)
     self.assertAllClose(ref_red(x), xmap_red(x))
 
@@ -926,7 +926,7 @@ class PDotTests(XMapTestCase):
                     out_axes={},
                     axis_resources={'i': 'r1'})
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(3, 8)
     y = rng.randn(8, 5)
 
@@ -939,7 +939,7 @@ class PDotTests(XMapTestCase):
     def f(x, y):
       return lax.pdot(x, y, 'i')
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(2, 3, 8)
     y = rng.randn(2, 8, 5)
 
@@ -957,7 +957,7 @@ class PDotTests(XMapTestCase):
     def f(x, y):
       return lax.pdot(x, y, 'i')
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(2, 3, 8)
     y = rng.randn(2, 8, 5)
 
@@ -1053,7 +1053,7 @@ class PDotTests(XMapTestCase):
                         atol=tol, rtol=tol)
 
   def test_xeinsum_vector_dot(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(3)
     y = rng.randn(3)
     out = xmap(partial(jnp.einsum, '{i},{i}->'),
@@ -1062,7 +1062,7 @@ class PDotTests(XMapTestCase):
     self.assertAllClose(out, expected, check_dtypes=False)
 
   def test_xeinsum_outer_product(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(3)
     y = rng.randn(3)
     out = xmap(partial(jnp.einsum, '{i},{j}->{i,j}'),
@@ -1071,7 +1071,7 @@ class PDotTests(XMapTestCase):
     self.assertAllClose(out, expected, check_dtypes=True)
 
   def test_xeinsum_matmul(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(3, 4)
     y = rng.randn(4, 5)
 
@@ -1090,7 +1090,7 @@ class PDotTests(XMapTestCase):
     check('{j},{j}->{}')
 
   def test_xeinsum_no_named_axes_vector_dot(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(3)
     y = rng.randn(3)
     out = jnp.einsum('i,i->', x, y, _use_xeinsum=True)
@@ -1098,7 +1098,7 @@ class PDotTests(XMapTestCase):
     self.assertAllClose(out, expected, check_dtypes=False)
 
   def test_xeinsum_no_named_axes_batch_vector_dot(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(3, 2)
     y = rng.randn(3, 2)
     out = jnp.einsum('ij,ij->i', x, y, _use_xeinsum=True)
@@ -1106,7 +1106,7 @@ class PDotTests(XMapTestCase):
     self.assertAllClose(out, expected, check_dtypes=True)
 
   def test_xeinsum_no_named_axes_reduce_sum(self):
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.randn(3)
     y = rng.randn()
     out = jnp.einsum('i,->', x, y, _use_xeinsum=True)

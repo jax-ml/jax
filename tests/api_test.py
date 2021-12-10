@@ -372,7 +372,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return x + x - 3.
 
-    xs = [np.random.randn(i) for i in range(10)]
+    xs = [self.rng().randn(i) for i in range(10)]
     with concurrent.futures.ThreadPoolExecutor() as executor:
       futures = [executor.submit(partial(f, x)) for x in xs]
       ys = [f.result() for f in futures]
@@ -414,7 +414,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_on_all_devices(self):
     # Verifies we can run the same computation on every device present, even
     # if they are, for example, different models of GPU.
-    data = np.random.rand(1000).astype(np.float32)
+    data = self.rng().rand(1000).astype(np.float32)
     f = self.jit(jnp.negative)
     for device in jax.local_devices():
       x = device_put(data, device=device)
@@ -1077,7 +1077,7 @@ class APITest(jtu.JaxTestCase):
     if len(api.local_devices()) < 2:
       raise unittest.SkipTest("this test requires multiple devices")
     d1, d2 = api.local_devices()[:2]
-    data = np.random.randn(*shape).astype(np.float32)
+    data = self.rng().randn(*shape).astype(np.float32)
     x = api.device_put(data, device=d1)
     self.assertEqual(x.device_buffer.device(), d1)
     y = api.device_put(x, device=d2)
@@ -1103,7 +1103,7 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
-    R = np.random.RandomState(0).randn
+    R = self.rng().randn
     A = R(4, 3)
     x = R(3)
 
@@ -1116,7 +1116,7 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")
   def test_hessian(self):
-    R = np.random.RandomState(0).randn
+    R = self.rng().randn
     A = R(4, 4)
     x = R(4)
 
@@ -1160,7 +1160,7 @@ class APITest(jtu.JaxTestCase):
                   (0., 1., 0.))
       self.assertAllClose(ans, expected, check_dtypes=False)
 
-      R = np.random.RandomState(0).randn
+      R = self.rng().randn
       x = R(2)
       y = R(3)
       ans = jacfun(lambda x, y: {'x': x, 'xy': jnp.outer(x, y)})(x, y)
@@ -2043,7 +2043,7 @@ class APITest(jtu.JaxTestCase):
         x = jax.device_get(y)
       return x
 
-    xs = [np.random.randn(i) for i in range(10)]
+    xs = [self.rng().randn(i) for i in range(10)]
     with concurrent.futures.ThreadPoolExecutor() as executor:
       futures = [executor.submit(partial(f, x)) for x in xs]
       ys = [f.result() for f in futures]
@@ -2170,8 +2170,8 @@ class APITest(jtu.JaxTestCase):
     def h(a, b):
       return jnp.sum(a) + jnp.sum(b)
 
-    X = np.random.randn(10, 4)
-    U = np.random.randn(10, 2)
+    X = self.rng().randn(10, 4)
+    U = self.rng().randn(10, 2)
 
     with self.assertRaisesRegex(
         ValueError,
@@ -3131,9 +3131,9 @@ class APITest(jtu.JaxTestCase):
 
     # A large and potentially unaligned array to trigger non-zero-copy and
     # async device array copy.
-    xs = np.random.uniform(0., 1., size=(10, 131, 111, 3)).astype(np.float32)
+    xs = self.rng().uniform(0., 1., size=(10, 131, 111, 3)).astype(np.float32)
     for x in xs:
-      delta = np.random.uniform(-0.5, 0.5, size=())
+      delta = self.rng().uniform(-0.5, 0.5, size=())
       jitted_f = api.jit(f)
       np.testing.assert_allclose(jitted_f(x, delta), f(x, delta))
 
@@ -5080,7 +5080,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       tangent_out = supp * x_dot - (jnp.dot(supp, x_dot) / card) * supp
       return primal_out, tangent_out
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     x = rng.rand(5).astype(np.float32)
 
     J_rev = jax.jacrev(projection_unit_simplex)(x)
@@ -5098,7 +5098,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     def fun(X):
       return jnp.sum(proj(X) ** 2)
 
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     X = rng.rand(4, 5).astype(np.float32)
     U = rng.rand(4, 5)
     U /= np.sqrt(np.sum(U ** 2))

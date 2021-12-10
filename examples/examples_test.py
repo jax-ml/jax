@@ -19,9 +19,8 @@ import sys
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as np
-
 from jax import lax
+# TODO(jakevdp) avoid dependence on private test_util in examples.
 from jax._src import test_util as jtu
 from jax import random
 import jax.numpy as jnp
@@ -39,7 +38,7 @@ FLAGS = config.FLAGS
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   jax_rng = random.PRNGKey(0)
   result_shape, params = init_fun(jax_rng, input_shape)
-  rng = np.random.RandomState(0)
+  rng = test_case.rng()
   result = apply_fun(params, rng.randn(*input_shape).astype(dtype="float32"))
   test_case.assertEqual(result.shape, result_shape)
 
@@ -77,15 +76,15 @@ class ExamplesTest(jtu.JaxTestCase):
 
   def testKernelRegressionGram(self):
     n, d = 100, 20
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     xs = rng.randn(n, d)
     kernel = lambda x, y: jnp.dot(x, y)
     self.assertAllClose(kernel_lsq.gram(kernel, xs), jnp.dot(xs, xs.T),
-                        check_dtypes=False)
+                        check_dtypes=False, atol=1E-5)
 
   def testKernelRegressionTrainAndPredict(self):
     n, d = 100, 20
-    rng = np.random.RandomState(0)
+    rng = self.rng()
     truth = rng.randn(d)
     xs = rng.randn(n, d)
     ys = jnp.dot(xs, truth)
