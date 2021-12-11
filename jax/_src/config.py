@@ -463,6 +463,15 @@ flags.DEFINE_bool(
         'Has no effect on TPU, since only the outfeed mechanism is implemented.'
     )
 )
+flags.DEFINE_bool(
+    'jax_host_callback_ad_transforms',
+    bool_env('JAX_HOST_CALLBACK_AD_TRANSFORMS', False),
+    help=(
+        'Enable support for jvp/vjp for the host_callback primitives. Default is '
+        'False, which means that host_callback operates only on primals. '
+        'The flag exists only temporarily, for backward compatibility.'
+    )
+)
 
 enable_checks = config.define_bool_state(
     name='jax_enable_checks',
