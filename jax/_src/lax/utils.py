@@ -66,6 +66,9 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
     return core.ShapedArray(shape_rule(*avals, **kwargs),
                             dtype_rule(*avals, **kwargs), weak_type=weak_type,
                             named_shape=named_shape_rule(*avals, **kwargs))
+  elif least_specialized is core.DShapedArray:
+    return core.DShapedArray(shape_rule(*avals, **kwargs),
+                             dtype_rule(*avals, **kwargs), weak_type)
   elif least_specialized is core.UnshapedArray:
     return core.UnshapedArray(dtype_rule(*avals, **kwargs), weak_type=weak_type)
   else:
