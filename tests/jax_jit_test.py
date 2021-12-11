@@ -16,6 +16,7 @@ import inspect
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import unittest
 import jax
 from jax._src import api
 from jax import dtypes
@@ -89,6 +90,8 @@ class JaxJitTest(parameterized.TestCase):
       self.assertEqual(output_buffer.aval, buffer.aval)
       np.testing.assert_array_equal(output_buffer, np.array(value + 1))
 
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 51,
+                   "requires jaxlib >= 0.1.76")
   @parameterized.parameters([jax.device_put, _cpp_device_put])
   def test_device_put_on_sharded_device_array(self, device_put_function):
     device = jax.devices()[0]

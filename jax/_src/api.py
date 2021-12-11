@@ -2023,6 +2023,7 @@ class _PmapFastpathData(NamedTuple):
   input_sharding_specs: Sequence[pxla.ShardingSpec]
   input_devices: Sequence[xc.Device]
   input_indices: Sequence[pxla.Index]
+  fully_replicated: Sequence[bool]
   # Data needed to build the ShardedDeviceArray from C++.
   out_sharding_specs: Sequence[pxla.ShardingSpec]
   out_indices: Sequence[pxla.Index]
@@ -2088,6 +2089,7 @@ def _cpp_pmap(
           input_sharding_specs=in_handler.sharding_specs,
           input_devices=in_handler.local_devices,
           input_indices=in_handler.input_indices,
+          fully_replicated=in_handler.fully_replicated,
           out_sharding_specs=out_handler.out_specs,
           out_indices=out_handler.out_indices,
           out_avals=out_handler.unmapped_local_out_avals,

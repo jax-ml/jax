@@ -312,7 +312,8 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   # If all inputs are GDAs, then the avals are global and the mesh should also
   # be global. This split is because non-contiguous mesh can only be used if all
   # inputs are GDAs.
-  if all(is_gda):
+  if all(is_gda) or all(
+      p.partitions == () for p in in_axis_resources_flat if p is not FROM_GDA):
     _check_shapes_against_resources(
         "pjit arguments", mesh.is_multi_process, mesh.shape, local_in_avals,
         in_axis_resources_flat)
@@ -355,8 +356,8 @@ class ParsedPartitionSpec:
   __slots__ = ('partitions', 'unsafe_user_spec', 'sync')
 
   def __init__(self, user_spec, partitions, sync=SpecSync.IN_SYNC):
-    self.partitions = tuple(partitions)
     self.unsafe_user_spec = user_spec
+    self.partitions = tuple(partitions)
     self.sync = sync
 
   @property
@@ -917,14 +918,14 @@ def global_to_local(positional_semantics, mesh, avals, axes):
   if isinstance(positional_semantics, maps._PositionalSemantics):
     positional_semantics = [positional_semantics] * len(axes)
   return [
-      aval if ps == maps._PositionalSemantics.GLOBAL else mesh.global_to_local(
+      aval if ps == maps._PositionalSemantics.GLOBAL or not aval_axes else mesh.global_to_local(
           get_array_mapping(aval_axes), aval)
       for aval, aval_axes, ps in safe_zip(avals, axes, positional_semantics)
   ]
 
 def local_to_global(positional_semantics, mesh, avals, axes):
   return [
-      aval if ps == maps._PositionalSemantics.GLOBAL else mesh.local_to_global(
+      aval if ps == maps._PositionalSemantics.GLOBAL or not aval_axes else mesh.local_to_global(
           get_array_mapping(aval_axes), aval)
       for aval, aval_axes, ps in safe_zip(avals, axes, positional_semantics)
   ]

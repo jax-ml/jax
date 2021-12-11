@@ -175,7 +175,7 @@ def _sharded_callable(
                    for aval, spec in zip(abstract_args, input_specs)]
 
   handle_args = partial(pxla.shard_args, compiled.local_devices(),
-                        input_indices)
+                        input_indices, [False] * len(input_indices))
   handle_outs = _avals_to_results_handler(nrep, local_nparts,  # type: ignore
                                           local_out_parts, local_out_avals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,

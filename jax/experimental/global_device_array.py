@@ -381,7 +381,7 @@ xla.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
     x.shape, x.dtype)
 xla.canonicalize_dtype_handlers[GlobalDeviceArray] = pxla.identity
 
-def _gda_shard_arg(x, devices, indices):
+def _gda_shard_arg(x, devices, indices, is_fully_replicated):
   pjit_mesh = maps.thread_resources.env.physical_mesh
   if x._global_mesh != pjit_mesh:
     raise ValueError("Pjit's mesh and GDA's mesh should be equal. Got Pjit "

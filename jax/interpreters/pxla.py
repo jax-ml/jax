@@ -273,7 +273,7 @@ def spec_to_indices(shape: Tuple[int, ...],
 
 def identity(x): return x
 
-def _shard_arg(arg, devices, arg_indices):
+def _shard_arg(arg, devices, arg_indices, is_fully_replicated):
   """Returns a list of size len(devices) containing per-device buffers.
 
   For the C++ pmap path, we fallback to Python (this function) to shard
@@ -283,6 +283,7 @@ def _shard_arg(arg, devices, arg_indices):
     arg: The Python argument.
     devices: The list of devices to shard over.
     arg_indices: A list of `len(devices)` indices to use to shard the argument.
+    is_fully_replicated: bool, indicating if arg is fully replicated.
   """
   if isinstance(arg, ShardedDeviceArray) and arg_indices == arg.indices:
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
@@ -295,12 +296,14 @@ def _shard_arg(arg, devices, arg_indices):
     ]
   else:
     arg = xla.canonicalize_dtype(arg)
-    return shard_arg_handlers[type(arg)](arg, devices, arg_indices)
+    return shard_arg_handlers[type(arg)](arg, devices, arg_indices,
+                                         is_fully_replicated)
 
 
 @profiler.annotate_function
 def shard_args(devices: Sequence[xb.xla_client.Device],
                indices: Sequence[Sequence[Index]],
+               fully_replicated: Sequence[bool],
                args) -> Sequence[Sequence[xb.xla_client.Buffer]]:
   """Shard each argument data array along its leading axis.
 
@@ -309,6 +312,8 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
     indices: sequence of the same length as `args` describing how each arg
       should be sharded/replicated across `devices`. Each element in `indices`
       is the same length as `devices`.
+    fully_replicated: True if arg is fully replicated
+      (i.e. same value on each device) else False.
     args: a sequence of JaxTypes representing arguments to be sharded according
       to `indices` and placed on `devices`.
 
@@ -316,18 +321,24 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
     A list of length matching args, containing lists of per-device buffers
     for each argument.
   """
-  return [_shard_arg(arg, devices, indices[a]) for a, arg in enumerate(args)]
+  return [_shard_arg(arg, devices, index, fr)
+          for arg, index, fr in safe_zip(args, indices, fully_replicated)]
 
 
-shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
+shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
-    lambda x, devices, _: device_put(core.unit, devices, replicate=True)  # type: ignore[has-type]
-def _shard_array(x, devices, indices):
+    lambda x, devices, *_: device_put(core.unit, devices, replicate=True)  # type: ignore[has-type]
+
+def _shard_array(x, devices, indices, is_fully_replicated):
+  if is_fully_replicated:
+    return device_put(x, devices, replicate=True)
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_device_array(x, devices, indices):
+def _shard_device_array(x, devices, indices, is_fully_replicated):
+  if is_fully_replicated:
+    return device_put(x, devices, replicate=True)
   start_indices, limit_indices, removed_dims = unzip3(
       _as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
@@ -710,7 +721,7 @@ def _hashable_index(idx):
 
 # The fast path is handled directly in shard_args().
 # TODO(skye): is there a simpler way to rewrite this using sharding_spec?
-def _shard_sharded_device_array_slow_path(x, devices, indices):
+def _shard_sharded_device_array_slow_path(x, devices, indices, is_fully_replicated):
   candidates = defaultdict(list)
   for buf, idx in safe_zip(x.device_buffers, x.indices):
     candidates[_hashable_index(idx)].append(buf)
@@ -722,7 +733,8 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?
-      return shard_arg_handlers[type(x._value)](x._value, devices, indices)
+      return shard_arg_handlers[type(x._value)](x._value, devices, indices,
+                                                is_fully_replicated)
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -1190,8 +1202,9 @@ class PmapExecutable:
         f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec"):
       compiled = dispatch.compile_or_get_cached(
           pci.backend, xla_computation, compile_options)
+    fully_replicated = [False for _ in pci.in_axes]
     handle_args = InputsHandler(
-        compiled.local_devices(), input_sharding_specs, input_indices)
+        compiled.local_devices(), input_sharding_specs, input_indices, fully_replicated)
     execute_fun = partial(
         execute_replicated, compiled, pci.backend, handle_args, handle_outs)
     fingerprint = getattr(compiled, "fingerprint", None)
@@ -1351,13 +1364,15 @@ def _safe_div(x, y):
 
 
 class InputsHandler:
-  __slots__ = ("handler", "local_devices", "sharding_specs", "input_indices")
+  __slots__ = ("handler", "local_devices", "sharding_specs", "input_indices",
+               "fully_replicated")
 
-  def __init__(self, local_devices, sharding_specs, input_indices):
-    self.handler = partial(shard_args, local_devices, input_indices)
+  def __init__(self, local_devices, sharding_specs, input_indices, fully_replicated):
+    self.handler = partial(shard_args, local_devices, input_indices, fully_replicated)
     self.local_devices = local_devices
     self.sharding_specs = sharding_specs
     self.input_indices = input_indices
+    self.fully_replicated = fully_replicated
 
   def __call__(self, input_buffers):
     return self.handler(input_buffers)
@@ -2051,15 +2066,17 @@ class MeshComputation:
 
 def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
   input_specs, input_indices, input_avals = [], [], []
+  fully_replicated = []
   for gaval, axis, is_gda in safe_zip(global_in_avals, in_axes, in_is_gda):
-    # TODO(yashkatariya): Don't calculate input_indices and input_specs for GDA
-    # as GDA doesn't need it.
-    if is_gda:
+    # If input is GDA or fully replicated.
+    if is_gda or not axis:
       aval = gaval
       mesh = global_mesh
     else:
       aval = global_mesh.global_to_local(axis, gaval)
       mesh = global_mesh.local_mesh
+
+    fully_replicated.append(not axis)
 
     spec = (mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, axis)
             if aval is not core.abstract_unit else None)
@@ -2067,7 +2084,7 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
     input_specs.append(spec)
     input_indices.append(index)
     input_avals.append(aval)
-  return input_specs, input_indices, input_avals
+  return input_specs, input_indices, input_avals, fully_replicated
 
 
 class MeshExecutable:
@@ -2110,7 +2127,7 @@ class MeshExecutable:
     compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
         _allow_propagation_to_outputs
 
-    input_specs, input_indices, input_avals = _get_input_metadata(
+    input_specs, input_indices, input_avals, fully_replicated = _get_input_metadata(
         global_in_avals, mesh, in_axes, in_is_gda)
     # Calculate local information here instead of calculating it in
     # `avals_to_results_handler` because pmap also uses this function.
@@ -2126,7 +2143,7 @@ class MeshExecutable:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
                                      "in {elapsed_time} sec"):
         compiled = dispatch.compile_or_get_cached(backend, computation, compile_options)
-      handle_args = InputsHandler(compiled.local_devices(), input_specs, input_indices)
+      handle_args = InputsHandler(compiled.local_devices(), input_specs, input_indices, fully_replicated)
       unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
       xla_executable = compiled
 

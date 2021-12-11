@@ -1892,6 +1892,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(x.size, 8 * 267736 * 1024)
     self.assertEqual(type(x.size), int)
 
+
+@unittest.skipIf(jax._src.lib._xla_extension_version < 51,
+                 "requires jaxlib >= 0.1.76")
 class CppPmapTest(PythonPmapTest):
 
   @property
@@ -2341,6 +2344,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     x = jnp.arange(device_count)
     tree_util.tree_multimap(self.assertAllClose, f(x), {'a': x})
 
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 51,
+                   "requires jaxlib >= 0.1.76")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{in_axes}_{out_axes}",
        "in_axes": in_axes, "out_axes": out_axes}
@@ -2670,8 +2675,7 @@ class ShardArgsTest(jtu.JaxTestCase):
       raise SkipTest
     x = np.arange(prod(shape)).reshape(shape)
     arg = make_arg(x)
-    bufs = pxla.shard_args(jax.devices()[:nshards],
-                           [indices], [arg])
+    bufs = pxla.shard_args(jax.devices()[:nshards], [indices], [False], [arg])
     self.assertEqual(len(bufs), 1)
     self.assertEqual(len(bufs[0]), nshards)
     for buf, idx in zip(bufs[0], indices):
