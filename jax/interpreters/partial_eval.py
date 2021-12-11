@@ -174,6 +174,7 @@ class JaxprTrace(Trace):
       return out_tracer
 
   # We use process_call to handle both call and map primitives.
+  # TODO(mattjj): split out process_call and process_map
   def process_call(self, primitive, f: lu.WrappedFun, tracers, params):
     if primitive in call_partial_eval_rules:
       return call_partial_eval_rules[primitive](self, primitive, f, tracers, params)
@@ -253,8 +254,8 @@ class JaxprTrace(Trace):
   process_map = process_call
 
   # We use post_process_call to handle both call and map primitives.
+  # TODO(mattjj): split out post_process_call and post_process_map
   def post_process_call(self, primitive, out_tracers, params):
-
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
     out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
     out = out_pv_consts + consts
@@ -262,19 +263,23 @@ class JaxprTrace(Trace):
     del consts, out_pv_consts
     main = self.main
 
-    if primitive.map_primitive:
-      out_axes = params['out_axes_thunk']()
-      sz = params['axis_size']
-      out_pvs = [None if pv is None else core.unmapped_aval(sz, params['axis_name'], ax, pv)
-                 for pv, ax in zip(out_pvs, out_axes)]
-
     def todo(x):
+      if primitive.map_primitive:
+        out_axes_ = params['out_axes_thunk']()
+        assert len(out_axes_) == len(out_pvs) + nconsts  # transformed below
+        out_axes = out_axes_[:len(out_pvs)]
+        sz = params['axis_size']
+        out_pvs_ = [core.unmapped_aval(sz, params['axis_name'], ax, pv)
+                    if pv is not None else None for pv, ax in zip(out_pvs, out_axes)]
+      else:
+        out_pvs_ = out_pvs
+
       n = len(jaxpr.outvars)
       out_pv_consts, consts = x[:n], x[n:]
       trace = JaxprTrace(main, core.cur_sublevel())
       const_tracers = map(trace.new_instantiated_const, consts)
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
-                     for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+                     for out_pv, out_pv_const in zip(out_pvs_, out_pv_consts)]
       in_tracers = (*const_tracers, *map(trace.full_raise, env))
 
       new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
@@ -349,7 +354,7 @@ class JaxprTrace(Trace):
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
-  def post_process_custom_jvp_call(self, out_tracers, params):
+  def post_process_custom_jvp_call(self, out_tracers, _):
     # This path should only be reachable if we expose a partial eval API
     # unrelated to autodiff, since we raise an error when differentiation with
     # respect to values over which a custom_jvp function closes is detected.
@@ -390,7 +395,7 @@ class JaxprTrace(Trace):
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
-  def post_process_custom_vjp_call(self, out_tracers, params):
+  def post_process_custom_vjp_call(self, out_tracers, _):
     # This path should only be reachable if we expose a partial eval API
     # unrelated to autodiff, since we raise an error when differentiation with
     # respect to values over which a custom_vjp function closes is detected.
@@ -1435,7 +1440,7 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.eqns.append(eqn)
     return out_tracers
 
-  def post_process_custom_jvp_call(self, out_tracers, params):
+  def post_process_custom_jvp_call(self, out_tracers, _):
     assert False  # unreachable
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
@@ -1459,7 +1464,7 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.eqns.append(eqn)
     return out_tracers
 
-  def post_process_custom_vjp_call(self, out_tracers, params):
+  def post_process_custom_vjp_call(self, out_tracers, _):
     assert False  # unreachable
 
 def _memoize(thunk):

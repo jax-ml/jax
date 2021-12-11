@@ -4955,6 +4955,28 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     api.vmap(sample)(jax.random.split(jax.random.PRNGKey(1), 3))  # don't crash
 
+  def test_closure_with_vmap2(self):
+    # https://github.com/google/jax/issues/8783
+    def h(z):
+      def f(x):
+        @jax.custom_jvp
+        def g(y):
+          return x * y
+
+        # NOTE: rule closes over vmap tracer
+        @g.defjvp
+        def g_jvp(primals, tangents):
+          (y,), (ydot,) = primals, tangents
+          return x * y, x * ydot
+
+        return g(z)  # NOTE: no vmapped arg
+
+      return jax.vmap(f)(jnp.arange(3., dtype='float32'))
+
+    primals, tangents = jax.jvp(h, (jnp.float32(1.),), (jnp.float32(2.),))
+    self.assertAllClose(primals ,     jnp.arange(3., dtype='float32'))
+    self.assertAllClose(tangents, 2 * jnp.arange(3., dtype='float32'))
+
   @unittest.skipIf(numpy_version == (1, 21, 0),
                    "https://github.com/numpy/numpy/issues/19305")
   def test_float0(self):
@@ -6198,6 +6220,27 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jtu.check_grads(batched_scan_over_mul, (x_batch, coeff), order=2,
                     modes=['rev'])
+
+  def test_closure_with_vmap2(self):
+    # https://github.com/google/jax/issues/8783
+    def h(z):
+      def f(x):
+        @jax.custom_vjp
+        def g(y):
+          return x * y
+
+        def g_fwd(y):
+          return x * y, (x, x * y, y)
+        def g_rev(res, w_bar):
+          x, *_ = res
+          return (x * w_bar,)
+        g.defvjp(g_fwd, g_rev)
+
+        return g(z)
+
+      return jax.vmap(f)(jnp.arange(3., dtype='float32')).sum()
+
+    jtu.check_grads(h, (jnp.float32(3.14),), order=1, modes=['rev'])
 
 
 def transpose_unary(f, x_example):
