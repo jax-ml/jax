@@ -999,6 +999,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_size={}_fill_value={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), size, fill_value),
+       "shape": shape, "dtype": dtype, "size": size, "fill_value": fill_value}
+      for shape in nonempty_array_shapes
+      for dtype in all_dtypes
+      for fill_value in [None, -1, shape or (1,)]
+      for size in [1, 5, 10]))
+  def testFlatNonzeroSize(self, shape, dtype, size, fill_value):
+    rng = jtu.rand_some_zero(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    @jtu.ignore_warning(category=DeprecationWarning, message="Calling nonzero on 0d arrays.*")
+    def np_fun(x):
+      result = np.flatnonzero(x)
+      if size <= len(result):
+        return result[:size]
+      else:
+        fill_val = fill_value or 0
+        return np.concatenate([result, np.full(size - len(result), fill_val, result.dtype)])
+    jnp_fun = lambda x: jnp.flatnonzero(x, size=size, fill_value=fill_value)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
           jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
@@ -1015,6 +1038,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # JIT compilation requires specifying a size statically. Full test of this
     # behavior is in testNonzeroSize().
     jnp_fun = lambda x: jnp.argwhere(x, size=np.size(x) // 2)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_size={}_fill_value={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), size, fill_value),
+       "shape": shape, "dtype": dtype, "size": size, "fill_value": fill_value}
+      for shape in nonempty_array_shapes
+      for dtype in all_dtypes
+      for fill_value in [None, -1, shape or (1,)]
+      for size in [1, 5, 10]))
+  def testArgWhereSize(self, shape, dtype, size, fill_value):
+    rng = jtu.rand_some_zero(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    @jtu.ignore_warning(category=DeprecationWarning, message="Calling nonzero on 0d arrays.*")
+    def np_fun(x):
+      result = np.argwhere(x)
+      if size <= len(result):
+        return result[:size]
+      else:
+        fillvals = fill_value if np.ndim(fill_value) else len(result) * [fill_value or 0]
+        return np.stack(np.concatenate([arg, np.full(size - len(arg), fval, arg.dtype)])
+                    for fval, arg in safe_zip(fillvals, result.T)).T
+    jnp_fun = lambda x: jnp.argwhere(x, size=size, fill_value=fill_value)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
