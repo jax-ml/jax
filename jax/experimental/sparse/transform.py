@@ -475,6 +475,12 @@ def _add_sparse(spenv, *argspecs):
 
 sparse_rules[lax.add_p] = _add_sparse
 
+def _sub_sparse(spenv, *argspecs):
+  lhs, rhs = argspecs
+  return _add_sparse(spenv, lhs, *sparse_rules[lax.neg_p](spenv, rhs))
+
+sparse_rules[lax.sub_p] = _sub_sparse
+
 def _mul_sparse(spenv, *argspecs):
   X, Y = argspecs
   if X.is_sparse() and Y.is_sparse():
@@ -675,18 +681,20 @@ def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=Fa
     result = BCOO.fromdense(result)
   return result
 
+_swap_args = lambda f: lambda a, b: f(b, a)
+
 _bcoo_methods = {
   'sum': _sum,
   "__neg__": sparsify(jnp.negative),
   "__pos__": sparsify(jnp.positive),
   "__matmul__": sparsify(jnp.matmul),
-  "__rmatmul__": sparsify(lambda self, other: jnp.matmul(other, self)),
+  "__rmatmul__": sparsify(_swap_args(jnp.matmul)),
   "__mul__": sparsify(jnp.multiply),
-  "__rmul__": sparsify(lambda self, other: jnp.multiply(other, self)),
+  "__rmul__": sparsify(_swap_args(jnp.multiply)),
   "__add__": sparsify(jnp.add),
-  "__radd__": sparsify(lambda self, other: jnp.add(other, self)),
-  "__sub__": sparsify(lambda self, other: jnp.add(self, jnp.negative(other))),
-  "__rsub__": sparsify(lambda self, other: jnp.add(other, jnp.negative(self))),
+  "__radd__": sparsify(_swap_args(jnp.add)),
+  "__sub__": sparsify(jnp.subtract),
+  "__rsub__": sparsify(_swap_args(jnp.subtract)),
   "__getitem__": _sparse_rewriting_take,
 }
 

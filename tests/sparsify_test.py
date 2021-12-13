@@ -195,6 +195,28 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(out.todense(), x.todense() * y.todense())
 
+  def testSparseSubtract(self):
+    x = BCOO.fromdense(3 * jnp.arange(5))
+    y = BCOO.fromdense(jnp.arange(5))
+
+    # Distinct indices
+    out = self.sparsify(operator.sub)(x, y)
+    self.assertEqual(out.nse, 8)  # uses concatenation.
+    self.assertArraysEqual(out.todense(), 2 * jnp.arange(5))
+
+    # Shared indices – requires lower level call
+    argspecs = [
+      ArgSpec(x.shape, 1, 0),
+      ArgSpec(y.shape, 2, 0)
+    ]
+    spenv = SparseEnv([x.indices, x.data, y.data])
+
+    result = sparsify_raw(operator.sub)(spenv, *argspecs)
+    args_out, _ = result
+    out, = argspecs_to_arrays(spenv, args_out)
+
+    self.assertAllClose(out.todense(), x.todense() - y.todense())
+
   def testSparseSum(self):
     x = jnp.arange(20).reshape(4, 5)
     xsp = BCOO.fromdense(x)
