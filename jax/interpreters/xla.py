@@ -1037,6 +1037,12 @@ def _array_aval_from_xla_shape(xla_shape):
   assert not xla_shape.is_tuple()
   return ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
 
+# Backwards compatibility flag. We keep this in for a bit longer to
+# allow us to turn off the refactoring of the remat lowering if we
+# run into test failures. A previous attempt at this was rolledback
+# due to bugs.
+# TODO(necula): remove this
+_USE_LAX_REMAT_LOWERING = True
 
 def _zeros(c, xla_shape):
   if xla_shape.is_array():
@@ -1136,7 +1142,8 @@ def _remat_translation_rule(ctx, avals_in, avals_out, *in_nodes,
   else:
     return jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes)
 
-register_translation(pe.remat_call_p, _remat_translation_rule)
+if not _USE_LAX_REMAT_LOWERING:
+  register_translation(pe.remat_call_p, _remat_translation_rule)
 
 
 ad.primitive_transposes[core.named_call_p] = partial(ad.call_transpose,

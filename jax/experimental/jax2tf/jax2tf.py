@@ -24,13 +24,14 @@ from jax import lax
 from jax._src import ad_util
 from jax._src import api_util
 from jax import config
-from jax._src import api
 from jax import core, custom_derivatives
-from jax._src import dispatch
-from jax._src import dtypes
 from jax import linear_util as lu
 from jax import random, tree_util
 from jax import numpy as jnp
+from jax._src import ad_checkpoint
+from jax._src import api
+from jax._src import dispatch
+from jax._src import dtypes
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
@@ -856,7 +857,7 @@ class TensorFlowTrace(core.Trace):
     assert call_primitive.multiple_results
     vals: Sequence[TfVal] = [t.val for t in tracers]
     avals: Sequence[core.ShapedArray] = tuple(t.aval for t in tracers)
-    fun = _interpret_subtrace(fun, self.main, avals)
+    interpreted_fun = _interpret_subtrace(fun, self.main, avals)
     extra_name_stack = None
     if call_primitive == core.named_call_p:
       extra_name_stack = util.wrap_name(params["name"], "named")
@@ -867,9 +868,9 @@ class TensorFlowTrace(core.Trace):
         if call_primitive == core.named_call_p:
           with tf.name_scope(_sanitize_scope_name(params["name"])):
             vals_out: Sequence[Tuple[TfVal, core.ShapedArray]] = \
-                fun.call_wrapped(*vals)
+                interpreted_fun.call_wrapped(*vals)
         elif call_primitive == sharded_jit.sharded_call_p:
-          vals_out = _sharded_call(fun, vals, **params)
+          vals_out = _sharded_call(interpreted_fun, vals, **params)
         elif call_primitive == xla.xla_call_p:
           if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
             # Make a nested tf.function(jit_compile=True)
@@ -877,7 +878,7 @@ class TensorFlowTrace(core.Trace):
             def f_tf(*tf_args):
               nonlocal store_tf_res_avals
               tf_res_out: Sequence[Tuple[TfVal, core.ShapedArray]] = \
-                _call_wrapped_with_new_constant_cache(fun, tf_args,
+                _call_wrapped_with_new_constant_cache(interpreted_fun, tf_args,
                                                       fresh_constant_cache=False)
               tf_res_vals, tf_res_avals = util.unzip2(tf_res_out)
               store_tf_res_avals = tf_res_avals
@@ -885,9 +886,9 @@ class TensorFlowTrace(core.Trace):
             tf_vals_out = tf.function(f_tf, autograph=False, jit_compile=True)(*vals)
             vals_out = zip(tf_vals_out, store_tf_res_avals)
           else:
-            vals_out = fun.call_wrapped(*vals)
+            vals_out = interpreted_fun.call_wrapped(*vals)
         else:
-          vals_out = fun.call_wrapped(*vals)
+          vals_out = interpreted_fun.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def post_process_call(self, call_primitive: core.Primitive,
@@ -963,13 +964,11 @@ for unexpected in [core.call_p, core.named_call_p, xla.xla_call_p,
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-    "rng_uniform",
     "clz",
     "igamma_grad_a",
     "random_gamma_grad",
     "reduce_precision",
     "schur",
-    "remat2",  # TODO(mattjj,necula): support new remat?
     "name",
 
     # Not high priority?
@@ -2035,6 +2034,13 @@ def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm) -> Sequence[TfVal
 tf_impl[lax.rng_bit_generator_p] = _rng_bit_generator
 
 
+def _rng_uniform(minval: TfVal, maxval: TfVal, *, shape) -> TfVal:
+  shape_tf = _eval_shape(shape)
+  return tf.random.uniform(shape_tf, minval=minval, maxval=maxval, dtype=minval.dtype)
+
+tf_impl[lax.rng_uniform_p] = _rng_uniform
+
+
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
   proto = xla_data_pb2.GatherDimensionNumbers()
   proto.offset_dims.extend(dimension_numbers.offset_dims)
@@ -2274,6 +2280,12 @@ tf_impl_with_avals[lax.scan_p] = _convert_jax_impl(
     lax_control_flow._scan_impl,
     extra_name_stack="scan")
 
+tf_impl_with_avals[ad_checkpoint.remat_p] = \
+  _convert_jax_impl(partial(lax_control_flow._remat_translation_rule,
+                            # TODO: jax2tf cannot discriminate by platform
+                            platform="tpu"),
+                    multiple_results=True,
+                    extra_name_stack="checkpoint")
 
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted
