@@ -138,9 +138,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     mk_sharded = lambda f: jax.pmap(lambda x: x)(f([n]))
     f_tf = tf.function(lambda x: x)
     self.assertAllClose(f_tf(mk_sharded(jnp.zeros)).numpy(),
-                        np.zeros([n]))
+                        jnp.zeros([n]))
     self.assertAllClose(f_tf(mk_sharded(jnp.ones)).numpy(),
-                        np.ones([n]))
+                        jnp.ones([n]))
 
   @jtu.skip_on_devices("gpu")
   def test_bfloat16_passed_by_tf(self):
