@@ -19,6 +19,7 @@ import collections
 import dataclasses
 from functools import partial
 import io
+import itertools
 import typing
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Type, Union,
                     Tuple)
@@ -341,6 +342,8 @@ def flatten_lowering_ir_args(
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
+_module_unique_id = itertools.count()
+
 def lower_jaxpr_to_module(
     module_name: str, jaxpr: core.ClosedJaxpr, platform: str,
     axis_env: xla.AxisEnv,
@@ -366,7 +369,10 @@ def lower_jaxpr_to_module(
 
   ctx = LoweringContext(platform, axis_env, name_stack)
   with ctx.context, ir.Location.unknown(ctx.context):
-    ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(module_name)
+    # Some clients expect modules to have unique names, e.g., in trace data.
+    # This may or may not be a reasonable assumption.
+    ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
+        f"{module_name}.{next(_module_unique_id)}")
     # TODO(phawkins): represent units with zero buffers at the runtime level.
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, public=True, replace_units_with_dummy=True,
