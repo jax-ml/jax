@@ -36,6 +36,7 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import std
 from jax._src.lib import xla_client as xc
+import jax._src.pretty_printer as pp
 from jax._src import source_info_util
 import jax._src.util as util
 import jax.interpreters.ad as ad
@@ -258,12 +259,21 @@ for t in device_array.device_array_types:
 # Source locations
 
 def _source_info_to_location(
-    source_info: source_info_util.SourceInfo) -> ir.Location:
+    primitive: core.Primitive, params: Dict,
+    source_info: source_info_util.SourceInfo,
+    name_stack: str = "") -> ir.Location:
+  eqn_str = str(
+      pp.text(name_stack) +
+      core.pp_eqn_compact(primitive.name, params, core.JaxprPpContext()))
   frame = source_info_util.user_frame(source_info)
   if frame is None:
-    return ir.Location.unknown()
-  return ir.Location.file(xla._get_canonical_source_file(frame), frame.line_num,
-                          1)
+    loc = ir.Location.unknown()
+  else:
+    loc = ir.Location.file(xla._get_canonical_source_file(frame),
+                           frame.line_num, 1)
+  loc = ir.Location.name(eqn_str, childLoc=loc)
+  # TODO(phawkins): also include primitive.name as the operator type.
+  return loc
 
 
 # Translation rules
@@ -547,9 +557,8 @@ def jaxpr_subcomp(ctx: LoweringContext, jaxpr: core.Jaxpr,
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
-    # TODO(phawkins): attach the primitive name, parameters, and name stack as
-    # metadata.
-    loc = _source_info_to_location(eqn.source_info)
+    loc = _source_info_to_location(eqn.primitive, eqn.params, eqn.source_info,
+                                   name_stack=ctx.name_stack)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive in _platform_specific_lowerings[ctx.platform]:
         rule = _platform_specific_lowerings[ctx.platform][eqn.primitive]
