@@ -52,6 +52,7 @@ from jax._src.config import (
 )
 from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
+  block_until_ready,
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
   closure_convert as closure_convert,

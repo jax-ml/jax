@@ -1517,6 +1517,13 @@ class APITest(jtu.JaxTestCase):
     # Tests mostly that block_until_ready() does not produce an error.
     self.assertTrue(y is x)
 
+  def test_block_until_ready_function(self):
+    # Just tests that we don't error...
+    pytree = (device_put(1.), np.ones(3))
+    pytree = jax.block_until_ready(pytree)
+    self.assertAllClose(pytree[0], jnp.array(1.), check_dtypes=False)
+    self.assertAllClose(pytree[1], np.ones(3), check_dtypes=False)
+
   def test_devicearray_weakref_friendly(self):
     x = device_put(1.)
     y = weakref.ref(x)
