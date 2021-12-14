@@ -793,7 +793,8 @@ def _ppermute_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, per
     raise NotImplementedError("ppermute batcher only supports a single axis")
   assert axis_name[0] == frame_name, "ppermute batcher called with a wrong axis!"
   assert len(perm) == axis_size, "Permutation doesn't match the axis size!"
-  assert d is not batching.not_mapped
+  if d is batching.not_mapped:
+    return v, d
   perm_indices = np.zeros(axis_size, dtype=int)
   for src, dst in perm:
     perm_indices[dst] = src

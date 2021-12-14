@@ -1267,6 +1267,19 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertEqual(f(jnp.ones(3)).shape, (3,))
     self.assertEqual(jax.vmap(f)(jnp.ones((2, 3))).shape, (2, 3))
 
+  def testPpermuteBatcherTrivial(self):
+    # https://github.com/google/jax/issues/8688
+    def ppermute(input):
+      return jax.lax.ppermute(input, axis_name="i", perm=[[0, 1], [1, 0]])
+
+    grad_fn = jax.grad(ppermute)
+
+    vmapped_gradients_fn = jax.vmap(grad_fn, axis_name="i")
+
+    vector = jax.numpy.array([1., 2.])
+    ans = vmapped_gradients_fn(vector)  # doesn't crash
+    self.assertAllClose(ans, jnp.ones(2), check_dtypes=False)
+
 
 Array = Any
 ArrayElt = Any
