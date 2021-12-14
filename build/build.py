@@ -352,7 +352,7 @@ def main():
       parser,
       "enable_nccl",
       default=True,
-      help_str="Should we build with NCCL enabled? Has non effect for non-CUDA "
+      help_str="Should we build with NCCL enabled? Has no effect for non-CUDA "
                "builds.")
   add_boolean_argument(
       parser,
@@ -377,7 +377,7 @@ def main():
       help="CUDNN version, e.g., 8")
   parser.add_argument(
       "--cuda_compute_capabilities",
-      default="3.5,5.2,6.0,6.1,7.0",
+      default="3.5,5.2,6.0,7.0,8.0",
       help="A comma-separated list of CUDA compute capabilities to support.")
   parser.add_argument(
       "--rocm_amdgpu_targets",
