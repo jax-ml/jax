@@ -3576,7 +3576,7 @@ https://jax.readthedocs.io/en/latest/faq.html).
 
 
 @_wraps(np.array, lax_description=_ARRAY_DOC)
-def array(object, dtype=None, copy=True, order="K", ndmin=0, *, device=None):
+def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
