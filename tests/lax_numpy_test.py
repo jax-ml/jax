@@ -1004,7 +1004,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "size": size, "fill_value": fill_value}
       for shape in nonempty_array_shapes
       for dtype in all_dtypes
-      for fill_value in [None, -1, shape or (1,)]
+      for fill_value in [None, -1, 10, (-1,), (10,)]
       for size in [1, 5, 10]))
   def testFlatNonzeroSize(self, shape, dtype, size, fill_value):
     rng = jtu.rand_some_zero(self.rng())
