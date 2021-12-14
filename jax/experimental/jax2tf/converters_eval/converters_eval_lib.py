@@ -16,7 +16,7 @@ import dataclasses
 import datetime
 import importlib
 import os
-from typing import Any, Callable, Dict, Sequence, Tuple
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from absl import flags
 from absl import logging
@@ -36,6 +36,7 @@ class ModuleToConvert:
   apply: Callable[..., Any]
   variables: Any
   dtype: Any
+  rtol: Optional[float]
 
 
 @dataclasses.dataclass
@@ -98,7 +99,8 @@ def make_module(spec: examples_lib.ModuleSpec) -> ModuleToConvert:
     else:
       return result
 
-  return ModuleToConvert(spec.input_shape, apply, variables, spec.dtype)
+  return ModuleToConvert(spec.input_shape, apply, variables, spec.dtype,
+                         spec.rtol)
 
 
 def log_summary(converter_name: str, results: Dict[str,
