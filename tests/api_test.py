@@ -2765,6 +2765,16 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f()
 
+  def test_concrete_error_because_const_2(self):
+    @jax.jit
+    def f():
+      result = sum(jnp.add(1, 1) for _ in range(6))
+      assert result > 0
+
+    msg = "Additional originating lines are not shown."
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f()
+
   def test_xla_computation_zeros_doesnt_device_put(self):
     with jtu.count_device_put() as count:
       api.xla_computation(lambda: jnp.zeros(3))()

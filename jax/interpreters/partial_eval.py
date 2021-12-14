@@ -1159,11 +1159,13 @@ class DynamicJaxprTracer(core.Tracer):
       msts = ["  operation "
               f"{core.pp_eqn(eqn, core.JaxprPpContext(), print_shapes=True)}\n"
               f"    from line {source_info_util.summarize(eqn.source_info)}"
-              for eqn in progenitor_eqns]
+              for eqn in progenitor_eqns[:5]]  # show at most 5
       origin = (f"While tracing the function {dbg.func_src_info} "
                 f"for {dbg.traced_for}, "
                 "this value became a tracer due to JAX operations on these lines:"
                 "\n\n" + "\n\n".join(msts))
+      if len(progenitor_eqns) > 5:
+        origin += "\n\n(Additional originating lines are not shown.)"
     else:
       origin = (f"The error occured while tracing the function {dbg.func_src_info} "
                 f"for {dbg.traced_for}.")
