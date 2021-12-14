@@ -3596,7 +3596,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertDtypesMatch(out, dtype_reference)
       self.assertEqual(dtypes.is_weakly_typed(out), weak_type)
 
-      out_jit = jnp.array(obj)
+      out_jit = jax.jit(jnp.array)(obj)
       self.assertDtypesMatch(out_jit, dtype_reference)
       self.assertEqual(dtypes.is_weakly_typed(out_jit), weak_type)
 
