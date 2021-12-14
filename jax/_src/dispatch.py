@@ -14,8 +14,10 @@
 
 # Primitive dispatch and jit dispatch.
 
+import contextlib
 from functools import partial
 import itertools
+import time
 from typing import (
     Any, Callable, Dict, Optional, Sequence, Set, Tuple, Type, Union)
 from typing_extensions import Protocol
@@ -159,6 +161,18 @@ def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
 _xla_callable = lu.cache(_xla_callable_uncached)
 
 
+@contextlib.contextmanager
+def log_elapsed_time(fmt: str):
+  if _on_exit:
+    yield
+  else:
+    log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
+    start_time = time.time()
+    yield
+    elapsed_time = time.time() - start_time
+    logging.log(log_priority, fmt.format(elapsed_time=elapsed_time))
+
+
 @profiler.annotate_function
 def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
                        donated_invars, *arg_specs):
@@ -167,8 +181,10 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
                      "got device={} and backend={}".format(device, backend))
 
   abstract_args, arg_devices = util.unzip2(arg_specs)
-  jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(
-      fun, abstract_args, pe.debug_info_final(fun, "jit"))
+  with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
+                        "for jit in {elapsed_time} sec"):
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(
+        fun, abstract_args, pe.debug_info_final(fun, "jit"))
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
   jaxpr, kept_const_idx, kept_var_idx = _prune_unused_inputs(jaxpr)
@@ -195,8 +211,11 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
-    logging.log(log_priority, "Compiling %s (%s) for args %s.",
-                fun.__name__, id(fun), abstract_args)
+    if len(abstract_args) > 10:
+      msg = f"Compiling {fun.__name__} ({id(fun)}) for {len(abstract_args)} args."
+    else:
+      msg = f"Compiling {fun.__name__} ({id(fun)} for args {abstract_args}."
+    logging.log(log_priority, msg)
 
   if nreps > 1:
     warnings.warn(
@@ -584,7 +603,9 @@ class XlaCompiledComputation:
         num_partitions=1,
         device_assignment=(sticky_device.id,) if sticky_device else None)
     options.parameter_is_tupled_arguments = tuple_args
-    compiled = compile_or_get_cached(backend, xla_computation, options)
+    with log_elapsed_time(f"Finished XLA compilation of {name} "
+                          "in {elapsed_time} sec"):
+      compiled = compile_or_get_cached(backend, xla_computation, options)
     buffer_counts = (None if len(out_avals) == 1 else
                      [aval_to_num_buffers(aval) for aval in out_avals])
     execute = _execute_compiled if nreps == 1 else _execute_replicated

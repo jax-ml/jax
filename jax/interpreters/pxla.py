@@ -801,6 +801,7 @@ def parallel_callable(fun: lu.WrappedFun,
 
 @dataclasses.dataclass(frozen=True)
 class ParallelCallableInfo:
+  name: str
   backend: xla.Backend
   axis_name: core.AxisName
   axis_size: int
@@ -869,8 +870,10 @@ def stage_parallel_callable(
     global_sharded_avals = sharded_avals  # type: ignore
 
   with core.extend_axis_env(pci.axis_name, pci.global_axis_size, None):  # type: ignore
-    jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
-        fun, global_sharded_avals, pe.debug_info_final(fun, "pmap"))
+    with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
+                                   "for pmap in {elapsed_time} sec"):
+      jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
+          fun, global_sharded_avals, pe.debug_info_final(fun, "pmap"))
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
@@ -960,8 +963,8 @@ def lower_parallel_callable(
       must_run_on_all_devices = True
 
   pci = ParallelCallableInfo(
-      backend, axis_name, axis_size, global_axis_size, devices, in_axes,
-      out_axes_thunk, avals)
+      name, backend, axis_name, axis_size, global_axis_size, devices,
+      in_axes, out_axes_thunk, avals)
   jaxpr, consts, replicas, parts, shards = stage_parallel_callable(
       pci, fun, global_arg_shapes)
 
@@ -1082,7 +1085,7 @@ class PmapExecutable:
     if devices is None:
       if shards.num_global_shards > xb.device_count(pci.backend):
         msg = ("compiling computation that requires {} logical devices, but only {} XLA "
-              "devices are available (num_replicas={}, num_partitions={})")
+               "devices are available (num_replicas={}, num_partitions={})")
         raise ValueError(msg.format(shards.num_global_shards,
                                     xb.device_count(pci.backend),
                                     replicas.num_global_replicas,
@@ -1182,8 +1185,10 @@ class PmapExecutable:
       # TODO(frostig): need `compile_replicated` to give us the XLA executable
       return PmapExecutable(None, execute_fun, None, pci.avals)
 
-    compiled = dispatch.compile_or_get_cached(
-        pci.backend, xla_computation, compile_options)
+    with dispatch.log_elapsed_time(
+        f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec"):
+      compiled = dispatch.compile_or_get_cached(
+          pci.backend, xla_computation, compile_options)
     handle_args = InputsHandler(
         compiled.local_devices(), input_sharding_specs, input_indices)
     execute_fun = partial(
@@ -1915,6 +1920,7 @@ def lower_mesh_computation(
     in_is_gda: Sequence[bool]):
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
+  name_stack = extend_name_stack(wrap_name(transformed_name, 'xmap'))
 
   global_axis_sizes = mesh.shape
 
@@ -1939,7 +1945,9 @@ def lower_mesh_computation(
     assert tile_by_mesh_axes
     in_jaxpr_avals = in_tiled_avals
   with core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
+    with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
+                                   "in {elapsed_time} sec"):
+      jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
   if callable(out_axes):
     out_axes = out_axes()
   assert len(out_axes) == len(out_jaxpr_avals)
@@ -1978,7 +1986,6 @@ def lower_mesh_computation(
                            names=tuple(global_axis_sizes.keys()),
                            sizes=tuple(global_axis_sizes.values()))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  name_stack = extend_name_stack(wrap_name(transformed_name, 'xmap'))
   module: Union[str, xc.XlaComputation]
   module_name = f"xmap_{fun.__name__}"
   with core.extend_axis_env_nd(mesh.shape.items()):
@@ -1995,7 +2002,7 @@ def lower_mesh_computation(
           partitions_are_protos=partitions_proto)
 
   return MeshComputation(
-      module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,
+      name_stack, module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,
       global_out_avals=global_out_avals, in_axes=in_axes, out_axes=out_axes,
       spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_gda=in_is_gda)
 
@@ -2003,8 +2010,9 @@ def lower_mesh_computation(
 class MeshComputation:
   _executable: Optional['MeshExecutable']
 
-  def __init__(self, hlo: Union[str, xc.XlaComputation],
+  def __init__(self, name: str, hlo: Union[str, xc.XlaComputation],
                donated_invars: Sequence[bool], **compile_args):
+    self._name = name
     self._hlo = hlo
     self._donated_invars = donated_invars
     self.compile_args = compile_args
@@ -2028,7 +2036,7 @@ class MeshComputation:
               _allow_compile_replicated : bool = True) -> 'MeshExecutable':
     if self._executable is None:
       self._executable = MeshExecutable.from_hlo(
-          self._hlo, **self.compile_args,
+          self._name, self._hlo, **self.compile_args,
           _allow_propagation_to_outputs=_allow_propagation_to_outputs,
           _allow_compile_replicated=_allow_compile_replicated)  # type: ignore
     return self._executable
@@ -2064,7 +2072,8 @@ class MeshExecutable:
     self._input_avals = input_avals
 
   @staticmethod
-  def from_hlo(computation: Union[str, xc.XlaComputation],
+  def from_hlo(name: str,
+               computation: Union[str, xc.XlaComputation],
                mesh: Mesh,
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
@@ -2105,7 +2114,9 @@ class MeshExecutable:
           handle_outs)
       xla_executable = None
     else:
-      compiled = dispatch.compile_or_get_cached(backend, computation, compile_options)
+      with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
+                                     "in {elapsed_time} sec"):
+        compiled = dispatch.compile_or_get_cached(backend, computation, compile_options)
       handle_args = InputsHandler(compiled.local_devices(), input_specs, input_indices)
       unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
       xla_executable = compiled
