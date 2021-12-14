@@ -3622,7 +3622,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     except TypeError:
       pass  # `object` does not support the buffer interface.
     else:
-      return array(_np_asarray(view), dtype, copy)
+      return array(_np_asarray(view), dtype, copy, ndmin=ndmin)
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
