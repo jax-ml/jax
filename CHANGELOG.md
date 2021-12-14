@@ -22,6 +22,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   using JAX custom AD APIs ({jax-issue}`#7839`).
 
 ## jaxlib 0.1.76 (Unreleased)
+* New features
+  * Includes precompiled SASS for NVidia compute capability 8.0 GPUS
+    (e.g. A100). Removes precompiled SASS for compute capability 6.1 so as not
+    to increase the number of compute capabilities: GPUs with compute capability
+    6.1 can use the 6.0 SASS.
 
 ## jaxlib 0.1.75 (Dec 8, 2021)
 * New features:
