@@ -161,7 +161,7 @@ def ir_constants(val: Any,
   Returns:
     A representation of the constant as a list of IR values.
   """
-  for t in type(val).mro():
+  for t in type(val).__mro__:
     handler = _constant_handlers.get(t)
     if handler: return handler(val, canonicalize_types)
   if hasattr(val, '__jax_array__'):
