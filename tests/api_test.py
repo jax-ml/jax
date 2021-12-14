@@ -2364,6 +2364,26 @@ class APITest(jtu.JaxTestCase):
         "positional arguments.",
         lambda: partial(df, x=0.)(y=1.))
 
+  def test_jit_compilation_time_logging(self):
+    @api.jit
+    def f(x):
+      return x * 2
+
+    # make sure some initial warnings & cached operations already happen.
+    f(jnp.ones(2))
+
+    prev_level = logging.get_verbosity()
+    try:
+      logging.set_verbosity('DEBUG')
+      with self.assertLogs(level=logging.DEBUG) as l:
+        f(2.)
+    finally:
+      logging.set_verbosity(prev_level)
+    self.assertLen(l.output, 3)  # 3 lines
+    self.assertIn('Finished tracing', l.output[0])
+    self.assertIn('Compiling f', l.output[1])
+    self.assertIn('Finished XLA compilation', l.output[2])
+
   def test_grad_of_jit_compilation_caching(self):
     if not hasattr(self, "assertLogs"):
       raise unittest.SkipTest("test requires assertLogs (python 3)")
@@ -2383,7 +2403,7 @@ class APITest(jtu.JaxTestCase):
         ans2 = api.grad(f)(3.)
     finally:
       logging.set_verbosity(prev_level)
-    self.assertLen(l.output, 2)  # one for fwd, one for bwd
+    self.assertLen(l.output, 2 * 3)  # one for fwd, one for bwd, 3 lines each
     self.assertAllClose(ans1, np.cos(2.), check_dtypes=False)
     self.assertAllClose(ans2, np.cos(3.), check_dtypes=False)
 
