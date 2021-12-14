@@ -707,7 +707,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
   mapped_in_avals = [_delete_aval_axes(aval, in_axes, global_axis_sizes)
                      for aval, in_axes in zip(in_avals, in_axes)]
   with core.extend_axis_env_nd(global_axis_sizes.items()):
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
+    with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
+                                   "for xmap in {elapsed_time} sec"):
+      jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
   out_axes = out_axes_thunk()
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
   # NOTE: We don't use avals and all params, so only pass in the relevant parts (too lazy...)

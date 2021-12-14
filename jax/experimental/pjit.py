@@ -25,6 +25,7 @@ from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax import core
 from jax import linear_util as lu
 from jax._src.api import _check_callable, _check_arg, Lowered
+from jax._src import dispatch
 from jax._src import source_info_util
 from jax._src.api_util import (argnums_partial_except, flatten_axes,
                                flatten_fun_nokwargs, _ensure_index_tuple,
@@ -324,7 +325,9 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   prev_positional = maps._positional_semantics
   try:
     maps._positional_semantics = maps._PositionalSemantics.GLOBAL
-    jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
+    with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
+                                   "for pjit in {elapsed_time} sec"):
+      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
   finally:
     maps._positional_semantics = prev_positional
   jaxpr = core.ClosedJaxpr(jaxpr, consts)
