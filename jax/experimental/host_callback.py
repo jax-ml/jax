@@ -393,7 +393,10 @@ in one of the tap functions. This exception will include the text and the
 stack trace of the last exception encountered.
 
 One further complication arises for callback functions that must return
-results to the call origin device. In order to avoid the device computation
+results to the call origin device, such as :func:`call()`. This is handled
+differently on CPU/GPU devices compared to TPU devices.
+
+On CPU/GPU devices, in order to avoid the device computation
 being stuck waiting for a result that will never arrive, in case of any
 error during the processing of the callback (whether raised by the user-code
 itself or due to a mismatch of the returned value and the expected return_shape)
@@ -415,8 +418,10 @@ RET_CHECK failure ... Mismatch between infeed source buffer shape s8[12345] ...
 
 To debug the underlying cause for these messages, see the Debugging section.
 
-On TPU, there is currently no shape check for infeed, so we take the safer
-route to not send anything in case of errors, and let the computation hang.
+On TPU devices, there is currently no shape check for infeed, so we take the
+safer route of not sending this fake result in case of errors. This means
+that the computation will hang, and no exception will be raised (but any
+exceptions in the callback functions will still appear in the logs).
 
 The current implementation uses the outfeed mechanism provided by XLA. The
 mechanism itself is quite primitive in the sense that a receiver must know
