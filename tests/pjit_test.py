@@ -53,6 +53,14 @@ def tearDownModule():
   jtu.restore_spmd_lowering_flag()
 
 
+def create_gda(global_shape, global_mesh, mesh_axes):
+  global_data = np.arange(
+      prod(global_shape), dtype=np.float32).reshape(global_shape)
+
+  return global_device_array.GlobalDeviceArray.from_callback(
+      global_shape, global_mesh, mesh_axes, lambda idx: global_data[idx])
+
+
 @curry
 def check_1d_2d_mesh(f, set_mesh):
   return parameterized.named_parameters(
@@ -865,6 +873,22 @@ class GDAPjitTest(jtu.JaxTestCase):
       self.assertEqual(output_gda._mesh_axes, ())
       # P(None) is in_axis_resources.
       f(output_gda)
+
+  def test_from_gda_duplicates(self):
+    global_mesh = create_global_mesh((1, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = ['x', 'y']
+    input_gda = create_gda(global_input_shape, global_mesh, mesh_axes)
+
+    # It's occasionally possible to end up with two FROM_GDA singletons (e.g. if
+    # pickling in_axis_resources and sending to other processes). Make sure this
+    # this doesn't cause an error to avoid user confusion.
+    from_gda_dup = pjit_lib._FromGsdaSingleton()
+    with mesh(global_mesh.devices, global_mesh.axis_names):
+      pjit(lambda x: x, in_axis_resources=from_gda_dup, out_axis_resources=None)(
+          input_gda)
+
+
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 

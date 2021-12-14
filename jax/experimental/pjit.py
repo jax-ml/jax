@@ -49,6 +49,13 @@ class _FromGsdaSingleton:
   pass
 FROM_GDA = _FromGsdaSingleton()
 
+def _is_from_gda(x):
+  # It's occasionally possible to end up with two FROM_GDA singletons (e.g. if
+  # pickling in_axis_resources and sending to other processes). Make sure this
+  # doesn't cause an error to avoid user confusion.
+  return isinstance(x, type(FROM_GDA))
+
+
 # TODO(yashkatariya): Add pjit microbenchmarks.
 def pjit(fun: Callable,
          in_axis_resources,
@@ -438,21 +445,21 @@ def _prepare_axis_resources(axis_resources, arg_name):
   entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
   entries = [
-      entry if entry is FROM_GDA else ParsedPartitionSpec.from_user_input(
+      entry if _is_from_gda(entry) else ParsedPartitionSpec.from_user_input(
           entry, what) for entry in entries
   ]
   _check_unique_resources(entries, arg_name)
   return tree_unflatten(treedef, entries), entries, treedef
 
 def _check_resources_mismatch(in_axis_resources_flat, is_gda):
-  if not is_gda and in_axis_resources_flat is FROM_GDA:
+  if not is_gda and _is_from_gda(in_axis_resources_flat):
     raise ValueError('For a non-GDA input, the corresponding resource in '
                      'in_axis_resources cannot be `pjit.FROM_GDA`.')
 
 def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
-    if arg_axis_resources is FROM_GDA: continue
+    if _is_from_gda(arg_axis_resources): continue
     resource_counts = Counter(it.chain.from_iterable(arg_axis_resources))
     if not resource_counts: continue
     if resource_counts.most_common(1)[0][1] > 1:
@@ -465,7 +472,7 @@ def _check_unique_resources(axis_resources, arg_name):
 def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape, flat_avals, flat_axis_resources):
   global_str = " global" if is_global_shape else ""
   for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
-    if aval_axis_resources is FROM_GDA:
+    if _is_from_gda(aval_axis_resources):
       continue
     shape = aval.shape
     if len(shape) < len(aval_axis_resources):
@@ -922,7 +929,7 @@ def local_to_global(positional_semantics, mesh, avals, axes):
 def _canonicalize_spec(in_axis_resources_flat: ParsedPartitionSpec, arg):
   if isinstance(arg, GDA):
     gsda_ppspec = gsda_mesh_axes_to_parsed_pspec(arg._mesh_axes)
-    if (in_axis_resources_flat is not FROM_GDA and
+    if (not _is_from_gda(in_axis_resources_flat) and
         not in_axis_resources_flat.eq_given_rank(gsda_ppspec, len(arg.shape))):
       raise ValueError(
           'Got an input GDA to pjit with different partitioning than specified in '
