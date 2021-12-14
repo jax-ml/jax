@@ -1057,7 +1057,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       if size <= len(result):
         return result[:size]
       else:
-        fillvals = fill_value if np.ndim(fill_value) else len(result) * [fill_value or 0]
+        fillvals = fill_value if np.ndim(fill_value) else result.shape[-1] * [fill_value or 0]
       return np.stack([np.concatenate([arg, np.full(size - len(arg), fval, arg.dtype)])
                   for fval, arg in safe_zip(fillvals, result.T)]).T
     jnp_fun = lambda x: jnp.argwhere(x, size=size, fill_value=fill_value)
