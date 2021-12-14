@@ -21,6 +21,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   Additionally, added documentation for how to implement the old behavior
   using JAX custom AD APIs ({jax-issue}`#7839`).
 
+* New features:
+  * add `jax.block_until_ready` ({jax-issue}`#8941)
+
 ## jaxlib 0.1.76 (Unreleased)
 
 ## jaxlib 0.1.75 (Dec 8, 2021)
