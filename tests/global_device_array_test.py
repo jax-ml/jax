@@ -48,34 +48,34 @@ class GDATest(jtu.JaxTestCase):
        # 2. The indices + shard_shape + replica_id should be unique enough.
        ((slice(0, 2), slice(0, 1)), (slice(0, 2), slice(1, 2))),
        (2, 1),
-       [0, 0, 0, 0, 0, 0, 0, 0]),
+       [0, 0, 0, 0, 0, 0, 0, 0], False),
       ("mesh_x_y_pspec", P("x", "y"),
        ((slice(0, 2), slice(0, 1)), (slice(0, 2), slice(1, 2))),
        (2, 1),
-       [0, 0, 0, 0, 0, 0, 0, 0]),
+       [0, 0, 0, 0, 0, 0, 0, 0], False),
       ("mesh_x", ["x"],
        ((slice(0, 2), slice(None)), (slice(0, 2), slice(None))),
        (2, 2),
-       [0, 1, 0, 1, 0, 1, 0, 1]),
+       [0, 1, 0, 1, 0, 1, 0, 1], False),
       ("mesh_y", ["y"],
        ((slice(0, 4), slice(None)), (slice(4, 8), slice(None))),
        (4, 2),
-       [0, 0, 1, 1, 2, 2, 3, 3]),
+       [0, 0, 1, 1, 2, 2, 3, 3], False),
       ("mesh_none_y", [None, "y"],
        ((slice(None), slice(0, 1)), (slice(None), slice(1, 2))),
        (8, 1),
-       [0, 0, 1, 1, 2, 2, 3, 3]),
+       [0, 0, 1, 1, 2, 2, 3, 3], False),
       ("mesh_xy", [("x", "y")],
        ((slice(0, 1), slice(None)), (slice(1, 2), slice(None))),
        (1, 2),
-       [0, 0, 0, 0, 0, 0, 0, 0]),
+       [0, 0, 0, 0, 0, 0, 0, 0], False),
       ("mesh_fully_replicated", [],
        ((slice(None), slice(None)), (slice(None), slice(None))),
        (8, 2),
-       [0, 1, 2, 3, 4, 5, 6, 7]),
+       [0, 1, 2, 3, 4, 5, 6, 7], True),
   )
   def test_gda_2d_shard(self, mesh_axes, expected_index, expected_shard_shape,
-                         expected_replica_ids):
+                         expected_replica_ids, expected_is_fully_replicated):
     global_mesh = create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     global_input_data = np.arange(
@@ -96,6 +96,7 @@ class GDATest(jtu.JaxTestCase):
     self.assertListEqual(replica_ids, expected_replica_ids)
     self.assertListEqual([i.device.id for i in gda.local_shards],
                          [0, 1, 2, 3, 4, 5, 6, 7])
+    self.assertEqual(gda.is_fully_replicated, expected_is_fully_replicated)
     for s in gda.local_shards:
       self.assertEqual(s.data.aval,
                        core.ShapedArray(expected_shard_shape, s.data.dtype))

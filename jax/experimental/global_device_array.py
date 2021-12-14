@@ -240,6 +240,10 @@ class GlobalDeviceArray:
   def shape(self) -> Shape:
     return self._global_shape
 
+  @property
+  def is_fully_replicated(self) -> bool:
+    return self.shape == self.local_data(0).shape
+
   def _create_shards(
       self, device_buffers: Sequence[DeviceArray]
   ) -> Tuple[Sequence[Shard], Sequence[Shard]]:
