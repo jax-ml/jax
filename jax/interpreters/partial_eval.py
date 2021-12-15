@@ -1029,7 +1029,7 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
     used_outs = map(read, eqn.outvars)
     # If any outputs are used, then we need to keep a version of the eqn and
     # potentially mark some inputs as used. Otherwise mark all inputs as unused.
-    if any(used_outs):
+    if any(used_outs) or core.primitive_uses_outfeed(eqn.primitive, eqn.params):
       # If there's a rule for modifying the eqn and computing used inputs, apply
       # it. Otherwise, keep the eqn unmodified and mark all inputs as used.
       rule = dce_rules.get(eqn.primitive)

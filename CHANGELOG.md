@@ -14,12 +14,15 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 * Breaking changes:
   * The host_callback primitives have been simplified to drop the
-  special autodiff handling for hcb.id_tap and id_print.
-  From now on, only the primals are tapped. The old behavior can be
-  obtained (for a limited time) by setting the ``JAX_HOST_CALLBACK_AD_TRANSFORMS``
-  environment variable, or the ```--flax_host_callback_ad_transforms``` flag.
-  Additionally, added documentation for how to implement the old behavior
-  using JAX custom AD APIs ({jax-issue}`#7839`).
+    special autodiff handling for hcb.id_tap and id_print.
+    From now on, only the primals are tapped. The old behavior can be
+    obtained (for a limited time) by setting the ``JAX_HOST_CALLBACK_AD_TRANSFORMS``
+    environment variable, or the ```--flax_host_callback_ad_transforms``` flag.
+    Additionally, added documentation for how to implement the old behavior
+    using JAX custom AD APIs ({jax-issue}`#8678`).
+
+* Bug fixes:
+  * host_callback now supports ad_checkpoint.checkpoint ({jax-issue}`#8907`).
 
 * New features:
   * add `jax.block_until_ready` ({jax-issue}`#8941)
