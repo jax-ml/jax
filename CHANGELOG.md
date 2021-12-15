@@ -21,6 +21,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   Additionally, added documentation for how to implement the old behavior
   using JAX custom AD APIs ({jax-issue}`#7839`).
 
+* New features:
+  * Added a new debugging flag/environment variable `JAX_DUMP_IR_TO=/path`.
+    If set, JAX dumps the MHLO/HLO IR it generates for each computation to a
+    file under the given path.
+
 ## jaxlib 0.1.76 (Unreleased)
 * New features
   * Includes precompiled SASS for NVidia compute capability 8.0 GPUS
