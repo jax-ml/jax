@@ -3667,6 +3667,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     _check([jnp.float64(1)], np.float64, False)
     _check([jnp.complex128(1)], np.complex128, False)
 
+    # Mixed inputs use JAX-style promotion.
+    # (regression test for https://github.com/google/jax/issues/8945)
+    _check([0, np.int16(1)], np.int16, False)
+    _check([0.0, np.float16(1)], np.float16, False)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_dtype={np.dtype(dtype)}", "dtype": dtype}
       for dtype in all_dtypes))
@@ -3753,12 +3758,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testArrayMethod(self):
     class arraylike(object):
-      dtype = np.float32
+      dtype = np.dtype('float32')
       def __array__(self, dtype=None):
         return np.array(3., dtype=dtype)
     a = arraylike()
     ans = jnp.array(a)
-    assert ans == 3.
+    self.assertEqual(ans, 3.)
 
   def testMemoryView(self):
     self.assertAllClose(
