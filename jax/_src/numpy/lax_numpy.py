@@ -2875,8 +2875,8 @@ def nonzero(a, *, size=None, fill_value=None):
   return out
 
 @_wraps(np.flatnonzero, lax_description=_NONZERO_DOC)
-def flatnonzero(a, *, size=None):
-  return nonzero(ravel(a), size=size)[0]
+def flatnonzero(a, *, size=None, fill_value=None):
+  return nonzero(ravel(a), size=size, fill_value=fill_value)[0]
 
 
 def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
@@ -5212,8 +5212,8 @@ nonzero elements than `size` indicates, the index arrays will be zero-padded.
 """
 
 @_wraps(np.argwhere, lax_description=_ARGWHERE_DOC)
-def argwhere(a, *, size=None):
-  result = transpose(vstack(nonzero(a, size=size)))
+def argwhere(a, *, size=None, fill_value=None):
+  result = transpose(vstack(nonzero(a, size=size, fill_value=fill_value)))
   if ndim(a) == 0:
     return result[:0].reshape(result.shape[0], 0)
   return result.reshape(result.shape[0], ndim(a))
