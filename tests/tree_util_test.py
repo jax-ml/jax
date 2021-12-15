@@ -379,6 +379,23 @@ class RavelUtilTest(jtu.JaxTestCase):
     tree_ = unravel(raveled)
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
 
+  def testDtypePolymorphicUnravel(self):
+    # https://github.com/google/jax/issues/7809
+    x = jnp.arange(10, dtype=jnp.float32)
+    x_flat, unravel = flatten_util.ravel_pytree(x)
+    y = x_flat < 5.3
+    x_ = unravel(y)
+    self.assertEqual(x_.dtype, y.dtype)
+
+  def testDtypeMonomorphicUnravel(self):
+    # https://github.com/google/jax/issues/7809
+    x1 = jnp.arange(10, dtype=jnp.float32)
+    x2 = jnp.arange(10, dtype=jnp.int32)
+    x_flat, unravel = flatten_util.ravel_pytree((x1, x2))
+    y = x_flat < 5.3
+    with self.assertRaisesRegex(TypeError, 'but expected dtype'):
+      _ = unravel(y)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
