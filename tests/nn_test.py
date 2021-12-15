@@ -176,6 +176,22 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testTanhExists(self):
     nn.tanh  # doesn't crash
 
+  def testCustomJVPLeak(self):
+    # https://github.com/google/jax/issues/8171
+    @jax.jit
+    def fwd():
+      a = jnp.array(1.)
+
+      def f(hx, _):
+        hx = jax.nn.sigmoid(hx + a)
+        return hx, None
+
+      hx = jnp.array(0.)
+      jax.lax.scan(f, hx, None, length=2)
+
+    with jax.checking_leaks():
+      fwd()  # doesn't crash
+
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
   ["name", "initializer", "shapes", "dtypes"])
