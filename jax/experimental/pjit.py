@@ -866,9 +866,9 @@ def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node, *,
       ctx.builder, x_node, get_aval_sharding_proto(aval, axis_resources, mesh))]
 xla.register_translation(sharding_constraint_p, _sharding_constraint_translation_rule)
 
-def _sharding_constraint_mhlo_lowering(ctx, avals_in, avals_out, x_node, *,
-                                       axis_resources, resource_env):
-  aval, = avals_in
+def _sharding_constraint_mhlo_lowering(ctx, x_node, *, axis_resources,
+                                       resource_env):
+  aval, = ctx.avals_in
   mesh = resource_env.physical_mesh
   return [mlir.wrap_with_sharding_op(
       x_node, get_aval_sharding_proto(aval, axis_resources, mesh))]

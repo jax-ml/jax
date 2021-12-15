@@ -1303,14 +1303,14 @@ def _xmap_lowering_rule(*args, **kwargs):
     return _xmap_lowering_rule_replica(*args, **kwargs)
 mlir.register_lowering(xmap_p, _xmap_lowering_rule)
 
-def _xmap_lowering_rule_replica(ctx, avals_in, avals_out, *in_nodes,
-                                   call_jaxpr, name,
-                                   in_axes, out_axes, donated_invars,
-                                   global_axis_sizes,
-                                   spmd_in_axes, spmd_out_axes,
-                                   positional_semantics,
-                                   axis_resources, resource_env, backend):
-  xla.check_backend_matches(backend, ctx.platform)
+def _xmap_lowering_rule_replica(ctx, *in_nodes,
+                                call_jaxpr, name,
+                                in_axes, out_axes, donated_invars,
+                                global_axis_sizes,
+                                spmd_in_axes, spmd_out_axes,
+                                positional_semantics,
+                                axis_resources, resource_env, backend):
+  xla.check_backend_matches(backend, ctx.module_context.platform)
   # The only way for any of those two assertions to be violated is when xmap
   # is using the SPMD lowering, but then this rule shouldn't even trigger.
   assert positional_semantics == _PositionalSemantics.LOCAL
@@ -1346,30 +1346,34 @@ def _xmap_lowering_rule_replica(ctx, avals_in, avals_out, *in_nodes,
   assert not consts
 
   tiled_ins = (
-      mlir.lower_fun(
-          partial(_tile, in_axes=arg_in_axes, axis_sizes=local_mesh_shape),
-          multiple_results=False)(ctx, [aval], None, in_node)[0]
-      if v.aval is not core.abstract_unit else in_node
-      for v, aval, in_node, arg_in_axes
-      in zip(call_jaxpr.invars, avals_in, in_nodes, mesh_in_axes))
+    mlir.lower_fun(partial(_tile, in_axes=arg_in_axes,
+                           axis_sizes=local_mesh_shape),
+                   multiple_results=False)(
+          mlir.LoweringRuleContext(module_context=ctx.module_context,
+                                   avals_in=[aval], avals_out=None),
+          in_node)[0]
+    if v.aval is not core.abstract_unit else in_node
+    for v, aval, in_node, arg_in_axes
+    in zip(call_jaxpr.invars, ctx.avals_in, in_nodes, mesh_in_axes))
 
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  sub_ctx = ctx.replace(
-      name_stack=xla.extend_name_stack(ctx.name_stack,
+  sub_ctx = ctx.module_context.replace(
+      name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        xla.wrap_name(name, 'xmap')))
   tiled_outs = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (), *tiled_ins)
 
   outs = [
       mlir.lower_fun(
           partial(_untile, out_axes=ans_out_axes, axis_sizes=local_mesh_shape,
-                  platform=ctx.platform),
+                  platform=ctx.module_context.platform),
           multiple_results=False)(
-          ctx, [vectorized_outvar.aval], None, tiled_out
-      )[0]
+              mlir.LoweringRuleContext(module_context=ctx.module_context,
+                                       avals_in=[vectorized_outvar.aval],
+                                       avals_out=None), tiled_out)[0]
       if v.aval is not core.abstract_unit else tiled_out
       for v, vectorized_outvar, tiled_out, ans_out_axes
       in zip(call_jaxpr.outvars, vectorized_jaxpr.outvars, tiled_outs,
@@ -1377,12 +1381,12 @@ def _xmap_lowering_rule_replica(ctx, avals_in, avals_out, *in_nodes,
   return outs
 
 
-def _xmap_lowering_rule_spmd(ctx, avals_in, avals_out, *global_in_nodes,
+def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
                              call_jaxpr, name, in_axes, out_axes,
                              donated_invars, global_axis_sizes, spmd_in_axes,
                              spmd_out_axes, positional_semantics,
                              axis_resources, resource_env, backend):
-  xla.check_backend_matches(backend, ctx.platform)
+  xla.check_backend_matches(backend, ctx.module_context.platform)
   plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env, global_axis_sizes)
 
   resource_call_jaxpr = plan.subst_axes_with_resources(call_jaxpr)
@@ -1409,7 +1413,7 @@ def _xmap_lowering_rule_spmd(ctx, avals_in, avals_out, *global_in_nodes,
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
-  global_in_avals = avals_in
+  global_in_avals = ctx.avals_in
   vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
   assert not consts
 
@@ -1422,8 +1426,8 @@ def _xmap_lowering_rule_spmd(ctx, avals_in, avals_out, *global_in_nodes,
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  sub_ctx = ctx.replace(
-      name_stack=xla.extend_name_stack(ctx.name_stack,
+  sub_ctx = ctx.module_context.replace(
+      name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        xla.wrap_name(name, 'xmap')))
   global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
                                         *sharded_global_in_nodes)

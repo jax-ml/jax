@@ -738,7 +738,7 @@ ad.deflinear2(device_put_p, lambda cotangent, _, **kwargs: [cotangent])
 masking.defvectorized(device_put_p)
 batching.defvectorized(device_put_p)
 
-def _device_put_lowering(ctx, avals_in, avals_out, x, *, device):
+def _device_put_lowering(ctx, x, *, device):
   return [x]
 
 
