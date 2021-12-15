@@ -101,6 +101,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: device_put_replicated
 .. autofunction:: device_put_sharded
 .. autofunction:: device_get
+.. autofunction:: block_until_ready
 .. autofunction:: default_backend
 .. autofunction:: named_call
 

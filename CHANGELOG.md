@@ -22,6 +22,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   using JAX custom AD APIs ({jax-issue}`#7839`).
 
 * New features:
+  * add `jax.block_until_ready` ({jax-issue}`#8941)
   * Added a new debugging flag/environment variable `JAX_DUMP_IR_TO=/path`.
     If set, JAX dumps the MHLO/HLO IR it generates for each computation to a
     file under the given path.
