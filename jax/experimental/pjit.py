@@ -232,7 +232,7 @@ def pjit(fun: Callable,
     # TODO(yashkatariya): This is a hack. This should go away when avals have
     # is_global attribute.
     in_positional_semantics = tuple(
-        maps._PositionalSemantics.GLOBAL if type(a) is GDA else maps
+        maps._PositionalSemantics.GLOBAL if isinstance(a, GDA) else maps
         ._positional_semantics for a in args_flat)
     out_positional_semantics = maps._positional_semantics
     jaxpr, in_axis_resources_flat, out_axis_resources_flat = _pjit_jaxpr(
