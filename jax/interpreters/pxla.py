@@ -399,20 +399,26 @@ mesh devices ndarray would have to be transposed before flattening and assignmen
 """
 ArrayMapping = OrderedDictType[MeshAxisName, int]
 
-AxisResource = Tuple[Optional[Tuple[Any, ...]], ...]
+AxisResource = Tuple[MeshAxisName, ...]
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping) -> AxisResource:
-  if not array_mapping:
-    return tuple()
   max_index = -1
   reverse_map = defaultdict(list)
   for axis, index in array_mapping.items():
     reverse_map[index].append(axis)
     if index > max_index:
       max_index = index
-  return tuple(
-      tuple(reverse_map[i]) if reverse_map[i] else None for i in range(max_index + 1)
-  )
+
+  out = []
+  for i in range(max_index + 1):
+    axis = reverse_map[i]
+    if not axis:
+      out.append(None)
+    elif len(axis) == 1:
+      out.append(axis[0])
+    else:
+      out.append(tuple(axis))
+  return tuple(out)
 
 def local_aval_to_result_handler(
     aval: core.AbstractValue,
