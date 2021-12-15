@@ -475,25 +475,6 @@ _INT_DTYPES = {
   64: np.int64,
 }
 
-def _np_array(obj, dtype=None, **kwargs):
-  """Return a properly-typed numpy array.
-
-  `_np_array(obj, **kwds)` is equivalent to `np.array(obj, **kwds)`, with the
-  exception that when obj.dtype is not defined and dtype is not specified, it
-  uses Jax's default dtypes.
-  """
-  arr = np.array(obj, dtype=dtype, **kwargs)
-  obj_dtype = getattr(obj, 'dtype', None)
-  arr_dtype = np.dtype(arr.dtype).type
-  if dtype is None and obj_dtype is None:
-    if dtypes.is_python_scalar(obj):
-      arr = arr.astype(result_type(obj))
-    elif arr_dtype in _DEFAULT_TYPEMAP:
-      arr = arr.astype(_DEFAULT_TYPEMAP[arr_dtype])
-  return arr
-
-_np_asarray = partial(_np_array, copy=False)
-
 def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
@@ -3574,7 +3555,6 @@ available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
 https://jax.readthedocs.io/en/latest/faq.html).
 """
 
-
 @_wraps(np.array, lax_description=_ARRAY_DOC)
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
@@ -3583,28 +3563,45 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   # check if the given dtype is compatible with JAX
   lax._check_user_dtype_supported(dtype, "array")
 
+  # Here we make a judgment call: we only return a weakly-typed array when the
+  # input object itself is weakly typed. That ensures asarray(x) is a no-op whenever
+  # x is weak, but avoids introducing weak types with something like array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
-  dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
-  if _can_call_numpy_array(object):
-    if dtypes.is_python_scalar(object):
-      object = dtypes.coerce_to_array(object, dtype)
+  # For Python scalar literals, call coerce_to_array to catch any overflow errors.
+  # We don't use dtypes.is_python_scalar because we don't want this triggering for
+  # traced values. We do this here because it matters whether or not dtype is None.
+  # We don't assign the result because we want the raw object to be used for type
+  # inference below.
+  if isinstance(object, (bool, int, float, complex)):
+    _ = dtypes.coerce_to_array(object, dtype)
+
+  leaves = tree_leaves(object)
+  if dtype is None:
+    # Use lattice_result_type rather than result_type to avoid canonicalization.
+    # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
+    try:
+      dtype = dtypes._lattice_result_type(*leaves)[0] if leaves else dtypes.float_
+    except TypeError:
+      # This happens if, e.g. one of the entries is a memoryview object.
+      # This is rare, so we only handle it if the normal path fails.
+      leaves = [_convert_to_array_if_dtype_fails(leaf) for leaf in leaves]
+      dtype = dtypes._lattice_result_type(*leaves)[0]
+
+  if not weak_type:
+    dtype = dtypes.canonicalize_dtype(dtype)
+
+  # We can't use the ndarray class because we need to handle internal buffers
+  # (See https://github.com/google/jax/issues/8950)
+  ndarray_types = (device_array.DeviceArray, core.Tracer)
+
+  if not _any(isinstance(leaf, ndarray_types) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists containing
     # large integers; see discussion in https://github.com/google/jax/pull/6047.
-    object = _np_array(object, dtype=dtype, ndmin=ndmin, copy=False)
-
-    # call _np_array a second time with canonicalized dtype
-    dtype = dtypes.canonicalize_dtype(object.dtype)
-    object = _np_array(object, dtype=dtype, copy=False)
-
-  assert type(object) not in dtypes.python_scalar_dtypes
-
-  if type(object) is np.ndarray:
-    _inferred_dtype = object.dtype and dtypes.canonicalize_dtype(object.dtype)
-    lax._check_user_dtype_supported(_inferred_dtype, "array")
-    out = _np_array(object, copy=copy, dtype=dtype)
-    if dtype: assert _dtype(out) == dtype
-  elif isinstance(object, (device_array.DeviceArray, core.Tracer)):
+    # More correct would be to call coerce_to_array on each leaf, but this may have
+    # performance implications.
+    out = np.array(object, dtype=dtype, ndmin=ndmin, copy=False)
+  elif isinstance(object, ndarray_types):
     if object.aval is None:
       # object is a raw buffer; convert to device array on its current device.
       aval = ShapedArray(object.xla_shape().dimensions(), object.dtype,
@@ -3615,34 +3612,30 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     if object:
       out = stack([asarray(elt, dtype=dtype) for elt in object])
     else:
-      out = _np_array([], dtype=dtype)
+      out = np.array([], dtype=dtype)
   else:
     try:
       view = memoryview(object)
     except TypeError:
       pass  # `object` does not support the buffer interface.
     else:
-      return array(_np_asarray(view), dtype, copy, ndmin=ndmin)
+      return array(np.asarray(view), dtype, copy, ndmin=ndmin)
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
-  if weak_type:
-    # Here we make a judgment call: we only return a weakly-typed array when obj
-    # itself is weakly typed. That ensures array(x) is a no-op whenever x is weak,
-    # but avoids introducing weak types with something like array([1, 2, 3])
-    out = lax._convert_element_type(out, dtype, weak_type=True)
-  else:
-    # If dtype is not specified, we use result_type(out). This ensures JIT invariance
-    # with, e.g. lists of scalars.
-    out = lax._convert_element_type(out, dtype or result_type(out))
-
+  out = lax._convert_element_type(out, dtype, weak_type=weak_type)
   if ndmin > ndim(out):
-    out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
+    out = lax.expand_dims(out, range(ndmin - ndim(out)))
   return out
 
-def _can_call_numpy_array(x):
-  return _all(not isinstance(l, (core.Tracer, device_array.DeviceArray))
-              for l in tree_leaves(x))
+
+def _convert_to_array_if_dtype_fails(x):
+  try:
+    dtypes.dtype(x)
+  except TypeError:
+    return np.asarray(x)
+  else:
+    return x
 
 
 @_wraps(np.asarray, lax_description=_ARRAY_DOC)
