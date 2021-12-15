@@ -16,7 +16,7 @@
 from collections import defaultdict, Counter
 import dataclasses
 import numpy as np
-from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict
+from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
 from jax.experimental import maps
 from jax import core
@@ -126,6 +126,11 @@ class Shard:
   data: Optional[DeviceArray] = None
 
 
+class _GdaFastPathArgs(NamedTuple):
+  local_indices_replica_ids: Mapping[Device, Tuple[Index, int]]
+  local_devices: Sequence[Device]
+
+
 class GlobalDeviceArray:
   """A logical array with data sharded across multiple devices and processes.
 
@@ -209,7 +214,7 @@ class GlobalDeviceArray:
 
   def __init__(self, global_shape: Shape, global_mesh: pxla.Mesh,
                mesh_axes: MeshAxes, device_buffers: Sequence[DeviceArray],
-               _local_indices_replica_ids: Optional[Mapping[Device, Tuple[Index, int]]] = None):
+               _gda_fast_path_args: Optional[_GdaFastPathArgs] = None):
     """Constructor of GlobalDeviceArray class.
 
     Args:
@@ -236,10 +241,15 @@ class GlobalDeviceArray:
     self._mesh_axes = mesh_axes
     self._device_buffers = device_buffers
     # Optionally precomputed for performance.
-    self._local_indices_replica_ids = _local_indices_replica_ids
+    self._gda_fast_path_args = _gda_fast_path_args
     self._current_process = xb.process_index()
-    assert len(device_buffers) == len(self._global_mesh.local_devices)
     self._local_shards = self._create_local_shards()
+
+    if self._gda_fast_path_args is None:
+      local_devices = self._global_mesh.local_devices
+    else:
+      local_devices = self._gda_fast_path_args.local_devices
+    assert len(device_buffers) == len(local_devices)
 
     ss = get_shard_shape(self._global_shape, self._global_mesh, self._mesh_axes)
     assert all(db.shape == ss for db in device_buffers), (
@@ -269,8 +279,8 @@ class GlobalDeviceArray:
     return self.shape == self.local_data(0).shape
 
   def _create_local_shards(self) -> Sequence[Shard]:
-    if self._local_indices_replica_ids:
-      local_idx_rid = self._local_indices_replica_ids
+    if self._gda_fast_path_args is not None:
+      local_idx_rid = self._gda_fast_path_args.local_indices_replica_ids
     else:
       global_indices_rid = get_shard_indices_replica_ids(
         self._global_shape, self._global_mesh, self._mesh_axes)
@@ -385,10 +395,12 @@ pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
 
 def _gda_array_result_handler(global_aval, out_axis_resources, global_mesh):
-  idx_rid = get_shard_indices_replica_ids(global_aval.shape, global_mesh,
-                                          out_axis_resources)
-  local_idx_rid = dict((d, idx_rid[d]) for d in global_mesh.local_devices)
+  global_idx_rid = get_shard_indices_replica_ids(global_aval.shape, global_mesh,
+                                                 out_axis_resources)
+  local_devices = global_mesh.local_devices
+  local_idx_rid = dict((d, global_idx_rid[d]) for d in local_devices)
+  fast_path_args = _GdaFastPathArgs(local_idx_rid, local_devices)
   return lambda bufs: GlobalDeviceArray(
-      global_aval.shape, global_mesh, out_axis_resources, bufs, local_idx_rid)
+      global_aval.shape, global_mesh, out_axis_resources, bufs, fast_path_args)
 pxla.global_result_handlers[core.ShapedArray] = _gda_array_result_handler
 pxla.global_result_handlers[core.ConcreteArray] = _gda_array_result_handler
