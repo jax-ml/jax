@@ -3596,7 +3596,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertDtypesMatch(out, dtype_reference)
       self.assertEqual(dtypes.is_weakly_typed(out), weak_type)
 
-      out_jit = jnp.array(obj)
+      out_jit = jax.jit(jnp.array)(obj)
       self.assertDtypesMatch(out_jit, dtype_reference)
       self.assertEqual(dtypes.is_weakly_typed(out_jit), weak_type)
 
@@ -3714,10 +3714,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     assert ans == 3.
 
   def testMemoryView(self):
-    ans = jnp.array(bytearray(b'\x2a'))
     self.assertAllClose(
-        ans,
-        np.array([0x2a], dtype=np.uint8))
+        jnp.array(bytearray(b'\x2a')),
+        np.array(bytearray(b'\x2a'))
+    )
+    self.assertAllClose(
+        jnp.array(bytearray(b'\x2a\xf3'), ndmin=2),
+        np.array(bytearray(b'\x2a\xf3'), ndmin=2)
+    )
 
   def testIsClose(self):
     c_isclose = jax.jit(jnp.isclose)

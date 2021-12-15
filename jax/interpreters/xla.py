@@ -257,7 +257,7 @@ def pyval_to_ir_constants(builder, py_val, canonicalize_types=True):
   Returns:
     A representation of the constant as a list of xla ops.
   """
-  for t in type(py_val).mro():
+  for t in type(py_val).__mro__:
     handler = _constant_handlers.get(t)
     if handler: return handler(builder, py_val, canonicalize_types)
   if hasattr(py_val, '__jax_array__'):
@@ -367,7 +367,7 @@ def canonicalize_dtype(x):
   typ = type(x)
   handler = canonicalize_dtype_handlers.get(typ)
   if handler: return handler(x)
-  for typ in typ.mro():
+  for typ in typ.__mro__:
     handler = canonicalize_dtype_handlers.get(typ)
     if handler: return handler(x)
   if hasattr(x, '__jax_array__'):
@@ -394,7 +394,7 @@ def abstractify(x) -> core.AbstractValue:
   typ = type(x)
   aval_fn = pytype_aval_mappings.get(typ)
   if aval_fn: return aval_fn(x)
-  for typ in typ.mro():
+  for typ in typ.__mro__:
     aval_fn = pytype_aval_mappings.get(typ)
     if aval_fn: return aval_fn(x)
   if hasattr(x, '__jax_array__'):

@@ -411,6 +411,13 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
         lambda: self.jit(f)("foo"))
 
+    if jax._src.lib._xla_extension_version >= 47:
+      # Jax type objects aren't valid data arguments.
+      self.assertRaisesRegex(
+          TypeError,
+          ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type",
+          lambda: self.jit(f)(jnp.int32))
+
   def test_jit_on_all_devices(self):
     # Verifies we can run the same computation on every device present, even
     # if they are, for example, different models of GPU.

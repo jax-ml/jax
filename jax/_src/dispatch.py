@@ -21,6 +21,8 @@ import time
 from typing import (
     Any, Callable, Dict, Optional, Sequence, Set, Tuple, Type, Union)
 from typing_extensions import Protocol
+import os
+import re
 import warnings
 
 from absl import logging
@@ -36,7 +38,7 @@ import jax.interpreters.xla as xla
 import jax.interpreters.partial_eval as pe
 from jax.errors import UnexpectedTracerError
 from jax._src.abstract_arrays import array_types
-from jax._src.config import config
+from jax._src.config import config, flags
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import profiler
@@ -45,6 +47,15 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
 from jax._src import traceback_util
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string(
+    'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
+    help="Path to which HLO/MHLO IR that is emitted by JAX as input to the "
+         "compiler should be dumped as text files. Optional. If omitted, JAX "
+         "will not dump IR.")
+
 
 traceback_util.register_exclusion(__file__)
 
@@ -552,6 +563,19 @@ def backend_compile(backend, built_c, options):
 # TODO(phawkins): update users.
 xla.backend_compile = backend_compile
 
+_ir_dump_counter = itertools.count()
+
+def _make_string_safe_for_filename(s: str) -> str:
+  return re.sub(r'[^\w.)( -]', '', s)
+
+def _dump_ir_to_file(name: str, ir: str):
+  id = next(_ir_dump_counter)
+  name = f"jax_ir{id}_{_make_string_safe_for_filename(name)}.mlir"
+  name = os.path.join(FLAGS.jax_dump_ir_to, name)
+  with open(name, "w") as f:
+    f.write(ir)
+
+
 def compile_or_get_cached(backend, computation, compile_options):
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
@@ -565,15 +589,20 @@ def compile_or_get_cached(backend, computation, compile_options):
   # Persistent compilation cache only implemented on TPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
   if cc.is_initialized() and backend.platform == 'tpu':
-      cached_executable = cc.get_executable(computation, compile_options, backend)
-      if cached_executable is not None:
-          logging.info('Persistent compilation cache hit for %s.', module_name)
-          return cached_executable
-      else:
-          compiled = backend_compile(backend, computation, compile_options)
-          cc.put_executable(module_name, computation, compile_options, compiled,
-                            backend)
-          return compiled
+    cached_executable = cc.get_executable(computation, compile_options, backend)
+    if cached_executable is not None:
+      logging.info('Persistent compilation cache hit for %s.', module_name)
+      return cached_executable
+    else:
+      compiled = backend_compile(backend, computation, compile_options)
+      cc.put_executable(module_name, computation, compile_options, compiled,
+                        backend)
+      return compiled
+
+  if FLAGS.jax_dump_ir_to:
+    ir_str = (computation if isinstance(computation, str)
+              else computation.as_hlo_text())
+    _dump_ir_to_file(module_name, ir_str)
   return backend_compile(backend, computation, compile_options)
 
 

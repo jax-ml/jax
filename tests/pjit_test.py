@@ -631,6 +631,9 @@ class GDAPjitTest(jtu.JaxTestCase):
       for s in out.local_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
+      out2 = f(out)
+      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
+
       with self.assertRaisesRegex(
           ValueError, ('For a non-GDA input, the corresponding resource in '
                        'in_axis_resources cannot be `pjit.FROM_GDA`.')):

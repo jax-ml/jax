@@ -973,7 +973,7 @@ def check_valid_jaxtype(x):
 
 
 def concrete_aval(x):
-  for typ in type(x).mro():
+  for typ in type(x).__mro__:
     handler = pytype_aval_mappings.get(typ)
     if handler: return handler(x)
   if hasattr(x, '__jax_array__'):
@@ -1261,7 +1261,7 @@ pytype_aval_mappings[Token] = lambda _: abstract_token
 def raise_to_shaped(aval: AbstractValue, weak_type=None):
   if weak_type is None:
     weak_type = getattr(aval, 'weak_type', False)
-  for typ in type(aval).mro():
+  for typ in type(aval).__mro__:
     handler = raise_to_shaped_mappings.get(typ)
     if handler: return handler(aval, weak_type)
   raise TypeError(type(aval))

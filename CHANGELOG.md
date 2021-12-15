@@ -23,8 +23,16 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 * New features:
   * add `jax.block_until_ready` ({jax-issue}`#8941)
+  * Added a new debugging flag/environment variable `JAX_DUMP_IR_TO=/path`.
+    If set, JAX dumps the MHLO/HLO IR it generates for each computation to a
+    file under the given path.
 
 ## jaxlib 0.1.76 (Unreleased)
+* New features
+  * Includes precompiled SASS for NVidia compute capability 8.0 GPUS
+    (e.g. A100). Removes precompiled SASS for compute capability 6.1 so as not
+    to increase the number of compute capabilities: GPUs with compute capability
+    6.1 can use the 6.0 SASS.
 
 ## jaxlib 0.1.75 (Dec 8, 2021)
 * New features:
