@@ -222,8 +222,15 @@ def check_errors_traceable(msgs, err, code, *args):
 ## assert primitive
 
 def assert_(pred: Bool, msg: str) -> None:
+  if not is_scalar_pred(pred):
+    raise TypeError(f"assert_ takes a scalar pred as argument, got {pred}")
   code = next_code()
   return assert2_(pred, code, {code: msg})
+
+def is_scalar_pred(pred) -> bool:
+  return (isinstance(pred, bool) or
+          isinstance(pred, jnp.ndarray) and pred.shape == () and
+          pred.dtype == jnp.dtype('bool'))
 
 def assert2_(pred: Bool, code: Int, msgs: Dict[int, str]) -> None:
   return assert_p.bind(pred, code, msgs=msgs)
