@@ -2932,7 +2932,7 @@ ad.primitive_jvps[cummax_p] = partial(_cumulative_jvp_rule, combine_fn=lax.max)
 
 def _dummy_remat_result(aval: core.AbstractValue):
   """A result that will be discarded"""
-  if aval is core.AbstractToken:
+  if aval is core.abstract_token:
     return lax.create_token()
   elif aval is core.abstract_unit:
     return core.unit
