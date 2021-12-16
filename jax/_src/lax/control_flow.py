@@ -675,8 +675,8 @@ def _while_lowering(ctx, *args, cond_jaxpr,
         *(x + z))
     if batched:
       pred_ctx = mlir.LoweringRuleContext(
-          module_context=ctx.module_context, avals_in=[pred_aval],
-          avals_out=[pred_aval.update(shape=())])
+          module_context=ctx.module_context, primitive=None,
+          avals_in=[pred_aval], avals_out=[pred_aval.update(shape=())])
       pred, = lax._unary_reduce_lower(
           mhlo.OrOp, lambda dtype: np.array(False, dtype), pred_ctx, pred,
           axes=tuple(range(len(pred_aval.shape))))
@@ -2900,8 +2900,10 @@ def _cumulative_reduction_primitive(name,
   batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
                                                    reducer_p)
   mlir.register_lowering(
-      reducer_p, mlir.lower_fun(partial(associative_scan, reduce_fn),
-                                multiple_results=False))
+      reducer_p,
+      mlir.cache_lowering(
+          mlir.lower_fun(partial(associative_scan, reduce_fn),
+                         multiple_results=False)))
   mlir.register_lowering(
       reducer_p,
       mlir.lower_fun(partial(_cumred_tpu_translation_rule,

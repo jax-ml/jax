@@ -17,6 +17,7 @@
 
 import collections
 import dataclasses
+import functools
 from functools import partial
 import io
 import itertools
@@ -290,12 +291,16 @@ class ModuleContext:
   axis_env: xla.AxisEnv
   name_stack: str
 
+  # Cached primitive lowerings.
+  cached_primitive_lowerings: Dict[Any, builtin.FuncOp]
 
-  def __init__(self, platform: str, axis_env: xla.AxisEnv, name_stack: str,
-               context: Optional[ir.Context] = None,
-               module: Optional[ir.Module] = None,
-               ip: Optional[ir.InsertionPoint] = None,
-               symbol_table: Optional[ir.SymbolTable] = None):
+  def __init__(
+      self, platform: str, axis_env: xla.AxisEnv, name_stack: str,
+      context: Optional[ir.Context] = None,
+      module: Optional[ir.Module] = None,
+      ip: Optional[ir.InsertionPoint] = None,
+      symbol_table: Optional[ir.SymbolTable] = None,
+      cached_primitive_lowerings: Optional[Dict[Any, builtin.FuncOp]] = None):
     assert platform is not None
     self.context = context or ir.Context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -304,6 +309,8 @@ class ModuleContext:
     self.platform = platform
     self.axis_env = axis_env
     self.name_stack = name_stack
+    self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
+                                       else cached_primitive_lowerings)
     mhlo.register_mhlo_dialect(self.context)
     chlo.register_chlo_dialect(self.context)
 
@@ -314,8 +321,9 @@ class ModuleContext:
 class LoweringRuleContext:
   """Per-rule context information for MLIR lowering."""
   module_context: ModuleContext
+  primitive: Optional[core.Primitive]
   avals_in: Sequence[core.AbstractValue]
-  avals_out: Any
+  avals_out: Any  # Usually Sequence[core.AbstractValue], but sometimes None.
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 
@@ -538,6 +546,25 @@ def lower_jaxpr_to_fun(
 
   return func_op
 
+def _emit_lowering_rule_as_fun(lowering_rule,
+                               ctx: LoweringRuleContext) -> builtin.FuncOp:
+  """Emits the contents of a lowering rule as a private function."""
+  input_types = map(aval_to_ir_types, ctx.avals_in)
+  output_types = map(aval_to_ir_types, ctx.avals_out)
+  flat_input_types = util.flatten(input_types)
+  flat_output_types = util.flatten(output_types)
+  ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
+  assert ctx.primitive is not None
+  func_op = builtin.FuncOp(ctx.primitive.name, ftype, ip=ctx.module_context.ip)
+  func_op.attributes["sym_visibility"] = ir.StringAttr.get("private")
+  ctx.module_context.symbol_table.insert(func_op)
+  entry_block = func_op.add_entry_block()
+  with ir.InsertionPoint(entry_block):
+    unflattened_args = util.unflatten(entry_block.arguments,
+                                      map(len, input_types))
+    outs = lowering_rule(ctx, *_unwrap_singleton_ir_values(unflattened_args))
+    std.ReturnOp(util.flatten(map(wrap_singleton_ir_values, outs)))
+  return func_op
 
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                   consts: Sequence[Sequence[ir.Value]],
@@ -581,15 +608,15 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         rule = _lowerings[eqn.primitive]
       elif (eqn.primitive in xla._translations or
             eqn.primitive in xla._backend_specific_translations[ctx.platform]):
-        rule = partial(xla_fallback_lowering, eqn.primitive)
+        rule = xla_fallback_lowering(eqn.primitive)
       else:
         raise NotImplementedError(
             f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
             f"found for platform {ctx.platform}")
 
       rule_ctx = LoweringRuleContext(
-          module_context=ctx, avals_in=map(aval, eqn.invars),
-          avals_out=map(aval, eqn.outvars))
+          module_context=ctx, primitive=eqn.primitive,
+          avals_in=map(aval, eqn.invars), avals_out=map(aval, eqn.outvars))
       ans = rule(rule_ctx, *map(_unwrap_singleton_ir_values, in_nodes),
                  **eqn.params)
 
@@ -747,36 +774,70 @@ def set_sharding(op, sharding_proto: xc.OpSharding):
 
 # MLIR lowerings for lax primitives
 
-def xla_fallback_lowering(prim: core.Primitive, ctx: LoweringRuleContext, *args,
-                          **params):
-  module_ctx = ctx.module_context
-  xla_computation = xla.primitive_subcomputation(
-      module_ctx.platform, module_ctx.axis_env, prim, *ctx.avals_in, **params)
-  submodule_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
-  submodule = ir.Module.parse(submodule_str)
-  callee_name = None
-  for op in submodule.body.operations:
-    module_ctx.module.body.append(op)
-    if op.name.value == "main":
-      op.attributes["sym_name"] = ir.StringAttr.get(f"xla_fallback_{prim.name}")
-      callee_name = ir.StringAttr(module_ctx.symbol_table.insert(op)).value
-      op.attributes["sym_visibility"] = ir.StringAttr.get("private")
-    else:
-      module_ctx.symbol_table.insert(op)
+def cache_lowering(f):
+  """Decorator that causes the contents of a lowering rule to be reused.
 
-  output_types = map(aval_to_ir_types, ctx.avals_out)
-  flat_output_types = util.flatten(output_types)
-  output_type = (ir.TupleType.get_tuple(flat_output_types)
-                 if prim.multiple_results else flat_output_types[0])
+  The lowering will be emitted out-of-line in a separate function, together with
+  a call to that function. If the same primitive is called with the same shapes
+  and parameters, a new call to the original function will be added, without
+  emitting a new function.
+  """
+  @functools.wraps(f)
+  def cached_lowering(ctx, *args, **params):
+    assert ctx.primitive is not None
+    key = (ctx.primitive, tuple(ctx.avals_in), tuple(ctx.avals_out),
+           tuple(params.items()))
+    try:
+      func = ctx.module_context.cached_primitive_lowerings.get(key)
+    except TypeError:
+      # If the parameters aren't hashable, give up on caching.
+      # TODO(phawkins): switch to requiring hashability, when XLA fallback
+      # computations have been ported to MHLO.
+      return f(ctx, *args, **params)
+    if func is None:
+      func = _emit_lowering_rule_as_fun(partial(f, **params), ctx)
+      ctx.module_context.cached_primitive_lowerings[key] = func
 
-  call = std.CallOp([output_type], ir.FlatSymbolRefAttr.get(callee_name),
-                    flatten_lowering_ir_args(args)).result
-  if not prim.multiple_results:
-    return [call]
-  flat_results = [mhlo.GetTupleElementOp(typ, call, i32_attr(i)).result
-                  for i, typ in enumerate(flat_output_types)]
-  return util.unflatten(flat_results, map(len, output_types))
+    output_types = map(aval_to_ir_types, ctx.avals_out)
+    flat_output_types = util.flatten(output_types)
+    call = std.CallOp(flat_output_types,
+                      ir.FlatSymbolRefAttr.get(func.name.value),
+                      flatten_lowering_ir_args(args))
+    return util.unflatten(call.results, map(len, output_types))
+  return cached_lowering
 
+
+def xla_fallback_lowering(prim: core.Primitive):
+  @cache_lowering
+  def fallback(ctx: LoweringRuleContext, *args, **params):
+    module_ctx = ctx.module_context
+    xla_computation = xla.primitive_subcomputation(
+        module_ctx.platform, module_ctx.axis_env, prim, *ctx.avals_in, **params)
+    submodule_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
+    submodule = ir.Module.parse(submodule_str)
+    callee_name = None
+    for op in submodule.body.operations:
+      module_ctx.module.body.append(op)
+      if op.name.value == "main":
+        op.attributes["sym_name"] = ir.StringAttr.get(f"xla_fallback_{prim.name}")
+        callee_name = ir.StringAttr(module_ctx.symbol_table.insert(op)).value
+        op.attributes["sym_visibility"] = ir.StringAttr.get("private")
+      else:
+        module_ctx.symbol_table.insert(op)
+
+    output_types = map(aval_to_ir_types, ctx.avals_out)
+    flat_output_types = util.flatten(output_types)
+    output_type = (ir.TupleType.get_tuple(flat_output_types)
+                   if prim.multiple_results else flat_output_types[0])
+
+    call = std.CallOp([output_type], ir.FlatSymbolRefAttr.get(callee_name),
+                      flatten_lowering_ir_args(args)).result
+    if not prim.multiple_results:
+      return [call]
+    flat_results = [mhlo.GetTupleElementOp(typ, call, i32_attr(i)).result
+                    for i, typ in enumerate(flat_output_types)]
+    return util.unflatten(flat_results, map(len, output_types))
+  return fallback
 
 register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 

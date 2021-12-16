@@ -1350,6 +1350,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
                            axis_sizes=local_mesh_shape),
                    multiple_results=False)(
           mlir.LoweringRuleContext(module_context=ctx.module_context,
+                                   primitive=None,
                                    avals_in=[aval], avals_out=None),
           in_node)[0]
     if v.aval is not core.abstract_unit else in_node
@@ -1372,6 +1373,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
                   platform=ctx.module_context.platform),
           multiple_results=False)(
               mlir.LoweringRuleContext(module_context=ctx.module_context,
+                                       primitive=None,
                                        avals_in=[vectorized_outvar.aval],
                                        avals_out=None), tiled_out)[0]
       if v.aval is not core.abstract_unit else tiled_out

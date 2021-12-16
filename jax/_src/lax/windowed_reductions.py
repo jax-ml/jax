@@ -930,5 +930,5 @@ mlir.register_lowering(select_and_gather_add_p, mlir.lower_fun(
 
 mlir.register_lowering(
     select_and_gather_add_p,
-    partial(mlir.xla_fallback_lowering, select_and_gather_add_p),
+    mlir.xla_fallback_lowering(select_and_gather_add_p),
     platform="gpu")

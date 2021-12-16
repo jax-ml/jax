@@ -1549,8 +1549,8 @@ def _round_lower(ctx, x, *, rounding_method):
     return mhlo.RoundOp(x).results
   else:
     assert rounding_method is RoundingMethod.TO_NEAREST_EVEN
-    round_nearest = mlir.lower_fun(_round_to_nearest_even,
-                                   multiple_results=False)
+    round_nearest = mlir.cache_lowering(mlir.lower_fun(_round_to_nearest_even,
+                                                       multiple_results=False))
     return round_nearest(ctx, x)
 mlir.register_lowering(round_p, _round_lower)
 
@@ -1904,8 +1904,9 @@ def _integer_pow(x, *, y):
       x = mul(x, x)
   return div(full_like(acc, 1), acc) if is_reciprocal else acc
 
-mlir.register_lowering(integer_pow_p,
-                       mlir.lower_fun(_integer_pow, multiple_results=False))
+mlir.register_lowering(
+    integer_pow_p,
+    mlir.cache_lowering(mlir.lower_fun(_integer_pow, multiple_results=False)))
 
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
@@ -3521,13 +3522,13 @@ argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 
-mlir.register_lowering(argmin_p, mlir.lower_fun(
+mlir.register_lowering(argmin_p, mlir.cache_lowering(mlir.lower_fun(
   partial(_compute_argminmax, lt, _get_min_identity),
-  multiple_results=False))
+  multiple_results=False)))
 
-mlir.register_lowering(argmax_p, mlir.lower_fun(
+mlir.register_lowering(argmax_p, mlir.cache_lowering(mlir.lower_fun(
   partial(_compute_argminmax, gt, _get_max_identity),
-  multiple_results=False))
+  multiple_results=False)))
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
@@ -3761,6 +3762,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
                                       multiple_results=False)
     sub_ctx = mlir.LoweringRuleContext(
         module_context = ctx.module_context,
+        primitive=None,
         avals_in=util.flatten(zip(scalar_avals, scalar_avals)),
         avals_out=[core.ShapedArray((), np.bool_)])
 
