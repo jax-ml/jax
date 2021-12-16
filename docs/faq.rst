@@ -247,12 +247,6 @@ lower per-operation dispatch overhead. If you're running your code on GPU or TPU
 or are benchmarking more complicated JIT-compiled sequences of operations on CPU, you
 can generally expect JAX to outperform NumPy.
 
-.. comment We refer to the anchor below in JAX error messages
-
-``Abstract tracer value encountered where concrete value is expected`` error
-----------------------------------------------------------------------------
-See :class:`jax.errors.ConcretizationTypeError`
-
 .. _faq-different-kinds-of-jax-values:
 
 Different kinds of JAX values
@@ -377,3 +371,13 @@ Additional reading:
 
   * `Issue: gradients through jnp.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.
+
+
+Additional Sections
+-------------------
+
+.. comment We refer to the anchor below in JAX error messages
+
+``Abstract tracer value encountered where concrete value is expected`` error
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+See :class:`jax.errors.ConcretizationTypeError`
