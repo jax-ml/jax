@@ -7052,6 +7052,7 @@ def _set_shaped_array_attributes(shaped_array):
   setattr(shaped_array, "split", core.aval_method(split))
   setattr(shaped_array, "compress", _compress_method)
   setattr(shaped_array, "at", core.aval_property(_IndexUpdateHelper))
+  setattr(shaped_array, "item", core.aval_method(device_array.DeviceArray.item))
 
 _set_shaped_array_attributes(ShapedArray)
 
