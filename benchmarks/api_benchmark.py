@@ -404,13 +404,12 @@ def sparse_bcoo_todense_compile(state):
 def _sparse_bcoo_matvec(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
-  size = np.prod(shape)
-  rng = np.random.RandomState(1701)
-  data = rng.randn(nse)
-  indices = np.unravel_index(
-      rng.choice(size, size=nse, replace=False), shape=shape)
-  mat = sparse.BCOO((jnp.array(data), jnp.column_stack(indices)), shape=shape)
-  vec = rng.randn(shape[1])
+  key = jax.random.PRNGKey(1701)
+  mat = sparse.random_bcoo(key, nse=nse, shape=shape, data_dtype=jnp.float32,
+                           indices_dtype=jnp.int32)
+  # Ensures that row indices are sorted.
+  mat = mat.sum_duplicates()
+  vec = jax.random.choice(key, shape[1], shape=(shape[1],)).astype(jnp.float32)
 
   f = lambda mat, vec: mat @ vec
   if jit or compile:
