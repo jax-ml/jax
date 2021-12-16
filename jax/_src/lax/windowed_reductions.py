@@ -308,14 +308,14 @@ reduce_window_p.def_abstract_eval(_reduce_window_abstract_eval_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 xla.register_translation(reduce_window_p, _reduce_window_translation_rule)
 
-def _generic_reduce_window_lower(ctx, avals_in, avals_out, *args, jaxpr, consts,
+def _generic_reduce_window_lower(ctx, *args, jaxpr, consts,
                                  window_dimensions, window_strides, padding,
                                  base_dilation, window_dilation):
   operands, init_values = util.split_list(args, [len(args) // 2])
-  _, init_value_avals = util.split_list(avals_in, [len(operands)])
+  _, init_value_avals = util.split_list(ctx.avals_in, [len(operands)])
   scalar_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   rw = mhlo.ReduceWindowOp(
-      map(mlir.aval_to_ir_type, avals_out), operands, init_values,
+      map(mlir.aval_to_ir_type, ctx.avals_out), operands, init_values,
       mlir.dense_int_elements(window_dimensions),
       mlir.dense_int_elements(window_strides),
       mlir.dense_int_elements(base_dilation),
@@ -323,7 +323,7 @@ def _generic_reduce_window_lower(ctx, avals_in, avals_out, *args, jaxpr, consts,
       ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
   reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
   with ir.InsertionPoint(reducer):
-    out_nodes = mlir.jaxpr_subcomp(ctx, jaxpr, consts,
+    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, jaxpr, consts,
                                    *([a] for a in reducer.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return rw.results
@@ -488,10 +488,10 @@ batching.primitive_batchers[reduce_window_min_p] = partial(
 
 
 def _reduce_window_lower(
-    reduce_op, init_value, ctx, avals_in, avals_out, operand, *,
+    reduce_op, init_value, ctx, operand, *,
     window_dimensions, window_strides, padding, base_dilation, window_dilation):
-  aval_out, = avals_out
-  operand_aval, = avals_in
+  aval_out, = ctx.avals_out
+  operand_aval, = ctx.avals_in
   scalar_aval = operand_aval.update(shape=())
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
   rw = mhlo.ReduceWindowOp(
@@ -545,11 +545,11 @@ select_and_scatter_p = lax.standard_primitive(
     _select_and_scatter_translation)
 
 def _select_and_scatter_lower(
-    ctx, avals_in, avals_out, operand, source, init_value, *, select_jaxpr,
+    ctx, operand, source, init_value, *, select_jaxpr,
     select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
     window_strides, padding):
-  operand_aval, source_aval, init_value_aval = avals_in
-  aval_out, = avals_out
+  operand_aval, source_aval, init_value_aval = ctx.avals_in
+  aval_out, = ctx.avals_out
   scalar_aval = operand_aval.update(shape=())
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
   op = mhlo.SelectAndScatterOp(
@@ -559,12 +559,14 @@ def _select_and_scatter_lower(
       ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
   select = op.select.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(select):
-    out_nodes = mlir.jaxpr_subcomp(ctx, select_jaxpr, select_consts,
+    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, select_jaxpr,
+                                   select_consts,
                                    *([a] for a in select.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   scatter = op.scatter.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(scatter):
-    out_nodes = mlir.jaxpr_subcomp(ctx, scatter_jaxpr, scatter_consts,
+    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, scatter_jaxpr,
+                                   scatter_consts,
                                    *([a] for a in scatter.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
@@ -679,8 +681,9 @@ xla.register_translation(
     platform='gpu')
 
 
-def _select_and_scatter_add_impl(source, operand, *, select_prim, window_dimensions,
-                            window_strides, padding, expand_padding):
+def _select_and_scatter_add_impl(source, operand, *,
+                                 select_prim, window_dimensions, window_strides,
+                                 padding, expand_padding):
   dtype = source.dtype
   select = lambda x, y: select_prim.bind(x, y)
   scatter = lax.bitwise_or if dtype == np.bool_ else lax.add

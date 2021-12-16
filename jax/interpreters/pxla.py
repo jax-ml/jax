@@ -1718,19 +1718,20 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
     raise TypeError(aval)
 
 
-def _pmap_lowering(ctx, avals_in, avals_out, *in_nodes, axis_name,
+def _pmap_lowering(ctx, *in_nodes, axis_name,
                    axis_size, global_axis_size, devices, name,
                    call_jaxpr, backend=None, in_axes, out_axes,
                    donated_invars, global_arg_shapes):
   del donated_invars  # Unused.
-  xla.check_backend_matches(backend, ctx.platform)
+  xla.check_backend_matches(backend, ctx.module_context.platform)
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  if ctx.axis_env.names and devices is not None:
+  if ctx.module_context.axis_env.names and devices is not None:
     raise ValueError("Nested pmap with explicit devices argument.")
   if global_axis_size is None:
     global_axis_size = axis_size
-  new_env = xla.extend_axis_env(ctx.axis_env, axis_name, global_axis_size)
+  new_env = xla.extend_axis_env(ctx.module_context.axis_env, axis_name,
+                                global_axis_size)
   # Shard the in_nodes that are mapped
   in_avals = [v.aval for v in call_jaxpr.invars]
   in_nodes_sharded = (
@@ -1739,14 +1740,15 @@ def _pmap_lowering(ctx, avals_in, avals_out, *in_nodes, axis_name,
     for aval, in_node, in_axis in zip(in_avals, in_nodes, in_axes))
 
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    sub_ctx = ctx.replace(
+    sub_ctx = ctx.module_context.replace(
         axis_env=new_env,
-        name_stack=xla.extend_name_stack(ctx.name_stack,
+        name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                          util.wrap_name(name, 'pmap')))
     sharded_outs = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, (),
                                       *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
-  outs = [_mhlo_unshard(aval, new_env, out_axis, shard, platform=ctx.platform)
+  outs = [_mhlo_unshard(aval, new_env, out_axis, shard,
+                        platform=ctx.module_context.platform)
           for aval, out_axis, shard in zip(out_avals, out_axes, sharded_outs)]
   return outs
 

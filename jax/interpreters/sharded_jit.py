@@ -214,7 +214,7 @@ def _sharded_jit_translation_rule(ctx, avals_in, avals_out, *in_nodes,
                              xops.Call(ctx.builder, subc, list(in_nodes)))
 
 
-def _sharded_jit_lowering(ctx, avals_in, avals_out, *in_nodes,
+def _sharded_jit_lowering(ctx, *in_nodes,
                           in_parts, out_parts_thunk, nparts,
                           name, call_jaxpr, local_in_parts,
                           local_out_parts_thunk, local_nparts):
@@ -233,12 +233,12 @@ def _sharded_jit_lowering(ctx, avals_in, avals_out, *in_nodes,
     else:
       args.append(ns)
 
-  sub_ctx = ctx.replace(
+  sub_ctx = ctx.module_context.replace(
       name_stack=extend_name_stack(wrap_name(name, "sharded_jit")))
   fn = mlir.lower_jaxpr_to_fun(sub_ctx, f"sharded_jit_{name}",
                                core.ClosedJaxpr(call_jaxpr, ()))
 
-  output_types = safe_map(mlir.aval_to_ir_types, avals_out)
+  output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
   flat_output_types = util.flatten(output_types)
   call = std.CallOp(flat_output_types,
                     ir.FlatSymbolRefAttr.get(fn.name.value),
@@ -472,8 +472,7 @@ ad.deflinear2(sharding_constraint_p,
 xla.register_translation(sharding_constraint_p,
                          _sharding_constraint_translation_rule)
 
-def _sharding_constraint_lowering(ctx, avals_in, avals_out, x_node,
-                                  partitions):
+def _sharding_constraint_lowering(ctx, x_node, partitions):
   return [mlir.wrap_with_sharding_op(x_node, xla.sharding_to_proto(partitions))]
 
 mlir.register_lowering(sharding_constraint_p, _sharding_constraint_lowering)

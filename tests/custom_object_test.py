@@ -170,7 +170,7 @@ def _sp_indices_translation_rule(ctx, avals_in, avals_out, data, indices):
 # because it leads to infinite recursion.
 xla.register_translation(sp_indices_p, _sp_indices_translation_rule)
 
-def _sp_indices_mhlo_lowering(ctx, avals_in, avals_out, data_and_indices):
+def _sp_indices_mhlo_lowering(ctx, data_and_indices):
   return [data_and_indices[1]]
 
 mlir.register_lowering(sp_indices_p, _sp_indices_mhlo_lowering)
@@ -192,7 +192,7 @@ def _sp_data_translation_rule(ctx, avals_in, avals_out, data, indices):
 # because it leads to infinite recursion.
 xla.register_translation(sp_data_p, _sp_data_translation_rule)
 
-def _sp_data_mhlo_lowering(ctx, avals_in, avals_out, data_and_indices):
+def _sp_data_mhlo_lowering(ctx, data_and_indices):
   return [data_and_indices[0]]
 
 mlir.register_lowering(sp_data_p, _sp_data_mhlo_lowering)

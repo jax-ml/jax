@@ -747,9 +747,8 @@ ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 masking.masking_rules[slice_p] = _slice_masking_rule
 
-def _slice_lower(ctx, avals_in, avals_out, x, *, start_indices,
-                 limit_indices, strides):
-  aval_out, = avals_out
+def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
+  aval_out, = ctx.avals_out
   strides = strides or [1] * len(start_indices)
   return mhlo.SliceOp(x,
                       mlir.dense_int_elements(start_indices),
@@ -848,9 +847,8 @@ ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp  # TODO
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 
-def _dynamic_slice_lower(ctx, avals_in, avals_out, x, *start_indices,
-                         slice_sizes):
-  aval_out, = avals_out
+def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
+  aval_out, = ctx.avals_out
   return mhlo.DynamicSliceOp(mlir.aval_to_ir_type(aval_out), x,
                              start_indices,
                              mlir.dense_int_elements(slice_sizes)).results
@@ -947,9 +945,8 @@ ad.primitive_transposes[dynamic_update_slice_p] = \
 batching.primitive_batchers[dynamic_update_slice_p] = \
     _dynamic_update_slice_batching_rule
 
-def _dynamic_update_slice_lower(ctx, avals_in, avals_out, x, update,
-                                *start_indices):
-  aval_out, = avals_out
+def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
+  aval_out, = ctx.avals_out
   return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
                                    start_indices).results
 
@@ -1280,14 +1277,14 @@ batching.primitive_batchers[gather_p] = _gather_batching_rule
 
 
 
-def _gather_lower(ctx, avals_in, avals_out, operand, indices, *,
+def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
-  aval_out, = avals_out
+  aval_out, = ctx.avals_out
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
     return gather_fill_fn(
-        ctx, avals_in, avals_out, operand, indices,
+        ctx, operand, indices,
         dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
         unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
         fill_value=fill_value, output_shape=aval_out.shape)
@@ -1296,7 +1293,7 @@ def _gather_lower(ctx, avals_in, avals_out, operand, indices, *,
                   GatherScatterMode.CLIP), mode
   dnums = mhlo.GatherDimensionNumbers.get(
     collapsed_slice_dims=list(dimension_numbers.collapsed_slice_dims),
-    index_vector_dim=len(avals_in[1].shape) - 1,
+    index_vector_dim=len(ctx.avals_in[1].shape) - 1,
     offset_dims=list(dimension_numbers.offset_dims),
     start_index_map=list(dimension_numbers.start_index_map))
   return mhlo.GatherOp(operand, indices, dnums,
@@ -1945,30 +1942,30 @@ batching.primitive_batchers[scatter_p] = (
 
 
 
-def _scatter_lower(ctx, avals_in, avals_out, operand, indices, updates, *,
+def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
-    (indices,), = clip_fn(ctx, avals_in, None, operand, indices, updates,
-                          dnums=dimension_numbers)
+    (indices,), = clip_fn(ctx.replace(avals_out=None), operand, indices,
+                          updates, dnums=dimension_numbers)
 
-  aval_out, = avals_out
+  aval_out, = ctx.avals_out
   dnums = dimension_numbers
   scatter_dnums = mhlo.ScatterDimensionNumbers.get(
     update_window_dims=list(dnums.update_window_dims),
     inserted_window_dims=list(dnums.inserted_window_dims),
     scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
-    index_vector_dim=len(avals_in[1].shape) - 1)
+    index_vector_dim=len(ctx.avals_in[1].shape) - 1)
   op = mhlo.ScatterOp(mlir.aval_to_ir_type(aval_out), operand, indices, updates,
                       scatter_dnums, ir.BoolAttr.get(indices_are_sorted),
                       ir.BoolAttr.get(unique_indices))
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
-    ctx = ctx.replace(name_stack='')
+    update_ctx = ctx.module_context.replace(name_stack='')
     out_nodes = mlir.jaxpr_subcomp(
-        ctx, update_jaxpr, update_consts,
+        update_ctx, update_jaxpr, update_consts,
         (update.arguments[0],), (update.arguments[1],))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
@@ -1982,12 +1979,12 @@ mlir.register_lowering(scatter_max_p, _scatter_lower)
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype
 
-def _scatter_add_lower_gpu(ctx, avals_in, avals_out, operand, indices, updates,
+def _scatter_add_lower_gpu(ctx, operand, indices, updates,
                            *, update_jaxpr, update_consts, dimension_numbers,
                            indices_are_sorted, unique_indices, mode):
-  operand_aval_in, _, updates_aval_in = avals_in
+  operand_aval_in, _, updates_aval_in = ctx.avals_in
   if operand_aval_in.dtype != np.complex128:
-    return _scatter_lower(ctx, avals_in, avals_out, operand, indices, updates,
+    return _scatter_lower(ctx, operand, indices, updates,
                           update_jaxpr=update_jaxpr,
                           update_consts=update_consts,
                           dimension_numbers=dimension_numbers,
@@ -1996,16 +1993,16 @@ def _scatter_add_lower_gpu(ctx, avals_in, avals_out, operand, indices, updates,
 
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
-    (indices,), = clip_fn(ctx, avals_in, None, operand, indices, updates,
+    (indices,), = clip_fn(ctx, ctx.avals_in, None, operand, indices, updates,
                           dnums=dimension_numbers)
 
-  aval_out, = avals_out
+  aval_out, = ctx.avals_out
   dnums = dimension_numbers
   scatter_dnums = mhlo.ScatterDimensionNumbers.get(
     update_window_dims=list(dnums.update_window_dims),
     inserted_window_dims=list(dnums.inserted_window_dims),
     scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
-    index_vector_dim=len(avals_in[1].shape) - 1)
+    index_vector_dim=len(ctx.avals_in[1].shape) - 1)
   real_dtype = _real_dtype(aval_out.dtype)
   operand_type_part = mlir.aval_to_ir_type(
       core.ShapedArray(aval_out.shape, real_dtype))

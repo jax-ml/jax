@@ -723,12 +723,12 @@ def _complex_mul(mul, x, y):
 _real_dtype = lambda dtype: np.finfo(dtype).dtype
 
 def _conv_general_dilated_lower(
-    ctx, avals_in, avals_out, lhs, rhs, *, window_strides, padding,
+    ctx, lhs, rhs, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
     batch_group_count, precision, preferred_element_type,
     expand_complex_convolutions=False, **unused_kwargs):
-  lhs_aval, rhs_aval = avals_in
-  aval_out, = avals_out
+  lhs_aval, rhs_aval = ctx.avals_in
+  aval_out, = ctx.avals_out
   assert isinstance(dimension_numbers, ConvDimensionNumbers)
   dtype = lhs_aval.dtype
   if expand_complex_convolutions and np.issubdtype(dtype, np.complexfloating):
@@ -746,7 +746,7 @@ def _conv_general_dilated_lower(
                 batch_group_count=batch_group_count, precision=precision,
                 preferred_element_type=preferred_element_type)),
       multiple_results=False)
-    return complex_conv(ctx, avals_in, avals_out, lhs, rhs)
+    return complex_conv(ctx, lhs, rhs)
 
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   dnums = mhlo.ConvDimensionNumbers.get(
