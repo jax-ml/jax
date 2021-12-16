@@ -32,6 +32,7 @@ from jax.interpreters import xla
 import jax.numpy as jnp
 from jax.interpreters import ad
 from jax.util import safe_zip, unzip2, split_list
+from jax._src import api_util
 from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
@@ -417,10 +418,12 @@ bcoo_transpose_p = core.Primitive('bcoo_transpose')
 bcoo_transpose_p.multiple_results = True
 
 def bcoo_transpose(data, indices, *, permutation, shape):
-  if tuple(permutation) == tuple(range(len(shape))):
+  permutation = tuple(permutation)
+  if permutation == tuple(range(len(shape))):
     return data, indices
   else:
-    return bcoo_transpose_p.bind(data, indices, permutation=permutation, shape=shape)
+    return bcoo_transpose_p.bind(data, indices, permutation=permutation,
+                                 shape=shape)
 
 def _validate_permutation(data, indices, permutation, shape):
   if not isinstance(permutation, (tuple, list, np.ndarray)):
@@ -520,8 +523,14 @@ def _dot_general_validated_shape(lhs_shape: Shape, rhs_shape: Shape, dimension_n
     precision=None, preferred_element_type=None)
 
 def bcoo_dot_general(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape):
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  cdims = (api_util._ensure_index_tuple(lhs_contract),
+           api_util._ensure_index_tuple(rhs_contract))
+  bdims = (api_util._ensure_index_tuple(lhs_batch),
+           api_util._ensure_index_tuple(rhs_batch))
   return bcoo_dot_general_p.bind(jnp.asarray(lhs_data), jnp.asarray(lhs_indices), jnp.asarray(rhs),
-                                 dimension_numbers=dimension_numbers, lhs_shape=tuple(lhs_shape))
+                                 dimension_numbers=(cdims, bdims),
+                                 lhs_shape=tuple(lhs_shape))
 
 def bcoo_rdot_general(lhs, rhs_data, rhs_indices, *, dimension_numbers, rhs_shape):
   # TODO(jakevdp): perhaps this should be part of the bcoo_dot_general primitive?
@@ -686,7 +695,13 @@ xla.register_translation(bcoo_dot_general_p, xla.lower_fun(
 bcoo_dot_general_sampled_p = core.Primitive("bcoo_dot_general_sampled")
 
 def bcoo_dot_general_sampled(A, B, indices, *, dimension_numbers):
-  return bcoo_dot_general_sampled_p.bind(A, B, indices, dimension_numbers=dimension_numbers)
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  cdims = (api_util._ensure_index_tuple(lhs_contract),
+           api_util._ensure_index_tuple(rhs_contract))
+  bdims = (api_util._ensure_index_tuple(lhs_batch),
+           api_util._ensure_index_tuple(rhs_batch))
+  return bcoo_dot_general_sampled_p.bind(A, B, indices,
+                                         dimension_numbers=(cdims, bdims))
 
 @bcoo_dot_general_sampled_p.def_impl
 def _bcoo_dot_general_sampled_impl(A, B, indices, *, dimension_numbers):
@@ -739,8 +754,14 @@ bcoo_spdot_general_p = core.Primitive('bcoo_spdot_general')
 bcoo_spdot_general_p.multiple_results = True
 
 def bcoo_spdot_general(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_shape, dimension_numbers):
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  cdims = (api_util._ensure_index_tuple(lhs_contract),
+           api_util._ensure_index_tuple(rhs_contract))
+  bdims = (api_util._ensure_index_tuple(lhs_batch),
+           api_util._ensure_index_tuple(rhs_batch))
   return bcoo_spdot_general_p.bind(lhs_data, lhs_indices, rhs_data, rhs_indices,
-                                   lhs_shape=lhs_shape, rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
+                                   lhs_shape=lhs_shape, rhs_shape=rhs_shape,
+                                   dimension_numbers=(cdims, bdims))
 
 def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_shape, lhs_contracting, rhs_contracting):
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
