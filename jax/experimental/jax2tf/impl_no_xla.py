@@ -676,7 +676,7 @@ def _pre_gather_with_batch_dims(args: GatherArgs):
     raise ValueError("unsupported start_index_map")
 
   # The batch dims in `start_indices` and `operand` should agree.
-  if jax2tf._eval_shape(args.op_shape)[0] != args.start_indices_shape[0]:
+  if not core.symbolic_equal_dim(args.op_shape[0], args.start_indices_shape[0]):
     raise ValueError("Batch dimensions in operand and start_indices don't "
                      "agree")
 

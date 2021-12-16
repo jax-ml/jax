@@ -26,11 +26,12 @@ import jax
 from jax import core
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf import shape_poly
-from jax.experimental.jax2tf import shape_poly_tf
 from jax import lax
+from jax import linear_util as lu
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src import util
 import numpy as np
 
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -404,7 +405,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["b, ..."])
     f_tf(x, y=y)
 
-
   def test_arg_avals(self):
     """Test conversion of actual arguments to abstract values."""
 
@@ -417,12 +417,14 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       # check expected_shapeenv.
       arg_dtypes = (_f32,) * len(arg_shapes)
       def f_tf(*tf_args):
-        avals, shape_env = shape_poly.args_avals_and_env(
-            arg_shapes, arg_dtypes, polymorphic_shapes,
-            tuple(shape_poly_tf.DimExprTfVal.for_arg(a) for a in tf_args))  # The function under test
+        avals = shape_poly.args_avals(
+            arg_shapes, arg_dtypes, polymorphic_shapes)  # The function under test
+        dim_vars, get_dim_values = shape_poly.prepare_dim_var_env(avals)
+        dim_values, _ = util.unzip2(jax2tf.jax2tf._interpret_fun(lu.wrap_init(get_dim_values),
+                                                                 tf_args, avals, ""))
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
-        return {k: d.raw for k, d in shape_env.items()}
+        return dict(zip(dim_vars, dim_values))
       if eager_mode:
         # If we want to check the shape_env then all arg_shapes must be known
         assert all(all(d is not None for d in a_s)
@@ -435,7 +437,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         f_tf = tf.function(autograph=False)(f_tf)
         f_tf.get_concrete_function(*[tf.TensorSpec(a_s, _f32)
                                    for a_s in arg_shapes])
-        assert not expected_shapeenv, "Should use eaager_mode=True"
+        assert not expected_shapeenv, "Should use eager_mode=True"
 
     def shaped_array(shape_spec: str, actual_shape: core.Shape):
       return core.ShapedArray(
@@ -630,9 +632,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape(
-            "Found inconsistency when solving a == 3. Partial solution: a = 2."
-        )):
+        "Found inconsistency when solving.*"):
       check_avals(
           arg_shapes=[(2, 3)],
           polymorphic_shapes=["(a, a)"],
@@ -641,9 +641,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # Same error across multiple arguments
     with self.assertRaisesRegex(
         ValueError,
-        re.escape(
-            "Found inconsistency when solving a == 5. Partial solution: a = 2."
-        )):
+        "Found inconsistency when solving.*"):
       check_avals(
           arg_shapes=[(2, 3), (5,)],
           polymorphic_shapes=["a, ...", "a"],
@@ -952,7 +950,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # eagerly.
     # Raises: ValueError: PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)
     with self.assertRaisesRegex(ValueError,
-                                re.escape("Dimension variable b must have integer value >= 1. Found value 0 when solving b == 0")):
+                                "Dimension variable b must have integer value >= 1. Found value 0 when solving .*"):
       jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0)
 
     # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
@@ -972,7 +970,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # function is executed eagerly.
     # Raises: ValueError: PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)
     with self.assertRaisesRegex(ValueError,
-                                re.escape("Found inconsistency when solving b == 5. Partial solution: b = 4.")):
+                                "Found inconsistency when solving b == .*"):
       jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
 
     # However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
@@ -1783,7 +1781,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="scatter_add_clip_poly_axes"
+      #one_containing="reshape_1_poly_axes=[(0, 1)]"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())

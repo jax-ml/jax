@@ -50,7 +50,6 @@ from jax.interpreters import xla
 from jax._src.lib import xla_client
 
 from jax.experimental.jax2tf import shape_poly
-from jax.experimental.jax2tf import shape_poly_tf
 from jax.experimental.jax2tf import impl_no_xla
 
 import numpy as np
@@ -161,7 +160,7 @@ class _ThreadLocalState(threading.local):
     self.inside_call_tf = False
 
     # Maps dimension variables to TF expressions
-    self.shape_env: shape_poly.ShapeEnv = {}
+    self.shape_env: Sequence[Tuple[str, TfVal]] = ()
 
     # Whether to actually include XLA op metadata in the generated TF ops
     self.include_xla_op_metadata = True
@@ -320,14 +319,17 @@ def convert(fun: Callable,
       return tuple(d.value if isinstance(d, tf.compat.v1.Dimension) else d for d in tf_arg_shape)
     args_shapes_flat = tuple(fix_tf1_shape(a) for a in args_flat)
 
-    args_dim_exprs_flat = tuple(shape_poly_tf.DimExprTfVal.for_arg(a) for a in args_flat)
     # Construct the abstract values for the flat arguments, possibly based on
     # the input shapes and the polymorphic_shapes if given. May create new shape
     # variables. May cast the args_flat to JAX types, using JAX's interpretation
     # of types of constants.
-    args_avals_flat, shapeenv = shape_poly.args_avals_and_env(
-        args_shapes_flat, arg_dtypes_flat, polymorphic_shapes_flat,
-        args_dim_exprs_flat)
+    args_avals_flat = shape_poly.args_avals(
+        args_shapes_flat, arg_dtypes_flat, polymorphic_shapes_flat)
+
+    dim_vars, get_dim_values = shape_poly.prepare_dim_var_env(args_avals_flat)
+    dim_values, _ = util.unzip2(_interpret_fun(lu.wrap_init(get_dim_values),
+                                               args_flat, args_avals_flat, ""))
+    shape_env = zip(dim_vars, dim_values)
 
     # This function may take pytrees of TfVals. We can only set
     # tf.custom_gradient on functions that take a flat argument list.
@@ -415,7 +417,7 @@ def convert(fun: Callable,
       prev_include_xla_op_metadata = _thread_local_state.include_xla_op_metadata
       _thread_local_state.include_xla_op_metadata = False
 
-      _thread_local_state.shape_env = shapeenv
+      _thread_local_state.shape_env = shape_env
       global _has_registered_tf_source_path
       if not _has_registered_tf_source_path:
         source_info_util.register_exclusion(os.path.dirname(tf.__file__))
@@ -445,7 +447,7 @@ def convert(fun: Callable,
             for o in outs
         ]
     finally:
-      _thread_local_state.shape_env = {}
+      _thread_local_state.shape_env = ()
       _thread_local_state.enable_xla = prev_enable_xla
       _thread_local_state.include_xla_op_metadata = prev_include_xla_op_metadata
 
@@ -669,7 +671,11 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
 def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
-  return shape_poly.eval_shape(shape, _thread_local_state.shape_env)
+  dim_vars, dim_values = util.unzip2(_thread_local_state.shape_env)
+  eval_shape, dim_avals = shape_poly.get_shape_evaluator(dim_vars, shape)
+  shape_values, _ = util.unzip2(_interpret_fun(lu.wrap_init(eval_shape),
+                                               dim_values, dim_avals, ""))  # type: ignore
+  return shape_values
 
 
 # TODO(b/26854495): pylint doesn't understand slots and inheritance.
@@ -723,7 +729,7 @@ class TensorFlowTracer(core.Tracer):
             # We have a TF value with known shape, and the abstract shape is a shape variable.
             try:
               aval_int = int(_eval_shape([aval_dim]))  # type: ignore
-            except TypeError:
+            except (TypeError, KeyError):
               continue
             assert aval_int == val_dim, f"expected {self._aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
 
@@ -2637,6 +2643,11 @@ def _pjit_sharding_constraint(arg: TfVal, *,
 
 
 tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint
+
+def _dimension_size_jax2tf(op: TfVal, *, dimension):
+  return tf.shape(op)[dimension]
+
+tf_impl[shape_poly.dimension_size_p] = _dimension_size_jax2tf
 
 def _dim_as_value_jax2tf(dim: shape_poly.DimSize):
   dim_tf, = _eval_shape((dim,))
