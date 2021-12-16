@@ -410,7 +410,9 @@ def pdot(x, y, axis_name, pos_contract=((), ()), pos_batch=((), ()),
          precision=None):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
-  return pdot_p.bind(x, y, axis_name=axis_name,
+  pos_contract = tuple(map(tuple, pos_contract))
+  pos_batch = tuple(map(tuple, pos_batch))
+  return pdot_p.bind(x, y, axis_name=tuple(axis_name),
                      pos_contract=pos_contract, pos_batch=pos_batch,
                      precision=lax.canonicalize_precision(precision))
 
@@ -1437,8 +1439,8 @@ def _pdot_vmap_collective_rule(axis_size, frame_name, _, vals_in, dims_in, *, ax
   y_pos_batch = [d + (d >= y_dim) for d in y_pos_batch]
   remaining_axis_names = tuple(n for n in axis_name if n != frame_name)
   out = pdot_p.bind(x, y, axis_name=remaining_axis_names,
-                    pos_contract=[x_pos_contract, y_pos_contract],
-                    pos_batch=[x_pos_batch, y_pos_batch],
+                    pos_contract=(tuple(x_pos_contract), tuple(y_pos_contract)),
+                    pos_batch=(tuple(x_pos_batch), tuple(y_pos_batch)),
                     precision=precision)
   return out, None
 batching.axis_primitive_batchers[pdot_p] = _pdot_vmap_collective_rule
