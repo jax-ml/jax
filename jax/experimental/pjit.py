@@ -940,6 +940,10 @@ def _canonicalize_spec(in_axis_resources_flat: ParsedPartitionSpec, arg):
           "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources`. "
           f"Got GDA spec: {gda_ppspec.user_spec} and "
           f"pjit spec: {in_axis_resources_flat.user_spec} for GDA: {arg}")
+    # Return `gda_ppspec` only if `FROM_GDA` exists in in_axis_resources.
+    # This is because `gda_ppspec` and `in_axis_resources_flat` may not be
+    # equal at this stage. The above check canonicalizes the specs and then
+    # checks for equality (i.e. checks for equality given the rank of the input).
     if _is_from_gda(in_axis_resources_flat):
       return gda_ppspec
     else:
