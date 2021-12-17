@@ -386,10 +386,6 @@ def _gda_shard_arg(x, devices, indices):
   if x._global_mesh != pjit_mesh:
     raise ValueError("Pjit's mesh and GDA's mesh should be equal. Got Pjit "
                      f"mesh: {pjit_mesh},\n GDA mesh: {x._global_mesh}")
-  # TODO(yashkatariya): Add an assert to check for GDA's indices and pjit's
-  # indices. The check should be on local indices though. Running it on
-  # global indices creates a performance regression because it runs during
-  # runtime.
   return [s.data for s in x.local_shards]
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 

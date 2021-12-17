@@ -2047,6 +2047,8 @@ class MeshComputation:
 def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
   input_specs, input_indices, input_avals = [], [], []
   for gaval, axis, is_gda in safe_zip(global_in_avals, in_axes, in_is_gda):
+    # TODO(yashkatariya): Don't calculate input_indices and input_specs for GDA
+    # as GDA doesn't need it.
     if is_gda:
       aval = gaval
       mesh = global_mesh
