@@ -237,6 +237,38 @@ class PrngTest(jtu.JaxTestCase):
     key = random.unsafe_rbg_key(42)
     self.assertIs(key.impl, prng.unsafe_rbg_prng_impl)
 
+  def test_key_array_indexing_0d(self):
+    if not config.jax_enable_custom_prng:
+      self.skipTest("test requires config.jax_enable_custom_prng")
+    key = random.PRNGKey(1701)
+    self.assertEqual(key.shape, ())
+    self.assertEqual(key[None].shape, (1,))
+    self.assertRaisesRegex(IndexError, 'Too many indices for PRNGKeyArray.*',
+                           lambda: key[0])
+
+  def test_key_array_indexing_nd(self):
+    if not config.jax_enable_custom_prng:
+      self.skipTest("test requires config.jax_enable_custom_prng")
+    keys = vmap(vmap(random.PRNGKey))(jnp.arange(6).reshape((2, 3)))
+    self.assertEqual(keys.shape, (2, 3))
+    self.assertEqual(keys[0, 0].shape, ())
+    self.assertEqual(keys[0, 1].shape, ())
+    self.assertEqual(keys[0].shape, (3,))
+    self.assertEqual(keys[1, :].shape, (3,))
+    self.assertEqual(keys[:, 1].shape, (2,))
+    self.assertEqual(keys[None].shape, (1, 2, 3))
+    self.assertEqual(keys[None, None].shape, (1, 1, 2, 3))
+    self.assertEqual(keys[None, :, None].shape, (1, 2, 1, 3))
+    self.assertEqual(keys[None, None, None, 0, None, None, None, 1].shape,
+                      (1,) * 6)
+    self.assertEqual(keys[..., 1:, None].shape, (2, 2, 1))
+    self.assertEqual(keys[None, 0, ..., 1, None].shape, (1, 1))
+    self.assertRaisesRegex(IndexError, 'Too many indices for PRNGKeyArray.*',
+                           lambda: keys[0, 1, 2])
+    self.assertRaisesRegex(IndexError, 'Too many indices for PRNGKeyArray.*',
+                           lambda: keys[0, 1, None, 2])
+
+
 @jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomTest(jtu.JaxTestCase):
 

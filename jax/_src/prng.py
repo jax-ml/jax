@@ -30,7 +30,9 @@ from jax.interpreters import xla
 from jax._src.api import jit, vmap
 from jax._src.lib import xla_client
 from jax._src.lib import cuda_prng
-from jax._src.numpy.lax_numpy import _register_stackable
+from jax._src.numpy.lax_numpy import (
+    _canonicalize_tuple_index, _eliminate_deprecated_list_indexing,
+    _expand_bool_indices, _register_stackable)
 import jax._src.pretty_printer as pp
 from jax._src.util import prod
 
@@ -167,18 +169,12 @@ class PRNGKeyArray:
     return (PRNGKeyArray(self.impl, k) for k in iter(self._keys))
 
   def __getitem__(self, idx) -> 'PRNGKeyArray':
-    if not isinstance(idx, tuple):
-      idx = (idx,)
-    if any(type(i) is not int for i in idx):
-      raise NotImplementedError(
-          'PRNGKeyArray only supports indexing with integer indices. '
-          f'Cannot index at {idx}')
     base_ndim = len(self.impl.key_shape)
     ndim = self._keys.ndim - base_ndim
-    if len(idx) > ndim:
-      raise IndexError(
-          f'too many indices for PRNGKeyArray: array is {ndim}-dimensional '
-          f'but {len(idx)} were indexed')
+    indexable_shape = self.impl.key_shape[:ndim]
+    idx = _eliminate_deprecated_list_indexing(idx)
+    idx = _expand_bool_indices(idx, indexable_shape)
+    idx = _canonicalize_tuple_index(ndim, idx, array_name='PRNGKeyArray')
     return PRNGKeyArray(self.impl, self._keys[idx])
 
   def _fold_in(self, data: int) -> 'PRNGKeyArray':
