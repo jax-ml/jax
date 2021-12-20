@@ -1631,6 +1631,8 @@ class SparseObjectTest(jtu.JaxTestCase):
 
     assert isinstance(M, Obj)
     assert M.shape == shape
+    assert M.size == np.prod(shape)
+    assert M.ndim == len(shape)
     assert M.dtype == dtype
     assert M.nse == (M.todense() != 0).sum()
     assert M.data.dtype == dtype

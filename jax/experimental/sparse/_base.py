@@ -18,6 +18,7 @@ from typing import Tuple
 
 from jax import core
 import jax.numpy as jnp
+from jax._src import util
 
 
 class JAXSparse(abc.ABC):
@@ -26,6 +27,10 @@ class JAXSparse(abc.ABC):
   shape: Tuple[int, ...]
   nse: property
   dtype: property
+
+  @property
+  def size(self):
+    return util.prod(self.shape)
 
   @property
   def ndim(self):
