@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""JAX tools."""
+
 def _shell_quote(s):
     """Copy of bazel-skylib's shell.quote.
 
@@ -28,7 +30,13 @@ def _shell_quote(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
 def jax_to_hlo(name, deps, fn, input_shapes, constants = None):
-    """Creates a genrule that uses jax_to_hlo.py to make HLO from a JAX func.
+    jax_to_ir(name, deps, fn, input_shapes, constants = constants, format = "HLO")
+
+def jax_to_tf(name, deps, fn, input_shapes, constants = None):
+    jax_to_ir(name, deps, fn, input_shapes, constants = constants, format = "TF")
+
+def jax_to_ir(name, deps, fn, input_shapes, constants = None, format = "HLO"):
+    """Creates a genrule that uses jax_to_ir.py to make proto from a JAX func.
 
     Suppose we have
 
@@ -46,9 +54,9 @@ def jax_to_hlo(name, deps, fn, input_shapes, constants = None):
     Then we can invoke this macro as follows.
 
       $ cat your/thing/BUILD
-      load("//jax/tools:build_defs.bzl", "jax_to_hlo")
+      load("//jax/tools:build_defs.bzl", "jax_to_ir")
 
-      jax_to_hlo(
+      jax_to_ir(
         name = "prog_hlo",
         deps = ["//your/thing:prog"],
         fn = "your.thing.prog.fn",  # Fully-qualified module name
@@ -59,6 +67,7 @@ def jax_to_hlo(name, deps, fn, input_shapes, constants = None):
         constants = {
           "z": "3.14159",
         },
+        format = 'HLO',
       )
 
     This generates two build rules, named
@@ -73,7 +82,7 @@ def jax_to_hlo(name, deps, fn, input_shapes, constants = None):
     That is, the above macro will create a program which accepts parameters y
     and x, in that order.
 
-    Skylark doesn't support floating-point numbers without a special option, so
+    Starlark doesn't support floating-point numbers without a special option, so
     we need special rules to be able to pass fp values in `constants`.  Each
     dict value `v` is transformed as follows.
 
@@ -103,36 +112,42 @@ def jax_to_hlo(name, deps, fn, input_shapes, constants = None):
         will be in the order specified here.
       constants: Python dictionary mapping arg names to constant values they
         should take on, e.g. {"z": "float(3.14159")}.
+      format: Either HLO or TF.
     """
     if not constants:
         constants = {}
 
     # Our goal here is to create a py_binary which depends on `deps` and
-    # invokes the main function defined in jax_to_hlo.py.
+    # invokes the main function defined in jax_to_ir.py.
     #
     # At first blush it seems that we can do this in a straightforward way:
     #
-    #   native.py_binary(main = "jax_to_hlo.py").
+    #   native.py_binary(main = "jax_to_ir.py").
     #
     # The problem with this is that this py_binary lives in the user's package,
-    # whereas jax_to_hlo.py lives inside JAX's package.  Bazel delivers a stern
+    # whereas jax_to_ir.py lives inside JAX's package.  Bazel delivers a stern
     # warning if you name a file in `main` that's outside of your package.
     #
     # To avoid the warning, we generate a simple "main file" in the user's
     # package.  It only complicates the rules a bit.
-    runner = name + "_jax_to_hlo_main"
+    runner = name + "_jax_to_ir_main"
     native.genrule(
         name = runner + "_gen",
         outs = [runner + ".py"],
         cmd = """cat <<EOF > '$(location {runner}.py)'
 from absl import app
-import jax.tools.jax_to_hlo as jax_to_hlo
+import jax.tools.jax_to_ir as jax_to_ir
 
-jax_to_hlo.set_up_flags()
-app.run(jax_to_hlo.main)
+jax_to_ir.set_up_flags()
+app.run(jax_to_ir.main)
 EOF
         """.format(runner = runner),
     )
+
+    if format == "TF":
+        jax_to_ir_rule = "//third_party/py/jax/tools:jax_to_ir_with_tensorflow"
+    else:
+        jax_to_ir_rule = "//third_party/py/jax/tools:jax_to_ir"
 
     native.py_binary(
         name = runner,
@@ -142,7 +157,7 @@ EOF
         python_version = "PY3",
         deps = deps + [
             "//third_party/py/jax/jaxlib",
-            "//third_party/py/jax/tools:jax_to_hlo",
+            jax_to_ir_rule,
         ],
     )
 
@@ -151,7 +166,7 @@ EOF
     # Set JAX_PLATFORM_NAME to "cpu" to silence the "no GPU/TPU backend found,
     # falling back to CPU" warning.
     native.genrule(
-        name = name + "_jax_to_hlo_genrule",
+        name = name + "_jax_to_ir_genrule",
         outs = [name + ".pb", name + ".txt"],
         exec_tools = [runner],
         cmd = """
@@ -160,13 +175,15 @@ EOF
           --fn {fn} \
           --input_shapes {input_shapes} \
           --evaled_constants {constants} \
-          --hlo_proto_dest '$(location {name}.pb)' \
-          --hlo_text_dest '$(location {name}.txt)' \
+          --ir_format {format} \
+          --ir_dest '$(location {name}.pb)' \
+          --ir_human_dest '$(location {name}.txt)' \
         """.format(
             name = name,
             fn = fn,
             input_shapes = _shell_quote(str(input_shapes)),
             constants = _shell_quote(str(constants)),
             runner = runner,
+            format = _shell_quote(format),
         ),
     )
