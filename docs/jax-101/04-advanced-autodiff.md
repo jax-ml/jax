@@ -250,7 +250,10 @@ def f(x):
   return jnp.round(x)  # non-differentiable
 
 def straight_through_f(x):
-  return x + jax.lax.stop_gradient(f(x) - x)
+  # Create an exactly-zero expression with Sterbenz lemma that has
+  # an exactly-one gradient.
+  zero = x - jax.lax.stop_gradient(x)
+  return zero + jax.lax.stop_gradient(f(x))
 
 print("f(x): ", f(3.2))
 print("straight_through_f(x):", straight_through_f(3.2))
