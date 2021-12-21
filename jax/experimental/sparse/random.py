@@ -22,14 +22,16 @@ import jax.numpy as jnp
 from jax.experimental import sparse
 
 
-def random_bcoo(key, shape, *, dtype=jnp.float_, nse=0.2, n_batch=0, n_dense=0,
-                unique_indices=True, generator=random.uniform, **kwds):
+def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=jnp.int_,
+                nse=0.2, n_batch=0, n_dense=0, unique_indices=True,
+                sorted_indices=False, generator=random.uniform, **kwds):
   """Generate a random BCOO matrix.
 
   Args:
     key : random.PRNGKey to be passed to ``generator`` function.
     shape : tuple specifying the shape of the array to be generated.
     dtype : dtype of the array to be generated.
+    indices_dtype: dtype of the BCOO indicies.
     nse : number of specified elements in the matrix, or if 0 < nse < 1, a
       fraction of sparse dimensions to be specified (default: 0.2).
     n_batch : number of batch dimensions. must satisfy ``n_batch >= 0`` and
@@ -38,9 +40,11 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, nse=0.2, n_batch=0, n_dense=0,
       ``n_batch + n_dense <= len(shape)``.
     unique_indices : boolean specifying whether indices should be unique
       (default: True).
-    generator : function for generating random values accepting a key, shape, and
-      dtype. It defaults to :func:`jax.random.uniform`, and may be any function
-      with a similar signature.
+    sorted_indices : boolean specifying whether indices should be row-sorted in
+      lexicographical order (default: False).
+    generator : function for generating random values accepting a key, shape,
+      and dtype. It defaults to :func:`jax.random.uniform`, and may be any
+      function with a similar signature.
     **kwds : additional keyword arguments to pass to ``generator``.
 
   Returns:
@@ -74,6 +78,6 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, nse=0.2, n_batch=0, n_dense=0,
   keys = random.split(key, batch_size + 1)
   data_key, index_keys = keys[0], keys[1:]
   data = generator(data_key, shape=data_shape, dtype=dtype, **kwds)
-  indices = _indices(index_keys).reshape(indices_shape)
-
-  return sparse.BCOO((data, indices), shape=shape)
+  indices = _indices(index_keys).reshape(indices_shape).astype(indices_dtype)
+  mat = sparse.BCOO((data, indices), shape=shape)
+  return mat.sum_duplicates() if sorted_indices else mat

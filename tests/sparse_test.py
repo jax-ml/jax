@@ -1735,20 +1735,25 @@ class SparseObjectTest(jtu.JaxTestCase):
 
 class SparseRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
-        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
-       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      {"testcase_name": "_{}_indices_dtype={}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), indices_dtype, n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "indices_dtype": indices_dtype,
+       "n_batch": n_batch, "n_dense": n_dense}
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for dtype in jtu.dtypes.floating
+      for indices_dtype in jtu.dtypes.integer
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)))
-  def test_random_bcoo(self, shape, dtype, n_batch, n_dense):
+  def test_random_bcoo(self, shape, dtype, indices_dtype, n_batch, n_dense):
     key = jax.random.PRNGKey(1701)
-    mat = sparse.random_bcoo(key, shape=shape, dtype=dtype, n_batch=n_batch, n_dense=n_dense)
+    mat = sparse.random_bcoo(
+        key, shape=shape, dtype=dtype, indices_dtype=indices_dtype,
+        n_batch=n_batch, n_dense=n_dense)
 
     mat_dense = mat.todense()
     self.assertEqual(mat_dense.shape, shape)
     self.assertEqual(mat_dense.dtype, dtype)
+    self.assertEqual(mat.indices.dtype, indices_dtype)
 
     n_sparse = len(shape) - n_batch - n_dense
     batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
