@@ -122,14 +122,17 @@ Let's first look at the principles of data and computation placement in JAX.
 
 In JAX, the computation follows data placement. JAX arrays
 have two placement properties: 1) the device where the data resides;
-and 2) whether it is **committed** to the device or not (the data is sometimes 
+and 2) whether it is **committed** to the device or not (the data is sometimes
 referred to as being *sticky* to the device).
 
 By default, JAX arrays are placed uncommitted on the default device
-(``jax.devices()[0]``), which is the first GPU by default. If no GPU is 
-present, ``jax.devices()[0]`` is the first CPU. The default device can 
-be set to "cpu" or "gpu" manually by setting the environment variable 
-``JAX_PLATFORM_NAME`` or the absl flag ``--jax_platform_name``.
+(``jax.devices()[0]``), which is the first GPU or TPU by default. If no GPU or
+TPU is present, ``jax.devices()[0]`` is the CPU. The default device can
+temporarily overridden with the :func:`jax.default_device` context manager, or
+set for the whole process by setting the environment variable ``JAX_PLATFORMS``
+or the absl flag ``--jax_platforms`` to "cpu", "gpu", or "tpu"
+(``JAX_PLATFORMS`` can also be a list of platforms, which determines which
+platforms are available in priority order).
 
 >>> from jax import numpy as jnp
 >>> print(jnp.ones(3).device_buffer.device())  # doctest: +SKIP
@@ -148,15 +151,15 @@ gpu:2
 
 Computations involving some committed inputs will happen on the
 committed device and the result will be committed on the
-same device. Invoking an operation on arguments that are committed 
+same device. Invoking an operation on arguments that are committed
 to more than one device will raise an error.
 
-You can also use :func:`jax.device_put` without a ``device`` parameter. If the data 
-is already on a device (committed or not), it's left as-is. If the data isn't on any 
-device—that is, it's a regular Python or NumPy value—it's placed uncommitted on the default 
+You can also use :func:`jax.device_put` without a ``device`` parameter. If the data
+is already on a device (committed or not), it's left as-is. If the data isn't on any
+device—that is, it's a regular Python or NumPy value—it's placed uncommitted on the default
 device.
 
-Jitted functions behave like any other primitive operations—they will follow the 
+Jitted functions behave like any other primitive operations—they will follow the
 data and will show errors if invoked on data committed on more than one device.
 
 ``jnp.device_put(jnp.zeros(...), jax.devices()[1])`` or similar will actually create the
@@ -164,8 +167,8 @@ array of zeros on ``jax.devices()[1]``, instead of creating the array on the def
 device then moving it. This is thanks to some laziness in array creation, which holds
 for all the constant creation operations (``ones``, ``full``, ``eye``, etc).
 
-(As of April 2020, :func:`jax.jit` has a `device` parameter that affects the device 
-placement. That parameter is experimental, is likely to be removed or changed, 
+(As of April 2020, :func:`jax.jit` has a `device` parameter that affects the device
+placement. That parameter is experimental, is likely to be removed or changed,
 and its use is not recommended.)
 
 For a worked-out example, we recommend reading through
@@ -259,7 +262,7 @@ Broadly speaking:
   they are dispatched asynchronously (see :ref:`async-dispatch`); and they can
   be executed on CPU, GPU, or TPU, each of which have vastly different and continuously
   evolving performance characteristics.
-  
+
 These architectural differences make meaningful direct benchmark comparisons between
 NumPy and JAX difficult.
 

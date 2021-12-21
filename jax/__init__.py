@@ -53,6 +53,7 @@ from jax._src.config import (
   transfer_guard_host_to_device as transfer_guard_host_to_device,
   transfer_guard_device_to_device as transfer_guard_device_to_device,
   transfer_guard_device_to_host as transfer_guard_device_to_host,
+  default_device as default_device,
 )
 from .core import eval_context as ensure_compile_time_eval
 from jax._src.api import (

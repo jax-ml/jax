@@ -456,6 +456,13 @@ def _cpp_jit(
     raise ValueError("can't specify both a device and a backend for jit, "
                      f"got device={device} and backend={backend}.")
 
+  if device is not None:
+    jit_device = device
+  elif backend is not None:
+    jit_device = xb.get_backend(backend).get_default_device_assignment(1)[0]
+  else:
+    jit_device = None
+
   @api_boundary
   def cache_miss(*args, **kwargs):
     ### This first part is basically the same code as in _python_jit.
@@ -531,7 +538,7 @@ def _cpp_jit(
                              static_argnums=static_argnums,
                              static_argnames=static_argnames,
                              donate_argnums=donate_argnums,
-                             cache=_cpp_jit_cache)
+                             cache=_cpp_jit_cache, jit_device=jit_device)
   f_jitted = wraps(fun)(cpp_jitted_f)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,

@@ -27,6 +27,7 @@ import warnings
 from jax._src import lib
 from jax._src.lib import jax_jit
 from jax._src.lib import transfer_guard_lib
+from jax._src.lib import xla_client
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.
@@ -324,6 +325,45 @@ class Config:
     Returns:
       A contextmanager to control the thread-local state value.
     """
+    def validate(new_val):
+      if new_val is not None and not isinstance(new_val, str):
+        raise ValueError(f"new string config value must be None or of type str,"
+                         f" got {new_val} of type {type(new_val)}.")
+
+    return self.define_string_or_object_state(
+        name, default, help, update_global_hook, update_thread_local_hook,
+        validate)
+
+  def define_string_or_object_state(
+      self, name: str, default: Any, help: str,
+      update_global_hook: Optional[Callable[[Any], None]] = None,
+      update_thread_local_hook: Optional[Callable[[Any], None]] = None,
+      validate_new_val_hook: Optional[Callable[[Any], None]] = None):
+    """Set up thread-local state and return a contextmanager for managing it.
+
+    Similar to ``define_string_state``, except the context manager will accept
+    any object, not just a string. Any value passed via commandline flag or
+    environment variable will be treated as a string.
+
+    Args:
+      name: string, converted to lowercase to define the name of the config
+        option (and absl flag). It is converted to uppercase to define the
+        corresponding shell environment variable.
+      default: string, a default value for the option.
+      help: string, used to populate the flag help information as well as the
+        docstring of the returned context manager.
+      update_global_hook: an optional callback that is called with the updated
+        value of the global state when it is altered or set initially.
+      update_thread_local_hook: an optional callback that is called with the
+        updated value of the thread-local state when it is altered or set
+        initially.
+      validate_new_val_hook: an optional callback that is called with the new
+        value on any update, and should raise an error if the new value is
+        invalid.
+
+    Returns:
+      A contextmanager to control the thread-local state value.
+    """
     name = name.lower()
     default = os.getenv(name.upper(), default)
     self.DEFINE_string(name, default, help=help,
@@ -335,12 +375,8 @@ class Config:
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
-    def validate(new_val):
-      if new_val is not None and not isinstance(new_val, str):
-        raise ValueError(f"new string config value must be None or of type str,"
-                         f" got {new_val} of type {type(new_val)}.")
-
-    return _StateContextManager(name, help, update_thread_local_hook, validate)
+    return _StateContextManager(name, help, update_thread_local_hook,
+                                validate_new_val_hook)
 
   def _trace_context(self):
     """Returns a tuple of configuration values that affect tracing.
@@ -435,7 +471,7 @@ already_configured_with_absl = False
 # a global/thread-local state. These methods allow updates to part of the
 # state when a configuration value changes.
 
-class GlobalJitState(NamedTuple):
+class GlobalExtraJitContext(NamedTuple):
   numpy_rank_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
@@ -443,11 +479,12 @@ class GlobalJitState(NamedTuple):
 
 def update_global_jit_state(**kw):
   gs = jax_jit.global_state()
-  context = gs.extra_jit_context or GlobalJitState()
-  gs.extra_jit_context = context._replace(**kw)
+  if gs.extra_jit_context is None:
+    gs.extra_jit_context = GlobalExtraJitContext()
+  gs.extra_jit_context = gs.extra_jit_context._replace(**kw)
 
 
-class ThreadLocalJitState(NamedTuple):
+class ThreadLocalExtraJitContext(NamedTuple):
   dynamic_trace_state: Optional[Any] = None
   numpy_rank_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
@@ -456,8 +493,9 @@ class ThreadLocalJitState(NamedTuple):
 
 def update_thread_local_jit_state(**kw):
   tls = jax_jit.thread_local_state()
-  context = tls.extra_jit_context or ThreadLocalJitState()
-  tls.extra_jit_context = context._replace(**kw)
+  if tls.extra_jit_context is None:
+    tls.extra_jit_context = ThreadLocalExtraJitContext()
+  tls.extra_jit_context = tls.extra_jit_context._replace(**kw)
 
 
 # TODO(mattjj): remove all uses of this flag
@@ -638,6 +676,34 @@ enable_x64 = config.define_bool_state(
 config._contextmanager_flags.remove("jax_enable_x64")
 
 Config.x64_enabled = Config.jax_enable_x64  # type: ignore
+
+
+def _update_default_device_global(val):
+  lib.jax_jit.global_state().default_device = val
+
+def _update_default_device_thread_local(val):
+  lib.jax_jit.thread_local_state().default_device = val
+
+def _validate_default_device(val):
+  if val is not None and not isinstance(val, xla_client.Device):
+    raise ValueError("jax.default_device must be passed a Device object (e.g. "
+                     f"`jax.devices('cpu')[0]`), got: {repr(val)}")
+
+# TODO(skye): default_device only accepts devices for now. Make it work with
+# platform names as well (e.g. "cpu" to mean the same as jax.devices("cpu")[0]).
+default_device = config.define_string_or_object_state(
+    name='jax_default_device',
+    default=None,
+    help=(
+        'Configure the default device for JAX operations. '
+        'Set to a Device object (e.g. ``jax.devices("cpu")[0]``) to use that Device as the '
+        'default device for JAX operations and jit\'d function calls (there is '
+        'no effect on multi-device computations, e.g. pmapped function calls). '
+        'Set to None to use the system default device. See '
+        ':ref:`faq-data-placement` for more information on device placement.'),
+    update_global_hook=_update_default_device_global,
+    update_thread_local_hook=_update_default_device_thread_local,
+    validate_new_val_hook=_validate_default_device)
 
 def _update_disable_jit_global(val):
   lib.jax_jit.global_state().disable_jit = val
