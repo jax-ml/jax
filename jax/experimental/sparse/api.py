@@ -31,11 +31,10 @@ Further down are some examples of potential high-level wrappers for sparse objec
 """
 from functools import partial
 
-import numpy as np
-
 import jax
 from jax import core
 from jax import tree_util
+from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.bcoo import BCOO
 from jax.experimental.sparse.coo import COO
 from jax.experimental.sparse.csr import CSR, CSC
@@ -44,7 +43,6 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
 from jax._src import dtypes
-import jax.numpy as jnp
 
 
 #----------------------------------------------------------------------
@@ -61,9 +59,7 @@ def todense(arr):
 @todense_p.def_impl
 def _todense_impl(*bufs, tree):
   arr = tree_util.tree_unflatten(tree, bufs)
-  if isinstance(arr, (jnp.ndarray, np.ndarray)):
-    return arr
-  return arr.todense()
+  return arr.todense() if isinstance(arr, JAXSparse) else arr
 
 @todense_p.def_abstract_eval
 def _todense_abstract_eval(*bufs, tree):
