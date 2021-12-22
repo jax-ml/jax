@@ -41,7 +41,7 @@ Usage:
 
   $ python jax_to_ir.py \
     --fn prog.fn \
-    --input_shapes '[("y": "f32[128,32]"), ("x", "f32[8,128]")]' \
+    --input_shapes '[("y", "f32[128,32]"), ("x", "f32[8,128]")]' \
     --constants '{"z": 3.14159}' \
     --ir_format HLO \
     --ir_human_dest /tmp/fn_hlo.txt \
