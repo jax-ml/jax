@@ -148,9 +148,9 @@ TREE_STRINGS = (
 # pytest expects "tree_util_test.ATuple"
 STRS = []
 for tree_str in TREE_STRINGS:
-    tree_str = re.escape(tree_str)
-    tree_str = tree_str.replace("__main__", ".*")
-    STRS.append(tree_str)
+  tree_str = re.escape(tree_str)
+  tree_str = tree_str.replace("__main__", ".*")
+  STRS.append(tree_str)
 TREE_STRINGS = STRS
 
 LEAVES = (
@@ -240,22 +240,41 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(out, (((1, [3]), (2, None)),
                            (([3, 4, 5], ({"foo": "bar"}, 7, [5, 6])))))
 
-  def testFlattenIsLeaf(self):
+  @parameterized.parameters(
+      tree_util.tree_leaves,
+      lambda tree, is_leaf: tree_util.tree_flatten(tree, is_leaf)[0])
+  def testFlattenIsLeaf(self, leaf_fn):
     x = [(1, 2), (3, 4), (5, 6)]
-    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: False)
+    leaves = leaf_fn(x, is_leaf=lambda t: False)
     self.assertEqual(leaves, [1, 2, 3, 4, 5, 6])
-    leaves, _ = tree_util.tree_flatten(
-        x, is_leaf=lambda t: isinstance(t, tuple))
+    leaves = leaf_fn(x, is_leaf=lambda t: isinstance(t, tuple))
     self.assertEqual(leaves, x)
-    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: isinstance(t, list))
+    leaves = leaf_fn(x, is_leaf=lambda t: isinstance(t, list))
     self.assertEqual(leaves, [x])
-    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: True)
+    leaves = leaf_fn(x, is_leaf=lambda t: True)
     self.assertEqual(leaves, [x])
 
     y = [[[(1,)], [[(2,)], {"a": (3,)}]]]
-    leaves, _ = tree_util.tree_flatten(
-        y, is_leaf=lambda t: isinstance(t, tuple))
+    leaves = leaf_fn(y, is_leaf=lambda t: isinstance(t, tuple))
     self.assertEqual(leaves, [(1,), (2,), (3,)])
+
+  @parameterized.parameters(
+      tree_util.tree_structure,
+      lambda tree, is_leaf: tree_util.tree_flatten(tree, is_leaf)[1])
+  def testStructureIsLeaf(self, structure_fn):
+    x = [(1, 2), (3, 4), (5, 6)]
+    treedef = structure_fn(x, is_leaf=lambda t: False)
+    self.assertEqual(treedef.num_leaves, 6)
+    treedef = structure_fn(x, is_leaf=lambda t: isinstance(t, tuple))
+    self.assertEqual(treedef.num_leaves, 3)
+    treedef = structure_fn(x, is_leaf=lambda t: isinstance(t, list))
+    self.assertEqual(treedef.num_leaves, 1)
+    treedef = structure_fn(x, is_leaf=lambda t: True)
+    self.assertEqual(treedef.num_leaves, 1)
+
+    y = [[[(1,)], [[(2,)], {"a": (3,)}]]]
+    treedef = structure_fn(y, is_leaf=lambda t: isinstance(t, tuple))
+    self.assertEqual(treedef.num_leaves, 3)
 
   @parameterized.parameters(*TREES)
   def testRoundtripIsLeaf(self, tree):

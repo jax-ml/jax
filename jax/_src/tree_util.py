@@ -68,13 +68,13 @@ def tree_unflatten(treedef, leaves):
   """
   return treedef.unflatten(leaves)
 
-def tree_leaves(tree):
+def tree_leaves(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Gets the leaves of a pytree."""
-  return pytree.flatten(tree)[0]
+  return pytree.flatten(tree, is_leaf)[0]
 
-def tree_structure(tree):
+def tree_structure(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Gets the treedef for a pytree."""
-  return pytree.flatten(tree)[1]
+  return pytree.flatten(tree, is_leaf)[1]
 
 def treedef_tuple(treedefs):
   """Makes a tuple treedef from a list of child treedefs."""
