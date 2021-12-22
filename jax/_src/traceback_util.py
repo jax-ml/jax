@@ -15,10 +15,13 @@
 import os
 import traceback
 import types
+from typing import Any, Callable, TypeVar
 
 import jax
 from jax._src.lib import xla_extension
 from jax._src import util
+
+C = TypeVar("C", bound=Callable[..., Any])
 
 _exclude_paths = [__file__, util.__file__]
 
@@ -132,7 +135,7 @@ def filtering_mode():
       mode = "remove_frames"
   return mode
 
-def api_boundary(fun):
+def api_boundary(fun: C) -> C:
   '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
 
   When an exception occurs below ``fun``, this appends to it a custom
