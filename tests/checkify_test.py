@@ -66,6 +66,23 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), 'out-of-bounds indexing')
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_update={update_fn}", "update_fn": update_fn}
+      for update_fn in ["set", "add", "multiply", "divide", "power", "min",
+                        "max", "get"])
+  def test_jit_oob_update(self, update_fn):
+    def f(x, i):
+      return getattr(x.at[i], update_fn)(1.)
+
+    f = jax.jit(f)
+
+    err, _ = checkify.checkify(f)(jnp.arange(3), 2)
+    self.assertIs(err.get(), None)
+
+    err, _ = checkify.checkify(f)(jnp.arange(3), 3)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), 'out-of-bounds indexing')
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
       for jit in [False, True]))
