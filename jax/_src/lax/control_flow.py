@@ -399,7 +399,7 @@ def _pred_bcast_select(c, pred, x, y, x_y_aval: core.AbstractValue):
     bcast_pred = xops.BroadcastInDim(pred, x_shape, list(range(len(pred_shape))))
     return xops.Select(bcast_pred, x, y)
 
-def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
+def _while_loop_batching_rule(axis_size, axis_name, args, dims,
                               cond_nconsts, cond_jaxpr,
                               body_nconsts, body_jaxpr):
   orig_batched = [d is not batching.not_mapped for d in dims]
@@ -415,7 +415,7 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
   for _ in range(1 + len(carry_bat)):
     _, carry_bat_out = batching.batch_jaxpr(
         body_jaxpr, axis_size, bconst_bat + carry_bat, instantiate=carry_bat,
-        axis_name=axis_name, main_type=main_type)
+        axis_name=axis_name)
     if carry_bat == carry_bat_out:
       break
     carry_bat = safe_map(operator.or_, carry_bat, carry_bat_out)
@@ -426,7 +426,7 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
   # batched.
   _, (pred_bat,) = batching.batch_jaxpr(
       cond_jaxpr, axis_size, cconst_bat + carry_bat, instantiate=False,
-      axis_name=axis_name, main_type=main_type)
+      axis_name=axis_name)
 
   if pred_bat:
     # If the predicate is batched, we have to batch *all* of the carry
@@ -435,10 +435,10 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
     carry_dims = [0] * len(carry_bat)
     body_jaxpr_batched, _ = batching.batch_jaxpr_axes(
         body_jaxpr, axis_size, bconst_dims + carry_dims,
-        carry_dims, axis_name=axis_name, main_type=main_type)
+        carry_dims, axis_name=axis_name)
     cond_jaxpr_batched, _ = batching.batch_jaxpr_axes(
         cond_jaxpr, axis_size, cconst_dims + carry_dims, [0],
-        axis_name=axis_name, main_type=main_type)
+        axis_name=axis_name)
   else:
     # If the predicate is not batched, we can look at the `cond_jaxpr`'s out
     # shape to determine the rank of the predicate. From this rank we pick the
@@ -449,12 +449,12 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
     carry_dims = [cond_rank if b else None for b in carry_bat]
     body_jaxpr_batched, _ = batching.batch_jaxpr_axes(
         body_jaxpr, axis_size, bconst_dims + carry_dims, carry_dims,
-        axis_name=axis_name, main_type=main_type)
+        axis_name=axis_name)
     # Now we need to rebatch the `cond_jaxpr` according to the new dims of the
     # carry.
     cond_jaxpr_batched, _ = batching.batch_jaxpr_axes(
         cond_jaxpr, axis_size, cconst_dims + carry_dims, (None,),
-        axis_name=axis_name, main_type=main_type)
+        axis_name=axis_name)
 
   # To prepare the `init` to the `while_p`, we broadcast values if they are
   # unbatched and need to have an out axis. If their current batch axis does not
@@ -1051,7 +1051,7 @@ def _bcast_select(pred, on_true, on_false):
     pred = lax.broadcast_in_dim(pred, np.shape(on_true), idx)
   return lax.select(pred, on_true, on_false)
 
-def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, linear):
+def _cond_batching_rule(axis_size, axis_name, args, dims, branches, linear):
   index, *ops = args
   index_dim, *op_dims = dims
 
@@ -1064,7 +1064,7 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
     index, *ops = [batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims)]
 
     branches_batched = [
-        batching.batch_jaxpr(jaxpr, axis_size, [True] * len(ops), True, axis_name, main_type)[0]
+        batching.batch_jaxpr(jaxpr, axis_size, [True] * len(ops), True, axis_name)[0]
         for jaxpr in branches]
 
     branch_outs = []
@@ -1084,11 +1084,11 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
            for b, x, d in zip(ops_bat, ops, op_dims)]
 
     branches_out_bat = [
-        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, False, axis_name, main_type)[1]
+        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, False, axis_name)[1]
         for jaxpr in branches]
     out_bat = [any(bat) for bat in zip(*branches_out_bat)]
     branches_batched = tuple(
-        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, out_bat, axis_name, main_type)[0]
+        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, out_bat, axis_name)[0]
         for jaxpr in branches)
 
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
@@ -2052,7 +2052,7 @@ def _make_closed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.Abstrac
   return core.ClosedJaxpr(jaxpr, consts)
 
 
-def _scan_batching_rule(axis_size, axis_name, main_type, args, dims, reverse, length,
+def _scan_batching_rule(axis_size, axis_name, args, dims, reverse, length,
                         jaxpr, num_consts, num_carry, linear, unroll):
   num_ys = len(jaxpr.out_avals) - num_carry
   orig_batched = [d is not batching.not_mapped for d in dims]
@@ -2069,8 +2069,7 @@ def _scan_batching_rule(axis_size, axis_name, main_type, args, dims, reverse, le
     jaxpr_batched, batched_out = batching.batch_jaxpr(
         jaxpr, axis_size, batched,
         instantiate=carry_batched + [False] * num_ys,
-        axis_name=axis_name,
-        main_type=main_type)
+        axis_name=axis_name)
     carry_batched_out, ys_batched = batched_out[:num_carry], batched_out[num_carry:]
     if carry_batched_out == carry_batched:
       break
@@ -2676,8 +2675,8 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
   return [None] * sum(const_lengths) + cotangent_b
 
 
-def _linear_solve_batching_rule(axis_size, axis_name, main_type, args, dims,
-                                const_lengths, jaxprs):
+def _linear_solve_batching_rule(axis_size, axis_name, args, dims, const_lengths,
+                                jaxprs):
   orig_bat = [d is not batching.not_mapped for d in dims]
 
   params, b = _split_linear_solve_args(args, const_lengths)
@@ -2696,28 +2695,28 @@ def _linear_solve_batching_rule(axis_size, axis_name, main_type, args, dims,
     # Apply vecmat and solve -> new batched parts of x
     solve_jaxpr_batched, solve_x_bat = batching.batch_jaxpr(
         solve, axis_size, solve_bat + b_bat, instantiate=x_bat,
-        axis_name=axis_name, main_type=main_type)
+        axis_name=axis_name)
     if vecmat is None:
       vecmat_jaxpr_batched = None
       x_bat_out = solve_x_bat
     else:
       vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
           vecmat, axis_size, vecmat_bat + b_bat, instantiate=x_bat,
-          axis_name=axis_name, main_type=main_type)
+          axis_name=axis_name)
       # batch all aux data by default
       x_bat_out = _map(operator.or_, vecmat_x_bat + [True] * num_aux, solve_x_bat)
 
     # Apply matvec and solve_t -> new batched parts of b
     matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
         matvec, axis_size, matvec_bat + x_bat_out, instantiate=b_bat,
-        axis_name=axis_name, main_type=main_type)
+        axis_name=axis_name)
     if solve_t is None:
       solve_t_jaxpr_batched = None
       b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
     else:
       solve_t_jaxpr_batched, solve_t_b_aux_bat = batching.batch_jaxpr(
           solve_t, axis_size, solve_t_bat + x_bat_out, instantiate=b_bat,
-          axis_name=axis_name, main_type=main_type)
+          axis_name=axis_name)
       assert len(solve_t_b_aux_bat) == len(orig_b_bat) + num_aux
       solve_t_b_bat, _ = split_list(solve_t_b_aux_bat, [len(orig_b_bat)])
       b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,

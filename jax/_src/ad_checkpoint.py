@@ -382,13 +382,12 @@ def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr, **params):
   return tree_unflatten(cell.treedef, in_cts)  # type: ignore
 ad.reducing_transposes[remat_p] = remat_transpose
 
-def remat_vmap(axis_size, axis_name, main_type, args, dims, *, jaxpr, **params):
+def remat_vmap(axis_size, axis_name, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
   in_batched = [d is not batching.not_mapped for d in dims]
   jaxpr_ = core.ClosedJaxpr(jaxpr, ())
   jaxpr_batched_, out_batched = batching.batch_jaxpr(
-      jaxpr_, axis_size, in_batched, instantiate=False, axis_name=axis_name,
-      main_type=main_type)
+      jaxpr_, axis_size, in_batched, instantiate=False, axis_name=axis_name)
   jaxpr_batched, consts = jaxpr_batched_.jaxpr, jaxpr_batched_.consts
   out_dims = [0 if b else None for b in out_batched]
   return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims

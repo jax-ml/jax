@@ -156,8 +156,7 @@ class BatchTrace(Trace):
     raise NotImplementedError(msg.format(primitive))
 
   def get_axis_primitive_batcher(self, primitive, frame):
-    return partial(axis_primitive_batchers[primitive],
-        frame.size, frame.name, frame.main_trace.trace_type)
+    return partial(axis_primitive_batchers[primitive], frame.size, frame.name)
 
   def get_frame(self, vals, dims) -> core.AxisEnvFrame:
     if self.axis_name is core.no_axis_name:
@@ -289,7 +288,7 @@ class BatchTrace(Trace):
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims)
     bwd = batch_custom_vjp_bwd(bwd, self.axis_name, axis_size,
-                               out_dims2, in_dims, self.main.trace_type)
+                               out_dims2, in_dims)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
@@ -309,15 +308,15 @@ def _main_trace_for_axis_names(main_trace: core.MainTrace,
 ### API for batching callables with vmappable inputs and outputs
 
 def batch(fun: lu.WrappedFun, axis_name: core.AxisName, axis_size,
-          in_dims, out_dim_dests, main_type: Type[BatchTrace] = BatchTrace,
+          in_dims, out_dim_dests,
           ) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
   f = _batch_inner(fun, axis_size, out_dim_dests)
-  return _batch_outer(f, axis_name, axis_size, in_dims, main_type)
+  return _batch_outer(f, axis_name, axis_size, in_dims)
 
 @lu.transformation
-def _batch_outer(axis_name, axis_size, in_dims, main_type, *in_vals):
-  with core.new_main(main_type, axis_name=axis_name) as main:
+def _batch_outer(axis_name, axis_size, in_dims, *in_vals):
+  with core.new_main(BatchTrace, axis_name=axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
       outs = yield (main, in_dims, *in_vals), {}
       del main
@@ -339,8 +338,7 @@ def vtile(f_flat: lu.WrappedFun,
           in_axes_flat: Tuple[Optional[int], ...],
           out_axes_flat: Tuple[Optional[int], ...],
           tile_size: Optional[int],
-          axis_name: core.AxisName,
-          main_type: Type[BatchTrace] = BatchTrace):
+          axis_name: core.AxisName):
   @curry
   def tile_axis(arg, axis: Optional[int], tile_size):
     if axis is None:
@@ -365,7 +363,7 @@ def vtile(f_flat: lu.WrappedFun,
     yield map(untile_axis, outputs_flat, out_axes_flat)
 
   return _map_to_tile(batch(
-      f_flat, axis_name, tile_size, in_axes_flat, out_axes_flat, main_type=main_type))
+      f_flat, axis_name, tile_size, in_axes_flat, out_axes_flat))
 
 ### API for batching functions with jaxpr type inputs and outputs
 
@@ -384,7 +382,7 @@ def batch_subtrace(main, in_dims, *in_vals):
 
 ### API for batching jaxprs
 
-def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name, main_type):
+def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name):
   assert (isinstance(instantiate, bool) or
           isinstance(instantiate, (list, tuple)) and
           all(isinstance(b, bool) for b in instantiate))
@@ -393,13 +391,12 @@ def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name, mai
   in_axes = [0 if b else not_mapped for b in in_batched]
   out_axes_dest = [0 if inst else zero_if_mapped for inst in instantiate]
   return batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
-                          axis_name, main_type)
+                          axis_name)
 
-def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name,
-                     main_type):
+def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_batched = _batch_jaxpr_inner(f, axis_size, out_axes_dest)
-  f = _batch_jaxpr_outer(f, axis_name, axis_size, in_axes, main_type)
+  f = _batch_jaxpr_outer(f, axis_name, axis_size, in_axes)
   avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval) if b is not not_mapped
               else aval for aval, b in zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
@@ -426,14 +423,14 @@ def _batch_jaxpr_inner(axis_size, out_axes_dest, main, in_axes, *in_vals):
   yield out_vals, out_batched
 
 @lu.transformation
-def _batch_jaxpr_outer(axis_name, axis_size, in_dims, main_type, *in_vals):
+def _batch_jaxpr_outer(axis_name, axis_size, in_dims, *in_vals):
   if axis_size is None:
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              and not isinstance(core.get_aval(x), core.AbstractUnit)
              else ax for x, ax in zip(in_vals, in_dims)]
-  with core.new_main(main_type, axis_name=axis_name) as main:
+  with core.new_main(BatchTrace, axis_name=axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
       out_vals = yield (main, in_dims, *in_vals), {}
       del main
@@ -471,9 +468,9 @@ def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
                      out_tangent_bds, out_dims, out_tangents)
   yield out_primals + out_tangents, out_dims * 2
 
-def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests, main_type):
+def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests):
   bwd, out_dims_thunk = batch_subtrace(bwd)
-  bwd_ = _batch_outer(bwd, axis_name, axis_size, in_dims, main_type)
+  bwd_ = _batch_outer(bwd, axis_name, axis_size, in_dims)
   return _match_axes_and_sum(bwd_, axis_size, axis_name, out_dims_thunk, out_dim_dests)
 
 @lu.transformation

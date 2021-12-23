@@ -605,7 +605,7 @@ def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
   return vals_out, [d if d is batching.not_mapped else 0 for d in dims_in]
 
 def _batched_reduction_collective(
-    prim, if_unmapped, axis_size, frame_name, _, vals_in, dims_in, axes,
+    prim, if_unmapped, axis_size, frame_name, vals_in, dims_in, axes,
     axis_index_groups):
   assert prim.multiple_results
   assert frame_name in axes
@@ -794,7 +794,7 @@ def _ppermute_transpose_rule(t, x, perm, axis_name):
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
-def _ppermute_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, perm):
+def _ppermute_batcher(axis_size, frame_name, vals_in, dims_in, axis_name, perm):
   (v,), (d,) = vals_in, dims_in
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
@@ -910,7 +910,7 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
       axis_index_groups=axis_index_groups)
   return result, d
 
-def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
+def _all_to_all_batched_collective(axis_size, frame_name, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups):
   if axis_index_groups is not None:
@@ -1144,7 +1144,7 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
       tiled=tiled)
   return result, d
 
-def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in,
+def _all_gather_batched_collective(frame_size, frame_name, vals_in, dims_in,
                                    all_gather_dimension, axis_name,
                                    axis_index_groups, axis_size, tiled):
   assert axis_index_groups is None, "axis_index_groups not supported in vmap"
@@ -1427,7 +1427,7 @@ def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch, precision):
                  if name not in axis_name}
   return pos_aval.update(named_shape=named_shape)
 
-def _pdot_vmap_collective_rule(axis_size, frame_name, _, vals_in, dims_in, *, axis_name,
+def _pdot_vmap_collective_rule(axis_size, frame_name, vals_in, dims_in, *, axis_name,
                                pos_contract, pos_batch, precision):
   x, y = vals_in
   x_dim, y_dim = dims_in
@@ -1528,7 +1528,7 @@ def _pgather_batcher(vals_in, dims_in, *, axes):
   else:
     assert False  # This shouldn't get called anyway
 
-def _pgather_collective_batcher(axis_size, frame_name, _, vals_in, dims_in, *, axes):
+def _pgather_collective_batcher(axis_size, frame_name, vals_in, dims_in, *, axes):
   src, idx = vals_in
   dsrc, didx = dims_in
   if dsrc is batching.not_mapped:
