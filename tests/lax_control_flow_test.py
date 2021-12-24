@@ -2735,7 +2735,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def func(carry, x):
       new_carry = (carry[0] + x, carry[1] + carry[0], carry[2] + carry[1])
       return new_carry, None
-    init_weak = 0., 0., 0.  # Python scalars are weakly-typed.
+    init_weak = 0, 0, 0  # Python scalars are weakly-typed.
     x = jnp.ones(5, dtype=jnp.float_)
     _ = lax.scan(func, init_weak, x)  # don't crash
 

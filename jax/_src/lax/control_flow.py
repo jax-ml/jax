@@ -1642,9 +1642,7 @@ def _promote_dtypes_jaxpr(
     jaxpr: core.ClosedJaxpr, dtypes_in: Tuple[DTypeWeakTypePair, ...],
     out_dtype_min: Tuple[DTypeWeakTypePair, ...]
   ) -> Tuple[core.ClosedJaxpr, Tuple[DTypeWeakTypePair, ...]]:
-  # This implementation relies on evaluating a jaxpr with strong-typed inputs
-  # corresponding to weak-typed binders, even when the dtypes disagree (e.g.
-  # weak-typed int32[] binder and strong-typed int16[] input value).
+  # TODO TODO we need a transform which handles weak type promo
   @lu.wrap_init
   def f(*args):
     outs = core.jaxpr_as_fun(jaxpr)(*args)
