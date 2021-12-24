@@ -408,10 +408,9 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
   cconst_dims, bconst_dims, init_dims = split_list(dims, [cond_nconsts, body_nconsts])
 
   carry_bat = init_bat
-  # Fixpoint computation of which carry are batched: either
-  # batched from init, or the carry out is batched. Each iteration promotes
-  # at least one carry to batched. We need at most len(carry) iterations to
-  # reach a fixpoint.
+  # Fixpoint computation of which carry are batched: either batched from init,
+  # or the carry out is batched. Each iteration promotes at least one carry to
+  # batched. We need at most len(carry) iterations to reach a fixpoint.
   for _ in range(1 + len(carry_bat)):
     _, carry_bat_out = batching.batch_jaxpr(
         body_jaxpr, axis_size, bconst_bat + carry_bat, instantiate=carry_bat,
@@ -420,7 +419,7 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
       break
     carry_bat = safe_map(operator.or_, carry_bat, carry_bat_out)
   else:
-    assert False, "Fixpoint not reached"
+    raise RuntimeError("Fixpoint not reached")
 
   # Knowing how the carry is batched now, we can determine if the predicate is
   # batched.
@@ -489,7 +488,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
       break
     carry_nz = _map(operator.or_, carry_nz, nonzeros_out)
   else:
-    assert False, "Fixpoint not reached"
+    raise RuntimeError("Fixpoint not reached")
 
   nonzeros = cconst_nz + body_nonzeros
   tangents = [ad.instantiate_zeros(t) if nz else t
@@ -551,8 +550,8 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
                 body_nconsts=body_nconsts, body_jaxpr=body_jaxpr)
 
   cond_consts_uk, body_consts_uk, carry_init_uk = split_list(unknowns, [cond_nconsts, body_nconsts])
-  # Fixpoint computation of unknown carry. Each iteration promotes
-  # at least one carry to unknown. We need one last iteration to prepare the jaxpr.
+  # Fixpoint computation of unknown carry. Each iteration promotes at least one
+  # carry to unknown. We need one last iteration to prepare the jaxpr.
   carry_uk = carry_init_uk
   for _ in range(1 + len(carry_uk)):
     body_jaxpr_known, _, carry_out_uk = pe.partial_eval_jaxpr(  # type: ignore
@@ -562,7 +561,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
     else:
       carry_uk = _map(operator.or_, carry_uk, carry_out_uk)
   else:
-    assert False, "Fixpoint not reached"
+    raise RuntimeError("Fixpoint not reached")
 
   cond_jaxpr_known, _, cond_uk = pe.partial_eval_jaxpr(  # type: ignore
       cond_jaxpr, cond_consts_uk + carry_uk, instantiate=False)
@@ -1525,7 +1524,9 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     loop carry value and the second element represents the stacked outputs of
     the second output of ``f`` when scanned over the leading axis of the inputs.
   """
-  xs_flat, xs_tree = tree_flatten(xs)
+  in_flat, in_tree = tree_flatten((init, xs))
+  init_tree, xs_tree = treedef_children(in_tree)
+  init_flat, xs_flat = split_list(in_flat, [init_tree.num_leaves])
 
   try:
     lengths = [x.shape[0] for x in xs_flat]
@@ -1554,7 +1555,9 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
 
   if config.jax_disable_jit:
     if length == 0:
-      raise ValueError("zero-length scan is not supported in disable_jit() mode because the output type is unknown.")
+      raise ValueError(  # TODO(mattjj): support using jax.eval_shape
+        "zero-length scan is not supported in disable_jit() mode because the "
+        "output type is unknown.")
     carry = init
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x
@@ -1567,47 +1570,93 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     stacked_y = tree_multimap(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
-  x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
-  x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
-  x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
+  init_avals = [_abstractify(c) for c in init_flat]
+  x_avals = [core.mapped_aval(length, 0, _abstractify(x)) for x in xs_flat]
+  jaxpr, consts, out_tree = _initial_style_jaxpr(
+      f, in_tree, (*init_avals, *x_avals), "scan")
+  if len(out_tree.children()) != 2:
+    aval_tree = tree_unflatten(out_tree, jaxpr.out_avals)
+    raise TypeError(f"scan body output must be a pair, got {aval_tree}.")
+  carry_tree, _ = out_tree.children()
+  carry_avals = jaxpr.out_avals[:len(init_avals)]
+  # These checks are similar to those in _check_tree_and_avals, except we want
+  # to ignore mismatches with weakly-typed avals (see promotion logic below).
+  if carry_tree != init_tree:
+    raise TypeError("scan carry output and input must have same type "
+                    f"structure, got {carry_tree} and {init_tree}.")
+  if any(in_aval != out_aval and not (in_aval.weak_type or out_aval.weak_type)
+         for in_aval, out_aval in zip(init_avals, carry_avals)):
+    diff = tree_multimap(_show_diff, tree_unflatten(carry_tree, carry_avals),
+                         tree_unflatten(init_tree, init_avals))
+    raise TypeError("scan carry output and input must have identical types, "
+                    f"got\n{diff}.")
 
-  def _create_jaxpr(init):
-    init_flat, init_tree = tree_flatten(init)
-    in_flat, in_tree = tree_flatten((init, xs))
+  if init_avals != carry_avals:
+    # When any carry inputs are weakly-typed (e.g. Python numeric types) and the
+    # corresponding carry output has a data dependence on a strongly-typed input
+    # (like a scanned-over input, typically a strongly-typed array), that carry
+    # output will be strongly-typed, leading to annoying type errors because the
+    # carry output type does not precisely match the carry input type. To avoid
+    # those errors, we automatically convert whichever weakly-typed inputs need
+    # to be strongly-typed to match the output. Since each distinct pattern of
+    # strongly / weakly-typed inputs can lead to a different pattern of strongly
+    # / weakly-typed outputs, we use a fixpoint loop. Each iteration promotes at
+    # least one carry element to strong.
+    in_dtypes_ = [(a.dtype, a.weak_type) for a in jaxpr.in_avals]
+    out_dtypes_ = [(a.dtype, a.weak_type) for a in jaxpr.out_avals]
+    const_dt, carry_dt, x_dt = split_list(in_dtypes_, [len(consts), len(carry_avals)])
+    _, y_dt = split_list(out_dtypes_, [len(carry_avals)])
+    for _ in range(1 + len(carry_avals)):
+      in_dtypes = [*const_dt, *carry_dt, *x_dt]
+      jaxpr, out_dtypes = _promote_dtypes_jaxpr(
+        jaxpr, tuple(in_dtypes), out_dtype_min=(*carry_dt, *y_dt))
+      carry_dt_out = out_dtypes[:len(carry_dt)]
+      if carry_dt == list(carry_dt_out):
+        break
+      else:
+        carry_dt = _map(dtypes._dtype_lattice_join, carry_dt, carry_dt_out)
+    else:
+      raise RuntimeError("Fixpoint not reached")
 
-    carry_avals = tuple(_map(_abstractify, init_flat))
-    jaxpr, consts, out_tree = _initial_style_jaxpr(
-        f, in_tree, carry_avals + x_avals, "scan")
-    out_tree_children = out_tree.children()
-    if len(out_tree_children) != 2:
-      msg = "scan body output must be a pair, got {}."
-      raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
-    carry_avals_out = jaxpr.out_avals[:out_tree_children[0].num_leaves]
-    return init_flat, carry_avals, carry_avals_out, init_tree, in_flat, jaxpr, consts, out_tree, out_tree_children
+    # Use the computed strong types to promote initial carry values.
+    init_flat = [lax._convert_element_type(c, dt, wt)
+                  if dtypes.is_weakly_typed(c) and not wt else c
+                  for c, (dt, wt) in zip(init_flat, carry_dt)]
 
-  # The carry input and output avals must match exactly. However, we want to account for
-  # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
-  # may not match the output despite being compatible by virtue of their weak type.
-  # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
-  # necessary, a second time with modified init values.
-  init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
-  new_init_flat, changed = _promote_weak_typed_inputs(init_flat, carry_avals, carry_avals_out)
-  if changed:
-    new_init = tree_unflatten(init_tree, new_init_flat)
-    init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(new_init)
-  in_flat, jaxpr, consts, out_tree, out_tree_children = rest
-
+  # Now that the weak types in the carry have been resolved, we run full checks.
+  carry_avals = jaxpr.out_avals[:len(init_avals)]
+  _, init_avals, _ = split_list(jaxpr.in_avals, [len(consts), len(carry_avals)])
   _check_tree_and_avals("scan carry output and input",
-                        # Extract the subtree and avals for the first element of the return tuple
-                        out_tree_children[0], carry_avals_out,
-                        init_tree, carry_avals)
+                        carry_tree, carry_avals, init_tree, init_avals)
 
-  out = scan_p.bind(*consts, *in_flat,
+  out = scan_p.bind(*consts, *init_flat, *xs_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
                     num_consts=len(consts), num_carry=len(init_flat),
                     linear=(False,) * (len(consts) + len(in_flat)),
                     unroll=unroll)
   return tree_unflatten(out_tree, out)
+
+DType = Any
+DTypeWeakTypePair = Tuple[DType, bool]
+def _promote_dtypes_jaxpr(
+    jaxpr: core.ClosedJaxpr, dtypes_in: Tuple[DTypeWeakTypePair, ...],
+    out_dtype_min: Tuple[DTypeWeakTypePair, ...]
+  ) -> Tuple[core.ClosedJaxpr, Tuple[DTypeWeakTypePair, ...]]:
+  # This implementation relies on evaluating a jaxpr with strong-typed inputs
+  # corresponding to weak-typed binders, even when the dtypes disagree (e.g.
+  # weak-typed int32[] binder and strong-typed int16[] input value).
+  @lu.wrap_init
+  def f(*args):
+    outs = core.jaxpr_as_fun(jaxpr)(*args)
+    out_dts = _map(dtypes._dtype_and_weaktype, outs)
+    target_dts = _map(dtypes._dtype_lattice_join, out_dts, out_dtype_min)
+    return [lax._convert_element_type(x, dt, wt) if ty != (dt, wt) else x
+            for x, ty, (dt, wt) in zip(outs, out_dts, target_dts)]
+  in_avals = [a.update(dtype=dt, weak_type=wt)
+              for a, (dt, wt) in zip(jaxpr.in_avals, dtypes_in)]
+  new_jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(f, in_avals)
+  dtypes_out = [(aval.dtype, aval.weak_type) for aval in out_avals]
+  return core.ClosedJaxpr(new_jaxpr, consts), tuple(dtypes_out)
 
 def _scan_impl_unrolled(*args, reverse, length, num_consts, num_carry, linear,
                         f_impl, x_avals, y_avals):
@@ -1809,11 +1858,10 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
   nonzeros = [type(t) is not ad_util.Zero for t in tangents]
   const_nz, init_nz, xs_nz = split_list(nonzeros, [num_consts, num_carry])
 
-  # Fixpoint computation of which carry are not ad.zero: either
-  # non-zero from init, or the carry out is non-zero. Each iteration promotes
-  # at least one carry to non-zero. We need at most len(carry) iterations,
-  # but we need one last iteration to prepare the jaxpr based on the final
-  # carry_nz.
+  # Fixpoint computation of which carry are not ad.zero: either non-zero from
+  # init, or the carry out is non-zero. Each iteration promotes at least one
+  # carry to non-zero. We need at most len(carry) iterations, but we need one
+  # last iteration to prepare the jaxpr based on the final carry_nz.
   carry_nz = init_nz
   for _ in range(1 + len(carry_nz)):
     nonzeros = const_nz + carry_nz + xs_nz
@@ -1825,7 +1873,7 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
     else:
       carry_nz = _map(operator.or_, carry_nz, carry_nz_out)
   else:
-    assert False, "Fixpoint not reached"
+    raise RuntimeError("Fixpoint not reached")
 
   tangents = [ad.instantiate_zeros(t) if nz else t
               for t, nz in zip(tangents, nonzeros)]
@@ -1884,7 +1932,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
     else:
       carry_uk = _map(operator.or_, carry_uk, carry_uk_out)
   else:
-    assert False, "Fixpoint not reached"
+    raise RuntimeError("Fixpoint not reached")
   num_res = len(jaxpr_1.out_avals) - len(jaxpr_2.out_avals)
 
   # The residuals are treated as extensive outputs of jaxpr_1 (and extensive
@@ -2077,7 +2125,7 @@ def _scan_batching_rule(axis_size, axis_name, main_type, args, dims, reverse, le
     else:
       carry_batched = _map(operator.or_, carry_batched, carry_batched_out)
   else:
-    assert False, "Fixpoint not reached"
+    raise RuntimeError("Fixpoint not reached")
 
   consts, init, xs = split_list(args, [num_consts, num_carry])
   consts_bdims, init_bdims, xs_bdims = split_list(dims, [num_consts, num_carry])

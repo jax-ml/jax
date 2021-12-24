@@ -372,11 +372,10 @@ For the example consider the function ``func11`` below
     d:f32[] e:f32[16] = scan[
       jaxpr={ lambda ; f:f32[] g:f32[] h:f32[] i:f32[]. let
           j:f32[] = mul h i
-          k:f32[] = convert_element_type[new_dtype=float32 weak_type=False] g
-          l:f32[] = add k j
-          m:f32[] = convert_element_type[new_dtype=float32 weak_type=False] f
-          n:f32[] = add l m
-        in (n, g) }
+          k:f32[] = add g j
+          l:f32[] = convert_element_type[new_dtype=float32 weak_type=False] f
+          m:f32[] = add k l
+        in (m, g) }
       length=16
       linear=(False, False, False, False)
       num_carry=1

@@ -2731,6 +2731,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(carry, x.sum())
     self.assertArraysEqual(result, x)
 
+  def test_scan_init_weak_type_multi(self):
+    def func(carry, x):
+      new_carry = (carry[0] + x, carry[1] + carry[0], carry[2] + carry[1])
+      return new_carry, None
+    init_weak = 0., 0., 0.  # Python scalars are weakly-typed.
+    x = jnp.ones(5, dtype=jnp.float_)
+    _ = lax.scan(func, init_weak, x)  # don't crash
+
+  def test_scan_init_weak_type_multi2(self):
+    def func(carry, x):
+      new_carry = (carry[1], carry[0])
+      return new_carry, None
+    init = 0., jnp.array(0.)
+    _ = lax.scan(func, init, None, length=1)  # don't crash
+
   @parameterized.named_parameters(
       {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
       for dtype in jtu.dtypes.all_integer)
