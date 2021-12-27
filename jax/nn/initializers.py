@@ -19,6 +19,7 @@ used in Keras and Sonnet.
 
 # flake8: noqa: F401
 from jax._src.nn.initializers import (
+  constant as constant,
   delta_orthogonal as delta_orthogonal,
   glorot_normal as glorot_normal,
   glorot_uniform as glorot_uniform,

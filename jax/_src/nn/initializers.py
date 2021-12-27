@@ -32,6 +32,12 @@ from jax import dtypes
 def zeros(key, shape, dtype=jnp.float_): return jnp.zeros(shape, dtypes.canonicalize_dtype(dtype))
 def ones(key, shape, dtype=jnp.float_): return jnp.ones(shape, dtypes.canonicalize_dtype(dtype))
 
+def constant(value, dtype=jnp.float_):
+  def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
+    return jnp.full(shape, value, dtype=dtype)
+  return init
+
 def uniform(scale=1e-2, dtype=jnp.float_):
   def init(key, shape, dtype=dtype):
     dtype = dtypes.canonicalize_dtype(dtype)
