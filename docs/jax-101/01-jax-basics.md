@@ -254,13 +254,13 @@ in_place_modify(jnp.array(x))  # Raises error when we cast input to jnp.ndarray
 
 +++ {"id": "RGqVfYSpc49s"}
 
-Helpfully, the error points us to JAX's side-effect-free way of doing the same thing via the [`jax.ops.index_*`](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-operators) ops. They are analogous to in-place modification by index, but create a new array with the corresponding modifications made:
+Helpfully, the error points us to JAX's side-effect-free way of doing the same thing via the [`jax.ops.*`](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-operators) index update operators (be careful [`jax.ops.index_*`](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-functions-deprecated) functions are deprecated). They are analogous to in-place modification by index, but create a new array with the corresponding modifications made:
 
 ```{code-cell}
 :id: Rmklk6BB2xF0
 
 def jax_in_place_modify(x):
-  return jax.ops.index_update(x, 0, 123)
+  return x.at[0].set(123)
 
 y = jnp.array([1, 2, 3])
 jax_in_place_modify(y)
@@ -280,7 +280,7 @@ y
 
 Side-effect-free code is sometimes called *functionally pure*, or just *pure*.
 
-Isn't the pure version less efficient? Strictly, yes; we are creating a new array. However, as we will explain in the next guide, JAX computations are often compiled before being run using another program transformation, `jax.jit`. If we don't use the old array after modifying it 'in place' using `jax.ops.index_update()`, the compiler can recognise that it can in fact compile to an in-place modify, resulting in efficient code in the end.
+Isn't the pure version less efficient? Strictly, yes; we are creating a new array. However, as we will explain in the next guide, JAX computations are often compiled before being run using another program transformation, `jax.jit`. If we don't use the old array after modifying it 'in place' using indexed update operators, the compiler can recognise that it can in fact compile to an in-place modify, resulting in efficient code in the end.
 
 Of course, it's possible to mix side-effectful Python code and functionally pure JAX code, and we will touch on this more later. As you get more familiar with JAX, you will learn how and when this can work. As a rule of thumb, however, any functions intended to be transformed by JAX should avoid side-effects, and the JAX primitives themselves will try to help you do that.
 
