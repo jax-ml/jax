@@ -1637,6 +1637,9 @@ class SparseObjectTest(jtu.JaxTestCase):
     assert M.nse == (M.todense() != 0).sum()
     assert M.data.dtype == dtype
 
+    with self.assertRaises(TypeError):
+      hash(M)
+
     if isinstance(M, sparse.CSR):
       assert len(M.data) == len(M.indices)
       assert len(M.indptr) == M.shape[0] + 1

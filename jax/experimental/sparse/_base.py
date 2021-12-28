@@ -28,6 +28,9 @@ class JAXSparse(abc.ABC):
   nse: property
   dtype: property
 
+  # Ignore type because of https://github.com/python/mypy/issues/4266.
+  __hash__ = None  # type: ignore
+
   @property
   def size(self):
     return util.prod(self.shape)
