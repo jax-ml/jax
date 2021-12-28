@@ -1596,6 +1596,10 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(sparse.todense(M), M_dense)
     self.assertArraysEqual(jit(sparse.todense)(M), M_dense)
 
+  def test_todense_scalar(self):
+    self.assertEqual(sparse.todense(1.0), 1.0)
+    self.assertEqual(jit(sparse.todense)(1.0), 1.0)
+
   @parameterized.named_parameters(
     {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
     for Obj in [jnp.array, sparse.BCOO])
