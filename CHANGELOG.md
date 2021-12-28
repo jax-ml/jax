@@ -29,6 +29,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Added a new debugging flag/environment variable `JAX_DUMP_IR_TO=/path`.
     If set, JAX dumps the MHLO/HLO IR it generates for each computation to a
     file under the given path.
+  * Added `jax.ensure_compile_time_eval` to the public api ({jax-issue}`#7987`).
 
 ## jaxlib 0.1.76 (Unreleased)
 * New features
