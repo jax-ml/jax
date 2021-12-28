@@ -6090,7 +6090,7 @@ def _expand_bool_indices(idx, shape):
     else:
       out.append(i)
     if i is Ellipsis:
-      ellipsis_offset = _max(0, len(shape) - total_dims - 1)
+      ellipsis_offset = len(shape) - total_dims - 1
   return tuple(out)
 
 
