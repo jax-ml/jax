@@ -254,7 +254,7 @@ in_place_modify(jnp.array(x))  # Raises error when we cast input to jnp.ndarray
 
 +++ {"id": "RGqVfYSpc49s"}
 
-Helpfully, the error points us to JAX's side-effect-free way of doing the same thing via the [`jax.ops.*`](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-operators) index update operators (be careful [`jax.ops.index_*`](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-functions-deprecated) functions are deprecated). They are analogous to in-place modification by index, but create a new array with the corresponding modifications made:
+Helpfully, the error points us to JAX's side-effect-free way of doing the same thing via the [`jax.numpy.ndarray.at`](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html) index update operators (be careful [`jax.ops.index_*`](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-functions-deprecated) functions are deprecated). They are analogous to in-place modification by index, but create a new array with the corresponding modifications made:
 
 ```{code-cell}
 :id: Rmklk6BB2xF0
