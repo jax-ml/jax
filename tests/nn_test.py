@@ -123,6 +123,28 @@ class NNFunctionsTest(jtu.JaxTestCase):
     with jax.enable_checks(False):  # With checks we materialize the array
       jax.make_jaxpr(lambda: nn.hard_tanh(jnp.ones((10 ** 12,))))  # don't oom
 
+  @parameterized.parameters([nn.softmax, nn.log_softmax])
+  def testSoftmaxWhereMask(self, fn):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.array([True, False, True, True])
+    x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
+
+    out_masked = jnp.take(
+        fn(x, where=m, initial=-jnp.inf), jnp.array([0, 2, 3]))
+    out_filtered = fn(x_filtered)
+
+    self.assertAllClose(out_masked, out_filtered)
+
+  def testNormalizeWhereMask(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.array([True, False, True, True])
+    x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
+
+    out_masked = jnp.take(nn.normalize(x, where=m), jnp.array([0, 2, 3]))
+    out_filtered = nn.normalize(x_filtered)
+
+    self.assertAllClose(out_masked, out_filtered)
+
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
     expected = jnp.array([[1., 0., 0.],
