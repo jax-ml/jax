@@ -78,6 +78,7 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.interpreters import invertible_ad as iad
 from jax.interpreters.invertible_ad import custom_ivjp
+from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
                                     custom_vjp, linear_call)
 from jax.ad_checkpoint import checkpoint_policies

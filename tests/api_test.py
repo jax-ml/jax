@@ -6314,6 +6314,153 @@ class CustomTransposeTest(jtu.JaxTestCase):
                         jax.jit(self.transpose(f1, x))(x))
 
 
+class CustomVmapTest(jtu.JaxTestCase):
+
+  def test_basic(self):
+    @api.custom_vmap
+    def f(x): return jnp.sin(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      self.assertEqual(in_batched, [True])
+      self.assertEqual(axis_size, xs.shape[0])
+      return [jnp.cos(xs)], in_batched
+
+    x, xs = jnp.array(1.), jnp.arange(3)
+    y = f(x)
+    self.assertAllClose(y, jnp.sin(x))
+    ys = api.vmap(f)(xs)
+    self.assertAllClose(ys, jnp.cos(xs))
+
+  def test_nary(self):
+    @api.custom_vmap
+    def f(x, y): return jnp.sin(x) + y ** 2.
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs, ys):
+      self.assertEqual(in_batched, [True, True])
+      self.assertEqual(axis_size, 3)
+      self.assertEqual(axis_size, xs.shape[0])
+      self.assertEqual(axis_size, ys.shape[0])
+      return [jnp.cos(xs) + ys ** 2.], [True]
+
+    xs, ys = jnp.arange(3), jnp.arange(3)
+    zs = api.vmap(f)(xs, ys)
+    self.assertAllClose(zs, jnp.cos(xs) + ys ** 2.)
+
+  def test_nary_mixed_batching(self):
+    @api.custom_vmap
+    def vector_dot(u, v):
+      self.assertEqual(u.ndim, 1)
+      self.assertEqual(v.ndim, 1)
+      return u @ v
+
+    size = 4
+    vlen = 3
+    in_batched_log = []
+
+    @vector_dot.def_vmap
+    def vector_dot_vmap_rule(axis_size, in_batched, u, v):
+      in_batched_log.append(in_batched)
+      self.assertEqual(axis_size, size)
+      u_batched, v_batched = in_batched
+      if u_batched:
+        self.assertEqual(u.ndim, 2)
+        self.assertEqual(u.shape[0], size)
+      else:
+        self.assertEqual(u.ndim, 1)
+        self.assertEqual(u.shape[0], vlen)
+      if v_batched:
+        self.assertEqual(v.ndim, 2)
+        self.assertEqual(v.shape[0], size)
+      else:
+        self.assertEqual(v.ndim, 1)
+        self.assertEqual(v.shape[0], vlen)
+      if u_batched and v_batched:
+        out = jnp.sum(u * v, axis=1)
+      else:
+        out = u @ v if u_batched else v @ u
+      return [out], [u_batched or v_batched]
+
+    f = vector_dot
+    v = lambda *shape: jnp.ones(shape)
+
+    y = api.vmap(f, in_axes=(0, None))(v(4, 3), v(3))
+    self.assertAllClose(y, v(4, 3) @ v(3))
+    y = api.vmap(f, in_axes=(1, None))(v(3, 4), v(3))
+    self.assertAllClose(y, v(3, 4).T @ v(3))
+    y = api.vmap(f, in_axes=(None, 0))(v(3), v(4, 3))
+    self.assertAllClose(y, v(3) @ v(4, 3).T)
+    y = api.vmap(f, in_axes=(0, 0))(v(4, 3), v(4, 3))
+    self.assertAllClose(y, jnp.sum(v(4, 3) * v(4, 3), axis=1))
+    self.assertEqual(in_batched_log[0], [True, False])
+    self.assertEqual(in_batched_log[1], [True, False])
+    self.assertEqual(in_batched_log[2], [False, True])
+    self.assertEqual(in_batched_log[3], [True, True])
+
+  def test_rule_input_signature(self):
+    @api.custom_vmap
+    def f(x): return jnp.sin(x)
+
+    rule_args = []
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      rule_args.append((axis_size, in_batched))
+      return [jnp.cos(xs)], in_batched
+
+    xs = jnp.arange(3)
+    _ = api.vmap(f)(xs)
+    (axis_size, in_batched), = rule_args
+    self.assertIs(type(axis_size), int)
+    self.assertIs(type(in_batched), list)
+
+  def test_rule_output_signature_any_sequence(self):
+    @api.custom_vmap
+    def f(x): return jnp.sin(x)
+
+    Box = collections.namedtuple('Box', 'value')
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      # custom vmap machinery should handle any sequence type for either output
+      return Box(jnp.cos(xs)), tuple(in_batched)
+
+    xs = jnp.arange(3)
+    ys = api.vmap(f)(xs)
+    self.assertAllClose(ys, jnp.cos(xs))
+
+  def test_rule_output_mismatch(self):
+    @api.custom_vmap
+    def f(x): return jnp.sin(x)
+
+    @f.def_vmap
+    def test_rule_abc(axis_size, in_batched, xs):
+      return [jnp.sin(xs), jnp.cos(xs)], in_batched
+
+    xs = jnp.arange(3)
+    self.assertRaisesRegex(
+        ValueError,
+        'structure of output values and output batching specification '
+        r'returned by custom vmap rule \(test_rule_abc\) do not match.*',
+        lambda: api.vmap(f)(xs))
+
+  def test_rule_output_array(self):
+    @api.custom_vmap
+    def f(x): return jnp.sin(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      # common to overlook the need to box up single output value in a list
+      return jnp.cos(xs), in_batched
+
+    xs = jnp.arange(3)
+    self.assertRaisesRegex(
+        TypeError,
+        'custom vmap rule output values must be a sequence.*',
+        lambda: api.vmap(f)(xs))
+
+
 class InvertibleADTest(jtu.JaxTestCase):
 
   @jtu.ignore_warning(message="Values that an @invertible function closes")
