@@ -2,7 +2,7 @@
 # sphinx >=3 required by sphinx-autodoc-typehints v1.11.1 (Oct 2020)
 sphinx >=3, <4
 sphinx_rtd_theme
-sphinx-autodoc-typehints==1.11.1
+sphinx-autodoc-typehints==1.13.0
 jupyter-sphinx>=0.3.2
 myst-nb
 
