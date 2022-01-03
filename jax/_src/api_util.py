@@ -15,8 +15,8 @@
 import inspect
 import operator
 from functools import partial
-from typing import (Any, Dict, Iterable, Sequence, Set, Tuple, Union, Optional,
-                    Callable)
+from typing import (Any, Callable, Dict, Iterable, List, Optional, Sequence,
+                    Set, Tuple, Union)
 import warnings
 
 import numpy as np
@@ -332,7 +332,7 @@ def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
 
 def donation_vector(donate_argnums, args, kwargs) -> Tuple[bool, ...]:
   """Returns a tuple with a boolean value for each leaf in args."""
-  res = []
+  res: List[bool] = []
   for i, arg in enumerate(args):
     donate = bool(i in donate_argnums)
     res.extend((donate,) * tree_structure(arg).num_leaves)

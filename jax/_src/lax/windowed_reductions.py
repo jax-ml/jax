@@ -86,7 +86,7 @@ def reduce_window(operand, init_value, computation: Callable,
         'reduce_window output must have the same tree structure as the operands'
         f' {operand_tree} vs. {out_tree}')
     out_flat = reduce_window_p.bind(
-        *(flat_operands + flat_init_values), jaxpr=jaxpr, consts=consts,
+        *flat_operands, *flat_init_values, jaxpr=jaxpr, consts=consts,
         window_dimensions=tuple(window_dimensions),
         window_strides=tuple(window_strides), padding=padding,
         base_dilation=tuple(base_dilation),

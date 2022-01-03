@@ -30,12 +30,15 @@ from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
-U = TypeVar("U")
+U = TypeVar("U", bound=Type[Any])
 
+Leaf = Any
 PyTreeDef = pytree.PyTreeDef
 
 
-def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
+def tree_flatten(tree: Any,
+                 is_leaf: Optional[Callable[[Any], bool]] = None
+                 ) -> Tuple[List[Leaf], PyTreeDef]:
   """Flattens a pytree.
 
   The flattening order (i.e. the order of elements in the output list)
@@ -55,15 +58,15 @@ def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   return pytree.flatten(tree, is_leaf)
 
 
-def tree_unflatten(treedef, leaves):
+def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[Leaf]) -> Any:
   """Reconstructs a pytree from the treedef and the leaves.
 
   The inverse of :func:`tree_flatten`.
 
   Args:
     treedef: the treedef to reconstruct
-    leaves: the list of leaves to use for reconstruction. The list must match
-      the leaves of the treedef.
+    leaves: the iterable of leaves to use for reconstruction. The iterable
+      must match the leaves of the treedef.
 
   Returns:
     The reconstructed pytree, containing the ``leaves`` placed in the structure
@@ -71,28 +74,32 @@ def tree_unflatten(treedef, leaves):
   """
   return treedef.unflatten(leaves)
 
-def tree_leaves(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
+def tree_leaves(tree: Any,
+                is_leaf: Optional[Callable[[Any], bool]] = None
+                ) -> List[Leaf]:
   """Gets the leaves of a pytree."""
   return pytree.flatten(tree, is_leaf)[0]
 
-def tree_structure(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
+def tree_structure(tree: Any,
+                   is_leaf: Optional[Callable[[Any], bool]] = None) -> PyTreeDef:
   """Gets the treedef for a pytree."""
   return pytree.flatten(tree, is_leaf)[1]
 
-def treedef_tuple(treedefs):
-  """Makes a tuple treedef from a list of child treedefs."""
+def treedef_tuple(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
+  """Makes a tuple treedef from an iterable of child treedefs."""
   return pytree.tuple(list(treedefs))
 
-def treedef_children(treedef):
+def treedef_children(treedef: PyTreeDef) -> List[PyTreeDef]:
   return treedef.children()
 
-def treedef_is_leaf(treedef):
+def treedef_is_leaf(treedef: PyTreeDef) -> bool:
   return treedef.num_nodes == 1
 
-def treedef_is_strict_leaf(treedef):
+def treedef_is_strict_leaf(treedef: PyTreeDef) -> bool:
   return treedef.num_nodes == 1 and treedef.num_leaves == 1
 
-def all_leaves(iterable, is_leaf: Optional[Callable[[Any], bool]] = None):
+def all_leaves(iterable: Iterable[Any],
+               is_leaf: Optional[Callable[[Any], bool]] = None) -> bool:
   """Tests whether all elements in the given iterable are all leaves.
 
   >>> tree = {"a": [1, 2, 3]}
@@ -100,8 +107,8 @@ def all_leaves(iterable, is_leaf: Optional[Callable[[Any], bool]] = None):
   >>> assert not all_leaves([tree])
 
   This function is useful in advanced cases, for example if a library allows
-  arbitrary map operations on a flat list of leaves it may want to check if
-  the result is still a flat list of leaves.
+  arbitrary map operations on a flat iterable of leaves it may want to check
+  if the result is still a flat iterable of leaves.
 
   Args:
     iterable: Iterable of leaves.
@@ -141,7 +148,7 @@ def register_pytree_node(nodetype: Type[T],
   pytree.register_node(nodetype, flatten_func, unflatten_func)
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
 
-def register_pytree_node_class(cls):
+def register_pytree_node_class(cls: U) -> U:
   """Extends the set of types that are considered internal nodes in pytrees.
 
   This function is a thin wrapper around ``register_pytree_node``, and provides
@@ -199,10 +206,12 @@ def tree_map(f: Callable[..., Any], tree: Any, *rest: Any,
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
-def build_tree(treedef, xs):
+def build_tree(treedef: PyTreeDef, xs: Any) -> Any:
   return treedef.from_iterable_tree(xs)
 
-def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
+def tree_transpose(outer_treedef: PyTreeDef,
+                   inner_treedef: PyTreeDef,
+                   pytree_to_transpose: Any) -> Any:
   """Transform a tree having tree structure (outer, inner) into one having structure
   (inner, outer).
   """
@@ -212,8 +221,8 @@ def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
   if treedef.num_leaves != (inner_size * outer_size):
     expected_treedef = outer_treedef.compose(inner_treedef)
     raise TypeError(f"Mismatch\n{treedef}\n != \n{expected_treedef}")
-  flat = iter(flat)
-  lol = [[next(flat) for _ in range(inner_size)] for __ in range(outer_size)]
+  iter_flat = iter(flat)
+  lol = [[next(iter_flat) for _ in range(inner_size)] for __ in range(outer_size)]
   transposed_lol = zip(*lol)
   subtrees = map(partial(tree_unflatten, outer_treedef), transposed_lol)
   return tree_unflatten(inner_treedef, subtrees)
@@ -268,7 +277,7 @@ def tree_reduce(function: Callable[[T, Any], T],
   else:
     return functools.reduce(function, tree_leaves(tree), initializer)
 
-def tree_all(tree):
+def tree_all(tree: Any) -> bool:
   return all(tree_leaves(tree))
 
 register_pytree_node(
