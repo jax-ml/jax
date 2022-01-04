@@ -1552,6 +1552,15 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(lax_reference.dynamic_update_slice,
                             lax.dynamic_update_slice, args_maker)
 
+  def testDynamicUpdateSliceBatched(self):
+    # Regression test for https://github.com/google/jax/issues/9083
+    x = jnp.arange(5)
+    y = jnp.arange(6, 9)
+    ind = jnp.arange(6)
+    expected = jnp.vstack([lax.dynamic_update_slice(x, y, (i,)) for i in ind])
+    actual = jax.vmap(lax.dynamic_update_slice, (None, None, 0))(x, y, (ind,))
+    self.assertAllClose(expected, actual)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_perm={}".format(
           jtu.format_shape_dtype_string(shape, dtype), perm),

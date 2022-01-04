@@ -933,7 +933,7 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
     scatter, (operand, index, update), (operand_bd, index_bdim, update_bd),
     update_jaxpr=None, update_consts=None, dimension_numbers=dnums,
     indices_are_sorted=True, unique_indices=True,
-    mode=GatherScatterMode.PROMISE_IN_BOUNDS)
+    mode=GatherScatterMode.CLIP)
 
 
 dynamic_update_slice_p = standard_primitive(
