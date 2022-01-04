@@ -2891,10 +2891,13 @@ def nanmax(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 @_wraps(np.nansum, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-           out=None, keepdims=None):
+           out=None, keepdims=None, initial=None, where=None):
   lax._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims)
+
+# Work around a sphinx documentation warning in NumPy 1.22.
+nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
 
 @_wraps(np.nanprod, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
@@ -6316,28 +6319,35 @@ def corrcoef(x, y=None, rowvar=True):
 
 @_wraps(np.quantile, skip_params=['out', 'overwrite_input'])
 @partial(jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
-                               'keepdims'))
+                               'keepdims', 'method'))
 def quantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
-             overwrite_input=False, interpolation="linear", keepdims=False):
+             overwrite_input=False, method="linear", keepdims=False,
+             interpolation=None):
   _check_arraylike("quantile", a, q)
   if overwrite_input or out is not None:
     msg = ("jax.numpy.quantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  return _quantile(a, q, axis, interpolation, keepdims, False)
+  if interpolation is not None:
+    warnings.warn("The interpolation= argument to 'quantile' is deprecated. "
+                  "Use 'method=' instead.", DeprecationWarning)
+  return _quantile(a, q, axis, interpolation or method, keepdims, False)
 
 @_wraps(np.nanquantile, skip_params=['out', 'overwrite_input'])
 @partial(jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
-                               'keepdims'))
+                               'keepdims', 'method'))
 def nanquantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
-                out=None, overwrite_input=False, interpolation="linear",
-                keepdims=False):
+                out=None, overwrite_input=False, method="linear",
+                keepdims=False, interpolation=None):
   _check_arraylike("nanquantile", a, q)
   if overwrite_input or out is not None:
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  return _quantile(a, q, axis, interpolation, keepdims, True)
+  if interpolation is not None:
+    warnings.warn("The interpolation= argument to 'nanquantile' is deprecated. "
+                  "Use 'method=' instead.", DeprecationWarning)
+  return _quantile(a, q, axis, interpolation or method, keepdims, True)
 
 def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
@@ -6525,26 +6535,27 @@ def _piecewise(x, condlist, consts, funcs, *args, **kw):
 
 @_wraps(np.percentile, skip_params=['out', 'overwrite_input'])
 @partial(jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
-                               'keepdims'))
+                               'keepdims', 'method'))
 def percentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
-               out=None, overwrite_input=False, interpolation="linear",
-               keepdims=False):
+               out=None, overwrite_input=False, method="linear",
+               keepdims=False, interpolation=None):
   _check_arraylike("percentile", a, q)
   a, q = _promote_dtypes_inexact(a, q)
   q = true_divide(q, 100.0)
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                  interpolation=interpolation, keepdims=keepdims)
+                  interpolation=interpolation, method=method, keepdims=keepdims)
 
 @_wraps(np.nanpercentile, skip_params=['out', 'overwrite_input'])
 @partial(jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
-                               'keepdims'))
+                               'keepdims', 'method'))
 def nanpercentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
-                  out=None, overwrite_input=False, interpolation="linear",
-                  keepdims=False):
+                  out=None, overwrite_input=False, method="linear",
+                  keepdims=False, interpolation=None):
   _check_arraylike("nanpercentile", a, q)
   q = true_divide(q, float32(100.0))
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                     interpolation=interpolation, keepdims=keepdims)
+                     interpolation=interpolation, method=method,
+                     keepdims=keepdims)
 
 @_wraps(np.median, skip_params=['out', 'overwrite_input'])
 @partial(jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
@@ -6552,7 +6563,7 @@ def median(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
            overwrite_input=False, keepdims=False):
   _check_arraylike("median", a)
   return quantile(a, 0.5, axis=axis, out=out, overwrite_input=overwrite_input,
-                  keepdims=keepdims, interpolation='midpoint')
+                  keepdims=keepdims, method='midpoint')
 
 @_wraps(np.nanmedian, skip_params=['out', 'overwrite_input'])
 @partial(jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
@@ -6561,7 +6572,7 @@ def nanmedian(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
   _check_arraylike("nanmedian", a)
   return nanquantile(a, 0.5, axis=axis, out=out,
                      overwrite_input=overwrite_input, keepdims=keepdims,
-                     interpolation='midpoint')
+                     method='midpoint')
 
 
 def _astype(arr, dtype):
