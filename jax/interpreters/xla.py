@@ -832,13 +832,8 @@ def _xla_call_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
       builder=subc,
       name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'jit')))
   out_nodes = jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
-
-  if len(out_nodes) == 1:
-    subc = subc.Build(out_nodes[0])
-    return [xops.Call(c, subc, list(in_nodes))]
-  else:
-    subc = subc.Build(xops.Tuple(subc, out_nodes))
-    return xla_destructure(c, xops.Call(c, subc, list(in_nodes)))
+  subc = subc.build(xops.Tuple(subc, out_nodes))
+  return xla_destructure(c, xops.Call(c, subc, list(in_nodes)))
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
@@ -1056,12 +1051,8 @@ def _named_call_translation_rule(ctx, avals_in, avals_out, *in_nodes,
   sub_ctx = ctx.replace(builder=subc,
                         name_stack=extend_name_stack(ctx.name_stack, name))
   out_nodes = jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
-  if len(out_nodes) == 1:
-    subc = subc.Build(out_nodes[0])
-    return [xops.Call(c, subc, list(in_nodes))]
-  else:
-    subc = subc.Build(xops.Tuple(subc, out_nodes))
-    return xla_destructure(c, xops.Call(c, subc, list(in_nodes)))
+  subc = subc.Build(xops.Tuple(subc, out_nodes))
+  return xla_destructure(c, xops.Call(c, subc, list(in_nodes)))
 register_translation(core.named_call_p, _named_call_translation_rule)
 
 
