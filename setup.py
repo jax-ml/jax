@@ -39,7 +39,7 @@ setup(
     python_requires='>=3.7',
     install_requires=[
         'absl-py',
-        'numpy>=1.18',
+        'numpy>=1.19',
         'opt_einsum',
         'scipy>=1.2.1',
         'typing_extensions',
