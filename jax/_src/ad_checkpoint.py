@@ -281,19 +281,6 @@ def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
   del args, prevent_cse, differentiated, policy  # Unused.
   return [v.aval for v in jaxpr.outvars]
 
-def remat_translation(ctx, avals_in, avals_out, *in_nodes,
-                      jaxpr, prevent_cse, differentiated, policy):
-  del policy  # Unused.
-  if differentiated and prevent_cse:
-    if ctx.platform == "gpu":
-      return xla._remat_using_while(ctx, in_nodes, "checkpoint", jaxpr)
-    else:
-      return xla._remat_using_cond(ctx, in_nodes, "checkpoint", jaxpr)
-  else:
-    return xla.jaxpr_subcomp(ctx, jaxpr, (), *in_nodes)
-if not xla._USE_LAX_REMAT_LOWERING:
-  xla.register_translation(remat_p, remat_translation)
-
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars
   in_nonzeros = [type(t) is not ad_util.Zero for t in tangents]
