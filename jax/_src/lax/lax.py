@@ -3016,8 +3016,12 @@ def _reshape_lower(ctx, x, *, new_sizes, dimensions):
   aval_out, = ctx.avals_out
   if dimensions is not None:
     aval = core.ShapedArray(np.take(aval_in.shape, dimensions), aval_in.dtype)
-    x = mhlo.TransposeOp(mlir.aval_to_ir_type(aval), x,
-                         mlir.dense_int_elements(dimensions)).result
+    if jax._src.lib._xla_extension_version < 49:
+      x = mhlo.TransposeOp(
+          mlir.aval_to_ir_type(aval), x,
+          mlir.dense_int_elements(dimensions)).result
+    else:
+      x = mhlo.TransposeOp(x, mlir.dense_int_elements(dimensions)).result
   return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), x).results
 mlir.register_lowering(reshape_p, _reshape_lower)
 
@@ -3075,8 +3079,11 @@ masking.masking_rules[transpose_p] = _transpose_masking_rule
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
-  return mhlo.TransposeOp(mlir.aval_to_ir_type(aval_out), x,
-                          mlir.dense_int_elements(permutation)).results
+  if jax._src.lib._xla_extension_version < 49:
+    return mhlo.TransposeOp(
+        mlir.aval_to_ir_type(aval_out), x,
+        mlir.dense_int_elements(permutation)).results
+  return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 mlir.register_lowering(transpose_p, _transpose_lower)
 
 
