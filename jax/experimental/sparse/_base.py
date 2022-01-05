@@ -111,3 +111,6 @@ class JAXSparse(abc.ABC):
 
   def __rsub__(self, other):
     raise NotImplementedError(f"{self.__class__}.__rsub__")
+
+  def __getitem__(self, item):
+    raise NotImplementedError(f"{self.__class__}.__getitem__")
