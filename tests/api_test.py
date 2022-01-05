@@ -6546,5 +6546,14 @@ class BackendsTest(jtu.JaxTestCase):
     assert "No GPU/TPU found" not in result.stderr.decode()
 
 
+class CleanupTest(jtu.JaxTestCase):
+  def test_call_wrapped_second_phase_cleanup(self):
+    try:
+      jax.vmap(lambda x: x, out_axes=None)(jnp.arange(3))
+    except:
+      assert core.trace_state_clean()  # this is the hard one
+    assert core.trace_state_clean()
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
