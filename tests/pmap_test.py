@@ -1976,7 +1976,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
     if jax.device_count() < 8:
       raise SkipTest("test requires at least eight devices")
-    x = jnp.arange(4*2*64*64).reshape(4, 2, 64, 64)
+    x = jnp.arange(4*2*16*16).reshape(4, 2, 16, 16)
     y = f(jax.pmap, jax.pmap)(x, x)
     self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
