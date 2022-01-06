@@ -20,6 +20,7 @@ XLA. There are also a handful of related casting utilities.
 """
 
 
+from contextlib import contextmanager
 from functools import partial, lru_cache
 import os
 import threading
@@ -436,3 +437,4 @@ def host_ids(backend=None):
       "instead. jax.host_ids will eventually be removed; please update your "
       "code.")
   return list(range(process_count(backend)))
+

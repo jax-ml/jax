@@ -2800,6 +2800,8 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
 def _device_get(x):
   if isinstance(x, core.Tracer):
     return x
+  if device_array.type_is_device_array(x):
+    return x.device_get()
   try:
     copy = x.copy
   except AttributeError:
@@ -3159,3 +3161,21 @@ def block_until_ready(x):
     except AttributeError:
       return x
   return jax.tree_util.tree_map(try_to_block, x)
+
+
+@contextmanager
+def host_transfer_guard(allowed: bool):
+  old_value = device_array.transfer_guard.allow_device_buffer_transfer_to_host
+  device_array.transfer_guard.allow_device_buffer_transfer_to_host = allowed
+  try:
+    yield None
+  finally:
+    device_array.transfer_guard.allow_device_buffer_transfer_to_host = old_value
+
+
+disallow_host_transfers = partial(host_transfer_guard, False)
+""" Disallows device arrays to be transferred to host memory while in-scope."""
+
+allow_host_transfers = partial(host_transfer_guard, True)
+""" Allows device arrays to be transferred to host memory while in-scope."""
+

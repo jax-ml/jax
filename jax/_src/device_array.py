@@ -16,6 +16,7 @@
 
 from functools import partial, partialmethod
 import operator
+import threading
 from typing import (Any, List, Optional, Union)
 import weakref
 
@@ -85,6 +86,40 @@ def device_array_supports_weakrefs():
     return True
   except TypeError:
     return False
+
+
+class _ThreadLocalTransferGuard(threading.local):
+  """Thread-local, host transfer guard."""
+
+  def __init__(self) -> None:
+    super().__init__()
+    self.allow_device_buffer_transfer_to_host = True
+
+  def check_transfer_allowed(self, buffer):
+    if (not self.allow_device_buffer_transfer_to_host and
+        not buffer.is_on_host()):
+      raise RuntimeError("Tried to transfer a device buffer to host memory when "
+                          "not allowed. If transfer is intended, ensure it is "
+                          "within an AllowDeviceArrayTransferToHost scope.")
+
+transfer_guard = _ThreadLocalTransferGuard()
+
+_prev_xc_buffer_to_py = xc.Buffer.to_py
+_prev_xc_buffer_value = getattr(xc.Buffer, '_value')
+
+def _device_get(self):
+  return _prev_xc_buffer_to_py(self)
+setattr(xc.Buffer, "device_get", _device_get)
+
+def _checked_to_py(self):
+  transfer_guard.check_transfer_allowed(self)
+  return _prev_xc_buffer_to_py(self)
+setattr(xc.Buffer, "to_py", _checked_to_py)
+
+def _checked_value(self):
+  transfer_guard.check_transfer_allowed(self)
+  return _prev_xc_buffer_value.__get__(self, xc.Buffer) # pytype: disable=attribute-error
+setattr(xc.Buffer, "_value", property(_checked_value))
 
 
 class _DeviceArray(DeviceArray):  # type: ignore
@@ -165,6 +200,13 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def ndim(self):
     return len(self.aval.shape)
 
+  def device_get(self):
+    self._check_if_deleted()
+    if self._npy_value is None:
+      self._npy_value = self.device_buffer.device_get()  # pytype: disable=attribute-error
+      self._npy_value.flags.writeable = False
+    return self._npy_value
+
   def copy_to_host_async(self):
     """Requests a copy of the buffer to the host."""
     self._check_if_deleted()
@@ -189,7 +231,6 @@ class _DeviceArray(DeviceArray):  # type: ignore
   @property
   def __cuda_array_interface__(self):
     return self.device_buffer.__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
-
 
 # Adding methods dynamically to both _DeviceArray and xc.Buffer
 # pylint: disable=protected-access

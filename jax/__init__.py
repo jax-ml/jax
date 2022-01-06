@@ -53,6 +53,7 @@ from jax._src.config import (
 from .core import eval_context as ensure_compile_time_eval
 from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
+  allow_host_transfers,
   block_until_ready,
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
@@ -71,6 +72,7 @@ from jax._src.api import (
   device_put_replicated as device_put_replicated,
   devices as devices,
   disable_jit as disable_jit,
+  disallow_host_transfers,
   eval_shape as eval_shape,
   flatten_fun_nokwargs,  # TODO(phawkins): update users to avoid this.
   float0 as float0,
