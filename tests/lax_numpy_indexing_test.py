@@ -757,6 +757,21 @@ class IndexingTest(jtu.JaxTestCase):
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testBoolean1DIndexingWithEllipsis2(self):
+    # Regression test for https://github.com/google/jax/issues/9050
+    x = np.arange(3)
+    idx = (..., np.array([True, False, True]))
+    ans = jnp.array(x)[idx]
+    expected = x[idx]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testBoolean1DIndexingWithEllipsis3(self):
+    x = np.arange(6).reshape(2, 3)
+    idx = (0, ..., np.array([True, False, True]))
+    ans = jnp.array(x)[idx]
+    expected = x[idx]
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testBoolean2DIndexingWithEllipsis(self):
     x = np.arange(24).reshape(4, 3, 2)
     idx = (..., np.array([[True, False], [True, False], [False, False]]))

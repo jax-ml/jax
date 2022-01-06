@@ -730,6 +730,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     self._CheckChiSquared(samples[:10000], scipy.stats.poisson(2.0).pmf)
     self._CheckChiSquared(samples[10000:], scipy.stats.poisson(20.0).pmf)
 
+  def testPoissonWithoutShape(self):
+    key = self.seed_prng(1)
+    lam = 2 * jnp.ones(10000)
+    samples = random.poisson(key, lam)
+    self._CheckChiSquared(samples, scipy.stats.poisson(2.0).pmf)
+
   def testPoissonShape(self):
     key = self.seed_prng(0)
     x = random.poisson(key, np.array([2.0, 20.0]), shape=(3, 2))

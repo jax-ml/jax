@@ -235,8 +235,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("fix", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
-    op_record("floor_divide", 2, number_dtypes, all_shapes,
-              jtu.rand_nonzero, ["rev"]),
+    op_record("floor_divide", 2, float_dtypes + int_dtypes,
+              all_shapes, jtu.rand_nonzero, ["rev"]),
     op_record("floor_divide", 2, unsigned_dtypes, all_shapes,
               jtu.rand_nonzero, ["rev"]),
     op_record("fmin", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
@@ -4486,17 +4486,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name":
-           "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}_interpolation={}".format(
+           "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}_method={}".format(
              op,
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              jtu.format_shape_dtype_string(q_shape, q_dtype),
-             axis, keepdims, interpolation),
+             axis, keepdims, method),
          "a_rng": jtu.rand_some_nan,
          "q_rng": q_rng, "op": op,
          "a_shape": a_shape, "a_dtype": a_dtype,
          "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
          "keepdims": keepdims,
-         "interpolation": interpolation}
+         "method": method}
         for (op, q_rng) in (
           ("percentile", partial(jtu.rand_uniform, low=0., high=100.)),
           ("quantile", partial(jtu.rand_uniform, low=0., high=1.)),
@@ -4512,10 +4512,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for q_dtype in [np.float32]
         for q_shape in scalar_shapes + [(4,)]
         for keepdims in [False, True]
-        for interpolation in ['linear', 'lower', 'higher', 'nearest',
-                              'midpoint']))
+        for method in ['linear', 'lower', 'higher', 'nearest', 'midpoint']))
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
-                   axis, keepdims, interpolation):
+                   axis, keepdims, method):
     a_rng = a_rng(self.rng())
     q_rng = q_rng(self.rng())
     if "median" in op:
@@ -4526,10 +4525,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]
-      return getattr(np, op)(*args, axis=axis, keepdims=keepdims,
-                     interpolation=interpolation)
+      if numpy_version <= (1, 22):
+        return getattr(np, op)(*args, axis=axis, keepdims=keepdims,
+                               interpolation=method)
+      else:
+        return getattr(np, op)(*args, axis=axis, keepdims=keepdims,
+                               method=method)
     jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims,
-                      interpolation=interpolation)
+                      method=method)
 
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
@@ -5953,6 +5956,8 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
       'angle': ['deg'],
+      'argmax': ['keepdims'],
+      'argmin': ['keepdims'],
       'asarray': ['like'],
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
@@ -5968,6 +5973,14 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
+      'nanargmax': ['out', 'keepdims'],
+      'nanargmin': ['out', 'keepdims'],
+      'nanmax': ['initial', 'where'],
+      'nanmean': ['where'],
+      'nanmin': ['initial', 'where'],
+      'nanprod': ['initial', 'where'],
+      'nanstd': ['where'],
+      'nanvar': ['where'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'tri': ['like'],
@@ -5989,6 +6002,9 @@ class NumpySignaturesTest(jtu.JaxTestCase):
         continue
       # Some signatures have changed; skip for older numpy versions.
       if numpy_version < (1, 19) and name in ['einsum_path', 'gradient', 'isscalar']:
+        continue
+      if numpy_version < (1, 22) and name in ['quantile', 'nanquantile',
+                                              'percentile', 'nanpercentile']:
         continue
       # Note: can't use inspect.getfullargspec due to numpy issue
       # https://github.com/numpy/numpy/issues/12225

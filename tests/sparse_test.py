@@ -1596,6 +1596,10 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(sparse.todense(M), M_dense)
     self.assertArraysEqual(jit(sparse.todense)(M), M_dense)
 
+  def test_todense_scalar(self):
+    self.assertEqual(sparse.todense(1.0), 1.0)
+    self.assertEqual(jit(sparse.todense)(1.0), 1.0)
+
   @parameterized.named_parameters(
     {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
     for Obj in [jnp.array, sparse.BCOO])
@@ -1631,9 +1635,14 @@ class SparseObjectTest(jtu.JaxTestCase):
 
     assert isinstance(M, Obj)
     assert M.shape == shape
+    assert M.size == np.prod(shape)
+    assert M.ndim == len(shape)
     assert M.dtype == dtype
     assert M.nse == (M.todense() != 0).sum()
     assert M.data.dtype == dtype
+
+    with self.assertRaises(TypeError):
+      hash(M)
 
     if isinstance(M, sparse.CSR):
       assert len(M.data) == len(M.indices)

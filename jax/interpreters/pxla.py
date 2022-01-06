@@ -57,6 +57,7 @@ from jax._src.util import (unzip3, prod, safe_map, safe_zip,
 from jax.errors import JAXTypeError
 from jax._src import dispatch
 from jax._src import profiler
+from jax._src.lib import _xla_extension_version
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
@@ -1703,8 +1704,12 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
       transposed_dims = list(dims)
       transposed_dims.insert(out_axis, axis_env.sizes[-1])
       aval = aval.update(shape=transposed_dims)
-      out = mhlo.TransposeOp(mlir.aval_to_ir_type(aval), out,
-                             mlir.dense_int_elements(perm)).result
+      if _xla_extension_version < 49:
+        out = mhlo.TransposeOp(
+            mlir.aval_to_ir_type(aval), out,
+            mlir.dense_int_elements(perm)).result
+      else:
+        out = mhlo.TransposeOp(out, mlir.dense_int_elements(perm)).result
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:

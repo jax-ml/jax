@@ -18,7 +18,7 @@ import functools
 from functools import partial
 import itertools
 import operator
-from typing import (Any, Callable, Optional, Sequence, Union, Tuple)
+from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar, Union
 import warnings
 
 import numpy as np
@@ -79,6 +79,8 @@ Array = Any
 DType = Any
 Shape = core.Shape
 
+T = TypeVar("T")
+
 @functools.partial(jax.jit, inline=True)
 def _array_copy(arr):
   """Return an on-device copy of a DeviceArray.
@@ -97,13 +99,14 @@ def _array_copy(arr):
     return bitwise_or(arr, _const(arr, False))
   return add(arr, _const(arr, 0))
 
-def _try_broadcast_shapes(shapes):
+def _try_broadcast_shapes(
+    shapes: Sequence[Tuple[int, ...]]) -> Optional[Tuple[int, ...]]:
   assert shapes
   if len(shapes) == 1: return shapes[0]
   rank, *others = {len(shape) for shape in shapes}
   if others: return None  # must have consistent rank
   if not rank: return ()  # scalar case
-  result_shape = [None] * rank
+  result_shape = [-1] * rank
   for i, sizes in enumerate(zip(*shapes)):
     non_1s = set([d for d in sizes if not core.symbolic_equal_dim(d, 1)])
     if len(non_1s) > 1:
@@ -113,16 +116,16 @@ def _try_broadcast_shapes(shapes):
   return tuple(result_shape)
 
 @cache()
-def broadcast_shapes(*shapes):
+def broadcast_shapes(*shapes: Tuple[int, ...]) -> Tuple[int, ...]:
   """Returns the shape that results from NumPy broadcasting of `shapes`."""
   if len(shapes) == 1:
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
-  shapes = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
-  result_shape = _try_broadcast_shapes(shapes)
+  shape_list = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
+  result_shape = _try_broadcast_shapes(shape_list)
   if result_shape is None:
     raise ValueError("Incompatible shapes for broadcasting: {}"
-                     .format(tuple(map(tuple, shapes))))
+                     .format(tuple(shape_list)))
   return result_shape
 
 def _identity(x): return x
@@ -836,8 +839,10 @@ def argmax(operand: Array, axis: int,
   return argmax_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
 
-def reduce(operands, init_values, computation: Callable,
-           dimensions: Sequence[int]):
+def reduce(operands: Any,
+           init_values: Any,
+           computation: Callable[[Any, Any], Any],
+           dimensions: Sequence[int]) -> Any:
   """Wraps XLA's `Reduce
   <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
   operator.
@@ -1028,7 +1033,7 @@ def _device_put_raw(x, weak_type=None):
     aval = raise_to_shaped(core.get_aval(x), weak_type=weak_type)
     return dispatch.array_result_handler(None, aval)(*dispatch.device_put(x))
 
-def zeros_like_shaped_array(aval):
+def zeros_like_shaped_array(aval: Array) -> Array:
   assert isinstance(aval, ShapedArray)
   if aval.dtype == dtypes.float0:
     scalar_zero = np.zeros((), dtype=aval.dtype)
@@ -1083,7 +1088,7 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
                 broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
 
-def stop_gradient(x):
+def stop_gradient(x: T) -> T:
   """Stops gradient computation.
 
   Operationally ``stop_gradient`` is the identity function, that is, it returns
@@ -1111,7 +1116,9 @@ def stop_gradient(x):
       return x  # only bind primitive on inexact dtypes, to avoid some staging
   return tree_map(stop, x)
 
-def reduce_precision(operand, exponent_bits, mantissa_bits):
+def reduce_precision(operand: Union[float, Array],
+                     exponent_bits: int,
+                     mantissa_bits: int) -> Array:
   """Wraps XLA's `ReducePrecision
   <https://www.tensorflow.org/xla/operation_semantics#reduceprecision>`_
   operator.
@@ -1280,7 +1287,7 @@ ShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
 
-def zeros_like_array(x):
+def zeros_like_array(x: Array) -> Array:
   return full_like(x, 0)
 
 for t in itertools.chain(
@@ -3016,8 +3023,12 @@ def _reshape_lower(ctx, x, *, new_sizes, dimensions):
   aval_out, = ctx.avals_out
   if dimensions is not None:
     aval = core.ShapedArray(np.take(aval_in.shape, dimensions), aval_in.dtype)
-    x = mhlo.TransposeOp(mlir.aval_to_ir_type(aval), x,
-                         mlir.dense_int_elements(dimensions)).result
+    if jax._src.lib._xla_extension_version < 49:
+      x = mhlo.TransposeOp(
+          mlir.aval_to_ir_type(aval), x,
+          mlir.dense_int_elements(dimensions)).result
+    else:
+      x = mhlo.TransposeOp(x, mlir.dense_int_elements(dimensions)).result
   return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), x).results
 mlir.register_lowering(reshape_p, _reshape_lower)
 
@@ -3075,8 +3086,11 @@ masking.masking_rules[transpose_p] = _transpose_masking_rule
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
-  return mhlo.TransposeOp(mlir.aval_to_ir_type(aval_out), x,
-                          mlir.dense_int_elements(permutation)).results
+  if jax._src.lib._xla_extension_version < 49:
+    return mhlo.TransposeOp(
+        mlir.aval_to_ir_type(aval_out), x,
+        mlir.dense_int_elements(permutation)).results
+  return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 mlir.register_lowering(transpose_p, _transpose_lower)
 
 

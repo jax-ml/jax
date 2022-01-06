@@ -260,7 +260,6 @@ class Primitive:
   multiple_results = False  # set for multi-output primitives
   call_primitive = False    # set for call primitives processed in final style
   map_primitive = False     # set for map primitives processed in final style
-  _dispatch_on_params = False  # whether to include axis names from params in dispatch
 
   def __init__(self, name: str):
     self.name = name
@@ -268,14 +267,13 @@ class Primitive:
   def __repr__(self):
     return '{}'.format(self.name)
 
-
   def bind(self, *args, **params):
     assert (not config.jax_enable_checks or
             all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
-    top_trace = find_top_trace(
-        args, used_axis_names(self, params) if self._dispatch_on_params else None)
-    tracers = map(top_trace.full_raise, args)
-    out = top_trace.process_primitive(self, tracers, params)
+    return self.bind_with_trace(find_top_trace(args), args, params)
+
+  def bind_with_trace(self, trace, args, params):
+    out = trace.process_primitive(self, map(trace.full_raise, args), params)
     return map(full_lower, out) if self.multiple_results else full_lower(out)
 
   def def_impl(self, impl):
@@ -879,17 +877,14 @@ def full_lower(val):
   else:
     return val
 
-def find_top_trace(xs, axis_names=None) -> Trace:
-  top_main: Optional[MainTrace] = None
-  if axis_names:
-    top_main = max((axis_frame(a).main_trace for a in axis_names),
-                   default=None, key=lambda t: getattr(t, 'level', -1))
+def find_top_trace(xs) -> Trace:
   top_tracer = max((x for x in xs if isinstance(x, Tracer)),
-                   default=None, key=attrgetter('_trace.level'))
+                    default=None, key=attrgetter('_trace.level'))
   if top_tracer is not None:
     top_tracer._assert_live()
-    if top_tracer._trace.main.level > getattr(top_main, 'level', -1):
-      top_main = top_tracer._trace.main
+    top_main = top_tracer._trace.main
+  else:
+    top_main = None  # type: ignore
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
@@ -1915,7 +1910,14 @@ axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst, bool], 
 # participate in dispatch should subclass AxisPrimitive.
 
 class AxisPrimitive(Primitive):
-  _dispatch_on_params = True
+  def bind(self, *args, **params):
+    top_trace = find_top_trace(args)
+    axis_main = max((axis_frame(a).main_trace for a in used_axis_names(self, params)),
+                    default=None, key=lambda t: getattr(t, 'level', -1))
+    top_trace = (top_trace if not axis_main or axis_main.level < top_trace.level
+                 else axis_main.with_cur_sublevel())
+    return self.bind_with_trace(top_trace, args, params)
+
 
 # ------------------- Jaxpr checking -------------------
 

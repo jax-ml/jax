@@ -3093,13 +3093,12 @@ def _remat_translation_rule(*args,
 
 for platform in ("cpu", "gpu", "tpu"):
   for remat_primitive in (pe.remat_call_p, ad_checkpoint.remat_p):  # type: ignore
-    if xla._USE_LAX_REMAT_LOWERING:
-      xla.register_translation(remat_primitive,
-                               xla.lower_fun(partial(_remat_translation_rule,
-                                                     platform=platform),
-                                             new_style=True, multiple_results=True,
-                                             backend=platform),
-                              platform=platform)
+    xla.register_translation(remat_primitive,
+                             xla.lower_fun(partial(_remat_translation_rule,
+                                                   platform=platform),
+                                           new_style=True, multiple_results=True,
+                                           backend=platform),
+                            platform=platform)
     mlir.register_lowering(remat_primitive,
                            mlir.lower_fun(partial(_remat_translation_rule,
                                                    platform=platform),

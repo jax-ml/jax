@@ -136,6 +136,12 @@ def coerce_to_array(x, dtype=None):
 
 iinfo = np.iinfo
 
+class _Bfloat16MachArLike:
+  def __init__(self):
+    smallest_normal = float.fromhex("0x1p-126")
+    self.smallest_normal = bfloat16(smallest_normal)
+
+
 class finfo(np.finfo):
   __doc__ = np.finfo.__doc__
   _finfo_cache: Dict[np.dtype, np.finfo] = {}
@@ -165,10 +171,12 @@ class finfo(np.finfo):
     obj.iexp = obj.nexp
     obj.precision = 2
     obj.resolution = bfloat16(resolution)
-    obj.tiny = bfloat16(tiny)
-    obj.machar = None  # np.core.getlimits.MachArLike does not support bfloat16.
+    obj._machar = _Bfloat16MachArLike()
+    if not hasattr(obj, "tiny"):
+      obj.tiny = bfloat16(tiny)
 
     obj._str_tiny = float_to_str(tiny)
+    obj._str_smallest_normal = float_to_str(tiny)
     obj._str_max = float_to_str(max)
     obj._str_epsneg = float_to_str(epsneg)
     obj._str_eps = float_to_str(eps)

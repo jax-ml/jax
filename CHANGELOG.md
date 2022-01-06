@@ -13,6 +13,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   commits](https://github.com/google/jax/compare/jax-v0.2.26...main).
 
 * Breaking changes:
+  * Support for NumPy 1.18 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
   * The host_callback primitives have been simplified to drop the
     special autodiff handling for hcb.id_tap and id_print.
     From now on, only the primals are tapped. The old behavior can be
@@ -36,6 +39,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     (e.g. A100). Removes precompiled SASS for compute capability 6.1 so as not
     to increase the number of compute capabilities: GPUs with compute capability
     6.1 can use the 6.0 SASS.
+* Breaking changes
+  * Support for NumPy 1.18 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
 
 ## jaxlib 0.1.75 (Dec 8, 2021)
 * New features:
