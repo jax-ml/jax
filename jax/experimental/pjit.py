@@ -380,7 +380,7 @@ class ParsedPartitionSpec:
     return ParsedPartitionSpec(self.unsafe_user_spec, new_partitions, sync=new_sync)
 
   @classmethod
-  def from_user_input(cls, entry, arg_name):
+  def from_user_input(cls, entry, arg_name, allow_unconstrained_dims=False):
     if entry is None:
       return cls(entry, ())
     if not isinstance(entry, PartitionSpec):
@@ -392,6 +392,10 @@ class ParsedPartitionSpec:
         axis_spec = ()
       elif isinstance(axis_spec, (list, tuple)):
         axis_spec = tuple(axis_spec)
+      elif axis_spec == PartitionSpec.UNCONSTRAINED:
+        if not allow_unconstrained_dims:
+          raise ValueError(f"Unconstrained dims are not allowed: {entry}")
+        axis_spec = None
       else:
         axis_spec = (axis_spec,)
       axis_specs.append(axis_spec)
@@ -444,14 +448,17 @@ class ParsedPartitionSpec:
 REPLICATED = ParsedPartitionSpec(None, ())
 
 
-def _prepare_axis_resources(axis_resources, arg_name):
+def _prepare_axis_resources(axis_resources,
+                            arg_name,
+                            allow_unconstrained_dims=False):
   # PyTrees don't treat None values as leaves, so we explicitly need
   # to explicitly declare them as such
   entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
   entries = [
       entry if _is_from_gda(entry) else ParsedPartitionSpec.from_user_input(
-          entry, what) for entry in entries
+          entry, what, allow_unconstrained_dims=allow_unconstrained_dims)
+      for entry in entries
   ]
   _check_unique_resources(entries, arg_name)
   return tree_unflatten(treedef, entries), entries, treedef
@@ -465,7 +472,8 @@ def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
     if _is_from_gda(arg_axis_resources): continue
-    resource_counts = Counter(it.chain.from_iterable(arg_axis_resources))
+    constrained_dims = [d for d in arg_axis_resources if d is not None]
+    resource_counts = Counter(it.chain.from_iterable(constrained_dims))
     if not resource_counts: continue
     if resource_counts.most_common(1)[0][1] > 1:
       multiple_uses = [r for r, c in resource_counts.items() if c > 1]
@@ -486,6 +494,8 @@ def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape
                        f"it has a rank of at least {len(aval_axis_resources)}, "
                        f"but it is {len(shape)}")
     for i, axis_resources in enumerate(aval_axis_resources):
+      if axis_resources is None:
+        continue
       try:
         size = int(np.prod([mesh_shape[resource] for resource in axis_resources], dtype=np.int64))
       except KeyError as e:
@@ -799,7 +809,8 @@ ad.reducing_transposes[pjit_p] = _pjit_transpose
 
 
 def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources):
-  pjit_resources = set(it.chain.from_iterable(pos_axis_resources))
+  pjit_resources = set(
+      it.chain.from_iterable([d for d in pos_axis_resources if d is not None]))
   aval_resources = set(it.chain.from_iterable(
     named_axis_resources[a] for a in aval.named_shape))
   overlap = pjit_resources & aval_resources
@@ -832,7 +843,8 @@ pxla.custom_resource_typing_rules[pjit_p] = _resource_typing_pjit
 
 def with_sharding_constraint(x, axis_resources):
   x_flat, tree = tree_flatten(x)
-  parsed_axis_resources, entries, _ = _prepare_axis_resources(axis_resources, "axis_resources")
+  parsed_axis_resources, entries, _ = _prepare_axis_resources(
+      axis_resources, "axis_resources", allow_unconstrained_dims=True)
   axis_resources_flat = tuple(
       flatten_axes("with_sharding_constraint axis_resources",
                    tree, parsed_axis_resources))
@@ -864,16 +876,25 @@ def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node, *,
                                           axis_resources, resource_env):
   aval, = avals_in
   mesh = resource_env.physical_mesh
-  return [xla.set_sharding_proto(
-      ctx.builder, x_node, get_aval_sharding_proto(aval, axis_resources, mesh))]
+  return [
+      xla.set_sharding_proto(
+          ctx.builder,
+          x_node,
+          get_aval_sharding_proto(aval, axis_resources, mesh),
+          unspecified_dims=get_unconstrained_dims(axis_resources))
+  ]
 xla.register_translation(sharding_constraint_p, _sharding_constraint_translation_rule)
 
 def _sharding_constraint_mhlo_lowering(ctx, x_node, *, axis_resources,
                                        resource_env):
   aval, = ctx.avals_in
   mesh = resource_env.physical_mesh
-  return [mlir.wrap_with_sharding_op(
-      x_node, get_aval_sharding_proto(aval, axis_resources, mesh))]
+  return [
+      mlir.wrap_with_sharding_op(
+          x_node,
+          get_aval_sharding_proto(aval, axis_resources, mesh),
+          unspecified_dims=get_unconstrained_dims(axis_resources))
+  ]
 mlir.register_lowering(sharding_constraint_p,
                        _sharding_constraint_mhlo_lowering)
 
@@ -904,7 +925,7 @@ pxla.custom_resource_typing_rules[sharding_constraint_p] = \
 def get_array_mapping(axis_resources: ParsedPartitionSpec) -> pxla.ArrayMapping:
   return OrderedDict((axis, i)
                      for i, axes in enumerate(axis_resources)
-                     for axis in axes)
+                     if axes is not None for axis in axes)
 
 
 def get_aval_sharding_proto(aval: core.AbstractValue,
@@ -914,6 +935,11 @@ def get_aval_sharding_proto(aval: core.AbstractValue,
   sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(
       aval, array_mapping)
   return sharding_spec.sharding_proto()
+
+
+def get_unconstrained_dims(axis_resources: ParsedPartitionSpec):
+  return {i for i, axes in enumerate(axis_resources) if axes is None}
+
 
 def global_to_local(positional_semantics, mesh, avals, axes):
   if isinstance(positional_semantics, maps._PositionalSemantics):
