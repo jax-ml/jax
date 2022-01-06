@@ -108,7 +108,7 @@ def _try_broadcast_shapes(
   if not rank: return ()  # scalar case
   result_shape = [-1] * rank
   for i, sizes in enumerate(zip(*shapes)):
-    non_1s = set([d for d in sizes if not core.symbolic_equal_dim(d, 1)])
+    non_1s = {d for d in sizes if not core.symbolic_equal_dim(d, 1)}
     if len(non_1s) > 1:
       return None  # must have equal sizes other than 1-sized axes
     result_shape[i] = next(iter(non_1s), 1)
@@ -1362,11 +1362,19 @@ def _broadcasting_shape_rule(name, *avals):
   if len({len(shape) for shape in shapes}) != 1:
     msg = '{}: arrays must have same number of dimensions, got {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
-  result_shape = _try_broadcast_shapes(shapes)
-  if result_shape is None:
-    msg = '{} got incompatible shapes for broadcasting: {}.'
-    raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
-  return result_shape
+  result_shape = []
+  for ds in zip(*shapes):
+    if all(d is ds[0] for d in ds):
+      # if all axes are identical objects, the resulting size is the object
+      result_shape.append(ds[0])
+    else:
+      # if all dims are equal (or 1), the result is the non-1 size
+      non_1s = {d for d in ds if not core.symbolic_equal_dim(d, 1)}
+      if len(non_1s) > 1:
+        raise TypeError(f'{name} got incompatible shapes for broadcasting: '
+                        f'{", ".join(map(str, map(tuple, shapes)))}.')
+      result_shape.append(non_1s.pop() if non_1s else 1)
+  return tuple(result_shape)
 
 def _naryop_weak_type_rule(name, *avals, **kwargs):
   if any(aval.dtype is dtypes.float0 for aval in avals):
@@ -3408,7 +3416,8 @@ def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
     raise ValueError(f"duplicate value in 'axes' of reduction: {axes}")
   if not all(0 <= a < operand.ndim for a in axes):
     raise ValueError(f"reduction axes {axes} contains out-of-bounds indices for {operand}.")
-  return tuple(np.delete(operand.shape, axes))
+  axes = frozenset(axes)
+  return tuple(d for i, d in enumerate(operand.shape) if i not in axes)
 
 def _reduce_prod_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
   operand_aval, = avals_in

@@ -27,6 +27,7 @@ import jax
 from jax import core
 from jax import lax
 from jax import numpy as jnp
+from jax import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src.abstract_arrays import make_shaped_array
 from jax import jvp, linearize, vjp, jit, make_jaxpr
@@ -513,6 +514,116 @@ class JaxprTypeChecks(jtu.JaxTestCase):
 
     aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
     self.assertFalse(core.typecompat(aval1, aval3))
+
+
+class DynamicShapesTest(jtu.JaxTestCase):
+
+  def test_staging_basic(self):
+    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
+    a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+
+    @lu.wrap_init
+    def f(x, y):
+      return x, y
+
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
+                                            keep_inputs=[False, True, True])
+
+    self.assertLen(jaxpr.invars, 3)
+    self.assertEqual((jaxpr.invars[0],), jaxpr.invars[1].aval.shape)
+    self.assertEqual((jaxpr.invars[0],), jaxpr.invars[2].aval.shape)
+
+    self.assertLen(jaxpr.outvars, 2)
+    self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[0].aval.shape)
+    self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[1].aval.shape)
+
+  def test_staging_nested(self):
+    n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
+    a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+
+    @lu.wrap_init
+    def f(x, y):
+      @jax.jit
+      def g(x, y, z, w):
+        return (x, w)
+      return g(x, y, x, y)
+
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
+                                            keep_inputs=[False, True, True])
+
+    self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
+    self.assertEqual((jaxpr.invars[0],), jaxpr.invars[1].aval.shape)
+    self.assertEqual((jaxpr.invars[0],), jaxpr.invars[2].aval.shape)
+
+    self.assertLen(jaxpr.outvars, 2)
+    self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[0].aval.shape)
+    self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[1].aval.shape)
+
+    self.assertLen(jaxpr.eqns, 1)
+    eqn = jaxpr.eqns[0]
+    self.assertIsInstance(eqn.primitive, core.CallPrimitive)
+    inner_jaxpr, _ = core.extract_call_jaxpr(eqn.primitive, eqn.params)
+    self.assertIsInstance(inner_jaxpr, core.Jaxpr)
+
+    self.assertLen(inner_jaxpr.invars, 1 + 4)  # one axis size var
+    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[1].aval.shape)
+    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[2].aval.shape)
+    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[3].aval.shape)
+    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
+
+  def test_staging_nested_including_shape_arg(self):
+    # This test covers the _get_tracers_only_in_shapes logic in partial_eval.py.
+    n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
+    a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+
+    @lu.wrap_init
+    def f(x, y):
+      @jax.jit
+      def g(_, x, y, z, w):
+        return (x, w)
+      return g(x.shape[0], x, y, x, y)
+
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
+                                            keep_inputs=[False, True, True])
+
+    self.assertLen(jaxpr.eqns, 1)
+    eqn = jaxpr.eqns[0]
+    self.assertIsInstance(eqn.primitive, core.CallPrimitive)
+    inner_jaxpr, _ = core.extract_call_jaxpr(eqn.primitive, eqn.params)
+    self.assertIsInstance(inner_jaxpr, core.Jaxpr)
+
+    self.assertLen(inner_jaxpr.invars, 1 + 4)  # one axis size var
+    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[1].aval.shape)
+    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[2].aval.shape)
+    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[3].aval.shape)
+    self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
+
+  def test_staging_primitive_applications(self):
+    n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
+    a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+
+    @lu.wrap_init
+    def f(x, y):
+      z = lax.mul(x, y)
+      w = lax.sin(z)
+      u = lax._reduce_sum(w, [0])
+      return (u,)
+
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
+                                            keep_inputs=[False, True, True])
+
+    self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
+    self.assertLen(jaxpr.eqns, 3)
+    self.assertLen(jaxpr.eqns[0].outvars, 1)
+    self.assertEqual(jaxpr.eqns[0].outvars[0].aval.shape,
+                     jaxpr.invars[1].aval.shape)
+
+    self.assertLen(jaxpr.outvars, 1)
+    self.assertEqual(jaxpr.outvars[0].aval.shape, ())
 
 
 if __name__ == '__main__':

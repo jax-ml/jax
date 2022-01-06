@@ -1033,7 +1033,7 @@ def _short_dtype_name(dtype):
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
-  array_abstraction_level = 2
+  array_abstraction_level = 3
 
   def __init__(self, dtype, weak_type=False):
     self.dtype = np.dtype(dtype)
@@ -1096,6 +1096,58 @@ class UnshapedArray(AbstractValue):
            "https://github.com/google/jax/issues because it's unexpected for "
            "UnshapedArray instances to ever be produced.")
     raise TypeError(msg)
+
+
+# We have a convention of reusing AbsractValues as types, in particular reusing
+# ShapedArrays as types, even though we could make a distinction and use
+# abstract values during tracing only. This reuse becomes a bit more extreme
+# with DShapedArrays. A DShapedArray's shape attribute is a tuple which can
+# contain several different types: ints, other AbstractValues (specifically at
+# the input and output to pe.trace_to_jaxpr_dynamic), Tracers (while tracing),
+# or Vars (when used as jaxpr type annotations). We could reduce this
+# polymorphism if it seems cleaner, though it's kind of convenient!
+AxisSizeForTracing = Union[int, Tracer]
+AxisSizeForJaxprType = Union[int, Var]
+AxisSizeForJaxprTracingSpec = Union[int, AbstractValue]
+AxisSize = Union[AxisSizeForTracing, AxisSizeForJaxprType,
+                 AxisSizeForJaxprTracingSpec]
+
+class DShapedArray(UnshapedArray):
+  __slots__ = ['shape']
+  shape: Tuple[AxisSize, ...]  # see comment above
+  array_abstraction_level = 2
+
+  def __init__(self, shape, dtype, weak_type):
+    self.shape = shape
+    self.dtype = dtype
+    self.weak_type = weak_type
+
+  ndim = property(lambda self: len(self.shape))
+  size = property(lambda self: prod(self.shape))
+
+  def str_short(self, short_dtypes=False) -> str:
+    del short_dtypes  # ignored
+    shape = f'{",".join(str(d) for d in self.shape)}' if self.shape else ''
+    dtype = _short_dtype_name(self.dtype)
+    return f'{dtype}[{shape}]'
+  __str__ = __repr__ = str_short
+
+  def __eq__(self, other):
+    return (type(self) is type(other) and
+            self.dtype == other.dtype and self.shape == other.shape and
+            self.weak_type == other.weak_type)
+
+  def update(self, shape=None, dtype=None, weak_type=None):
+    if shape is None:
+      shape = self.shape
+    if dtype is None:
+      dtype = self.dtype
+    if weak_type is None:
+      weak_type = self.weak_type
+    return DShapedArray(shape, dtype, weak_type)
+
+del AxisSize, AxisSizeForTracing, AxisSizeForJaxprType, \
+    AxisSizeForJaxprTracingSpec
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'named_shape']
@@ -2111,9 +2163,17 @@ class JaxprPpContext:
     self.var_ids = collections.defaultdict(it.count().__next__)
 
 
-def pp_var(v: Var, context: JaxprPpContext):
+def pp_var(v: Var, context: JaxprPpContext) -> str:
   if isinstance(v, (Literal, DropVar)): return str(v)
   return f"{_encode_digits_alphabetic(context.var_ids[v])}{v.suffix}"
+
+def pp_aval(a: AbstractValue, context: JaxprPpContext) -> str:
+  if isinstance(a, DShapedArray):
+    shape = [pp_var(d, context) if type(d) is Var else str(d) for d in a.shape]
+    dtype = _short_dtype_name(a.dtype)
+    return f'{dtype}[{",".join(shape)}]'
+  else:
+    return a.str_short(short_dtypes=True)
 
 def pp_vars(vs: Sequence[Any], context: JaxprPpContext,
             *, separator="", print_shapes: bool = False) -> pp.Doc:
@@ -2121,7 +2181,7 @@ def pp_vars(vs: Sequence[Any], context: JaxprPpContext,
     return pp.nest(2, pp.group(
       pp.join(pp.text(separator) + pp.group(pp.brk()), [
         pp.text(pp_var(v, context)) +
-        pp.dim(pp.text(":" + v.aval.str_short(short_dtypes=True)))
+        pp.dim(pp.text(":" + pp_aval(v.aval, context)))
         for v in vs
       ])
     ))
