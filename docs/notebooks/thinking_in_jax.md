@@ -456,7 +456,7 @@ f(x)
 
 +++ {"id": "ZO3GMGrHBZDS"}
 
-This fails with an error specifying that a tracer was found in `jax.numpy.reshape`. Let's add some print statements to the function to understand why this is happening:
+This fails with an error specifying that a tracer was found instead of a 1D sequence of concrete values of integer type. Let's add some print statements to the function to understand why this is happening:
 
 ```{code-cell} ipython3
 :id: Cb4mbeVZEi_q
