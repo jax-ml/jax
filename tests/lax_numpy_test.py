@@ -2979,6 +2979,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
+    for dtype in inexact_dtypes))
+  def testSearchsortedNans(self, dtype):
+    if np.issubdtype(dtype, np.complexfloating):
+      raise SkipTest("Known failure for complex inputs; see #9107")
+    sorted = jnp.array([-np.nan, -np.inf, -1, 0, 1, np.inf, np.nan], dtype=dtype)
+    self.assertArraysEqual(
+      jnp.searchsorted(sorted, sorted, side='left'),
+      jnp.arange(len(sorted)))
+    self.assertArraysEqual(
+      jnp.searchsorted(sorted, sorted, side='right'),
+      jnp.arange(1, 1 + len(sorted)))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_x={}_bins={}_right={}_reverse={}".format(
       jtu.format_shape_dtype_string(xshape, dtype),
       jtu.format_shape_dtype_string(binshape, dtype),
