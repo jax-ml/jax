@@ -279,6 +279,14 @@ def gather_error_check(error, operand, start_indices, *,
   return out, assert_func(error, all_inbounds, msg)
 error_checks[lax.gather_p] = gather_error_check
 
+def div_error_check(error, x, y):
+  """Checks for division by zero and NaN."""
+  all_nonzero = jnp.logical_not(jnp.any(jnp.equal(y, 0)))
+  msg = f'divided by zero at {summary()}'
+  div_by_zero_err = assert_func(error, all_nonzero, msg)
+  return nan_error_check(lax.div_p, div_by_zero_err, x, y)
+error_checks[lax.div_p] = div_error_check
+
 def cond_error_check(error, index, *ops, branches, linear):
   new_branches, msgs_ = unzip2(checkify_jaxpr(jxpr, error) for jxpr in branches)
   new_linear = (False, False, *linear)
@@ -418,7 +426,6 @@ add_nan_check(lax.integer_pow_p)
 add_nan_check(lax.tanh_p)
 add_nan_check(lax.log_p)
 add_nan_check(lax.atan2_p)
-add_nan_check(lax.div_p)
 add_nan_check(lax.sin_p)
 add_nan_check(lax.cos_p)
 add_nan_check(lax.sinh_p)
