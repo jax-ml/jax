@@ -19,9 +19,10 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import random
-from jax.experimental import stax
+from jax.example_libraries import stax
+from jax import dtypes
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -29,7 +30,7 @@ config.parse_flags_with_absl()
 
 def random_inputs(rng, input_shape):
   if type(input_shape) is tuple:
-    return rng.randn(*input_shape).astype(np.float32)
+    return rng.randn(*input_shape).astype(dtypes.canonicalize_dtype(np.float_))
   elif type(input_shape) is list:
     return [random_inputs(rng, shape) for shape in input_shape]
   else:
@@ -40,7 +41,7 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   rng_key = random.PRNGKey(0)
   rng_key, init_key = random.split(rng_key)
   result_shape, params = init_fun(init_key, input_shape)
-  inputs = random_inputs(np.random.RandomState(0), input_shape)
+  inputs = random_inputs(test_case.rng(), input_shape)
   result = apply_fun(params, inputs, rng=rng_key)
   test_case.assertEqual(result.shape, result_shape)
 
@@ -217,7 +218,7 @@ class StaxTest(jtu.JaxTestCase):
     axes = (0, 1, 2)
     init_fun, apply_fun = stax.BatchNorm(axis=axes, center=False, scale=False)
     input_shape = (4, 5, 6, 7)
-    inputs = random_inputs(np.random.RandomState(0), input_shape)
+    inputs = random_inputs(self.rng(), input_shape)
 
     out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)
@@ -230,7 +231,7 @@ class StaxTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 1, 2))
     input_shape = (4, 5, 6, 7)
-    inputs = random_inputs(np.random.RandomState(0), input_shape)
+    inputs = random_inputs(self.rng(), input_shape)
 
     out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)
@@ -246,7 +247,7 @@ class StaxTest(jtu.JaxTestCase):
     # Regression test for https://github.com/google/jax/issues/461
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 2, 3))
     input_shape = (4, 5, 6, 7)
-    inputs = random_inputs(np.random.RandomState(0), input_shape)
+    inputs = random_inputs(self.rng(), input_shape)
 
     out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)

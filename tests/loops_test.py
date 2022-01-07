@@ -19,10 +19,10 @@ from absl.testing import absltest
 import numpy as np
 import re
 
-from jax._src import api
-from jax import lax, ops
+import jax
+from jax import lax
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.experimental import loops
 
 from jax.config import config
@@ -58,12 +58,12 @@ class LoopsTest(jtu.JaxTestCase):
     def f_expected(inc):
       return 10 + 5 * inc
     self.assertAllClose(f_expected(2.), f_op(2.))
-    self.assertAllClose(f_expected(2.), api.jit(f_op)(2.))
-    self.assertAllClose(5., api.grad(f_op)(2.))
-    self.assertAllClose(5., api.grad(f_op)(2.))
+    self.assertAllClose(f_expected(2.), jax.jit(f_op)(2.))
+    self.assertAllClose(5., jax.grad(f_op)(2.))
+    self.assertAllClose(5., jax.grad(f_op)(2.))
     inc_batch = np.arange(5.0)
-    self.assertAllClose(jnp.array([f_expected(inc) for inc in inc_batch]),
-                        api.vmap(f_op)(inc_batch))
+    self.assertAllClose(np.array([f_expected(inc) for inc in inc_batch]),
+                        jax.vmap(f_op)(inc_batch))
 
 
   def test_loop_2(self):
@@ -87,7 +87,7 @@ class LoopsTest(jtu.JaxTestCase):
         assert n == y.shape[0]
         s.out = jnp.zeros(shape=[n], dtype=jnp.float32)
         for i in s.range(n):
-          s.out = ops.index_add(s.out, i, x[i] + y[i])
+          s.out = s.out.at[i].add(x[i] + y[i])
         return s.out
 
     x = jnp.array([1., 2., 3.], dtype=jnp.float32)
@@ -104,7 +104,7 @@ class LoopsTest(jtu.JaxTestCase):
         for i in s.range(n):
           for j in s.range(p):
             for k in s.range(m):
-              s.out = ops.index_add(s.out, (i, j), x[i, k] * y[k, j])
+              s.out = s.out.at[(i, j)].add(x[i, k] * y[k, j])
         return s.out
 
     x = jnp.array([[1., 2., 3.]], dtype=jnp.float32)  # 1x3
@@ -178,10 +178,10 @@ class LoopsTest(jtu.JaxTestCase):
     def f_op_jax():
       arr = jnp.zeros(5)
       def loop_body(i, acc_arr):
-        arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
+        arr1 = acc_arr.at[i].set(acc_arr[i] + 2.)
         return lax.cond(i % 2 == 0,
                         arr1,
-                        lambda arr1: ops.index_update(arr1, i, arr1[i] + 1.),
+                        lambda arr1: arr1.at[i].set(arr1[i] + 1.),
                         arr1,
                         lambda arr1: arr1)
       arr = lax.fori_loop(0, arr.shape[0], loop_body, arr)
@@ -191,9 +191,9 @@ class LoopsTest(jtu.JaxTestCase):
       with loops.Scope() as s:
         s.arr = jnp.zeros(5)  # Must create the mutable state of the loop as `scope` fields.
         for i in s.range(s.arr.shape[0]):
-          s.arr = ops.index_update(s.arr, i, s.arr[i] + 2.)
+          s.arr = s.arr.at[i].set(s.arr[i] + 2.)
           for _ in s.cond_range(i % 2 == 0):  # Conditionals are also sugared as loops with 0 or 1 iterations
-            s.arr = ops.index_update(s.arr, i, s.arr[i] + 1.)
+            s.arr = s.arr.at[i].set(s.arr[i] + 1.)
         return s.arr
 
     self.assertAllClose(f_expected(), f_op_jax())
@@ -365,11 +365,11 @@ class LoopsTest(jtu.JaxTestCase):
 
     self.assertAllClose(16., f_op(0, 4, 4.))
     # Ok to jit, as long as the start and end are static
-    self.assertAllClose(16., api.jit(f_op, static_argnums=(0, 1))(0, 4, 4.))
+    self.assertAllClose(16., jax.jit(f_op, static_argnums=(0, 1))(0, 4, 4.))
     with self.assertRaisesRegex(TypeError, "Abstract tracer value encountered where concrete value is expected"):
-      self.assertAllClose(16., api.jit(f_op)(0, 4, 4.))
+      self.assertAllClose(16., jax.jit(f_op)(0, 4, 4.))
     with self.assertRaisesRegex(TypeError, "Abstract tracer value encountered where concrete value is expected"):
-      self.assertAllClose(16., api.vmap(f_op)(jnp.zeros(10), jnp.ones(10), jnp.array([4.] * 10)))
+      self.assertAllClose(16., jax.vmap(f_op)(jnp.zeros(10), jnp.ones(10), jnp.array([4.] * 10)))
 
   def test_cond(self):
     def f_op(inc):
@@ -439,7 +439,7 @@ class LoopsTest(jtu.JaxTestCase):
         ValueError,
         r"^Body of cond_range or while_range should not use the index variable "
         r"returned by iterator\."):
-      api.make_jaxpr(f_op)(2.)
+      jax.make_jaxpr(f_op)(2.)
 
   def test_while(self):
     def f_op(init):
@@ -457,12 +457,12 @@ class LoopsTest(jtu.JaxTestCase):
       return out
 
     self.assertAllClose(f_expected(2.), f_op(2.))
-    self.assertAllClose(f_expected(2.), api.jit(f_op)(2.))
+    self.assertAllClose(f_expected(2.), jax.jit(f_op)(2.))
     self.assertAllClose(f_expected(1.), f_op(1.))
     init_batch = np.array([1., 2., 3.], dtype=np.float32)
     self.assertAllClose(np.array([f_expected(init) for init in init_batch],
                                   dtype=np.float32),
-                        api.vmap(f_op)(init_batch))
+                        jax.vmap(f_op)(init_batch))
 
   def test_error_while_cond_mutation(self):
     """Disallow mutation in the while conditional."""

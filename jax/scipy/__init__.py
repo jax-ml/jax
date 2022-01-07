@@ -13,9 +13,10 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from . import linalg
-from . import ndimage
-from . import signal
-from . import sparse
-from . import special
-from . import stats
+from jax.scipy import linalg as linalg
+from jax.scipy import ndimage as ndimage
+from jax.scipy import signal as signal
+from jax.scipy import sparse as sparse
+from jax.scipy import special as special
+from jax.scipy import stats as stats
+from jax.scipy import fft as fft

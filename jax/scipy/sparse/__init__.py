@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from . import linalg
+from jax.scipy.sparse import linalg as linalg

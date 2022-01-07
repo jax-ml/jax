@@ -24,7 +24,7 @@ from absl.testing import parameterized
 import scipy.stats
 
 from jax import core
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.test_util import check_grads
 from jax import nn
 from jax import random
@@ -109,8 +109,6 @@ class NNFunctionsTest(jtu.JaxTestCase):
        partial(nn.gelu, approximate=True),
        nn.relu, nn.softplus, nn.sigmoid)))
   def testDtypeMatchesInput(self, dtype, fn):
-    if dtype is jnp.float16 and jtu.device_under_test() == "tpu":
-      self.skipTest("float16 not supported on TPU")
     x = jnp.zeros((), dtype=dtype)
     out = fn(x)
     self.assertEqual(out.dtype, dtype)
@@ -124,6 +122,28 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # see https://github.com/google/jax/pull/1640
     with jax.enable_checks(False):  # With checks we materialize the array
       jax.make_jaxpr(lambda: nn.hard_tanh(jnp.ones((10 ** 12,))))  # don't oom
+
+  @parameterized.parameters([nn.softmax, nn.log_softmax])
+  def testSoftmaxWhereMask(self, fn):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.array([True, False, True, True])
+    x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
+
+    out_masked = jnp.take(
+        fn(x, where=m, initial=-jnp.inf), jnp.array([0, 2, 3]))
+    out_filtered = fn(x_filtered)
+
+    self.assertAllClose(out_masked, out_filtered)
+
+  def testNormalizeWhereMask(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.array([True, False, True, True])
+    x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
+
+    out_masked = jnp.take(nn.normalize(x, where=m), jnp.array([0, 2, 3]))
+    out_filtered = nn.normalize(x_filtered)
+
+    self.assertAllClose(out_masked, out_filtered)
 
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
@@ -178,28 +198,44 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testTanhExists(self):
     nn.tanh  # doesn't crash
 
+  def testCustomJVPLeak(self):
+    # https://github.com/google/jax/issues/8171
+    @jax.jit
+    def fwd():
+      a = jnp.array(1.)
+
+      def f(hx, _):
+        hx = jax.nn.sigmoid(hx + a)
+        return hx, None
+
+      hx = jnp.array(0.)
+      jax.lax.scan(f, hx, None, length=2)
+
+    with jax.checking_leaks():
+      fwd()  # doesn't crash
+
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
-  ["name", "initializer", "shapes"])
+  ["name", "initializer", "shapes", "dtypes"])
 
 ALL_SHAPES = [(2,), (2, 2), (2, 3), (3, 2), (2, 3, 4), (4, 3, 2), (2, 3, 4, 5)]
 
-def initializer_record(name, initializer, min_dims=2, max_dims=4):
+def initializer_record(name, initializer, dtypes, min_dims=2, max_dims=4):
   shapes = [shape for shape in ALL_SHAPES
             if min_dims <= len(shape) <= max_dims]
-  return InitializerRecord(name, initializer, shapes)
+  return InitializerRecord(name, initializer, shapes, dtypes)
 
 INITIALIZER_RECS = [
-    initializer_record("uniform", nn.initializers.uniform, 1),
-    initializer_record("normal", nn.initializers.normal, 1),
-    initializer_record("he_normal", nn.initializers.he_normal),
-    initializer_record("he_uniform", nn.initializers.he_uniform),
-    initializer_record("glorot_normal", nn.initializers.glorot_normal),
-    initializer_record("glorot_uniform", nn.initializers.glorot_uniform),
-    initializer_record("lecun_normal", nn.initializers.lecun_normal),
-    initializer_record("lecun_uniform", nn.initializers.lecun_uniform),
-    initializer_record("orthogonal", nn.initializers.orthogonal, 2, 2),
-    initializer_record("delta_orthogonal", nn.initializers.delta_orthogonal, 4, 4)
+    initializer_record("uniform", nn.initializers.uniform, jtu.dtypes.floating, 1),
+    initializer_record("normal", nn.initializers.normal, jtu.dtypes.inexact, 1),
+    initializer_record("he_normal", nn.initializers.he_normal, jtu.dtypes.inexact),
+    initializer_record("he_uniform", nn.initializers.he_uniform, jtu.dtypes.inexact),
+    initializer_record("glorot_normal", nn.initializers.glorot_normal, jtu.dtypes.inexact),
+    initializer_record("glorot_uniform", nn.initializers.glorot_uniform, jtu.dtypes.inexact),
+    initializer_record("lecun_normal", nn.initializers.lecun_normal, jtu.dtypes.inexact),
+    initializer_record("lecun_uniform", nn.initializers.lecun_uniform, jtu.dtypes.inexact),
+    initializer_record("orthogonal", nn.initializers.orthogonal, jtu.dtypes.floating, 2, 2),
+    initializer_record("delta_orthogonal", nn.initializers.delta_orthogonal, jtu.dtypes.floating, 4, 4)
 ]
 
 class NNInitializersTest(jtu.JaxTestCase):
@@ -221,10 +257,11 @@ class NNInitializersTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
-      for dtype in jtu.dtypes.floating))
+      for dtype in rec.dtypes))
   def testInitializer(self, initializer, shape, dtype):
     rng = random.PRNGKey(0)
     val = initializer(rng, shape, dtype)
+
     self.assertEqual(shape, jnp.shape(val))
     self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
 
@@ -237,7 +274,7 @@ class NNInitializersTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
-      for dtype in jtu.dtypes.floating))
+      for dtype in rec.dtypes))
   def testInitializerProvider(self, initializer_provider, shape, dtype):
     rng = random.PRNGKey(0)
     initializer = initializer_provider(dtype=dtype)
@@ -245,6 +282,16 @@ class NNInitializersTest(jtu.JaxTestCase):
 
     self.assertEqual(shape, jnp.shape(val))
     self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
+
+  def testVarianceScalingMultiAxis(self):
+    rng = random.PRNGKey(0)
+    shape = (2, 3, 4, 5)
+    initializer = nn.initializers.variance_scaling(
+      scale=1.0, mode='fan_avg', distribution='truncated_normal',
+      in_axis=(0, 1), out_axis=(-2, -1))
+    val = initializer(rng, shape)
+
+    self.assertEqual(shape, jnp.shape(val))
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ build/bazel*
 dist/
 .ipynb_checkpoints
 /bazel-*
-.bazelrc
+.jax_configure.bazelrc
 /tensorflow
 .DS_Store
 .mypy_cache/
@@ -16,5 +16,11 @@ docs/notebooks/.ipynb_checkpoints/
 docs/_autosummary
 .idea
 .vscode
-venv/
 jax.iml
+
+# virtualenv/venv directories
+venv/
+bin/
+include/
+lib/
+share/

@@ -92,7 +92,7 @@ def main(_):
 
   # Convert TF function to TF Lite format.
   converter = tf.lite.TFLiteConverter.from_concrete_functions(
-      [tf_predict.get_concrete_function()])
+      [tf_predict.get_concrete_function()], tf_predict)
   converter.target_spec.supported_ops = [
       tf.lite.OpsSet.TFLITE_BUILTINS,  # enable TensorFlow Lite ops.
       tf.lite.OpsSet.SELECT_TF_OPS  # enable TensorFlow ops.
@@ -113,7 +113,7 @@ def main(_):
   print('which is about %d%% of the float model size.' %
         (quantized_model_size * 100 / float_model_size))
 
-  # Evaluate the TF Lite float model. You'll find that its accurary is identical
+  # Evaluate the TF Lite float model. You'll find that its accuracy is identical
   # to the original Flax model because they are essentially the same model
   # stored in different format.
   float_accuracy = evaluate_tflite_model(tflite_float_model, test_ds)

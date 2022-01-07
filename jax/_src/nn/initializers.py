@@ -24,32 +24,95 @@ import numpy as np
 
 import jax.numpy as jnp
 from jax import lax
-from jax import ops
 from jax import random
 from jax import core
 from jax._src.util import prod
+from jax import dtypes
 
-def zeros(key, shape, dtype=jnp.float32): return jnp.zeros(shape, dtype)
-def ones(key, shape, dtype=jnp.float32): return jnp.ones(shape, dtype)
+def zeros(key, shape, dtype=jnp.float_): return jnp.zeros(shape, dtypes.canonicalize_dtype(dtype))
+def ones(key, shape, dtype=jnp.float_): return jnp.ones(shape, dtypes.canonicalize_dtype(dtype))
 
-def uniform(scale=1e-2, dtype=jnp.float32):
+def uniform(scale=1e-2, dtype=jnp.float_):
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     return random.uniform(key, shape, dtype) * scale
   return init
 
-def normal(stddev=1e-2, dtype=jnp.float32):
+def normal(stddev=1e-2, dtype=jnp.float_):
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     return random.normal(key, shape, dtype) * stddev
   return init
 
 def _compute_fans(shape: core.NamedShape, in_axis=-2, out_axis=-1):
-  receptive_field_size = shape.total / shape[in_axis] / shape[out_axis]
-  fan_in = shape[in_axis] * receptive_field_size
-  fan_out = shape[out_axis] * receptive_field_size
+  if isinstance(in_axis, int):
+    in_size = shape[in_axis]
+  else:
+    in_size = int(np.prod([shape[i] for i in in_axis]))
+  if isinstance(out_axis, int):
+    out_size = shape[out_axis]
+  else:
+    out_size = int(np.prod([shape[i] for i in out_axis]))
+  receptive_field_size = shape.total / in_size / out_size
+  fan_in = in_size * receptive_field_size
+  fan_out = out_size * receptive_field_size
   return fan_in, fan_out
 
-def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=jnp.float32):
+def _complex_uniform(key, shape, dtype):
+  """
+  Sample uniform random values within a disk on the complex plane,
+  with zero mean and unit variance.
+  """
+  key_r, key_theta = random.split(key)
+  dtype = np.array(0, dtype).real.dtype
+  r = jnp.sqrt(2 * random.uniform(key_r, shape, dtype))
+  theta = 2 * jnp.pi * random.uniform(key_theta, shape, dtype)
+  return r * jnp.exp(1j * theta)
+
+def _complex_truncated_normal(key, upper, shape, dtype):
+  """
+  Sample random values from a centered normal distribution on the complex plane,
+  whose modulus is truncated to `upper`, and the variance before the truncation is one.
+  """
+  key_r, key_theta = random.split(key)
+  dtype = np.array(0, dtype).real.dtype
+  t = (1 - jnp.exp(jnp.array(-(upper ** 2), dtype))) * random.uniform(key_r, shape, dtype)
+  r = jnp.sqrt(-jnp.log(1 - t))
+  theta = 2 * jnp.pi * random.uniform(key_theta, shape, dtype)
+  return r * jnp.exp(1j * theta)
+
+def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=jnp.float_):
+  """
+  Initializer capable of adapting its scale to the shape of the weights tensor.
+
+  With `distribution="truncated_normal" or "normal"`, samples are
+  drawn from a truncated/untruncated normal distribution with a mean of zero and
+  a standard deviation (after truncation, if used) `stddev = sqrt(scale / n)`,
+  where `n` is:
+  - number of input units in the weights tensor, if `mode="fan_in"`
+  - number of output units, if `mode="fan_out"`
+  - average of the numbers of input and output units, if `mode="fan_avg"`
+
+  With `distribution="truncated_normal"`, the absolute values of the samples are
+  truncated below 2 standard deviations before truncation.
+
+  With `distribution="uniform"`, samples are drawn from:
+  - a uniform interval, if `dtype` is real
+  - a uniform disk, if `dtype` is complex
+  with a mean of zero and a standard deviation of `stddev`.
+
+  Args:
+    scale: scaling factor (positive float).
+    mode: one of "fan_in", "fan_out", and "fan_avg".
+    distribution: random distribution to use. One of "truncated_normal",
+      "normal" and "uniform".
+    in_axis: axis or sequence of axes of the input dimension in the weights tensor.
+    out_axis: axis or sequence of axes of the output dimension in the weights tensor.
+    dtype: the dtype of the weights.
+  """
+
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     shape = core.as_named_shape(shape)
     fan_in, fan_out = _compute_fans(shape, in_axis, out_axis)
     if mode == "fan_in": denominator = fan_in
@@ -59,16 +122,26 @@ def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=j
       raise ValueError(
         "invalid mode for variance scaling initializer: {}".format(mode))
     variance = jnp.array(scale / denominator, dtype=dtype)
+
     if distribution == "truncated_normal":
-      # constant is stddev of standard normal truncated to (-2, 2)
-      stddev = jnp.sqrt(variance) / jnp.array(.87962566103423978, dtype)
-      return random.truncated_normal(key, -2, 2, shape, dtype) * stddev
+      if jnp.issubdtype(dtype, jnp.floating):
+        # constant is stddev of standard normal truncated to (-2, 2)
+        stddev = jnp.sqrt(variance) / jnp.array(.87962566103423978, dtype)
+        return random.truncated_normal(key, -2, 2, shape, dtype) * stddev
+      else:
+        # constant is stddev of complex standard normal truncated to 2
+        stddev = jnp.sqrt(variance) / jnp.array(.95311164380491208, dtype)
+        return _complex_truncated_normal(key, 2, shape, dtype) * stddev
     elif distribution == "normal":
       return random.normal(key, shape, dtype) * jnp.sqrt(variance)
     elif distribution == "uniform":
-      return random.uniform(key, shape, dtype, -1) * jnp.sqrt(3 * variance)
+      if jnp.issubdtype(dtype, jnp.floating):
+        return random.uniform(key, shape, dtype, -1) * jnp.sqrt(3 * variance)
+      else:
+        return _complex_uniform(key, shape, dtype) * jnp.sqrt(variance)
     else:
-      raise ValueError("invalid distribution for variance scaling initializer")
+      raise ValueError("invalid distribution for variance scaling initializer: {}".format(distribution))
+
   return init
 
 xavier_uniform = glorot_uniform = partial(variance_scaling, 1.0, "fan_avg", "uniform")
@@ -78,7 +151,7 @@ lecun_normal = partial(variance_scaling, 1.0, "fan_in", "truncated_normal")
 kaiming_uniform = he_uniform = partial(variance_scaling, 2.0, "fan_in", "uniform")
 kaiming_normal = he_normal = partial(variance_scaling, 2.0, "fan_in", "truncated_normal")
 
-def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
+def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float_):
   """
   Construct an initializer for uniformly distributed orthogonal matrices.
 
@@ -86,6 +159,7 @@ def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
   depending on which side is smaller.
   """
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
     n_rows, n_cols = prod(shape) // shape[column_axis], shape[column_axis]
@@ -101,13 +175,14 @@ def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
   return init
 
 
-def delta_orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
+def delta_orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float_):
   """
   Construct an initializer for delta orthogonal kernels; see arXiv:1806.05393.
 
   The shape must be 3D, 4D or 5D.
   """
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) not in [3, 4, 5]:
       raise ValueError("Delta orthogonal initializer requires a 3D, 4D or 5D "
                        "shape.")
@@ -118,12 +193,11 @@ def delta_orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
     W = jnp.zeros(shape, dtype=dtype)
     if len(shape) == 3:
       k = shape[0]
-      return ops.index_update(W, ops.index[(k-1)//2, ...], ortho_matrix)
+      return W.at[(k-1)//2, ...].set(ortho_matrix)
     elif len(shape) == 4:
       k1, k2 = shape[:2]
-      return ops.index_update(W, ops.index[(k1-1)//2, (k2-1)//2, ...], ortho_matrix)
+      return W.at[(k1-1)//2, (k2-1)//2, ...].set(ortho_matrix)
     else:
       k1, k2, k3 = shape[:3]
-      return ops.index_update(W, ops.index[(k1-1)//2, (k2-1)//2, (k3-1)//2, ...],
-                              ortho_matrix)
+      return W.at[(k1-1)//2, (k2-1)//2, (k3-1)//2, ...].set(ortho_matrix)
   return init

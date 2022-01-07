@@ -15,6 +15,6 @@
 # flake8: noqa: F401
 
 from jax._src.scipy.stats.gamma import (
-  logpdf,
-  pdf,
+  logpdf as logpdf,
+  pdf as pdf,
 )

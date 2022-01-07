@@ -12,13 +12,18 @@ While JAX tries to follow the NumPy API as closely as possible, sometimes JAX
 cannot follow NumPy exactly.
 
 * Notably, since JAX arrays are immutable, NumPy APIs that mutate arrays
-  in-place cannot be implemented in JAX. However, often JAX is able to provide a
-  alternative API that is purely functional. For example, instead of in-place
+  in-place cannot be implemented in JAX. However, often JAX is able to provide
+  an alternative API that is purely functional. For example, instead of in-place
   array updates (:code:`x[i] = y`), JAX provides an alternative pure indexed
-  update function :func:`jax.ops.index_update`.
+  update function :code:`x.at[i].set(y)`.
+
+* Relatedly, some NumPy functions return views of arrays when possible (examples
+  are :func:`numpy.transpose` and :func:`numpy.reshape`). JAX versions of such
+  functions will return copies instead, although such copies can often be optimized
+  away by XLA when sequences of operations are compiled using :func:`jax.jit`.
 
 * NumPy is very aggressive at promoting values to :code:`float64` type. JAX
-  sometimes is less aggressive about type promotion.
+  sometimes is less aggressive about type promotion (See :ref:`type-promotion`).
 
 A small number of NumPy operations that have data-dependent output shapes are
 incompatible with :func:`jax.jit` compilation. The XLA compiler requires that
@@ -36,6 +41,11 @@ Not every function in NumPy is implemented; contributions are welcome!
 
    # Finally, sort the list using sort(1), which is different than Python's
    # sorted() function.
+
+.. autosummary::
+   :toctree: _autosummary
+
+   ndarray.at
 
 .. autosummary::
   :toctree: _autosummary
@@ -172,6 +182,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     full
     full_like
     gcd
+    get_printoptions
     geomspace
     gradient
     greater
@@ -191,9 +202,11 @@ Not every function in NumPy is implemented; contributions are welcome!
     iinfo
     imag
     in1d
+    index_exp
     indices
     inexact
     inner
+    insert
     int_
     int16
     int32
@@ -286,14 +299,17 @@ Not every function in NumPy is implemented; contributions are welcome!
     pad
     percentile
     piecewise
+    poly
     polyadd
     polyder
+    polyfit
     polyint
     polymul
     polysub
     polyval
     positive
     power
+    printoptions
     prod
     product
     promote_types
@@ -309,6 +325,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     remainder
     repeat
     reshape
+    resize
     result_type
     right_shift
     rint
@@ -317,7 +334,9 @@ Not every function in NumPy is implemented; contributions are welcome!
     roots
     rot90
     round
+    round_
     row_stack
+    s_
     save
     savez
     searchsorted
@@ -369,8 +388,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     uint32
     uint64
     uint8
-    unique
     union1d
+    unique
     unpackbits
     unravel_index
     unsignedinteger
@@ -446,7 +465,7 @@ JAX DeviceArray
 The JAX :class:`~jax.numpy.DeviceArray` is the core array object in JAX: you can
 think of it as the equivalent of a :class:`numpy.ndarray` backed by a memory buffer
 on a single device. Like :class:`numpy.ndarray`, most users will not need to
-instantiate :class:`DeviceArray`s manually, but rather will create them via
+instantiate :class:`DeviceArray` objects manually, but rather will create them via
 :mod:`jax.numpy` functions like :func:`~jax.numpy.array`, :func:`~jax.numpy.arange`,
 :func:`~jax.numpy.linspace`, and others listed above.
 

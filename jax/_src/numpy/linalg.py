@@ -22,11 +22,10 @@ from typing import Tuple, Union, cast
 
 from jax import jit, custom_jvp
 from jax import lax
-from jax import ops
 from jax._src.lax import linalg as lax_linalg
 from jax._src import dtypes
-from .util import _wraps
-from . import lax_numpy as jnp
+from jax._src.numpy.util import _wraps
+from jax._src.numpy import lax_numpy as jnp
 from jax._src.util import canonicalize_axis
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
@@ -35,11 +34,11 @@ _H = lambda x: jnp.conjugate(jnp.swapaxes(x, -1, -2))
 
 def _promote_arg_dtypes(*args):
   """Promotes `args` to a common inexact type."""
-  def _to_inexact_type(type):
-    return type if jnp.issubdtype(type, jnp.inexact) else jnp.float_
-  inexact_types = [_to_inexact_type(jnp._dtype(arg)) for arg in args]
-  dtype = dtypes.canonicalize_dtype(jnp.result_type(*inexact_types))
-  args = [lax.convert_element_type(arg, dtype) for arg in args]
+  dtype, weak_type = dtypes._lattice_result_type(*args)
+  if not jnp.issubdtype(dtype, jnp.inexact):
+    dtype, weak_type = jnp.float_, False
+  dtype = dtypes.canonicalize_dtype(dtype)
+  args = [lax._convert_element_type(arg, dtype, weak_type) for arg in args]
   if len(args) == 1:
     return args[0]
   else:
@@ -47,18 +46,38 @@ def _promote_arg_dtypes(*args):
 
 
 @_wraps(np.linalg.cholesky)
+@jit
 def cholesky(a):
   a = _promote_arg_dtypes(jnp.asarray(a))
   return lax_linalg.cholesky(a)
 
 
 @_wraps(np.linalg.svd)
-def svd(a, full_matrices=True, compute_uv=True):
+@partial(jit, static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
+def svd(a, full_matrices: bool = True, compute_uv: bool = True,
+        hermitian: bool = False):
   a = _promote_arg_dtypes(jnp.asarray(a))
+  if hermitian:
+    w, v = lax_linalg.eigh(a)
+    s = lax.abs(v)
+    if compute_uv:
+      sign = lax.sign(v)
+      idxs = lax.broadcasted_iota(np.int64, s.shape, dimension=s.ndim - 1)
+      s, idxs, sign = lax.sort((s, idxs, sign), dimension=-1, num_keys=1)
+      s = lax.rev(s, dimensions=[s.ndim - 1])
+      idxs = lax.rev(idxs, dimensions=[s.ndim - 1])
+      sign = lax.rev(sign, dimensions=[s.ndim - 1])
+      u = jnp.take_along_axis(w, idxs[..., None, :], axis=-1)
+      vh = _H(u * sign[..., None, :])
+      return u, s, vh
+    else:
+      return lax.rev(lax.sort(s, dimension=-1), dimensions=[s.ndim-1])
+
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
 @_wraps(np.linalg.matrix_power)
+@partial(jit, static_argnames=('n',))
 def matrix_power(a, n):
   a = _promote_arg_dtypes(jnp.asarray(a))
 
@@ -96,6 +115,7 @@ def matrix_power(a, n):
 
 
 @_wraps(np.linalg.matrix_rank)
+@jit
 def matrix_rank(M, tol=None):
   M = _promote_arg_dtypes(jnp.asarray(M))
   if M.ndim > 2:
@@ -218,7 +238,7 @@ def _cofactor_solve(a, b):
   # partial_det[:, -1] contains the full determinant and
   # partial_det[:, -2] contains det(u) / u_{nn}.
   partial_det = jnp.cumprod(diag, axis=-1) * sign[..., None]
-  lu = ops.index_update(lu, ops.index[..., -1, -1], 1.0 / partial_det[..., -2])
+  lu = lu.at[..., -1, -1].set(1.0 / partial_det[..., -2])
   permutation = jnp.broadcast_to(permutation, batch_dims + (a_shape[-1],))
   iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in batch_dims + (1,)))
   # filter out any matrices that are not full rank
@@ -289,12 +309,14 @@ def eig(a):
 
 
 @_wraps(np.linalg.eigvals)
+@jit
 def eigvals(a):
   return lax_linalg.eig(a, compute_left_eigenvectors=False,
                         compute_right_eigenvectors=False)[0]
 
 
 @_wraps(np.linalg.eigh)
+@partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
 def eigh(a, UPLO=None, symmetrize_input=True):
   if UPLO is None or UPLO == "L":
     lower = True
@@ -310,6 +332,7 @@ def eigh(a, UPLO=None, symmetrize_input=True):
 
 
 @_wraps(np.linalg.eigvalsh)
+@partial(jit, static_argnames=('UPLO',))
 def eigvalsh(a, UPLO='L'):
   w, _ = eigh(a, UPLO)
   return w
@@ -321,6 +344,7 @@ def eigvalsh(a, UPLO='L'):
     default `rcond` is `1e-15`. Here the default is
     `10. * max(num_rows, num_cols) * jnp.finfo(dtype).eps`.
     """))
+@jit
 def pinv(a, rcond=None):
   # Uses same algorithm as
   # https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
@@ -329,12 +353,12 @@ def pinv(a, rcond=None):
     max_rows_cols = max(a.shape[-2:])
     rcond = 10. * max_rows_cols * jnp.finfo(a.dtype).eps
   rcond = jnp.asarray(rcond)
-  u, s, v = svd(a, full_matrices=False)
+  u, s, vh = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   cutoff = rcond[..., jnp.newaxis] * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
   s = jnp.where(s > cutoff, s, jnp.inf)
-  res = jnp.matmul(_T(v), jnp.divide(_T(u), s[..., jnp.newaxis]))
+  res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]))
   return lax.convert_element_type(res, a.dtype)
 
 
@@ -357,6 +381,7 @@ def _pinv_jvp(rcond, primals, tangents):
 
 
 @_wraps(np.linalg.inv)
+@jit
 def inv(a):
   if jnp.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
     raise ValueError(
@@ -365,8 +390,10 @@ def inv(a):
     a, lax.broadcast(jnp.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
 
 
-@partial(jit, static_argnums=(1, 2, 3))
-def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
+@_wraps(np.linalg.norm)
+@partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
+def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
+         keepdims=False):
   x = _promote_arg_dtypes(jnp.asarray(x))
   x_shape = jnp.shape(x)
   ndim = len(x_shape)
@@ -452,12 +479,9 @@ def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
     raise ValueError(
         "Invalid axis values ({}) for jnp.linalg.norm.".format(axis))
 
-@_wraps(np.linalg.norm)
-def norm(x, ord=None, axis=None, keepdims=False):
-  return _norm(x, ord, axis, keepdims)
-
 
 @_wraps(np.linalg.qr)
+@partial(jit, static_argnames=('mode',))
 def qr(a, mode="reduced"):
   if mode in ("reduced", "r", "full"):
     full_matrices = False
@@ -479,20 +503,7 @@ def solve(a, b):
   return lax_linalg._solve(a, b)
 
 
-@_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\
-    It has two important differences:
-
-    1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and warns that in the future
-       the default will be `None`. Here, the default rcond is `None`.
-    2. In `np.linalg.lstsq` the returned residuals are empty for low-rank or over-determined
-       solutions. Here, the residuals are returned in all cases, to make the function
-       compatible with jit. The non-jit compatible numpy behavior can be recovered by
-       passing numpy_resid=True.
-
-    The lstsq function does not currently have a custom JVP rule, so the gradient is
-    poorly behaved for some inputs, particularly for low-rank `a`.
-    """))
-def lstsq(a, b, rcond=None, *, numpy_resid=False):
+def _lstsq(a, b, rcond, *, numpy_resid=False):
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   # TODO: add custom jvp rule for more robust lstsq differentiation
   a, b = _promote_arg_dtypes(a, b)
@@ -511,8 +522,8 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
   dtype = a.dtype
   if rcond is None:
     rcond = jnp.finfo(dtype).eps * max(n, m)
-  elif rcond < 0:
-    rcond = jnp.finfo(dtype).eps
+  else:
+    rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
   u, s, vt = svd(a, full_matrices=False)
   mask = s >= rcond * s[0]
   rank = mask.sum()
@@ -530,3 +541,23 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
   if b_orig_ndim == 1:
     x = x.ravel()
   return x, resid, rank, s
+
+_jit_lstsq = jit(partial(_lstsq, numpy_resid=False))
+
+@_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\
+    It has two important differences:
+
+    1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and warns that in the future
+       the default will be `None`. Here, the default rcond is `None`.
+    2. In `np.linalg.lstsq` the returned residuals are empty for low-rank or over-determined
+       solutions. Here, the residuals are returned in all cases, to make the function
+       compatible with jit. The non-jit compatible numpy behavior can be recovered by
+       passing numpy_resid=True.
+
+    The lstsq function does not currently have a custom JVP rule, so the gradient is
+    poorly behaved for some inputs, particularly for low-rank `a`.
+    """))
+def lstsq(a, b, rcond=None, *, numpy_resid=False):
+  if numpy_resid:
+    return _lstsq(a, b, rcond, numpy_resid=True)
+  return _jit_lstsq(a, b, rcond)

@@ -1,5 +1,5 @@
 <div align="center">
-<img src="https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png" alt="logo"></img>
+<img src="https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
 # JAX: Autograd and XLA
@@ -13,10 +13,7 @@
 | [**Neural net libraries**](#neural-network-libraries)
 | [**Change logs**](https://jax.readthedocs.io/en/latest/changelog.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
-| [**Code search**](https://cs.opensource.google/jax/jax)
 
-
-**News:** [JAX tops largest-scale MLPerf Training 0.7 benchmarks!](https://cloud.google.com/blog/products/ai-machine-learning/google-breaks-ai-performance-records-in-mlperf-with-worlds-fastest-training-supercomputer)
 
 ## What is JAX?
 
@@ -63,15 +60,15 @@ from jax import grad, jit, vmap
 def predict(params, inputs):
   for W, b in params:
     outputs = jnp.dot(inputs, W) + b
-    inputs = jnp.tanh(outputs)
-  return outputs
+    inputs = jnp.tanh(outputs)  # inputs to the next layer
+  return outputs                # no activation on last layer
 
-def logprob_fun(params, inputs, targets):
+def loss(params, inputs, targets):
   preds = predict(params, inputs)
   return jnp.sum((preds - targets)**2)
 
-grad_fun = jit(grad(logprob_fun))  # compiled gradient evaluation function
-perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grads
+grad_loss = jit(grad(loss))  # compiled gradient evaluation function
+perex_grads = jit(vmap(grad_loss, in_axes=(None, 0, 0)))  # fast per-example grads
 ```
 
 ### Contents
@@ -87,29 +84,30 @@ perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grad
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU.
 Here are some starter notebooks:
 - [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html)
-- [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb)
+- [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb)
 
 **JAX now runs on Cloud TPUs.** To try out the preview, see the [Cloud TPU
-Colabs](https://github.com/google/jax/tree/master/cloud_tpu_colabs).
+Colabs](https://github.com/google/jax/tree/main/cloud_tpu_colabs).
 
 For a deeper dive into JAX:
 - [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html)
 - [Common gotchas and sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html)
 - See the [full list of
-notebooks](https://github.com/google/jax/tree/master/docs/notebooks).
+notebooks](https://github.com/google/jax/tree/main/docs/notebooks).
 
 You can also take a look at [the mini-libraries in
-`jax.experimental`](https://github.com/google/jax/tree/master/jax/experimental/README.md),
+`jax.example_libraries`](https://github.com/google/jax/tree/main/jax/example_libraries/README.md),
 like [`stax` for building neural
-networks](https://github.com/google/jax/tree/master/jax/experimental/README.md#neural-net-building-with-stax)
+networks](https://github.com/google/jax/tree/main/jax/example_libraries/README.md#neural-net-building-with-stax)
 and [`optimizers` for first-order stochastic
-optimization](https://github.com/google/jax/tree/master/jax/experimental/README.md#first-order-optimization),
-or the [examples](https://github.com/google/jax/tree/master/examples).
+optimization](https://github.com/google/jax/tree/main/jax/example_libraries/README.md#first-order-optimization),
+or the [examples](https://github.com/google/jax/tree/main/examples).
 
 ## Transformations
 
 At its core, JAX is an extensible system for transforming numerical functions.
-Here are four of primary interest: `grad`, `jit`, `vmap`, and `pmap`.
+Here are four transformations of primary interest: `grad`, `jit`, `vmap`, and
+`pmap`.
 
 ### Automatic differentiation with `grad`
 
@@ -221,8 +219,8 @@ def predict(params, input_vec):
   activations = input_vec
   for W, b in params:
     outputs = jnp.dot(W, activations) + b  # `activations` on the right-hand side!
-    activations = jnp.tanh(outputs)
-  return outputs
+    activations = jnp.tanh(outputs)        # inputs to the next layer
+  return outputs                           # no activation on last layer
 ```
 
 We often instead write `jnp.dot(activations, W)` to allow for a batch dimension on the
@@ -310,7 +308,7 @@ print(normalize(jnp.arange(4.)))
 # prints [0.         0.16666667 0.33333334 0.5       ]
 ```
 
-You can even [nest `pmap` functions](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Pmap_Cookbook.ipynb#scrollTo=MdRscR5MONuN) for more
+You can even [nest `pmap` functions](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb#scrollTo=MdRscR5MONuN) for more
 sophisticated communication patterns.
 
 It all composes, so you're free to differentiate through parallel computations:
@@ -343,9 +341,9 @@ When reverse-mode differentiating a `pmap` function (e.g. with `grad`), the
 backward pass of the computation is parallelized just like the forward pass.
 
 See the [SPMD
-Cookbook](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
+Cookbook](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
 and the [SPMD MNIST classifier from scratch
-example](https://github.com/google/jax/blob/master/examples/spmd_mnist_classifier_fromscratch.py)
+example](https://github.com/google/jax/blob/main/examples/spmd_mnist_classifier_fromscratch.py)
 for more.
 
 ## Current gotchas
@@ -357,22 +355,26 @@ Some standouts:
 
 1. JAX transformations only work on [pure functions](https://en.wikipedia.org/wiki/Pure_function), which don't have side-effects and respect [referential transparency](https://en.wikipedia.org/wiki/Referential_transparency) (i.e. object identity testing with `is` isn't preserved). If you use a JAX transformation on an impure Python function, you might see an error like `Exception: Can't lift Traced...`  or `Exception: Different traces at same level`.
 1. [In-place mutating updates of
-   arrays](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-In-Place-Updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://jax.readthedocs.io/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
+   arrays](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#in-place-updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://jax.readthedocs.io/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
 1. [Random numbers are
-   different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Random-Numbers), but for [good reasons](https://github.com/google/jax/blob/master/design_notes/prng.md).
+   different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers), but for [good reasons](https://github.com/google/jax/blob/main/design_notes/prng.md).
 1. If you're looking for [convolution
-   operators](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Convolutions),
+   operators](https://jax.readthedocs.io/en/latest/notebooks/convolutions.html),
    they're in the `jax.lax` package.
 1. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
    [to enable
-   double-precision](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#Double-(64bit)-precision)
+   double-precision](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision)
    (64-bit, e.g. `float64`) one needs to set the `jax_enable_x64` variable at
    startup (or set the environment variable `JAX_ENABLE_X64=True`).
+   On TPU, JAX uses 32-bit values by default for everything _except_ internal
+   temporary variables in 'matmul-like' operations, such as `jax.numpy.dot` and `lax.conv`.
+   Those ops have a `precision` parameter which can be used to simulate
+   true 32-bit, with a cost of possibly slower runtime.
 1. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
 1. Some transformations, like `jit`, [constrain how you can use Python control
-   flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Control-Flow).
+   flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#control-flow).
    You'll always get loud errors if something goes wrong. You might have to use
    [`jit`'s `static_argnums`
    parameter](https://jax.readthedocs.io/en/latest/jax.html#just-in-time-compilation-jit),
@@ -396,25 +398,28 @@ There is some initial native Windows support, but since it is still somewhat
 immature, there are no binary releases and it must be
 [built from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
 
-### pip installation
+### pip installation: CPU
 
-To install a CPU-only version, which might be useful for doing local
+To install a CPU-only version of JAX, which might be useful for doing local
 development on a laptop, you can run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax jaxlib  # CPU-only version
+pip install --upgrade "jax[cpu]"
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
 `manylinux2010` wheels.
+
+### pip installation: GPU (CUDA)
 
 If you want to install JAX with both CPU and NVidia GPU support, you must first
 install [CUDA](https://developer.nvidia.com/cuda-downloads) and
 [CuDNN](https://developer.nvidia.com/CUDNN),
 if they have not already been installed. Unlike some other popular deep
 learning systems, JAX does not bundle CUDA or CuDNN as part of the `pip`
-package. The CUDA 10 JAX wheels require CuDNN 7, whereas the CUDA 11 wheels of
+package. JAX provides pre-built CUDA-compatible wheels for **linux only**;
+the CUDA 10 JAX wheels require CuDNN 7, whereas the CUDA 11 wheels of
 JAX require CuDNN 8. Other combinations of CUDA and CuDNN are possible but
 require building from source.
 
@@ -422,17 +427,31 @@ Next, run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax jaxlib==0.1.66+cuda111 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+# Installs the wheel compatible with CUDA 11 and cuDNN 8.2 or newer.
+pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_releases.html  # Note: wheels only available on linux.
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
 installation you want to use:
-* For CUDA 11.1, 11.2, or 11.3, use `cuda111`. The same wheel should work for
+* For CUDA 11.1 or newer use `cuda11`. The same wheel should work for
   CUDA 11.x releases from 11.1 onwards.
-* For CUDA 11.0, use `cuda110`.
-* For CUDA 10.2, use `cuda102`.
-* For CUDA 10.1, use `cuda101`.
 * Older CUDA versions are not supported.
+* The supported cuDNN versions for `cuda11` are:
+  * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
+    installation is new enough, since it supports additional functionality.
+  * cuDNN 8.0.5 or newer.
+
+You can specify a particular CUDA and cuDNN version for jaxlib explicitly:
+
+```bash
+pip install --upgrade pip
+
+# Installs the wheel compatible with Cuda 11 and cudnn 8.2 or newer.
+pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+
+# Installs the wheel compatible with Cuda 11 and cudnn 8.0.5 or newer.
+pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+```
 
 You can find your CUDA version with the command:
 
@@ -442,7 +461,7 @@ nvcc --version
 
 Some GPU functionality expects the CUDA installation to be at
 `/usr/local/cuda-X.X`, where X.X should be replaced with the CUDA version number
-(e.g. `cuda-10.2`). If CUDA is installed elsewhere on your system, you can either
+(e.g. `cuda-11.1`). If CUDA is installed elsewhere on your system, you can either
 create a symlink:
 
 ```bash
@@ -451,6 +470,21 @@ sudo ln -s /path/to/cuda /usr/local/cuda-X.X
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.
+
+### pip installation: Google Cloud TPU
+JAX also provides pre-built wheels for
+[Google Cloud TPU](https://cloud.google.com/tpu/docs/users-guide-tpu-vm).
+To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can run
+the following in your cloud TPU VM:
+```bash
+pip install --upgrade pip
+pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+```
+Colab TPU runtimes come with JAX pre-installed, but before importing JAX you must run the following code to initialize the TPU:
+```python
+import jax.tools.colab_tpu
+jax.tools.colab_tpu.setup_tpu()
+```
 
 ### Building JAX from source
 See [Building JAX from
@@ -461,19 +495,16 @@ source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source
 Multiple Google research groups develop and share libraries for training neural
 networks in JAX. If you want a fully featured library for neural network
 training with examples and how-to guides, try
-[Flax](https://github.com/google/flax). Another option is
-[Trax](https://github.com/google/trax), a combinator-based framework focused on
-ease-of-use and end-to-end single-command examples, especially for sequence
-models and reinforcement learning. Finally,
-[Objax](https://github.com/google/objax) is a minimalist object-oriented
-framework with a PyTorch-like interface.
+[Flax](https://github.com/google/flax).
 
-DeepMind has open-sourced an
-[ecosystem of libraries around JAX](https://deepmind.com/blog/article/using-jax-to-accelerate-our-research) including [Haiku](https://github.com/deepmind/dm-haiku) for neural
-network modules, [Optax](https://github.com/deepmind/optax) for gradient
-processing and optimization, [RLax](https://github.com/deepmind/rlax) for RL
-algorithms, and [chex](https://github.com/deepmind/chex) for reliable code and
-testing. (Watch the NeurIPS 2020 JAX Ecosystem at DeepMind talk [here](https://www.youtube.com/watch?v=iDxJxIyzSiM))
+In addition, DeepMind has open-sourced an [ecosystem of libraries around
+JAX](https://deepmind.com/blog/article/using-jax-to-accelerate-our-research)
+including [Haiku](https://github.com/deepmind/dm-haiku) for neural network
+modules, [Optax](https://github.com/deepmind/optax) for gradient processing and
+optimization, [RLax](https://github.com/deepmind/rlax) for RL algorithms, and
+[chex](https://github.com/deepmind/chex) for reliable code and testing. (Watch
+the NeurIPS 2020 JAX Ecosystem at DeepMind talk
+[here](https://www.youtube.com/watch?v=iDxJxIyzSiM))
 
 ## Citing JAX
 
@@ -490,7 +521,7 @@ To cite this repository:
 ```
 
 In the above bibtex entry, names are in alphabetical order, the version number
-is intended to be that from [jax/version.py](../master/jax/version.py), and
+is intended to be that from [jax/version.py](../main/jax/version.py), and
 the year corresponds to the project's open-source release.
 
 A nascent version of JAX, supporting only automatic differentiation and

@@ -24,7 +24,7 @@
 # uniformity
 
 from contextlib import contextmanager
-from .._src.config import enable_x64 as _jax_enable_x64
+from jax._src.config import enable_x64 as _jax_enable_x64
 
 @contextmanager
 def enable_x64(new_val: bool = True):
@@ -32,9 +32,9 @@ def enable_x64(new_val: bool = True):
 
   Usage::
 
-    >>> import jax.numpy as jnp
+    >>> x = np.arange(5, dtype='float64')
     >>> with enable_x64():
-    ...   print(jnp.arange(10.0).dtype)
+    ...   print(jnp.asarray(x).dtype)
     ...
     float64
 
@@ -51,9 +51,9 @@ def disable_x64():
 
   Usage::
 
-    >>> import jax.numpy as jnp
+    >>> x = np.arange(5, dtype='float64')
     >>> with disable_x64():
-    ...   print(jnp.arange(10.0).dtype)
+    ...   print(jnp.asarray(x).dtype)
     ...
     float32
 

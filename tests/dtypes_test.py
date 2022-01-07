@@ -26,11 +26,12 @@ import jax
 from jax._src import dtypes
 from jax import lax
 from jax import numpy as jnp
-from jax import test_util as jtu
-from jax.interpreters import xla
+from jax._src import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
+
+FLAGS = config.FLAGS
 
 bool_dtypes = [np.dtype('bool')]
 
@@ -55,6 +56,8 @@ scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                 jnp.complex64, jnp.complex128]
+
+python_scalar_types = [bool, int, float, complex]
 
 _EXPECTED_CANONICALIZE_X64 = {value: value for value in scalar_types}
 
@@ -81,15 +84,14 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertEqual(dtypes.canonicalize_dtype(in_dtype), expected_dtype)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_type={}".format(type.__name__), "type": type,
-     "dtype": dtype}
-    for type, dtype in [(bool, jnp.bool_), (int, jnp.int_), (float, jnp.float_),
-                        (complex, jnp.complex_)])
-  def testDefaultTypes(self, type, dtype):
+    {"testcase_name": "_type={}".format(type.__name__), "type": type}
+    for type in python_scalar_types)
+  def testDefaultTypes(self, type):
+    expected_dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type])
     for f in [jnp.array, jax.jit(jnp.array), jax.jit(lambda x: x)]:
       y = f(type(0))
       self.assertTrue(isinstance(y, jnp.ndarray), msg=(f, y))
-      self.assertEqual(y.dtype, dtypes.canonicalize_dtype(dtype), msg=(f, y))
+      self.assertEqual(y.dtype, expected_dtype, msg=(f, y))
 
   def testUnsupportedType(self):
     with self.assertRaisesRegex(TypeError, "nonsense.* not understood"):
@@ -103,8 +105,8 @@ class DtypesTest(jtu.JaxTestCase):
                       message="Explicitly requested dtype.*")
   def testBinaryPromotion(self, swap, jit):
     testcases = [
-      (jnp.array(1.), 0., jnp.float_),
-      (jnp.array(1.), jnp.array(0.), jnp.float_),
+      (jnp.array(1.), 0., jnp.float64),
+      (jnp.array(1.), jnp.array(0.), jnp.float64),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float16),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float32),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float64), jnp.float64),
@@ -166,7 +168,7 @@ class DtypesTest(jtu.JaxTestCase):
   def testScalarInstantiation(self, scalar_type):
     a = scalar_type(1)
     self.assertEqual(a.dtype, jnp.dtype(scalar_type))
-    self.assertIsInstance(a, xla.DeviceArray)
+    self.assertIsInstance(a, jnp.DeviceArray)
     self.assertEqual(0, jnp.ndim(a))
     self.assertIsInstance(np.dtype(scalar_type).type(1), scalar_type)
 
@@ -204,9 +206,38 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(jnp.int32(101),
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
 
+  @parameterized.parameters(python_scalar_types)
+  def testDtypeFromScalarType(self, typ):
+    self.assertEqual(dtypes.dtype(typ), dtypes.python_scalar_dtypes[typ])
+
+  @parameterized.parameters(python_scalar_types)
+  def testDtypeFromScalarValue(self, typ):
+    self.assertEqual(dtypes.dtype(typ(0)), dtypes.python_scalar_dtypes[typ])
+
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromValue(self, dtype):
+    self.assertEqual(dtypes.dtype(dtype.type(0)), dtype)
+
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromDtype(self, dtype):
+    self.assertEqual(dtypes.dtype(dtype), dtype)
+
   @parameterized.parameters(all_dtypes)
   def testDtypeFromString(self, dtype):
     self.assertEqual(dtypes.dtype(str(dtype)), dtype)
+
+  def testDtypeFromNone(self):
+    with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
+      dtypes.dtype(None)
+
+  def testDefaultDtypes(self):
+    precision = config.jax_default_dtype_bits
+    assert precision in ['32', '64']
+    self.assertEqual(dtypes.bool_, np.bool_)
+    self.assertEqual(dtypes.int_, np.int32 if precision == '32' else np.int64)
+    self.assertEqual(dtypes.uint, np.uint32 if precision == '32' else np.uint64)
+    self.assertEqual(dtypes.float_, np.float32 if precision == '32' else np.float64)
+    self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
 
 
 class TestPromotionTables(jtu.JaxTestCase):
@@ -228,6 +259,10 @@ class TestPromotionTables(jtu.JaxTestCase):
     except TypeError:
       val = jaxtype.type(0)
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(val)), jaxtype)
+
+  def testResultTypeNone(self):
+    # This matches the behavior of np.result_type(None) => np.float_
+    self.assertEqual(dtypes.result_type(None), dtypes.canonicalize_dtype(dtypes.float_))
 
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")
@@ -342,8 +377,12 @@ class TestPromotionTables(jtu.JaxTestCase):
   def testUnaryPromotion(self, dtype, weak_type):
     # Regression test for https://github.com/google/jax/issues/6051
     x = lax._convert_element_type(0, dtype, weak_type=weak_type)
-    y = jnp.array(0, dtype=dtypes.result_type(x))
-    assert x.dtype == y.dtype
+    if weak_type:
+      expected = dtypes.canonicalize_dtype(
+        dtypes._default_types['f' if x.dtype == 'bfloat16' else x.dtype.kind])
+    else:
+      expected = x.dtype
+    self.assertEqual(dtypes.result_type(x), expected)
 
   @parameterized.named_parameters(
     {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
@@ -357,6 +396,22 @@ class TestPromotionTables(jtu.JaxTestCase):
     y = (x + x)
     assert x.dtype == y.dtype
     assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+     "dtype": dtype, "weak_type": weak_type}
+    for dtype in all_dtypes
+    for weak_type in [True, False]
+  )
+  def testDeviceArrayRepr(self, dtype, weak_type):
+    val = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    rep = repr(val)
+    self.assertStartsWith(rep, 'DeviceArray(')
+    if weak_type:
+      self.assertEndsWith(rep, f"dtype={val.dtype.name}, weak_type=True)")
+    else:
+      self.assertEndsWith(rep, f"dtype={val.dtype.name})")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

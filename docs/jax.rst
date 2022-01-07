@@ -11,6 +11,7 @@ Subpackages
 
     jax.numpy
     jax.scipy
+    jax.example_libraries
     jax.experimental
     jax.image
     jax.lax
@@ -18,8 +19,15 @@ Subpackages
     jax.ops
     jax.random
     jax.tree_util
+    jax.flatten_util
     jax.dlpack
     jax.profiler
+    jax.config
+
+.. toctree::
+   :hidden:
+
+   jax.lib
 
 .. _jax-jit:
 
@@ -36,6 +44,7 @@ Just-in-time compilation (:code:`jit`)
     device_put
     device_put_replicated
     device_put_sharded
+    device_get
     default_backend
     named_call
 
@@ -91,6 +100,8 @@ Parallelization (:code:`pmap`)
 .. autofunction:: device_put
 .. autofunction:: device_put_replicated
 .. autofunction:: device_put_sharded
+.. autofunction:: device_get
+.. autofunction:: block_until_ready
 .. autofunction:: default_backend
 .. autofunction:: named_call
 

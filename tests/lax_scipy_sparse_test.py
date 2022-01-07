@@ -23,7 +23,8 @@ import scipy.sparse.linalg
 from jax import jit
 import jax.numpy as jnp
 from jax import lax
-from jax import test_util as jtu
+from jax._src import dtypes
+from jax._src import test_util as jtu
 from jax.tree_util import register_pytree_node_class
 import jax.scipy.sparse.linalg
 import jax._src.scipy.sparse.linalg
@@ -63,7 +64,9 @@ def rand_sym_pos_def(rng, shape, dtype):
   return matrix @ matrix.T.conj()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxBackedScipyTests(jtu.JaxTestCase):
+
   def _fetch_preconditioner(self, preconditioner, A, rng=None):
     """
     Returns one of various preconditioning matrices depending on the identifier
@@ -195,6 +198,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual, _ = jax.scipy.sparse.linalg.cg(A, b)
     self.assertAllClose(expected, actual.value)
 
+  def test_cg_weak_types(self):
+    x, _ = jax.scipy.sparse.linalg.bicgstab(lambda x: x, 1.0)
+    self.assertTrue(dtypes.is_weakly_typed(x))
+
   # BICGSTAB
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -303,6 +310,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAlmostEqual(expected["a"], actual["a"], places=5)
     self.assertAlmostEqual(expected["b"], actual["b"], places=5)
 
+  def test_bicgstab_weak_types(self):
+    x, _ = jax.scipy.sparse.linalg.bicgstab(lambda x: x, 1.0)
+    self.assertTrue(dtypes.is_weakly_typed(x))
 
   # GMRES
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -321,10 +331,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self, shape, dtype, preconditioner, solve_method):
     if not config.x64_enabled:
       raise unittest.SkipTest("requires x64 mode")
-
-    # The LLVM bug that caused this appears to be fixed in jaxlib 0.1.67.
-    if jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 66):
-      raise unittest.SkipTest("test fails on CPU jaxlib <= 0.1.66")
 
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
@@ -470,6 +476,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     QA = matmul_high_precision(Q[:, :n].conj().T, A)
     QAQ = matmul_high_precision(QA, Q[:, :n])
     self.assertAllClose(QAQ, H.T[:n, :], rtol=1e-5, atol=1e-5)
+
+  def test_gmres_weak_types(self):
+    x, _ = jax.scipy.sparse.linalg.gmres(lambda x: x, 1.0)
+    self.assertTrue(dtypes.is_weakly_typed(x))
 
 
 if __name__ == "__main__":

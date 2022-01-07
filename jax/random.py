@@ -72,42 +72,49 @@ The approach is based on:
 2. "Splittable pseudorandom number generators using cryptographic hashing"
    (Claessen et al. 2013)
 
-See also https://github.com/google/jax/blob/master/design_notes/prng.md
+See also https://github.com/google/jax/blob/main/design_notes/prng.md
 for the design and its motivation.
 """
 
 # flake8: noqa: F401
 
+# TODO(frostig): replace with KeyArray from jax._src.random once we
+# always enable_custom_prng
+from jax._src.prng import PRNGKeyArray as KeyArray
+
 from jax._src.random import (
-  PRNGKey,
-  bernoulli,
-  beta,
-  categorical,
-  cauchy,
-  choice,
-  dirichlet,
-  double_sided_maxwell,
-  exponential,
-  fold_in,
-  gamma,
-  gumbel,
-  laplace,
-  logistic,
-  maxwell,
-  multivariate_normal,
-  normal,
-  pareto,
-  permutation,
-  poisson,
-  rademacher,
-  randint,
-  random_gamma_p,
-  shuffle,
-  split,
-  t,
-  threefry2x32_p,
-  threefry_2x32,
-  truncated_normal,
-  uniform,
-  weibull_min,
+  PRNGKey as PRNGKey,
+  bernoulli as bernoulli,
+  beta as beta,
+  categorical as categorical,
+  cauchy as cauchy,
+  choice as choice,
+  dirichlet as dirichlet,
+  double_sided_maxwell as double_sided_maxwell,
+  exponential as exponential,
+  fold_in as fold_in,
+  gamma as gamma,
+  gumbel as gumbel,
+  laplace as laplace,
+  logistic as logistic,
+  maxwell as maxwell,
+  multivariate_normal as multivariate_normal,
+  normal as normal,
+  pareto as pareto,
+  permutation as permutation,
+  poisson as poisson,
+  rademacher as rademacher,
+  randint as randint,
+  random_gamma_p as random_gamma_p,
+  rbg_key as rbg_key,
+  shuffle as shuffle,
+  split as split,
+  t as t,
+  threefry_2x32 as threefry_2x32,
+  threefry2x32_key as threefry2x32_key,
+  threefry2x32_p as threefry2x32_p,
+  truncated_normal as truncated_normal,
+  uniform as uniform,
+  unsafe_rbg_key as unsafe_rbg_key,
+  weibull_min as weibull_min,
 )

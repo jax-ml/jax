@@ -29,7 +29,7 @@ That is:
    contains pytrees, is considered a pytree.
 
 For each entry in the pytree container registry, a container-like type is
-registered with a pair of functions which specify how to convert an instance of
+registered with a pair of functions that specify how to convert an instance of
 the container type to a `(children, metadata)` pair and how to convert such a
 pair back to an instance of the container type. Using these functions, JAX can
 canonicalize any tree of registered container objects into tuples.
@@ -64,7 +64,7 @@ pytrees with values in the argument pytrees, the parameter pytrees are often
 constrained to be tree prefixes of the argument pytrees.
 
 For example, if we pass the following input to {func}`~jax.vmap` (note that the input
-arguments to a function considered a tuple):
+arguments to a function are considered a tuple):
 
 ```
 (a1, {"k1": a2, "k2": a3})
@@ -281,7 +281,7 @@ class RegisteredSpecial2(Special):
 show_example(RegisteredSpecial2(1., 2.))
 ```
 
-JAX needs sometimes to compare `treedef` for equality. Therefore, care must be
+JAX sometimes needs to compare `treedef` for equality. Therefore, care must be
 taken to ensure that the auxiliary data specified in the flattening recipe
 supports a meaningful equality comparison.
 

@@ -19,13 +19,15 @@ from absl.testing import parameterized
 
 import jax
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class VectorizeTest(jtu.JaxTestCase):
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
        "left_shape": left_shape, "right_shape": right_shape, "result_shape": result_shape}

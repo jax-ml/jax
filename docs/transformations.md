@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   language: python
@@ -18,7 +18,8 @@ kernelspec:
 ```
 
 At its core, JAX is an extensible system for transforming numerical functions.
-This section will discuss four that are of primary interest: {func}`grad`, {func}`jit`, {func}`vmap`, and {func}`pmap`.
+This section will discuss four transformations that are of primary interest:
+{func}`grad`, {func}`jit`, {func}`vmap`, and {func}`pmap`.
 
 ## Automatic differentiation with `grad`
 
@@ -27,6 +28,7 @@ The most popular function is {func}`jax.grad` for {term}`reverse-mode<VJP>` grad
 
 ```{code-cell}
 :tags: [remove-cell]
+
 def _setup():
   # Set up runtime to mimic an 8-core machine for pmap example below:
   import os
@@ -85,6 +87,7 @@ def abs_val(x):
 abs_val_grad = grad(abs_val)
 print(abs_val_grad(1.0))
 ```
+
 ```{code-cell}
 print(abs_val_grad(-1.0))
 ```
@@ -111,6 +114,7 @@ def slow_f(x):
 x = jnp.ones((5000, 5000))
 %timeit slow_f(x).block_until_ready()
 ```
+
 ```{code-cell}
 fast_f = jit(slow_f)
 
@@ -142,8 +146,8 @@ def predict(params, input_vec):
   activations = input_vec
   for W, b in params:
     outputs = jnp.dot(W, activations) + b  # `input_vec` on the right-hand side!
-    activations = jnp.tanh(outputs)
-  return outputs
+    activations = jnp.tanh(outputs)        # inputs to the next layer
+  return outputs                           # no activation on last layer
 ```
 
 We often instead write `jnp.dot(inputs, W)` to allow for a batch dimension on the
@@ -153,6 +157,7 @@ batch of inputs at once, semantically we could just write
 
 ```{code-cell}
 :tags: [hide-cell]
+
 # Create some sample inputs & parameters
 import numpy as np
 k, N = 10, 5
@@ -193,6 +198,7 @@ separately at each example in a batch. With {func}`vmap`, it’s easy:
 
 ```{code-cell}
 :tags: [hide-cell]
+
 # create a sample loss function & inputs
 def loss(params, x, y0):
   y = predict(params, x)
@@ -250,7 +256,7 @@ def normalize(x):
 print(normalize(jnp.arange(4.)))
 ```
 
-You can even [nest `pmap` functions](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Pmap_Cookbook.ipynb#scrollTo=MdRscR5MONuN) for more sophisticated communication patterns.
+You can even [nest `pmap` functions](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb#scrollTo=MdRscR5MONuN) for more sophisticated communication patterns.
 
 It all composes, so you're free to differentiate through parallel computations:
 
@@ -268,6 +274,7 @@ def f(x):
 x = jnp.arange(8.0).reshape(2, 4)
 print(f(x))
 ```
+
 ```{code-cell}
 print(grad(lambda x: f(x).sum())(x))
 ```
@@ -275,6 +282,6 @@ print(grad(lambda x: f(x).sum())(x))
 When reverse-mode differentiating a {func}`pmap` function (e.g. with {func}`grad`), the
 backward pass of the computation is parallelized just like the forward pass.
 
-See the [SPMD Cookbook](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
-and the [SPMD MNIST classifier from scratch example](https://github.com/google/jax/blob/master/examples/spmd_mnist_classifier_fromscratch.py)
+See the [SPMD Cookbook](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
+and the [SPMD MNIST classifier from scratch example](https://github.com/google/jax/blob/main/examples/spmd_mnist_classifier_fromscratch.py)
 for more.

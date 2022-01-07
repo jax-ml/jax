@@ -34,10 +34,10 @@ returns an updated array, e.g.::
 
   arr = np.zeros(5)
   def loop_body(i, acc_arr):
-    arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
+    arr1 = acc_arr.at[i].set(acc_arr[i] + 2.)
     return lax.cond(i % 2 == 0,
                     arr1,
-                    lambda arr1: ops.index_update(arr1, i, arr1[i] + 1),
+                    lambda arr1: arr1.at[i].set(arr1[i] + 1),
                     arr1,
                     lambda arr1: arr1)
   arr = lax.fori_loop(0, arr.shape[0], loop_body, arr)
@@ -52,13 +52,13 @@ special `loops.scope` object and use `for` loops over special
   with loops.Scope() as s:
     s.arr = np.zeros(5)  # Create the mutable state of the loop as `scope` fields.
     for i in s.range(s.arr.shape[0]):
-      s.arr = ops.index_update(s.arr, i, s.arr[i] + 2.)
+      s.arr = s.arr.at[i].set(s.arr[i] + 2.)
       for _ in s.cond_range(i % 2 == 0):  # Conditionals as loops with 0 or 1 iterations
-        s.arr = ops.index_update(s.arr, i, s.arr[i] + 1.)
+        s.arr = s.arr.at[i].set(s.arr[i] + 1.)
 
 Loops constructed with `range` must have literal constant bounds. If you need
 loops with dynamic bounds, you can use the more general `while_range` iterator.
-However, in that case that `grad` transformation is not supported::
+However, in that case the `grad` transformation is not supported::
 
     s.idx = start
     for _ in s.while_range(lambda: s.idx < end):
@@ -93,7 +93,7 @@ Restrictions:
   * Once the loop starts all updates to loop state must be with new values of the
     same abstract values as the values on loop start.
   * For a `while` loop, the conditional function is not allowed to modify the
-    scope state. This is a checked error. Also, for `while` loops the `grad`
+    scope state. This is a checked error. Also, for `while` loops, the `grad`
     transformation does not work. An alternative that allows `grad` is a bounded
     loop (`range`).
 
@@ -115,7 +115,7 @@ from typing import Any, Dict, List, cast
 from jax import lax, core
 from jax._src.lax import control_flow as lax_control_flow
 from jax import tree_util
-from jax import numpy as jnp
+from jax.errors import UnexpectedTracerError
 from jax.interpreters import partial_eval as pe
 from jax._src.util import safe_map
 
@@ -415,7 +415,7 @@ class _BodyTracer(object):
           in_tracers=in_tracers,
           out_tracers=body_out_tracers,
           trace=self.trace)
-    except core.UnexpectedTracerError as e:
+    except UnexpectedTracerError as e:
       if "Tracer not among input tracers" in str(e):
         raise ValueError("Body of cond_range or while_range should not use the "
                          "index variable returned by iterator.") from e
@@ -499,9 +499,8 @@ class _BoundedLoopBuilder(_LoopBuilder):
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
                         init_vals, body_closed_jaxpr, body_const_vals):
-    arange_val = jnp.arange(self.start, stop=self.stop, step=self.step)
-    return lax_control_flow.scan_p.bind(*itertools.chain(body_const_vals,
-                                                         init_vals, [arange_val]),
+    arange_val = np.arange(self.start, stop=self.stop, step=self.step)
+    return lax_control_flow.scan_p.bind(*body_const_vals, *init_vals, arange_val,
                                         reverse=False, length=arange_val.shape[0],
                                         jaxpr=body_closed_jaxpr,
                                         num_consts=len(body_const_vals),
@@ -532,7 +531,7 @@ class _CondBuilder(_LoopBuilder):
           in_tree,
           tuple(in_avals)))
     assert len(pass_through_const_vals) == 0
-    args = list(itertools.chain(body_const_vals, init_vals))
+    args = [*body_const_vals, *init_vals]
     return lax_control_flow.cond_p.bind(
         self.index, *args,
         branches=(pass_through_closed_jaxpr, body_closed_jaxpr),
@@ -579,9 +578,7 @@ class _WhileBuilder(_LoopBuilder):
       raise TypeError(f"cond_fun must return a boolean scalar, but got output type(s) "
                       f"{cond_jaxpr.out_avals}.")
 
-    return lax_control_flow.while_p.bind(*itertools.chain(cond_consts,
-                                                          body_const_vals,
-                                                          init_vals),
+    return lax_control_flow.while_p.bind(*cond_consts, *body_const_vals, *init_vals,
                                          cond_nconsts=len(cond_consts),
                                          cond_jaxpr=cond_jaxpr,
                                          body_nconsts=len(body_const_vals),

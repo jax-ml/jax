@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 
 import numpy as np
 import scipy.stats as osp_stats
@@ -42,7 +43,10 @@ def logpdf(x, mean, cov, allow_singular=None):
       if cov.ndim < 2 or cov.shape[-2:] != (n, n):
         raise ValueError("multivariate_normal.logpdf got incompatible shapes")
       L = lax.linalg.cholesky(cov)
-      y = lax.linalg.triangular_solve(L, x - mean, lower=True, transpose_a=True)
+      y = jnp.vectorize(
+        partial(lax.linalg.triangular_solve, lower=True, transpose_a=True),
+        signature="(n,n),(n)->(n)"
+      )(L, x - mean)
       return (-1/2 * jnp.einsum('...i,...i->...', y, y) - n/2*np.log(2*np.pi)
               - jnp.log(L.diagonal(axis1=-1, axis2=-2)).sum(-1))
 

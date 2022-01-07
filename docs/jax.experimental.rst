@@ -7,12 +7,12 @@ jax.experimental package
 .. toctree::
     :maxdepth: 1
 
+    jax.experimental.ann
     jax.experimental.host_callback
     jax.experimental.loops
     jax.experimental.maps
     jax.experimental.pjit
-    jax.experimental.optimizers
-    jax.experimental.stax
+    jax.experimental.sparse
 
 .. automodule:: jax.experimental
 

@@ -17,14 +17,15 @@
 
 import contextlib
 import functools
+import itertools
 import os
 import sys
 import threading
 from typing import Any, List, Callable, NamedTuple, Optional
 import warnings
 
-from jax import lib
-from jax.lib import jax_jit
+from jax._src import lib
+from jax._src.lib import jax_jit
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.
@@ -48,7 +49,7 @@ def bool_env(varname: str, default: bool) -> bool:
 
 def int_env(varname: str, default: int) -> int:
   """Read an environment variable and interpret it as an integer."""
-  return int(os.getenv(varname, default))
+  return int(os.getenv(varname, str(default)))
 
 
 class Config:
@@ -147,32 +148,39 @@ class Config:
   def parse_flags_with_absl(self):
     global already_configured_with_absl
     if not already_configured_with_absl:
+      # Extract just the --jax... flags (before the first --) from argv. In some
+      # environments (e.g. ipython/colab) argv might be a mess of things
+      # parseable by absl and other junk.
+      jax_argv = itertools.takewhile(lambda a: a != '--', sys.argv)
+      jax_argv = ['', *(a for a in jax_argv if a.startswith('--jax'))]
+
       import absl.flags
       self.config_with_absl()
-      absl.flags.FLAGS(sys.argv, known_only=True)
+      absl.flags.FLAGS(jax_argv, known_only=True)
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
       if not FLAGS.jax_omnistaging:
         raise Exception(
           "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
-          "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.\n"
+          "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md.\n"
           "To remove this warning, unset the JAX_OMNISTAGING environment variable.")
 
   def enable_omnistaging(self):
     warnings.warn(
         "enable_omnistaging() is a no-op in JAX versions 0.2.12 and higher;\n"
-        "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md")
+        "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md")
 
   def disable_omnistaging(self):
     raise Exception(
       "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
-      "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.")
+      "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md.")
 
   def define_bool_state(
     self, name: str, default: bool, help: str, *,
     update_global_hook: Optional[Callable[[bool], None]] = None,
-    update_thread_local_hook: Optional[Callable[[Optional[bool]], None]] = None):
+    update_thread_local_hook: Optional[Callable[[Optional[bool]], None]] = None,
+    extra_description: str = ""):
     """Set up thread-local state and return a contextmanager for managing it.
 
     This function is a convenience wrapper. It defines a flag, environment
@@ -194,6 +202,8 @@ class Config:
       update_thread_local_hook: a optional callback that is called with the
         updated value of the thread-local state when it is altered or set
         initially.
+      extra_description: string, optional: extra information to add to the
+        summary description.
 
     Returns:
       A contextmanager to control the thread-local state value.
@@ -228,7 +238,8 @@ class Config:
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
-    return _BoolStateContextManager(name, help, update_thread_local_hook)
+    return _StateContextManager(name, help, update_thread_local_hook,
+                                extra_description=extra_description)
 
   def define_enum_state(
       self, name: str, enum_values: List[str], default: Optional[str],
@@ -250,7 +261,10 @@ class Config:
     See docstring for ``define_bool_state``.
     """
     name = name.lower()
-    self.DEFINE_enum(name, os.getenv(name.upper(), default),
+    default = os.getenv(name.upper(), default)
+    if default is not None and default not in enum_values:
+      raise ValueError(f"Invalid value \"{default}\" for JAX flag {name}")
+    self.DEFINE_enum(name, default,
                      enum_values=enum_values, help=help,
                      update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
@@ -260,27 +274,55 @@ class Config:
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
-    @contextlib.contextmanager
-    def set_state(new_val: Optional[str]):
+    def validate(new_val):
       if (new_val is not None and
           (type(new_val) is not str or new_val not in enum_values)):
         raise ValueError(f"new enum value must be None or in {enum_values}, "
                          f"got {new_val} of type {type(new_val)}.")
-      prev_val = getattr(_thread_local_state, name, unset)
-      setattr(_thread_local_state, name, new_val)
-      if update_thread_local_hook: update_thread_local_hook(new_val)
-      try:
-        yield
-      finally:
-        if prev_val is unset:
-          delattr(_thread_local_state, name)
-          if update_thread_local_hook: update_thread_local_hook(None)
-        else:
-          setattr(_thread_local_state, name, prev_val)
-          if update_thread_local_hook: update_thread_local_hook(prev_val)
-    set_state.__name__ = name[4:] if name.startswith('jax_') else name
-    set_state.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
-    return set_state
+
+    return _StateContextManager(name, help, update_thread_local_hook, validate)
+
+  def define_string_state(
+      self, name: str, default: Optional[str], help: str,
+      update_global_hook: Optional[Callable[[str], None]] = None,
+      update_thread_local_hook: Optional[Callable[[Optional[str]], None]] = None):
+    """Set up thread-local state and return a contextmanager for managing it.
+
+    See docstring for ``define_bool_state``.
+
+    Args:
+      name: string, converted to lowercase to define the name of the config
+        option (and absl flag). It is converted to uppercase to define the
+        corresponding shell environment variable.
+      default: string, a default value for the option.
+      help: string, used to populate the flag help information as well as the
+        docstring of the returned context manager.
+      update_global_hook: an optional callback that is called with the updated
+        value of the global state when it is altered or set initially.
+      update_thread_local_hook: an optional callback that is called with the
+        updated value of the thread-local state when it is altered or set
+        initially.
+
+    Returns:
+      A contextmanager to control the thread-local state value.
+    """
+    name = name.lower()
+    default = os.getenv(name.upper(), default)
+    self.DEFINE_string(name, default, help=help,
+                       update_hook=update_global_hook)
+    self._contextmanager_flags.add(name)
+
+    def get_state(self):
+      val = getattr(_thread_local_state, name, unset)
+      return val if val is not unset else self._read(name)
+    setattr(Config, name, property(get_state))
+
+    def validate(new_val):
+      if new_val is not None and not isinstance(new_val, str):
+        raise ValueError(f"new string config value must be None or of type str,"
+                         f" got {new_val} of type {type(new_val)}.")
+
+    return _StateContextManager(name, help, update_thread_local_hook, validate)
 
   def _trace_context(self):
     """Returns a tuple of configuration values that affect tracing.
@@ -292,33 +334,41 @@ class Config:
     return (self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision)
 
-class _BoolStateContextManager:
-  def __init__(self, name, help, update_thread_local_hook):
+class _StateContextManager:
+  def __init__(self, name, help, update_thread_local_hook,
+               validate_new_val_hook: Optional[Callable[[Any], None]] = None,
+               extra_description: str = ""):
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
-    self.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
-    self._hook = update_thread_local_hook
+    self.__doc__ = f"Context manager for `{name}` config option{extra_description}.\n\n{help}"
+    self._update_thread_local_hook = update_thread_local_hook
+    self._validate_new_val_hook = validate_new_val_hook
 
   @contextlib.contextmanager
-  def __call__(self, new_val: bool):
+  def __call__(self, new_val):
+    if self._validate_new_val_hook:
+      self._validate_new_val_hook(new_val)
     prev_val = getattr(_thread_local_state, self._name, unset)
     setattr(_thread_local_state, self._name, new_val)
-    if self._hook is not None: self._hook(new_val)
+    if self._update_thread_local_hook:
+      self._update_thread_local_hook(new_val)
     try:
       yield
     finally:
       if prev_val is unset:
         delattr(_thread_local_state, self._name)
-        if self._hook is not None: self._hook(None)
+        if self._update_thread_local_hook:
+          self._update_thread_local_hook(None)
       else:
         setattr(_thread_local_state, self._name, prev_val)
-        if self._hook is not None: self._hook(prev_val)
+        if self._update_thread_local_hook:
+          self._update_thread_local_hook(prev_val)
 
   def _add_hooks(self, update_global_hook, update_thread_local_hook):
     """Private method that adds hooks to an existing context-manager.
 
     Used to avoid cyclic import dependencies."""
-    self._hook = update_thread_local_hook
+    self._update_thread_local_hook = update_thread_local_hook
     config._update_hooks[self._name] = update_global_hook
     update_global_hook(config._read(self._name))
 
@@ -404,7 +454,24 @@ flags.DEFINE_integer(
           'until the Python callback consume more outfeeds.'),
     lower_bound=int(16 * 1e6)
 )
-
+flags.DEFINE_bool(
+    'jax_host_callback_outfeed',
+    bool_env('JAX_HOST_CALLBACK_OUTFEED', False),
+    help=(
+        'Use outfeed implementation for host_callback, even on CPU and GPU. '
+        'If false, use the CustomCall implementation. '
+        'Has no effect on TPU, since only the outfeed mechanism is implemented.'
+    )
+)
+flags.DEFINE_bool(
+    'jax_host_callback_ad_transforms',
+    bool_env('JAX_HOST_CALLBACK_AD_TRANSFORMS', False),
+    help=(
+        'Enable support for jvp/vjp for the host_callback primitives. Default is '
+        'False, which means that host_callback operates only on primals. '
+        'The flag exists only temporarily, for backward compatibility.'
+    )
+)
 
 enable_checks = config.define_bool_state(
     name='jax_enable_checks',
@@ -416,7 +483,9 @@ check_tracer_leaks = config.define_bool_state(
     default=False,
     help=('Turn on checking for leaked tracers as soon as a trace completes. '
           'Enabling leak checking may have performance impacts: some caching '
-          'is disabled, and other overheads may be added.'))
+          'is disabled, and other overheads may be added. Additionally, be aware '
+          'that some Python debuggers can cause false positives, so it is recommended '
+          'to disable any debuggers while leak checking is enabled.'))
 checking_leaks = functools.partial(check_tracer_leaks, True)
 
 debug_nans = config.define_bool_state(
@@ -443,12 +512,53 @@ log_compiles = config.define_bool_state(
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
 
+parallel_functions_output_gda = config.define_bool_state(
+    name='jax_parallel_functions_output_gda',
+    default=False,
+    help='If True, pjit will output GSDAs.')
+
+
 distributed_debug = config.define_bool_state(
-    name="jax_distributed_debug",
+    name='jax_distributed_debug',
     default=False,
     help=('Enable logging useful for debugging multi-process distributed '
           'computations. Logging is performed with `absl.logging` at WARNING '
           'level.'))
+
+enable_custom_prng = config.define_bool_state(
+    name='jax_enable_custom_prng',
+    default=False,
+    help=('Enables an internal upgrade that allows one to define custom '
+          'pseudo-random number generator implementations. This will '
+          'be enabled by default in future versions of JAX, at which point '
+          'disabling it will be considered deprecated. In a version '
+          'after that the flag will be removed altogether.'),
+    extra_description=" (transient)")
+
+default_prng_impl = config.define_enum_state(
+    name='jax_default_prng_impl',
+    enum_values=['threefry2x32', 'rbg', 'unsafe_rbg'],
+    default='threefry2x32',
+    help=('Select the default PRNG implementation, used when one is not '
+          'explicitly provided at seeding time.'))
+
+hlo_source_file_canonicalization_regex = config.define_string_state(
+    name='jax_hlo_source_file_canonicalization_regex',
+    default=None,
+    help=('Used to canonicalize the source_path metadata of HLO instructions '
+          'by removing the given regex. If set, re.sub() is called on each '
+          'source_file with the given regex, and all matches are removed. '
+          'This can be used to avoid spurious cache misses when using the '
+          'persistent compilation cache, which includes HLO metadata in the '
+          'cache key.'))
+
+config.define_enum_state(
+    name='jax_default_dtype_bits',
+    enum_values=['32', '64'],
+    default='64',
+    help=('Specify bit width of default dtypes, either 32-bit or 64-bit. '
+          'This is a temporary flag that will be used during the process '
+          'of deprecating the ``jax_enable_x64`` flag.'))
 
 def _update_x64_global(val):
   lib.jax_jit.global_state().enable_x64 = val
@@ -517,3 +627,23 @@ default_matmul_precision = config.define_enum_state(
       update_global_jit_state(default_matmul_precision=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(default_matmul_precision=val))
+
+traceback_filtering = config.define_enum_state(
+    name = 'jax_traceback_filtering',
+    enum_values=["off", "tracebackhide", "remove_frames", "auto"],
+    default="auto",
+    help="Controls how JAX filters internal frames out of tracebacks.\n\n"
+         "Valid values are:\n"
+         " * \"off\": disables traceback filtering.\n"
+         " * \"auto\": use \"tracebackhide\" if running under a sufficiently "
+         "new IPython, or \"remove_frames\" otherwise.\n"
+         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to "
+         " hidden stack frames, which some traceback printers support.\n"
+         " * \"remove_frames\": removes hidden frames from tracebacks, and adds "
+         " the unfiltered traceback as a __cause__ of the exception.\n")
+
+enable_mlir = config.define_bool_state(
+    name='jax_enable_mlir',
+    default=False,
+    help=('Enables an experimental code path that compiles JAX programs via '
+          'emitting the MLIR MHLO dialect.'))

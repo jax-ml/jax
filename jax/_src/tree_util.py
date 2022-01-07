@@ -12,20 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
 import collections
+import functools
+from functools import partial
 import operator as op
-from typing import Any, Callable, Optional, Sequence, Tuple, Type, TypeVar, overload
+from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, Type,
+                    TypeVar, overload, TYPE_CHECKING)
 
-from ..lib import pytree
+from jax._src.lib import pytree
 
-from .._src.util import partial, safe_zip, unzip2
+from jax._src.util import safe_zip, unzip2
 
-from .._src import traceback_util
+from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
 U = TypeVar("U")
+
+if TYPE_CHECKING:
+  PyTreeDef = pytree.PyTreeDef
+else:
+  PyTreeDef = Any
+
 
 def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Flattens a pytree.
@@ -60,13 +68,13 @@ def tree_unflatten(treedef, leaves):
   """
   return treedef.unflatten(leaves)
 
-def tree_leaves(tree):
+def tree_leaves(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Gets the leaves of a pytree."""
-  return pytree.flatten(tree)[0]
+  return pytree.flatten(tree, is_leaf)[0]
 
-def tree_structure(tree):
+def tree_structure(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Gets the treedef for a pytree."""
-  return pytree.flatten(tree)[1]
+  return pytree.flatten(tree, is_leaf)[1]
 
 def treedef_tuple(treedefs):
   """Makes a tuple treedef from a list of child treedefs."""
@@ -97,11 +105,13 @@ def all_leaves(iterable):
   """
   return pytree.all_leaves(iterable)
 
-# The auxiliary is hashable, but because mypy has poor support for Hashable, we
-# annotate it as Any.
+
+_Children = TypeVar("_Children", bound=Iterable[Any])
+_AuxData = TypeVar("_AuxData", bound=Hashable)
+
 def register_pytree_node(nodetype: Type[T],
-                         flatten_func: Callable[[T], Tuple[Sequence[Any], Any]],
-                         unflatten_func: Callable[[Any, Sequence[Any]], T]):
+                         flatten_func: Callable[[T], Tuple[_Children, _AuxData]],
+                         unflatten_func: Callable[[_AuxData, _Children], T]):
   """Extends the set of types that are considered internal nodes in pytrees.
 
   See `example usage <pytrees.html>`_.
@@ -178,6 +188,9 @@ def build_tree(treedef, xs):
   return treedef.from_iterable_tree(xs)
 
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
+  """Transform a tree having tree structure (outer, inner) into one having structure
+  (inner, outer).
+  """
   flat, treedef = tree_flatten(pytree_to_transpose)
   inner_size = inner_treedef.num_leaves
   outer_size = outer_treedef.num_leaves
@@ -245,13 +258,13 @@ def tree_all(tree):
 
 register_pytree_node(
   collections.OrderedDict,
-  lambda x: (list(x.values()), list(x.keys())),
+  lambda x: (tuple(x.values()), tuple(x.keys())),
   lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
 
 register_pytree_node(
   collections.defaultdict,
   lambda x: (tuple(x.values()), (x.default_factory, tuple(x.keys()))),
-  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))
+  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))  # type: ignore[index]
 
 
 class Partial(functools.partial):
@@ -269,7 +282,7 @@ class Partial(functools.partial):
   >>> import jax.numpy as jnp
   >>> add_one = Partial(jnp.add, 1)
   >>> add_one(2)
-  DeviceArray(3, dtype=int32)
+  DeviceArray(3, dtype=int32, weak_type=True)
 
   Pytree compatibility means that the resulting partial function can be passed
   as an argument within transformed JAX functions, which is not possible with a
@@ -281,13 +294,13 @@ class Partial(functools.partial):
   ...   return f(*args)
   ...
   >>> call_func(add_one, 2)
-  DeviceArray(3, dtype=int32)
+  DeviceArray(3, dtype=int32, weak_type=True)
 
   Passing zero arguments to ``Partial`` effectively wraps the original function,
   making it a valid argument in JAX transformed functions:
 
   >>> call_func(Partial(jnp.add), 1, 2)
-  DeviceArray(3, dtype=int32)
+  DeviceArray(3, dtype=int32, weak_type=True)
 
   Had we passed ``jnp.add`` to ``call_func`` directly, it would have resulted in a
   ``TypeError``.
@@ -302,9 +315,23 @@ class Partial(functools.partial):
   >>> call_func(print_zero)
   Traced<ShapedArray(int32[], weak_type=True)>with<DynamicJaxprTrace(level=0/1)>
   """
+  def __new__(klass, func, *args, **kw):
+    # In Python 3.10+, if func is itself a functools.partial instance,
+    # functools.partial.__new__ would merge the arguments of this Partial
+    # instance with the arguments of the func. We box func in another lambda to
+    # avoid this optimization since it would change which arguments are
+    # considered part of the pytree.
+    if isinstance(func, functools.partial):
+      original_func = func
+      func = lambda *args, **kw: original_func(*args, **kw)
+      func.func = original_func.func
+      func.args = original_func.args
+      func.keywords = original_func.keywords
+    return super(Partial, klass).__new__(klass, func, *args, **kw)
+
 
 register_pytree_node(
     Partial,
     lambda partial_: ((partial_.args, partial_.keywords), partial_.func),
-    lambda func, xs: Partial(func, *xs[0], **xs[1]),
+    lambda func, xs: Partial(func, *xs[0], **xs[1]),  # type: ignore[index]
 )

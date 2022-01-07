@@ -15,9 +15,9 @@
 # flake8: noqa: F401
 
 from jax._src.scipy.signal import (
-  convolve,
-  convolve2d,
-  correlate,
-  correlate2d,
-  detrend,
+  convolve as convolve,
+  convolve2d as convolve2d,
+  correlate as correlate,
+  correlate2d as correlate2d,
+  detrend as detrend,
 )

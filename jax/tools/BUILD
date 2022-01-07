@@ -17,9 +17,23 @@ licenses(["notice"])
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "jax_to_hlo",
-    srcs = ["jax_to_hlo.py"],
+    name = "jax_to_ir",
+    srcs = ["jax_to_ir.py"],
+    tags = [
+        "ignore_for_dep=third_party.py.jax.experimental.jax2tf",
+        "ignore_for_dep=third_party.py.tensorflow",
+    ],
     deps = [
         "//third_party/py/jax",
+    ],
+)
+
+py_library(
+    name = "jax_to_ir_with_tensorflow",
+    srcs = ["jax_to_ir.py"],
+    deps = [
+        "//third_party/py/jax",
+        "//third_party/py/jax/experimental/jax2tf",
+        "//third_party/py/tensorflow",
     ],
 )

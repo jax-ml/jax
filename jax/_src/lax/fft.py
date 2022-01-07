@@ -23,10 +23,10 @@ from jax.interpreters import xla
 from jax._src.util import prod
 from jax._src import dtypes
 from jax import lax
-from jax.lib import xla_client
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.lib import pocketfft
+from jax._src.lib import xla_client
+from jax._src.lib import pocketfft
 
 xops = xla_client.ops
 
@@ -43,6 +43,7 @@ def _promote_to_real(arg):
   dtype = dtypes.result_type(arg, np.float32)
   return lax.convert_element_type(arg, dtype)
 
+@partial(jit, static_argnums=(1, 2))
 def fft(x, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
     if np.iscomplexobj(x):
@@ -60,7 +61,7 @@ def fft_impl(x, fft_type, fft_lengths):
   return xla.apply_primitive(fft_p, x, fft_type=fft_type, fft_lengths=fft_lengths)
 
 _complex_dtype = lambda dtype: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
-_real_dtype = lambda dtype: np.zeros((), dtype).real.dtype
+_real_dtype = lambda dtype: np.finfo(dtype).dtype
 _is_even = lambda x: x % 2 == 0
 
 def fft_abstract_eval(x, fft_type, fft_lengths):
@@ -76,8 +77,14 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
     dtype = x.dtype
   return x.update(shape=shape, dtype=dtype)
 
-def fft_translation_rule(c, x, fft_type, fft_lengths):
-  return xops.Fft(x, fft_type, fft_lengths)
+def _fft_translation_rule(ctx, avals_in, avals_out, x, *, fft_type,
+                          fft_lengths):
+  return [xops.Fft(x, fft_type, fft_lengths)]
+
+def _fft_translation_rule_cpu(ctx, avals_in, avals_out, x, *, fft_type,
+                               fft_lengths):
+  return [pocketfft.pocketfft(ctx.builder, x, fft_type=fft_type,
+                              fft_lengths=fft_lengths)]
 
 def _naive_rfft(x, fft_lengths):
   y = fft(x, xla_client.FftType.FFT, fft_lengths)
@@ -137,8 +144,8 @@ def fft_batching_rule(batched_args, batch_dims, fft_type, fft_lengths):
 fft_p = Primitive('fft')
 fft_p.def_impl(fft_impl)
 fft_p.def_abstract_eval(fft_abstract_eval)
-xla.translations[fft_p] = fft_translation_rule
+xla.register_translation(fft_p, _fft_translation_rule)
 ad.deflinear2(fft_p, fft_transpose_rule)
 batching.primitive_batchers[fft_p] = fft_batching_rule
 if pocketfft:
-  xla.backend_specific_translations['cpu'][fft_p] = pocketfft.pocketfft
+  xla.register_translation(fft_p, _fft_translation_rule_cpu, platform='cpu')

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   name: python3
@@ -15,7 +15,7 @@ kernelspec:
 
 # Parallel Evaluation in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/06-parallelism.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/06-parallelism.ipynb)
 
 *Authors: Vladimir Mikulik & Roman Ring*
 
@@ -56,7 +56,7 @@ jax.devices()
 
 ## The basics
 
-The most basic use of `jax.pmap` is completely analogous to `jax.vmap`, so let's return to the convolution example from the [Vectorisation notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/03-vectorization.ipynb).
+The most basic use of `jax.pmap` is completely analogous to `jax.vmap`, so let's return to the convolution example from the [Vectorisation notebook](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/03-vectorization.ipynb).
 
 ```{code-cell}
 :id: IIQKBr-CgtD2
@@ -223,12 +223,12 @@ There are two places to pay attention to:
 * the `update()` function
 * the replication of parameters and splitting of data across devices.
 
-If this example is too confusing, you can find the same example, but without parallelism, in the next notebook, [State in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/07-state-in-jax.ipynb). Once that example makes sense, you can compare the differences to understand how parallelism changes the picture.
+If this example is too confusing, you can find the same example, but without parallelism, in the next notebook, [State in JAX](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/07-state.ipynb). Once that example makes sense, you can compare the differences to understand how parallelism changes the picture.
 
 ```{code-cell}
 :id: cI8xQqzRrc-4
 
-from typing import NamedTuple
+from typing import NamedTuple, Tuple
 import functools
 
 class Params(NamedTuple):
@@ -258,7 +258,7 @@ LEARNING_RATE = 0.005
 # to later tell `jax.lax.pmean` which axis to reduce over. Here, we call it
 # 'num_devices', but could have used anything, so long as `pmean` used the same.
 @functools.partial(jax.pmap, axis_name='num_devices')
-def update(params: Params, xs: jnp.ndarray, ys: jnp.ndarray) -> Params:
+def update(params: Params, xs: jnp.ndarray, ys: jnp.ndarray) -> Tuple[Params, jnp.ndarray]:
   """Performs one SGD update step on params using the given data."""
 
   # Compute the gradients on the given minibatch (individually on each device).

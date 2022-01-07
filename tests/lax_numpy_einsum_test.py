@@ -24,12 +24,13 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 import jax.numpy as jnp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class EinsumTest(jtu.JaxTestCase):
 
   def _check(self, s, *ops):
@@ -293,7 +294,7 @@ class EinsumTest(jtu.JaxTestCase):
 
   def test_einsum_kpmurphy_example(self):
     # code from an email with @murphyk
-    N = 2; C = 3; D = 4; K = 5; T = 6;
+    N, C, D, K, T = 2, 3, 4, 5, 6
     r = self.rng()
     S = r.randn(N, T, K)
     W = r.randn(K, D)

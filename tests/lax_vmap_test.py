@@ -16,21 +16,21 @@
 from functools import partial
 import itertools
 from typing import Optional, cast
-from unittest import SkipTest
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as np
 
-from jax._src import api
+import jax
 from jax import dtypes
 from jax import lax
-from jax import test_util as jtu
-from jax.lib import xla_client
+from jax._src import test_util as jtu
+from jax._src.lib import xla_client
 from jax._src.util import safe_map, safe_zip
 
-from tests.lax_test import LAX_OPS
+from lax_test import LAX_OPS
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -69,17 +69,24 @@ def args_slicer(args, bdims):
 class LaxVmapTest(jtu.JaxTestCase):
 
   def _CheckBatching(self, op, bdim_size, bdims, shapes, dtypes, rng,
-                     rtol=None, atol=None):
+                     rtol=None, atol=None, multiple_results=False):
     batched_shapes = map(partial(add_bdim, bdim_size), bdims, shapes)
     args = [rng(shape, dtype) for shape, dtype in zip(batched_shapes, dtypes)]
     args_slice = args_slicer(args, bdims)
-    ans = api.vmap(op, bdims)(*args)
+    ans = jax.vmap(op, bdims)(*args)
     if bdim_size == 0:
       args = [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
       out = op(*args)
-      expected = np.zeros((0,) + out.shape, out.dtype)
+      if not multiple_results:
+        expected = np.zeros((0,) + out.shape, out.dtype)
+      else:
+        expected = [np.zeros((0,) + o.shape, o.dtype) for o in out]
     else:
-      expected = np.stack([op(*args_slice(i)) for i in range(bdim_size)])
+      outs = [op(*args_slice(i)) for i in range(bdim_size)]
+      if not multiple_results:
+        expected = np.stack(outs)
+      else:
+        expected = [np.stack(xs) for xs in zip(*outs)]
     self.assertAllClose(ans, expected, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -220,7 +227,6 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(min_shape, operand_shape, max_shape)))
   def testClamp(self, min_shape, operand_shape, max_shape, dtype, bdims):
     rng = jtu.rand_default(self.rng())
-    raise SkipTest("batching rule for clamp not implemented")  # TODO(mattj)
     shapes = [min_shape, operand_shape, max_shape]
     self._CheckBatching(lax.clamp, 10, bdims, shapes, [dtype] * 3, rng)
 
@@ -294,7 +300,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                         rng)
 
     # Checks that batching didn't introduce any transposes or broadcasts.
-    jaxpr = api.make_jaxpr(dot)(np.zeros(lhs_shape, dtype),
+    jaxpr = jax.make_jaxpr(dot)(np.zeros(lhs_shape, dtype),
                                 np.zeros(rhs_shape, dtype))
     for eqn in jtu.iter_eqns(jaxpr.jaxpr):
       self.assertFalse(eqn.primitive in ["transpose", "broadcast"])
@@ -327,9 +333,9 @@ class LaxVmapTest(jtu.JaxTestCase):
       ]
       for dtype in default_dtypes
       for bdims in all_bdims(inshape)))
+  @unittest.skip("this test has failures in some cases")  # TODO(mattjj)
   def testBroadcastInDim(self, inshape, dtype, outshape, dimensions, bdims):
     rng = jtu.rand_default(self.rng())
-    raise SkipTest("this test has failures in some cases")  # TODO(mattjj)
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CheckBatching(op, 5, bdims, (inshape,), (dtype,), rng)
 
@@ -483,6 +489,27 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_reducedims={}_bdims={}"
+       .format(jtu.format_shape_dtype_string(shape, dtype), dims, bdims),
+       "shape": shape, "dtype": dtype, "dims": dims, "bdims": bdims}
+      for dtype in default_dtypes
+      for shape, dims in [
+          [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
+          [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
+      ]
+      for bdims in all_bdims(shape, shape)))
+  def testVariadicReduce(self, shape, dtype, dims, bdims):
+    def op(a, b):
+      x1, y1 = a
+      x2, y2 = b
+      return x1 + x2, y1 * y2
+    rng = jtu.rand_small(self.rng())
+    init_val = tuple(np.asarray([0, 1], dtype=dtype))
+    fun = lambda x, y: lax.reduce((x, y), init_val, op, dims)
+    self._CheckBatching(fun, 5, bdims, (shape, shape), (dtype, dtype), rng,
+                        multiple_results=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_inshape={}_reducedims={}_bdims={}"
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dim,
                bdims),
@@ -570,8 +597,6 @@ class LaxVmapTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   @jtu.ignore_warning(message="Using reduced precision for gradient.*")
   def testSelectAndGatherAdd(self, dtype, padding):
-    if jtu.device_under_test() == "tpu" and dtype == dtypes.bfloat16:
-      raise SkipTest("bfloat16 _select_and_gather_add doesn't work on tpu")
     rng = jtu.rand_small(self.rng())
     all_configs = itertools.chain(
         itertools.product(
@@ -611,7 +636,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       return lax._select_and_scatter_add(operand, cotangents, lax.ge_p, dims,
                                          strides, pads)
     ones = (1,) * len(shape)
-    cotangent_shape = api.eval_shape(
+    cotangent_shape = jax.eval_shape(
       lambda x: lax._select_and_gather_add(x, x, lax.ge_p, dims, strides,
                                            pads, ones, ones),
       np.ones(shape, dtype)).shape
@@ -627,12 +652,11 @@ class LaxVmapTest(jtu.JaxTestCase):
       for shape in [(5,), (3, 4, 5), (2, 3, 4, 5)]
       for bdims in all_bdims(shape)
       for fft_ndims in range(0, min(3, len(shape)) + 1)))
-  @jtu.skip_on_devices("tpu")  # TODO(b/137993701): unimplemented cases.
   def testFft(self, fft_ndims, shape, bdims):
     rng = jtu.rand_default(self.rng())
     ndims = len(shape)
     axes = range(ndims - fft_ndims, ndims)
-    fft_lengths = [shape[axis] for axis in axes]
+    fft_lengths = tuple(shape[axis] for axis in axes)
     op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
     self._CheckBatching(op, 5, bdims, [shape], [np.complex64], rng)
 

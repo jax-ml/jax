@@ -19,58 +19,64 @@ This module introduces the function :func:`call_tf` that allows JAX to call
 TensorFlow functions.
 
 For examples and details, see
-https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
+https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
 
 """
+import functools
 import logging
-from typing import Callable
+from typing import Any, Callable, Optional, Sequence, Tuple
 
 import jax
 from jax import core
 from jax import dlpack
 from jax import dtypes
-from jax import numpy as jnp
 from jax import tree_util
 from jax._src import util
+from jax._src import ad_util
+from jax._src.lax.lax import _device_put_raw
 from jax.interpreters import xla
-from jax.lib import xla_bridge
-from jax.lib import xla_client
+from jax._src.lib import xla_client
+from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
+map = util.safe_map
+zip = util.safe_zip
 xops = xla_client._xla.ops  # type: ignore
+
+TfConcreteFunction = Any
 
 # The platforms for which to use DLPack to avoid copying (only works on GPU
 # and CPU at the moment, and only for DeviceArray). For CPU we don't need
 # DLPack, if we are careful.
 _DLPACK_PLATFORMS = ("gpu",)
 
-def call_tf(func_tf: Callable) -> Callable:
+def call_tf(callable_tf: Callable) -> Callable:
   """Calls a TensorFlow function from JAX, with support for reverse autodiff.
 
-  The ``func_tf`` will be called with TensorFlow-compatible arguments (
+  The ``callable_tf`` will be called with TensorFlow-compatible arguments (
   numpy.ndarray, ``tf.Tensor`` or ``tf.Variable``) or pytrees thereof. The
   function must return the same type of results.
 
   If ``call_tf`` appears in a JAX staging context (:func:`jax.jit`,
   or :func:`jax.pmap`, or :func:`jax.xmap`, or a control-flow primitive) then
-  ``func_tf`` will be compiled with ``tf.function(func_tf, jit_compile=True)``
+  ``callable_tf`` will be compiled with ``tf.function(callable_tf, jit_compile=True)``
   and the resulting XLA computation will be embedded in JAX's XLA computation.
 
   If ``call_tf`` appears outside a JAX staging context, it will be called inline
   using TensorFlow eager mode.
 
   The ``call_tf`` supports JAX's reverse-mode autodiff, in which case the
-  ``func_tf`` will be differentiated using ``tf.GradientTape``. This means
+  ``callable_tf`` will be differentiated using ``tf.GradientTape``. This means
   that the gradient will be TensorFlow-accurate, e.g., will respect the
-  custom gradients that may be defined for the code in ``func_tf``.
+  custom gradients that may be defined for the code in ``callable_tf``.
 
   For an example and more details see the
-  `README <https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax>`_.
+  `README <https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax>`_.
 
   Args:
-    func_tf: a TensorFlow Callable that can take a pytree of TensorFlow
+    callable_tf: a TensorFlow Callable that can take a pytree of TensorFlow
       arguments.
   Returns: a JAX callable that can be invoked with JAX pytree arguments, in
     op-by-op mode or in a staged context. This callable can be used with
@@ -81,79 +87,110 @@ def call_tf(func_tf: Callable) -> Callable:
   def make_call(*args_jax):
     """We wrap it all in `make_call` so that we can attach custom VJP."""
 
-    def _dtype(x):
-      return (getattr(x, "dtype", None) or np.asarray(x).dtype)
+    args_flat_jax, args_treedef = tree_util.tree_flatten(args_jax)
+    # Canonicalize the arguments; e.g., makes them x32 if JAX is in 32-bit mode
+    def canonical_arg(v):
+      v = v if getattr(v, "dtype", None) else np.asarray(v)
+      dtype = dtypes.canonicalize_dtype(v.dtype)
+      if dtype != v.dtype:
+        v = v.astype(dtype)
+      return v
 
-    args_jax_flat, args_jax_treedef = tree_util.tree_flatten(args_jax)
-    args_tf_sig_flat = [
-        tf.TensorSpec(np.shape(a_jax), _to_tf_dtype(_dtype(a_jax)))
-        for a_jax in args_jax_flat
-    ]
-    args_tf_sig = tf.nest.map_structure(
-        lambda a_jax: tf.TensorSpec(
-            np.shape(a_jax), _to_tf_dtype(_dtype(a_jax))), args_jax)
-    func_tf_concrete = tf.function(func_tf).get_concrete_function(*args_tf_sig)
-    res_tf_sig_flat, res_treedef = tree_util.tree_flatten(
-        func_tf_concrete.structured_outputs)
+    args_flat_jax = tuple(map(canonical_arg, args_flat_jax))
+    def make_tensorspec(a_jax):
+      a_tf_dtype = jax2tf_internal._to_tf_dtype(a_jax.dtype)
+      if any(not core.is_constant_dim(d) for d in a_jax.shape):
+        msg = ("call_tf cannot be applied to shape-polymorphic arguments. "
+               f"Found argument shape: {a_jax.shape}. "
+               "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+        raise ValueError(msg)
+
+      return tf.TensorSpec(a_jax.shape, a_tf_dtype)
+    args_flat_sig_tf = tuple(map(make_tensorspec, args_flat_jax))
+
+    res_treedef = None  # We'll store here the result treedef
+    # The function below will be called at least once, either in eager
+    # or in graph mode.
+    def callable_flat_tf(*args_tf_flat: TfVal) -> Sequence[TfVal]:
+      args_tf = args_treedef.unflatten(args_tf_flat)
+      res_tf = callable_tf(*args_tf)
+      nonlocal res_treedef
+      res_tf_flat, res_treedef_now = tree_util.tree_flatten(res_tf)
+      assert res_treedef is None or res_treedef == res_treedef_now, f"Subsequent calls had different results. Previous {res_treedef} and now {res_treedef_now}"
+      res_treedef = res_treedef_now
+      return res_tf_flat
+
+    # Prepare a tf.function ahead of time, to cache the concrete functions. This
+    # won't be used in op-by-op execution mode.
+    function_flat_tf = tf.function(callable_flat_tf, autograph=False, jit_compile=True)
 
     res_jax_flat = call_tf_p.bind(
-        *args_jax_flat,
-        func_tf=func_tf,
-        args_treedef=args_jax_treedef,
-        args_tf_sig_flat=args_tf_sig_flat,
-        res_treedef=res_treedef,
-        res_tf_sig_flat=res_tf_sig_flat)
-    # TODO(necula): check the expected result signature
-    assert len(res_jax_flat) == len(res_tf_sig_flat)
+        *args_flat_jax,
+        # Carry the actual function such that op-by-op call can call in TF eager mode.
+        callable_flat_tf=callable_flat_tf,
+        function_flat_tf=function_flat_tf,
+        args_flat_sig_tf=args_flat_sig_tf)
     return res_treedef.unflatten(res_jax_flat)
 
   # Define the fwd and bwd custom_vjp functions
   def make_call_vjp_fwd(*args_jax):
-    # Return the primal argument as the residual
+    # Return the primal arguments as the residual
     return make_call(*args_jax), args_jax
 
-  def make_call_vjp_bwd(residual, ct_res):
-    args_jax = residual  # residual is the primal argument
+  def make_call_vjp_bwd(residual_jax, ct_res_jax):
+    args_jax = residual_jax  # residual is the primal argument
 
-    def tf_vjp_fun(args, ct_res):
+    def tf_vjp_fun(args_tf, ct_res_tf):
       """Invoke TF gradient."""
+
+      # TF does not like us to watch non-float vars
+      def replace_non_float(arg):
+        if np.issubdtype(arg.dtype.as_numpy_dtype, np.inexact):
+          return arg
+        else:
+          # When watched, this will be ignored. When use in results it will
+          # result in a floating 0. gradient, which JAX will ignore (and
+          # replace it with a float0)
+          return tf.zeros((), dtype=tf.float32)
+
+      watched_args_tf = tf.nest.map_structure(replace_non_float, args_tf)
       with tf.GradientTape(persistent=True) as tape:
-        tape.watch(args)
-        res = func_tf(*args)
+        tape.watch(watched_args_tf)
+        res = callable_tf(*args_tf)
 
-      tf.nest.assert_same_structure(res, ct_res)
-      # If the result is not a scalar, we must accumulate arguments cotangents.
-      accumulator = None  # Same structure as "arg"
+      tf.nest.assert_same_structure(res, ct_res_tf)
+      dres_darg = tape.gradient(
+          tf.nest.map_structure(replace_non_float, res),
+          sources=watched_args_tf,
+          output_gradients=ct_res_tf,
+          unconnected_gradients=tf.UnconnectedGradients.ZERO)
 
-      def acc_ct(res_, ct_res_):
-        dres_darg = tape.gradient(
-            res_,
-            sources=args,
-            unconnected_gradients=tf.UnconnectedGradients.ZERO)
-        tf.nest.assert_same_structure(dres_darg, args)
-        scaled_dres_darg = tf.nest.map_structure(lambda d: d * ct_res_,
-                                                 dres_darg)
-        nonlocal accumulator
-        accumulator = (
-            scaled_dres_darg if accumulator is None
-            else tf.nest.map_structure(
-                lambda x, y: x + y, accumulator, scaled_dres_darg))
+      tf.nest.assert_same_structure(dres_darg, args_tf)
+      return dres_darg
 
-      tf.nest.map_structure(acc_ct, res, ct_res)
-      return accumulator
     # Use call_tf to call the VJP function
-    return call_tf(tf_vjp_fun)(args_jax, ct_res)
+    ct_args_jax = call_tf(tf_vjp_fun)(args_jax, ct_res_jax)
+    # We must make the float0s that JAX expects
+    def fix_float0(arg_jax, ct_arg_jax):
+      arg_dtype = dtypes.result_type(arg_jax)  # May be scalar
+      ct_arg_dtype = core.primal_dtype_to_tangent_dtype(arg_dtype)
+      if ct_arg_dtype != ct_arg_jax.dtype:
+        return ad_util.zeros_like_aval(core.ShapedArray(np.shape(arg_jax),
+                                                        ct_arg_dtype))
+      return ct_arg_jax
+
+    ct_args_jax_fixed = tree_util.tree_map(fix_float0, args_jax, ct_args_jax)
+    return ct_args_jax_fixed
 
   make_call.defvjp(make_call_vjp_fwd, make_call_vjp_bwd)
-  return util.wraps(func_tf)(make_call)
+  return util.wraps(callable_tf)(make_call)
 
 
 call_tf_p = core.Primitive("call_tf")
 call_tf_p.multiple_results = True
 
-
-# The impl will be used in op-by-op mode and calls func_tf in TF eager mode.
-def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
+# The impl will be used in op-by-op mode and calls callable_tf in TF eager mode.
+def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
   # On GPU we use dlpack to avoid copies of data to the host.
   def _arg_jax_to_tf(arg_jax):
     if (isinstance(arg_jax, xla.DeviceArray) and
@@ -167,20 +204,20 @@ def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
     return tf.constant(np.asarray(arg_jax))
 
   args_tf_flat = tuple(map(_arg_jax_to_tf, args_jax_flat))
-  res_tf = func_tf(*args_treedef.unflatten(args_tf_flat))
-  res_tf_flat, _ = tree_util.tree_flatten(res_tf)
-  # TODO(necula): check the result for tree and aval
+  with jax2tf_internal.inside_call_tf():
+    # Call in TF eager mode
+    res_tf_flat = callable_flat_tf(*args_tf_flat)
 
-  def _res_tf_to_jax(res_tf):
+  def _res_tf_to_jax(res_tf: TfVal):
+    res_tf, _ = jax2tf_internal._tfval_to_tensor_jax_dtype(res_tf)
     if isinstance(res_tf, tf.Tensor) and res_tf.dtype in dlpack.SUPPORTED_DTYPES:
       res_tf_platform = tf.DeviceSpec.from_string(res_tf.backing_device).device_type
       res_jax_platform = res_tf_platform.lower()
       if res_jax_platform in _DLPACK_PLATFORMS:
         res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
-        return jax.dlpack.from_dlpack(
-            res_dlpack, backend=xla_bridge.get_backend(res_jax_platform))
+        return jax.dlpack.from_dlpack(res_dlpack)
 
-    return jnp.asarray(np.asarray(res_tf))
+    return _device_put_raw(np.asarray(res_tf))
 
   return list(map(_res_tf_to_jax, res_tf_flat))
 
@@ -188,73 +225,205 @@ def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
 call_tf_p.def_impl(_call_tf_impl)
 
 
-def _call_tf_abstract_eval(*_, res_tf_sig_flat, **__):
-  return tuple([
-      core.ShapedArray(np.shape(r), _to_jax_dtype(r.dtype))
-      for r in res_tf_sig_flat
-  ])
-
+def _call_tf_abstract_eval(*_,
+                           function_flat_tf,
+                           args_flat_sig_tf, **__):
+  # See comments in _code_generator_and_avals of why we overkill and do a
+  # full compilation only to get the abstract avals.
+  _, result_avals = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,
+                                              code_gen_optional=True)
+  return tuple(result_avals)
 
 call_tf_p.def_abstract_eval(_call_tf_abstract_eval)
 
 
-def _call_tf_translation_rule(builder, *args_op, func_tf,
-                              args_treedef, args_tf_sig_flat, res_tf_sig_flat,
+def _call_tf_translation_rule(ctx, avals_in, avals_out, *args_op,
+                              function_flat_tf,
+                              args_flat_sig_tf,
                               **_):
+  # This will most likely hit the cache, because we used it for abstract_eval
+  code_gen, _ = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,  # type: ignore
+                                          code_gen_optional=False)
+  assert code_gen is not None
+  return code_gen(ctx.builder, args_op)
+
+
+@functools.lru_cache(maxsize=128)
+def _code_generator_and_avals(
+    function_flat_tf,
+    args_flat_sig_tf,
+    code_gen_optional=False
+) -> Tuple[Optional[Callable[[xla.XlaBuilder, Sequence[xla.XlaOp]],
+                             Sequence[xla.XlaOp]]],
+           Sequence[core.ShapedArray]]:
+  # Returns and caches a code generator (taking a builder and the
+  # XlaOps for the arguments) and a sequence of result abstract shapes.
+
+  # It turns out that both for abstract evaluation and for actual compilation
+  # it is useful to actually generate the HLO. This is true because in some
+  # cases just TF-level shape inference is not precise enough to recover the
+  # output shapes (e.g., b/128924522), even in situations where XLA can compile
+  # the code, from which we can get the shapes.
+
+  # Due to bugs like b/193754660, the compilation may fail. To work around this
+  # issue we pass the `code_gen_optional` when in an abstract evaluation context
+  # in which case we fallback on TF shape inference. Luckily it seen that
+  # it is never the case that we are under tf.function, and we call the
+  # XLA translation rule for call_tf. The latter happens only for jax.jit, but
+  # jax.jit under a tf.function must be under jax2tf.convert, which unrolls
+  # the jit.
+
   # TODO(necula): It seems that we need concrete tensors for get_compiler_ir?
+  # We know of one case when TF is sensitive to the values of the tensors that
+  # affect shapes in the computation. In those cases, however, those tensors
+  # are inlined in the computation, which we detect below.
   args_tf_flat = [
       tf.constant((0 if a.dtype != tf.bool else False),
                   shape=a.shape,
-                  dtype=a.dtype) for a in args_tf_sig_flat
-  ]
-  args_tf = args_treedef.unflatten(args_tf_flat)
-  func_tf = tf.function(func_tf, jit_compile=True)
-  func_tf_concrete = func_tf.get_concrete_function(*args_tf)
-  captured_ops = []  # Same order as captured_inputs
-  if func_tf_concrete.captured_inputs:
+                  dtype=a.dtype) for a in args_flat_sig_tf]
+
+  # TODO(necula): We should use the proper device, because in some cases we
+  # generate different HLO for different devices.
+  # One example is when the code refers to variables on one device. Or, for
+  # sharding annotations (only supported on TPU).
+  # For now we just use the default device, but ideally we should pass the
+  # intended platform in. The problem is that we want to reuse and cache this
+  # function across abstract_eval and XLA translation, but for abstract_eval
+  # we do not know the platform.
+  tf_device_name = f"/device:{jax.default_backend().upper()}:0"
+  with jax2tf_internal.inside_call_tf():
+    concrete_function_flat_tf = function_flat_tf.get_concrete_function(*args_flat_sig_tf)
+
+  captured_inputs = []
+  if concrete_function_flat_tf.captured_inputs:
     # The function uses either captured variables or tensors.
     msg = (
-      "call_tf works best with a TensorFlow function that does not capture "
-      "variables or tensors from the context. "
-      "See https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax for a discussion. "
-      f"The following captures were found {func_tf_concrete.captured_inputs}")
+        "call_tf works best with a TensorFlow function that does not capture "
+        "variables or tensors from the context. "
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion. "
+        f"The following captures were found {concrete_function_flat_tf.captured_inputs}")
     logging.warning(msg)
-
-    next_var_idx = 0
-    for inp in func_tf_concrete.captured_inputs:
-      if inp.dtype == tf.resource:  # A variable; assume the next variable
-        assert next_var_idx < len(func_tf_concrete.variables)
-        # TODO(necula): better checking that we are picking the right variable
-        var = func_tf_concrete.variables[next_var_idx]
-        next_var_idx += 1
-        inp_const = np.asarray(var)
+    for inp in concrete_function_flat_tf.captured_inputs:
+      if inp.dtype == tf.resource:  # A variable; lookup by handle
+        inp_vars = [v for v in concrete_function_flat_tf.variables if inp is v.handle]
+        assert len(inp_vars) == 1, f"Found {inp_vars}"
+        captured_inputs.append(inp_vars[0])
       else:
-        inp_const = np.asarray(inp)
-      captured_ops.append(xops.ConstantLiteral(builder, np.asarray(inp_const)))
+        captured_inputs.append(inp)
 
-  # TODO(necula): For unoptimized HLO, does it make a difference which device we use?
-  tf_device_name = "/device:CPU:0"
-  func_tf_hlo = func_tf.experimental_get_compiler_ir(*args_tf)(
-      stage="hlo_serialized", device_name=tf_device_name)
-  callee_xla_comp = xla_client.XlaComputation(func_tf_hlo)
-  res_tf = xops.Call(builder, callee_xla_comp, args_op + tuple(captured_ops))
-  if len(res_tf_sig_flat) == 1:
+  with jax2tf_internal.inside_call_tf():
+    # The above has traced the function and in fact has cached a ConcreteFunction
+    # Grab it now, so that we don't have to construct `args_tf_flat` only to
+    # get a cache hit.
+    try:
+      func_tf_hlo = function_flat_tf.experimental_get_compiler_ir(*args_tf_flat)(
+            stage="hlo_serialized", device_name=tf_device_name)
+    except Exception as e:
+      # TODO(b/193754660): This is a workaround. Use a more robust mechanism
+      # instead of relying on error message.
+      # Check two different error messages, to ensure the code works internally
+      # (with "out of scope") and also in OSS (with "An op outside ...").
+      if type(e) is TypeError and ("out of scope" in str(e) or
+                                   "An op outside of the function building code" in str(e)):
+        # TODO(b/193754660): this may happen if we are in a function context
+        # Try to salvage the situation if we are just doing abstract_eval, maybe
+        # for jax2tf.convert. We can do that if all the output_shapes are known.
+        def is_fully_known_shape(s):
+          return s.rank is not None and all([d is not None for d in s])
+        if code_gen_optional and (
+            all([is_fully_known_shape(s)
+                 for s in concrete_function_flat_tf.output_shapes])):
+          result_avals = [
+              # We convert to JAX type, and canonicalize to 32-bit if necessary
+              core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
+              for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
+                                      concrete_function_flat_tf.output_shapes)]
+          return None, result_avals
+      msg = ("Error compiling TensorFlow function. call_tf can used " +
+             "in a staged context (under jax.jit, lax.scan, etc.) only with " +
+             "compileable functions with static output shapes. " +
+             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+      raise ValueError(msg) from e
+
+  xla_comp = xla_client.XlaComputation(func_tf_hlo)
+  # Check that the function does not have compile-time constant inputs that
+  # have been inlined in the compiled code.
+  xla_comp_parameter_shapes = xla_comp.program_shape().parameter_shapes()
+  found_parameter_avals = [
+      core.ShapedArray(found_xla_shape.dimensions(),
+                       dtypes.canonicalize_dtype(found_xla_shape.numpy_dtype()))
+      for found_xla_shape in xla_comp_parameter_shapes
+  ]
+  # Add the captured_inputs to args_flat_sig_tf
+  expected_args_flat_sig_tf = list(args_flat_sig_tf) + list(captured_inputs)
+  expected_parameter_avals = [
+      core.ShapedArray(tuple(arg_sig.shape.as_list()),
+                       dtypes.canonicalize_dtype(arg_sig.dtype.as_numpy_dtype))
+      for arg_sig in expected_args_flat_sig_tf]
+  if found_parameter_avals != expected_parameter_avals:
+    msg = ("Compiled TensorFlow function has unexpected parameter types " +
+           f"{found_parameter_avals}, while the expected types are " +
+           f"{expected_parameter_avals}. Perhaps the TensorFlow function " +
+           "has shape-influencing inputs, and thus needs to be recompiled " +
+           "for each value of some inputs. " +
+           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+    raise ValueError(msg)
+
+  # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
+  def canonical_res_aval(res_shape: xla.XlaShape) -> core.ShapedArray:
+    if not res_shape.is_static():
+      msg = ("Compiled TensorFlow function has dynamic output shape " +
+             f"{res_shape}. call_tf can used " +
+             "in a staged context (under jax.jit, lax.scan, etc.) only with " +
+             "compileable functions with static output shapes. " +
+             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+      raise ValueError(msg)
+
+    res_dtype = res_shape.numpy_dtype()
+    jax_res_dtype = dtypes.canonicalize_dtype(res_dtype)
+    return core.ShapedArray(res_shape.dimensions(), jax_res_dtype)
+
+  result_shape = xla_comp.program_shape().result_shape()
+  if not result_shape.is_tuple():
     # TF does not wrap singletons as tuples, but JAX expects tuples because
     # call_tf is a multiple_results primitive.
-    return xops.Tuple(builder, [res_tf])
+    result_shapes = (result_shape,)
   else:
-    return res_tf
+    result_shapes = result_shape.tuple_shapes()  # type: ignore
 
+  result_avals = tuple(map(canonical_res_aval, result_shapes))  # type: ignore
 
-xla.translations[call_tf_p] = _call_tf_translation_rule
+  def code_gen(builder: xla.XlaBuilder, args_op: Sequence[xla.XlaOp]
+              ) -> Sequence[xla.XlaOp]:
+    captured_ops = [xops.Constant(builder, np.asarray(inp))
+                    for inp in captured_inputs]
 
+    res_tf = xops.Call(builder, xla_comp, args_op + tuple(captured_ops))  # type: ignore
+    def post_process_result(idx: int, res_aval: core.ShapedArray, res_shape: xla.XlaShape):
+      res_op = res_tf
+      if result_shape.is_tuple():
+        res_op = xops.GetTupleElement(res_tf, idx)
+      if res_aval.dtype != res_shape.numpy_dtype():
+        res_op = xops.ConvertElementType(
+            res_op,
+            new_element_type=xla.dtype_to_primitive_type(res_aval.dtype))
+      return res_op
 
-def _to_tf_dtype(jax_dtype):
-  if jax_dtype == dtypes.float0:
-    return tf.float32
-  else:
-    return tf.dtypes.as_dtype(jax_dtype)
+    return [
+        post_process_result(i, res_aval, res_shape)
+        for i, (res_aval, res_shape) in enumerate(zip(result_avals,
+                                                      result_shapes))]
 
+  return code_gen, result_avals
 
-def _to_jax_dtype(tf_dtype):
-  return tf_dtype.as_numpy_dtype
+xla.register_translation(call_tf_p, _call_tf_translation_rule)
+
+TfVal = jax2tf_internal.TfVal
+def _jax2tf_call_tf(*args: TfVal,
+                    callable_flat_tf: Callable,
+                    **_) -> TfVal:
+  with jax2tf_internal.inside_call_tf():
+    res_tf_flat = callable_flat_tf(*args)
+  return res_tf_flat
+
+jax2tf_internal.tf_impl[call_tf_p] = _jax2tf_call_tf

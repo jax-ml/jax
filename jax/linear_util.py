@@ -67,13 +67,13 @@ from functools import partial
 from typing import Any, Tuple, Callable
 import weakref
 
-from . import core
-from ._src.util import curry
-from .tree_util import tree_map
+from jax import core
+from jax._src.util import curry
+from jax.tree_util import tree_map
 
-from ._src import traceback_util
+from jax._src import traceback_util
 
-from .config import config
+from jax.config import config
 
 traceback_util.register_exclusion(__file__)
 
@@ -167,8 +167,9 @@ class WrappedFun(object):
     except:
       # Some transformations yield from inside context managers, so we have to
       # interrupt them before reraising the exception. Otherwise they will only
-      # get garbage-collected at some later time, running their cleanup tasks only
-      # after this exception is handled, which can corrupt the global state.
+      # get garbage-collected at some later time, running their cleanup tasks
+      # only after this exception is handled, which can corrupt the global
+      # state.
       while stack:
         stack.pop()[0].close()
       raise
@@ -176,7 +177,15 @@ class WrappedFun(object):
     args = kwargs = None
     while stack:
       gen, out_store = stack.pop()
-      ans = gen.send(ans)
+      try:
+        ans = gen.send(ans)
+      except:
+        # As above does for the first half of the transformation, exceptions
+        # raised in the second half of the transformation also require us to
+        # clean up references here.
+        while stack:
+          stack.pop()[0].close()
+        raise
       if out_store is not None:
         ans, side = ans
         out_store.store(side)
@@ -220,15 +229,16 @@ def fun_name(f):
   except:
     return str(f)
 
-def wrap_init(f, params={}) -> WrappedFun:
+def wrap_init(f, params=None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
-  return WrappedFun(f, (), (), tuple(sorted(params.items())))
+  return WrappedFun(f, (), (),
+                    () if params is None else tuple(sorted(params.items())))
 
 
 class _CacheLocalContext(threading.local):
 
   def __init__(self):
-    super(_CacheLocalContext, self).__init__()
+    super().__init__()
     self.most_recent_entry = None
 
 

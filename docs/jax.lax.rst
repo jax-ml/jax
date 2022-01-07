@@ -44,6 +44,7 @@ Operators
     broadcast
     broadcasted_iota
     broadcast_in_dim
+    cbrt
     ceil
     clamp
     collapse
@@ -52,6 +53,7 @@ Operators
     conj
     conv
     convert_element_type
+    conv_dimension_numbers
     conv_general_dilated
     conv_general_dilated_local
     conv_general_dilated_patches
@@ -119,6 +121,9 @@ Operators
     rsqrt
     scatter
     scatter_add
+    scatter_max
+    scatter_min
+    scatter_mul
     select
     shift_left
     shift_right_arithmetic
@@ -198,6 +203,7 @@ Linear algebra operators (jax.lax.linalg)
     eig
     eigh
     lu
+    qdwh
     qr
     svd
     triangular_solve
@@ -208,7 +214,9 @@ Argument classes
 .. currentmodule:: jax.lax
 
 .. autoclass:: ConvDimensionNumbers
+.. autoclass:: ConvGeneralDilatedDimensionNumbers
 .. autoclass:: GatherDimensionNumbers
+.. autoclass:: GatherScatterMode
 .. autoclass:: Precision
 .. autoclass:: RoundingMethod
 .. autoclass:: ScatterDimensionNumbers

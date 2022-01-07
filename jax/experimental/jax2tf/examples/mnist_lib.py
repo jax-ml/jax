@@ -174,10 +174,12 @@ class PureJaxMNIST:
       epoch_time = time.time() - start_time
       train_acc = PureJaxMNIST.accuracy(PureJaxMNIST.predict, params, train_ds)
       test_acc = PureJaxMNIST.accuracy(PureJaxMNIST.predict, params, test_ds)
-      logging.info(
-        f"{PureJaxMNIST.name}: Epoch {epoch} in {epoch_time:0.2f} sec")
-      logging.info(f"{PureJaxMNIST.name}: Training set accuracy {100. * train_acc:0.2f}%")
-      logging.info(f"{PureJaxMNIST.name}: Test set accuracy {100. * test_acc:0.2f}%")
+      logging.info("%s: Epoch %d in %0.2f sec", PureJaxMNIST.name, epoch,
+                   epoch_time)
+      logging.info("%s: Training set accuracy %0.2f%%", PureJaxMNIST.name,
+                   100. * train_acc)
+      logging.info("%s: Test set accuracy %0.2f%%", PureJaxMNIST.name,
+                   100. * test_acc)
 
     return (functools.partial(
       PureJaxMNIST.predict, with_classifier=with_classifier), params)
@@ -265,9 +267,12 @@ class FlaxMNIST:
                                         train_ds)
       test_acc = PureJaxMNIST.accuracy(FlaxMNIST.predict, optimizer.target,
                                        test_ds)
-      logging.info(f"{FlaxMNIST.name}: Epoch {epoch} in {epoch_time:0.2f} sec")
-      logging.info(f"{FlaxMNIST.name}: Training set accuracy {100. * train_acc:0.2f}%")
-      logging.info(f"{FlaxMNIST.name}: Test set accuracy {100. * test_acc:0.2f}%")
+      logging.info("%s: Epoch %d in %0.2f sec", FlaxMNIST.name, epoch,
+                   epoch_time)
+      logging.info("%s: Training set accuracy %0.2f%%", FlaxMNIST.name,
+                   100. * train_acc)
+      logging.info("%s: Test set accuracy %0.2f%%", FlaxMNIST.name,
+                   100. * test_acc)
 
     # See discussion in README.md for packaging Flax models for conversion
     predict_fn = functools.partial(FlaxMNIST.predict,

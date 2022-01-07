@@ -16,6 +16,7 @@ from functools import partial
 import enum
 from typing import Callable, Sequence, Union
 
+from jax import core
 from jax import jit
 from jax import lax
 from jax import numpy as jnp
@@ -24,9 +25,8 @@ import numpy as np
 
 def _fill_lanczos_kernel(radius, x):
   y = radius * jnp.sin(np.pi * x) * jnp.sin(np.pi * x / radius)
-  with np.errstate(divide='ignore', invalid='ignore'):
-    out = y / (np.pi ** 2 * x ** 2)
-  out = jnp.where(x <= 1e-3, 1., out)
+  #  out = y / (np.pi ** 2 * x ** 2) where x >1e-3, 1 otherwise
+  out = jnp.where(x > 1e-3, jnp.divide(y, jnp.where(x != 0, np.pi**2 * x**2, 1)), 1)
   return jnp.where(x > radius, 0., out)
 
 
@@ -36,7 +36,7 @@ def _fill_keys_cubic_kernel(x):
   # IEEE Transactions on Acoustics, Speech, and Signal Processing,
   # 29(6):1153–1160, 1981.
   out = ((1.5 * x - 2.5) * x) * x + 1.
-  out = jnp.where(x >= 1., ((-0.5* x + 2.5) * x - 4.) * x + 2., out)
+  out = jnp.where(x >= 1., ((-0.5 * x + 2.5) * x - 4.) * x + 2., out)
   return jnp.where(x >= 2., 0., out)
 
 
@@ -44,7 +44,8 @@ def _fill_triangle_kernel(x):
   return jnp.maximum(0, 1 - jnp.abs(x))
 
 
-def compute_weight_mat(input_size: int, output_size: int, scale,
+def compute_weight_mat(input_size: core.DimSize,
+                       output_size: core.DimSize, scale,
                        translation,
                        kernel: Callable,
                        antialias: bool):
@@ -63,20 +64,22 @@ def compute_weight_mat(input_size: int, output_size: int, scale,
   weights = kernel(x)
 
   total_weight_sum = jnp.sum(weights, axis=0, keepdims=True)
-  with np.errstate(invalid='ignore', divide='ignore'):
-    weights = jnp.where(
-        jnp.abs(total_weight_sum) > 1000. * np.finfo(np.float32).eps,
-        weights / total_weight_sum, 0)
+  weights = jnp.where(
+      jnp.abs(total_weight_sum) > 1000. * np.finfo(np.float32).eps,
+      jnp.divide(weights, jnp.where(total_weight_sum != 0,  total_weight_sum, 1)),
+      0)
   # Zero out weights where the sample location is completely outside the input
   # range.
   # Note sample_f has already had the 0.5 removed, hence the weird range below.
+  input_size_minus_0_5 = core.dimension_as_value(input_size) - 0.5
   return jnp.where(
       jnp.logical_and(sample_f >= -0.5,
-                      sample_f <= input_size - 0.5)[jnp.newaxis, :], weights, 0)
+                      sample_f <= input_size_minus_0_5)[jnp.newaxis, :], weights, 0)
 
 
-def _scale_and_translate(x, output_shape, spatial_dims, scale, translation,
-                         kernel, antialias, precision):
+def _scale_and_translate(x, output_shape: core.Shape,
+                         spatial_dims: Sequence[int], scale, translation,
+                         kernel, antialias: bool, precision):
   input_shape = x.shape
   assert len(input_shape) == len(output_shape)
   assert len(spatial_dims) == len(scale)
@@ -134,7 +137,7 @@ _kernels = {
 
 # scale and translation here are scalar elements of an np.array, what is the
 # correct type annotation?
-def scale_and_translate(image, shape: Sequence[int],
+def scale_and_translate(image, shape: core.Shape,
                         spatial_dims: Sequence[int],
                         scale, translation,
                         method: Union[str, ResizeMethod],
@@ -195,6 +198,7 @@ def scale_and_translate(image, shape: Sequence[int],
   Returns:
     The scale and translated image.
   """
+  shape = core.canonicalize_shape(shape)
   if len(shape) != image.ndim:
     msg = ('shape must have length equal to the number of dimensions of x; '
            f' {shape} vs {image.shape}')
@@ -220,22 +224,26 @@ def scale_and_translate(image, shape: Sequence[int],
                               kernel, antialias, precision)
 
 
-def _resize_nearest(x, output_shape):
+def _resize_nearest(x, output_shape: core.Shape):
   input_shape = x.shape
   assert len(input_shape) == len(output_shape)
-  spatial_dims, = np.nonzero(np.not_equal(input_shape, output_shape))
+  spatial_dims = tuple(i for i in range(len(input_shape))
+                       if not core.symbolic_equal_dim(input_shape[i], output_shape[i]))
   for d in spatial_dims:
     m = input_shape[d]
     n = output_shape[d]
-    offsets = (np.arange(n) + 0.5) * m / n
+    offsets = (jnp.arange(n) + 0.5) * core.dimension_as_value(m) / core.dimension_as_value(n)
+    # TODO(b/206898375): this computation produces the wrong result on
+    # CPU and GPU when using float64. Use float32 until the bug is fixed.
+    offsets = jnp.floor(offsets.astype(np.float32)).astype(np.int32)
     indices = [slice(None)] * len(input_shape)
-    indices[d] = np.floor(offsets).astype(np.int32)
+    indices[d] = offsets
     x = x[tuple(indices)]
   return x
 
 
 @partial(jit, static_argnums=(1, 2, 3, 4))
-def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
+def _resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
             antialias: bool, precision):
   if len(shape) != image.ndim:
     msg = ('shape must have length equal to the number of dimensions of x; '
@@ -253,14 +261,16 @@ def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   # Skip dimensions that have scale=1 and translation=0, this is only possible
   # since all of the current resize methods (kernels) are interpolating, so the
   # output = input under an identity warp.
-  spatial_dims = tuple(np.nonzero(np.not_equal(image.shape, shape))[0])
-  scale = [float(shape[d]) / image.shape[d] for d in spatial_dims]
+  spatial_dims = tuple(i for i in range(len(shape))
+                       if not core.symbolic_equal_dim(image.shape[i], shape[i]))
+  scale = [1.0 if core.symbolic_equal_dim(shape[d], 0) else core.dimension_as_value(shape[d]) / core.dimension_as_value(image.shape[d])
+           for d in spatial_dims]
   return _scale_and_translate(image, shape, spatial_dims,
                               scale, [0.] * len(spatial_dims), kernel,
                               antialias, precision)
 
 
-def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
+def resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
            antialias: bool = True,
            precision = lax.Precision.HIGHEST):
   """Image resize.
@@ -303,4 +313,5 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   Returns:
     The resized image.
   """
-  return _resize(image, tuple(shape), method, antialias, precision)
+  return _resize(image, core.canonicalize_shape(shape), method, antialias,
+                 precision)

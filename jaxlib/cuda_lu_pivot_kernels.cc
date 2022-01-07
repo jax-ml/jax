@@ -15,29 +15,35 @@ limitations under the License.
 
 #include "jaxlib/cuda_lu_pivot_kernels.h"
 
-#include "jaxlib/kernel_pybind11_helpers.h"
-#include "include/pybind11/pybind11.h"
+#include "jaxlib/cuda_gpu_kernel_helpers.h"
+#include "jaxlib/kernel_helpers.h"
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 namespace {
 
-pybind11::dict Registrations() {
-  pybind11::dict dict;
-  dict["cuda_lu_pivots_to_permutation"] =
-      EncapsulateFunction(CudaLuPivotsToPermutation);
-  return dict;
-}
-
-PYBIND11_MODULE(cuda_lu_pivot_kernels, m) {
-  m.def("registrations", &Registrations);
-  m.def("cuda_lu_pivots_to_permutation_descriptor",
-        [](std::int64_t batch_size, std::int32_t pivot_size,
-           std::int32_t permutation_size) {
-          std::string result = BuildCudaLuPivotsToPermutationDescriptor(
-              batch_size, pivot_size, permutation_size);
-          return pybind11::bytes(result);
-        });
+absl::Status CudaLuPivotsToPermutation_(cudaStream_t stream, void** buffers,
+                                        const char* opaque,
+                                        std::size_t opaque_len) {
+  auto s =
+      UnpackDescriptor<LuPivotsToPermutationDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  LaunchLuPivotsToPermutationKernel(stream, buffers, **s);
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaGetLastError()));
+  return absl::OkStatus();
 }
 
 }  // namespace
+
+void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
+                               const char* opaque, size_t opaque_len,
+                               XlaCustomCallStatus* status) {
+  auto s = CudaLuPivotsToPermutation_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    absl::string_view message = s.message();
+    XlaCustomCallStatusSetFailure(status, message.data(), message.length());
+  }
+}
+
+
 }  // namespace jax

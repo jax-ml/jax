@@ -40,7 +40,7 @@ Follow these steps to contribute code:
    git clone https://github.com/YOUR_USERNAME/jax
    cd jax
    pip install -r build/test-requirements.txt  # Installs all testing requirements.
-   pip install -e .  # Installs JAX from the current directory in editable mode.
+   pip install -e .[cpu]  # Installs JAX from the current directory in editable mode.
    ```
 
 4. Add the JAX repo as an upstream remote, so you can use it to sync your
@@ -88,10 +88,10 @@ Follow these steps to contribute code:
 
    ```bash
    git fetch upstream
-   git rebase upstream/master
+   git rebase upstream/main
    ```
 
-   Finally, push your commit on your development branch and create a remote 
+   Finally, push your commit on your development branch and create a remote
    branch in your fork that you can use to create a pull request from:
 
    ```bash
@@ -160,6 +160,6 @@ fix the issues you can push new commits to your branch.
 Once your PR has been reviewed, a JAX maintainer will mark it as `Pull Ready`. This
 will trigger a larger set of tests, including tests on GPU and TPU backends that are
 not available via standard GitHub CI. Detailed results of these tests are not publicly
-viweable, but the JAX mantainer assigned to your PR will communicate with you regarding
+viewable, but the JAX maintainer assigned to your PR will communicate with you regarding
 any failures these might uncover; it's not uncommon, for example, that numerical tests
 need different tolerances on TPU than on CPU.

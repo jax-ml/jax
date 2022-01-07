@@ -93,7 +93,7 @@ def train_and_save():
 
   if FLAGS.generate_model:
     model_descr = model_description()
-    logging.info(f"Generating model for {model_descr}")
+    logging.info("Generating model for %s", model_descr)
     (predict_fn, predict_params) = the_model_class.train(
         train_ds,
         test_ds,
@@ -118,7 +118,7 @@ def train_and_save():
       ]
       polymorphic_shapes = None
 
-    logging.info(f"Saving model for {model_descr}")
+    logging.info("Saving model for %s", model_descr)
     saved_model_lib.convert_and_save_model(
         predict_fn,
         predict_params,
@@ -191,14 +191,14 @@ def tf_accelerator_and_tolerances():
   tf_accelerator = (tf.config.list_logical_devices("TPU") +
                     tf.config.list_logical_devices("GPU") +
                     tf.config.list_logical_devices("CPU"))[0]
-  logging.info(f"Using tf_accelerator = {tf_accelerator}")
+  logging.info("Using tf_accelerator = %s", tf_accelerator)
   if tf_accelerator.device_type == "TPU":
     tolerances = dict(atol=1e-6, rtol=1e-6)
   elif tf_accelerator.device_type == "GPU":
     tolerances = dict(atol=1e-6, rtol=1e-4)
   elif tf_accelerator.device_type == "CPU":
     tolerances = dict(atol=1e-5, rtol=1e-5)
-  logging.info(f"Using tolerances {tolerances}")
+  logging.info("Using tolerances %s", tolerances)
   return tf_accelerator, tolerances
 
 

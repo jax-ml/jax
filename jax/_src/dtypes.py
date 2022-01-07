@@ -27,7 +27,7 @@ import numpy as np
 
 from jax._src import util
 from jax._src.config import flags, config
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -39,19 +39,15 @@ bfloat16: type = xla_client.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
-
-bool_ = np.bool_
-int_: np.dtype = np.int64  # type: ignore
-float_: np.dtype = np.float64  # type: ignore
-complex_ = np.complex128
-
-# TODO(phawkins): change the above defaults to:
-# int_ = np.int32
-# float_ = np.float32
-# complex_ = np.complex64
+bool_: type = np.bool_
+int_: type = np.int32 if config.jax_default_dtype_bits == '32' else np.int64
+uint: type = np.uint32 if config.jax_default_dtype_bits == '32' else np.uint64
+float_: type = np.float32 if config.jax_default_dtype_bits == '32' else np.float64
+complex_: type = np.complex64 if config.jax_default_dtype_bits == '32' else np.complex128
+_default_types = {'b': bool_, 'i': int_, 'u': uint, 'f': float_, 'c': complex_}
 
 # Trivial vectorspace datatype needed for tangent values of int/bool primals
-float0 = np.dtype([('float0', np.void, 0)])
+float0: np.dtype = np.dtype([('float0', np.void, 0)])
 
 _dtype_to_32bit_dtype = {
     np.dtype('int64'): np.dtype('int32'),
@@ -76,10 +72,10 @@ def canonicalize_dtype(dtype):
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes : dict = {
-  bool: np.dtype(bool_),
-  int: np.dtype(int_),
-  float: np.dtype(float_),
-  complex: np.dtype(complex_),
+  bool: np.dtype('bool'),
+  int: np.dtype('int64'),
+  float: np.dtype('float64'),
+  complex: np.dtype('complex128'),
 }
 
 def scalar_type_of(x):
@@ -140,6 +136,12 @@ def coerce_to_array(x, dtype=None):
 
 iinfo = np.iinfo
 
+class _Bfloat16MachArLike:
+  def __init__(self):
+    smallest_normal = float.fromhex("0x1p-126")
+    self.smallest_normal = bfloat16(smallest_normal)
+
+
 class finfo(np.finfo):
   __doc__ = np.finfo.__doc__
   _finfo_cache: Dict[np.dtype, np.finfo] = {}
@@ -169,10 +171,12 @@ class finfo(np.finfo):
     obj.iexp = obj.nexp
     obj.precision = 2
     obj.resolution = bfloat16(resolution)
-    obj.tiny = bfloat16(tiny)
-    obj.machar = None  # np.core.getlimits.MachArLike does not support bfloat16.
+    obj._machar = _Bfloat16MachArLike()
+    if not hasattr(obj, "tiny"):
+      obj.tiny = bfloat16(tiny)
 
     obj._str_tiny = float_to_str(tiny)
+    obj._str_smallest_normal = float_to_str(tiny)
     obj._str_max = float_to_str(max)
     obj._str_epsneg = float_to_str(epsneg)
     obj._str_eps = float_to_str(eps)
@@ -198,6 +202,8 @@ def _issubclass(a, b):
     return False
 
 def issubdtype(a, b):
+  if a == "bfloat16":
+    a = bfloat16
   if a == bfloat16:
     if isinstance(b, np.dtype):
       return b == _bfloat16_dtype
@@ -336,14 +342,20 @@ def is_python_scalar(x):
   except AttributeError:
     return type(x) in python_scalar_dtypes
 
-def dtype(x):
-  if type(x) in python_scalar_dtypes:
-    return python_scalar_dtypes[type(x)]
-  dt = np.result_type(x)
+def dtype(x, *, canonicalize=False):
+  """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
+  if x is None:
+    raise ValueError(f"Invalid argument to dtype: {x}.")
+  elif isinstance(x, type) and x in python_scalar_dtypes:
+    dt = python_scalar_dtypes[x]
+  elif type(x) in python_scalar_dtypes:
+    dt = python_scalar_dtypes[type(x)]
+  else:
+    dt = np.result_type(x)
   if dt not in _jax_dtype_set:
     raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
-  return dt
+  return canonicalize_dtype(dt) if canonicalize else dt
 
 def _lattice_result_type(*args):
   dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
@@ -364,4 +376,7 @@ def result_type(*args):
   """Convenience function to apply JAX argument dtype promotion."""
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
-  return canonicalize_dtype(_lattice_result_type(*args)[0])
+  dtype, weak_type = _lattice_result_type(*(float_ if arg is None else arg for arg in args))
+  if weak_type:
+    dtype = _default_types['f' if dtype == _bfloat16_dtype else dtype.kind]
+  return canonicalize_dtype(dtype)

@@ -22,7 +22,7 @@ def repo():
         sha256 = "66eda977b195965d27aeb9d74f46e0029a6a02e75fbbc47bb554aad68615a260",
         strip_prefix = "pocketfft-f800d91ba695b6e19ae2687dd60366900b928002",
         urls = [
-            "https://gitlab.mpcdf.mpg.de/mtr/pocketfft/-/archive/f800d91ba695b6e19ae2687dd60366900b928002/pocketfft-f800d91ba695b6e19ae2687dd60366900b928002.tar.gz",
+            "https://github.com/mreineck/pocketfft/archive/f800d91ba695b6e19ae2687dd60366900b928002.tar.gz",
             "https://storage.googleapis.com/jax-releases/mirror/pocketfft/pocketfft-f800d91ba695b6e19ae2687dd60366900b928002.tar.gz",
         ],
         build_file = "@//third_party/pocketfft:BUILD.bazel",

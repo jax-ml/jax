@@ -21,9 +21,10 @@ import numpy as np
 from unittest import SkipTest
 
 from jax._src import api
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit
+import jax._src.lib
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -36,6 +37,10 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
   def tearDown(self):
     config.update("jax_debug_nans", self.cfg)
+
+  def testSinc(self):
+    # Regression test for #6936
+    self.assertEqual(jnp.sinc(0.0), 1.0)
 
   def testSingleResultPrimitiveNoNaN(self):
     A = jnp.array([[1., 2.], [2., 3.]])
@@ -92,20 +97,25 @@ class DebugNaNsTest(jtu.JaxTestCase):
         f(1)
 
   def testPmap(self):
-    f = jax.pmap(lambda x: 0. / x)
+    pmap_funcs = [api._python_pmap, api._cpp_pmap]
 
-    with self.assertRaisesRegex(
-        FloatingPointError,
-        r"invalid value \(nan\) encountered in parallel computation"):
-      ans = f(jnp.array([0.]))
-      ans.block_until_ready()
+    for pmap in pmap_funcs:
+      f = pmap(lambda x: 0. / x)
+      # For the Cpp pmap, the first execution always goes through Python.
+      f(jnp.array([1.]))
 
-    if jax.device_count() >= 2:
       with self.assertRaisesRegex(
           FloatingPointError,
           r"invalid value \(nan\) encountered in parallel computation"):
-        ans = f(jnp.array([1., 0.]))
+        ans = f(jnp.array([0.]))
         ans.block_until_ready()
+
+      if jax.device_count() >= 2:
+        with self.assertRaisesRegex(
+            FloatingPointError,
+            r"invalid value \(nan\) encountered in parallel computation"):
+          ans = f(jnp.array([1., 0.]))
+          ans.block_until_ready()
 
   def testPmapNoNaN(self):
     ans = jax.pmap(lambda x: 0. / x)(jnp.array([1.]))
@@ -196,6 +206,19 @@ class DebugInfsTest(jtu.JaxTestCase):
       msg = r"invalid value \(inf\) encountered in cond"
       with self.assertRaisesRegex(FloatingPointError, msg):
         f(1)
+
+  def testDebugNansDoesntCorruptCaches(self):
+    # https://github.com/google/jax/issues/6614
+    @jax.jit
+    def f(x):
+      return jnp.divide(x, x)
+
+    for _ in range(2):
+      try:
+       with jax.debug_nans(True):
+         jax.grad(f)(0.)
+      except FloatingPointError:
+        pass
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

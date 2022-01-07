@@ -14,18 +14,21 @@
 
 
 import functools
+from functools import partial
 import itertools as it
 import operator
 import types
-from typing import Any, Callable
+from typing import (Any, Callable, Iterable, List, Tuple, Generic, TypeVar, Set,
+                    Iterator, Sequence)
 
 from absl import logging
 import numpy as np
 
 from jax.config import config
 
-partial = functools.partial
+Seq = Sequence
 
+T = TypeVar("T")
 
 def safe_zip(*args):
   n = len(args[0])
@@ -64,8 +67,7 @@ def subvals(lst, replace):
     lst[i] = v
   return tuple(lst)
 
-def split_list(args, ns):
-  assert type(ns) is list
+def split_list(args: Sequence[T], ns: Sequence[int]) -> List[List[T]]:
   args = list(args)
   lists = []
   for n in ns:
@@ -74,22 +76,36 @@ def split_list(args, ns):
   lists.append(args)
   return lists
 
+def partition_list(bs: Sequence[bool], l: Sequence[T]) -> Tuple[List[T], List[T]]:
+  assert len(bs) == len(l)
+  lists = [], []  # type: ignore
+  for b, x in zip(bs, l):
+    lists[b].append(x)
+  return lists
+
 def split_dict(dct, names):
   dct = dict(dct)
   lst = [dct.pop(name) for name in names]
   assert not dct
   return lst
 
-def concatenate(xs):
+def concatenate(xs: Iterable[Sequence[T]]) -> List[T]:
+  """Concatenates/flattens a list of lists."""
   return list(it.chain.from_iterable(xs))
 
-class partialmethod(functools.partial):
-  def __get__(self, instance, owner):
-    if instance is None:
-      return self
-    else:
-      return partial(self.func, instance,
-                     *(self.args or ()), **(self.keywords or {}))
+flatten = concatenate
+
+_unflatten_done = object()
+
+def unflatten(xs: Iterable[T], ns: Sequence[int]) -> List[List[T]]:
+  """Splits `xs` into subsequences of lengths `ns`.
+
+  Unlike `split_list`, the `sum(ns)` must be equal to `len(xs)`."""
+  xs_iter = iter(xs)
+  unflattened = [[next(xs_iter) for _ in range(n)] for n in ns]
+  assert next(xs_iter, _unflatten_done) is _unflatten_done
+  return unflattened
+
 
 def curry(f):
   """Curries arguments of f, returning a function on any remaining arguments.
@@ -209,17 +225,14 @@ def prod(xs):
     out *= x
   return out
 
-class WrapHashably:
+class Unhashable:
   __slots__ = ["val"]
 
   def __init__(self, val):
     self.val = val
 
-  def __hash__(self):
-    return id(self.val)
-
   def __eq__(self, other):
-    return self.val is other.val
+    return self.val == other.val
 
 class Hashable:
   __slots__ = ["val"]
@@ -274,9 +287,7 @@ def canonicalize_axis(axis, num_dims) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
   if not -num_dims <= axis < num_dims:
-    raise ValueError(
-        "axis {} is out of bounds for array of dimension {}".format(
-            axis, num_dims))
+    raise ValueError(f"axis {axis} is out of bounds for array of dimension {num_dims}")
   if axis < 0:
     axis = axis + num_dims
   return axis
@@ -329,10 +340,6 @@ def tuple_insert(t, idx, val):
 def tuple_delete(t, idx):
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
-
-def tuple_replace(t, idx, val):
-  assert 0 <= idx < len(t), (idx, len(t))
-  return t[:idx] + (val,) + t[idx:]
 
 # TODO(mattjj): replace with dataclass when Python 2 support is removed
 def taggedtuple(name, fields) -> Callable[..., Any]:
@@ -412,3 +419,30 @@ def distributed_debug_log(*pairs):
       lines.append(f"{e}")
     lines.append("DISTRIBUTED_DEBUG_END")
     logging.warning("\n".join(lines))
+
+
+class OrderedSet(Generic[T]):
+  elts_set: Set[T]
+  elts_list: List[T]
+
+  def __init__(self):
+    self.elts_set = set()
+    self.elts_list = []
+
+  def add(self, elt: T) -> None:
+    if elt not in self.elts_set:
+      self.elts_set.add(elt)
+      self.elts_list.append(elt)
+
+  def update(self, elts: Seq[T]) -> None:
+    for e in elts:
+      self.add(e)
+
+  def __iter__(self) -> Iterator[T]:
+    return iter(self.elts_list)
+
+  def __len__(self) -> int:
+    return len(self.elts_list)
+
+  def __contains__(self, elt: T) -> bool:
+    return elt in self.elts_set

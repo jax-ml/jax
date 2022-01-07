@@ -18,8 +18,11 @@ import threading
 from typing import Callable, Optional
 import warnings
 
-from jax.lib import xla_bridge
-from jax.lib import xla_client
+from jax._src import traceback_util
+traceback_util.register_exclusion(__file__)
+
+from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
 
 
 def start_server(port: int):
@@ -169,7 +172,8 @@ class StepTraceContext(StepTraceAnnotation):
     super().__init__(*args, **kwargs)
 
 
-def annotate_function(func: Callable, name: str = None, **kwargs):
+def annotate_function(func: Callable, name: Optional[str] = None,
+                      **decorator_kwargs):
   """Decorator that generates a trace event for the execution of a function.
 
   For example:
@@ -198,7 +202,7 @@ def annotate_function(func: Callable, name: str = None, **kwargs):
   name = name or func.__name__
   @wraps(func)
   def wrapper(*args, **kwargs):
-    with TraceAnnotation(name, **kwargs):
+    with TraceAnnotation(name, **decorator_kwargs):
       return func(*args, **kwargs)
     return wrapper
   return wrapper

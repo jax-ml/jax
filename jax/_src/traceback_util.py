@@ -13,12 +13,15 @@
 # limitations under the License.
 
 import os
-import sys
 import traceback
 import types
+from typing import Any, Callable, TypeVar
 
-from jax.lib import xla_extension
+import jax
+from jax._src.lib import xla_extension
 from jax._src import util
+
+C = TypeVar("C", bound=Callable[..., Any])
 
 _exclude_paths = [__file__, util.__file__]
 
@@ -56,16 +59,21 @@ def include_frame(f):
 def ignore_known_hidden_frame(f):
   return 'importlib._bootstrap' in f.f_code.co_filename
 
+def add_tracebackhide_to_hidden_frames(tb):
+  for f, lineno in traceback.walk_tb(tb):
+    if not include_frame(f):
+      f.f_locals["__tracebackhide__"] = True
+
 def filter_traceback(tb):
   out = None
   # Scan the traceback and collect relevant frames.
   frames = list(traceback.walk_tb(tb))
   for f, lineno in reversed(frames):
     if include_frame(f):
-      out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
   if out is None and len(frames) > 0:
     f, lineno = frames[-1]
-    out = make_traceback(out, f, f.f_lasti, lineno)
+    out = types.TracebackType(out, f, f.f_lasti, lineno)
   return out
 
 def add_call_stack_frames(tb):
@@ -87,7 +95,7 @@ def add_call_stack_frames(tb):
     if reached_module_level and f.f_code.co_name != '<module>':
       break
     if include_frame(f):
-      out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
     if f.f_code.co_name == '<module>':
       reached_module_level = True
   return out
@@ -105,13 +113,29 @@ def format_exception_only(e):
 
 class UnfilteredStackTrace(Exception): pass
 
-make_traceback = (types.TracebackType if sys.version_info >= (3, 7) else
-                  getattr(xla_extension, "make_python_traceback", None))
+def running_under_ipython():
+  """Returns true if we appear to be in an IPython session."""
+  try:
+    get_ipython()  # type: ignore
+    return True
+  except NameError:
+    return False
 
-def filtered_tracebacks_supported():
-  return make_traceback is not None
+def ipython_supports_tracebackhide():
+  """Returns true if the IPython version supports __tracebackhide__."""
+  import IPython  # type: ignore
+  return IPython.version_info[:2] >= (7, 17)
 
-def api_boundary(fun):
+def filtering_mode():
+  mode = jax.config.jax_traceback_filtering
+  if mode is None or mode == "auto":
+    if (running_under_ipython() and ipython_supports_tracebackhide()):
+      mode = "tracebackhide"
+    else:
+      mode = "remove_frames"
+  return mode
+
+def api_boundary(fun: C) -> C:
   '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
 
   When an exception occurs below ``fun``, this appends to it a custom
@@ -134,44 +158,42 @@ def api_boundary(fun):
   that excludes the frames specific to JAX's implementation.
   '''
 
-  if not filtered_tracebacks_supported():
-    return fun
-
   @util.wraps(fun)
   def reraise_with_filtered_traceback(*args, **kwargs):
+    __tracebackhide__ = True
     try:
       return fun(*args, **kwargs)
     except Exception as e:
-      if not is_under_reraiser(e):
-        filtered_tb, unfiltered = None, None
-        try:
-          filtered_tb = filter_traceback(e.__traceback__)
-          if filtered_tb is None:
-            raise
-          msg = format_exception_only(e)
-          msg = f'{msg}\n\n{_jax_message_append}'
-          unfiltered = UnfilteredStackTrace(msg)
-          unfiltered.with_traceback(add_call_stack_frames(e.__traceback__))
-          unfiltered.__context__ = e.__context__
-          unfiltered.__cause__ = e.__cause__
-          unfiltered.__suppress_context__ = e.__suppress_context__
-          e.__context__ = None
-          e.__cause__ = unfiltered
-          # There seems to be no way to alter the currently raised exception's
-          # traceback, except via the C API. The currently raised exception
-          # is part of the interpreter's thread state: value `e` is a copy.
-          if hasattr(xla_extension, 'replace_thread_exc_traceback'):
-            xla_extension.replace_thread_exc_traceback(filtered_tb)
-            raise
-          else:
-            # TODO(phawkins): remove this case when jaxlib 0.1.66 is the
-            # minimum.
-
-            # Fallback case for older jaxlibs; includes the current frame.
-            raise e.with_traceback(filtered_tb)
-        finally:
-          del filtered_tb
-          del unfiltered
-      else:
+      mode = filtering_mode()
+      if is_under_reraiser(e) or mode == "off":
         raise
+      if mode == "tracebackhide":
+        add_tracebackhide_to_hidden_frames(e.__traceback__)
+        raise
+      assert mode == "remove_frames", mode
+
+      filtered_tb, unfiltered, mode = None, None, None
+      try:
+        filtered_tb = filter_traceback(e.__traceback__)
+        if filtered_tb is None:
+          raise
+        msg = format_exception_only(e)
+        msg = f'{msg}\n\n{_jax_message_append}'
+        unfiltered = UnfilteredStackTrace(msg)
+        unfiltered.with_traceback(add_call_stack_frames(e.__traceback__))
+        unfiltered.__context__ = e.__context__
+        unfiltered.__cause__ = e.__cause__
+        unfiltered.__suppress_context__ = e.__suppress_context__
+        e.__context__ = None
+        e.__cause__ = unfiltered
+
+        # There seems to be no way to alter the currently raised exception's
+        # traceback, except via the C API. The currently raised exception
+        # is part of the interpreter's thread state: value `e` is a copy.
+        xla_extension.replace_thread_exc_traceback(filtered_tb)
+        raise
+      finally:
+        del filtered_tb
+        del unfiltered
+        del mode
   return reraise_with_filtered_traceback

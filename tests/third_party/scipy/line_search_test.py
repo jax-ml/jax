@@ -1,10 +1,9 @@
-import numpy as np
 from absl.testing import absltest, parameterized
 
 from jax import grad
 from jax.config import config
 import jax.numpy as jnp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 from jax._src.scipy.optimize.line_search import line_search
 from scipy.optimize.linesearch import line_search_wolfe2
 
@@ -76,7 +75,7 @@ class TestLineSearch(jtu.JaxTestCase):
     value = getattr(self, name)
     phi = bind_index(value, 0)
     derphi = bind_index(value, 1)
-    for old_phi0 in np.random.randn(3):
+    for old_phi0 in self.rng().randn(3):
       res = line_search(phi, 0., 1.)
       s, phi1, derphi1 = res.a_k, res.f_k, res.g_k
       self.assertAllClose(phi1, phi(s), check_dtypes=False, atol=1e-6)
@@ -101,12 +100,12 @@ class TestLineSearch(jtu.JaxTestCase):
 
     k = 0
     N = 20
-    np.random.seed(1234)
+    rng = self.rng()
     # sets A in one of the line funcs
-    self.A = np.random.randn(N, N)
+    self.A = self.rng().randn(N, N)
     while k < 9:
-      x = np.random.randn(N)
-      p = np.random.randn(N)
+      x = rng.randn(N)
+      p = rng.randn(N)
       if jnp.dot(p, fprime(x)) >= 0:
         # always pick a descent pk
         continue

@@ -24,7 +24,7 @@ from jax._src import dtypes
 from jax import lax
 from jax import core
 from jax.core import AxisName
-from .. import util
+from jax._src import util
 from jax.scipy.special import expit
 from jax.scipy.special import logsumexp as _logsumexp
 import jax.numpy as jnp
@@ -261,7 +261,10 @@ def glu(x: Array, axis: int = -1) -> Array:
 logsumexp = _logsumexp
 
 
-def log_softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> Array:
+def log_softmax(x: Array,
+                axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+                where: Optional[Array] = None,
+                initial: Optional[Array] = None) -> Array:
   r"""Log-Softmax function.
 
   Computes the logarithm of the :code:`softmax` function, which rescales
@@ -275,11 +278,21 @@ def log_softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> A
     x : input array
     axis: the axis or axes along which the :code:`log_softmax` should be
       computed. Either an integer or a tuple of integers.
+    where: Elements to include in the :code:`log_softmax`.
+    initial: The minimum value used to shift the input array. Must be present
+      when :code:`where` is not None.
   """
-  shifted = x - lax.stop_gradient(x.max(axis, keepdims=True))
-  return shifted - jnp.log(jnp.sum(jnp.exp(shifted), axis, keepdims=True))
+  x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
+  shifted = x - lax.stop_gradient(x_max)
+  shifted_logsumexp = jnp.log(
+      jnp.sum(jnp.exp(shifted), axis, where=where, keepdims=True))
+  return shifted - shifted_logsumexp
 
-def softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> Array:
+
+def softmax(x: Array,
+            axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+            where: Optional[Array] = None,
+            initial: Optional[Array] = None) -> Array:
   r"""Softmax function.
 
   Computes the function which rescales elements to the range :math:`[0, 1]`
@@ -293,28 +306,34 @@ def softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> Array
     axis: the axis or axes along which the softmax should be computed. The
       softmax output summed across these dimensions should sum to :math:`1`.
       Either an integer or a tuple of integers.
+    where: Elements to include in the :code:`softmax`.
+    initial: The minimum value used to shift the input array. Must be present
+      when :code:`where` is not None.
   """
-  unnormalized = jnp.exp(x - lax.stop_gradient(x.max(axis, keepdims=True)))
-  return unnormalized / unnormalized.sum(axis, keepdims=True)
+  x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
+  unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
+  return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
 
 def normalize(x: Array,
               axis: Optional[Union[int, Tuple[int, ...]]] = -1,
               mean: Optional[Array] = None,
               variance: Optional[Array] = None,
-              epsilon: Array = 1e-5) -> Array:
+              epsilon: Array = 1e-5,
+              where: Optional[Array] = None) -> Array:
   """Normalizes an array by subtracting mean and dividing by sqrt(var)."""
   if mean is None:
-    mean = jnp.mean(x, axis, keepdims=True)
+    mean = jnp.mean(x, axis, keepdims=True, where=where)
   if variance is None:
     # this definition is traditionally seen as less accurate than jnp.var's
     # mean((x - mean(x))**2) but may be faster and even, given typical
     # activation distributions and low-precision arithmetic, more accurate
     # when used in neural network normalization layers
-    variance = jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
+    variance = jnp.mean(
+        jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
 def one_hot(x: Array, num_classes: int, *,
-            dtype: Any = jnp.float64, axis: Union[int, AxisName] = -1) -> Array:
+            dtype: Any = jnp.float_, axis: Union[int, AxisName] = -1) -> Array:
   """One-hot encodes the given indicies.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -334,8 +353,7 @@ def one_hot(x: Array, num_classes: int, *,
   Args:
     x: A tensor of indices.
     num_classes: Number of classes in the one-hot dimension.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values (default :obj:`jnp.float_`).
     axis: the axis or axes along which the function should be
       computed.
   """

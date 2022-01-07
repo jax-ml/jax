@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from jax._src import api
 from jax import lax
-from . import lax_numpy as jnp
+from jax._src.numpy import lax_numpy as jnp
 from jax._src.util import safe_map as map, safe_zip as zip
 
 
@@ -208,8 +208,8 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   Returns:
     Vectorized version of the given function.
 
-  Here a few examples of how one could write vectorized linear algebra routines
-  using :func:`vectorize`:
+  Here are a few examples of how one could write vectorized linear algebra
+  routines using :func:`vectorize`:
 
   >>> from functools import partial
 

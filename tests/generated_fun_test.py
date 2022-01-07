@@ -23,7 +23,7 @@ from absl.testing import parameterized
 import itertools as it
 import jax.numpy as jnp
 from jax import jit, jvp, vjp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()

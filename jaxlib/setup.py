@@ -21,8 +21,9 @@ with open('jaxlib/version.py') as f:
   exec(f.read(), globals())
 
 cuda_version = os.environ.get("JAX_CUDA_VERSION")
-if cuda_version:
-  __version__ += "+cuda" + cuda_version.replace(".", "")
+cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
+if cuda_version and cudnn_version:
+  __version__ += f"+cuda{cuda_version.replace('.', '')}-cudnn{cudnn_version.replace('.', '')}"
 
 setup(
     name='jaxlib',
@@ -30,14 +31,25 @@ setup(
     description='XLA library for JAX',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=['jaxlib', 'jaxlib.xla_extension-stubs'],
-    python_requires='>=3.6',
-    install_requires=['scipy', 'numpy>=1.16', 'absl-py', 'flatbuffers >= 1.12, < 3.0'],
+    packages=['jaxlib', 'jaxlib.xla_extension'],
+    python_requires='>=3.7',
+    install_requires=['scipy', 'numpy>=1.19', 'absl-py', 'flatbuffers >= 1.12, < 3.0'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
     package_data={
-        'jaxlib': ['*.so', '*.pyd*', 'py.typed', 'cuda/nvvm/libdevice/libdevice*'],
-        'jaxlib.xla_extension-stubs': ['*.pyi'],
+        'jaxlib': [
+            '*.so',
+            '*.pyd*',
+            'py.typed',
+            'cuda/nvvm/libdevice/libdevice*',
+            'mlir/*.py',
+            'mlir/dialects/*.py',
+            'mlir/_mlir_libs/*.dll',
+            'mlir/_mlir_libs/*.dylib',
+            'mlir/_mlir_libs/*.so',
+            'mlir/_mlir_libs/*.pyd',
+        ],
+        'jaxlib.xla_extension': ['*.pyi'],
     },
     zip_safe=False,
 )

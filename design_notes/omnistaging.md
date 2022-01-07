@@ -99,7 +99,7 @@ The name "omnistaging" means staging out everything possible.
 
 ### Toy example
 
-iJAX transformations like `jit` and `pmap` stage out computations to XLA. That
+JAX transformations like `jit` and `pmap` stage out computations to XLA. That
 is, we apply them to functions comprising multiple primitive operations so that
 rather being executed one at a time from Python the operations are all part of
 one end-to-end optimized XLA computation.

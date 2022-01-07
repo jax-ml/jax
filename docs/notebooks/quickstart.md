@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   language: python
@@ -16,7 +16,7 @@ kernelspec:
 
 # JAX Quickstart
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/quickstart.ipynb)
 
 **JAX is NumPy on the CPU, GPU, and TPU, with great automatic differentiation for high-performance machine learning research.**
 
@@ -48,8 +48,8 @@ from jax import random
 ```{code-cell} ipython3
 :tags: [remove-cell]
 
-# Execute this to consume & hide the GPU warning.
-jnp.arange(10)
+# Prevent GPU/TPU warning.
+import jax; jax.config.update('jax_platform_name', 'cpu')
 ```
 
 +++ {"id": "FQ89jHCYfhpg"}
@@ -117,17 +117,11 @@ The output of {func}`~jax.device_put` still acts like an NDArray, but it only co
 +++ {"id": "ghkfKNQttDpg"}
 
 If you have a GPU (or TPU!) these calls run on the accelerator and have the potential to be much faster than on CPU.
-
-```{code-cell} ipython3
-:id: RzXK8GnIs7VV
-
-x = np.random.normal(size=(size, size)).astype(np.float32)
-%timeit np.dot(x, x.T)
-```
+See {ref}`faq-jax-vs-numpy` for more comparison of performance characteristics of NumPy and JAX
 
 +++ {"id": "iOzp0P_GoJhb"}
 
-JAX is much more than just a GPU-backed NumPy. It also comes with a few program transformations that are useful when writing numerical code. For now, there's three main ones:
+JAX is much more than just a GPU-backed NumPy. It also comes with a few program transformations that are useful when writing numerical code. For now, there are three main ones:
 
  - {func}`~jax.jit`, for speeding up your code
  - {func}`~jax.grad`, for taking derivatives

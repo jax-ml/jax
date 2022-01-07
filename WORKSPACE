@@ -7,10 +7,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "f3b7102c640aca6690787bbc2bba0b1a91371710bd065141b74e10ded4680cbc",
-    strip_prefix = "tensorflow-a33a0e8524108a7fe00614194788aad7991ab268",
+    sha256 = "e62f0c241c090bf6753334bd1705dd1a528e3fedaf48e97a6a49e58f9de2b72f",
+    strip_prefix = "tensorflow-d8b3d5b22cb61b1a19e7d1c3524f1be92ee45ca6",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/a33a0e8524108a7fe00614194788aad7991ab268.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/d8b3d5b22cb61b1a19e7d1c3524f1be92ee45ca6.tar.gz",
     ],
 )
 
@@ -24,11 +24,14 @@ load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
 pocketfft()
 
 # Initialize TensorFlow's external dependencies.
-load("@org_tensorflow//tensorflow:workspace3.bzl", "workspace")
-workspace()
-load("@org_tensorflow//tensorflow:workspace2.bzl", "workspace")
-workspace()
-load("@org_tensorflow//tensorflow:workspace1.bzl", "workspace")
-workspace()
-load("@org_tensorflow//tensorflow:workspace0.bzl", "workspace")
-workspace()
+load("@org_tensorflow//tensorflow:workspace3.bzl", "tf_workspace3")
+tf_workspace3()
+
+load("@org_tensorflow//tensorflow:workspace2.bzl", "tf_workspace2")
+tf_workspace2()
+
+load("@org_tensorflow//tensorflow:workspace1.bzl", "tf_workspace1")
+tf_workspace1()
+
+load("@org_tensorflow//tensorflow:workspace0.bzl", "tf_workspace0")
+tf_workspace0()

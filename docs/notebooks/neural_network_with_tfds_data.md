@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   language: python
@@ -36,15 +36,15 @@ limitations under the License.
 
 # Training a Simple Neural Network, with tensorflow/datasets Data Loading
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb)
 
 _Forked from_ `neural_network_and_data_loading.ipynb`
 
-![JAX](https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png)
+![JAX](https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png)
 
-Let's combine everything we showed in the [quickstart notebook](https://colab.research.google.com/github/google/jax/blob/master/notebooks/quickstart.ipynb) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use `tensorflow/datasets` data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library :P).
+Let's combine everything we showed in the [quickstart notebook](https://colab.research.google.com/github/google/jax/blob/main/notebooks/quickstart.ipynb) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use `tensorflow/datasets` data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library :P).
 
-Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for builidng our model.
+Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for building our model.
 
 ```{code-cell} ipython3
 :id: OksHydJDtbbI
@@ -75,7 +75,6 @@ def init_network_params(sizes, key):
   return [random_layer_params(m, n, k) for m, n, k in zip(sizes[:-1], sizes[1:], keys)]
 
 layer_sizes = [784, 512, 512, 10]
-param_scale = 0.1
 step_size = 0.01
 num_epochs = 10
 batch_size = 128
@@ -188,6 +187,10 @@ JAX is laser-focused on program transformations and accelerator-backed NumPy, so
 
 ```{code-cell} ipython3
 :id: uWvo1EgZCvnK
+
+import tensorflow as tf
+# Ensure TF does not see GPU and grab all GPU memory.
+tf.config.set_visible_devices([], device_type='GPU')
 
 import tensorflow_datasets as tfds
 

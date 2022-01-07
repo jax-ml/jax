@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from typing import Any, Callable, Mapping, Optional, Tuple, Union
-from .bfgs import minimize_bfgs
+from jax._src.scipy.optimize.bfgs import minimize_bfgs
+from jax._src.scipy.optimize._lbfgs import _minimize_lbfgs
 from typing import NamedTuple
 import jax.numpy as jnp
 
@@ -38,7 +39,7 @@ class OptimizeResults(NamedTuple):
   status: Union[int, jnp.ndarray]
   fun: jnp.ndarray
   jac: jnp.ndarray
-  hess_inv: jnp.ndarray
+  hess_inv: Optional[jnp.ndarray]
   nfev: Union[int, jnp.ndarray]
   njev: Union[int, jnp.ndarray]
   nit: Union[int, jnp.ndarray]
@@ -71,7 +72,7 @@ def minimize(
 
   Args:
     fun: the objective function to be minimized, ``fun(x, *args) -> float``,
-      where ``x`` is an 1-D array with shape ``(n,)`` and ``args`` is a tuple
+      where ``x`` is a 1-D array with shape ``(n,)`` and ``args`` is a tuple
       of the fixed parameters needed to completely specify the function.
       ``fun`` must support differentiation.
     x0: initial guess. Array of real elements of size ``(n,)``, where ``n`` is
@@ -100,13 +101,26 @@ def minimize(
 
   if method.lower() == 'bfgs':
     results = minimize_bfgs(fun_with_args, x0, **options)
-    success = (results.converged) & jnp.logical_not(results.failed)
+    success = results.converged & jnp.logical_not(results.failed)
     return OptimizeResults(x=results.x_k,
                            success=success,
                            status=results.status,
                            fun=results.f_k,
                            jac=results.g_k,
                            hess_inv=results.H_k,
+                           nfev=results.nfev,
+                           njev=results.ngev,
+                           nit=results.k)
+
+  if method.lower() == 'l-bfgs-experimental-do-not-rely-on-this':
+    results = _minimize_lbfgs(fun_with_args, x0, **options)
+    success = results.converged & (~results.failed)
+    return OptimizeResults(x=results.x_k,
+                           success=success,
+                           status=results.status,
+                           fun=results.f_k,
+                           jac=results.g_k,
+                           hess_inv=None,
                            nfev=results.nfev,
                            njev=results.ngev,
                            nit=results.k)

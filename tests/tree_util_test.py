@@ -14,18 +14,17 @@
 
 
 import collections
+import functools
 import re
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.tree_util import _process_pytree
 from jax import flatten_util
 import jax.numpy as jnp
-from jax import lib
 
 
 def _dummy_func(*args, **kwargs):
@@ -138,9 +137,9 @@ TREE_STRINGS = (
     "PyTreeDef((*, *))",
     "PyTreeDef(((*, *), [*, (*, None, *)]))",
     "PyTreeDef([*])",
-    "PyTreeDef([*, CustomNode(namedtuple[<class '__main__.ATuple'>], [(*, "
-    "CustomNode(namedtuple[<class '__main__.ATuple'>], [*, None])), {'baz': "
-    "*}])])",
+    ("PyTreeDef([*, CustomNode(namedtuple[<class '__main__.ATuple'>], [(*, "
+     "CustomNode(namedtuple[<class '__main__.ATuple'>], [*, None])), {'baz': "
+     "*}])])"),
     "PyTreeDef([CustomNode(<class '__main__.AnObject'>[[4, 'foo']], [*, None])])",
     "PyTreeDef(CustomNode(<class '__main__.Special'>[None], [*, *]))",
     "PyTreeDef({'a': *, 'b': *})",
@@ -149,9 +148,9 @@ TREE_STRINGS = (
 # pytest expects "tree_util_test.ATuple"
 STRS = []
 for tree_str in TREE_STRINGS:
-    tree_str = re.escape(tree_str)
-    tree_str = tree_str.replace("__main__", "(__main__|tree_util_test)")
-    STRS.append(tree_str)
+  tree_str = re.escape(tree_str)
+  tree_str = tree_str.replace("__main__", ".*")
+  STRS.append(tree_str)
 TREE_STRINGS = STRS
 
 LEAVES = (
@@ -192,6 +191,12 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(actual.args, inputs.args)
     self.assertEqual(actual.keywords, inputs.keywords)
 
+  def testPartialDoesNotMergeWithOtherPartials(self):
+    def f(a, b, c): pass
+    g = functools.partial(f, 2)
+    h = tree_util.Partial(g, 3)
+    self.assertEqual(h.args, (3,))
+
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripViaBuild(self, inputs):
     xs, tree = _process_pytree(tuple, inputs)
@@ -203,6 +208,15 @@ class TreeTest(jtu.JaxTestCase):
     _, c0 = tree_util.tree_flatten((0, 0, 0))
     _, c1 = tree_util.tree_flatten((7,))
     self.assertEqual([c0, c1], tree.children())
+
+  def testTreedefTupleFromChildren(self):
+    # https://github.com/google/jax/issues/7377
+    tree = ((1, 2, (3, 4)), (5,))
+    leaves, treedef1 = tree_util.tree_flatten(tree)
+    treedef2 = tree_util.treedef_tuple(treedef1.children())
+    self.assertEqual(treedef1.num_leaves, len(leaves))
+    self.assertEqual(treedef1.num_leaves, treedef2.num_leaves)
+    self.assertEqual(treedef1.num_nodes, treedef2.num_nodes)
 
   def testFlattenUpTo(self):
     _, tree = tree_util.tree_flatten([(1, 2), None, ATuple(foo=3, bar=7)])
@@ -226,22 +240,41 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(out, (((1, [3]), (2, None)),
                            (([3, 4, 5], ({"foo": "bar"}, 7, [5, 6])))))
 
-  def testFlattenIsLeaf(self):
+  @parameterized.parameters(
+      tree_util.tree_leaves,
+      lambda tree, is_leaf: tree_util.tree_flatten(tree, is_leaf)[0])
+  def testFlattenIsLeaf(self, leaf_fn):
     x = [(1, 2), (3, 4), (5, 6)]
-    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: False)
+    leaves = leaf_fn(x, is_leaf=lambda t: False)
     self.assertEqual(leaves, [1, 2, 3, 4, 5, 6])
-    leaves, _ = tree_util.tree_flatten(
-        x, is_leaf=lambda t: isinstance(t, tuple))
+    leaves = leaf_fn(x, is_leaf=lambda t: isinstance(t, tuple))
     self.assertEqual(leaves, x)
-    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: isinstance(t, list))
+    leaves = leaf_fn(x, is_leaf=lambda t: isinstance(t, list))
     self.assertEqual(leaves, [x])
-    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: True)
+    leaves = leaf_fn(x, is_leaf=lambda t: True)
     self.assertEqual(leaves, [x])
 
     y = [[[(1,)], [[(2,)], {"a": (3,)}]]]
-    leaves, _ = tree_util.tree_flatten(
-        y, is_leaf=lambda t: isinstance(t, tuple))
+    leaves = leaf_fn(y, is_leaf=lambda t: isinstance(t, tuple))
     self.assertEqual(leaves, [(1,), (2,), (3,)])
+
+  @parameterized.parameters(
+      tree_util.tree_structure,
+      lambda tree, is_leaf: tree_util.tree_flatten(tree, is_leaf)[1])
+  def testStructureIsLeaf(self, structure_fn):
+    x = [(1, 2), (3, 4), (5, 6)]
+    treedef = structure_fn(x, is_leaf=lambda t: False)
+    self.assertEqual(treedef.num_leaves, 6)
+    treedef = structure_fn(x, is_leaf=lambda t: isinstance(t, tuple))
+    self.assertEqual(treedef.num_leaves, 3)
+    treedef = structure_fn(x, is_leaf=lambda t: isinstance(t, list))
+    self.assertEqual(treedef.num_leaves, 1)
+    treedef = structure_fn(x, is_leaf=lambda t: True)
+    self.assertEqual(treedef.num_leaves, 1)
+
+    y = [[[(1,)], [[(2,)], {"a": (3,)}]]]
+    treedef = structure_fn(y, is_leaf=lambda t: isinstance(t, tuple))
+    self.assertEqual(treedef.num_leaves, 3)
 
   @parameterized.parameters(*TREES)
   def testRoundtripIsLeaf(self, tree):
@@ -306,13 +339,14 @@ class TreeTest(jtu.JaxTestCase):
                                       FlatCache({"a": [3, 4], "b": [5, 6]}))
     self.assertEqual(expected, actual)
 
-  @unittest.skipIf(lib._xla_extension_version < 17,
-                   "Test requires jaxlib 0.1.66.")
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""
     treedef = tree_util.tree_structure(tree)
     self.assertRegex(str(treedef), correct_string)
+
+  def testTreeDefWithEmptyDictStringRepresentation(self):
+    self.assertEqual(str(tree_util.tree_structure({})), "PyTreeDef({})")
 
 
 class RavelUtilTest(jtu.JaxTestCase):
@@ -363,6 +397,23 @@ class RavelUtilTest(jtu.JaxTestCase):
     self.assertEqual(raveled.dtype, jnp.float32)  # convention
     tree_ = unravel(raveled)
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
+
+  def testDtypePolymorphicUnravel(self):
+    # https://github.com/google/jax/issues/7809
+    x = jnp.arange(10, dtype=jnp.float32)
+    x_flat, unravel = flatten_util.ravel_pytree(x)
+    y = x_flat < 5.3
+    x_ = unravel(y)
+    self.assertEqual(x_.dtype, y.dtype)
+
+  def testDtypeMonomorphicUnravel(self):
+    # https://github.com/google/jax/issues/7809
+    x1 = jnp.arange(10, dtype=jnp.float32)
+    x2 = jnp.arange(10, dtype=jnp.int32)
+    x_flat, unravel = flatten_util.ravel_pytree((x1, x2))
+    y = x_flat < 5.3
+    with self.assertRaisesRegex(TypeError, 'but expected dtype'):
+      _ = unravel(y)
 
 
 if __name__ == "__main__":

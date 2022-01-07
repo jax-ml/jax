@@ -25,7 +25,7 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 from jax.config import config
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 
 try:
   import portpicker
@@ -76,8 +76,7 @@ class ProfilerTest(unittest.TestCase):
       self.assertIn(b"/host:CPU", proto)
       if jtu.device_under_test() == "tpu":
         self.assertIn(b"/device:TPU", proto)
-      if jax.lib.version >= (0, 1, 65):
-        self.assertIn(b"pxla.py", proto)
+      self.assertIn(b"pxla.py", proto)
 
   def testProgrammaticProfilingErrors(self):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
@@ -118,9 +117,14 @@ class ProfilerTest(unittest.TestCase):
 
   def testTraceFunction(self):
     @jax.profiler.annotate_function
-    def f(x):
-      return x + 2
-    self.assertEqual(f(7), 9)
+    def f(x, *, y):
+      return x + 2 * y
+    self.assertEqual(f(7, y=3), 13)
+
+    @jax.profiler.annotate_function
+    def f(x, *, name):
+      return x + 2 * len(name)
+    self.assertEqual(f(7, name="abc"), 13)
 
     @partial(jax.profiler.annotate_function, name="aname")
     def g(x):

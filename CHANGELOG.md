@@ -5,18 +5,329 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 <!--
 Remember to align the itemized text with the first line of an item within a list.
 
-PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.14 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...master).
+## jax 0.2.27 (Unreleased)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.26...main).
+
+* Breaking changes:
+  * Support for NumPy 1.18 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
+  * The host_callback primitives have been simplified to drop the
+    special autodiff handling for hcb.id_tap and id_print.
+    From now on, only the primals are tapped. The old behavior can be
+    obtained (for a limited time) by setting the ``JAX_HOST_CALLBACK_AD_TRANSFORMS``
+    environment variable, or the ```--flax_host_callback_ad_transforms``` flag.
+    Additionally, added documentation for how to implement the old behavior
+    using JAX custom AD APIs ({jax-issue}`#8678`).
 
 * Bug fixes:
+  * host_callback now supports ad_checkpoint.checkpoint ({jax-issue}`#8907`).
+
+* New features:
+  * add `jax.block_until_ready` ({jax-issue}`#8941)
+  * Added a new debugging flag/environment variable `JAX_DUMP_IR_TO=/path`.
+    If set, JAX dumps the MHLO/HLO IR it generates for each computation to a
+    file under the given path.
+
+## jaxlib 0.1.76 (Unreleased)
+* New features
+  * Includes precompiled SASS for NVidia compute capability 8.0 GPUS
+    (e.g. A100). Removes precompiled SASS for compute capability 6.1 so as not
+    to increase the number of compute capabilities: GPUs with compute capability
+    6.1 can use the 6.0 SASS.
+* Breaking changes
+  * Support for NumPy 1.18 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
+
+## jaxlib 0.1.75 (Dec 8, 2021)
+* New features:
+  * Support for python 3.10.
+
+## jax 0.2.26 (Dec 8, 2021)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.25...jax-v0.2.26).
+
+* Bug fixes:
+  * Out-of-bounds indices to `jax.ops.segment_sum` will now be handled with
+    `FILL_OR_DROP` semantics, as documented. This primarily afects the
+    reverse-mode derivative, where gradients corresponding to out-of-bounds
+    indices will now be returned as 0. (#8634).
+  * jax2tf will force the converted code to use XLA for the code fragments
+    under jax.jit, e.g., most jax.numpy functions ({jax-issue}`#7839`).
+
+## jaxlib 0.1.74 (Nov 17, 2021)
+* Enabled peer-to-peer copies between GPUs. Previously, GPU copies were bounced via
+  the host, which is usually slower.
+* Added experimental MLIR Python bindings for use by JAX.
+
+## jax 0.2.25 (Nov 10, 2021)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.24...jax-v0.2.25).
+
+* New features:
+  * (Experimental) `jax.distributed.initialize` exposes multi-host GPU backend.
+  * `jax.random.permutation` supports new `independent` keyword argument
+    ({jax-issue}`#8430`)
+* Breaking changes
+  * Moved `jax.experimental.stax` to `jax.example_libraries.stax`
+  * Moved `jax.experimental.optimizers` to `jax.example_libraries.optimizers`
+* New features:
+  * Added `jax.lax.linalg.qdwh`.
+
+## jax 0.2.24 (Oct 19, 2021)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.22...jax-v0.2.24).
+
+* New features:
+  * `jax.random.choice` and `jax.random.permutation` now support
+    multidimensional arrays and an optional `axis` argument ({jax-issue}`#8158`)
+* Breaking changes:
+  * `jax.numpy.take` and `jax.numpy.take_along_axis` now require array-like inputs
+    (see {jax-issue}`#7737`)
+
+## jaxlib 0.1.73 (Oct 18, 2021)
+
+* Multiple cuDNN versions are now supported for jaxlib GPU `cuda11` wheels.
+  * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
+    installation is new enough, since it supports additional functionality.
+  * cuDNN 8.0.5 or newer.
+
+* Breaking changes:
+  * The install commands for GPU jaxlib are as follows:
+
+    ```bash
+    pip install --upgrade pip
+
+    # Installs the wheel compatible with CUDA 11 and cuDNN 8.2 or newer.
+    pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
+
+    # Installs the wheel compatible with Cuda 11 and cudnn 8.2 or newer.
+    pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+
+    # Installs the wheel compatible with Cuda 11 and cudnn 8.0.5 or newer.
+    pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+    ```
+
+## jax 0.2.22 (Oct 12, 2021)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.21...jax-v0.2.22).
+* Breaking Changes
+  * Static arguments to `jax.pmap` must now be hashable.
+
+    Unhashable static arguments have long been disallowed on `jax.jit`, but they
+    were still permitted on `jax.pmap`; `jax.pmap` compared unhashable static
+    arguments using object identity.
+
+    This behavior is a footgun, since comparing arguments using
+    object identity leads to recompilation each time the object identity
+    changes. Instead, we now ban unhashable arguments: if a user of `jax.pmap`
+    wants to compare static arguments by object identity, they can define
+    `__hash__` and `__eq__` methods on their objects that do that, or wrap their
+    objects in an object that has those operations with object identity
+    semantics. Another option is to use `functools.partial` to encapsulate the
+    unhashable static arguments into the function object.
+  * `jax.util.partial` was an accidental export that has now been removed. Use
+    `functools.partial` from the Python standard library instead.
+* Deprecations
+  * The functions `jax.ops.index_update`, `jax.ops.index_add` etc. are
+    deprecated and will be removed in a future JAX release. Please use
+    [the `.at` property on JAX arrays](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html)
+    instead, e.g., `x.at[idx].set(y)`. For now, these functions produce a
+    `DeprecationWarning`.
+* New features:
+  * An optimized C++ code-path improving the dispatch time for `pmap` is now the
+    default when using jaxlib 0.1.72 or newer. The feature can be disabled using
+    the `--experimental_cpp_pmap` flag (or `JAX_CPP_PMAP` environment variable).
+  * `jax.numpy.unique` now supports an optional `fill_value` argument ({jax-issue}`#8121`)
+
+## jaxlib 0.1.72 (Oct 12, 2021)
+  * Breaking changes:
+    * Support for CUDA 10.2 and CUDA 10.1 has been dropped. Jaxlib now supports
+      CUDA 11.1+.
+  * Bug fixes:
+    * Fixes https://github.com/google/jax/issues/7461, which caused wrong
+      outputs on all platforms due to incorrect buffer aliasing inside the XLA
+      compiler.
+
+## jax 0.2.21 (Sept 23, 2021)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.20...jax-v0.2.21).
+* Breaking Changes
+  * `jax.api` has been removed. Functions that were available as `jax.api.*`
+    were aliases for functions in `jax.*`; please use the functions in
+    `jax.*` instead.
+  * `jax.partial`, and `jax.lax.partial` were accidental exports that have now
+    been removed. Use `functools.partial` from the Python standard library
+    instead.
+  * Boolean scalar indices now raise a `TypeError`; previously this silently
+    returned wrong results ({jax-issue}`#7925`).
+  * Many more `jax.numpy` functions now require array-like inputs, and will error
+    if passed a list ({jax-issue}`#7747` {jax-issue}`#7802` {jax-issue}`#7907`).
+    See {jax-issue}`#7737` for a discussion of the rationale behind this change.
+  * When inside a transformation such as `jax.jit`, `jax.numpy.array` always
+    stages the array it produces into the traced computation. Previously
+    `jax.numpy.array` would sometimes produce a on-device array, even under
+    a `jax.jit` decorator. This change may break code that used JAX arrays to
+    perform shape or index computations that must be known statically; the
+    workaround is to perform such computations using classic NumPy arrays
+    instead.
+  * `jnp.ndarray` is now a true base-class for JAX arrays. In particular, this
+    means that for a standard numpy array `x`, `isinstance(x, jnp.ndarray)` will
+    now return `False` ({jax-issue}`7927`).
+* New features:
+  * Added {func}`jax.numpy.insert` implementation ({jax-issue}`#7936`).
+
+## jax 0.2.20 (Sept 2, 2021)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.19...jax-v0.2.20).
+* Breaking Changes
+  * `jnp.poly*` functions now require array-like inputs ({jax-issue}`#7732`)
+  * `jnp.unique` and other set-like operations now require array-like inputs
+    ({jax-issue}`#7662`)
+
+## jaxlib 0.1.71 (Sep 1, 2021)
+* Breaking changes:
+  * Support for CUDA 11.0 and CUDA 10.1 has been dropped. Jaxlib now supports
+    CUDA 10.2 and CUDA 11.1+.
+
+## jax 0.2.19 (Aug 12, 2021)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.18...jax-v0.2.19).
+* Breaking changes:
+  * Support for NumPy 1.17 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
+  * The `jit` decorator has been added around the implementation of a number of
+    operators on JAX arrays. This speeds up dispatch times for common
+    operators such as `+`.
+
+    This change should largely be transparent to most users. However, there is
+    one known behavioral change, which is that large integer constants may now
+    produce an error when passed directly to a JAX operator
+    (e.g., `x + 2**40`). The workaround is to cast the constant to an
+    explicit type (e.g., `np.float64(2**40)`).
+* New features:
+  * Improved the support for shape polymorphism in jax2tf for operations that
+    need to use a dimension size in array computation, e.g., `jnp.mean`.
+    ({jax-issue}`#7317`)
+* Bug fixes:
+  * Some leaked trace errors from the previous release ({jax-issue}`#7613`)
+
+## jaxlib 0.1.70 (Aug 9, 2021)
+* Breaking changes:
+  * Support for Python 3.6 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported Python version.
+  * Support for NumPy 1.17 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
+
+  * The host_callback mechanism now uses one thread per local device for
+    making the calls to the Python callbacks. Previously there was a single
+    thread for all devices. This means that the callbacks may now be called
+    interleaved. The callbacks corresponding to one device will still be
+    called in sequence.
+
+## jax 0.2.18 (July 21 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.17...jax-v0.2.18).
+
+* Breaking changes:
+  * Support for Python 3.6 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported Python version.
+  * The minimum jaxlib version is now 0.1.69.
+  * The `backend` argument to {py:func}`jax.dlpack.from_dlpack` has been
+    removed.
+
+* New features:
+  * Added a polar decomposition ({py:func}`jax.scipy.linalg.polar`).
+
+* Bug fixes:
+  * Tightened the checks for lax.argmin and lax.argmax to ensure they are
+    not used with an invalid `axis` value, or with an empty reduction dimension.
+    ({jax-issue}`#7196`)
+
+
+## jaxlib 0.1.69 (July 9 2021)
+* Fix bugs in TFRT CPU backend that results in incorrect results.
+
+## jax 0.2.17 (July 9 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...jax-v0.2.17).
+* Bug fixes:
+  * Default to the older "stream_executor" CPU runtime for jaxlib <= 0.1.68
+    to work around #7229, which caused wrong outputs on CPU due to a concurrency
+    problem.
+* New features:
+  * New SciPy function {py:func}`jax.scipy.special.sph_harm`.
+  * Reverse-mode autodiff functions ({func}`jax.grad`,
+    {func}`jax.value_and_grad`, {func}`jax.vjp`, and
+    {func}`jax.linear_transpose`) support a parameter that indicates which named
+    axes should be summed over in the backward pass if they were broadcasted
+    over in the forward pass. This enables use of these APIs in a
+    non-per-example way inside maps (initially only
+    {func}`jax.experimental.maps.xmap`) ({jax-issue}`#6950`).
+
+
+## jax 0.2.16 (June 23 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.15...jax-v0.2.16).
+
+## jax 0.2.15 (June 23 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...jax-v0.2.15).
+* New features:
+  * [#7042](https://github.com/google/jax/pull/7042) Turned on TFRT CPU backend
+    with significant dispatch performance improvements on CPU.
+  * The {func}`jax2tf.convert` supports inequalities and min/max for booleans
+    ({jax-issue}`#6956`).
+  * New SciPy function {py:func}`jax.scipy.special.lpmn_values`.
+
+* Breaking changes:
+  * Support for NumPy 1.16 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+
+* Bug fixes:
+  * Fixed bug that prevented round-tripping from JAX to TF and back:
+    `jax2tf.call_tf(jax2tf.convert)` ({jax-issue}`#6947`).
+
+## jaxlib 0.1.68 (June 23 2021)
+* Bug fixes:
+  * Fixed bug in TFRT CPU backend that gets nans when transfer TPU buffer to
+    CPU.
+
+## jax 0.2.14 (June 10 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...jax-v0.2.14).
+* New features:
+  * The {func}`jax2tf.convert` now has support for `pjit` and `sharded_jit`.
+  * A new configuration option JAX_TRACEBACK_FILTERING controls how JAX filters
+    tracebacks.
+  * A new traceback filtering mode using `__tracebackhide__` is now enabled by
+    default in sufficiently recent versions of IPython.
+  * The {func}`jax2tf.convert` supports shape polymorphism even when the
+    unknown dimensions are used in arithmetic operations, e.g., `jnp.reshape(-1)`
+    ({jax-issue}`#6827`).
+  * The {func}`jax2tf.convert` generates custom attributes with location information
+   in TF ops. The code that XLA generates after jax2tf
+   has the same location information as JAX/XLA.
+  * New SciPy function {py:func}`jax.scipy.special.lpmn`.
+
+* Bug fixes:
+  * The {func}`jax2tf.convert` now ensures that it uses the same typing rules
+    for Python scalars and for choosing 32-bit vs. 64-bit computations
+    as JAX ({jax-issue}`#6883`).
+  * The {func}`jax2tf.convert` now scopes the `enable_xla` conversion parameter
+    properly to apply only during the just-in-time conversion
+    ({jax-issue}`#6720`).
   * The {func}`jax2tf.convert` now converts `lax.dot_general` using the
     `XlaDot` TensorFlow op, for better fidelity w.r.t. JAX numerical precision
     ({jax-issue}`#6717`).
+  * The {func}`jax2tf.convert` now has support for inequality comparisons and
+    min/max for complex numbers ({jax-issue}`#6892`).
 
-## jaxlib 0.1.67 (unreleased)
+## jaxlib 0.1.67 (May 17 2021)
 
 ## jaxlib 0.1.66 (May 11 2021)
 
@@ -103,7 +414,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     * `TraceContext` --> {func}`~jax.profiler.TraceAnnotation`
     * `StepTraceContext` --> {func}`~jax.profiler.StepTraceAnnotation`
     * `trace_function` --> {func}`~jax.profiler.annotate_function`
-  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/master/design_notes/omnistaging.md)
+  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/main/design_notes/omnistaging.md)
     for more information.
   * Python integers larger than the maximum `int64` value will now lead to an overflow
     in all cases, rather than being silently converted to `uint64` in some cases ({jax-issue}`#6047`).
@@ -151,7 +462,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.scipy.stats.betabinom` is now available as a distribution with logpmf and pmf methods.
   * Added {func}`jax.experimental.jax2tf.call_tf` to call TensorFlow functions
     from JAX ({jax-issue}`#5627`)
-    and [README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
+    and [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
   * Extended the batching rule for `lax.pad` to support batching of the padding values.
 * Bug fixes:
   * {func}`jax.numpy.take` properly handles negative indices ({jax-issue}`#5768`)
@@ -221,7 +532,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
   * `jax.numpy.arccosh` now returns the same branch as `numpy.arccosh` for
     complex inputs ({jax-issue}`#5156`)
-  * `host_callback.id_tap` now works for `jax.pmap` also. There is a
+  * `host_callback.id_tap` now works for `jax.pmap` also. There is an
     optional parameter for `id_tap` and `id_print` to request that the
     device from which the value is tapped be passed as a keyword argument
     to the tap function ({jax-issue}`#5182`).
@@ -247,7 +558,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features:
   * Add `jax.device_put_replicated`
   * Add multi-host support to `jax.experimental.sharded_jit`
-  * Add support for differentiating eigenvaleus computed by `jax.numpy.linalg.eig`
+  * Add support for differentiating eigenvalues computed by `jax.numpy.linalg.eig`
   * Add support for building on Windows platforms
   * Add support for general in_axes and out_axes in `jax.pmap`
   * Add complex support for `jax.numpy.linalg.slogdet`
@@ -266,7 +577,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.5...jax-v0.2.6).
 * New Features:
   * Add support for shape-polymorphic tracing for the jax.experimental.jax2tf converter.
-    See [README.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md).
+    See [README.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
 * Breaking change cleanup
 
   * Raise an error on non-hashable static arguments for jax.jit and
@@ -326,7 +637,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Improvements:
   * Ensure that `check_jaxpr` does not perform FLOPS.  See {jax-issue}`#4650`.
   * Expanded the set of JAX primitives converted by jax2tf.
-    See [primitives_with_limited_support.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/primitives_with_limited_support.md).
+    See [primitives_with_limited_support.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/primitives_with_limited_support.md).
 
 ## jax 0.2.4 (October 19 2020)
 
@@ -363,7 +674,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0).
 * Improvements:
   * Omnistaging on by default. See {jax-issue}`#3370` and
-    [omnistaging](https://github.com/google/jax/blob/master/design_notes/omnistaging.md)
+    [omnistaging](https://github.com/google/jax/blob/main/design_notes/omnistaging.md)
 
 ## jax (0.1.77) (September 15 2020)
 
@@ -392,7 +703,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.73...jax-v0.1.74).
 * New Features:
   * BFGS (#3101)
-  * TPU suppot for half-precision arithmetic (#3878)
+  * TPU support for half-precision arithmetic (#3878)
 * Bug Fixes:
   * Prevent some accidental dtype warnings (#3874)
   * Fix a multi-threading bug in custom derivatives (#3845, #3869)

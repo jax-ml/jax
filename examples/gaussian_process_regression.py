@@ -101,7 +101,7 @@ def main(unused_argv):
   lr = 0.01  # Learning rate
   def train_step(params, momentums, scales, x, y):
     grads = grad_fun(params, x, y)
-    for k in (params):
+    for k in params:
       momentums[k] = 0.9 * momentums[k] + 0.1 * grads[k][0]
       scales[k] = 0.9 * scales[k] + 0.1 * grads[k][0]**2
       params[k] -= lr * momentums[k]/jnp.sqrt(scales[k] + 1e-5)

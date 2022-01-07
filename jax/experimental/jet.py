@@ -22,15 +22,14 @@ import jax
 import jax.numpy as jnp
 from jax import core
 from jax._src.util import unzip2
-from jax import ad_util
+from jax._src import ad_util
+from jax._src import dispatch
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
 import jax.linear_util as lu
 from jax.interpreters import xla
 from jax.custom_derivatives import custom_jvp_call_jaxpr_p
-from jax._src.lax import lax
-from jax._src.lax import control_flow as lax_control_flow
-from jax._src.lax import fft as lax_fft
+from jax import lax
 
 def jet(fun, primals, series):
   try:
@@ -241,24 +240,24 @@ deflinear(lax.transpose_p)
 deflinear(lax.slice_p)
 deflinear(lax.reduce_sum_p)
 deflinear(lax.reduce_window_sum_p)
-deflinear(lax_fft.fft_p)
-deflinear(xla.device_put_p)
+deflinear(lax.fft_p)
+deflinear(dispatch.device_put_p)
 
 def _cumulative_jet_rule(primals_in, series_in, *, axis: int, reverse: bool,
                          combine_fn: Callable):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return jet(partial(lax_control_flow.associative_scan, combine_fn, axis=axis,
+  return jet(partial(lax.associative_scan, combine_fn, axis=axis,
                      reverse=reverse),
              primals_in, series_in)
 
-deflinear(lax_control_flow.cumsum_p)
-jet_rules[lax_control_flow.cumprod_p] = partial(_cumulative_jet_rule,
+deflinear(lax.cumsum_p)
+jet_rules[lax.cumprod_p] = partial(_cumulative_jet_rule,
                                                 combine_fn=lax.mul)
-jet_rules[lax_control_flow.cummax_p] = partial(_cumulative_jet_rule,
+jet_rules[lax.cummax_p] = partial(_cumulative_jet_rule,
                                                combine_fn=lax.max)
-jet_rules[lax_control_flow.cummin_p] = partial(_cumulative_jet_rule,
+jet_rules[lax.cummin_p] = partial(_cumulative_jet_rule,
                                                combine_fn=lax.min)
 
 
@@ -364,7 +363,7 @@ def _exp_taylor(primals_in, series_in):
   u = [x] + series
   v = [lax.exp(x)] + [None] * len(series)
   for k in range(1,len(v)):
-    v[k] = fact(k-1) * sum([_scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
+    v[k] = fact(k-1) * sum([_scale(k, j) * v[k-j] * u[j] for j in range(1, k+1)])
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.exp_p] = _exp_taylor
@@ -377,7 +376,7 @@ def _pow_taylor(primals_in, series_in):
   u = [x] + series
   v = [u_ ** r_] + [None] * len(series)
   for k in range(1, len(v)):
-    v[k] = fact(k-1) * sum([_scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
+    v[k] = fact(k-1) * sum([_scale(k, j) * v[k-j] * u[j] for j in range(1, k+1)])
   primal_out, *series_out = v
 
   return primal_out, series_out
@@ -412,7 +411,7 @@ def _expit_taylor(primals_in, series_in):
   e = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
   for k in range(1, len(v)):
     v[k] = fact(k-1) * sum([_scale(k, j) * e[k-j] * u[j] for j in range(1, k+1)])
-    e[k] = (1 - v[0]) * v[k] - fact(k) * sum([_scale2(k, j)* v[j] * v[k-j] for j in range(1, k+1)])
+    e[k] = (1 - v[0]) * v[k] - fact(k) * sum([_scale2(k, j) * v[j] * v[k-j] for j in range(1, k+1)])
 
   primal_out, *series_out = v
   return primal_out, series_out
@@ -590,10 +589,12 @@ def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
 jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
 
 def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
-                      dimension_numbers, indices_are_sorted, unique_indices):
+                      dimension_numbers, indices_are_sorted, unique_indices,
+                      mode):
   bind = partial(lax.scatter_add_p.bind, update_jaxpr=update_jaxpr,
                  update_consts=update_consts, dimension_numbers=dimension_numbers,
-                 indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
+                 indices_are_sorted=indices_are_sorted,
+                 unique_indices=unique_indices, mode=mode)
   operand, scatter_indices, updates = primals_in
   primal_out = bind(operand, scatter_indices, updates)
   series_out = [bind(d1, scatter_indices, d2) for d1, _, d2 in zip(*series_in)]

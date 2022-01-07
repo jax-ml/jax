@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   name: python3
@@ -15,7 +15,7 @@ kernelspec:
 
 # Advanced Automatic Differentiation in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/04-advanced-autodiff.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/04-advanced-autodiff.ipynb)
 
 *Authors: Vlatimir Mikulik & Matteo Hessel*
 
@@ -186,7 +186,7 @@ $$
 
 This update is not the gradient of any loss function.
 
-However it can be **written** as the gradient of the pseudo loss function
+However, it can be **written** as the gradient of the pseudo loss function
 
 $$
 L(\theta) = [r_t + v_{\theta}(s_t) - v_{\theta}(s_{t-1})]^2
@@ -250,7 +250,10 @@ def f(x):
   return jnp.round(x)  # non-differentiable
 
 def straight_through_f(x):
-  return x + jax.lax.stop_gradient(f(x) - x)
+  # Create an exactly-zero expression with Sterbenz lemma that has
+  # an exactly-one gradient.
+  zero = x - jax.lax.stop_gradient(x)
+  return zero + jax.lax.stop_gradient(f(x))
 
 print("f(x): ", f(3.2))
 print("straight_through_f(x):", straight_through_f(3.2))

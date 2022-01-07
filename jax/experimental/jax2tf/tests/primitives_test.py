@@ -30,7 +30,7 @@ in Tensorflow errors (for some devices and compilation modes). These limitations
 are captured as jax2tf_limitations.Jax2TfLimitation objects.
 
 From the limitations objects, we generate a
-[report](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+[report](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 The report has instructions for how to re-generate it.
 
 If a harness run fails with error, and a limitation that matches the device
@@ -61,9 +61,8 @@ from absl.testing import parameterized
 
 import jax
 from jax import dtypes
-from jax import lax
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.interpreters import xla
@@ -99,8 +98,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(
-      primitive_harness.all_harnesses, include_jax_unimpl=False,
-      )
+      primitive_harness.all_harnesses,
+      include_jax_unimpl=False,
+      #one_containing="mode=GatherScatterMode.CLIP"
+  )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
   def test_prim(self, harness: primitive_harness.Harness):
@@ -118,12 +119,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     """Fail if there are JAX primitives that are not implemented."""
     # Harvest primitives from XLA translation tables
     all_primitives = (
-        set(xla.translations)
-        | set(xla.backend_specific_translations["cpu"])
-        | set(xla.backend_specific_translations["gpu"])
-        | set(xla.backend_specific_translations["tpu"])
-        | set(xla.initial_style_translations)
-        | set(xla.parallel_translations))
+        set(xla._translations)
+        | set(xla._backend_specific_translations["cpu"])
+        | set(xla._backend_specific_translations["gpu"])
+        | set(xla._backend_specific_translations["tpu"]))
 
     tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl) | set(
         jax.experimental.jax2tf.jax2tf.tf_impl_with_avals)
@@ -183,7 +182,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       modes = ", ".join(sorted(l.modes))
       description = l.description
       if l.skip_comparison:
-        description = "Numeric comparision disabled: " + description
+        description = "Numeric comparison disabled: " + description
       if l.expect_tf_error:
         description = "TF error: " + description
       if l.skip_tf_run:
@@ -255,16 +254,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
       self.assertAllClose(expected, tf1_res)
 
-  def test_disable_xla(self):
-
-    def fun(x):
-      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
-
-    with self.assertRaisesRegex(
-        NotImplementedError, "Call to pad cannot be converted with enable_xla=False."):
-      self.ConvertAndCompare(
-          fun, np.ones((2, 3), dtype=np.float32), enable_xla=False)
-
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
                       dtype=np.bool_)
@@ -289,17 +278,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-          dict(testcase_name=f"_{op.__name__}", op=op) for op in (
-              jax.ops.index_add,
-              jax.ops.index_max,
-              jax.ops.index_min,
-              jax.ops.index_mul,
-              jax.ops.index_update,
+          dict(testcase_name=f"_{op}", op=op) for op in (
+              "add", "max", "min", "multiply", "set"
           )))
   def test_scatter_static(self, op):
     values = np.ones((5, 6), dtype=np.float32)
     update = np.float32(6.)
-    f_jax = jax.jit(lambda v, u: op(v, jax.ops.index[::2, 3:], u))
+    f_jax = jax.jit(lambda v, u: getattr(v.at[::2, 3:], op)(u))
     self.ConvertAndCompare(f_jax, values, update)
 
   @parameterized.named_parameters(
@@ -309,7 +294,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_reduce_ops_with_boolean_input(self, f_jax):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -15,12 +15,11 @@
 
 import numpy as np
 from jax import lax
-from . import lax_numpy as jnp
+from jax._src.numpy import lax_numpy as jnp
 
 from jax import jit
-from .util import _wraps
-from .linalg import eigvals as _eigvals
-from jax import ops as jaxops
+from jax._src.numpy.util import _wraps
+from jax._src.numpy.linalg import eigvals as _eigvals
 
 
 def _to_inexact_type(type):
@@ -38,7 +37,7 @@ def _roots_no_zeros(p):
 
   # build companion matrix and find its eigenvalues (the roots)
   A = jnp.diag(jnp.ones((p.size - 2,), p.dtype), -1)
-  A = jaxops.index_update(A, jaxops.index[0, :], -p[1:] / p[0])
+  A = A.at[0, :].set(-p[1:] / p[0])
   roots = _eigvals(A)
   return roots
 

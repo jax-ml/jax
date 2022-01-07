@@ -19,11 +19,13 @@ from typing import (Tuple, List, Sequence, Set, Dict, Any, Callable, Union,
                     Optional)
 
 from jax import core
-from jax._src import dtypes
+from jax._src import dispatch
+from jax._src import source_info_util
 from jax.core import Var, Literal, Atom, Tracer
+from jax._src import util
 from jax._src.util import (safe_zip, safe_map, curry, unzip2, split_list,
                            tuple_delete)
-from jax._src.pprint_util import pp, vcat, PrettyPrint
+import jax._src.pretty_printer as pp
 
 map = safe_map
 zip = safe_zip
@@ -41,7 +43,7 @@ class EltTy: pass
 
 class BaseType(EltTy):
   def __init__(self, dtype: DType):
-    self._dtype = dtypes.dtype(dtype)
+    self._dtype = np.dtype(dtype)
 
   def __repr__(self):
     return f'BaseType({self._dtype.name})'
@@ -73,7 +75,8 @@ class AbsArray(core.AbstractValue):
     self.shape = shape
     self._eltTy = eltTy
 
-  def str_short(self):
+  def str_short(self, short_dtypes=False):
+    del short_dtypes  # ignored
     shape = f'[{",".join(str(d) for d in self.shape)}]' if self.shape else ''
     if isinstance(self._eltTy, BoundedIntTy):
       return f'BInt{{≤{self._eltTy._bound}}}{shape}'
@@ -177,7 +180,7 @@ class DJaxpr:
   def __repr__(self):
     return str(pp_djaxpr(self))
 
-def pp_djaxpr(jaxpr: DJaxpr) -> PrettyPrint:
+def pp_djaxpr(jaxpr: DJaxpr) -> pp.Doc:
   eqns = map(pp_eqn, jaxpr.eqns)
   in_dim_binders = pp_vars(jaxpr.in_dim_binders)
   in_binders = pp_vars(jaxpr.in_binders)
@@ -185,21 +188,21 @@ def pp_djaxpr(jaxpr: DJaxpr) -> PrettyPrint:
   outs = ', '.join(map(str, jaxpr.outs))
   out_dim_types = pp_vars(jaxpr.out_dims)
   outs_type = ', '.join(v.aval.str_short() for v in jaxpr.outs)
-  return (pp(f'{{ lambda {in_dim_binders} ; {in_binders} .')
-          + (pp('let ') >> vcat(eqns) +
-             pp(f'in ( {out_dims} ; {outs} ) '
-                f': ( {out_dim_types} ; {outs_type} ) }}')).indent(2))
+  return (pp.text(f'{{ lambda {in_dim_binders} ; {in_binders} .')
+          + (pp.text('let ') + pp.nest(2, pp.brk() + pp.join(pp.brk(), eqns)) +
+             pp.text(f'in ( {out_dims} ; {outs} ) '
+                f': ( {out_dim_types} ; {outs_type} ) }}')))
 
 def pp_vars(vs: Sequence[Atom]) -> str:
   return ', '.join(f'{v}:{v.aval.str_short()}' for v in vs)
 
-def pp_eqn(eqn: core.JaxprEqn) -> PrettyPrint:
+def pp_eqn(eqn: core.JaxprEqn) -> pp.Doc:
   lhs = pp_vars(eqn.outvars)
-  pp_lhs = pp(f'{lhs} =')
-  pp_rhs = (pp(eqn.primitive.name) >>
-            core.pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
-            pp(' '.join(map(str, eqn.invars))))
-  return pp_lhs >> pp(' ') >> pp_rhs
+  pp_lhs = pp.text(f'{lhs} =')
+  pp_rhs = (pp.text(eqn.primitive.name) +
+            core.pp_kv_pairs(sorted(eqn.params.items()), core.JaxprPpContext())
+            + pp.text(' ') + pp.text(' '.join(map(str, eqn.invars))))
+  return pp_lhs + pp.text(' ') + pp_rhs
 
 # Typechecking DJaxprs
 
@@ -437,7 +440,7 @@ class Array:
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
 
-from jax.api_util import flatten_fun
+from jax._src.api_util import flatten_fun
 from jax.tree_util import tree_flatten, tree_unflatten
 
 def make_djaxpr(fun, *args, **kwargs):
@@ -600,8 +603,8 @@ core.pytype_aval_mappings[BoundedInt] = _abstractify_bdint
 # XLA lowering
 
 from jax.interpreters import xla
-from jax.lib import xla_bridge as xb
-from jax.lib import xla_client as xc
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 xe = xc._xla
 xops = xc._xla.ops
 
@@ -617,19 +620,19 @@ def _array_xla_shape(aval: AbsArray):
     return (xla.xc.Shape.array_shape(dtype, shape),)
   elif isinstance(aval._eltTy, BoundedIntTy):
     shape = [d._bound if isinstance(d, BoundedInt) else d for d in aval.shape]
-    return (xla.xc.Shape.array_shape(dtypes.dtype('int32'), shape),)
+    return (xla.xc.Shape.array_shape(np.dtype('int32'), shape),)
   else:
     raise NotImplementedError
 xla.xla_shape_handlers[AbsArray] = _array_xla_shape
 xla.canonicalize_dtype_handlers[Array] = identity
 
 def _array_device_put(x, device):
-  return xla._device_put_array(x._data, device)
-xla.device_put_handlers[Array] = _array_device_put
+  return dispatch._device_put_array(x._data, device)
+dispatch.device_put_handlers[Array] = _array_device_put
 
 def _bdint_device_put(x, device):
-  return xla._device_put_scalar(x._val, device)
-xla.device_put_handlers[BoundedInt] = _bdint_device_put
+  return dispatch._device_put_scalar(x._val, device)
+dispatch.device_put_handlers[BoundedInt] = _bdint_device_put
 
 def _bdint_canoncalize_dtype(x):
   return BoundedInt(xla.canonicalize_dtype(x._val), x._bound)
@@ -637,13 +640,14 @@ xla.canonicalize_dtype_handlers[BoundedInt] = _bdint_canoncalize_dtype
 
 def _make_params(c, dim_in_avals, in_avals):
   n = it.count()
-  make = lambda a: [xb.parameter(c, next(n), s) for s in xla.aval_to_xla_shapes(a)]
+  make = lambda a: [xla.parameter(c, next(n), s) for s in xla.aval_to_xla_shapes(a)]
   return map(make, dim_in_avals), map(make, in_avals)
 
 def _xla_consts(c, consts):
   unique_consts = {id(const): const for const in consts}
   xla_consts = {
-      id_: [xb.constant(c, const)] for id_, const in unique_consts.items()}
+      id_: [xla.pyval_to_ir_constant(c, const)]
+      for id_, const in unique_consts.items()}
   return [xla_consts[id(const)] for const in consts]
 
 def djaxpr_subcomp(c, jaxpr, dim_args, args):
@@ -654,7 +658,7 @@ def djaxpr_subcomp(c, jaxpr, dim_args, args):
 
   def read(v):
     if type(v) is core.Literal:
-      return [xb.constant(c, xla.canonicalize_dtype(v.val))]
+      return [xla.pyval_to_ir_constant(c, xla.canonicalize_dtype(v.val))]
     else:
       return env[v]
 
@@ -675,8 +679,8 @@ def djaxpr_subcomp(c, jaxpr, dim_args, args):
 
 def execute_compiled(compiled, partitioner, handlers, dim_vals, args):
   input_bufs = list(it.chain(
-      (buf for x in dim_vals for buf in xla.device_put(x, None)),
-      (buf for x in args     for buf in xla.device_put(x, None))))
+      (buf for x in dim_vals for buf in dispatch.device_put(x, None)),
+      (buf for x in args     for buf in dispatch.device_put(x, None))))
   out_bufs = compiled.execute(input_bufs)
   dims_dict, grouped_bufs = partitioner(out_bufs)
   return [handler(dims_dict, bs) for handler, bs in zip(handlers, grouped_bufs)]
@@ -703,7 +707,7 @@ def result_handler(aval):
   if isinstance(aval, AbsArray):
     return array_result_handler(aval)
   else:
-    handler = xla.aval_to_result_handler(None, aval)
+    handler = dispatch.aval_to_result_handler(None, aval)
     return lambda _, bufs: handler(*bufs)
 
 def array_result_handler(aval):
@@ -719,7 +723,7 @@ def array_result_handler(aval):
     else:
       raise NotImplementedError  # TODO
   padded_aval = core.ShapedArray(tuple(padded_shape), aval._eltTy._dtype)
-  array_handler = xla.array_result_handler(None, padded_aval)
+  array_handler = dispatch.array_result_handler(None, padded_aval)
   def handler(dims_dict, bufs):
     shape = tuple(dims_dict[d] if isinstance(d, Var) else
                   DimIndexer(dims_dict[d.name], d.indices) if isinstance(d, DimIndexingExpr) else
@@ -727,6 +731,11 @@ def array_result_handler(aval):
     return Array(shape, aval._eltTy, array_handler(*bufs))
   return handler
 
+def aval_to_num_buffers(aval):
+  if isinstance(aval, AbsArray):
+    return 1
+  else:
+    return len(xla.aval_to_xla_shapes(aval))
 
 translations: Dict[core.Primitive, Callable] = {}
 
@@ -738,14 +747,14 @@ dynamic_xla_call_p.multiple_results = True
 def _dynamic_xla_call_impl(*args, jaxpr, num_consts):
   in_dim_vals, consts, args = split_list(args, [len(jaxpr.in_dim_binders), num_consts])
   dim_in_avals = [v.aval for v in jaxpr.in_dim_binders]
-  c = xb.make_computation_builder("dxla_call")
+  c = xc.XlaBuilder("dxla_call")
   dim_params, params = _make_params(c, dim_in_avals, map(xla.abstractify, args))
   const_params = _xla_consts(c, consts)
   dim_outs, outs = djaxpr_subcomp(c, jaxpr, dim_params, const_params + params)
   out = xops.Tuple(c, [o for ops in dim_outs + outs for o in ops])
   compiled = xb.get_backend(None).compile(c.build(out))
   result_handlers = map(result_handler, [v.aval for v in jaxpr.outs])
-  out_bufcounts = [v.aval._num_buffers for v in jaxpr.outs]
+  out_bufcounts = [aval_to_num_buffers(v.aval) for v in jaxpr.outs]
   partitioner = result_partitioner(jaxpr.in_dim_binders, in_dim_vals,
                                    jaxpr.out_dims, out_bufcounts)
   return execute_compiled(compiled, partitioner, result_handlers,
@@ -796,9 +805,11 @@ def traceable_to_padded_translation(traceable):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
 
     operands_ = it.chain.from_iterable([*dims.values(), *operands])
-    outs = xla.jaxpr_subcomp(c, jaxpr, None, xla.AxisEnv(1, (), ()),
-                             xla._xla_consts(c, consts), '', *operands_)
-    return xla._partition_outputs(out_avals, outs)
+    platform = "cpu"  # TODO: don't hardwire in the CPU translation.
+    ctx = xla.TranslationContext(c, platform, xla.AxisEnv(1, (), ()), '')
+    outs = xla.jaxpr_subcomp(ctx, jaxpr, xla._xla_consts(c, consts), *operands_)
+    return util.unflatten(outs,
+                          [aval_to_num_buffers(aval) for aval in out_avals])
   return translation
 
 def _replace_vars_with_bounds(aval):
@@ -913,7 +924,7 @@ def _dynamic_xla_call_pe(trace, *tracers, jaxpr, num_consts):
            for v in jaxpr2.outs]
   eqn = pe.new_eqn_recipe(in_dim_tracers + res_tracers + unknown_tracers, outs2,
                           dynamic_xla_call_p, dict(jaxpr=jaxpr2, num_consts=0),
-                          None)
+                          source_info_util.new_source_info())
   for t in outs2: t.recipe = eqn
   outs1, outs2 = iter(outs1), iter(outs2)
   return [next(outs2) if uk else next(outs1) for uk in out_unknowns]
@@ -943,7 +954,8 @@ def partial_eval_jaxpr(jaxpr, in_unknowns):
     if any(unks):
       invars = [v if unk else new_res(v) for unk, v in zip(unks, eqn.invars)]
       eqns2.append(pe.new_jaxpr_eqn(invars, eqn.outvars, eqn.primitive,
-                                    eqn.params, None))
+                                    eqn.params,
+                                    source_info_util.new_source_info()))
       map(partial(write, True), eqn.outvars)
     else:
       eqns1.append(eqn)
@@ -988,7 +1000,7 @@ def batch_jaxpr(jaxpr, axis_size, in_dims):
   dimvars = dict((v, v.aval) for v in jaxpr.in_dim_binders)
   in_avals = [_replace_vars_with_avals(dimvars, v.aval) for v in jaxpr.in_binders]
 
-  in_avals = [core.unmapped_aval(axis_size, d, aval)
+  in_avals = [core.unmapped_aval(axis_size, core.no_axis_name, d, aval)
               if d is not batching.not_mapped else aval
               for d, aval in zip(in_dims, in_avals)]
 
@@ -999,7 +1011,7 @@ def batch_jaxpr(jaxpr, axis_size, in_dims):
 
 @lu.transformation
 def _batch_fun(in_dims, *in_vals, **params):
-  with core.new_main(batching.BatchTrace, axis_name=None) as main:
+  with core.new_main(batching.BatchTrace, axis_name=core.no_axis_name) as main:
     out_vals = yield (main, in_dims, *in_vals), params
     del main
   yield out_vals
@@ -1258,7 +1270,8 @@ def _nonzero_staging_rule(trace, tracers, params):
   out_val_tracer = pe.DynamicJaxprTracer(trace, out_val_aval, None)
   invars = map(trace.getvar, tracers)
   outvars = map(trace.makevar, [out_dim_tracer, out_val_tracer])
-  eqn = pe.new_jaxpr_eqn(invars, outvars, nonzero_p, {}, None)
+  eqn = pe.new_jaxpr_eqn(invars, outvars, nonzero_p, {},
+      source_info_util.new_source_info())
   trace.frame.eqns.append(eqn)
   return out_val_tracer
 custom_staging_rules[nonzero_p] = _nonzero_staging_rule
@@ -1312,7 +1325,8 @@ def _iota_staging_rule(trace, tracers, params):
     out_aval = core.ShapedArray((n,), np.dtype('int32'))
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     outvar = trace.makevar(out_tracer)
-    eqn = pe.new_jaxpr_eqn([], [outvar], iota_p, dict(size=n), None)
+    eqn = pe.new_jaxpr_eqn([], [outvar], iota_p, dict(size=n),
+        source_info_util.new_source_info())
   else:
     aval = tracer.aval
     if not isinstance(aval, AbsArray): raise TypeError
@@ -1325,7 +1339,8 @@ def _iota_staging_rule(trace, tracers, params):
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     outvar = trace.makevar(out_tracer)
     invar = trace.getvar(tracer)
-    eqn = pe.new_jaxpr_eqn([invar], [outvar], iota_p, {}, None)
+    eqn = pe.new_jaxpr_eqn([invar], [outvar], iota_p, {},
+        source_info_util.new_source_info())
   trace.frame.eqns.append(eqn)
   return out_tracer
 custom_staging_rules[iota_p] = _iota_staging_rule
@@ -1351,7 +1366,7 @@ def _iota_translation_rule(c, dims, avals, operands, *, size=None):
     shape = aval.shape
   else:
     shape = ()
-  etype = xc.dtype_to_etype(np.dtype('int32'))
+  etype = xla.dtype_to_primitive_type(np.dtype('int32'))
   xla_shape = xc.Shape.array_shape(etype, (*shape, size))
   return [[xops.Iota(c, xla_shape, len(shape))]]
 translations[iota_p] = _iota_translation_rule
@@ -1374,7 +1389,8 @@ def _broadcast_staging_rule(trace, tracers, params):
     out_aval = AbsArray((d, *x.shape), BaseType(dtype))
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     eqn = pe.new_jaxpr_eqn([trace.getvar(x), trace.getvar(d)],
-                           [trace.makevar(out_tracer)], broadcast_p, {}, None)
+                           [trace.makevar(out_tracer)], broadcast_p, {},
+                           source_info_util.new_source_info())
     trace.frame.eqns.append(eqn)
     return out_tracer
 custom_staging_rules[broadcast_p] = _broadcast_staging_rule

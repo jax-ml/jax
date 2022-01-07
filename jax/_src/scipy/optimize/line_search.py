@@ -13,10 +13,13 @@
 # limitations under the License.
 
 from typing import NamedTuple, Union
+from functools import partial
 
 import jax.numpy as jnp
 import jax
-from jax.lax import while_loop
+from jax import lax
+
+_dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 
 
 def _cubicmin(a, fa, fpa, b, fb, c, fc):
@@ -26,7 +29,7 @@ def _cubicmin(a, fa, fpa, b, fb, c, fc):
   denom = (db * dc) ** 2 * (db - dc)
   d1 = jnp.array([[dc ** 2, -db ** 2],
                   [-dc ** 3, db ** 3]])
-  A, B = jnp.dot(d1, jnp.array([fb - fa - C * db, fc - fa - C * dc])) / denom
+  A, B = _dot(d1, jnp.array([fb - fa - C * db, fc - fa - C * dc])) / denom
 
   radical = B * B - 3. * A * C
   xmin = a + (-B + jnp.sqrt(radical)) / (3. * A)
@@ -104,15 +107,16 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
   def body(state):
     # Body of zoom algorithm. We use boolean arithmetic to avoid using jax.cond
     # so that it works on GPU/TPU.
+    dalpha = (state.a_hi - state.a_lo)
     a = jnp.minimum(state.a_hi, state.a_lo)
     b = jnp.maximum(state.a_hi, state.a_lo)
-    dalpha = (b - a)
     cchk = delta1 * dalpha
     qchk = delta2 * dalpha
 
     # This will cause the line search to stop, and since the Wolfe conditions
     # are not satisfied the minimization should stop too.
-    state = state._replace(failed=state.failed | (dalpha <= 1e-10))
+    threshold = jnp.where((jnp.finfo(dalpha).bits < 64), 1e-5, 1e-10)
+    state = state._replace(failed=state.failed | (dalpha <= threshold))
 
     # Cubmin is sometimes nan, though in this case the bounds check will fail.
     a_j_cubic = _cubicmin(state.a_lo, state.phi_lo, state.dphi_lo, state.a_hi,
@@ -127,7 +131,11 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
     a_j = jnp.where(use_quad, a_j_quad, a_j)
     a_j = jnp.where(use_bisection, a_j_bisection, a_j)
 
+    # TODO(jakevdp): should we use some sort of fixed-point approach here instead?
     phi_j, dphi_j, g_j = restricted_func_and_grad(a_j)
+    phi_j = phi_j.astype(state.phi_lo.dtype)
+    dphi_j = dphi_j.astype(state.dphi_lo.dtype)
+    g_j = g_j.astype(state.g_star.dtype)
     state = state._replace(nfev=state.nfev + 1,
                            ngev=state.ngev + 1)
 
@@ -169,9 +177,9 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
             hi_to_lo,
             state._asdict(),
             dict(
-                a_hi=a_lo,
-                phi_hi=phi_lo,
-                dphi_hi=dphi_lo,
+                a_hi=state.a_lo,
+                phi_hi=state.phi_lo,
+                dphi_hi=state.dphi_lo,
                 a_rec=state.a_hi,
                 phi_rec=state.phi_hi,
             ),
@@ -191,11 +199,14 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
         ),
     )
     state = state._replace(j=state.j + 1)
+    # Choose higher cutoff for maxiter than Scipy as Jax takes longer to find
+    # the same value - possibly floating point issues?
+    state = state._replace(failed= state.failed | state.j >= 30)
     return state
 
-  state = while_loop(lambda state: (~state.done) & (~pass_through) & (~state.failed),
-                     body,
-                     state)
+  state = lax.while_loop(lambda state: (~state.done) & (~pass_through) & (~state.failed),
+                         body,
+                         state)
 
   return state
 
@@ -213,7 +224,6 @@ class _LineSearchState(NamedTuple):
   phi_star: Union[float, jnp.ndarray]
   dphi_star: Union[float, jnp.ndarray]
   g_star: jnp.ndarray
-  saddle_point: Union[bool, jnp.ndarray]
 
 
 class _LineSearchResults(NamedTuple):
@@ -261,14 +271,19 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
   """
   def restricted_func_and_grad(t):
     phi, g = jax.value_and_grad(f)(xk + t * pk)
-    dphi = jnp.dot(g, pk)
+    dphi = jnp.real(_dot(g, pk))
     return phi, dphi, g
 
   if old_fval is None or gfk is None:
     phi_0, dphi_0, gfk = restricted_func_and_grad(0.)
   else:
     phi_0 = old_fval
-    dphi_0 = jnp.dot(gfk, pk)
+    dphi_0 = jnp.real(_dot(gfk, pk))
+  if old_old_fval is not None:
+    candidate_start_value = 1.01 * 2 * (phi_0 - old_old_fval) / dphi_0
+    start_value = jnp.where(candidate_start_value > 1, 1.0, candidate_start_value)
+  else:
+    start_value = 1
 
   def wolfe_one(a_i, phi_i):
     # actually negation of W1
@@ -292,18 +307,12 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
       phi_star=phi_0,
       dphi_star=dphi_0,
       g_star=gfk,
-      saddle_point=False,
   )
 
   def body(state):
     # no amax in this version, we just double as in scipy.
     # unlike original algorithm we do our next choice at the start of this loop
-    a_i = jnp.where(state.i == 1, 1., state.a_i1 * 2.)
-    # if a_i <= 0 then something went wrong. In practice any really small step
-    # length is a failure. Likely means the search pk is not good, perhaps we
-    # are at a saddle point.
-    saddle_point = a_i < 1e-5
-    state = state._replace(failed=saddle_point, saddle_point=saddle_point)
+    a_i = jnp.where(state.i == 1, start_value, state.a_i1 * 2.)
 
     phi_i, dphi_i, g_i = restricted_func_and_grad(a_i)
     state = state._replace(nfev=state.nfev + 1,
@@ -379,30 +388,33 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
     state = state._replace(i=state.i + 1, a_i1=a_i, phi_i1=phi_i, dphi_i1=dphi_i)
     return state
 
-  state = while_loop(lambda state: (~state.done) & (state.i <= maxiter) & (~state.failed),
-                     body,
-                     state)
+  state = lax.while_loop(lambda state: (~state.done) & (state.i <= maxiter) & (~state.failed),
+                         body,
+                         state)
 
   status = jnp.where(
-      state.failed & (~state.saddle_point),
+      state.failed,
       jnp.array(1),  # zoom failed
-      jnp.where(
-          state.failed & state.saddle_point,
-          jnp.array(2),  # saddle point reached,
           jnp.where(
               state.i > maxiter,
               jnp.array(3),  # maxiter reached
               jnp.array(0),  # passed (should be)
           ),
-      ),
   )
+  # Step sizes which are too small causes the optimizer to get stuck with a
+  # direction of zero in <64 bit mode - avoid with a floor on minimum step size.
+  alpha_k = state.a_star
+  alpha_k = jnp.where((jnp.finfo(alpha_k).bits != 64)
+                    & (jnp.abs(alpha_k) < 1e-8),
+                      jnp.sign(alpha_k) * 1e-8,
+                      alpha_k)
   results = _LineSearchResults(
       failed=state.failed | (~state.done),
       nit=state.i - 1,  # because iterations started at 1
       nfev=state.nfev,
       ngev=state.ngev,
       k=state.i,
-      a_k=state.a_star,
+      a_k=alpha_k,
       f_k=state.phi_star,
       g_k=state.g_star,
       status=status,

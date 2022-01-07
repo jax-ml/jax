@@ -18,7 +18,7 @@ See README.md for instructions.
 import grpc  # type: ignore[import]
 import json
 import logging
-import requests
+import requests  # type: ignore[import]
 
 from absl import app
 from absl import flags
@@ -46,7 +46,7 @@ flags.DEFINE_string(
     "prediction_service_addr",
     "localhost:8500",
     "Stubby endpoint for the prediction service. If you serve your model "
-    "locally using TensorFlow model server, then you can use \"locahost:8500\""
+    "locally using TensorFlow model server, then you can use \"localhost:8500\""
     "for the gRPC server and \"localhost:8501\" for the HTTP REST server.")
 
 flags.DEFINE_integer("serving_batch_size", 1,
@@ -119,8 +119,8 @@ def main(_):
     running_accuracy = (
         100. * accurate_count / (1 + batch_idx) / FLAGS.serving_batch_size)
     logging.info(
-        f" predicted digits = {predictions_digit} labels {labels_digit}. "
-        f"Running accuracy {running_accuracy:.3f}%")
+        " predicted digits = %s labels %s. Running accuracy %.3f%%",
+        predictions_digit, labels_digit, running_accuracy)
 
 
 if __name__ == "__main__":

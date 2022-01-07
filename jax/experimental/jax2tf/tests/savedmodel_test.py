@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-
 from absl.testing import absltest
+import os
 
 import jax
 from jax import lax
@@ -24,7 +23,7 @@ import tensorflow as tf  # type: ignore[import]
 
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -32,41 +31,17 @@ config.parse_flags_with_absl()
 
 class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
-  def save_and_load_model(self, model: tf.Module) -> tf.Module:
-    # Roundtrip through saved model on disk.
-    model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
-    tf.saved_model.save(model, model_dir)
-    restored_model = tf.saved_model.load(model_dir)
-    return restored_model
-
   def test_eval(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
     model = tf.Module()
     model.f = tf.function(jax2tf.convert(f_jax),
                           autograph=False,
-                          input_signature=[tf.TensorSpec([], tf.float32)])
+                          input_signature=[tf.TensorSpec([], tf.float32)]
+                          )
     x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
-    restored_model = self.save_and_load_model(model)
+    restored_model = tf_test_util.SaveAndLoadModel(model)
     self.assertAllClose(restored_model.f(x), f_jax(x))
-
-  def test_gradient_disabled(self):
-    f_jax = lambda x: x * x
-
-    model = tf.Module()
-    model.f = tf.function(jax2tf.convert(f_jax, with_gradient=False),
-                          autograph=False,
-                          input_signature=[tf.TensorSpec([], tf.float32)])
-    x = np.array(0.7, dtype=jnp.float32)
-    self.assertAllClose(model.f(x), f_jax(x))
-    restored_model = self.save_and_load_model(model)
-    xv = tf.Variable(0.7, dtype=jnp.float32)
-    self.assertAllClose(restored_model.f(x), f_jax(x))
-
-    with self.assertRaisesRegex(LookupError,
-                                "Gradient explicitly disabled.*The jax2tf-converted function does not support gradients"):
-      with tf.GradientTape():
-        _ = restored_model.f(xv)
 
   def test_gradient(self):
     """Save and restore the custom gradient."""
@@ -80,7 +55,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
       x, = primals
       x_dot, = tangents
       primal_out = f_jax(x)
-      tangent_out = 3. * x * x_dot
+      tangent_out = x * x_dot * 3.
       return primal_out, tangent_out
 
     model = tf.Module()
@@ -89,18 +64,172 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
                           input_signature=[tf.TensorSpec([], tf.float32)])
     x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
-    restored_model = self.save_and_load_model(model)
-    xv = tf.Variable(0.7, dtype=jnp.float32)
+    restored_model = tf_test_util.SaveAndLoadModel(model)
+    xv = tf.Variable(x)
     self.assertAllClose(restored_model.f(x), f_jax(x))
     with tf.GradientTape() as tape:
       y = restored_model.f(xv)
+    self.assertAllClose(tape.gradient(y, xv).numpy(),
+                        jax.grad(f_jax)(x))
 
-    # TODO: at the moment TF does not fully-support custom_gradient in a
-    # savedmodel (b/123499169), but at least a warning is printed and an
-    # exception is thrown when gradients are taken. The exception, however,
-    # is a very strange one, for now.
-    with self.assertRaisesRegex(TypeError, "An op outside of the function building code is being passed"):
-      _ = tape.gradient(y, xv)
+  def test_gradient_nested(self):
+    """Save and restore the custom gradient, when combined with other TF code."""
+    @jax.custom_jvp
+    def f_jax(x):
+      return x * x
+
+    @f_jax.defjvp
+    def f_jax_jvp(primals, tangents):
+      # 3 * x * x_t
+      x, = primals
+      x_dot, = tangents
+      primal_out = f_jax(x)
+      tangent_out = x * x_dot * 3.
+      return primal_out, tangent_out
+
+    model = tf.Module()
+    # After conversion, we wrap with some pure TF code
+    model.f = tf.function(lambda x: tf.math.sin(jax2tf.convert(f_jax, with_gradient=True)(x)),
+                          autograph=False,
+                          input_signature=[tf.TensorSpec([], tf.float32)])
+    f_jax_equiv = lambda x: jnp.sin(f_jax(x))
+    x = np.array(0.7, dtype=jnp.float32)
+    self.assertAllClose(model.f(x), f_jax_equiv(x))
+    restored_model = tf_test_util.SaveAndLoadModel(model)
+    xv = tf.Variable(x)
+    self.assertAllClose(restored_model.f(x), f_jax_equiv(x))
+    with tf.GradientTape() as tape:
+      y = restored_model.f(xv)
+    self.assertAllClose(tape.gradient(y, xv).numpy(),
+                        jax.grad(f_jax_equiv)(x))
+
+  def test_gradient_disabled(self):
+    f_jax = lambda x: x * x
+
+    model = tf.Module()
+    model.f = tf.function(jax2tf.convert(f_jax, with_gradient=False),
+                          autograph=False,
+                          input_signature=[tf.TensorSpec([], tf.float32)])
+    x = np.array(0.7, dtype=jnp.float32)
+    self.assertAllClose(model.f(x), f_jax(x))
+    restored_model = tf_test_util.SaveAndLoadModel(model)
+    xv = tf.Variable(0.7, dtype=jnp.float32)
+    self.assertAllClose(restored_model.f(x), f_jax(x))
+
+    with self.assertRaisesRegex(LookupError,
+                                "Gradient explicitly disabled.*The jax2tf-converted function does not support gradients"):
+      with tf.GradientTape():
+        _ = restored_model.f(xv)
+
+  def test_save_without_gradients(self):
+    f_jax = lambda x: x * x
+
+    x = np.array(0.7, dtype=jnp.float32)
+    model = tf.Module()
+    model.f = tf.function(jax2tf.convert(f_jax, with_gradient=True),
+                          autograph=False,
+                          input_signature=[tf.TensorSpec(x.shape, x.dtype)])
+
+    self.assertAllClose(model.f(x), f_jax(x))
+    restored_model = tf_test_util.SaveAndLoadModel(model,
+                                                   save_gradients=False)
+    self.assertAllClose(restored_model.f(x), f_jax(x))
+
+    xv = tf.Variable(x)
+    with tf.GradientTape():
+      _ = restored_model.f(xv)
+      # TODO: clean this up b/191117111: it should fail with a clear error
+      # The following results in a confusing error:
+      # TypeError: An op outside of the function building code is being passed
+      # a "Graph" tensor. It is possible to have Graph tensors
+      # leak out of the function building context by including a
+      # tf.init_scope in your function building code.
+      # For example, the following function will fail:
+      #   @tf.function
+      #   def has_init_scope():
+      #     my_constant = tf.constant(1.)
+      #     with tf.init_scope():
+      #       added = my_constant * 2
+      # The graph tensor has name: args_0:0
+      # g = tape.gradient(res, xv)
+    #self.assertAllClose(g.numpy(), jax.grad(f_jax)(x))
+
+  def test_save_without_embedding_params(self):
+    def model_jax(params, inputs):
+      return params[0] + params[1] * inputs
+
+    params = (np.array(1.0, dtype=jnp.float32),
+              np.array(2.0, dtype=jnp.float32))
+    params_vars = tf.nest.map_structure(tf.Variable, params)
+
+    prediction_tf = lambda x: jax2tf.convert(model_jax)(params_vars, x)
+
+    model = tf.Module()
+    model._variables = tf.nest.flatten(params_vars)
+    model.f = tf.function(prediction_tf, jit_compile=True)
+
+    x = np.array(0.7, dtype=jnp.float32)
+    self.assertAllClose(model.f(x), model_jax(params, x))
+    restored_model = tf_test_util.SaveAndLoadModel(model,
+                                                   save_gradients=False)
+    self.assertAllClose(restored_model.f(x), model_jax(params, x))
+
+
+  def test_save_grad_integers(self):
+    # https://github.com/google/jax/issues/7123
+    # In the end this is a test that does not involve JAX at all
+    batch_size = 5
+    state = np.array([1], dtype=np.int32)  # Works if float32
+    params = np.ones((3, 3), dtype=np.float32)
+
+    # params: f32[3, 3], state: i32[1]
+    # returns f32[5, 2] constant, and the state
+    def tf_predict(params, state):
+      # state = tf.cast(state, tf.float32)
+      # Setup a custom-gradient, like jax2tf would
+      @tf.custom_gradient
+      def converted_fun_with_custom_gradient(params, state):
+        res_out = tf.zeros((batch_size, 2), dtype=tf.float32)
+        state_out = state  # tf.zeros((4, 4), np.int32),
+
+        return ((res_out, state_out), converted_grad_fn)
+
+      def converted_grad_fn(res_out_ct, state_out_ct, variables=None):
+        # The gradients for params and the state
+        return tf.zeros(params.shape, dtype=params.dtype), state_out_ct
+
+      res, state_out = converted_fun_with_custom_gradient(params, state)
+      # state_out = tf.cast(state_out, tf.int32)
+      return res, state_out
+
+    # Compute the gradient before saving. This works!
+    params_v = tf.Variable(params)
+    with tf.GradientTape() as tape:
+      preds = tf_predict(params_v, state)[0]
+      loss = tf.reduce_mean(preds)
+      g = tape.gradient(loss, params_v)
+    self.assertAllClose(g.numpy(), np.zeros(params.shape, dtype=params.dtype))
+
+    # TF -> SavedModel
+    model = tf.Module()
+    model.fn = tf.function(tf_predict, autograph=False)
+    model.fn.get_concrete_function(
+        tf.TensorSpec(params.shape, params.dtype),
+        tf.TensorSpec(state.shape, state.dtype))
+    save_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
+    options = tf.saved_model.SaveOptions(experimental_custom_gradients=True)
+    _ = tf.saved_model.save(model, save_dir, options=options)
+    restored_module = tf.saved_model.load(save_dir)
+
+    # It seems that saving and reloading is important
+    restored_fn = restored_module.fn
+
+    # Compute the gradients after saving and restoring. Fails!
+    with tf.GradientTape() as tape:
+      preds = restored_fn(params_v, state)[0]
+      loss = tf.reduce_mean(preds)
+      g = tape.gradient(loss, params_v)
+    self.assertAllClose(g.numpy(), np.zeros(params.shape, dtype=params.dtype))
 
   def _compare_with_saved_model(self, f_jax, *args):
     # Certain ops are converted to ensure an XLA context, e.g.,
@@ -108,14 +237,8 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     # JAX. We check that this information is preserved through a savedmodel
     f_tf = jax2tf.convert(f_jax)
     res = f_tf(*args)
-
-    model = tf.Module()
-    input_signature = list(tf.TensorSpec(a.shape, a.dtype) for a in args)
-    model.f = tf.function(f_tf,
-                          autograph=False,
-                          input_signature=input_signature)
-    restored_model = self.save_and_load_model(model)
-    res_restored = restored_model.f(*args)
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, input_args=args)
+    res_restored = restored_f(*args)
     self.assertAllClose(res, res_restored)
 
   def test_xla_context_preserved_slice(self):
@@ -129,6 +252,42 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
       return arr[100]  # out of bounds, should return the last element
     arr = np.arange(10, dtype=np.float32)
     self._compare_with_saved_model(f_jax, arr)
+
+  # Test does not work on GPU/TPU; would need something like TPU inference
+  # converter to separate the model on what needs to run on CPU or accelerator.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def test_tf_mix_jax_with_uncompileable(self):
+    """Show how to combine TF-uncompileable code with compiled JAX-converted code."""
+    def tf_fn(x_str, compute_tf_fn=lambda x: x):
+      # Some TF preprocessing code that cannot be compiled with XLA because it
+      # uses strings.
+      numbers_f32 = tf.strings.to_number(x_str, out_type=tf.float32)
+      numbers_f16 = tf.cast(numbers_f32, tf.float16)
+      return compute_tf_fn(numbers_f16)
+
+    x_str = np.array(["3.14", "2.78"])
+
+    # Test that we get an error if we try to TF-compile `tf_fn`
+    with self.assertRaisesRegex(
+        Exception,
+        "Detected unsupported operations when trying to compile graph"):
+      tf.function(tf_fn, jit_compile=True)(x_str)
+
+    # Plug in the TF-compiled JAX-converted `compute_jax_fn`.
+    composed_fn = lambda x_str: tf_fn(
+        x_str,
+        compute_tf_fn=tf.function(jax2tf.convert(jnp.sin),
+                                  autograph=True,
+                                  jit_compile=True))
+    res_tf = composed_fn(x_str)
+    self.assertAllClose(res_tf.numpy(),
+                        jnp.sin(np.array([3.14, 2.78], dtype=np.float16)))
+
+    # Save and restore SavedModel
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(composed_fn,
+                                                     input_args=[x_str])
+    res_tf_restored = restored_f(x_str)
+    self.assertAllClose(res_tf_restored.numpy(), res_tf.numpy())
 
 
 if __name__ == "__main__":

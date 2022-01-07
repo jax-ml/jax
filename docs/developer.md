@@ -24,7 +24,7 @@ pip install jaxlib
 ```
 
 See the [JAX readme](https://github.com/google/jax#installation) for full
-guidance on pip installation (e.g., for GPU support).
+guidance on pip installation (e.g., for GPU and TPU support).
 
 ### Building `jaxlib` from source
 
@@ -42,7 +42,7 @@ To build `jaxlib` from source, you must also install some prerequisites:
   are installed.
 
   See below for Windows build instructions.
-* Python packages: `numpy`, `scipy`, `six`, `wheel`.
+* Python packages: `numpy`, `six`, `wheel`.
 
   The `six` package is required for during the jaxlib build only, and is not
   required at install time.
@@ -50,7 +50,7 @@ To build `jaxlib` from source, you must also install some prerequisites:
 You can install the necessary Python dependencies using `pip`:
 
 ```
-pip install numpy scipy six wheel
+pip install numpy six wheel
 ```
 
 To build `jaxlib` with CUDA support, you can run:
@@ -85,15 +85,16 @@ You can either install Python using its
 [Windows installer](https://www.python.org/downloads/), or if you prefer, you
 can use [Anaconda](https://docs.anaconda.com/anaconda/install/windows/)
 or [Miniconda](https://docs.conda.io/en/latest/miniconda.html#windows-installers)
-to setup a Python environment.
+to set up a Python environment.
 
 Some targets of Bazel use bash utilities to do scripting, so [MSYS2](https://www.msys2.org)
 is needed. See [Installing Bazel on Windows](https://docs.bazel.build/versions/master/install-windows.html#installing-compilers-and-language-runtimes)
 for more details. Install the following packages:
 
 ```
-pacman -S patch realpath
+pacman -S patch coreutils
 ```
+Once coreutils is installed, the realpath command should be present in your shell's path.
 
 Once everything is installed. Open PowerShell, and make sure MSYS2 is in the
 path of the current session. Ensure `bazel`, `patch` and `realpath` are
@@ -105,7 +106,6 @@ python .\build\build.py `
   --enable_cuda `
   --cuda_path='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1' `
   --cudnn_path='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1' `
-  --cuda_compute_capabilities='6.1' `
   --cuda_version='10.1' `
   --cudnn_version='7.6.5'
 ```
@@ -131,7 +131,7 @@ sets up symbolic links from site-packages into the repository.
 
 To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
 parallel. First, install `pytest-xdist` and `pytest-benchmark` by running
-`ip install -r build/test-requirements.txt`.
+`pip install -r build/test-requirements.txt`.
 Then, from the repository root directory run:
 
 ```
@@ -174,7 +174,7 @@ python tests/lax_numpy_test.py --test_targets="testPad"
 
 The Colab notebooks are tested for errors as part of the documentation build.
 
-Note that to run the full pmap tests on a (multi-core) CPU only machine, you
+Note that to run the full pmap tests on a (multi-core) CPU-only machine, you
 can run:
 
 ```
@@ -187,7 +187,7 @@ single-core worker.
 # Type checking
 
 We use `mypy` to check the type hints. To check types locally the same way
-as Travis checks them:
+as the CI checks them:
 
 ```
 pip install mypy
@@ -266,7 +266,7 @@ desired formats, and which the `jupytext --sync` command recognizes when invoked
 
 ### Notebooks within the sphinx build
 
-Some of the notebooks are built automatically as part of the Travis pre-submit checks and
+Some of the notebooks are built automatically as part of the pre-submit checks and
 as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
 The build will fail if cells raise errors. If the errors are intentional, you can either catch them,
 or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/google/jax/pull/2402/files)).
@@ -274,15 +274,15 @@ You have to add this metadata by hand in the `.ipynb` file. It will be preserved
 re-saves the notebook.
 
 We exclude some notebooks from the build, e.g., because they contain long computations.
-See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/master/docs/conf.py).
+See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/main/docs/conf.py).
 
 ## Documentation building on readthedocs.io
 
-JAX's auto-generated documentations is at <https://jax.readthedocs.io/>.
+JAX's auto-generated documentation is at <https://jax.readthedocs.io/>.
 
 The documentation building is controlled for the entire project by the
 [readthedocs JAX settings](https://readthedocs.org/dashboard/jax). The current settings
-trigger a documentation build as soon as code is pushed to the GitHub `master` branch.
+trigger a documentation build as soon as code is pushed to the GitHub `main` branch.
 For each code version, the building process is driven by the
 `.readthedocs.yml` and the `docs/conf.py` configuration files.
 

@@ -87,7 +87,7 @@ skip_app.defvjp(skip_app_fwd, skip_app_bwd)
 ## Explanation
 
 Passing `Tracer`s into `nondiff_argnums` arguments was always buggy. While there
-were some cases which worked correctly, others would lead to complex and
+were some cases that worked correctly, others would lead to complex and
 confusing error messages.
 
 The essence of the bug was that `nondiff_argnums` was implemented in a way that

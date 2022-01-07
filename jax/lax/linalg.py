@@ -29,4 +29,13 @@ from jax._src.lax.linalg import (
   svd_p,
   triangular_solve,
   triangular_solve_p,
+  tridiagonal_solve,
+  tridiagonal_solve_p,
+  schur,
+  schur_p
+)
+
+
+from jax._src.lax.qdwh import (
+  qdwh as qdwh
 )

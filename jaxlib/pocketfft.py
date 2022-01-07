@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# flatbuffers needs importlib.util but fails to import it itself.
+import importlib.util  # noqa: F401
 from typing import List
 
 from . import _pocketfft
 from . import pocketfft_flatbuffers_py_generated as pd
 import numpy as np
+
 
 import flatbuffers
 from jaxlib import xla_client

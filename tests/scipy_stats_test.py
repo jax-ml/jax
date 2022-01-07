@@ -21,8 +21,8 @@ import numpy as np
 import scipy as osp
 import scipy.stats as osp_stats
 
-from jax._src import api
-from jax import test_util as jtu
+import jax
+from jax._src import test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
@@ -148,6 +148,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker,
                           rtol={np.float32: 2e-3, np.float64: 1e-4})
 
+  def testBetaLogPdfZero(self):
+    # Regression test for https://github.com/google/jax/issues/7645
+    a = b = 1.
+    x = np.array([0., 1.])
+    self.assertAllClose(
+      osp_stats.beta.pdf(x, a, b), lsp_stats.beta.pdf(x, a, b), atol=1E-6)
+
   @genNamedParametersNArgs(3)
   def testCauchyLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -230,6 +237,30 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=5e-4)
     self._CompileAndCheck(lax_fun, args_maker)
+
+  def testGammaLogPdfZero(self):
+    # Regression test for https://github.com/google/jax/issues/7256
+    self.assertAllClose(
+      osp_stats.gamma.pdf(0.0, 1.0), lsp_stats.gamma.pdf(0.0, 1.0), atol=1E-6)
+
+  @genNamedParametersNArgs(4)
+  def testNBinomLogPmf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.nbinom.logpmf
+    lax_fun = lsp_stats.nbinom.logpmf
+
+    def args_maker():
+      k, n, logit, loc = map(rng, shapes, dtypes)
+      k = np.floor(np.abs(k))
+      n = np.ceil(np.abs(n))
+      p = expit(logit)
+      loc = np.floor(loc)
+      return [k, n, p, loc]
+
+    tol = {np.float32: 1e-6, np.float64: 1e-8}
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=5e-4)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
 
   @genNamedParametersNArgs(3)
   def testLaplaceLogPdf(self, shapes, dtypes):
@@ -497,13 +528,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(3,), (3,), ()],
           [(3,), (3,), (3, 3)],
           [(3, 4), (4,), (4, 4)],
-
-          # # These test cases are where scipy flattens things, which has
-          # # different batch semantics than some might expect
-          # [(5, 3, 2), (5, 3, 2,), ()],
-          # [(5, 3, 2), (5, 3, 2,), (5, 3, 2, 2)],
-          # [(5, 3, 2), (3, 2,), (5, 3, 2, 2)],
-          # [(5, 3, 2), (3, 2,), (2, 2)],
+          [(2, 3, 4), (4,), (4, 4)],
       ]
       for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
       if (mean_shape is not None or mean_dtype == np.float32)
@@ -530,6 +555,56 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_x={}_mean={}_cov={}".format(
+          jtu.format_shape_dtype_string(x_shape, x_dtype),
+          jtu.format_shape_dtype_string(mean_shape, mean_dtype)
+          if mean_shape is not None else None,
+          jtu.format_shape_dtype_string(cov_shape, cov_dtype)
+          if cov_shape is not None else None),
+       "x_shape": x_shape, "x_dtype": x_dtype,
+       "mean_shape": mean_shape, "mean_dtype": mean_dtype,
+       "cov_shape": cov_shape, "cov_dtype": cov_dtype}
+      for x_shape, mean_shape, cov_shape in [
+          # These test cases are where scipy flattens things, which has
+          # different batch semantics than some might expect, so we manually
+          # vectorize scipy's outputs for the sake of testing.
+          [(5, 3, 2), (5, 3, 2), (5, 3, 2, 2)],
+          [(2,), (5, 3, 2), (5, 3, 2, 2)],
+          [(5, 3, 2), (2,), (5, 3, 2, 2)],
+          [(5, 3, 2), (5, 3, 2,), (2, 2)],
+          [(1, 3, 2), (3, 2,), (5, 1, 2, 2)],
+          [(5, 3, 2), (1, 2,), (2, 2)],
+      ]
+      for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
+      if (mean_shape is not None or mean_dtype == np.float32)
+      and (cov_shape is not None or cov_dtype == np.float32)))
+  def testMultivariateNormalLogpdfBroadcasted(self, x_shape, x_dtype, mean_shape,
+                                              mean_dtype, cov_shape, cov_dtype):
+    rng = jtu.rand_default(self.rng())
+    def args_maker():
+      args = [rng(x_shape, x_dtype)]
+      if mean_shape is not None:
+        args.append(5 * rng(mean_shape, mean_dtype))
+      if cov_shape is not None:
+        if cov_shape == ():
+          args.append(0.1 + rng(cov_shape, cov_dtype) ** 2)
+        else:
+          factor_shape = (*cov_shape[:-1], 2 * cov_shape[-1])
+          factor = rng(factor_shape, cov_dtype)
+          args.append(np.matmul(factor, np.swapaxes(factor, -1, -2)))
+      return args
+
+    osp_fun = np.vectorize(osp_stats.multivariate_normal.logpdf,
+                           signature="(n),(n),(n,n)->()")
+
+    self._CheckAgainstNumpy(osp_fun, lsp_stats.multivariate_normal.logpdf,
+                            args_maker, tol=1e-3)
+    self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
+                          rtol=1e-4, atol=1e-4)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_ndim={}_nbatch={}_dtype={}".format(ndim, nbatch, dtype.__name__),
        "ndim": ndim, "nbatch": nbatch, "dtype": dtype}
@@ -545,7 +620,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     cov = factor @ factor.transpose(0, 2, 1)
 
     result1 = lsp_stats.multivariate_normal.logpdf(x, mean, cov)
-    result2 = api.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
+    result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
     self.assertArraysEqual(result1, result2)
 
 

@@ -14,7 +14,7 @@
 
 # Helpers for indexed updates.
 
-
+import warnings
 import sys
 from typing import Any, Callable, Optional, Sequence, Tuple, Union
 
@@ -22,13 +22,14 @@ import numpy as np
 
 from jax import core
 from jax import lax
+from jax._src import dtypes
 from jax._src.numpy import lax_numpy as jnp
 from jax._src import util
 
 
 Array = Any
 if sys.version_info >= (3, 10):
-    from typing import EllipsisType
+    from types import EllipsisType
     SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
 else:
     SingleIndex = Union[None, int, slice, Sequence[int], Array]
@@ -38,7 +39,7 @@ Numeric = Union[Array, Scalar]
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
-                    unique_indices, normalize_indices=True):
+                    unique_indices, mode=None, normalize_indices=True):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -64,22 +65,31 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
   y = jnp.asarray(y)
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
-  treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx)
+  treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx, x.shape)
   return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                       indices_are_sorted, unique_indices, normalize_indices)
+                       indices_are_sorted, unique_indices, mode,
+                       normalize_indices)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
 def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                  indices_are_sorted, unique_indices, normalize_indices):
+                  indices_are_sorted, unique_indices, mode,
+                  normalize_indices):
   dtype = lax.dtype(x)
-  x, y = jnp._promote_dtypes(x, y)
+  weak_type = dtypes.is_weakly_typed(x)
 
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
                                  normalize_indices=normalize_indices)
+
+  # Avoid calling scatter if the slice shape is empty, both as a fast path and
+  # to handle cases like zeros(0)[array([], int32)].
+  if core.is_empty_shape(indexer.slice_shape):
+    return x
+
+  x, y = jnp._promote_dtypes(x, y)
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
@@ -95,14 +105,20 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     inserted_window_dims=indexer.dnums.collapsed_slice_dims,
     scatter_dims_to_operand_dims=indexer.dnums.start_index_map
   )
-  out = scatter_op(x, indexer.gather_indices, y, dnums,
-                   indices_are_sorted=indices_are_sorted,
-                   unique_indices=unique_indices)
-  return lax.convert_element_type(out, dtype)
+  out = scatter_op(
+    x, indexer.gather_indices, y, dnums,
+    indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
+    unique_indices=indexer.unique_indices or unique_indices,
+    mode=mode)
+  return lax._convert_element_type(out, dtype, weak_type)
 
 
 class _Indexable(object):
   """Helper object for building indexes for indexed update functions.
+
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`. If an explicit index
+     is needed, use :func:`jax.numpy.index_exp`.
 
   This is a singleton object that overrides the :code:`__getitem__` method
   to return the index it is passed.
@@ -125,6 +141,9 @@ def index_add(x: Array,
               indices_are_sorted: bool = False,
               unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] += y`.
+
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -155,13 +174,15 @@ def index_add(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_add(x, jax.ops.index[2:4, 3:], 6.)
+  >>> jax.ops.index_add(x, jnp.index_exp[2:4, 3:], 6.)
   DeviceArray([[1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 7., 7., 7.],
                [1., 1., 1., 7., 7., 7.],
                [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
+  warnings.warn("index_add is deprecated. Use x.at[idx].add(y) instead.",
+                DeprecationWarning)
   return _scatter_update(
       x, idx, y, lax.scatter_add, indices_are_sorted, unique_indices)
 
@@ -172,6 +193,9 @@ def index_mul(x: Array,
               indices_are_sorted: bool = False,
               unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] *= y`.
+
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -202,13 +226,15 @@ def index_mul(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_mul(x, jax.ops.index[2:4, 3:], 6.)
+  >>> jax.ops.index_mul(x, jnp.index_exp[2:4, 3:], 6.)
   DeviceArray([[1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
+  warnings.warn("index_mul is deprecated. Use x.at[idx].mul(y) instead.",
+                DeprecationWarning)
   return _scatter_update(x, idx, y, lax.scatter_mul,
                          indices_are_sorted, unique_indices)
 
@@ -219,6 +245,9 @@ def index_min(x: Array,
               indices_are_sorted: bool = False,
               unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
+
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -247,13 +276,15 @@ def index_min(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_min(x, jax.ops.index[2:4, 3:], 0.)
+  >>> jax.ops.index_min(x, jnp.index_exp[2:4, 3:], 0.)
   DeviceArray([[1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 0., 0., 0.],
                [1., 1., 1., 0., 0., 0.],
                [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
+  warnings.warn("index_min is deprecated. Use x.at[idx].min(y) instead.",
+                DeprecationWarning)
   return _scatter_update(
       x, idx, y, lax.scatter_min, indices_are_sorted, unique_indices)
 
@@ -263,6 +294,9 @@ def index_max(x: Array,
               indices_are_sorted: bool = False,
               unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
+
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -291,13 +325,15 @@ def index_max(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_max(x, jax.ops.index[2:4, 3:], 6.)
+  >>> jax.ops.index_max(x, jnp.index_exp[2:4, 3:], 6.)
   DeviceArray([[1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
+  warnings.warn("index_max is deprecated. Use x.at[idx].max(y) instead.",
+                DeprecationWarning)
   return _scatter_update(
       x, idx, y, lax.scatter_max, indices_are_sorted, unique_indices)
 
@@ -307,6 +343,9 @@ def index_update(x: Array,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = y`.
+
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -336,13 +375,15 @@ def index_update(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_update(x, jax.ops.index[::2, 3:], 6.)
+  >>> jax.ops.index_update(x, jnp.index_exp[::2, 3:], 6.)
   DeviceArray([[1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 6., 6., 6.]], dtype=float32)
   """
+  warnings.warn("index_update is deprecated. Use x.at[idx].set(y) instead.",
+                DeprecationWarning)
   return _scatter_update(
       x, idx, y, lax.scatter, indices_are_sorted, unique_indices)
 
@@ -373,8 +414,10 @@ def _segment_update(name: str,
                     indices_are_sorted: bool = False,
                     unique_indices: bool = False,
                     bucket_size: Optional[int] = None,
-                    reducer: Optional[Callable] = None) -> Array:
+                    reducer: Optional[Callable] = None,
+                    mode: Optional[lax.GatherScatterMode] = None) -> Array:
   jnp._check_arraylike(name, data, segment_ids)
+  mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
   segment_ids = jnp.asarray(segment_ids)
   dtype = data.dtype
@@ -391,7 +434,7 @@ def _segment_update(name: str,
   if num_buckets == 1:
     return _scatter_update(
       out, segment_ids, data, scatter_op, indices_are_sorted,
-      unique_indices, normalize_indices=False)
+      unique_indices, normalize_indices=False, mode=mode)
 
   # Bucketize indices and perform segment_update on each bucket to improve
   # numerical stability for operations like product and sum.
@@ -411,7 +454,8 @@ def segment_sum(data: Array,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None) -> Array:
+                bucket_size: Optional[int] = None,
+                mode: Optional[lax.GatherScatterMode] = None) -> Array:
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's `segment_sum
@@ -421,8 +465,7 @@ def segment_sum(data: Array,
     data: an array with the values to be summed.
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be summed. Values can be repeated and
-      need not be sorted. Values outside of the range [0, num_segments) are
-      dropped and do not contribute to the sum.
+      need not be sorted.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -434,6 +477,9 @@ def segment_sum(data: Array,
     bucket_size: size of bucket to group indices into. ``segment_sum`` is
       performed on each bucket separately to improve numerical stability of
       addition. Default ``None`` means no bucketing.
+    mode: a :class:`jax.lax.GatherScatterMode` value describing how
+      out-of-bounds indices should be handled. By default, values outside of the
+      range [0, num_segments) are dropped and do not contribute to the sum.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -453,8 +499,9 @@ def segment_sum(data: Array,
     >>> jit(segment_sum, static_argnums=2)(data, segment_ids, 3)
     DeviceArray([1, 5, 4], dtype=int32)
   """
-  return _segment_update("segment_sum", data, segment_ids, lax.scatter_add, num_segments,
-                         indices_are_sorted, unique_indices, bucket_size, jnp.sum)
+  return _segment_update(
+      "segment_sum", data, segment_ids, lax.scatter_add, num_segments,
+      indices_are_sorted, unique_indices, bucket_size, jnp.sum, mode=mode)
 
 
 def segment_prod(data: Array,
@@ -462,7 +509,8 @@ def segment_prod(data: Array,
                  num_segments: Optional[int] = None,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False,
-                 bucket_size: Optional[int] = None) -> Array:
+                 bucket_size: Optional[int] = None,
+                 mode: Optional[lax.GatherScatterMode] = None) -> Array:
   """Computes the product within segments of an array.
 
   Similar to TensorFlow's `segment_prod
@@ -485,6 +533,9 @@ def segment_prod(data: Array,
     bucket_size: size of bucket to group indices into. ``segment_prod`` is
       performed on each bucket separately to improve numerical stability of
       addition. Default ``None`` means no bucketing.
+    mode: a :class:`jax.lax.GatherScatterMode` value describing how
+      out-of-bounds indices should be handled. By default, values outside of the
+      range [0, num_segments) are dropped and do not contribute to the sum.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -504,8 +555,9 @@ def segment_prod(data: Array,
     >>> jit(segment_prod, static_argnums=2)(data, segment_ids, 3)
     DeviceArray([ 0,  6, 20], dtype=int32)
   """
-  return _segment_update("segment_prod", data, segment_ids, lax.scatter_mul, num_segments,
-                         indices_are_sorted, unique_indices, bucket_size, jnp.prod)
+  return _segment_update(
+      "segment_prod", data, segment_ids, lax.scatter_mul, num_segments,
+      indices_are_sorted, unique_indices, bucket_size, jnp.prod, mode=mode)
 
 
 def segment_max(data: Array,
@@ -513,7 +565,8 @@ def segment_max(data: Array,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None) -> Array:
+                bucket_size: Optional[int] = None,
+                mode: Optional[lax.GatherScatterMode] = None) -> Array:
   """Computes the maximum within segments of an array.
 
   Similar to TensorFlow's `segment_max
@@ -535,6 +588,9 @@ def segment_max(data: Array,
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. ``segment_max`` is
       performed on each bucket separately. Default ``None`` means no bucketing.
+    mode: a :class:`jax.lax.GatherScatterMode` value describing how
+      out-of-bounds indices should be handled. By default, values outside of the
+      range [0, num_segments) are dropped and do not contribute to the sum.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -554,8 +610,9 @@ def segment_max(data: Array,
     >>> jit(segment_max, static_argnums=2)(data, segment_ids, 3)
     DeviceArray([1, 3, 5], dtype=int32)
   """
-  return _segment_update("segment_max", data, segment_ids, lax.scatter_max, num_segments,
-                         indices_are_sorted, unique_indices, bucket_size, jnp.max)
+  return _segment_update(
+      "segment_max", data, segment_ids, lax.scatter_max, num_segments,
+      indices_are_sorted, unique_indices, bucket_size, jnp.max, mode=mode)
 
 
 def segment_min(data: Array,
@@ -563,7 +620,8 @@ def segment_min(data: Array,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None) -> Array:
+                bucket_size: Optional[int] = None,
+                mode: Optional[lax.GatherScatterMode] = None) -> Array:
   """Computes the minimum within segments of an array.
 
   Similar to TensorFlow's `segment_min
@@ -585,6 +643,9 @@ def segment_min(data: Array,
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. ``segment_min`` is
       performed on each bucket separately. Default ``None`` means no bucketing.
+    mode: a :class:`jax.lax.GatherScatterMode` value describing how
+      out-of-bounds indices should be handled. By default, values outside of the
+      range [0, num_segments) are dropped and do not contribute to the sum.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -604,5 +665,6 @@ def segment_min(data: Array,
     >>> jit(segment_min, static_argnums=2)(data, segment_ids, 3)
     DeviceArray([0, 2, 4], dtype=int32)
   """
-  return _segment_update("segment_min", data, segment_ids, lax.scatter_min, num_segments,
-                         indices_are_sorted, unique_indices, bucket_size, jnp.min)
+  return _segment_update(
+      "segment_min", data, segment_ids, lax.scatter_min, num_segments,
+      indices_are_sorted, unique_indices, bucket_size, jnp.min, mode=mode)

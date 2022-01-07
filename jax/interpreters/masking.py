@@ -22,12 +22,12 @@ from typing import Callable, Dict, Optional, Sequence, Union, Tuple
 
 import numpy as np
 
-from .. import core
-from .._src import dtypes
-from ..tree_util import tree_unflatten
-from ..core import ShapedArray, Trace, Tracer
-from .._src.util import safe_map, safe_zip, unzip2, prod, wrap_name
-from .. import linear_util as lu
+from jax import core
+from jax._src import dtypes
+from jax.tree_util import tree_unflatten
+from jax.core import ShapedArray, Trace, Tracer
+from jax._src.util import safe_map, safe_zip, unzip2, prod, wrap_name
+from jax import linear_util as lu
 
 map = safe_map
 zip = safe_zip
@@ -322,6 +322,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
 
 
 core._SPECIAL_DIMENSION_HANDLERS[Poly] = DimensionHandlerPoly()
+dtypes.python_scalar_dtypes[Poly] = dtypes.python_scalar_dtypes[int]
 
 class Mon(dict):
   # TODO: move this before Poly in the file
@@ -458,7 +459,8 @@ class MaskTracer(Tracer):
 
   @property
   def aval(self):
-    return ShapedArray(self.polymorphic_shape, self.dtype)
+    return ShapedArray(self.polymorphic_shape,
+                       dtypes.canonicalize_dtype(self.dtype))
 
   @property
   def dtype(self):

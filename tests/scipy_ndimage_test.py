@@ -22,7 +22,7 @@ from absl.testing import parameterized
 import scipy.ndimage as osp_ndimage
 
 from jax import grad
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import dtypes
 from jax.scipy import ndimage as lsp_ndimage
 from jax._src.util import prod
@@ -57,6 +57,7 @@ def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
   return result
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NdimageTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -73,7 +74,7 @@ class NdimageTest(jtu.JaxTestCase):
       for dtype in float_dtypes + int_dtypes
       for coords_dtype in float_dtypes
       for order in [0, 1]
-      for mode in ['wrap', 'constant', 'nearest']
+      for mode in ['wrap', 'constant', 'nearest', 'mirror', 'reflect']
       for cval in ([0, -1] if mode == 'constant' else [0])
       for impl, rng_factory in [
           ("original", partial(jtu.rand_uniform, low=0, high=1)),
@@ -110,7 +111,7 @@ class NdimageTest(jtu.JaxTestCase):
       lsp_ndimage.map_coordinates(x, c, order=2)
     with self.assertRaisesRegex(
         NotImplementedError, 'does not yet support mode'):
-      lsp_ndimage.map_coordinates(x, c, order=1, mode='reflect')
+      lsp_ndimage.map_coordinates(x, c, order=1, mode='grid-wrap')
     with self.assertRaisesRegex(ValueError, 'sequence of length'):
       lsp_ndimage.map_coordinates(x, [c, c], order=1)
 

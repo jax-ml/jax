@@ -40,9 +40,18 @@ parser.add_argument(
   default=None,
   required=True,
   help="Path to which the output wheel should be written. Required.")
+parser.add_argument(
+  "--cpu",
+  default=None,
+  required=True,
+  help="Target CPU architecture. Required.")
 args = parser.parse_args()
 
 r = runfiles.Create()
+
+
+def _is_mac():
+  return platform.system() == "Darwin"
 
 
 def _is_windows():
@@ -95,13 +104,8 @@ def patch_copy_xla_extension_stubs(dst_dir):
   # type stubs.
   with open(os.path.join(dst_dir, "py.typed"), "w"):
     pass
-  # The -stubs suffix is required by PEP-561.
-  xla_extension_dir = os.path.join(dst_dir, "xla_extension-stubs")
+  xla_extension_dir = os.path.join(dst_dir, "xla_extension")
   os.makedirs(xla_extension_dir)
-  # Create a dummy __init__.py to convince setuptools that
-  # xla_extension-stubs is a package.
-  with open(os.path.join(xla_extension_dir, "__init__.py"), "w"):
-    pass
   for stub_name in _XLA_EXTENSION_STUBS:
     with open(r.Rlocation(
         "org_tensorflow/tensorflow/compiler/xla/python/xla_extension/" + stub_name)) as f:
@@ -145,18 +149,20 @@ def verify_mac_libraries_dont_reference_chkstack():
 
   This check makes sure we don't release wheels that have this dependency.
   """
-  if platform.system() != "Darwin":
+  if not _is_mac():
     return
   nm = subprocess.run(
     ["nm", "-g",
      r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so")
-     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    ],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    check=False)
   if nm.returncode != 0:
     raise RuntimeError(f"nm process failed: {nm.stdout} {nm.stderr}")
   if "____chkstk_darwin" in nm.stdout:
-      raise RuntimeError(
-        "Mac wheel incorrectly depends on symbol ____chkstk_darwin, which "
-        "means that it isn't compatible with older MacOS versions.")
+    raise RuntimeError(
+      "Mac wheel incorrectly depends on symbol ____chkstk_darwin, which "
+      "means that it isn't compatible with older MacOS versions.")
 
 
 def prepare_wheel(sources_path):
@@ -172,20 +178,22 @@ def prepare_wheel(sources_path):
   copy_file(r.Rlocation("__main__/jaxlib/setup.cfg"), dst_dir=sources_path)
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/init.py"),
                  dst_filename="__init__.py")
-  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/lapack.so"))
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cpu_feature_guard.so"))
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/lapack.py"))
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_lapack.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_pocketfft.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft.py"))
-  if r.Rlocation("__main__/jaxlib/cusolver_kernels.so") is not None:
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.so"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.so"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.so"))
-  if r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd") is not None:
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.pyd"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.pyd"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.pyd"))
+  if r.Rlocation("__main__/jaxlib/_cusolver.so") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cusolver.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cublas.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cuda_linalg.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cuda_prng.so"))
+  if r.Rlocation("__main__/jaxlib/_cusolver.pyd") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cusolver.pyd"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cublas.pyd"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cuda_linalg.pyd"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cuda_prng.pyd"))
   if r.Rlocation("__main__/jaxlib/cusolver.py") is not None:
     libdevice_dir = os.path.join(jaxlib_dir, "cuda", "nvvm", "libdevice")
     os.makedirs(libdevice_dir)
@@ -197,14 +205,44 @@ def prepare_wheel(sources_path):
   if r.Rlocation("__main__/jaxlib/rocblas_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocblas_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocsolver.py"))
-  if r.Rlocation("__main__/jaxlib/cusparse_kernels.so") is not None:
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse_kernels.so"))
+  if r.Rlocation("__main__/jaxlib/_cusparse.so") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cusparse.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/version.py"))
 
+  mlir_dir = os.path.join(jaxlib_dir, "mlir")
+  mlir_dialects_dir = os.path.join(jaxlib_dir, "mlir", "dialects")
+  mlir_libs_dir = os.path.join(jaxlib_dir, "mlir", "_mlir_libs")
+  os.makedirs(mlir_dir)
+  os.makedirs(mlir_dialects_dir)
+  os.makedirs(mlir_libs_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/ir.py"), dst_dir=mlir_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/_builtin_ops_ext.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/_builtin_ops_gen.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/_chlo_ops_gen.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/_mhlo_ops_gen.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/_ods_common.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/_std_ops_ext.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/_std_ops_gen.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/builtin.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/chlo.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/mhlo.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/std.py"), dst_dir=mlir_dialects_dir)
+
   if _is_windows():
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlir.pyd"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.pyd"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll"), dst_dir=mlir_libs_dir)
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.pyd"))
+  elif _is_mac():
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlir.so"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.so"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.dylib"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so"))
   else:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlir.so"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.so"), dst_dir=mlir_libs_dir)
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.so"), dst_dir=mlir_libs_dir)
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so"))
   patch_copy_xla_extension_stubs(jaxlib_dir)
   patch_copy_xla_client_py(jaxlib_dir)
@@ -214,25 +252,23 @@ def prepare_wheel(sources_path):
     patch_copy_tpu_client_py(jaxlib_dir)
 
 
-def build_wheel(sources_path, output_path):
+def build_wheel(sources_path, output_path, cpu):
   """Builds a wheel in `output_path` using the source tree in `sources_path`."""
-  if platform.system() == "Windows":
-    cpu_name = "amd64"
-    platform_name = "win"
-  else:
-    platform_name, cpu_name = {
-      ("Linux", "x86_64"): ("manylinux2010", "x86_64"),
-      ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
-      ("Darwin", "x86_64"): ("macosx_10_9", "x86_64"),
-      ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
-    }[(platform.system(), platform.machine())]
+  platform_name, cpu_name = {
+    ("Linux", "x86_64"): ("manylinux2010", "x86_64"),
+    ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
+    ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
+    ("Darwin", "x86_64"): ("macosx_10_9", "x86_64"),
+    ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
+    ("Windows", "AMD64"): ("win", "amd64"),
+  }[(platform.system(), cpu)]
   python_tag_arg = (f"--python-tag=cp{sys.version_info.major}"
                     f"{sys.version_info.minor}")
   platform_tag_arg = f"--plat-name={platform_name}_{cpu_name}"
   cwd = os.getcwd()
   os.chdir(sources_path)
   subprocess.run([sys.executable, "setup.py", "bdist_wheel",
-                 python_tag_arg, platform_tag_arg])
+                 python_tag_arg, platform_tag_arg], check=True)
   os.chdir(cwd)
   for wheel in glob.glob(os.path.join(sources_path, "dist", "*.whl")):
     output_file = os.path.join(output_path, os.path.basename(wheel))
@@ -251,7 +287,7 @@ if sources_path is None:
 try:
   os.makedirs(args.output_path, exist_ok=True)
   prepare_wheel(sources_path)
-  build_wheel(sources_path, args.output_path)
+  build_wheel(sources_path, args.output_path, args.cpu)
 finally:
   if tmpdir:
     tmpdir.cleanup()

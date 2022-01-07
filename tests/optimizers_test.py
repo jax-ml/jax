@@ -20,11 +20,11 @@ from absl.testing import absltest
 import numpy as np
 
 import jax.numpy as jnp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 from jax import jit, grad, jacfwd, jacrev
 from jax import tree_util
 from jax import lax
-from jax.experimental import optimizers
+from jax.example_libraries import optimizers
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -138,7 +138,14 @@ class OptimizerTests(jtu.JaxTestCase):
     x0 = (jnp.ones(2), jnp.ones((2, 2)))
     self._CheckOptimizer(optimizers.adagrad, loss, x0, num_iters, step_size)
 
-  def testSM3(self):
+  def testSM3Scalar(self):
+    def loss(x): return x**2
+    x0 = jnp.array(1.)
+    num_iters = 100
+    step_size = 0.1
+    self._CheckOptimizer(optimizers.sm3, loss, x0, num_iters, step_size)
+
+  def testSM3Vector(self):
     def loss(xs):
       x1, x2 = xs
       return jnp.sum(x1 ** 2) + jnp.sum(x2 ** 2)
@@ -297,7 +304,7 @@ class OptimizerTests(jtu.JaxTestCase):
 
   def testUnpackPackRoundTrip(self):
     opt_init, _, _ = optimizers.momentum(0.1, mass=0.9)
-    params = [{'w': np.random.randn(1, 2), 'bias': np.random.randn(2)}]
+    params = [{'w': self.rng().randn(1, 2), 'bias': self.rng().randn(2)}]
     expected = opt_init(params)
     ans = optimizers.pack_optimizer_state(
         optimizers.unpack_optimizer_state(expected))

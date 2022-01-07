@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest import SkipTest
+import unittest
 
 from absl.testing import absltest
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 
 import jax
 from jax import numpy as jnp
@@ -35,8 +35,8 @@ class MetadataTest(jtu.JaxTestCase):
     self.assertRegex(hlo, 'op_type="sin"')
     self.assertRegex(hlo, 'op_name="xla_computation\\(foo\\)/sin"')
 
+  @unittest.skip("TODO") # TODO(jekbradbury)
   def test_nested_jit_metadata(self):
-    raise SkipTest              # TODO(jekbradbury)
     @jax.jit
     def foo(x):
       return jnp.sin(x)
@@ -80,12 +80,36 @@ class MetadataTest(jtu.JaxTestCase):
       return jax.lax.cond(True, x, true_fun, x, false_fun)
     hlo = jax.xla_computation(f)(1.).get_hlo_module().to_string()
     self.assertRegex(hlo, 'op_type="cond"')
-    self.assertRegex(hlo, 'op_name=".*cond\\[ linear=\\(False, False\\) \\]"')
+    self.assertRegex(hlo, 'op_name=".*cond\\[linear=\\(False, False\\)\\]"')
     self.assertRegex(hlo, 'op_type="cos"')
     self.assertRegex(hlo, 'op_name=".*cond/branch_0_fun/cos"')
     self.assertRegex(hlo, 'op_type="sin"')
     self.assertRegex(hlo, 'op_name=".*cond/branch_1_fun/sin"')
 
+  def test_source_file_prefix_removal(self):
+    def make_hlo():
+      return jax.xla_computation(jnp.sin)(1.).get_hlo_module().to_string()
+
+    # Sanity check
+    self.assertIn("/tests/metadata_test.py", make_hlo())
+
+    with jax._src.config.hlo_source_file_canonicalization_regex(".*/tests/"):
+      hlo = make_hlo()
+      self.assertIn("metadata_test.py", hlo)
+      self.assertNotIn("tests/", hlo)
+      self.assertNotIn("/metadata_test.py", hlo)
+
+    with jax._src.config.hlo_source_file_canonicalization_regex("no_match_xxx"):
+      hlo = make_hlo()
+      self.assertIn("/tests/metadata_test.py", hlo)
+
+    with jax._src.config.hlo_source_file_canonicalization_regex(".*"):
+      hlo = make_hlo()
+      self.assertNotIn("test.py", hlo)
+
+    with jax._src.config.hlo_source_file_canonicalization_regex("test"):
+      hlo = make_hlo()
+      self.assertIn("/s/metadata_.py", hlo)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

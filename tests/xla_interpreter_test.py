@@ -12,24 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-
 from absl.testing import absltest
 
-from jax import test_util as jtu
-from jax._src import api
-from jax.interpreters import xla
+import jax
+from jax._src import test_util as jtu
+from jax._src import dispatch
 
 
 class XlaInterpreterTest(jtu.JaxTestCase):
 
-  @unittest.skipIf(not xla._ALLOW_ARG_PRUNING, "Test requires jaxlib 0.1.66")
   def test_prune_jit_args(self):
     def f(*args):
       return args[0]
 
-    closed_jaxpr = api.make_jaxpr(f)(*range(10))
-    pruned_jaxpr, kept_const_idx, kept_var_idx = xla._prune_unused_inputs(
+    closed_jaxpr = jax.make_jaxpr(f)(*range(10))
+    pruned_jaxpr, kept_const_idx, kept_var_idx = dispatch._prune_unused_inputs(
         closed_jaxpr.jaxpr)
     assert len(pruned_jaxpr.invars) == 1
     assert kept_const_idx == set()

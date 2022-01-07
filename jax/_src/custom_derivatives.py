@@ -16,21 +16,23 @@
 from functools import update_wrapper, reduce, partial
 import inspect
 import operator as op
-from typing import Callable, Generic, Optional, Sequence, Tuple, TypeVar, Any
+from typing import (Callable, Generic, Optional, Sequence, Tuple, List, TypeVar,
+                    Any)
 
 from jax import core
-from jax._src import dtypes
 from jax import linear_util as lu
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                         tree_multimap, treedef_is_leaf, treedef_tuple,
                         register_pytree_node_class)
-from jax._src.util import cache, safe_zip, safe_map, split_list
-from jax.api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
+from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
+from jax._src.api_util import flatten_fun_nokwargs, argnums_partial
 from jax.core import raise_to_shaped
-from jax.ad_util import Zero, zeros_like_aval, stop_gradient_p
+from jax.errors import UnexpectedTracerError
+from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
 from jax.interpreters import batching
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters.batching import not_mapped
 from jax.config import config
@@ -132,7 +134,7 @@ class custom_jvp(Generic[ReturnValue]):
       jvp: a Python callable representing the custom JVP rule. When there are no
         ``nondiff_argnums``, the ``jvp`` function should accept two arguments,
         where the first is a tuple of primal inputs and the second is a tuple of
-        tangent inputs. The lengths of both tuples is equal to the number of
+        tangent inputs. The lengths of both tuples are equal to the number of
         parameters of the ``custom_jvp`` function. The ``jvp`` function should
         produce as output a pair where the first element is the primal output
         and the second element is the tangent output. Elements of the input and
@@ -193,7 +195,8 @@ class custom_jvp(Generic[ReturnValue]):
 
     self.defjvp(jvp)
 
-  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
+  @traceback_util.api_boundary
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     if not self.jvp:
       msg = "No JVP defined for custom_jvp function {} using defjvp."
       raise AttributeError(msg.format(self.__name__))
@@ -203,7 +206,8 @@ class custom_jvp(Generic[ReturnValue]):
       args = tuple(_stop_gradient(x) if i in nondiff_argnums else x
                    for i, x in enumerate(args))
       diff_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
-      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), diff_argnums, args)
+      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), diff_argnums, args,
+                                     require_static_args_hashable=False)
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args)
     else:
@@ -217,7 +221,7 @@ class custom_jvp(Generic[ReturnValue]):
     return tree_unflatten(out_tree, out_flat)
 
 def _add_args(f, extra_args):
-  return _add_args_(f, tuple(map(wrap_hashably, extra_args)))
+  return _add_args_(f, tuple(Unhashable(arg) for arg in extra_args))
 
 @lu.transformation
 def _add_args_(extra_args, *args, **kwargs):
@@ -242,8 +246,13 @@ def _flatten_jvp(in_tree, *args):
     msg = ("Custom JVP rule must produce primal and tangent outputs with equal "
            "container (pytree) structures, but got {} and {} respectively.")
     raise TypeError(msg.format(out_tree, out_tree2))
-  primal_avals_out = [raise_to_shaped(core.get_aval(x), weak_type=False) for x in primals_out]
-  tangent_avals_out = [raise_to_shaped(core.get_aval(t), weak_type=False) for t in tangents_out]
+  # TODO(mattjj): compare primals' tangent types to tangent objects' types
+  primal_avals_out = [
+      raise_to_shaped(core.get_aval(x), weak_type=False).strip_named_shape()
+      for x in primals_out]
+  tangent_avals_out = [
+      raise_to_shaped(core.get_aval(t), weak_type=False).strip_named_shape()
+      for t in tangents_out]
   if primal_avals_out != tangent_avals_out:
     if len(primal_avals_out) == 1:
       (av1,), (av2,) = primal_avals_out, tangent_avals_out
@@ -298,11 +307,15 @@ def _custom_jvp_call_jaxpr_abstract_eval(*args, fun_jaxpr: core.ClosedJaxpr, **p
   del args, params
   return fun_jaxpr.out_avals
 
-custom_jvp_call_jaxpr_p = core.Primitive('custom_jvp_call_jaxpr')
+custom_jvp_call_jaxpr_p = core.AxisPrimitive('custom_jvp_call_jaxpr')
 custom_jvp_call_jaxpr_p.multiple_results = True
 custom_jvp_call_jaxpr_p.def_impl(_custom_jvp_call_jaxpr_impl)
 custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 CustomJVPCallPrimitive.initial_style = custom_jvp_call_jaxpr_p
+
+mlir.register_lowering(custom_jvp_call_jaxpr_p, mlir.lower_fun(
+    _custom_jvp_call_jaxpr_impl, multiple_results=True))
+
 
 def _custom_jvp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
@@ -324,17 +337,16 @@ def _custom_jvp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
 def _custom_jvp_call_jaxpr_vmap(
-    args, in_dims, axis_name, main_type, *, fun_jaxpr: core.ClosedJaxpr,
+    axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
     jvp_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     num_consts: int):
-  size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
   num_out = len(fun_jaxpr.out_avals)
 
   in_batched = [d is not not_mapped for d in in_dims]
   batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-      fun_jaxpr, size, in_batched, False, axis_name, main_type)
+      fun_jaxpr, axis_size, in_batched, False, axis_name, main_type)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []  # mutable cell updated by batched_jvp_jaxpr_thunk
 
@@ -342,13 +354,13 @@ def _custom_jvp_call_jaxpr_vmap(
   def batched_jvp_jaxpr_thunk():
     jvp_jaxpr = core.ClosedJaxpr(*jvp_jaxpr_thunk())  # consts can be tracers
     _, args_batched = split_list(in_batched, [num_consts])
-    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, size, args_batched * 2, False,
+    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, axis_size, args_batched * 2, False,
                                           axis_name, main_type)
     primals_batched, tangents_batched = split_list(all_batched, [num_out])
     out_batched = map(op.or_, primals_batched, tangents_batched)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     batched_jvp_jaxpr, _ = batching.batch_jaxpr(
-        jvp_jaxpr, size, args_batched * 2, out_batched * 2,
+        jvp_jaxpr, axis_size, args_batched * 2, out_batched * 2,
         axis_name, main_type)
     return batched_jvp_jaxpr.jaxpr, batched_jvp_jaxpr.consts
 
@@ -357,19 +369,48 @@ def _custom_jvp_call_jaxpr_vmap(
       jvp_jaxpr_thunk=batched_jvp_jaxpr_thunk, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.initial_style_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
+batching.axis_primitive_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
 
-xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
-    xla.lower_fun_initial_style(_custom_jvp_call_jaxpr_impl)
+xla.register_translation(
+    custom_jvp_call_jaxpr_p,
+    xla.lower_fun(_custom_jvp_call_jaxpr_impl, new_style=True,
+                  multiple_results=True),
+    initial_style=True)
 
 # If a (multi)linear function is defined with a custom jvp, then
 # custom_jvp_call_jaxpr can appear in jaxprs to be transposed. Since it's
 # already been linearized, we can drop the jvp rule.
-def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk,
-                                     num_consts):
+def _custom_jvp_call_jaxpr_transpose(reduce_axes, cts, *args, fun_jaxpr,
+                                     jvp_jaxpr_thunk, num_consts):
   del jvp_jaxpr_thunk, num_consts
-  return ad.backward_pass(fun_jaxpr.jaxpr, fun_jaxpr.consts, args, cts)
-ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
+  return ad.backward_pass(
+      fun_jaxpr.jaxpr, reduce_axes, fun_jaxpr.consts, args, cts)
+ad.reducing_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
+
+def custom_jvp_jaxpr_custom_partial_eval_rule(
+    saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
+    eqn: core.JaxprEqn
+  ) -> Tuple[Optional[core.JaxprEqn], core.JaxprEqn, List[bool], List[bool], List[core.Var]]:
+  # It doesn't make sense to unzip (i.e. break up) a custom_jvp function into
+  # constituent parts, so we always perform full remat. An alternative would be
+  # to allow the policy function to decide whether the value of a
+  # custom_jvp-decorated function's application should be saved or not.
+  # TODO(mattjj,jekbradbury): the user writing the custom_jvp-decorated function
+  # probably has a better idea for what to do under remat (e.g. if the function
+  # contains dots or not), so we should allow for more expressive interaction
+  # (e.g. allow the policy to depend on which custom_jvp-decorated function is
+  # being applied, or annotating the behavior where custom_vjp is called.)
+  inst_out = [True] * len(eqn.outvars)
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+  if any(unks_in):
+    unks_out = [True] * len(eqn.outvars)
+    return None, eqn, unks_out, inst_out, new_inst
+  else:
+    unks_out = [False] * len(eqn.outvars)
+    return eqn, eqn, unks_out, inst_out, new_inst
+pe.partial_eval_jaxpr_custom_rules[custom_jvp_call_jaxpr_p] = \
+    custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
 
 
 ### VJPs
@@ -462,7 +503,8 @@ class custom_vjp(Generic[ReturnValue]):
     self.fwd = fwd
     self.bwd = bwd
 
-  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
+  @traceback_util.api_boundary
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     if not self.fwd or not self.bwd:
       msg = "No VJP defined for custom_vjp function {} using defvjp."
       raise AttributeError(msg.format(self.__name__))
@@ -471,9 +513,11 @@ class custom_vjp(Generic[ReturnValue]):
       for i in self.nondiff_argnums: _check_for_tracers(args[i])
       nondiff_argnums = set(self.nondiff_argnums)
       dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
-      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
+      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args,
+                                     require_static_args_hashable=False)
       static_args = [args[i] for i in self.nondiff_argnums]
-      fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args)
+      fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args,
+                               require_static_args_hashable=False)
       bwd = _add_args(lu.wrap_init(self.bwd), static_args)
     else:
       f_, dyn_args = lu.wrap_init(self.fun), args
@@ -501,9 +545,9 @@ def _check_for_tracers(x):
            "arguments should typically not be indicated as nondiff_argnums. "
            "\n\n"
            "This behavior recently changed in JAX. "
-           "See https://github.com/google/jax/blob/master/docs/custom_vjp_update.md "
+           "See https://github.com/google/jax/blob/main/docs/custom_vjp_update.md "
            "for more information.")
-    raise core.UnexpectedTracerError(msg)
+    raise UnexpectedTracerError(msg)
 
 @lu.transformation_with_aux
 def _flatten_fwd(in_tree, *args):
@@ -548,8 +592,11 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
            "number of arguments to the primal function, but got VJP output "
            "structure {} for primal input structure {}.")
     raise TypeError(msg.format(in_tree2, in_tree)) from None
-  yield [zeros_like_aval(aval.at_least_vspace()) if ct is zero else ct
-         for aval, ct in zip(in_avals, cts_in_flat)]
+  # Ignore any None cotangents, and any corresponding to inputs for which the
+  # type doesn't equal the tangent type (i.e. float0s)
+  # TODO(mattjj): change this to check if tangent type represents 0dim vspace
+  yield [Zero(a.at_least_vspace()) if ct is zero or a != a.at_least_vspace()
+         else ct for a, ct in zip(in_avals, cts_in_flat)]
 
 
 class CustomVJPCallPrimitive(core.CallPrimitive):
@@ -583,11 +630,15 @@ def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
 def _custom_vjp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
   return fun_jaxpr.out_avals
 
-custom_vjp_call_jaxpr_p = core.Primitive('custom_vjp_call_jaxpr')
+custom_vjp_call_jaxpr_p = core.AxisPrimitive('custom_vjp_call_jaxpr')
 custom_vjp_call_jaxpr_p.multiple_results = True
 custom_vjp_call_jaxpr_p.def_impl(_custom_vjp_call_jaxpr_impl)
 custom_vjp_call_jaxpr_p.def_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
 CustomVJPCallPrimitive.initial_style = custom_vjp_call_jaxpr_p
+
+mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
+    _custom_vjp_call_jaxpr_impl, multiple_results=True))
+
 
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
@@ -607,16 +658,15 @@ def _custom_vjp_call_jaxpr_jvp(
   res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
   avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
   tangents_out = ad.custom_lin_p.bind(
-      *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd, avals_out=avals_out)
+      *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd, out_avals=avals_out)
   tangents_out = map(ad.recast_to_float0, primals_out, tangents_out)
   return primals_out, tangents_out
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
 def _custom_vjp_call_jaxpr_vmap(
-    args, in_dims, axis_name, main_type, *, fun_jaxpr: core.ClosedJaxpr,
+    axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
-  axis_size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
 
@@ -646,13 +696,19 @@ def _custom_vjp_call_jaxpr_vmap(
       out_trees=out_trees, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.initial_style_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
+batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
-xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
-    xla.lower_fun_initial_style(_custom_vjp_call_jaxpr_impl)
+xla.register_translation(
+    custom_vjp_call_jaxpr_p,
+    xla.lower_fun(_custom_vjp_call_jaxpr_impl, new_style=True,
+                  multiple_results=True),
+    initial_style=True)
 
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
-xla.translations[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
+xla.register_translation(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
+
+pe.partial_eval_jaxpr_custom_rules[custom_vjp_call_jaxpr_p] = \
+    custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
 
 
 def custom_gradient(fun):
@@ -679,7 +735,9 @@ def custom_gradient(fun):
   over intermediate values computed when evaluating the function to be
   differentiated. That is, use lexical closure to share work between the forward
   pass and the backward pass of reverse-mode automatic differentiation. However,
-  it cannot support Python control flow.
+  it cannot perform Python control flow which depends on the values of the
+  closed-over intermediate values or its cotangent arguments; if the function
+  includes such control flow, an error is raised.
 
   Args:
     fun: a Python callable specifying both the mathematical function to be
@@ -826,18 +884,21 @@ def closure_convert(fun, *example_args):
   else:
     return _closure_convert_for_avals(fun, in_tree, in_avals)
 
+def _is_perturbed(x: Any) -> bool:
+  if isinstance(x, ad.JVPTracer):
+    return True
+  elif isinstance(x, core.Tracer):
+    return any(_is_perturbed(attr) for name, attr in x._contents())
+  else:
+    return False
+
 @cache()
 def _closure_convert_for_avals(fun, in_tree, in_avals):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
   out_tree = out_tree()
 
-  # We only want to closure convert for constants with respect to which we're
-  # differentiating. As a proxy for that, we hoist consts with float dtype.
-  # TODO(frostig,mattjj): revise this approach
-  from jax.numpy import inexact
-  is_float = lambda c: dtypes.issubdtype(dtypes.dtype(c), inexact)
-  (closure_consts, hoisted_consts), merge = partition_list(is_float, consts)
+  (closure_consts, hoisted_consts), merge = partition_list(_is_perturbed, consts)
   num_consts = len(hoisted_consts)
 
   def converted_fun(*args_hconsts):
@@ -902,13 +963,13 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   ...   return transposed
 
   >>> div_add(9., 3.)
-  DeviceArray(12., dtype=float32)
+  DeviceArray(12., dtype=float32, weak_type=True)
 
   >>> transpose(partial(div_add, denom=3.), 1.)(18.)  # custom
-  DeviceArray(24., dtype=float32)
+  DeviceArray(24., dtype=float32, weak_type=True)
 
   >>> transpose(lambda x: x + x / 3., 1.)(18.)  # reference
-  DeviceArray(24., dtype=float32)
+  DeviceArray(24., dtype=float32, weak_type=True)
 
   The above definition of ``f`` illustrates the purpose of a residual
   argument: division is linear in one of its inputs (the dividend
@@ -1021,3 +1082,9 @@ linear_call_p.multiple_results = True
 linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
+xla.register_translation(linear_call_p,
+                         xla.lower_fun(_linear_call_impl, new_style=True,
+                                       multiple_results=True),
+                         initial_style=True)
+mlir.register_lowering(linear_call_p, mlir.lower_fun(
+    _linear_call_impl, multiple_results=True))
