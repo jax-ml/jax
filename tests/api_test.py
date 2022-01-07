@@ -6200,13 +6200,14 @@ class CustomVJPTest(jtu.JaxTestCase):
                     modes=['rev'])
 
 
-class CustomTransposeTest(jtu.JaxTestCase):
+def transpose_unary(f, x_example):
+  def transposed(y):
+    x, = api.linear_transpose(f, x_example)(y)
+    return x
+  return transposed
 
-  def transpose(self, f, x_example):
-    def transposed(y):
-      x, = api.linear_transpose(f, x_example)(y)
-      return x
-    return transposed
+
+class CustomTransposeTest(jtu.JaxTestCase):
 
   def test_linear_call(self):
     def f(x, y):
@@ -6223,8 +6224,8 @@ class CustomTransposeTest(jtu.JaxTestCase):
 
     f1     = lambda x: f(x, y)
     f1_ref = lambda x: f_ref(x, y)
-    self.assertAllClose(self.transpose(f1,     x)(x),
-                        self.transpose(f1_ref, x)(x))
+    self.assertAllClose(transpose_unary(f1,     x)(x),
+                        transpose_unary(f1_ref, x)(x))
 
   def test_linear_call_incorrect_transpose(self):
     def f(x, y):
@@ -6241,8 +6242,8 @@ class CustomTransposeTest(jtu.JaxTestCase):
 
     f1     = lambda x: f(x, y)
     f1_ref = lambda x: f_ref(x, 2. * y)  # nb: double the reference divisor
-    self.assertAllClose(self.transpose(f1,     x)(x),
-                        self.transpose(f1_ref, x)(x))
+    self.assertAllClose(transpose_unary(f1,     x)(x),
+                        transpose_unary(f1_ref, x)(x))
 
   def test_linear_call_transpose_transpose_transpose(self):
     def fn(r, x): return x / r
@@ -6253,9 +6254,9 @@ class CustomTransposeTest(jtu.JaxTestCase):
     x = jnp.ones(2) * 6.
     y = jnp.ones(2) * 3.
     f = lambda x: f_(x, y)
-    ft   = self.transpose(f,   x)
-    ftt  = self.transpose(ft,  x)
-    fttt = self.transpose(ftt, x)
+    ft   = transpose_unary(f,   x)
+    ftt  = transpose_unary(ft,  x)
+    fttt = transpose_unary(ftt, x)
     self.assertAllClose(ft(x), x + tp(y, x))
     self.assertAllClose(f(x),  ftt(x))
     self.assertAllClose(ft(x), fttt(x))
@@ -6277,8 +6278,8 @@ class CustomTransposeTest(jtu.JaxTestCase):
     c, x = 2., 3.
     t = [4., 5.]
     self.assertAllClose(f(c, x), f_ref(c, x))
-    self.assertAllClose(self.transpose(partial(f,     c), x)(t),
-                        self.transpose(partial(f_ref, c), x)(t))
+    self.assertAllClose(transpose_unary(partial(f,     c), x)(t),
+                        transpose_unary(partial(f_ref, c), x)(t))
 
   def test_linear_call_nested(self):
     # identity function with an untrue transpose of 0
@@ -6296,11 +6297,11 @@ class CustomTransposeTest(jtu.JaxTestCase):
       return api.linear_call(f_, t_, (), x)
 
     x = 5.
-    id_t  = self.transpose(id_,  x)
-    id_tt = self.transpose(id_t, x)
-    ft   = self.transpose(f,    x)
-    ftt  = self.transpose(ft,   x)
-    fttt = self.transpose(ftt,  x)
+    id_t  = transpose_unary(id_,  x)
+    id_tt = transpose_unary(id_t, x)
+    ft   = transpose_unary(f,    x)
+    ftt  = transpose_unary(ft,   x)
+    fttt = transpose_unary(ftt,  x)
 
     self.assertAllClose(id_(x),   x)
     self.assertAllClose(id_t(x),  0.)
@@ -6322,8 +6323,216 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f(x, y), jax.jit(f)(x, y))
 
     f1 = lambda x: f(x, y)
-    self.assertAllClose(self.transpose(f1, x)(x),
-                        jax.jit(self.transpose(f1, x))(x))
+    self.assertAllClose(transpose_unary(f1, x)(x),
+                        jax.jit(transpose_unary(f1, x))(x))
+
+  def test_basic(self):
+    def f(x, y):
+      @api.custom_transpose
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return t / r
+
+      return x + fn(y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), f_ref(x, y))
+
+    f1     = lambda x: f(x, y)
+    f1_ref = lambda x: f_ref(x, y)
+    self.assertAllClose(transpose_unary(f1,     x)(x),
+                        transpose_unary(f1_ref, x)(x))
+
+  def test_incorrect_transpose(self):
+    def f(x, y):
+      @api.custom_transpose
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return t / (2. * r)  # nb: not the true transpose
+
+      return x + fn(y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), f_ref(x, y))
+
+    f1     = lambda x: f(x, y)
+    f1_ref = lambda x: f_ref(x, 2. * y)  # nb: double the reference divisor
+    self.assertAllClose(transpose_unary(f1,     x)(x),
+                        transpose_unary(f1_ref, x)(x))
+
+  def test_transpose_transpose_transpose(self):
+    @api.custom_transpose
+    def fn(r, x): return x / r
+    @api.custom_transpose
+    def tp(r, t): return t / (2. * r)  # nb: untrue transpose
+
+    fn.def_transpose(tp)
+    tp.def_transpose(fn)
+
+    def f_(x, y):
+      return x + fn(y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    f = lambda x: f_(x, y)
+    ft   = transpose_unary(f,   x)
+    ftt  = transpose_unary(ft,  x)
+    fttt = transpose_unary(ftt, x)
+    self.assertAllClose(ft(x), x + tp(y, x))
+    self.assertAllClose(f(x),  ftt(x))
+    self.assertAllClose(ft(x), fttt(x))
+
+  def test_scalar_to_vector(self):
+    def f(c, x):
+      @api.custom_transpose
+      def fn(_, x):
+        return [x, x]
+
+      @fn.def_transpose
+      def tp(_, t):
+        t1, t2 = t
+        return t1 + t2
+
+      return fn((), c * x)
+
+    def f_ref(c, x):
+      return [c * x, c * x]
+
+    c, x = 2., 3.
+    t = [4., 5.]
+    self.assertAllClose(f(c, x), f_ref(c, x))
+    self.assertAllClose(transpose_unary(partial(f,     c), x)(t),
+                        transpose_unary(partial(f_ref, c), x)(t))
+
+  def test_nested(self):
+    # identity function with an untrue transpose of 0
+    def id_(x):
+      f = api.custom_transpose(lambda _, x: x)
+      t = api.custom_transpose(lambda _, t: 0.)
+      f.def_transpose(t)
+      t.def_transpose(f)
+      return f((), x)
+
+    # identity function with an untrue transpose of 7, and where both
+    # forward and transpose have custom transpositions that should
+    # never end up invoked.
+    def f(x):
+      f_ = api.custom_transpose(lambda _, x: id_(x))
+      t_ = api.custom_transpose(lambda _, t: id_(7.))
+      f_.def_transpose(t_)
+      t_.def_transpose(f_)
+      return f_((), x)
+
+    x = 5.
+    id_t  = transpose_unary(id_,  x)
+    id_tt = transpose_unary(id_t, x)
+    ft   = transpose_unary(f,    x)
+    ftt  = transpose_unary(ft,   x)
+    fttt = transpose_unary(ftt,  x)
+
+    self.assertAllClose(id_(x),   x)
+    self.assertAllClose(id_t(x),  0.)
+    self.assertAllClose(id_tt(x), x)
+
+    self.assertAllClose(f(x),    x)
+    self.assertAllClose(ft(x),   7.)
+    self.assertAllClose(ftt(x),  x)
+    self.assertAllClose(fttt(x), 7.)
+
+  def test_one_degree(self):
+    T = lambda f: transpose_unary(f, 0.)
+
+    @api.custom_transpose
+    def f(_, z): return 2. * z
+    @f.def_transpose
+    def ft(_, z): return 3. * z
+
+    f = partial(f, ())
+    self.assertAllClose(2., f(1.))
+    self.assertAllClose(3., T(f)(1.))
+    self.assertAllClose(3., T(T(f))(1.))
+    self.assertAllClose(3., T(T(T(f)))(1.))
+    self.assertAllClose(3., T(T(T(T(f))))(1.))  # ...
+
+  def test_two_degrees(self):
+    T = lambda f: transpose_unary(f, 0.)
+
+    @api.custom_transpose
+    def f(_, z): return 2. * z
+
+    @f.def_transpose
+    @api.custom_transpose
+    def ft(_, z): return 3. * z
+
+    @ft.def_transpose
+    def ftt(_, z): return 7. * z
+
+    f = partial(f, ())
+    self.assertAllClose(2., f(1.))
+    self.assertAllClose(3., T(f)(1.))
+    self.assertAllClose(7., T(T(f))(1.))
+    self.assertAllClose(7., T(T(T(f)))(1.))
+    self.assertAllClose(7., T(T(T(T(f))))(1.))  # ...
+
+  def test_symmetric(self):
+    T = lambda f: transpose_unary(f, 0.)
+
+    @api.custom_transpose
+    def f(_, z): return 2. * z
+    @api.custom_transpose
+    def g(_, z): return 3. * z
+
+    f.def_transpose(g)
+    g.def_transpose(f)
+
+    f = partial(f, ())
+    self.assertAllClose(2., f(1.))
+    self.assertAllClose(3., T(f)(1.))
+    self.assertAllClose(2., T(T(f))(1.))
+    self.assertAllClose(3., T(T(T(f)))(1.))
+    self.assertAllClose(2., T(T(T(T(f))))(1.))  # ...
+
+  def test_recursive(self):
+    T = lambda f: transpose_unary(f, 0.)
+
+    @api.custom_transpose
+    def f(c, z): return c * z
+
+    @f.def_transpose
+    def ft(c, z): return f(c + 1., z)
+
+    g = partial(f, 1.)
+    self.assertAllClose(1., g(1.))
+    self.assertAllClose(2., T(g)(1.))
+    self.assertAllClose(3., T(T(g))(1.))
+    self.assertAllClose(4., T(T(T(g)))(1.))
+    self.assertAllClose(5., T(T(T(T(g))))(1.))  # ...
+
+  def test_jit(self):
+    def f(x, y):
+      @api.custom_transpose
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return t / r
+
+      return x + fn(y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), jax.jit(f)(x, y))
+
+    f_ = lambda x: f(x, y)
+    f_t = transpose_unary(f_, x)
+    self.assertAllClose(f_(x), jax.jit(f_)(x))
+    self.assertAllClose(f_t(x), jax.jit(f_t)(x))
 
 
 class CustomVmapTest(jtu.JaxTestCase):
