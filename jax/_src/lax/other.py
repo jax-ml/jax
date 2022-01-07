@@ -122,10 +122,10 @@ def conv_general_dilated_local(
     window_strides: Sequence[int],
     padding: Union[str, Sequence[Tuple[int, int]]],
     filter_shape: Sequence[int],
-    lhs_dilation: Sequence[int] = None,
-    rhs_dilation: Sequence[int] = None,
-    dimension_numbers: lax.ConvGeneralDilatedDimensionNumbers = None,
-    precision: lax.PrecisionLike = None
+    lhs_dilation: Optional[Sequence[int]] = None,
+    rhs_dilation: Optional[Sequence[int]] = None,
+    dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
+    precision: Optional[lax.PrecisionLike] = None
 ) -> jnp.ndarray:
   """General n-dimensional unshared convolution operator with optional dilation.
 
@@ -210,7 +210,7 @@ def conv_general_dilated_local(
       precision=lhs_precision
   )
 
-  lhs_spec, rhs_spec, out_spec = lax.conv_dimension_numbers(
+  lhs_spec, rhs_spec, out_spec = convolution.conv_dimension_numbers(
       lhs.shape, (1, 1) + tuple(filter_shape), dimension_numbers)
 
   lhs_c_dims, rhs_c_dims = [out_spec[1]], [rhs_spec[1]]
