@@ -55,7 +55,7 @@ import numpy as np
 from jax import core
 from jax import lax
 from jax import linear_util as lu
-from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
+from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse, BCOOInfo
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
@@ -407,14 +407,15 @@ def _dot_general_sparse(spenv, *argspecs, dimension_numbers, precision, preferre
   if argspecs[0].is_sparse() and argspecs[1].is_sparse():
     shape = sparse.bcoo._dot_general_validated_shape(A.shape, B.shape, dimension_numbers)
     data, indices = sparse.bcoo_spdot_general(A.data, A.indices, B.data, B.indices,
-                                              lhs_shape=A.shape, rhs_shape=B.shape,
+                                              lhs_spinfo=BCOOInfo(A.shape),
+                                              rhs_spinfo=BCOOInfo(B.shape),
                                               dimension_numbers=dimension_numbers)
     return [ArgSpec(shape, spenv.push(data), spenv.push(indices))]
   elif argspecs[0].is_sparse():
-    result = sparse.bcoo_dot_general(A.data, A.indices, B, lhs_shape=A.shape,
-                                    dimension_numbers=dimension_numbers)
+    result = sparse.bcoo_dot_general(A.data, A.indices, B, lhs_spinfo=BCOOInfo(A.shape),
+                                     dimension_numbers=dimension_numbers)
   else:
-    result = sparse.bcoo_rdot_general(A, B.data, B.indices, rhs_shape=B.shape,
+    result = sparse.bcoo_rdot_general(A, B.data, B.indices, rhs_spinfo=BCOOInfo(B.shape),
                                       dimension_numbers=dimension_numbers)
   return [ArgSpec(result.shape, spenv.push(result), None)]
 
@@ -426,7 +427,7 @@ def _transpose_sparse(spenv, *argspecs, permutation):
   shape = args[0].shape
   data, indices = sparse.bcoo_transpose(args[0].data, args[0].indices,
                                         permutation=permutation,
-                                        shape=shape)
+                                        spinfo=BCOOInfo(shape))
   out_shape = tuple(shape[i] for i in permutation)
 
   n_batch = args[0].indices.ndim - 2
@@ -491,13 +492,14 @@ def _mul_sparse(spenv, *argspecs):
     else:
       data, indices, shape = bcoo_multiply_sparse(X.data(spenv), X.indices(spenv),
                                                   Y.data(spenv), Y.indices(spenv),
-                                                  lhs_shape=X.shape, rhs_shape=Y.shape)
+                                                  lhs_spinfo=BCOOInfo(X.shape),
+                                                  rhs_spinfo=BCOOInfo(Y.shape))
       out_argspec = ArgSpec(shape, spenv.push(data), spenv.push(indices))
   else:
     if Y.is_sparse():
       X, Y = Y, X
     out_data = bcoo_multiply_dense(
-        X.data(spenv), X.indices(spenv), Y.data(spenv), shape=X.shape)
+        X.data(spenv), X.indices(spenv), Y.data(spenv), spinfo=BCOOInfo(X.shape))
     out_argspec = ArgSpec(X.shape, spenv.push(out_data), X.indices_ref)
 
   return (out_argspec,)
@@ -507,7 +509,7 @@ sparse_rules[lax.mul_p] = _mul_sparse
 def _reduce_sum_sparse(spenv, *argspecs, axes):
   X, = argspecs
   data, indices, out_shape = sparse.bcoo_reduce_sum(
-      X.data(spenv), X.indices(spenv), shape=X.shape, axes=axes)
+      X.data(spenv), X.indices(spenv), spinfo=BCOOInfo(X.shape), axes=axes)
   if out_shape == ():
     out_argspec = ArgSpec(out_shape, spenv.push(data.sum()), None)
   else:
@@ -519,7 +521,7 @@ sparse_rules[lax.reduce_sum_p] = _reduce_sum_sparse
 def _broadcast_in_dim_sparse(spenv, *argspecs, shape, broadcast_dimensions):
   operand, = argspecs
   data, indices = sparse.bcoo_broadcast_in_dim(operand.data(spenv), operand.indices(spenv),
-                                               shape=operand.shape, new_shape=shape,
+                                               spinfo=BCOOInfo(operand.shape), shape=shape,
                                                broadcast_dimensions=broadcast_dimensions)
   return (ArgSpec(shape, spenv.push(data), spenv.push(indices)),)
 
@@ -654,7 +656,7 @@ sparse_rules[lax.cond_p] = _cond_sparse
 
 def _todense_sparse_rule(spenv, argspec, *, tree):
   del tree  # TODO(jakvdp): we should assert that tree is PytreeDef(*)
-  out = sparse.bcoo_todense(argspec.data(spenv), argspec.indices(spenv), shape=argspec.shape)
+  out = sparse.bcoo_todense(argspec.data(spenv), argspec.indices(spenv), spinfo=BCOOInfo(argspec.shape))
   out_argspec = sparse.transform.ArgSpec(argspec.shape, spenv.push(out), None)
   return (out_argspec,)
 
