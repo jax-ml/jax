@@ -229,7 +229,7 @@ Behavior under JAX autodiff transformations
 -------------------------------------------
 
 When used under a JAX autodiff transformation, the host callback functions
-operate on the primal values only. Consider the following example:
+operate on the primal values only. Consider the following example::
 
     def power3(x):
       y = x * x
