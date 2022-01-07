@@ -1263,7 +1263,7 @@ def _inline_literals(jaxpr, constvals):
   # prunes unused constants, and inserts `dropvar` symbols.
   consts = dict(zip(jaxpr.constvars, constvals))
   newvar = core.gensym()
-  newvars = {v: v for v in jaxpr.invars}
+  newvars = {}
   var = lambda v: newvars.get(v) or newvars.setdefault(v, newvar(v.aval))
 
   def lit(var: Var) -> Optional[Any]:
@@ -1277,6 +1277,7 @@ def _inline_literals(jaxpr, constvals):
   new_constvars = [var(v) for v in jaxpr.constvars if v in used and not lit(v)]
   new_constvals = [c for v, c in zip(jaxpr.constvars, constvals)
                    if v in used and not lit(v)]
+  new_invars = [var(v) for v in jaxpr.invars]
   new_eqns = []
   for eqn in jaxpr.eqns:
     invars = [lit(v) or var(v) for v in eqn.invars]
@@ -1285,7 +1286,7 @@ def _inline_literals(jaxpr, constvals):
     new_eqns.append(new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
                                   eqn.source_info))
   new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
-  new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, new_outvars, new_eqns)
+  new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns)
   return new_jaxpr, new_constvals
 
 class DynamicJaxprTrace(core.Trace):
