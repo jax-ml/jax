@@ -243,6 +243,40 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
+  @jtu.with_mesh([('x', 2), ('y', 1)])
+  def testShardingConstraintVmap(self):
+    @partial(pjit, in_axis_resources=None, out_axis_resources=None)
+    @partial(jax.vmap, axis_name='i')
+    def f(x):
+      y = x + 1
+      y = with_sharding_constraint(y, P('y'),
+                                   named_axis_partitions={'i': 'x'})
+      return y * 2
+
+    shape = (8, 8)
+    x = np.arange(prod(shape)).reshape(shape)
+    expected = (x + 1) * 2
+    actual = f(x)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, pxla.ShardedDeviceArray)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertAllClose(actual.device_buffers[0].to_py(), expected,
+                        check_dtypes=False)
+
+    hlo = jax.xla_computation(f)(np.ones(shape))
+    # Annotation from with_sharding_constraint
+    self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
+    # Annotation from pjit
+    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
+
+  def testShardingConstraintVmapUnAnnotatedAxis(self):
+    @partial(jax.vmap, axis_name='i')
+    def f(x):
+      return with_sharding_constraint(x, P('y'))
+
+    jaxpr = jax.make_jaxpr(f)(jnp.ones((3, 4)))
+    self.assertIn("partitions=(None, 'y')", str(jaxpr))
+
   def testCaching(self):
     def f(x):
       assert should_be_tracing

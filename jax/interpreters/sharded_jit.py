@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Iterable, Optional, Tuple, Union
+from typing import Callable, Iterable, Optional, Tuple, Union, Dict, Any
 
 from absl import logging
 import numpy as np
@@ -25,6 +25,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
+from jax.interpreters import batching
 from jax import linear_util as lu
 from jax._src import dispatch
 from jax._src.lib import xla_bridge as xb
@@ -454,23 +455,72 @@ def sharded_jit(
   return wrapped
 
 
-def _sharding_constraint_impl(x, partitions):
+def _sharding_constraint_impl(x, *, partitions, named_axis_partitions):
   # TODO(skye): can we also prevent this from being called in other
   # non-sharded_jit contexts? (e.g. pmap, control flow)
   raise NotImplementedError(
       "with_sharding_constraint() should only be called inside sharded_jit()")
 
-def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node,
-                                          partitions):
+def _sharding_constraint_translation_rule(
+    ctx, avals_in, avals_out, x_node, *, partitions, named_axis_partitions):
+  if named_axis_partitions:
+    # Named axes must all be resolved to positional axes by the time we're
+    # staging out to XLA.
+    raise NameError("sharding_constraint got axis names not bound by a "
+                    f"vmap: {named_axis_partitions.keys()}")
+  del named_axis_partitions
   return [xla.set_sharding(ctx.builder, x_node, partitions)]
+
+def _sharding_constraint_vmap(
+    vals_in, dims_in, *, partitions, named_axis_partitions):
+  # This rule is called when we're vmapping over an axis name which doesn't
+  # appear in named_axis_partitions, and so we insert a None in the positional
+  # annotations.
+  (x,), (d,) = vals_in, dims_in
+  new_partitions = list(partitions)
+  new_partitions.insert(d, None)
+  out = sharding_constraint_p.bind(
+      x, partitions=tuple(new_partitions),
+      named_axis_partitions=named_axis_partitions)
+  return out, d
+
+def _sharding_constraint_vmap_collective_rule(
+    axis_size, frame_name, _, vals_in, dims_in, *,
+    partitions, named_axis_partitions):
+  # This rule is called when we're vmapping over an axis name in
+  # named_axis_partitions, so we move it over to the positional annotations.
+  (x,), (d,) = vals_in, dims_in
+  new_partitions = list(partitions)
+  new_partitions.insert(d, named_axis_partitions[frame_name])
+  new_named_axis_partitions = dict(named_axis_partitions)
+  del new_named_axis_partitions[frame_name]
+  out = sharding_constraint_p.bind(
+      x, partitions=tuple(new_partitions),
+      named_axis_partitions=HashableDict(new_named_axis_partitions))
+  return out, d
+
+def _sharding_constraint_axis_subst(
+    params: core.ParamDict, subst: core.AxisSubst, traverse: bool
+  ) -> core.ParamDict:
+  del traverse
+  prev_parts = params['named_axis_partitions']
+  named_axis_partitions = {subst(name): p for name, p in prev_parts.items()}
+  return dict(params, named_axis_partitions=HashableDict(named_axis_partitions))
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
-sharding_constraint_p.def_abstract_eval(lambda x, partitions: x)
+sharding_constraint_p.def_abstract_eval(
+    lambda x, partitions, named_axis_partitions: x)
 ad.deflinear2(sharding_constraint_p,
-              lambda ct, _, partitions: (with_sharding_constraint(ct, partitions),))
+              lambda ct, _, partitions, named_axis_partitions:
+              (with_sharding_constraint(ct, partitions, named_axis_partitions),))
 xla.register_translation(sharding_constraint_p,
                          _sharding_constraint_translation_rule)
+batching.primitive_batchers[sharding_constraint_p] = _sharding_constraint_vmap
+batching.axis_primitive_batchers[sharding_constraint_p] = \
+    _sharding_constraint_vmap_collective_rule
+core.axis_substitution_rules[sharding_constraint_p] = \
+    _sharding_constraint_axis_subst
 
 def _sharding_constraint_lowering(ctx, x_node, partitions):
   return [mlir.wrap_with_sharding_op(x_node, xla.sharding_to_proto(partitions))]
@@ -478,7 +528,9 @@ def _sharding_constraint_lowering(ctx, x_node, partitions):
 mlir.register_lowering(sharding_constraint_p, _sharding_constraint_lowering)
 
 
-def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
+def with_sharding_constraint(
+    x, partitions: Optional[PartitionSpec], *,
+    named_axis_partitions: Optional[Dict[core.AxisName, Any]] = None):
   """Identity-like function that specifies how ``x`` should be sharded.
 
   WARNING: this feature is still under active development! It may not work well,
@@ -514,8 +566,19 @@ def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
     x: Array value
     partitions: PartitionSpec indicating how ``x`` should be partitioned, or
       None for replication.
+    named_axis_partitions: Optional, dictionary mapping axis names to
+      specifications for how that axis should be partitioned. The named axes
+      must be bound by a ``vmap``.
 
   Returns:
     A new version of ``x`` with the specified sharding applied.
   """
-  return sharding_constraint_p.bind(x, partitions=partitions)
+  named_axis_partitions = HashableDict(named_axis_partitions or {})
+  return sharding_constraint_p.bind(x, partitions=partitions,
+                                    named_axis_partitions=named_axis_partitions)
+
+class HashableDict(dict):
+  def __hash__(self):
+    return id(self)
+  def __eq__(self, other) -> bool:
+    return self is other
