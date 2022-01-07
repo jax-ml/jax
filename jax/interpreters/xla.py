@@ -168,12 +168,25 @@ def tuple_sharding_proto(elems):
   proto.tuple_shardings = elems
   return proto
 
-def set_sharding_proto(builder, op, sharding_proto):
+
+def set_sharding_proto(builder, op, sharding_proto, unspecified_dims=None):
   """Uses CustomCall to annotate a value as sharded."""
   # "Sharding" is a built-in custom call target that acts like an identity
   # function, and is used to attach an OpSharding to.
-  return with_sharding_proto(builder, sharding_proto, xops.CustomCall,
-                             builder, b"Sharding", [op], builder.get_shape(op))
+  def _create_custom_call(x):
+    # unspecified_dims indicate dimensions whose shardings are not specified and
+    # XLA sharding propagation can change them.
+    if unspecified_dims:
+      opaque = 'unspecified_dims=[' + ','.join(
+          [str(i) for i in unspecified_dims]) + ']'
+      opaque = bytes(opaque, 'utf-8')
+      return xops.CustomCall(
+          builder, b'Sharding', [x], builder.get_shape(x), opaque=opaque)
+    else:
+      return xops.CustomCall(builder, b'Sharding', [x], builder.get_shape(x))
+
+  return with_sharding_proto(builder, sharding_proto, _create_custom_call, op)
+
 
 def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""

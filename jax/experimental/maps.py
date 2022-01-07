@@ -1611,17 +1611,32 @@ def _xmap_translation_rule_spmd(ctx, avals_in, avals_out, *global_in_nodes,
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
-  global_in_avals = [core.ShapedArray(xla_type.dimensions(), xla_type.numpy_dtype())
-                     for in_node in global_in_nodes
-                     for xla_type in (ctx.builder.get_shape(in_node),)]
-  vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
+  global_in_avals = [
+      core.ShapedArray(xla_type.dimensions(), xla_type.numpy_dtype())
+      for in_node in global_in_nodes
+      for xla_type in (ctx.builder.get_shape(in_node),)
+  ]
+  vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(
+      f, global_in_avals)
   assert not consts
 
   global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
+
+  def set_sharding(node, aval, aval_axes):
+    sharding_proto = global_sharding_spec(aval, aval_axes).sharding_proto()
+    if not config.experimental_xmap_ensure_fixed_sharding:
+      # Do not specify sharding on other dimensions.
+      unspecified_dims = list(range(aval.ndim))
+      for axis in set(aval_axes.values()):
+        unspecified_dims.remove(axis)
+      return xla.set_sharding_proto(ctx.builder, node, sharding_proto,
+                                    unspecified_dims)
+    else:
+      return xla.set_sharding_proto(ctx.builder, node, sharding_proto)
+
   sharded_global_in_nodes = [
-    xla.set_sharding_proto(ctx.builder, node, global_sharding_spec(aval, aval_axes).sharding_proto())
-    if aval_axes else node
-    for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
+      set_sharding(node, aval, aval_axes) if aval_axes else node for node, aval,
+      aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
   ]
 
   # We in-line here rather than generating a Call HLO as in the xla_call
@@ -1633,9 +1648,8 @@ def _xmap_translation_rule_spmd(ctx, avals_in, avals_out, *global_in_nodes,
                                        *sharded_global_in_nodes)
 
   sharded_global_out_nodes = [
-    xla.set_sharding_proto(ctx.builder, node, global_sharding_spec(aval, aval_axes).sharding_proto())
-    if aval_axes else node
-    for node, aval, aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
+      set_sharding(node, aval, aval_axes) if aval_axes else node for node, aval,
+      aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
   ]
 
   return sharded_global_out_nodes
