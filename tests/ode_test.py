@@ -235,9 +235,10 @@ class ODETest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu", "gpu")
   def test_complex_odeint(self):
     # https://github.com/google/jax/issues/3986
+    # https://github.com/google/jax/issues/8757
 
     def dy_dt(y, t, alpha):
-      return alpha * y
+      return alpha * y * jnp.exp(-t)
 
     def f(y0, ts, alpha):
       return odeint(dy_dt, y0, ts, alpha).real
