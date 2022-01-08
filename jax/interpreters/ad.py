@@ -218,8 +218,7 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, consts, primals_in, cotangents
     with source_info_util.user_context(eqn.source_info.traceback):
       if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
         cts_in_avals = [v.aval for v in eqn.outvars]
-        params = dict(eqn.params)
-        call_jaxpr = params.pop('call_jaxpr')
+        call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
         cts_out = get_primitive_transpose(eqn.primitive)(
             params, call_jaxpr, invals, cts_in, cts_in_avals, reduce_axes)
       elif eqn.primitive in reducing_transposes:

@@ -567,7 +567,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 1)
     eqn = jaxpr.eqns[0]
     self.assertIsInstance(eqn.primitive, core.CallPrimitive)
-    inner_jaxpr = eqn.params['call_jaxpr']
+    inner_jaxpr, _ = core.extract_call_jaxpr(eqn.primitive, eqn.params)
     self.assertIsInstance(inner_jaxpr, core.Jaxpr)
 
     self.assertLen(inner_jaxpr.invars, 1 + 4)  # one axis size var
@@ -596,7 +596,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 1)
     eqn = jaxpr.eqns[0]
     self.assertIsInstance(eqn.primitive, core.CallPrimitive)
-    inner_jaxpr = eqn.params['call_jaxpr']
+    inner_jaxpr, _ = core.extract_call_jaxpr(eqn.primitive, eqn.params)
     self.assertIsInstance(inner_jaxpr, core.Jaxpr)
 
     self.assertLen(inner_jaxpr.invars, 1 + 4)  # one axis size var
