@@ -149,23 +149,3 @@ def mode(a, axis=0, nan_policy='propagate'):
     newshape = list(a.shape)
     newshape[axis] = 1
     return ModeResult(modes.reshape(newshape), counts.reshape(newshape))
-
-# def mode(x, axis=None):
-
-#   """
-
-#     Return an array of the modal (most common) value in the passed array.
-
-#   """
-#   a, axis = _chk_asarray(x, axis)
-#   if a.size == 0:
-#         return ModeResult(np.array([]), np.array([]))
-
-#   def _mode(x):
-#     vals, counts = jnp.unique(x, return_counts=True, size=x.size)
-#     return ModeResult(vals[jnp.argmax(counts)] , jnp.max(counts))
-#   if axis is None:
-#     return _mode(x)
-#   else:
-#     x = jnp.moveaxis(x, axis, 0)
-#     return vmap(_mode, in_axes=(1,))(x.reshape(x.shape[0], -1)).reshape(x.shape[1:])
