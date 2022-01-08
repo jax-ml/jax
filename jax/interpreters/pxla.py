@@ -316,7 +316,7 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
     A list of length matching args, containing lists of per-device buffers
     for each argument.
   """
-  return [_shard_arg(arg, devices, indices[a]) for a, arg in enumerate(args)]
+  return [_shard_arg(arg, devices, indices[i]) for i, arg in enumerate(args)]
 
 
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
@@ -2051,10 +2051,11 @@ class MeshComputation:
 
 def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
   input_specs, input_indices, input_avals = [], [], []
+  num_local_devices = len(global_mesh.local_devices)
   for gaval, axis, is_gda in safe_zip(global_in_avals, in_axes, in_is_gda):
     # TODO(yashkatariya): Don't calculate input_indices and input_specs for GDA
     # as GDA doesn't need it.
-    if is_gda:
+    if is_gda or not axis:
       aval = gaval
       mesh = global_mesh
     else:
@@ -2063,7 +2064,12 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
 
     spec = (mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, axis)
             if aval is not core.abstract_unit else None)
-    index = spec_to_indices(aval.shape, spec) if spec is not None else None
+    # We special case this logic to support fully replicated non-GDA values
+    # with non-contiguous submeshes
+    if not axis:
+      index = tuple(() for _ in range(num_local_devices))
+    else:
+      index = spec_to_indices(aval.shape, spec) if spec is not None else None
     input_specs.append(spec)
     input_indices.append(index)
     input_avals.append(aval)

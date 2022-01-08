@@ -46,9 +46,9 @@ from jax._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          split_list, cache, tuple_insert)
 xops = xc._xla.ops
 
-class _FromGsdaSingleton:
+class _FromGdaSingleton:
   pass
-FROM_GDA = _FromGsdaSingleton()
+FROM_GDA = _FromGdaSingleton()
 
 def _is_from_gda(x):
   # It's occasionally possible to end up with two FROM_GDA singletons (e.g. if
@@ -309,10 +309,12 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   # will be raised because get_array_mapping (in local_to_global) of a
   # FROM_GDA cannot happen.
   tree_map(_check_resources_mismatch, in_axis_resources_flat, is_gda)
-  # If all inputs are GDAs, then the avals are global and the mesh should also
-  # be global. This split is because non-contiguous mesh can only be used if all
-  # inputs are GDAs.
-  if all(is_gda):
+  # If all inputs are either GDAs or fully replicated, then the avals are
+  # global and the mesh should also be global. This split is because
+  # non-contiguous mesh can only be used if all inputs are either GDAs or fully
+  # replicated.
+  if all(((not _is_from_gda(p) and p.partitions == ()) or ig)
+         for p, ig in safe_zip(in_axis_resources_flat, is_gda)):
     _check_shapes_against_resources(
         "pjit arguments", mesh.is_multi_process, mesh.shape, local_in_avals,
         in_axis_resources_flat)
@@ -355,8 +357,8 @@ class ParsedPartitionSpec:
   __slots__ = ('partitions', 'unsafe_user_spec', 'sync')
 
   def __init__(self, user_spec, partitions, sync=SpecSync.IN_SYNC):
-    self.partitions = tuple(partitions)
     self.unsafe_user_spec = user_spec
+    self.partitions = tuple(partitions)
     self.sync = sync
 
   @property
@@ -917,14 +919,14 @@ def global_to_local(positional_semantics, mesh, avals, axes):
   if isinstance(positional_semantics, maps._PositionalSemantics):
     positional_semantics = [positional_semantics] * len(axes)
   return [
-      aval if ps == maps._PositionalSemantics.GLOBAL else mesh.global_to_local(
+      aval if ps == maps._PositionalSemantics.GLOBAL or not aval_axes else mesh.global_to_local(
           get_array_mapping(aval_axes), aval)
       for aval, aval_axes, ps in safe_zip(avals, axes, positional_semantics)
   ]
 
 def local_to_global(positional_semantics, mesh, avals, axes):
   return [
-      aval if ps == maps._PositionalSemantics.GLOBAL else mesh.local_to_global(
+      aval if ps == maps._PositionalSemantics.GLOBAL or not aval_axes else mesh.local_to_global(
           get_array_mapping(aval_axes), aval)
       for aval, aval_axes, ps in safe_zip(avals, axes, positional_semantics)
   ]

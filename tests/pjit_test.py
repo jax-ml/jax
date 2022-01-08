@@ -886,7 +886,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     # It's occasionally possible to end up with two FROM_GDA singletons (e.g. if
     # pickling in_axis_resources and sending to other processes). Make sure this
     # this doesn't cause an error to avoid user confusion.
-    from_gda_dup = pjit_lib._FromGsdaSingleton()
+    from_gda_dup = pjit_lib._FromGdaSingleton()
     with mesh(global_mesh.devices, global_mesh.axis_names):
       pjit(lambda x: x, in_axis_resources=from_gda_dup, out_axis_resources=None)(
           input_gda)
