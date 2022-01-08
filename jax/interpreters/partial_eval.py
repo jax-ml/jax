@@ -463,45 +463,12 @@ class JaxprTrace(Trace):
   def _current_truncated_name_stack(self):
     return source_info_util.current_name_stack()[len(self.name_stack):]
 
-  def process_custom_jvp_call(self, prim, f, jvp, tracers):
-    # TODO(mattjj): after old remat is deleted, make this method trivial:
-    # https://github.com/google/jax/pull/9137/files#diff-440d9df723b313bb263bc7704103cad1dcc886ff6553aa78c30188b0b323b686R319-R323
-    # Because we instantiate all tracers, in_knowns is all False.
-    tracers = map(self.instantiate_const_abstracted, tracers)
-    in_knowns, in_avals, () = partition_pvals([t.pval for t in tracers])
-    f = trace_to_subjaxpr_nounits(f, self.main, True)
-    f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
-    out_flat = prim.bind(f, jvp)
-    out_knowns, out_avals, jaxpr, env = aux()
-    out_consts, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-    res_tracers = map(self.new_instantiated_const, res)
-    env_tracers =  map(self.full_raise, env)
-    out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
-                   for a in out_avals]
-    closed_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(jaxpr), ())
-
-    @_memoize
-    def jvp_jaxpr_thunk():
-      jvp_ = trace_to_subjaxpr_nounits(jvp, self.main, True)
-      jvp_, aux = partial_eval_wrapper_nounits(
-          jvp_, tuple(in_knowns) * 2, tuple(in_avals) * 2)
-      with core.new_sublevel():
-        out_flat = jvp_.call_wrapped()
-      out_knowns, out_avals, jaxpr, env = aux()
-      _, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-      converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
-      return converted_jaxpr, (*res, *env)
-
-    name_stack = self._current_truncated_name_stack()
-    source = source_info_util.current().replace(name_stack=name_stack)
-    eqn = new_eqn_recipe((*res_tracers, *env_tracers, *tracers),
-                         out_tracers, prim.initial_style,
-                         dict(fun_jaxpr=closed_jaxpr,
-                              jvp_jaxpr_thunk=jvp_jaxpr_thunk,
-                              num_consts=len(res)+len(env)),
-                         jaxpr.effects, source)
-    for t in out_tracers: t.recipe = eqn
-    return merge_lists(out_knowns, out_tracers, out_consts)
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+    # We assume partial evaluation is only performed to build linear functions,
+    # and hence we don't need to keep the custom JVP rule around anymore.
+    del jvp
+    assert not all(t.is_known() for t in tracers)
+    return fun.call_wrapped(*tracers)
 
   def post_process_custom_jvp_call(self, out_tracers, _):
     # This path should only be reachable if we expose a partial eval API
@@ -1796,8 +1763,8 @@ class DynamicJaxprTrace(core.Trace):
     invars = map(self.getvar, tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
     outvars = map(self.makevar, out_tracers)
-    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim.initial_style,
-                        dict(fun_jaxpr=closed_fun_jaxpr,
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
+                        dict(call_jaxpr=closed_fun_jaxpr,
                              jvp_jaxpr_thunk=jvp_jaxpr_thunk,
                              num_consts=len(consts)),
                         fun_jaxpr.effects,

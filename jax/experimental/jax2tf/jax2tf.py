@@ -2788,14 +2788,15 @@ def _tridiagonal_solve(*args: TfVal, _in_avals, _out_aval, **params):
 
 tf_impl_with_avals[lax.linalg.tridiagonal_solve_p] = _tridiagonal_solve
 
-def _custom_jvp_call_jaxpr(*args: TfVal, fun_jaxpr: core.ClosedJaxpr,
+def _custom_jvp_call(*args: TfVal, call_jaxpr: core.ClosedJaxpr,
                            jvp_jaxpr_thunk: Callable,
                            num_consts: int) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
-  return _interpret_jaxpr(fun_jaxpr, *args, extra_name_stack="custom_jvp")
+  del jvp_jaxpr_thunk, num_consts
+  return _interpret_jaxpr(call_jaxpr, *args, extra_name_stack="custom_jvp")
 
 
-tf_impl[custom_derivatives.custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr
+tf_impl[custom_derivatives.custom_jvp_call_p] = _custom_jvp_call
 
 
 def _custom_vjp_call_jaxpr(*args: TfVal, fun_jaxpr: core.ClosedJaxpr,

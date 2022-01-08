@@ -1615,8 +1615,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 # cased to just pass-through the token
                 in_axes=eqn.params["in_axes"] + (None, None),
                 out_axes=eqn.params["out_axes"] + (0, 0))))
-  elif eqn.primitive is custom_derivatives.custom_jvp_call_jaxpr_p:
-    fun_jaxpr = eqn.params["fun_jaxpr"]
+  elif eqn.primitive is custom_derivatives.custom_jvp_call_p:
+    fun_jaxpr = eqn.params["call_jaxpr"]
 
     def unreachable_thunk():
       assert False, "Should not be reached"
@@ -1627,7 +1627,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             outvars=eqn.outvars + [output_token_var, output_itoken_var],
             params=dict(
                 eqn.params,
-                fun_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
+                call_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
                 jvp_jaxpr_thunk=unreachable_thunk
             )))
   elif eqn.primitive is custom_derivatives.custom_vjp_call_jaxpr_p:
