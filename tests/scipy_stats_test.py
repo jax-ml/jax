@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import jax.numpy as jnp
 import itertools
 
 from absl.testing import absltest, parameterized
-
+from functools import partial
 import numpy as np
 import scipy as osp
 import scipy.stats as osp_stats
@@ -531,8 +531,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(2, 3, 4), (4,), (4, 4)],
       ]
       for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
-      if (mean_shape is not None or mean_dtype == np.float32)
-      and (cov_shape is not None or cov_dtype == np.float32)))
+      if (mean_shape is not None or mean_dtype == np.float32) and
+      (cov_shape is not None or cov_dtype == np.float32)))
   def testMultivariateNormalLogpdf(self, x_shape, x_dtype, mean_shape,
                                    mean_dtype, cov_shape, cov_dtype):
     rng = jtu.rand_default(self.rng())
@@ -578,8 +578,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(5, 3, 2), (1, 2,), (2, 2)],
       ]
       for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
-      if (mean_shape is not None or mean_dtype == np.float32)
-      and (cov_shape is not None or cov_dtype == np.float32)))
+      if (mean_shape is not None or mean_dtype == np.float32) and
+      (cov_shape is not None or cov_dtype == np.float32)))
   def testMultivariateNormalLogpdfBroadcasted(self, x_shape, x_dtype, mean_shape,
                                               mean_dtype, cov_shape, cov_dtype):
     rng = jtu.rand_default(self.rng())
@@ -622,6 +622,38 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     result1 = lsp_stats.multivariate_normal.logpdf(x, mean, cov)
     result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
     self.assertArraysEqual(result1, result2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(  {"testcase_name":
+           "_{}_a_shape={}_axis={}_keepdims={}".format(
+             op, jtu.format_shape_dtype_string(a_shape, a_dtype),
+             axis, keepdims),
+         "op": op, "a_shape": a_shape, "a_dtype": a_dtype,
+         "axis": axis,
+         "keepdims": keepdims}
+        for a_dtype in jtu.dtypes.floating
+        for a_shape, axis in (
+          ((7,), None),
+          ((47, 7), 0),
+          ((4, 101), 1),
+        )
+        for keepdims in [False, True]
+        for op in ["mode", "nanmode"]))
+  def testMode(self,a_shape,a_dtype,keepdims,op, axis=0):
+    if op == "mode":
+      a_rng = jtu.rand_default(self.rng())
+    else:
+      a_rng = jtu.rand_some_nan(self.rng())
+    args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    def np_fun(*args):
+      args = [x if jnp.result_type(x) != jnp.bfloat16 else
+              np.asarray(x, np.float32) for x in args]
+      return getattr(np, op)(*args, axis=axis, keepdims=keepdims)
+    jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims)
+    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
+    tol = jtu.tolerance(a_dtype, tol_spec)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
 
 if __name__ == "__main__":
