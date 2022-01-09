@@ -2066,8 +2066,8 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
             if aval is not core.abstract_unit else None)
     # We special case this logic to support fully replicated non-GDA values
     # with non-contiguous submeshes
-    if not axis:
-      index = tuple(() for _ in range(num_local_devices))
+    if not axis and not is_gda:
+      index = tuple((slice(None),) * aval.ndim for _ in range(num_local_devices))
     else:
       index = spec_to_indices(aval.shape, spec) if spec is not None else None
     input_specs.append(spec)

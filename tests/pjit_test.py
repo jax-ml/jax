@@ -38,7 +38,7 @@ from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src.lib import xla_client
-from jax._src.util import prod, curry, unzip2
+from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -1172,6 +1172,24 @@ class UtilTest(jtu.JaxTestCase):
   )
   def test_array_mapping_to_axis_resources(self, inp, expected_out):
     self.assertEqual(pxla.array_mapping_to_axis_resources(inp), expected_out)
+
+  def test_get_input_metadata_fully_replicated(self):
+    global_mesh = create_global_mesh((2, 2), ('x', 'y'))
+    global_in_aval1 = jax.core.ShapedArray((4, 4), jnp.int32)
+    global_in_aval2 = jax.core.ShapedArray((4, 4, 4), jnp.int32)
+    in_avals = [global_in_aval1, global_in_aval2]
+
+    _, out_indices, _ = pxla._get_input_metadata(
+        in_avals, global_mesh, [{}, {}], [False, False])
+
+    self.assertLen(out_indices, len(in_avals))
+    self.assertLen(out_indices[0], len(global_mesh.local_devices))
+    self.assertLen(out_indices[1], len(global_mesh.local_devices))
+    self.assertTrue(all(len(i) == aval.ndim
+                    for out, aval in safe_zip(out_indices, in_avals) for i in out))
+    self.assertTrue(all(i == (slice(None),) * aval.ndim
+                    for out, aval in safe_zip(out_indices, in_avals) for i in out))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
