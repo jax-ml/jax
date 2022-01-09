@@ -1405,37 +1405,67 @@ xla.register_translation(cond_p, _cond_translation_rule, initial_style=True)
 core.custom_typechecks[cond_p] = _cond_typecheck
 pe.partial_eval_jaxpr_custom_rules[cond_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
 
-def _cond_lowering(ctx, index, *args, branches, linear):
-  del linear  # Unused.
-  arg_avals = ctx.avals_in[1:]
-  input_types = _map(mlir.aval_to_ir_types, arg_avals)
-  output_types = _map(mlir.aval_to_ir_types, ctx.avals_out)
-  flat_input_types = util.flatten(input_types)
-  flat_output_types = util.flatten(output_types)
-  input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
-  output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
-  op = mhlo.TupleOp(input_tuple_type,
-                    mlir.flatten_lowering_ir_args(args)).result
-  # TODO(phawkins): avoid build_generic when CaseOp is fixed.
-  case_op = mhlo.CaseOp.build_generic([output_tuple_type],
-                                      [index] + [op] * len(branches),
-                                      regions=len(branches))
-  for i, jaxpr in enumerate(branches):
-    branch = case_op.regions[i].blocks.append(input_tuple_type)
-    with ir.InsertionPoint(branch):
-      args = [mhlo.GetTupleElementOp(input_type, branch.arguments[0],
-                                     mlir.i32_attr(i)).result
-              for i, input_type in enumerate(flat_input_types)]
-      unflattened_args = util.unflatten(args, _map(len, input_types))
-      out_vals = mlir.jaxpr_subcomp(ctx.module_context, jaxpr.jaxpr,
-                                    jaxpr.consts, *unflattened_args)
-      out = mhlo.TupleOp(output_tuple_type, util.flatten(out_vals)).results
-      mhlo.ReturnOp(out)
+if jax._src.lib._xla_extension_version < 51:
 
-  results = [mhlo.GetTupleElementOp(output_type, case_op.result,
-                                    mlir.i32_attr(i)).result
-             for i, output_type in enumerate(flat_output_types)]
-  return util.unflatten(results, _map(len, output_types))
+  def _cond_lowering(ctx, index, *args, branches, linear):
+    del linear  # Unused.
+    arg_avals = ctx.avals_in[1:]
+    input_types = _map(mlir.aval_to_ir_types, arg_avals)
+    output_types = _map(mlir.aval_to_ir_types, ctx.avals_out)
+    flat_input_types = util.flatten(input_types)
+    flat_output_types = util.flatten(output_types)
+    input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
+    output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
+    op = mhlo.TupleOp(input_tuple_type,
+                      mlir.flatten_lowering_ir_args(args)).result
+    # TODO(phawkins): avoid build_generic when CaseOp is fixed.
+    case_op = mhlo.CaseOp.build_generic([output_tuple_type],
+                                        [index] + [op] * len(branches),
+                                        regions=len(branches))
+    for i, jaxpr in enumerate(branches):
+      branch = case_op.regions[i].blocks.append(input_tuple_type)
+      with ir.InsertionPoint(branch):
+        args = [
+            mhlo.GetTupleElementOp(input_type, branch.arguments[0],
+                                   mlir.i32_attr(i)).result
+            for i, input_type in enumerate(flat_input_types)
+        ]
+        unflattened_args = util.unflatten(args, _map(len, input_types))
+        out_vals = mlir.jaxpr_subcomp(ctx.module_context, jaxpr.jaxpr,
+                                      jaxpr.consts, *unflattened_args)
+        out = mhlo.TupleOp(output_tuple_type, util.flatten(out_vals)).results
+        mhlo.ReturnOp(out)
+
+    results = [
+        mhlo.GetTupleElementOp(output_type, case_op.result,
+                               mlir.i32_attr(i)).result
+        for i, output_type in enumerate(flat_output_types)
+    ]
+    return util.unflatten(results, _map(len, output_types))
+
+else:
+
+  def _cond_lowering(ctx, index, *args, branches, linear):
+    del linear  # Unused.
+    output_types = _map(mlir.aval_to_ir_types, ctx.avals_out)
+    flat_output_types = util.flatten(output_types)
+
+    # mhlo.CaseOp takes a single argument 'index' and the corresponding blocks
+    # have no arguments; the computation within the block uses implicit
+    # captures.
+
+    # TODO(phawkins): avoid build_generic when CaseOp is fixed.
+    case_op = mhlo.CaseOp.build_generic(
+        flat_output_types, [index], regions=len(branches))
+    for i, jaxpr in enumerate(branches):
+      branch = case_op.regions[i].blocks.append()
+      with ir.InsertionPoint(branch):
+        out_vals = mlir.jaxpr_subcomp(
+            ctx.module_context, jaxpr.jaxpr, jaxpr.consts,
+            *_map(mlir.wrap_singleton_ir_values, args))
+        mhlo.ReturnOp(util.flatten(out_vals))
+
+    return util.unflatten(case_op.results, _map(len, output_types))
 
 mlir.register_lowering(cond_p, _cond_lowering)
 
