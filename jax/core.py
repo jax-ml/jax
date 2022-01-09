@@ -296,11 +296,27 @@ class Primitive:
     raise NotImplementedError("Abstract evaluation for '{}' not implemented"
                               .format(self.name))
 
-  def get_bind_params(self, params):
-    return [], params
-
 
 # -------------------- lifting --------------------
+
+# TODO(necula): this belongs next to pe.new_eqn_recipe, but is needed in
+# core.py. Plan to move all these utilities to jaxpr.py.
+def extract_call_jaxpr(
+  primitive: Primitive,
+  params: Dict[str, Any]) -> Tuple[Optional[Jaxpr], Dict[str, Any]]:
+  """Extract the call primitive subjaxpr from the params.
+
+  Returns the subjaxpr and the params without the "call_jaxpr" value. If this is
+  not a call primitive then returns (None, params).
+  """
+  if not (primitive.call_primitive or primitive.map_primitive):
+    return (None, params)
+  else:
+    assert "call_jaxpr" in params
+    new_params = dict(params)
+    del new_params["call_jaxpr"]
+    return (params["call_jaxpr"], new_params)
+
 
 # TODO(mattjj): replace this approach with a primitive-keyed table of rules
 def traverse_jaxpr_params(f, params):
@@ -309,6 +325,26 @@ def traverse_jaxpr_params(f, params):
           for name, param in params.items()
           for p in (param if isinstance(param, (tuple, list)) else [param])
           if type(p) in (Jaxpr, ClosedJaxpr)}
+
+
+def eval_jaxpr_eqn(eqn, in_vals):
+  """Evaluates the jaxpr equation with the provided input values."""
+  call_jaxpr, params = extract_call_jaxpr(eqn.primitive, eqn.params)
+  if call_jaxpr:
+    subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
+  else:
+    subfuns = []
+  if eqn.primitive in initial_to_final_param_rules:
+    bind_params = initial_to_final_param_rules[eqn.primitive](params)
+  elif eqn.primitive.map_primitive:
+    out_axes_thunk = HashableFunction(lambda: params['out_axes'],
+                                      closure=params['out_axes'])
+    bind_params = dict(params, out_axes_thunk=out_axes_thunk)
+    del bind_params['out_axes']
+  else:
+    bind_params = params
+  with source_info_util.user_context(eqn.source_info.traceback):
+    return eqn.primitive.bind(*(subfuns + in_vals), **bind_params)
 
 
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
@@ -326,14 +362,14 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-    with source_info_util.user_context(eqn.source_info.traceback):
-      ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
+    ans = eval_jaxpr_eqn(eqn, map(read, eqn.invars))
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
       write(eqn.outvars[0], ans)
   return map(read, jaxpr.outvars)
+
+initial_to_final_param_rules: Dict[Primitive, Callable] = {}
 
 
 # -------------------- tracing --------------------
@@ -1677,11 +1713,6 @@ class CallPrimitive(Primitive):
   def post_process(self, trace, out_tracers, params):
     return trace.post_process_call(self, out_tracers, params)
 
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    subfun = lu.wrap_init(partial(eval_jaxpr, new_params.pop('call_jaxpr'), ()))
-    return [subfun], new_params
-
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   with new_sublevel():
@@ -1693,7 +1724,6 @@ call_p.def_impl(call_impl)
 
 named_call_p: CallPrimitive = CallPrimitive('named_call')
 named_call_p.def_impl(call_impl)
-
 
 outfeed_primitives: Set[Primitive] = set()
 def jaxpr_uses_outfeed(jaxpr: Jaxpr) -> bool:
@@ -1774,13 +1804,6 @@ class MapPrimitive(Primitive):
 
   def post_process(self, trace, out_tracers, params):
     return trace.post_process_map(self, out_tracers, params)
-
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    subfun = lu.wrap_init(partial(eval_jaxpr, new_params.pop('call_jaxpr'), ()))
-    axes = new_params.pop('out_axes')
-    new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
-    return [subfun], new_params
 
 @contextmanager
 def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
@@ -2273,10 +2296,3 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int, context: JaxprPpContext,
         pps.append(pp.text('...'))
     return pp.join(pp.brk("; "), pps)
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, print_shapes=print_shapes)
-
-
-# TODO(mattjj,frostig): remove these stubs, which are a temporary hack for
-# google-internal type checking
-extract_call_jaxpr: Callable
-eval_jaxpr_eqn: Callable
-initial_to_final_param_rules: Dict

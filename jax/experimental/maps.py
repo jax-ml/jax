@@ -866,19 +866,6 @@ class XMapPrimitive(core.MapPrimitive):  # Not really a map, but it gives us a f
   def post_process(self, trace, out_tracers, params):
     raise NotImplementedError
 
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    subfun = lu.wrap_init(partial(core.eval_jaxpr, new_params.pop('call_jaxpr'), ()))
-    axes = new_params.pop('out_axes')
-    new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
-    spmd_axes = new_params.pop('spmd_out_axes')
-    if spmd_axes is not None:
-      new_params['spmd_out_axes_thunk'] = \
-          HashableFunction(lambda: spmd_axes, closure=spmd_axes)
-    else:
-      new_params['spmd_out_axes_thunk'] = None
-    return [subfun], new_params
-
 xmap_p = XMapPrimitive()
 core.EvalTrace.process_xmap = core.EvalTrace.process_call  # type: ignore
 def _process_xmap_default(self, call_primitive, f, tracers, params):
@@ -1290,6 +1277,22 @@ def _batch_trace_process_xmap(self, is_spmd, primitive, f: lu.WrappedFun, tracer
 batching.BatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, False)  # type: ignore
 pxla.SPMDBatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, True)  # type: ignore
 
+
+def _xmap_initial_to_final_params(params):
+  out_axes_thunk = HashableFunction(lambda: params['out_axes'],
+                                    closure=params['out_axes'])
+  if params['spmd_out_axes'] is not None:
+    spmd_out_axes_thunk = HashableFunction(lambda: params['spmd_out_axes'],
+                                           closure=params['spmd_out_axes'])
+  else:
+    spmd_out_axes_thunk = None
+  bind_params = dict(params,
+                     out_axes_thunk=out_axes_thunk,
+                     spmd_out_axes_thunk=spmd_out_axes_thunk)
+  del bind_params['out_axes']
+  del bind_params['spmd_out_axes']
+  return bind_params
+core.initial_to_final_param_rules[xmap_p] = _xmap_initial_to_final_params
 
 # -------- nested xmap handling --------
 
