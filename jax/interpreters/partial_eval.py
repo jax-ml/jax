@@ -758,6 +758,34 @@ def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
 
   return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
 
+def partial_eval_eqn(
+    eqn: JaxprEqn, unknowns: Sequence[bool]
+  ) -> Tuple[Optional[JaxprEqn], Optional[JaxprEqn], Sequence[bool]]:
+  invars = [x for x in eqn.invars if not isinstance(x, Literal)]
+  jaxpr = ClosedJaxpr(Jaxpr([], invars, eqn.outvars, [eqn]), [])
+  jaxpr_known, jaxpr_unknown, unks_out = partial_eval_jaxpr(jaxpr, unknowns, False)
+  assert 0 <= len(jaxpr_known.eqns) <= 1 and 0 <= len(jaxpr_unknown.eqns) <= 1
+  eqn_known = jaxpr_known.eqns[0] if jaxpr_known.eqns else None
+  eqn_unknown = jaxpr_unknown.eqns[0] if jaxpr_unknown.eqns else None
+
+  # We need to substitute in the original binders for the caller. Literals
+  # include units.
+  known_invars = [new_atom if type(new_atom) is Literal else old_atom
+                  for old_atom, new_atom in zip(eqn.invars, eqn_known.invars)]
+  known_outvars = [new_var if uk else old_var for old_var, new_var, uk
+                   in zip(eqn.outvars, eqn_known.outvars, unks_out)]
+  eqn_known = JaxprEqn(known_invars, known_outvars, eqn_known.primitive,
+                       eqn_known.params, eqn_known.source_info)
+
+  unknown_invars = [new_atom if type(new_atom) is Literal else old_atom
+                    for old_atom, new_atom in zip(eqn.invars, eqn_unknown.invars)]
+  unknown_outvars = [old_var if uk else new_var for old_var, new_var, uk
+                     in zip(eqn.outvars, eqn_unknown.outvars, unks_out)]
+  eqn_unknown = JaxprEqn(unknown_invars, unknown_outvars, eqn_unknown.primitive,
+                         eqn_unknown.params, eqn_unknown.source_info)
+
+  return eqn_known, eqn_unknown, unks_out
+
 
 remat_call_p: Primitive = core.CallPrimitive('remat_call')
 remat_call = remat_call_p.bind
@@ -947,8 +975,18 @@ def _partial_eval_jaxpr_custom(
 
   return jaxpr_known, jaxpr_staged, out_unknowns, out_inst, len(residuals)
 
-# A primitive rule for policy-driven partial evaluation returns a 5-tuple
-# with the components representing, respectively:
+# A primitive rule for policy-driven partial evaluation takes as input:
+#  * the function specifying the policy for which primitive applications'
+#    results are saveable,
+#  * a list of booleans indicating which of the original inputs are unknown,
+#  * a list of booleans indicating which of the original inputs are
+#    instantiated (i.e. available) in the 'unknown' side,
+#  * the jaxpr equation to be procssed,
+SaveablePolicy = Callable[..., bool]
+UnknownInputs = Sequence[bool]
+InstantiatedInputs = Sequence[bool]
+# and it returns as output a 5-tuple with the components representing,
+# respectively:
 #  * the JaxprEqn for the 'known' side (or None if there is no known component),
 #  * the JaxprEqn for the 'unknown' side (or None),
 #  * a list of booleans indicating which of the original outputs are unknown,
@@ -957,17 +995,23 @@ def _partial_eval_jaxpr_custom(
 #  * a list of Var instances representing residuals to be added (i.e. to be
 #    plumbed as outputs of the 'known' side jaxpr and added as input binders to
 #    the 'unknown' jaxpr).
-PartialEvalCustomResult = Tuple[Optional[JaxprEqn], Optional[JaxprEqn],
-                                Sequence[bool], Sequence[bool], List[Var]]
+KnownJaxprEqn = Optional[JaxprEqn]
+UnknownJaxprEqn = Optional[JaxprEqn]
+UnknownOuts = Sequence[bool]
+InstantiatedOuts = Sequence[bool]
+NewResVars = List[Var]
+PartialEvalCustomResult = Tuple[KnownJaxprEqn, UnknownJaxprEqn,
+                                UnknownOuts, InstantiatedOuts, NewResVars]
+
 PartialEvalCustomRule = Callable[
-    [Callable[..., bool], Sequence[bool], Sequence[bool], JaxprEqn],
+    [SaveablePolicy, UnknownInputs, InstantiatedInputs, JaxprEqn],
     PartialEvalCustomResult]
 partial_eval_jaxpr_custom_rules: Dict[Primitive, PartialEvalCustomRule] = {}
 
 def partial_eval_jaxpr_custom_rule_not_implemented(
     saveable: Callable[..., bool], unks_in: Sequence[bool], inst_in: Sequence[bool],
     eqn: JaxprEqn) -> PartialEvalCustomResult:
-  raise NotImplementedError
+  raise NotImplementedError(f'custom partial eval for {eqn.primitive.name}')
 
 
 ParamsUpdater = Callable[[List[bool], int, dict, dict], Tuple[dict, dict]]

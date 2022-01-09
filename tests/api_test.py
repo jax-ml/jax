@@ -3469,7 +3469,13 @@ class RematTest(jtu.JaxTestCase):
     expected = api.grad(api.grad(f))(3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_remat_scan(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_remat_scan(self, remat):
     to_scan = lambda c, x: (jnp.sin(c), None)
 
     def f_noremat(x):
@@ -3477,7 +3483,7 @@ class RematTest(jtu.JaxTestCase):
       return y
 
     def f_yesremat(x):
-      y, _ = lax.scan(api.remat(to_scan), x, np.arange(3.))
+      y, _ = lax.scan(remat(to_scan), x, np.arange(3.))
       return y
 
     ans = f_yesremat(4.)
@@ -3547,7 +3553,13 @@ class RematTest(jtu.JaxTestCase):
     self.assertAllClose(f1(x), f2(x), check_dtypes=False)
     self.assertAllClose(api.grad(f1)(x), api.grad(f2)(x), check_dtypes=False)
 
-  def test_remat_symbolic_zeros(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_remat_symbolic_zeros(self, remat):
     # code from https://github.com/google/jax/issues/1907
 
     key = jax.random.PRNGKey(0)
@@ -3568,7 +3580,7 @@ class RematTest(jtu.JaxTestCase):
         F = apply_fn(R)
         return shift(R, 0.001 * F), jnp.array([0.])
 
-      move = api.remat(move)
+      move = remat(move)
       R, temp = lax.scan(move, Rinit, jnp.arange(2))
       return R[0, 0]
 
@@ -3594,10 +3606,16 @@ class RematTest(jtu.JaxTestCase):
 
     self.assertAllClose(f(3), 6, check_dtypes=False)
 
-  def test_remat_nontrivial_env(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_remat_nontrivial_env(self, remat):
     # simplified from https://github.com/google/jax/issues/2030
 
-    @api.remat
+    @remat
     def foo(state, dt=0.5, c=1):
       u, u_t = state
       u_tt = c**2 * u
@@ -3655,14 +3673,20 @@ class RematTest(jtu.JaxTestCase):
     f = remat(f)
     api.grad(f)(w, x)  # doesn't crash
 
-  def test_remat_scan2(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_remat_scan2(self, remat):
     # https://github.com/google/jax/issues/1963
 
     def scan_bug(x0):
       f = lambda x, _: (x + 1, None)
       def scanned_f(x, _):
         return lax.scan(f, x, xs=None, length=1)[0], None
-      x, _ = jax.remat(scanned_f)(x0, None)
+      x, _ = remat(scanned_f)(x0, None)
       return x
 
     jax.grad(scan_bug)(1.0)  # doesn't crash
@@ -3791,8 +3815,14 @@ class RematTest(jtu.JaxTestCase):
     text = c.as_hlo_text()
     self.assertTrue('while' in text or 'conditional' in text)
 
-  def test_no_cse_widget_with_prevent_cse_false(self):
-    @partial(api.remat, prevent_cse=False)
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_no_cse_widget_with_prevent_cse_false(self, remat):
+    @partial(remat, prevent_cse=False)
     def g(x):
       return lax.sin(lax.sin(x)), 3.
 

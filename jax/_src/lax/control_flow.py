@@ -2195,7 +2195,14 @@ xla.register_translation(scan_p, xla.lower_fun(_scan_impl, new_style=True,
 batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
 masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
-pe.partial_eval_jaxpr_custom_rules[scan_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
+
+def _scan_partial_eval_custom_rule(saveable_policy, unks_in, inst_in, eqn):
+  if saveable_policy is ad_checkpoint.nothing_saveable:
+    return ad_checkpoint.full_remat_rule(unks_in, inst_in, eqn)
+  else:
+    raise NotImplementedError('scan partial eval for custom policies is not '
+                              'implemented. Please open a feature request!')
+pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom_rule
 
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))

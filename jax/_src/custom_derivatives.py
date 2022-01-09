@@ -400,6 +400,7 @@ def custom_jvp_jaxpr_custom_partial_eval_rule(
   # contains dots or not), so we should allow for more expressive interaction
   # (e.g. allow the policy to depend on which custom_jvp-decorated function is
   # being applied, or annotating the behavior where custom_vjp is called.)
+  del saveable
   inst_out = [True] * len(eqn.outvars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is core.Var and not inst]

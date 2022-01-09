@@ -46,6 +46,7 @@ from jax._src.lib import xla_bridge
 from jax._src.util import prod, safe_map
 from jax.interpreters import pxla
 from jax.interpreters import xla
+from jax.ad_checkpoint import checkpoint as new_checkpoint
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -1614,7 +1615,13 @@ class PythonPmapTest(jtu.JaxTestCase):
     tol = 1e-1 if jtu.device_under_test() == "tpu" else 1e-3
     self.assertAllClose(result, expected, check_dtypes=False, atol=tol, rtol=tol)
 
-  def testAxisIndexRemat(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', jax.remat),
+          ('_new', new_checkpoint),
+      ])
+  def testAxisIndexRemat(self, remat):
     # https://github.com/google/jax/issues/2716
     n = len(jax.devices())
 
@@ -1623,7 +1630,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       return random.bernoulli(key, p=0.5)
 
     keys = random.split(random.PRNGKey(0), n)
-    self.pmap(jax.remat(f), axis_name='i')(keys)
+    self.pmap(remat(f), axis_name='i')(keys)
 
   def testPmapMapVmapCombinations(self):
     # https://github.com/google/jax/issues/2822

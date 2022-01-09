@@ -300,7 +300,7 @@ ad.primitive_jvps[remat_p] = remat_jvp
 
 def remat_partial_eval(trace, *tracers, jaxpr, **params):
   assert not jaxpr.constvars
-  policy = params['policy'] or (lambda *_, **__: False)
+  policy = params['policy'] or nothing_saveable
   # unzip into jaxpr_known and jaxpr_unknown
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_unknown, out_unknowns, out_inst, _ = \
@@ -400,3 +400,14 @@ def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims
   return name_p.bind(x, name=name), d
 batching.primitive_batchers[name_p] = name_batcher
+
+
+### Rule utility functions
+
+def full_remat_rule(unks_in: List[bool], inst_in: List[bool], eqn: core.JaxprEqn
+                    ) -> pe.PartialEvalCustomResult:
+  known_eqn, _, unks_out = pe.partial_eval_eqn(eqn, unks_in)
+  inst_out = [True] * len(eqn.outvars)
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+  return known_eqn, eqn, unks_out, inst_out, new_inst
