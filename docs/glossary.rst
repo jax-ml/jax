@@ -13,7 +13,7 @@ JAX Glossary of Terms
       by JAX to perform computations.
 
     DeviceArray
-      JAX's analog of the :class:`numpy.ndarray`. See :class:`jax.interpreters.xla.DeviceArray`.
+      JAX's analog of the :class:`numpy.ndarray`. See :class:`jaxlib.xla_extension.DeviceArray`.
 
     forward-mode autodiff
       See :term:`JVP`
