@@ -1229,13 +1229,13 @@ class BCOO(JAXSparse):
 
 
 # vmappable handlers
-def _bcoo_to_elt(cont, _, val, axis):
+def _bcoo_to_elt(cont, i, val, axis):
   if axis is None:
     return val
   if axis >= val.n_batch:
     raise ValueError(f"Cannot map in_axis={axis} for BCOO array with n_batch={val.n_batch}. "
                      "in_axes for batched BCOO operations must correspond to a batch dimension.")
-  return BCOO((cont(val.data, axis), cont(val.indices, axis)),
+  return BCOO((cont(i, val.data, axis), cont(i, val.indices, axis)),
               shape= val.shape[:axis] + val.shape[axis + 1:])
 
 def _bcoo_from_elt(cont, axis_size, elt, axis):

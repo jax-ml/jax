@@ -741,5 +741,4 @@ batching.defvectorized(device_put_p)
 def _device_put_lowering(ctx, x, *, device):
   return [x]
 
-
 mlir.register_lowering(device_put_p, _device_put_lowering)

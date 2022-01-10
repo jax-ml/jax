@@ -356,14 +356,16 @@ def _python_jit(
       return fun(*args, **kwargs)
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    args_flat, in_meta = xla.flatten(args_flat)
     for arg in args_flat:
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
+    flat_fun, out_meta = xla.flatten_fun(flat_fun, in_meta)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
         donated_invars=donated_invars, inline=inline)
-    return tree_unflatten(out_tree(), out_flat)
+    return tree_unflatten(out_tree(), xla.unflatten(out_flat, out_meta()))
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
                               backend, donate_argnums, inline)
@@ -419,15 +421,16 @@ def _cpp_jit(
     # work/code that is redundant between C++ and Python. We can try that later.
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    args_flat, in_meta = xla.flatten(args_flat)
     for arg in args_flat:
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
+    flat_fun, out_meta = xla.flatten_fun(flat_fun, in_meta)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
         donated_invars=donated_invars, inline=inline)
-    out_pytree_def = out_tree()
-    out = tree_unflatten(out_pytree_def, out_flat)
+    out = tree_unflatten(out_tree(), xla.unflatten(out_flat, out_meta()))
 
     ### Decide whether we can support the C++ fast path
     # High level note: The Python tracing mechanism is complex; in particular
@@ -442,7 +445,9 @@ def _cpp_jit(
         execute is not None and
         execute.func is dispatch._execute_compiled and  # not trivial, not pmap
         # Not supported: ShardedDeviceArray
-        all(device_array.type_is_device_array(x) for x in out_flat))
+        all(device_array.type_is_device_array(x) for x in out_flat) and
+        # Not supported: jittable data types which aren't arrays
+        xla.meta_is_trivial(out_meta()))
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       _, xla_executable, _, result_handlers, kept_var_idx = execute.args
@@ -454,7 +459,7 @@ def _cpp_jit(
         avals.append(aval)
       assert len(avals) == len(out_flat)
       kept_var_bitvec = [i in kept_var_idx for i in range(len(args_flat))]
-      fastpath_data = _FastpathData(xla_executable, out_pytree_def,
+      fastpath_data = _FastpathData(xla_executable, out_tree(),
                                     sticky_device, avals, lazy_exprs,
                                     kept_var_bitvec)
     else:
@@ -1516,6 +1521,8 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
   @wraps(fun, docstr=docstr)
   @api_boundary
   def batched_fun(*args, **kwargs):
+    # TODO(mattjj,jakevdp): remove batching.is_vmappable and
+    # flatten_fun_for_vmap once BCOO is revised
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
@@ -2252,18 +2259,8 @@ def _jvp(fun: lu.WrappedFun, primals, tangents):
     raise TypeError("primal and tangent arguments to jax.jvp must have the same tree "
                     f"structure; primals have tree structure {tree_def} whereas tangents have "
                     f"tree structure {tree_def_2}.")
-  for p, t in safe_zip(ps_flat, ts_flat):
-    if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
-      raise TypeError("primal and tangent arguments to jax.jvp do not match; "
-                      "dtypes must be equal, or in case of int/bool primal dtype "
-                      "the tangent dtype must be float0."
-                      f"Got primal dtype {_dtype(p)} and so expected tangent dtype "
-                      f"{core.primal_dtype_to_tangent_dtype(_dtype(p))}, but got "
-                      f"tangent dtype {_dtype(t)} instead.")
-    if np.shape(p) != np.shape(t):
-      raise ValueError("jvp called with different primal and tangent shapes;"
-                       f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
-
+  for p, t in zip(ps_flat, ts_flat):
+    ad.check_primal_tangent_type_agreement(p, t)
   flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
   out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
   return (tree_unflatten(out_tree(), out_primals),
@@ -2364,7 +2361,7 @@ def _vjp_pullback_wrapper(cotangent_dtypes, cotangent_shapes,
   if in_tree != in_tree_expected:
     raise TypeError(f"Tree structure of cotangent input {in_tree}, does not match structure of "
                     f"primal output {in_tree_expected}.")
-  for arg, ct_dtype, ct_shape in safe_zip(args, cotangent_dtypes, cotangent_shapes):
+  for arg, ct_dtype, ct_shape in zip(args, cotangent_dtypes, cotangent_shapes):
     expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(_dtype(arg))
     if expected_tangent_dtype != ct_dtype:
       raise TypeError(
