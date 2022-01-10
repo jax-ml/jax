@@ -958,7 +958,7 @@ def _typecheck_xmap(
   mapped_in_avals = [_delete_aval_axes(a, a_in_axes, global_axis_sizes)
                      for a, a_in_axes in zip(in_avals, in_axes)]
   with core.extend_axis_env_nd(global_axis_sizes.items()):
-    core._check_jaxpr(call_jaxpr, mapped_in_avals)
+    core._check_jaxpr(core.JaxprPpContext(), call_jaxpr, mapped_in_avals)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [_insert_aval_axes(a, a_out_axes, local_axis_sizes)
