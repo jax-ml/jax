@@ -12,20 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import collections
 import functools
 import re
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax._src import test_util as jtu
 from jax import tree_util
-from jax._src.tree_util import _process_pytree
 from jax import flatten_util
+from jax._src import test_util as jtu
+from jax._src.lib import pytree as pytree
+from jax._src.tree_util import _process_pytree
 import jax.numpy as jnp
 
+
+pytree_version = getattr(pytree, "version", 0)
 
 def _dummy_func(*args, **kwargs):
   return
@@ -217,6 +220,12 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(treedef1.num_leaves, len(leaves))
     self.assertEqual(treedef1.num_leaves, treedef2.num_leaves)
     self.assertEqual(treedef1.num_nodes, treedef2.num_nodes)
+
+  @unittest.skipIf(pytree_version < 1, "Requires jaxlib 0.1.76")
+  def testTreedefTupleComparesEqual(self):
+    # https://github.com/google/jax/issues/9066
+    self.assertEqual(tree_util.tree_structure((3,)),
+                     tree_util.treedef_tuple((tree_util.tree_structure(3),)))
 
   def testFlattenUpTo(self):
     _, tree = tree_util.tree_flatten([(1, 2), None, ATuple(foo=3, bar=7)])
