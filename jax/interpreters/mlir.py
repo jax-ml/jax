@@ -377,7 +377,7 @@ def lower_jaxpr_to_module(
   runtime."""
   input_output_aliases = None
   if platform in ("gpu", "tpu"):
-    input_output_aliases, out_donated_args = _set_up_aliases(
+    input_output_aliases, donated_args = _set_up_aliases(
         jaxpr.in_avals, jaxpr.out_avals, donated_args)
   if any(donated_args):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
