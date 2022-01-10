@@ -57,7 +57,8 @@ flags.DEFINE_string(
     'jax_xla_backend', '',
     'Deprecated, please use --jax_platforms instead.')
 flags.DEFINE_string(
-    'jax_backend_target', '',
+    'jax_backend_target',
+    os.getenv('JAX_BACKEND_TARGET', '').lower(),
     'Either "local" or "rpc:address" to connect to a remote service target.')
 # TODO(skye): warn when this is used once we test out --jax_platforms a bit
 flags.DEFINE_string(
