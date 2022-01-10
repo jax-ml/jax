@@ -111,6 +111,9 @@ except ImportError:
 # branch on the Jax github.
 _xla_extension_version = getattr(xla_client, '_version', 0)
 
+# Version number for MLIR:Python APIs, provided by jaxlib.
+mlir_api_version = getattr(xla_client, 'mlir_api_version', 0)
+
 try:
   from jaxlib import tpu_client as tpu_driver_client  # pytype: disable=import-error
 except:

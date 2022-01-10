@@ -644,6 +644,6 @@ traceback_filtering = config.define_enum_state(
 
 enable_mlir = config.define_bool_state(
     name='jax_enable_mlir',
-    default=False,
+    default=lib.mlir_api_version >= 1,
     help=('Enables an experimental code path that compiles JAX programs via '
           'emitting the MLIR MHLO dialect.'))
