@@ -28,3 +28,7 @@ Experimental APIs
 
    enable_x64
    disable_x64
+
+   jax.experimental.checkify.checkify
+   jax.experimental.checkify.check
+   jax.experimental.checkify.check_error
