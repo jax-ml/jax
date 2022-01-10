@@ -314,6 +314,10 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2)])
   def testGradOfConstraint(self):
+    # TODO(b/213927860): XLA incorrectly simplifies away the sharding constraint
+    # on the output.
+    if config.jax_enable_mlir:
+      raise unittest.SkipTest("test fails with jax_enable_mlir")
     # Make sure that we can compute grads through sharding constraints
     h = lambda x: jnp.sin(with_sharding_constraint(x, P('x'))).sum()
     f = pjit(lambda x: jax.grad(h)(x),
