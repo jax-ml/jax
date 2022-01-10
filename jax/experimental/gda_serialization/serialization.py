@@ -25,21 +25,26 @@ import numpy as np
 import tensorstore as ts
 
 
-async def create_async_gsda_from_callback(
+async def create_async_gda_from_callback(
     global_shape: gda.Shape,
     global_mesh: Mesh,
     mesh_axes: gda.MeshAxes,
     data_callback: Callable[[gda.Index], asyncio.Future],
 ):
-  indices = gda.get_shard_indices(global_shape, global_mesh, mesh_axes)
-  future_arrays = [data_callback(indices[d]) for d in global_mesh.local_devices]
+  global_idx_rid = gda.get_shard_indices_replica_ids(
+      global_shape, global_mesh, mesh_axes)
+  local_devices = global_mesh.local_devices
+  future_arrays = [data_callback(global_idx_rid[d][0])
+                   for d in local_devices]
   # Pause here and come back to `from_async_callback()` when future_arrays are
   # ready. device_put cannot happen with future_arrays.
   local_arrays = await asyncio.gather(*future_arrays)
 
   dbs = [jax.device_put(array, device)
-         for array, device in zip(local_arrays, global_mesh.local_devices)]
-  return gda.GlobalDeviceArray(global_shape, global_mesh, mesh_axes, dbs)
+         for array, device in zip(local_arrays, local_devices)]
+  local_idx_rid = dict((d, global_idx_rid[d]) for d in local_devices)
+  return gda.GlobalDeviceArray(global_shape, global_mesh, mesh_axes, dbs,
+                               gda._GdaFastPathArgs(local_idx_rid, local_devices))
 
 
 def _get_metadata(gda):
@@ -105,4 +110,4 @@ async def async_deserialize(ckpt_path, mesh, mesh_axes, tensorstore_spec):
   async def cb(index):
     return await t[index].read()
 
-  return await create_async_gsda_from_callback(t.shape, mesh, mesh_axes, cb)
+  return await create_async_gda_from_callback(t.shape, mesh, mesh_axes, cb)
