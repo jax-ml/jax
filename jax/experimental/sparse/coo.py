@@ -27,8 +27,7 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _coo_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
 from jax._src.lib import cusparse
-from jax._src.numpy.lax_numpy import _promote_dtypes
-import jax.numpy as jnp
+import jax._src.numpy.lax_numpy as jnp
 
 @tree_util.register_pytree_node_class
 class COO(JAXSparse):
@@ -73,8 +72,8 @@ class COO(JAXSparse):
   def __matmul__(self, other):
     if isinstance(other, JAXSparse):
       raise NotImplementedError("matmul between two sparse objects.")
-    other = jnp.asarray(other)
-    data, other = _promote_dtypes(self.data, other)
+    other = jnp._asarray(other)
+    data, other = jnp._promote_dtypes(self.data, other)
     if other.ndim == 1:
       return coo_matvec(data, self.row, self.col, other, shape=self.shape)
     elif other.ndim == 2:
@@ -162,13 +161,13 @@ def coo_fromdense(mat, *, nse, index_dtype=jnp.int32):
     row : array of shape ``(nse,)`` and dtype ``index_dtype``
     col : array of shape ``(nse,)`` and dtype ``index_dtype``
   """
-  mat = jnp.asarray(mat)
+  mat = jnp._asarray(mat)
   nse = core.concrete_or_error(operator.index, nse, "nse argument of coo_fromdense()")
   return coo_fromdense_p.bind(mat, nse=nse, index_dtype=index_dtype)
 
 @coo_fromdense_p.def_impl
 def _coo_fromdense_impl(mat, *, nse, index_dtype):
-  mat = jnp.asarray(mat)
+  mat = jnp._asarray(mat)
   assert mat.ndim == 2
 
   row, col = jnp.nonzero(mat, size=nse)
@@ -260,7 +259,7 @@ def coo_matvec(data, row, col, v, *, shape, transpose=False):
 
 @coo_matvec_p.def_impl
 def _coo_matvec_impl(data, row, col, v, *, shape, transpose):
-  v = jnp.asarray(v)
+  v = jnp._asarray(v)
   if transpose:
     row, col = col, row
   out_shape = shape[1] if transpose else shape[0]
@@ -305,7 +304,7 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, shape, transpose):
   if ad.is_undefined_primal(v):
     return data, row, col, coo_matvec(data, row, col, ct, shape=shape, transpose=not transpose)
   else:
-    v = jnp.asarray(v)
+    v = jnp._asarray(v)
     # The following line does this, but more efficiently:
     # return _coo_extract(row, col, jnp.outer(ct, v)), row, col, v
     return ct[row] * v[col], row, col, v
@@ -343,7 +342,7 @@ def coo_matmat(data, row, col, B, *, shape, transpose=False):
 
 @coo_matmat_p.def_impl
 def _coo_matmat_impl(data, row, col, B, *, shape, transpose):
-  B = jnp.asarray(B)
+  B = jnp._asarray(B)
   if transpose:
     row, col = col, row
   out_shape = shape[1] if transpose else shape[0]
@@ -386,7 +385,7 @@ def _coo_matmat_transpose(ct, data, row, col, B, *, shape, transpose):
   if ad.is_undefined_primal(B):
     return data, row, col, coo_matmat(data, row, col, ct, shape=shape, transpose=not transpose)
   else:
-    B = jnp.asarray(B)
+    B = jnp._asarray(B)
     return (ct[row] * B[col]).sum(1), row, col, B
 
 ad.defjvp(coo_matmat_p, _coo_matmat_jvp_left, None, None, _coo_matmat_jvp_right)

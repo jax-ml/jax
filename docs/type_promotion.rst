@@ -200,7 +200,7 @@ that can be seen in an array's string representation:
 
 .. code-block:: python
 
-   >>> jnp.asarray(2)
+   >>> jax.device_put(2)
    DeviceArray(2, dtype=int32, weak_type=True)
 
 If the ``dtype`` is specified explicitly, it will instead result in a standard
@@ -208,5 +208,5 @@ strongly-typed array value:
 
 .. code-block:: python
 
-   >>> jnp.asarray(2, dtype='int32')
+   >>> jnp.array(2, dtype='int32')
    DeviceArray(2, dtype=int32)

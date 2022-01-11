@@ -609,7 +609,7 @@ def _convert_and_clip_integer(val, dtype):
   >>> _convert_and_clip_integer(val, 'int32')
   DeviceArray(2147483647, dtype=int32)
   """
-  val = val if isinstance(val, ndarray) else asarray(val)
+  val = val if isinstance(val, ndarray) else _asarray(val)
   dtype = dtypes.canonicalize_dtype(dtype)
   if not (issubdtype(dtype, integer) and issubdtype(val.dtype, integer)):
     raise TypeError("_convert_and_clip_integer only accepts integer dtypes.")
@@ -1172,7 +1172,7 @@ def ldexp(x1, x2):
 @jit
 def frexp(x):
   _check_arraylike("frexp", x)
-  x = asarray(x)
+  x = _asarray(x)
   if issubdtype(x.dtype, complexfloating):
     raise TypeError("frexp does not support complex-valued inputs")
   elif not issubdtype(x.dtype, floating):
@@ -1247,7 +1247,7 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
     raise NotImplementedError("string values for `bins` not implemented.")
   _check_arraylike("histogram_bin_edges", a, bins)
   a = ravel(a)
-  b = asarray(bins)
+  b = _asarray(bins)
   if b.ndim == 1:
     return b
   if range is None:
@@ -2210,7 +2210,7 @@ def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [shape(arg) for arg in args]
   if len(set(shapes)) == 1:
-    return [arg if isinstance(arg, ndarray) or isscalar(arg) else array(arg)
+    return [arg if isinstance(arg, ndarray) or isscalar(arg) else _array(arg)
             for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)
   return [broadcast_to(arg, result_shape) for arg in args]
@@ -2222,7 +2222,7 @@ The JAX version does not necessarily return a view of the input.
 def broadcast_to(arr, shape):
   if hasattr(arr, "broadcast_to"):
     return arr.broadcast_to(shape)
-  arr = arr if isinstance(arr, ndarray) else array(arr)
+  arr = arr if isinstance(arr, ndarray) else _array(arr)
   shape = (shape,) if ndim(shape) == 0 else shape
   shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
@@ -2459,7 +2459,7 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
       raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
                        f"where mask one has to specify 'initial'")
 
-  a = a if isinstance(a, ndarray) else asarray(a)
+  a = a if isinstance(a, ndarray) else _asarray(a)
   a = preproc(a) if preproc else a
   pos_dims, dims = _reduction_dims(a, axis)
   result_dtype = dtypes.canonicalize_dtype(dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a)))))
@@ -3040,7 +3040,7 @@ def _check_no_padding(axis_padding, mode):
 
 def _pad_constant(array, pad_width, constant_values):
   nd = ndim(array)
-  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+  constant_values = broadcast_to(_asarray(constant_values), (nd, 2))
   constant_values = lax._convert_element_type(constant_values, array.dtype, dtypes.is_weakly_typed(array))
   for i in range(nd):
     widths = [(0, 0, 0)] * nd
@@ -3255,7 +3255,7 @@ def _broadcast_to_pairs(nvals, nd, name):
 
 @partial(jit, static_argnums=(1, 2, 4, 5, 6))
 def _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type):
-  array = asarray(array)
+  array = _asarray(array)
   nd = ndim(array)
 
   if nd == 0:
@@ -3379,7 +3379,7 @@ def tile(A, reps):
 
 def _concatenate_array(arr, axis: int):
   # Fast path for concatenation when the input is an ndarray rather than a list.
-  arr = asarray(arr)
+  arr = _asarray(arr)
   if arr.ndim == 0 or arr.shape[0] == 0:
     raise ValueError("Need at least one array to concatenate.")
   if axis is None:
@@ -3411,7 +3411,7 @@ def concatenate(arrays, axis: int = 0):
   # (https://github.com/google/jax/issues/653).
   k = 16
   if len(arrays) == 1:
-    return asarray(arrays[0])
+    return _asarray(arrays[0])
   else:
     while len(arrays) > 1:
       arrays = [lax.concatenate(arrays[i:i+k], axis)
@@ -3502,7 +3502,7 @@ def _block(xs):
     xs = [_atleast_nd(x, rank) for x in xs]
     return concatenate(xs, axis=-depths[0]), depths[0] + 1
   else:
-    return asarray(xs), 1
+    return _asarray(xs), 1
 
 @_wraps(np.block)
 @jit
@@ -3514,7 +3514,7 @@ def block(arrays):
 @jit
 def atleast_1d(*arys):
   if len(arys) == 1:
-    arr = asarray(arys[0])
+    arr = _asarray(arys[0])
     return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
     return [atleast_1d(arr) for arr in arys]
@@ -3524,7 +3524,7 @@ def atleast_1d(*arys):
 @jit
 def atleast_2d(*arys):
   if len(arys) == 1:
-    arr = asarray(arys[0])
+    arr = _asarray(arys[0])
     if ndim(arr) >= 2:
       return arr
     elif ndim(arr) == 1:
@@ -3539,7 +3539,7 @@ def atleast_2d(*arys):
 @jit
 def atleast_3d(*arys):
   if len(arys) == 1:
-    arr = asarray(arys[0])
+    arr = _asarray(arys[0])
     if ndim(arr) == 0:
       arr = expand_dims(arr, axis=(0, 1, 2))
     elif ndim(arr) == 1:
@@ -3551,25 +3551,12 @@ def atleast_3d(*arys):
     return [atleast_3d(arr) for arr in arys]
 
 
-_ARRAY_DOC = """
-This function will create arrays on JAX's default device. For control of the
-device placement of data, see :func:`jax.device_put`. More information is
-available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
-https://jax.readthedocs.io/en/latest/faq.html).
-"""
-
-@_wraps(np.array, lax_description=_ARRAY_DOC)
-def array(object, dtype=None, copy=True, order="K", ndmin=0):
-  if order is not None and order != "K":
-    raise NotImplementedError("Only implemented for order='K'")
+def _array(object, dtype=None, copy=True, allow_weak_types=True):
+  # Private utility for array conversion. This is like jnp.array,
+  # but does not strip weak types from inputs.
 
   # check if the given dtype is compatible with JAX
   lax._check_user_dtype_supported(dtype, "array")
-
-  # Here we make a judgment call: we only return a weakly-typed array when the
-  # input object itself is weakly typed. That ensures asarray(x) is a no-op whenever
-  # x is weak, but avoids introducing weak types with something like array([1, 2, 3])
-  weak_type = dtype is None and dtypes.is_weakly_typed(object)
 
   # For Python scalar literals, call coerce_to_array to catch any overflow errors.
   # We don't use dtypes.is_python_scalar because we don't want this triggering for
@@ -3580,16 +3567,25 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     _ = dtypes.coerce_to_array(object, dtype)
 
   leaves = tree_leaves(object)
+  weak_type = False
   if dtype is None:
-    # Use lattice_result_type rather than result_type to avoid canonicalization.
-    # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
-    try:
-      dtype = dtypes._lattice_result_type(*leaves)[0] if leaves else dtypes.float_
-    except TypeError:
-      # This happens if, e.g. one of the entries is a memoryview object.
-      # This is rare, so we only handle it if the normal path fails.
-      leaves = [_convert_to_array_if_dtype_fails(leaf) for leaf in leaves]
-      dtype = dtypes._lattice_result_type(*leaves)[0]
+    if not leaves:
+      dtype = dtypes.float_
+    else:
+      # Use lattice_result_type rather than result_type to avoid canonicalization.
+      # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
+      try:
+        dtype, weak_type = dtypes._lattice_result_type(*leaves)
+      except TypeError:
+        # This happens if, e.g. one of the entries is a memoryview object.
+        # This is rare, so we only handle it if the normal path fails.
+        leaves = [_convert_to_array_if_dtype_fails(leaf) for leaf in leaves]
+        dtype, weak_type = dtypes._lattice_result_type(*leaves)
+
+  if not allow_weak_types:
+    # TODO(jakevdp) - if the output is weak and does not match the default dtype,
+    # should we convert to default? Probably?
+    weak_type = False
 
   if not weak_type:
     dtype = dtypes.canonicalize_dtype(dtype)
@@ -3603,7 +3599,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     # large integers; see discussion in https://github.com/google/jax/pull/6047.
     # More correct would be to call coerce_to_array on each leaf, but this may have
     # performance implications.
-    out = np.array(object, dtype=dtype, ndmin=ndmin, copy=False)
+    out = np.array(object, dtype=dtype, copy=False)
   elif isinstance(object, ndarray_types):
     if object.aval is None:
       # object is a raw buffer; convert to device array on its current device.
@@ -3613,7 +3609,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     out = _array_copy(object) if copy else object
   elif isinstance(object, (list, tuple)):
     if object:
-      out = stack([asarray(elt, dtype=dtype) for elt in object])
+      out = stack([_asarray(elt, dtype=dtype) for elt in object])
     else:
       out = np.array([], dtype=dtype)
   else:
@@ -3622,14 +3618,14 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     except TypeError:
       pass  # `object` does not support the buffer interface.
     else:
-      return array(np.asarray(view), dtype, copy, ndmin=ndmin)
+      return _array(np.asarray(view), dtype, copy)
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
   out = lax._convert_element_type(out, dtype, weak_type=weak_type)
-  if ndmin > ndim(out):
-    out = lax.expand_dims(out, range(ndmin - ndim(out)))
   return out
+
+_asarray = partial(_array, copy=False)
 
 
 def _convert_to_array_if_dtype_fails(x):
@@ -3641,10 +3637,26 @@ def _convert_to_array_if_dtype_fails(x):
     return x
 
 
+_ARRAY_DOC = """
+This function will create arrays on JAX's default device. For control of the
+device placement of data, see :func:`jax.device_put`. More information is
+available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
+https://jax.readthedocs.io/en/latest/faq.html).
+"""
+
+@_wraps(np.array, lax_description=_ARRAY_DOC)
+def array(object, dtype=None, copy=True, order="K", ndmin=0):
+  if order is not None and order != "K":
+    raise NotImplementedError("Only implemented for order='K'")
+  out = _array(object, dtype=dtype, copy=copy, allow_weak_types=False)
+  if ndmin > ndim(out):
+    out = lax.expand_dims(out, range(ndmin - ndim(out)))
+  return out
+
+
 @_wraps(np.asarray, lax_description=_ARRAY_DOC)
 def asarray(a, dtype=None, order=None):
   lax._check_user_dtype_supported(dtype, "asarray")
-  dtype = dtypes.canonicalize_dtype(dtype) if dtype is not None else dtype
   return array(a, dtype=dtype, copy=False, order=order)
 
 
@@ -3674,7 +3686,7 @@ def full(shape, fill_value, dtype=None):
     shape = (shape,) if ndim(shape) == 0 else shape
     return lax.full(shape, fill_value, dtype)
   else:
-    return broadcast_to(asarray(fill_value, dtype=dtype), shape)
+    return broadcast_to(_asarray(fill_value, dtype=dtype), shape)
 
 
 @_wraps(np.full_like)
@@ -3688,7 +3700,7 @@ def full_like(a, fill_value, dtype=None, shape=None):
   else:
     shape = np.shape(a) if shape is None else shape
     dtype = result_type(a) if dtype is None else dtype
-    return broadcast_to(asarray(fill_value, dtype=dtype), shape)
+    return broadcast_to(_asarray(fill_value, dtype=dtype), shape)
 
 
 @_wraps(np.zeros)
@@ -3795,7 +3807,7 @@ def _wrap_numpy_nullary_function(f):
             for i, arg in enumerate(args)]
     kwargs = {key: core.concrete_or_error(None, val, f"the error occured in argument '{key}' jnp.{f.__name__}()")
               for key, val in kwargs.items()}
-    return asarray(f(*args, **kwargs))
+    return _asarray(f(*args, **kwargs))
   return wrapper
 
 
@@ -3919,7 +3931,7 @@ def _geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
 @_wraps(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
 def meshgrid(*xi, copy=True, sparse=False, indexing='xy'):
   _check_arraylike("meshgrid", *xi)
-  args = [asarray(x) for x in xi]
+  args = [_asarray(x) for x in xi]
   if not copy:
     raise ValueError("jax.numpy.meshgrid only supports copy=True")
   if indexing not in ["xy", "ij"]:
@@ -4242,7 +4254,7 @@ def ix_(*args):
   n = len(args)
   output = []
   for i, a in enumerate(args):
-    a = asarray(a)
+    a = _asarray(a)
     if len(a.shape) != 1:
       msg = "Arguments to jax.numpy.ix_ must be 1-dimensional, got shape {}"
       raise ValueError(msg.format(a.shape))
@@ -4428,7 +4440,7 @@ def _wrap_indices_function(f):
     kwargs = {key: core.concrete_or_error(
                 None, val, f"argument '{key}' of jnp.{f.__name__}()")
               for key, val in kwargs.items()}
-    return tuple(asarray(x) for x in f(*args, **kwargs))
+    return tuple(_asarray(x) for x in f(*args, **kwargs))
   return wrapper
 
 tril_indices = _wrap_indices_function(np.tril_indices)
@@ -4662,9 +4674,9 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
     a1, a2 = trim_zeros(a1, trim='f'), trim_zeros(a2, trim='f')
   if len(a1) == 0:
-    a1 = asarray([0.])
+    a1 = array([0.])
   if len(a2) == 0:
-    a2 = asarray([0.])
+    a2 = array([0.])
   val = convolve(a1, a2, mode='full')
   return val
 
@@ -4732,8 +4744,8 @@ def delete(arr, obj, axis=None):
 @_wraps(np.insert)
 def insert(arr, obj, values, axis=None):
   _check_arraylike("insert", arr, 0 if isinstance(obj, slice) else obj, values)
-  arr = asarray(arr)
-  values = asarray(values)
+  arr = _asarray(arr)
+  values = _asarray(values)
 
   if axis is None:
     arr = ravel(arr)
@@ -5431,7 +5443,7 @@ def unpackbits(a, axis: Optional[int] = None, count=None, bitorder='big'):
     raise TypeError("Expected an input array of unsigned byte data type")
   if bitorder not in ['little', 'big']:
     raise ValueError("'order' must be either 'little' or 'big'")
-  bits = asarray(1) << arange(8, dtype='uint8')
+  bits = array(1) << arange(8, dtype='uint8')
   if bitorder == 'big':
     bits = bits[::-1]
   if axis is None:
@@ -5453,7 +5465,7 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
   _check_arraylike("take", a, indices)
-  a = asarray(a)
+  a = _asarray(a)
   indices = asarray(indices)
 
   if axis is None:
@@ -5681,7 +5693,7 @@ def unique(ar, return_index=False, return_inverse=False,
     ar = core.concrete_or_error(None, ar, "The error arose for the first argument of jnp.unique()")
   else:
     size = core.concrete_or_error(operator.index, size, "The error arose for the size argument of jnp.unique()")
-  ar = asarray(ar)
+  ar = _asarray(ar)
   if axis is None:
     axis = 0
     ar = ar.flatten()
@@ -5695,7 +5707,7 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
-  arr = asarray(arr)
+  arr = _asarray(arr)
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx, arr.shape)
   return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
                  unique_indices, mode, fill_value)
@@ -6216,7 +6228,7 @@ def compress(condition, a, axis: Optional[int] = None, out=None):
     raise NotImplementedError("The 'out' argument to jnp.compress is not supported.")
   if ndim(condition) != 1:
     raise ValueError("condition must be a 1D array")
-  condition = asarray(condition).astype(bool)
+  condition = asarray(condition, dtype=bool)
   if axis is None:
     axis = 0
     a = ravel(a)

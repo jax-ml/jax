@@ -28,8 +28,7 @@ from jax.experimental.sparse.coo import _coo_matmat_impl, _coo_matvec_impl, _coo
 from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
 from jax._src.lib import cusparse
-from jax._src.numpy.lax_numpy import _promote_dtypes
-import jax.numpy as jnp
+import jax._src.numpy.lax_numpy as jnp
 
 
 @tree_util.register_pytree_node_class
@@ -73,8 +72,8 @@ class CSR(JAXSparse):
   def __matmul__(self, other):
     if isinstance(other, JAXSparse):
       raise NotImplementedError("matmul between two sparse objects.")
-    other = jnp.asarray(other)
-    data, other = _promote_dtypes(self.data, other)
+    other = jnp._asarray(other)
+    data, other = jnp._promote_dtypes(self.data, other)
     if other.ndim == 1:
       return csr_matvec(data, self.indices, self.indptr, other, shape=self.shape)
     elif other.ndim == 2:
@@ -127,8 +126,8 @@ class CSC(JAXSparse):
   def __matmul__(self, other):
     if isinstance(other, JAXSparse):
       raise NotImplementedError("matmul between two sparse objects.")
-    other = jnp.asarray(other)
-    data, other = _promote_dtypes(self.data, other)
+    other = jnp._asarray(other)
+    data, other = jnp._promote_dtypes(self.data, other)
     if other.ndim == 1:
       return csr_matvec(data, self.indices, self.indptr, other, shape=self.shape[::-1], transpose=True)
     elif other.ndim == 2:
@@ -224,13 +223,13 @@ def csr_fromdense(mat, *, nse, index_dtype=np.int32):
     indices : array of shape ``(nse,)`` and dtype ``index_dtype``
     indptr : array of shape ``(mat.shape[0] + 1,)`` and dtype ``index_dtype``
   """
-  mat = jnp.asarray(mat)
+  mat = jnp._asarray(mat)
   nse = core.concrete_or_error(operator.index, nse, "nse argument of csr_fromdense()")
   return csr_fromdense_p.bind(mat, nse=nse, index_dtype=np.dtype(index_dtype))
 
 @csr_fromdense_p.def_impl
 def _csr_fromdense_impl(mat, *, nse, index_dtype):
-  mat = jnp.asarray(mat)
+  mat = jnp._asarray(mat)
   assert mat.ndim == 2
   m = mat.shape[0]
 
@@ -367,7 +366,7 @@ def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
   if ad.is_undefined_primal(v):
     return data, indices, indptr, csr_matvec(data, indices, indptr, ct, shape=shape, transpose=not transpose)
   else:
-    v = jnp.asarray(v)
+    v = jnp._asarray(v)
     # The following lines do this, but more efficiently.
     # return _csr_extract(indices, indptr, jnp.outer(ct, v)), indices, indptr, v
     row, col = _csr_to_coo(indices, indptr)
@@ -449,7 +448,7 @@ def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
   if ad.is_undefined_primal(B):
     return data, indices, indptr, csr_matmat(data, indices, indptr, ct, shape=shape, transpose=not transpose)
   else:
-    B = jnp.asarray(B)
+    B = jnp._asarray(B)
     row, col = _csr_to_coo(indices, indptr)
     return (ct[row] * B[col]).sum(1), indices, indptr, B
 

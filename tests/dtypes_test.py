@@ -106,10 +106,10 @@ class DtypesTest(jtu.JaxTestCase):
   def testBinaryPromotion(self, swap, jit):
     testcases = [
       (jnp.array(1.), 0., jnp.float64),
-      (jnp.array(1.), jnp.array(0.), jnp.float64),
-      (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float16),
-      (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float32),
-      (jnp.array(1.), jnp.array(0., dtype=jnp.float64), jnp.float64),
+      (1., jnp.array(0.), jnp.float64),
+      (1., jnp.array(0., dtype=jnp.float16), jnp.float16),
+      (1., jnp.array(0., dtype=jnp.float32), jnp.float32),
+      (1., jnp.array(0., dtype=jnp.float64), jnp.float64),
       (jnp.array(1., dtype=jnp.float16), 0., jnp.float16),
       (jnp.array(1., dtype=jnp.float32), 0., jnp.float32),
       (jnp.array(1., dtype=jnp.float64), 0., jnp.float64),

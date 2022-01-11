@@ -31,7 +31,7 @@ _T = lambda x: jnp.swapaxes(x, -1, -2)
 
 @partial(jit, static_argnames=('lower',))
 def _cholesky(a, lower):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp._asarray(a))
   l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
   return l if lower else jnp.conj(_T(l))
 
@@ -46,7 +46,7 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
 
 @partial(jit, static_argnames=('lower',))
 def _cho_solve(c, b, lower):
-  c, b = np_linalg._promote_arg_dtypes(jnp.asarray(c), jnp.asarray(b))
+  c, b = np_linalg._promote_arg_dtypes(jnp._asarray(c), jnp._asarray(b))
   lax_linalg._check_solve_shapes(c, b)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
@@ -63,7 +63,7 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
 
 @partial(jit, static_argnames=('full_matrices', 'compute_uv'))
 def _svd(a, *, full_matrices, compute_uv):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp._asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 @_wraps(scipy.linalg.svd)
@@ -88,7 +88,7 @@ def _eigh(a, b, lower, eigvals_only, eigvals, type):
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp._asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
 
   if eigvals_only:
@@ -115,7 +115,7 @@ def inv(a, overwrite_a=False, check_finite=True):
 @partial(jit, static_argnames=('overwrite_a', 'check_finite'))
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp._asarray(a))
   lu, pivots, _ = lax_linalg.lu(a)
   return lu, pivots
 
@@ -132,7 +132,7 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
 
 @partial(jit, static_argnums=(1,))
 def _lu(a, permute_l):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp._asarray(a))
   lu, pivots, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
@@ -162,7 +162,7 @@ def _qr(a, mode, pivoting):
     full_matrices = False
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp._asarray(a))
   q, r = lax_linalg.qr(a, full_matrices)
   if mode == "r":
     return r
@@ -180,7 +180,7 @@ def _solve(a, b, sym_pos, lower):
   if not sym_pos:
     return np_linalg.solve(a, b)
 
-  a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  a, b = np_linalg._promote_arg_dtypes(jnp._asarray(a), jnp._asarray(b))
   lax_linalg._check_solve_shapes(a, b)
 
   # With custom_linear_solve, we can reuse the same factorization when
@@ -216,7 +216,7 @@ def _solve_triangular(a, b, trans, lower, unit_diagonal):
   else:
     raise ValueError("Invalid 'trans' value {}".format(trans))
 
-  a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  a, b = np_linalg._promote_arg_dtypes(jnp._asarray(a), jnp._asarray(b))
 
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
   b_is_vector = jnp.ndim(a) == jnp.ndim(b) + 1
@@ -283,7 +283,7 @@ def expm(A, *, upper_triangular=False, max_squarings=16):
 
 @jit
 def _calc_P_Q(A):
-  A = jnp.asarray(A)
+  A = jnp._asarray(A)
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected A to be a square matrix')
   A_L1 = np_linalg.norm(A,1)
@@ -402,8 +402,8 @@ support the ``method='blockEnlarge'`` argument.
 @_wraps(scipy.linalg.expm_frechet, lax_description=_expm_frechet_description)
 @partial(jit, static_argnames=('method', 'compute_expm'))
 def expm_frechet(A, E, *, method=None, compute_expm=True):
-  A = jnp.asarray(A)
-  E = jnp.asarray(E)
+  A = jnp._asarray(A)
+  E = jnp._asarray(E)
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected A to be a square matrix')
   if E.ndim != 2 or E.shape[0] != E.shape[1]:
@@ -500,8 +500,8 @@ def eigh_tridiagonal(d, e, *, eigvals_only=False, select='a',
     _, _, count = lax.while_loop(cond, unrolled_steps, (i, q, count))
     return count
 
-  alpha = jnp.asarray(d)
-  beta = jnp.asarray(e)
+  alpha = jnp._asarray(d)
+  beta = jnp._asarray(e)
   supported_dtypes = (jnp.float32, jnp.float64, jnp.complex64, jnp.complex128)
   if alpha.dtype != beta.dtype:
     raise TypeError("diagonal and off-diagonal values must have same dtype, "

@@ -29,7 +29,6 @@ from jax.experimental.sparse.util import _safe_asarray
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-import jax.numpy as jnp
 from jax.interpreters import ad
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
@@ -37,7 +36,7 @@ from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
-from jax._src.numpy.lax_numpy import _unique
+import jax._src.numpy.lax_numpy as jnp
 
 Dtype = Any
 Shape = Tuple[int, ...]
@@ -67,7 +66,7 @@ def broadcasting_vmap(fun, in_axes=0, out_axes=0):
 # BCOO primitives: batched extension of COO.
 
 def _bcoo_nse(mat, n_batch=0, n_dense=0):
-  mat = jnp.asarray(mat)
+  mat = jnp._asarray(mat)
   mask = (mat != 0)
   if n_dense > 0:
     mask = mask.any([-(i + 1) for i in range(n_dense)])
@@ -105,7 +104,7 @@ def _bcoo_sum_duplicates_unbatched(data, indices, *, shape, nse, remove_zeros):
     out_of_bounds = out_of_bounds | data_all_zero
   indices = jnp.where(out_of_bounds, fill_value, indices)
   if nse is None:
-    indices_unique, inv_idx, nse = _unique(
+    indices_unique, inv_idx, nse = jnp._unique(
       indices, axis=0, return_inverse=True, return_true_size=True,
       size=props.nse, fill_value=fill_value)
     nse = nse - (indices == fill_value).any()
@@ -189,7 +188,7 @@ def bcoo_todense(data, indices, *, spinfo):
   Returns:
     mat : array with specified shape and dtype matching ``data``
   """
-  return bcoo_todense_p.bind(jnp.asarray(data), jnp.asarray(indices), spinfo=spinfo)
+  return bcoo_todense_p.bind(jnp._asarray(data), jnp._asarray(indices), spinfo=spinfo)
 
 @bcoo_todense_p.def_impl
 def _bcoo_todense_impl(data, indices, *, spinfo):
@@ -272,7 +271,7 @@ def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32
       and dtype ``mat.dtype``
     indices : array of shape ``mat.shape[:n_batch] + (n_sparse, nse)``
   """
-  mat = jnp.asarray(mat)
+  mat = jnp._asarray(mat)
   if nse is None:
     nse = _bcoo_nse(mat, n_batch, n_dense)
   nse = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
@@ -281,7 +280,7 @@ def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32
 
 @bcoo_fromdense_p.def_impl
 def _bcoo_fromdense_impl(mat, *, nse, n_batch, n_dense, index_dtype):
-  mat = jnp.asarray(mat)
+  mat = jnp._asarray(mat)
   n_sparse = mat.ndim - n_dense - n_batch
   mask = (mat != 0)
   if n_dense > 0:
@@ -362,7 +361,7 @@ def bcoo_extract(indices, mat):
 
 @bcoo_extract_p.def_impl
 def _bcoo_extract_impl(indices, mat):
-  mat = jnp.asarray(mat)
+  mat = jnp._asarray(mat)
   n_batch, n_sparse, _, _ = _validate_bcoo_indices(indices, mat.shape)
 
   ind_slices = tuple(np.zeros(s, int) if i_s == 1 else np.arange(s)
@@ -536,7 +535,7 @@ def bcoo_dot_general(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinf
            api_util._ensure_index_tuple(rhs_contract))
   bdims = (api_util._ensure_index_tuple(lhs_batch),
            api_util._ensure_index_tuple(rhs_batch))
-  return bcoo_dot_general_p.bind(jnp.asarray(lhs_data), jnp.asarray(lhs_indices), jnp.asarray(rhs),
+  return bcoo_dot_general_p.bind(jnp._asarray(lhs_data), jnp._asarray(lhs_indices), jnp._asarray(rhs),
                                  dimension_numbers=(cdims, bdims),
                                  lhs_spinfo=lhs_spinfo)
 
@@ -551,9 +550,9 @@ def bcoo_rdot_general(lhs, rhs_data, rhs_indices, *, dimension_numbers: DotDimen
 
 @bcoo_dot_general_p.def_impl
 def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: BCOOInfo):
-  lhs_data = jnp.asarray(lhs_data)
-  lhs_indices = jnp.asarray(lhs_indices)
-  rhs = jnp.asarray(rhs)
+  lhs_data = jnp._asarray(lhs_data)
+  lhs_indices = jnp._asarray(lhs_indices)
+  rhs = jnp._asarray(rhs)
   # Validate all inputs via abstract_eval
   out_aval = _bcoo_dot_general_abstract_eval(lhs_data.aval, lhs_indices.aval, rhs.aval,
                                              dimension_numbers=dimension_numbers,
@@ -1193,7 +1192,7 @@ class BCOO(JAXSparse):
     if n_dense != 0 or n_batch != 0:
       raise NotImplementedError("BCOO.fromscipy with nonzero n_dense/n_batch")
     mat = mat.tocoo()
-    data = jnp.asarray(mat.data)
+    data = jnp._asarray(mat.data)
     indices = jnp.column_stack((mat.row, mat.col)).astype(index_dtype or jnp.int32)
     return cls((data, indices), shape=mat.shape)
 

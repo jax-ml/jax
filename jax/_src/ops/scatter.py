@@ -61,8 +61,8 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
     An ndarray representing an updated `x` after performing the scatter-update.
   """
 
-  x = jnp.asarray(x)
-  y = jnp.asarray(y)
+  x = jnp._asarray(x)
+  y = jnp._asarray(y)
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx, x.shape)
@@ -418,7 +418,7 @@ def _segment_update(name: str,
                     mode: Optional[lax.GatherScatterMode] = None) -> Array:
   jnp._check_arraylike(name, data, segment_ids)
   mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
-  data = jnp.asarray(data)
+  data = jnp._asarray(data)
   segment_ids = jnp.asarray(segment_ids)
   dtype = data.dtype
   if num_segments is None:

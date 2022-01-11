@@ -18,7 +18,7 @@ import numpy as np
 import jax
 from jax import core
 from jax._src import dtypes
-import jax.numpy as jnp
+import jax._src.numpy.lax_numpy as jnp
 
 
 class CuSparseEfficiencyWarning(UserWarning):
@@ -52,7 +52,7 @@ def _is_aval(*args):
 def _asarray_or_float0(arg):
   if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
     return arg
-  return jnp.asarray(arg)
+  return jnp._asarray(arg)
 
 def _safe_asarray(args):
   if _is_pytree_placeholder(*args) or _is_aval(*args):

@@ -45,7 +45,7 @@ from jax import tree_util
 from jax.test_util import check_grads
 from jax._src.util import prod, safe_zip
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
-from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
+from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact, _array
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -1843,7 +1843,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             constant_values=(4, 6)))
 
   def testPadWeakType(self):
-    x = jnp.array(1.0)[None]
+    x = lax._convert_element_type(jnp.ones(1), weak_type=True)
     for mode in ['constant', 'edge', 'linear_ramp', 'maximum', 'mean', 'median',
                  'minimum', 'reflect', 'symmetric', 'wrap', 'empty']:
       y = jnp.pad(x, 0, mode=mode)
@@ -3245,7 +3245,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     func = lambda x: getattr(jnp, funcname)(x, dtype=dtype)
     fjit = jax.jit(func)
     val = input_type(val)
-    expected_weak_type = dtype is None and input_type in set(dtypes._weak_types)
+    expected_weak_type = False
     self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
     self.assertEqual(dtypes.is_weakly_typed(fjit(val)), expected_weak_type)
 
@@ -3649,15 +3649,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*")
-  def testArrayDtypeInference(self):
+  def testPrivateArrayDtypeInference(self):
+    # Test the semantics of the private _array() function.
     def _check(obj, out_dtype, weak_type):
       dtype_reference = np.array(obj, dtype=out_dtype)
 
-      out = jnp.array(obj)
+      out = _array(obj)
       self.assertDtypesMatch(out, dtype_reference)
       self.assertEqual(dtypes.is_weakly_typed(out), weak_type)
 
-      out_jit = jax.jit(jnp.array)(obj)
+      out_jit = jax.jit(_array)(obj)
       self.assertDtypesMatch(out_jit, dtype_reference)
       self.assertEqual(dtypes.is_weakly_typed(out_jit), weak_type)
 
@@ -3666,25 +3667,60 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     _check(1.0, np.float64, True)
     _check(1.0j, np.complex128, True)
 
-    # Lists become strongly-typed defaults.
-    _check([1], jnp.int_, False)
-    _check([1.0], jnp.float_, False)
-    _check([1.0j], jnp.complex_, False)
+    # Lists of scalars become 64-bit weak types.
+    _check([1], jnp.int64, True)
+    _check([1.0], jnp.float64, True)
+    _check([1.0j], jnp.complex128, True)
 
-    # Lists of weakly-typed objects become strongly-typed defaults.
-    _check([jnp.array(1)], jnp.int_, False)
-    _check([jnp.array(1.0)], jnp.float_, False)
-    _check([jnp.array(1.0j)], jnp.complex_, False)
+    # Lists of weakly-typed objects maintain their weak type
+    _check([_array(1)], jnp.int64, True)
+    _check([_array(1.0)], jnp.float64, True)
+    _check([_array(1.0j)], jnp.complex128, True)
 
     # Lists of strongly-typed objects maintain their strong type.
     _check([jnp.int64(1)], np.int64, False)
     _check([jnp.float64(1)], np.float64, False)
     _check([jnp.complex128(1)], np.complex128, False)
 
+  @jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*")
+  def testArrayDtypeInference(self):
+    def _check(obj, out_dtype):
+      dtype_reference = np.array(obj, dtype=out_dtype)
+
+      out = jnp.array(obj)
+      self.assertDtypesMatch(out, dtype_reference)
+      self.assertFalse(dtypes.is_weakly_typed(out))
+
+      out_jit = jax.jit(jnp.array)(obj)
+      self.assertDtypesMatch(out_jit, dtype_reference)
+      self.assertFalse(dtypes.is_weakly_typed(out_jit))
+
+    # Python scalars become default types
+    _check(True, np.bool_)
+    _check(1, np.int_)
+    _check(1.0, np.float_)
+    _check(1.0j, np.complex_)
+
+    # Lists of scalars become default types
+    _check([True], np.bool_)
+    _check([1], np.int_)
+    _check([1.0], np.float_)
+    _check([1.0j], np.complex_)
+
+    # Lists of weakly-typed objects become strongly-typed defaults.
+    _check([_array(1)], jnp.int_)
+    _check([_array(1.0)], jnp.float_)
+    _check([_array(1.0j)], jnp.complex_)
+
+    # Lists of strongly-typed objects maintain their strong type.
+    _check([jnp.int64(1)], np.int64)
+    _check([jnp.float64(1)], np.float64)
+    _check([jnp.complex128(1)], np.complex128)
+
     # Mixed inputs use JAX-style promotion.
     # (regression test for https://github.com/google/jax/issues/8945)
-    _check([0, np.int16(1)], np.int16, False)
-    _check([0.0, np.float16(1)], np.float16, False)
+    _check([0, np.int16(1)], np.int16)
+    _check([0.0, np.float16(1)], np.float16)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_dtype={np.dtype(dtype)}", "dtype": dtype}

@@ -680,7 +680,6 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   else:
     raise ValueError(f"invalid solve_method {solve_method}, must be either "
                      "'incremental' or 'batched'")
-
   def _solve(A, b):
     return _gmres_solve(A, b, x0, atol, ptol, restart, maxiter, M, gmres_func)
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)

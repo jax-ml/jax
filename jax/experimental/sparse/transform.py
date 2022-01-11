@@ -56,7 +56,7 @@ from jax import core
 from jax import lax
 from jax import linear_util as lu
 from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse, BCOOInfo
-import jax.numpy as jnp
+import jax._src.numpy.lax_numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -82,7 +82,7 @@ class SparseEnv:
     self._buffers = list(bufs)
 
   def push(self, arr: Array) -> int:
-    self._buffers.append(jnp.asarray(arr))  # type: ignore
+    self._buffers.append(jnp._asarray(arr))  # type: ignore
     return len(self._buffers) - 1
 
   def get(self, ind: int) -> Array:
