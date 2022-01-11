@@ -30,7 +30,7 @@ from jax.errors import JAXTypeError
 from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import PartitionSpec as P
-from jax.experimental.maps import xmap, mesh, Mesh
+from jax.experimental.maps import xmap, mesh
 from jax.experimental import global_device_array
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
@@ -70,15 +70,6 @@ def check_1d_2d_mesh(f, set_mesh):
       ("2x1", (("x", 2), ("y", 1)), ("x", "y")),
       ("2x2", (("x", 2), ("y", 2)), ("x", "y")),
     ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
-
-
-def create_global_mesh(mesh_shape, axis_names):
-  size = prod(mesh_shape)
-  if len(jax.devices()) < size:
-    raise unittest.SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(jax.devices()[:size]).reshape(mesh_shape)
-  global_mesh = Mesh(mesh_devices, axis_names)
-  return global_mesh
 
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
@@ -610,7 +601,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_pjit_gda_single_output(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
@@ -645,7 +636,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_pjit_gda_multi_input_multi_output(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     input_data = np.arange(
         prod(global_input_shape)).reshape(global_input_shape)
@@ -718,7 +709,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_pjit_gda_mixed_inputs(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
@@ -783,7 +774,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def test_pjit_gda_mesh_mismatch(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = ['x', 'y']
     global_input_data = np.arange(
@@ -804,7 +795,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_pjit_gda_wrong_resource_for_gda_input(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = ['x']
     global_input_data = np.arange(
@@ -830,7 +821,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_pjit_gda_caching(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
@@ -858,7 +849,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_partition_spec_mismatch_semantically_equivalent(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = [None]
     global_input_data = np.arange(
@@ -882,7 +873,7 @@ class GDAPjitTest(jtu.JaxTestCase):
       f(output_gda)
 
   def test_from_gda_duplicates(self):
-    global_mesh = create_global_mesh((1, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = ['x', 'y']
     input_gda = create_gda(global_input_shape, global_mesh, mesh_axes)
@@ -896,7 +887,7 @@ class GDAPjitTest(jtu.JaxTestCase):
           input_gda)
 
   def test_no_recompilation_due_to_in_axis_resources(self):
-    global_mesh = create_global_mesh((1, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = P(None,)
     input_gda = create_gda(global_input_shape, global_mesh, mesh_axes)
@@ -1178,7 +1169,7 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(pxla.array_mapping_to_axis_resources(inp), expected_out)
 
   def test_get_input_metadata_fully_replicated(self):
-    global_mesh = create_global_mesh((2, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_in_aval1 = jax.core.ShapedArray((4, 4), jnp.int32)
     global_in_aval2 = jax.core.ShapedArray((4, 4, 4), jnp.int32)
     global_in_aval3 = jax.core.ShapedArray((), jnp.int32)

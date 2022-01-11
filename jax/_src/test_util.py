@@ -41,7 +41,7 @@ from jax._src.lib import xla_bridge
 from jax._src import dispatch
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax.experimental.maps import mesh
+from jax.experimental.maps import mesh, Mesh
 
 
 FLAGS = flags.FLAGS
@@ -1128,6 +1128,16 @@ def set_spmd_lowering_flag(val: bool):
 def restore_spmd_lowering_flag():
   if old_spmd_lowering_flag is None: return
   config.update('experimental_xmap_spmd_lowering', old_spmd_lowering_flag)
+
+def create_global_mesh(mesh_shape, axis_names):
+  size = prod(mesh_shape)
+  if len(api.devices()) < size:
+    raise unittest.SkipTest(f"Test requires {size} global devices.")
+  devices = sorted(api.devices(), key=lambda d: d.id)
+  mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
+  global_mesh = Mesh(mesh_devices, axis_names)
+  return global_mesh
+
 
 class _cached_property:
   null = object()

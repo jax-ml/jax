@@ -13,7 +13,6 @@
 # limitations under the License.
 """Tests for GlobalDeviceArray."""
 
-import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
@@ -24,20 +23,10 @@ from jax._src import test_util as jtu
 from jax._src.util import prod, safe_zip
 
 from jax.experimental import PartitionSpec as P
-from jax.experimental.maps import Mesh
 from jax.experimental.global_device_array import GlobalDeviceArray
 
 from jax.config import config
 config.parse_flags_with_absl()
-
-
-def create_global_mesh(mesh_shape, axis_names):
-  size = prod(mesh_shape)
-  if len(jax.devices()) < size:
-    raise unittest.SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(jax.devices()[:size]).reshape(mesh_shape)
-  global_mesh = Mesh(mesh_devices, axis_names)
-  return global_mesh
 
 
 class GDATest(jtu.JaxTestCase):
@@ -76,7 +65,7 @@ class GDATest(jtu.JaxTestCase):
   )
   def test_gda_2d_shard(self, mesh_axes, expected_index, expected_shard_shape,
                          expected_replica_ids, expected_is_fully_replicated):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     global_input_data = np.arange(
         prod(global_input_shape)).reshape(global_input_shape)
@@ -126,7 +115,7 @@ class GDATest(jtu.JaxTestCase):
   )
   def test_gda_3d_shard(self, mesh_axes, expected_index, expected_shard_shape,
                          expected_replica_ids):
-    global_mesh = create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
+    global_mesh = jtu.create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
     global_input_shape = (8, 4, 2)
     global_input_data = np.arange(
         prod(global_input_shape)).reshape(global_input_shape)
@@ -160,7 +149,7 @@ class GDATest(jtu.JaxTestCase):
   )
   def test_gda_1d_shard(self, mesh_axes, expected_index, expected_shard_shape,
                          expected_replica_ids):
-    global_mesh = create_global_mesh((8,), ('x'))
+    global_mesh = jtu.create_global_mesh((8,), ('x'))
     global_input_shape = (16,)
     global_input_data = np.arange(prod(global_input_shape)).reshape(-1)
     def cb(index):
@@ -188,7 +177,7 @@ class GDATest(jtu.JaxTestCase):
   )
   def test_gda_subset_devices(self, mesh_axes, expected_index,
                                expected_shard_shape, expected_replica_ids):
-    global_mesh = create_global_mesh((2, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     global_input_data = np.arange(
         prod(global_input_shape)).reshape(global_input_shape)
@@ -213,7 +202,7 @@ class GDATest(jtu.JaxTestCase):
       self.assertArraysEqual(g.data, l.data)
 
   def test_gda_batched_callback(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = [('x', 'y')]
     global_input_data = np.arange(
@@ -233,7 +222,7 @@ class GDATest(jtu.JaxTestCase):
                            expected_second_shard_value)
 
   def test_gda_batched_callback_with_devices(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = ['x']
     global_input_data = np.arange(
@@ -259,7 +248,7 @@ class GDATest(jtu.JaxTestCase):
                            expected_second_shard_value)
 
   def test_gda_str_repr(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = [('x', 'y')]
     global_input_data = np.arange(
