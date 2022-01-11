@@ -50,7 +50,7 @@ from jax.config import config
 from jax.interpreters import pxla
 from jax import lax
 from jax._src import device_array
-from jax._src.lax.lax import _array_copy, _sort_lt_comparator, _sort_le_comparator
+from jax._src.lax.lax import _array_copy
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
@@ -6468,33 +6468,23 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   return lax.convert_element_type(result, a.dtype)
 
 
-@partial(vectorize, excluded={0, 2})
-def _searchsorted(a, v, side):
-  if len(a) == 0:
-    return 0
-  op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
-  a, v = _promote_dtypes(a, v)
-  def body_fun(i, state):
-    low, high = state
-    mid = (low + high) // 2
-    go_left = op(v, a[mid])
-    return (where(go_left, low, mid), where(go_left, mid, high))
+_SEARCHSORTED_DOC = """\
+``jnp.searchsorted`` adds the ``method`` parameter, which accepts one of
+['default', 'scan', 'sort']; see :func:`~jax.lax.searchsorted` for more
+information.
+"""
 
-  n_levels = int(np.ceil(np.log2(len(a) + 1)))
-  return lax.fori_loop(0, n_levels, body_fun, (0, len(a)))[1]
-
-
-@_wraps(np.searchsorted, skip_params=['sorter'])
-@partial(jit, static_argnames=('side', 'sorter'))
-def searchsorted(a, v, side='left', sorter=None):
+@_wraps(np.searchsorted, skip_params=['sorter'], lax_description=_SEARCHSORTED_DOC)
+def searchsorted(a, v, side='left', sorter=None, *, method='default'):
   _check_arraylike("searchsorted", a, v)
+  a, v = _promote_dtypes(a, v)
   if side not in ['left', 'right']:
     raise ValueError(f"{side!r} is an invalid value for keyword 'side'")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
-  return _searchsorted(a, v, side)
+  return lax.searchsorted(a, v, side=side, method=method)
 
 
 @_wraps(np.digitize)

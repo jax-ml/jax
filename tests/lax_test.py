@@ -1987,6 +1987,80 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_queryshape={}_dimension={}_batch_dims={}_side={}_method={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          jtu.format_shape_dtype_string(queryshape, dtype),
+          dimension, batch_dims, side, method),
+       "shape": shape, "queryshape": queryshape, "dtype": dtype, "batch_dims": batch_dims,
+       "dimension": dimension, "side": side, "method": method}
+      for side in ["left", "right"]
+      for method in ["sort", "scan"]
+      for dtype in float_dtypes + int_dtypes
+      for shape, queryshape, dimension, batch_dims in [
+        ((8,), (5,), 0, None),
+        ((4, 8), (), 0, None),
+        ((4, 8), (5, 4), 1, ((0,), (1,))),
+      ]))
+  def testSearchsorted(self, shape, queryshape, dtype, batch_dims, dimension, side, method):
+    rng = jtu.rand_some_equal(self.rng())
+    def args_maker():
+      size = np.prod(shape)
+      query_size = np.prod(queryshape).astype(int)
+      buf = rng((size + query_size,), dtype)
+      return np.sort(buf[:size].reshape(shape)), buf[size:].reshape(queryshape)
+    lax_fun = partial(lax.searchsorted, batch_dims=batch_dims, dimension=dimension,
+                      side=side, method=method)
+    self._CompileAndCheck(lax_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_queryshape={}_side={}_method={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          jtu.format_shape_dtype_string(queryshape, dtype),
+          side, method),
+       "shape": shape, "queryshape": queryshape, "dtype": dtype, "side": side, "method": method}
+      for side in ["left", "right"]
+      for method in ["default", "sort", "scan"]
+      for dtype in float_dtypes + int_dtypes
+      for shape in [(0,), (8,), (10,)]
+      for queryshape in [(), (5,), (4, 5)]))
+  def testSearchsorted1DAgainstNumpy(self, shape, queryshape, dtype, side, method):
+    rng = jtu.rand_some_equal(self.rng())
+    def args_maker():
+      size = np.prod(shape)
+      query_size = np.prod(queryshape).astype(int)
+      buf = rng((size + query_size,), dtype)
+      return np.sort(buf[:size].reshape(shape)), buf[size:].reshape(queryshape)
+    np_fun = lambda a, v: np.searchsorted(a, v, side=side).astype('int32')
+    lax_fun = partial(lax.searchsorted, side=side, method=method)
+    self._CompileAndCheck(lax_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, lax_fun, args_maker)
+
+  def testSearchsortedAutodiff(self):
+    x = jnp.arange(5.0)
+    y = jnp.linspace(0, 5, 10).reshape(2, 5)
+
+    # Because searchsorted outputs an integer, the autodiff results should
+    # be identical to those of this function:
+    def f_ref(x, y):
+      del x
+      return jnp.zeros_like(y, dtype='int32')
+
+    # Test JVP via jacfwd
+    self.assertAllClose(
+      jax.jacfwd(lax.searchsorted, argnums=0)(x, y),
+      jax.jacfwd(f_ref, argnums=0)(x, y)
+    )
+    self.assertAllClose(
+      jax.jacfwd(lax.searchsorted, argnums=1)(x, y),
+      jax.jacfwd(f_ref, argnums=1)(x, y)
+    )
+    # Because output is an integer, test VJP directly
+    primals, vjp_fun = jax.vjp(lax.searchsorted, x, y)
+    _, vjp_fun_ref = jax.vjp(f_ref, x, y)
+    self.assertAllClose(primals, lax.searchsorted(x, y))
+    self.assertAllClose(vjp_fun(primals), vjp_fun_ref(primals))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_k={}".format(
           jtu.format_shape_dtype_string(shape, dtype), k),
        "shape": shape, "dtype": dtype, "k": k}

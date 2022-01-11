@@ -2983,21 +2983,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_a={}_v={}_side={}".format(
+    {"testcase_name": "_a={}_v={}_side={}_method={}".format(
       jtu.format_shape_dtype_string(ashape, dtype),
       jtu.format_shape_dtype_string(vshape, dtype),
-      side), "ashape": ashape, "vshape": vshape, "side": side,
-     "dtype": dtype}
+      side, method), "ashape": ashape, "vshape": vshape, "side": side,
+     "dtype": dtype, "method": method}
     for ashape in [(15,), (16,), (17,)]
     for vshape in [(), (5,), (5, 5)]
     for side in ['left', 'right']
+    for method in ['default', 'scan', 'sort']
     for dtype in number_dtypes
   ))
-  def testSearchsorted(self, ashape, vshape, side, dtype):
+  def testSearchsorted(self, ashape, vshape, side, dtype, method):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [np.sort(rng(ashape, dtype)), rng(vshape, dtype)]
-    np_fun = lambda a, v: np.searchsorted(a, v, side=side)
-    jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side)
+    np_fun = lambda a, v: np.searchsorted(a, v, side=side).astype('int32')
+    jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side, method=method)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -3037,7 +3038,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     order = jnp.index_exp[::-1] if reverse else jnp.index_exp[:]
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), jnp.sort(rng(binshape, dtype))[order]]
-    np_fun = lambda x, bins: np.digitize(x, bins, right=right)
+    np_fun = lambda x, bins: np.digitize(x, bins, right=right).astype('int32')
     jnp_fun = lambda x, bins: jnp.digitize(x, bins, right=right)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)

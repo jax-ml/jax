@@ -338,6 +338,10 @@ from jax._src.lax.control_flow import (
   while_loop as while_loop,
   while_p as while_p,
 )
+from jax._src.lax.search import (
+  searchsorted as searchsorted,
+  searchsorted_p as searchsorted_p,
+)
 from jax._src.lax.fft import (
   fft as fft,
   fft_p as fft_p,
