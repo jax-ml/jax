@@ -981,6 +981,7 @@ tf_not_yet_impl = [
     "after_all",
     "all_to_all",
     "create_token",
+    "custom_transpose_call",
     "infeed",
     "linear_call",
     "outfeed",

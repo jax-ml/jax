@@ -81,6 +81,7 @@ from jax.interpreters.invertible_ad import custom_ivjp
 from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
                                     custom_vjp, linear_call)
+from jax.custom_transpose import custom_transpose
 from jax.ad_checkpoint import checkpoint_policies
 
 from jax._src.config import (flags, config, bool_env,
