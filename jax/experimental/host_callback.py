@@ -139,8 +139,8 @@ If your Python callbacks have side-effects you may need to wait until the
 computation has finished to ensure that the side-effects have been observed.
 You can use the :func:`barrier_wait` function for that purpose::
 
-   accumulator = p[]
-   def host_log(arg):
+   accumulator = []
+   def host_log(arg, transforms):
      # We just record the arguments in a list
      accumulator.append(arg)
 
