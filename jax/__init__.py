@@ -50,6 +50,7 @@ from jax._src.config import (
   default_prng_impl as default_prng_impl,
   numpy_rank_promotion as numpy_rank_promotion,
 )
+from .core import eval_context as ensure_compile_time_eval
 from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
   block_until_ready,
