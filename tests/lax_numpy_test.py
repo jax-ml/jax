@@ -4237,6 +4237,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{dtype.__name__}", "dtype": dtype}
+      for dtype in float_dtypes))
+  def testSortNans(self, dtype):
+    x = jnp.array([-np.nan, -np.inf, -1, -0, 0, 1, np.inf, np.nan], dtype=dtype)
+    y = jnp.sort(x)
+    # This fails for dtype=bfloat16 on TPU; passes for all other dtypes & devices.
+    self.assertArraysEqual(jnp.signbit(x), jnp.signbit(y))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(
           jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
