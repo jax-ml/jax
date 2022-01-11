@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import types
+from typing import Callable
 import unittest
 import warnings
 import weakref
@@ -6854,6 +6855,43 @@ class CustomVmapTest(jtu.JaxTestCase):
         ValueError, 'vmap has mapped output but out_axes is None',
         lambda: api.vmap(
             f_jvp, in_axes=(None, 0), out_axes=(None, 0))(x, txs))
+
+
+class CustomApiTest(jtu.JaxTestCase):
+  """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""
+
+  def test_method_forwarding(self):
+    @api.custom_vmap
+    @api.custom_jvp
+    @api.custom_transpose
+    def f(x): return 2. * x
+
+    # none of these err:
+    @f.def_vmap
+    def f_batch(sz, b, xs): return 2. * xs
+    @f.defjvp
+    def f_jvp(x, tx): return 2. * x, 2. * tx
+    @f.def_transpose
+    def f_transpose(x): return 2. * x
+
+  def test_def_method_forwarding_all_permutations(self):
+    for wraps in it.permutations([
+        api.custom_jvp, api.custom_transpose, api.custom_vmap]):
+      f = lambda x: x + 1.
+      for wrap in wraps:
+        f = wrap(f)
+      for methods in it.permutations(['defjvp', 'def_vmap', 'def_transpose']):
+        for method in methods:
+          self.assertIsInstance(getattr(f, method), Callable)
+
+    for decorators in it.permutations([
+        api.custom_vjp, api.custom_transpose, api.custom_vmap]):
+      f = lambda x: x + 1.
+      for decorator in decorators:
+        f = decorator(f)
+      for methods in it.permutations(['defvjp', 'def_vmap', 'def_transpose']):
+        for method in methods:
+          self.assertIsInstance(getattr(f, method), Callable)
 
 
 class InvertibleADTest(jtu.JaxTestCase):
