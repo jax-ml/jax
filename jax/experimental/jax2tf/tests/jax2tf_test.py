@@ -155,6 +155,22 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_jax = lambda a, b: (a + b).astype(jnp.bfloat16)
     f_tf = jax2tf.convert(f_jax)
     self.assertEqual(f_tf(1., 2.).dtype, tf.bfloat16)
+    
+  @jtu.skip_on_devices("gpu")
+  def test_bfloat16_tf_grad(self):
+    f_jax = lambda a, b: a + b
+
+    def _tf_grad(a, b):
+      with tf.GradientTape() as tape:
+        tape.watch(a)
+        result = jax2tf.convert(f_jax)(a, b)
+      return result, tape.gradient(result, a)
+
+    f_tf = tf.function(_tf_grad,
+                       input_signature=[tf.TensorSpec([512, 512], tf.bfloat16),
+                                        tf.TensorSpec([512, 512], tf.bfloat16)])
+
+    self.assertIsNotNone(f_tf.get_concrete_function())
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_dtype={dtype.__name__}_function={with_function}",
