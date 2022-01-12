@@ -359,7 +359,7 @@ class JVPTrace(Trace):
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
-  def post_process_custom_jvp_call(self, out_tracers, params):
+  def post_process_custom_jvp_call(self, out_tracers, _):
     raise CustomJVPException()
 
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
@@ -375,7 +375,7 @@ class JVPTrace(Trace):
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
-  def post_process_custom_vjp_call(self, out_tracers, params):
+  def post_process_custom_vjp_call(self, out_tracers, _):
     raise CustomVJPException()
 
   def join(self, xt, yt):

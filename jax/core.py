@@ -1662,25 +1662,32 @@ def as_named_shape(shape) -> NamedShape:
 
 # ------------------- Call -------------------
 
-def apply_todos(todos, outs):
-  todos_list = list(todos)
-  while todos_list:
-    outs = map(full_lower, todos_list.pop()(outs))
-  return outs
+class CallPrimitive(Primitive):
+  multiple_results = True
+  call_primitive = True
 
-class _IgnoreElemList(list):
-  """Compares equal to all other _ignore_elem_lists."""
-  def __hash__(self): return 0
-  def __eq__(self, other):
-    return type(other) is _IgnoreElemList
+  def bind(self, fun, *args, **params):
+    return call_bind(self, fun, *args, **params)
+
+  def get_bind_params(self, params):
+    new_params = dict(params)
+    subfun = lu.wrap_init(partial(eval_jaxpr, new_params.pop('call_jaxpr'), ()))
+    return [subfun], new_params
+
+def call_bind(primitive: CallPrimitive, fun, *args, **params):
+  top_trace = find_top_trace(args)
+  fun, env_trace_todo = process_env_traces_call(
+      fun, primitive, top_trace and top_trace.level, tuple(params.items()))
+  tracers = map(top_trace.full_raise, args)
+  outs = top_trace.process_call(primitive, fun, tracers, params)
+  return map(full_lower, apply_todos(env_trace_todo(), outs))
 
 @lu.transformation_with_aux
-def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
-                       level: int, params_tuple: tuple, out_axes_transforms, *args):
+def process_env_traces_call(primitive: CallPrimitive, level: int,
+                            params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
-  assert not out_axes_transforms
   while True:
     tracers = [x for x in outs if isinstance(x, Tracer)
                and (level is None or x._trace.level > level)]
@@ -1690,55 +1697,16 @@ def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
       break
     trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
-    outs, cur_todo = primitive.post_process(trace, outs, params)
-    if isinstance(primitive, MapPrimitive):
-      cur_todo, out_axes_transform = cur_todo
-      out_axes_transforms.append(out_axes_transform)
+    outs, cur_todo = trace.post_process_call(primitive, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
-              fun, *args, **params):
-  out_axes_transforms = _IgnoreElemList()
-  if primitive.map_primitive:
-    out_axes_thunk = params['out_axes_thunk']
-    # The new thunk depends deterministically on the old thunk and the wrapped
-    # function. Any caching already has to include the wrapped function as part
-    # of the key, so we only use the previous thunk for equality checks.
-    @as_hashable_function(closure=out_axes_thunk)
-    def new_out_axes_thunk():
-      out_axes = out_axes_thunk()
-      for t in out_axes_transforms:
-        out_axes = t(out_axes)
-      return out_axes
-    params = dict(params, out_axes_thunk=new_out_axes_thunk)
-  params_tuple = tuple(params.items())
-  top_trace = find_top_trace(args)
-  fun, env_trace_todo = process_env_traces(
-      fun, primitive, top_trace and top_trace.level,
-      params_tuple, out_axes_transforms)
-  tracers = map(top_trace.full_raise, args)
-  outs = primitive.process(top_trace, fun, tracers, params)
-  return map(full_lower, apply_todos(env_trace_todo(), outs))
+def apply_todos(todos, outs):
+  todos_list = list(todos)
+  while todos_list:
+    outs = map(full_lower, todos_list.pop()(outs))
+  return outs
 
-
-class CallPrimitive(Primitive):
-  multiple_results = True
-  call_primitive = True
-
-  def bind(self, fun, *args, **params):
-    return call_bind(self, fun, *args, **params)
-
-  def process(self, trace, fun, tracers, params):
-    return trace.process_call(self, fun, tracers, params)
-
-  def post_process(self, trace, out_tracers, params):
-    return trace.post_process_call(self, out_tracers, params)
-
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    subfun = lu.wrap_init(partial(eval_jaxpr, new_params.pop('call_jaxpr'), ()))
-    return [subfun], new_params
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
@@ -1781,6 +1749,70 @@ def primitive_uses_outfeed(prim: Primitive, params: Dict) -> bool:
 
 # ------------------- Map -------------------
 
+class MapPrimitive(Primitive):
+  multiple_results = True
+  map_primitive = True
+
+  def bind(self, fun, *args, **params):
+    assert len(params['in_axes']) == len(args)
+    return map_bind(self, fun, *args, **params)
+
+  def process(self, trace, fun, tracers, params):
+    return trace.process_map(self, fun, tracers, params)
+
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_map(self, out_tracers, params)
+
+  def get_bind_params(self, params):
+    new_params = dict(params)
+    subfun = lu.wrap_init(partial(eval_jaxpr, new_params.pop('call_jaxpr'), ()))
+    axes = new_params.pop('out_axes')
+    new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
+    return [subfun], new_params
+
+def map_bind(primitive: 'MapPrimitive', fun, *args, out_axes_thunk, **params):
+  # The new thunk depends deterministically on the old thunk and the wrapped
+  # function. Any caching already has to include the wrapped function as part
+  # of the key, so we only use the previous thunk for equality checks.
+  @as_hashable_function(closure=out_axes_thunk)
+  def new_out_axes_thunk():
+    out_axes = out_axes_thunk()
+    _, out_axes_transforms = todo_and_xforms()
+    for t in out_axes_transforms:
+      out_axes = t(out_axes)
+    return out_axes
+  params = dict(params, out_axes_thunk=new_out_axes_thunk)
+  params_tuple = tuple(params.items())
+  top_trace = find_top_trace(args)
+  fun, todo_and_xforms = process_env_traces_map(
+      fun, primitive, top_trace and top_trace.level, params_tuple)
+  tracers = map(top_trace.full_raise, args)
+  outs = primitive.process(top_trace, fun, tracers, params)
+  env_trace_todo, _ = todo_and_xforms()
+  return map(full_lower, apply_todos(env_trace_todo, outs))
+
+@lu.transformation_with_aux
+def process_env_traces_map(primitive: MapPrimitive, level: int,
+                           params_tuple: tuple, *args):
+  outs = yield args, {}
+  params = dict(params_tuple)
+  todo = []
+  out_axes_transforms = []
+  while True:
+    tracers = [x for x in outs if isinstance(x, Tracer)
+               and (level is None or x._trace.level > level)]
+    if tracers:
+      ans = max(tracers, key=lambda x: x._trace.level)
+    else:
+      break
+    trace = ans._trace.main.with_cur_sublevel()
+    outs = map(trace.full_raise, outs)
+    outs, (cur_todo, cur_xform) = primitive.post_process(trace, outs, params)
+    todo.append(cur_todo)
+    out_axes_transforms.append(cur_xform)
+  yield outs, (tuple(todo), tuple(out_axes_transforms))
+
+
 def mapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
@@ -1817,28 +1849,6 @@ aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
     ConcreteArray: (_map_shaped_array, _unmap_shaped_array),
 }
-
-
-class MapPrimitive(Primitive):
-  multiple_results = True
-  map_primitive = True
-
-  def bind(self, fun, *args, **params):
-    assert len(params['in_axes']) == len(args)
-    return call_bind(self, fun, *args, **params)
-
-  def process(self, trace, fun, tracers, params):
-    return trace.process_map(self, fun, tracers, params)
-
-  def post_process(self, trace, out_tracers, params):
-    return trace.post_process_map(self, out_tracers, params)
-
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    subfun = lu.wrap_init(partial(eval_jaxpr, new_params.pop('call_jaxpr'), ()))
-    axes = new_params.pop('out_axes')
-    new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
-    return [subfun], new_params
 
 @contextmanager
 def extend_axis_env(axis_name: AxisName, size: int, tag: Any):

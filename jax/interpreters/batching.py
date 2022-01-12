@@ -274,12 +274,17 @@ class BatchTrace(Trace):
       out_dims = out_dims[:len(out_dims) // 2]
     return [BatchTracer(self, v, d) for v, d in zip(out_vals, out_dims)]
 
-  def post_process_custom_jvp_call(self, out_tracers, params):
+  def post_process_custom_jvp_call(self, out_tracers, jvp_was_run):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
     main = self.main
     def todo(vals):
       trace = main.with_cur_sublevel()
-      return map(partial(BatchTracer, trace), vals, dims)
+      if jvp_was_run:
+        primal_dims, tangent_dims = dims[:len(vals)], dims[len(vals):]
+        assert primal_dims == tangent_dims
+        return map(partial(BatchTracer, trace), vals, primal_dims)
+      else:
+        return map(partial(BatchTracer, trace), vals, dims)
     return vals, todo
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees):
@@ -296,7 +301,29 @@ class BatchTrace(Trace):
       out_dims = out_dims[-len(out_vals) % len(out_dims):]
     return [BatchTracer(self, v, d) for v, d in zip(out_vals, out_dims)]
 
-  post_process_custom_vjp_call = post_process_custom_jvp_call
+  def post_process_custom_vjp_call(self, out_tracers, _):
+    vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    main = self.main
+    def todo(vals):
+      trace = main.with_cur_sublevel()
+      return map(partial(BatchTracer, trace), vals, dims)
+    return vals, todo
+
+  def post_process_custom_vjp_call_fwd(self, out_tracers, out_trees):
+    vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    axis_size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
+    main, trace_type = self.main, self.main.trace_type
+    axis_name = self.axis_name
+    _, res_tree = out_trees()
+    num_res = res_tree.num_leaves
+    res_dims, primal_dims = split_list(dims, [num_res])
+    def todo(vals):
+      trace = main.with_cur_sublevel()
+      return map(partial(BatchTracer, trace), vals, primal_dims)
+    def bwd_transform(bwd):
+      return batch_custom_vjp_bwd(bwd, axis_name, axis_size, dims, (None, ),
+                                  trace_type)
+    return vals, todo, bwd_transform
 
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
                                axis_name: Iterable[core.AxisName],

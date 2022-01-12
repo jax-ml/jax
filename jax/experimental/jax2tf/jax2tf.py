@@ -928,7 +928,7 @@ class TensorFlowTrace(core.Trace):
     del jvp  # Unused.
     return self.process_call(core.call_p, fun, tracers, {})
 
-  def post_process_custom_jvp_call(self, out_tracers, params):
+  def post_process_custom_jvp_call(self, out_tracers, _):
     assert False  # unreachable assuming jax2tf runs with clean trace state
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
@@ -938,7 +938,10 @@ class TensorFlowTrace(core.Trace):
     del fwd, bwd, out_trees  # Unused.
     return self.process_call(core.call_p, fun, tracers, {})
 
-  def post_process_custom_vjp_call(self, out_tracers, params):
+  def post_process_custom_vjp_call(self, out_tracers, _):
+    assert False  # unreachable assuming jax2tf runs with clean trace state
+
+  def post_process_custom_vjp_call_fwd(self, *_, **__):
     assert False  # unreachable assuming jax2tf runs with clean trace state
 
   def get_primitive_impl(self, p: core.Primitive) -> Tuple[Callable, bool]:
