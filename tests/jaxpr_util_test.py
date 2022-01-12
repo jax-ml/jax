@@ -14,7 +14,13 @@
 
 from absl.testing import absltest
 
+import gzip
+import json
+import unittest
+
 from jax import jaxpr_util, jit, make_jaxpr, numpy as jnp
+import jax._src.lib
+from jax._src.lib import xla_client
 from jax._src import test_util as jtu
 from jax.config import config
 
@@ -84,6 +90,20 @@ class JaxprStatsTest(jtu.JaxTestCase):
       return jnp.sin(s) + jnp.cos(y)
     hist = jaxpr_util.primitives_by_source(make_jaxpr(f)(1., 1.).jaxpr)
     jaxpr_util.print_histogram(hist)
+
+  @unittest.skipIf(jax._src.lib.xla_extension_version < 53,
+                   "Test requires jaxlib 0.1.76")
+  def test_pprof_equation_profile(self):
+    def f(x, y):
+      s = jit(jnp.sin)(x)
+      return jnp.sin(s) + jnp.cos(y)
+    profile_gz = jaxpr_util.pprof_equation_profile(make_jaxpr(f)(1., 1.).jaxpr)
+    profile_proto = gzip.decompress(profile_gz)
+    json_str = xla_client._xla.pprof_profile_to_json(profile_proto)
+    profile = json.loads(json_str)
+    self.assertSetEqual(
+        {"sampleType", "sample", "stringTable", "location", "function"},
+        set(profile.keys()))
 
 
 if __name__ == "__main__":

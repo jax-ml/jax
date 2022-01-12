@@ -43,8 +43,13 @@ class SourceInfo(NamedTuple):
 def new_source_info() -> SourceInfo:
   return SourceInfo(None)
 
-def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
+def is_user_filename(filename: str) -> bool:
   """Heuristic that guesses the identity of the user's code in a stack trace."""
+  return (filename.endswith("_test.py") or
+          not any(filename.startswith(p) for p in _exclude_paths))
+
+def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
+  """Iterator over the user's frames."""
   # Guess the user's frame is the innermost frame not in the jax source tree
   # We don't use traceback_util.path_starts_with because that incurs filesystem
   # access, which may be slow; we call this function when e.g. adding source
@@ -53,7 +58,7 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   # this mechanism from tests.
   traceback = source_info.traceback
   return (x for x in (traceback.frames if traceback else [])
-          if x.file_name.endswith("_test.py") or not any(x.file_name.startswith(p) for p in _exclude_paths))
+          if is_user_filename(x.file_name))
 
 def user_frame(source_info: SourceInfo) -> Optional[Frame]:
   return next(user_frames(source_info), None)
