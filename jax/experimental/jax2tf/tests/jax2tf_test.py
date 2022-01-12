@@ -155,7 +155,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_jax = lambda a, b: (a + b).astype(jnp.bfloat16)
     f_tf = jax2tf.convert(f_jax)
     self.assertEqual(f_tf(1., 2.).dtype, tf.bfloat16)
-    
+
   @jtu.skip_on_devices("gpu")
   def test_bfloat16_tf_grad(self):
     f_jax = lambda a, b: a + b
