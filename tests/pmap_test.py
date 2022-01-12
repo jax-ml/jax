@@ -1877,7 +1877,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       _, f_bwd  = jax.vjp(f, x)
       _ = f_bwd(x)
-    self.assertEqual(count[0], 2)  # one for fwd, one for bwd
+    self.assertEqual(count[0], 2)  # once for fwd, once for bwd
 
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       _, f_bwd2 = jax.vjp(f, x)

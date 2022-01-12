@@ -1361,8 +1361,13 @@ class DynamicJaxprTrace(core.Trace):
     in_avals = _tracers_to_avals({}, dim_tracers + tracers)
     keep_inputs = [False] * len(dim_tracers) + [True] * len(tracers)
     with core.new_sublevel():
-      jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(
-        f, self.main, in_avals, keep_inputs=keep_inputs)
+      if config.jax_check_tracer_leaks:
+        # Don't want to keep a strong ref to 'main' in memoization cache key
+        jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(
+            f, self.main, in_avals, keep_inputs=keep_inputs)
+      else:
+        jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic_memoized(
+            f, self.main, tuple(in_avals), tuple(keep_inputs)).val
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *dim_tracers, *tracers)
     source_info = source_info_util.current()
@@ -1602,6 +1607,17 @@ def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
 
     del fun, main, trace, frame, in_tracers, out_tracers, ans
   return jaxpr, out_avals, consts
+
+@lu.cache
+def trace_to_subjaxpr_dynamic_memoized(
+    fun: lu.WrappedFun, main: core.MainTrace, in_avals, keep_inputs):
+  tup = trace_to_subjaxpr_dynamic(fun, main, in_avals, keep_inputs=keep_inputs)
+  return WrapperForWeakRef(tup)
+
+class WrapperForWeakRef:
+  val: Any
+  def __init__(self, val):
+    self.val = val
 
 @contextlib.contextmanager
 def extend_jaxpr_stack(main, frame):

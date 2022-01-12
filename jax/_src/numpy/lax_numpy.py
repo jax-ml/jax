@@ -6775,8 +6775,6 @@ def _multi_slice(arr,
                  start_indices: Tuple[Tuple[int, ...]],
                  limit_indices: Tuple[Tuple[int, ...]],
                  removed_dims: Tuple[Tuple[int, ...]]):
-  print(core.thread_local_state.trace_state.axis_env)
-  breakpoint()
   """Extracts multiple slices from `arr`.
 
   This is used to shard DeviceArray arguments to pmap. It's implemented as a
