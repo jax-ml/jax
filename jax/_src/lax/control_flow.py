@@ -2357,18 +2357,6 @@ def _promote_weak_typed_inputs(in_vals, in_avals, out_avals):
     in_vals[i] = lax.convert_element_type(in_vals[i], new_dtype)
   return in_vals, True
 
-def _stop_gradient_fun(f):
-  """Create a version of f() that stops all gradients."""
-  def wrapper(*args, **kwargs):
-    args_flat, in_args_tree = tree_flatten((args, kwargs))
-    args_avals = tuple(_map(_abstractify, args_flat))
-    g = lambda a, b: f(*a, **b)
-    jaxpr, consts, out_tree = _initial_style_jaxpr(g, in_args_tree, args_avals)
-    all_args = _map(lax.stop_gradient, (*consts, *args_flat))
-    out = core.jaxpr_as_fun(jaxpr)(*all_args)
-    return tree_unflatten(out_tree, out)
-  return wrapper
-
 
 _RootTuple = collections.namedtuple('_RootTuple', 'f, solve, l_and_s')
 
@@ -2426,7 +2414,7 @@ def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
   _check_tree("f", "initial_guess", out_tree, in_tree, False)
 
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
-      partial(solve, _stop_gradient_fun(f)), in_args_tree, guess_avals)
+      partial(solve, f), in_args_tree, guess_avals)
   _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
 
   def linearize_and_solve(x, b):

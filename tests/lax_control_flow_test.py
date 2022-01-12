@@ -95,6 +95,52 @@ ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
 
 
+# Simple optimization routine for testing custom_root
+def binary_search(func, x0, low=0.0, high=100.0):
+  del x0  # unused
+
+  def cond(state):
+    low, high = state
+    midpoint = 0.5 * (low + high)
+    return (low < midpoint) & (midpoint < high)
+
+  def body(state):
+    low, high = state
+    midpoint = 0.5 * (low + high)
+    update_upper = func(midpoint) > 0
+    low = jnp.where(update_upper, low, midpoint)
+    high = jnp.where(update_upper, midpoint, high)
+    return (low, high)
+
+  solution, _ = lax.while_loop(cond, body, (low, high))
+  return solution
+
+# Optimization routine for testing custom_root.
+def newton_raphson(func, x0):
+  tol = 1e-16
+  max_it = 20
+
+  fx0, dfx0 = func(x0), jax.jacobian(func)(x0)
+  initial_state = (0, x0, fx0, dfx0)  # (iteration, x, f(x), grad(f)(x))
+
+  def cond(state):
+    it, _, fx, _ = state
+    return (jnp.max(jnp.abs(fx)) > tol) & (it < max_it)
+
+  def body(state):
+    it, x, fx, dfx = state
+    step = jnp.linalg.solve(
+      dfx.reshape((-1, fx.size)), fx.ravel()
+    ).reshape(fx.shape)
+    x_next = x - step
+    fx, dfx = func(x_next), jax.jacobian(func)(x_next)
+    return (it + 1, x_next, fx, dfx)
+
+  _, x, _, _ = lax.while_loop(cond, body, initial_state)
+
+  return x
+
+
 class LaxControlFlowTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -2007,33 +2053,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jax.grad(lambda x: jit_run_scan(x))(0.)  # doesn't crash
 
-  def test_custom_root_scalar(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "binary_search", "solve_method": binary_search},
+      {"testcase_name": "newton_raphson", "solve_method": newton_raphson},
+  )
+  def test_custom_root_scalar(self, solve_method):
 
     def scalar_solve(f, y):
       return y / f(1.0)
 
-    def binary_search(func, x0, low=0.0, high=100.0):
-      del x0  # unused
-
-      def cond(state):
-        low, high = state
-        midpoint = 0.5 * (low + high)
-        return (low < midpoint) & (midpoint < high)
-
-      def body(state):
-        low, high = state
-        midpoint = 0.5 * (low + high)
-        update_upper = func(midpoint) > 0
-        low = jnp.where(update_upper, low, midpoint)
-        high = jnp.where(update_upper, midpoint, high)
-        return (low, high)
-
-      solution, _ = lax.while_loop(cond, body, (low, high))
-      return solution
-
     def sqrt_cubed(x, tangent_solve=scalar_solve):
       f = lambda y: y ** 2 - x ** 3
-      return lax.custom_root(f, 0.0, binary_search, tangent_solve)
+      # Note: Nonzero derivative at x0 required for newton_raphson
+      return lax.custom_root(f, 1.0, solve_method, tangent_solve)
 
     value, grad = jax.value_and_grad(sqrt_cubed)(5.0)
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False, rtol=1e-6)
@@ -2044,7 +2076,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     inputs = jnp.array([4.0, 5.0])
     results = jax.vmap(sqrt_cubed)(inputs)
-    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+    self.assertAllClose(
+      results, inputs ** 1.5, check_dtypes=False,
+      atol={jnp.float32: 1e-3, jnp.float64: 1e-6},
+      rtol={jnp.float32: 1e-3, jnp.float64: 1e-6},
+    )
 
     results = jax.jit(sqrt_cubed)(5.0)
     self.assertAllClose(
@@ -2072,6 +2108,30 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = jax.jit(linear_solve)(a, b)
     expected = jnp.linalg.solve(a, b)
     self.assertAllClose(expected, actual)
+
+  def test_custom_root_vector_nonlinear(self):
+
+    def nonlinear_func(x, y):
+      # func(x, y) == 0 if and only if x == y.
+      return (x - y) * (x**2 + y**2 + 1)
+
+    def tangent_solve(g, y):
+      return jnp.linalg.solve(
+        jax.jacobian(g)(y).reshape(-1, y.size),
+        y.ravel()
+      ).reshape(y.shape)
+
+    def nonlinear_solve(y):
+      f = lambda x: nonlinear_func(x, y)
+      x0 = -jnp.ones_like(y)
+      return lax.custom_root(f, x0, newton_raphson, tangent_solve)
+
+    y = self.rng().randn(3, 1)
+    jtu.check_grads(nonlinear_solve, (y,), order=2,
+                rtol={jnp.float32: 1e-2, jnp.float64: 1e-3})
+
+    actual = jax.jit(nonlinear_solve)(y)
+    self.assertAllClose(y, actual, rtol=1e-5, atol=1e-5)
 
   def test_custom_root_with_custom_linear_solve(self):
 
