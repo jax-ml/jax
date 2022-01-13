@@ -33,6 +33,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     If set, JAX dumps the MHLO/HLO IR it generates for each computation to a
     file under the given path.
   * Added `jax.ensure_compile_time_eval` to the public api ({jax-issue}`#7987`).
+  * jax2tf now supports a flag jax2tf_associative_scan_reductions to change
+    the lowering for associative reductions, e.g., jnp.cumsum, to behave
+    like JAX on CPU and GPU (to use an associative scan). See the jax2tf README
+    for more details ({jax-issue}`#9189`).
 
 ## jaxlib 0.1.76 (Unreleased)
 * New features

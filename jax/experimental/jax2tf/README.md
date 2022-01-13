@@ -759,6 +759,27 @@ jax2tf.convert(jax_fun)(3.14)
 jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14))
 ```
 
+### Slow implementation of associative reductions for CPU
+
+Operations like ``jax.numpy.cumsum`` are compiled by JAX differently based
+on the platform. For TPU, the compilation uses the [HLO ReduceWindow](https://www.tensorflow.org/xla/operation_semantics#reducewindow)
+operation, which has an efficient implementation for the cases when the
+reduction function is associative. For CPU and GPU, JAX uses an alternative
+implementation using [associative scans](https://github.com/google/jax/blob/f08bb50bfa9f6cf2de1f3f78f76e1aee4a78735d/jax/_src/lax/control_flow.py#L2801).
+jax2tf uses the TPU lowering (because it does not support backend-specific lowering)
+and hence it can be slow in some cases on CPU and GPU.
+
+We have filed a bug with the XLA:CPU compiler to improve ReduceWindow.
+Meanwhile, if you run into this problem you can use the
+``--jax2tf_associative_scan_reductions`` flag to get the special
+associative scan lowering.
+You can alternatively use the ``with jax.jax2tf_associative_scan_reductions(True)``
+around the code that invokes the function returned by ``jax2tf.convert``.
+Use this only if it improves the performance for your application.
+
+Note that this lowering may not work as well as the default one in presence
+of shape polymorphism.
+
 ### Unchecked assumption that the dimension variables take strictly positive values
 
 The shape polymorphic conversion is sound with the assumption that the dimension
