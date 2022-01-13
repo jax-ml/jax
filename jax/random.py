@@ -89,6 +89,7 @@ from jax._src.random import (
   categorical as categorical,
   cauchy as cauchy,
   choice as choice,
+  default_prng_impl as default_prng_impl,
   dirichlet as dirichlet,
   double_sided_maxwell as double_sided_maxwell,
   exponential as exponential,
