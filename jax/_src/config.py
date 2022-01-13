@@ -21,7 +21,7 @@ import itertools
 import os
 import sys
 import threading
-from typing import Any, List, Callable, NamedTuple, Optional
+from typing import Any, List, Callable, NamedTuple, Optional, Hashable
 import warnings
 
 from jax._src import lib
@@ -324,15 +324,8 @@ class Config:
 
     return _StateContextManager(name, help, update_thread_local_hook, validate)
 
-  def _trace_context(self):
-    """Returns a tuple of configuration values that affect tracing.
-
-    These values are included in the cache key for linear_util.cache.
-
-    Values included in this set should also most likely be included in
-    the C++ JIT state, which is handled separately."""
-    return (self.x64_enabled, self.jax_numpy_rank_promotion,
-            self.jax_default_matmul_precision)
+  def get_thread_local_trace_state(self):
+    return get_thread_local_trace_state()
 
 class _StateContextManager:
   def __init__(self, name, help, update_thread_local_hook,
@@ -405,7 +398,7 @@ already_configured_with_absl = False
 
 class GlobalJitState(NamedTuple):
   numpy_rank_promotion: Optional[str] = None
-  default_matmul_precision: Optional[Any] = None
+  default_matmul_precision: Optional[Hashable] = None
 
 
 def update_global_jit_state(**kw):
@@ -415,15 +408,23 @@ def update_global_jit_state(**kw):
 
 
 class ThreadLocalJitState(NamedTuple):
-  dynamic_trace_state: Optional[Any] = None
+  dynamic_trace_state: Optional[Hashable] = None
+  axis_env_state: Optional[Hashable] = None
   numpy_rank_promotion: Optional[str] = None
-  default_matmul_precision: Optional[Any] = None
+  default_matmul_precision: Optional[Hashable] = None
 
 
 def update_thread_local_jit_state(**kw):
   tls = jax_jit.thread_local_state()
   context = tls.extra_jit_context or ThreadLocalJitState()
   tls.extra_jit_context = context._replace(**kw)
+
+
+def get_thread_local_trace_state() -> Hashable:
+  tls = jax_jit.thread_local_state()
+  ctx = tls.extra_jit_context or ThreadLocalJitState()
+  return (ctx.axis_env_state, config.jax_enable_x64, config.jax_disable_jit,
+          config.jax_numpy_rank_promotion, config.jax_default_matmul_precision)
 
 
 # TODO(mattjj): remove all uses of this flag

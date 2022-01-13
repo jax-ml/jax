@@ -199,7 +199,7 @@ def cache(max_size=4096):
       if config.jax_check_tracer_leaks:
         return f(*args, **kwargs)
       else:
-        return cached(config._trace_context(), *args, **kwargs)
+        return cached(config.get_thread_local_trace_state(), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info

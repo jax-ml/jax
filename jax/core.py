@@ -1854,20 +1854,40 @@ aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
 def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
   frame = AxisEnvFrame(axis_name, size, tag)
   thread_local_state.trace_state.axis_env.append(frame)
+  jax_config.update_thread_local_jit_state(
+      axis_env_state=tuple(thread_local_state.trace_state.axis_env))
   try:
     yield
   finally:
     thread_local_state.trace_state.axis_env.pop()
+    jax_config.update_thread_local_jit_state(
+        axis_env_state=tuple(thread_local_state.trace_state.axis_env))
 
 @contextmanager
 def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]]):
   frames = [AxisEnvFrame(axis_name, size, None) for axis_name, size in axes]
   thread_local_state.trace_state.axis_env.extend(frames)
+  jax_config.update_thread_local_jit_state(
+      axis_env_state=tuple(thread_local_state.trace_state.axis_env))
   try:
     yield
   finally:
     for _ in frames:
       thread_local_state.trace_state.axis_env.pop()
+    jax_config.update_thread_local_jit_state(
+        axis_env_state=tuple(thread_local_state.trace_state.axis_env))
+
+@contextmanager
+def stash_axis_env():
+  "Promise that a function or with-suite does not depend implicitly on axis env"
+  s = thread_local_state.trace_state
+  prev_axis_env, s.axis_env = s.axis_env, []
+  jax_config.update_thread_local_jit_state(axis_env_state=())
+  try:
+    yield
+  finally:
+    s.axis_env = prev_axis_env
+    jax_config.update_thread_local_jit_state(axis_env_state=tuple(s.axis_env))
 
 
 # When a mapped function is given no axis name, we generate a name object based

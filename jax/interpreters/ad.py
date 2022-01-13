@@ -625,6 +625,7 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
 
   # The freevars are being fanned out (not mapped). During transpose the
   # dual of fan-out is fan-in-sum. We apply it to the unmapped invars.
+  # TODO(mattjj,jekbradbury): should this look at global_axis_size?
   assert len(in_axes) == len(arg_cts)
   def unmap_zero(zero, in_axis):
     return (zero if in_axis is None else
