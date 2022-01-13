@@ -2269,8 +2269,8 @@ def _split(op, ary, indices_or_sections, axis=0):
     elif op == "array_split":
       split_indices = np.concatenate(
           [np.arange(r + 1, dtype=np.int64) * (part_size + 1),
-           np.arange(indices_or_sections - r, dtype=np.int64) * part_size
-           + ((r + 1) * (part_size + 1) - 1)])
+           np.arange(indices_or_sections - r, dtype=np.int64) * part_size +
+           ((r + 1) * (part_size + 1) - 1)])
     else:
       raise ValueError("array split does not result in an equal division")
   starts, ends = [0] * ndim(ary), shape(ary)
@@ -6017,9 +6017,9 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
-  return (isinstance(x, (np.ndarray, ndarray)) and np.ndim(x) != 0
-          or isinstance(x, (Sequence, slice))
-          or x is Ellipsis or x is None)
+  return (isinstance(x, (np.ndarray, ndarray)) and np.ndim(x) != 0 or
+          isinstance(x, (Sequence, slice)) or
+          x is Ellipsis or x is None)
 
 def _eliminate_deprecated_list_indexing(idx):
   # "Basic slicing is initiated if the selection object is a non-array,
@@ -6049,9 +6049,9 @@ def _is_boolean_index(i):
     abstract_i = core.get_aval(i)
   except TypeError:
     abstract_i = None
-  return (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_)
-          or isinstance(i, list) and i and _all(_is_scalar(e)
-          and issubdtype(_dtype(e), np.bool_) for e in i))
+  return (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_) or
+          isinstance(i, list) and i and _all(_is_scalar(e) and
+          issubdtype(_dtype(e), np.bool_) for e in i))
 
 def _expand_bool_indices(idx, shape):
   """Converts concrete bool indexes into advanced integer indexes."""
@@ -6107,22 +6107,22 @@ def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
-  if _all(e is None or e is Ellipsis or isinstance(e, slice)
-          or _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
+  if _all(e is None or e is Ellipsis or isinstance(e, slice) or
+          _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
     return False
-  return _all(e is None or e is Ellipsis or isinstance(e, slice)
-              or _is_int_arraylike(e) for e in idx)
+  return _all(e is None or e is Ellipsis or isinstance(e, slice) or
+              _is_int_arraylike(e) for e in idx)
 
 def _is_int_arraylike(x):
   """Returns True if x is array-like with integer dtype, False otherwise."""
-  return (isinstance(x, int) and not isinstance(x, bool)
-          or issubdtype(getattr(x, "dtype", None), np.integer)
-          or isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
+  return (isinstance(x, int) and not isinstance(x, bool) or
+          issubdtype(getattr(x, "dtype", None), np.integer) or
+          isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
 
 def _is_scalar(x):
   """Checks if a Python or NumPy scalar."""
-  return  np.isscalar(x) or (isinstance(x, (np.ndarray, ndarray))
-                             and np.ndim(x) == 0)
+  return  np.isscalar(x) or (isinstance(x, (np.ndarray, ndarray)) and
+                             np.ndim(x) == 0)
 
 def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""

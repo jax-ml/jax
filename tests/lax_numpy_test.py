@@ -6069,8 +6069,8 @@ class NumpyUfuncTests(jtu.JaxTestCase):
   def testUfuncInputTypes(self, name, arg_dtypes):
     # TODO(jakevdp): fix following failures and remove from this exception list.
     if (name in ['divmod', 'floor_divide', 'fmod', 'gcd', 'left_shift', 'mod',
-                 'power', 'remainder', 'right_shift', 'rint', 'square'] and
-        'bool_' in arg_dtypes):
+                 'power', 'remainder', 'right_shift', 'rint', 'square'] 
+        and 'bool_' in arg_dtypes):
       self.skipTest(f"jax.numpy does not support {name}{tuple(arg_dtypes)}")
     if name == 'arctanh' and jnp.issubdtype(arg_dtypes[0], jnp.complexfloating):
       self.skipTest("np.arctanh & jnp.arctanh have mismatched NaNs for complex input.")

@@ -627,7 +627,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
            "_{}_a_shape={}_axis={}_keepdims={}".format(
              op, jtu.format_shape_dtype_string(a_shape, a_dtype),
              axis, keepdims),
-         "op": op, "a_shape": a_shape, "a_dtype": a_dtype,
+         "op": "mode", "a_shape": a_shape, "a_dtype": a_dtype,
          "axis": axis,
          "keepdims": keepdims}
         for a_dtype in jtu.dtypes.floating
@@ -637,7 +637,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           ((4, 101), 1),
         )
         for keepdims in [False, True]
-        for op in ["mode", "nanmode"]))
+        ))
   def testMode(self,a_shape,a_dtype,keepdims,op, axis=0):
     if op == "mode":
       a_rng = jtu.rand_default(self.rng())
