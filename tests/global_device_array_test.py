@@ -71,9 +71,9 @@ class GDATest(jtu.JaxTestCase):
         prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
-    gda = GlobalDeviceArray.from_callback(global_input_shape,
-                                                  global_mesh,
-                                                  mesh_axes, cb)
+
+    gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                          mesh_axes, cb)
     self.assertEqual(gda.local_shards[0].index, expected_index[0])
     self.assertArraysEqual(gda.local_data(0),
                            global_input_data[expected_index[0]])
@@ -121,9 +121,9 @@ class GDATest(jtu.JaxTestCase):
         prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
-    gda = GlobalDeviceArray.from_callback(global_input_shape,
-                                                  global_mesh,
-                                                  mesh_axes, cb)
+
+    gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                          mesh_axes, cb)
     self.assertEqual(gda.local_shards[0].index, expected_index[0])
     self.assertArraysEqual(gda.local_data(0),
                            global_input_data[expected_index[0]])
@@ -154,9 +154,9 @@ class GDATest(jtu.JaxTestCase):
     global_input_data = np.arange(prod(global_input_shape)).reshape(-1)
     def cb(index):
       return global_input_data[index]
-    gda = GlobalDeviceArray.from_callback(global_input_shape,
-                                                  global_mesh,
-                                                  mesh_axes, cb)
+
+    gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                          mesh_axes, cb)
     self.assertEqual(gda.local_shards[0].index, expected_index[0])
     self.assertArraysEqual(gda.local_data(0),
                            global_input_data[expected_index[0]])
@@ -183,9 +183,9 @@ class GDATest(jtu.JaxTestCase):
         prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
-    gda = GlobalDeviceArray.from_callback(global_input_shape,
-                                                  global_mesh,
-                                                  mesh_axes, cb)
+
+    gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                          mesh_axes, cb)
     self.assertEqual(gda.local_shards[0].index, expected_index[0])
     self.assertArraysEqual(gda.local_data(0),
                            global_input_data[expected_index[0]])
