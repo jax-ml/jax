@@ -1873,6 +1873,19 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
+      for dtype in float_dtypes))
+  def testSortFloatSpecialValues(self, dtype):
+    # Test confirms that
+    # - NaNs are sorted to the end, regardless of representation
+    # - sign bit of 0.0 is ignored
+    x = jnp.array([-np.inf, 0.0, -0.0, np.inf, np.nan, -np.nan], dtype=dtype)
+    index = lax.iota(dtypes.int_, x.size)
+    argsort = lambda x: lax.sort_key_val(x, lax.iota(dtypes.int_, x.size), is_stable=True)[1]
+    self.assertArraysEqual(argsort(x), index)
+    self.assertArraysEqual(jax.jit(argsort)(x), index)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_isstable={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
         "shape": shape, "dtype": dtype, "axis": axis, "is_stable": is_stable}
