@@ -1435,6 +1435,74 @@ class DimensionHandler:
     return d
 
 _dimension_handler_int = DimensionHandler()
+
+class DimensionHandlerTracer(DimensionHandler):
+  """See core.DimensionHandler.
+
+  Implements operations on dimensions that are Tracer. These can
+  arise as part of DShapedArray. For now, the only defined operation on
+  Tracer dimensions is that identity implies equality.
+
+  """
+  def is_constant(self, d: DimSize) -> bool:
+    assert isinstance(d, Tracer)
+    return False
+
+  def as_value(self, d: DimSize):
+    """Turns a dimension size into a Jax value that we can compute with."""
+    assert isinstance(d, Tracer)
+    return d
+
+  def symbolic_equal(self, d1: DimSize, d2: DimSize) -> bool:
+    if isinstance(d1, Tracer) and isinstance(d2, Tracer):
+      return d1 is d2
+    else:
+      return False
+
+  def greater_equal(self, d1: DimSize, d2: DimSize):
+    if self.symbolic_equal(d1, d2):
+      return True
+    # TODO(necula): it will be useful to keep an invariant that all dimension Tracers
+    # represent >= 0 values.
+    # elif core.is_constant_dim(d2) and d2 == 0:
+    #  return True
+    else:
+      raise InconclusiveDimensionOperation(f"{d1} >= {d2}")
+
+  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
+    """Computes integer "i" such that i  * prod(s2) == prod(s1)."""
+    # We implement only the case when s1 and s2 have the same exact tracers,
+    # perhaps in a different order.
+    def prod_const_dims(s: Shape) -> Tuple[int, Sequence[int]]:
+      # Return the product of the known dimensions, and the sorted sequence of id(Tracer)
+      # for the unknown ones.
+      prod_int = 1
+      other_ids = []
+      for d in s:
+        if is_constant_dim(d):
+          prod_int *= d
+        else:
+          other_ids.append(id(d))
+      return prod_int, tuple(sorted(other_ids))
+    s1_int, s1_rest = prod_const_dims(s1)
+    s2_int, s2_rest = prod_const_dims(s2)
+    err_msg = f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}"
+    if s1_rest == s2_rest and s1_int % s2_int == 0:
+        return s1_int / s2_int
+
+    raise InconclusiveDimensionOperation(err_msg)
+
+
+  def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
+    """Implements `(d - window_size) // window_stride + 1`"""
+    raise InconclusiveDimensionOperation("stride not yet implemented")
+
+_dimension_handler_tracer = DimensionHandlerTracer()
+
+# Allow other modules to register DimensionHandlers for types that may end
+# up in shapes. For upcoming dynamic shape support we can also have
+# Tracer in shapes. We treat Tracer specially, and we do not add it to
+# _SPECIAL_DIMENSION_HANDLERS because there may be multiple Tracer types.
 _SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
 
 def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple[DimSize, ...]]:
@@ -1446,14 +1514,17 @@ def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple
   special_handlers = set()
   canonical = []
   for d in dlist:
-    handler = _SPECIAL_DIMENSION_HANDLERS.get(type(d))
-    if handler:
-      special_handlers.add(handler)
-      canonical.append(d)
-    else:
-      try:
-        canonical.append(operator.index(d))
-      except TypeError:
+    try:
+      canonical.append(operator.index(d))
+    except TypeError:
+      if not isinstance(d, Tracer):
+        handler = _SPECIAL_DIMENSION_HANDLERS.get(type(d))
+      else:
+        handler = _dimension_handler_tracer
+      if handler:
+        special_handlers.add(handler)
+        canonical.append(d)  # type: ignore
+      else:
         raise _invalid_shape_error(dlist)
 
   if len(special_handlers) > 1:

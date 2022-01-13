@@ -18,6 +18,7 @@ from functools import partial
 import gc
 import itertools as it
 import operator
+import unittest
 
 import numpy as np
 from absl.testing import absltest
@@ -518,6 +519,11 @@ class JaxprTypeChecks(jtu.JaxTestCase):
 
 class DynamicShapesTest(jtu.JaxTestCase):
 
+  def make_dim_inputs(self, many):
+    return [core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
+            for _ in range(many)]
+
+  @unittest.skip("needs a pe._inline_literals fix")  # TODO(mattjj)
   def test_staging_basic(self):
     n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
     a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
@@ -602,7 +608,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
 
   def test_staging_primitive_applications(self):
-    n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
+    n, = self.make_dim_inputs(1)
     a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
     b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
 
@@ -624,6 +630,38 @@ class DynamicShapesTest(jtu.JaxTestCase):
 
     self.assertLen(jaxpr.outvars, 1)
     self.assertEqual(jaxpr.outvars[0].aval.shape, ())
+
+
+  @unittest.skip("needs to add support for addition")  # TODO(necula)
+  def test_concatenate(self):
+    n, m = self.make_dim_inputs(2)
+    a = core.DShapedArray((n, m), jnp.dtype('float32'), weak_type=False)
+
+    @lu.wrap_init
+    def f(x):
+      z = lax.concatenate([x, x], 0)
+      return (z,)
+
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, m, a],
+                                            keep_inputs=[False, False, True])
+    # TODO: add assertions
+
+  @unittest.skip("needs the invariant that dimensions >= 0")  # TODO(necula)
+  def test_reshape(self):
+    n, m = self.make_dim_inputs(2)
+    a = core.DShapedArray((n, m), jnp.dtype('float32'), weak_type=False)
+
+    @lu.wrap_init
+    def f(x):
+      z = jnp.reshape(x, (1, x.shape[1], x.shape[0]))
+      return (z,)
+
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, m, a],
+                                            keep_inputs=[False, False, True])
+
+    self.assertLen(jaxpr.invars, 2 + 1)  # two axis size vars, one other input
+    self.assertLen(jaxpr.outvars, 1)
+    self.assertEqual(jaxpr.outvars[0].aval.shape, (1, jaxpr.invars[1], jaxpr.invars[0]))
 
 
 if __name__ == '__main__':
