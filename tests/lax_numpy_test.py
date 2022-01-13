@@ -2479,6 +2479,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @unittest.skipIf(numpy_version < (1, 21), "Numpy < 1.21 does not properly handle NaN values in unique.")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{dtype.__name__}", "dtype": dtype}
+      for dtype in inexact_dtypes))
+  def testUniqueNans(self, dtype):
+    def args_maker():
+      x = [-0.0, 0.0, 1.0, 1.0, np.nan, -np.nan]
+      if np.issubdtype(dtype, np.complexfloating):
+        x = [complex(i, j) for i, j in itertools.product(x, repeat=2)]
+      return [np.array(x, dtype=dtype)]
+
+    kwds = dict(return_index=True, return_inverse=True, return_counts=True)
+    jnp_fun = partial(jnp.unique, **kwds)
+    def np_fun(x):
+      dtype = x.dtype
+      # numpy unique fails for bfloat16 NaNs, so we cast to float64
+      if x.dtype == jnp.bfloat16:
+        x = x.astype('float64')
+      u, *rest = np.unique(x, **kwds)
+      return (u.astype(dtype), *rest)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fixed_size={}".format(fixed_size),
       "fixed_size": fixed_size}
