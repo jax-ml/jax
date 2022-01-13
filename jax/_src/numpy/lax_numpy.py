@@ -50,7 +50,7 @@ from jax.config import config
 from jax.interpreters import pxla
 from jax import lax
 from jax._src import device_array
-from jax._src.lax.lax import _array_copy, _float_to_int_for_sort
+from jax._src.lax.lax import _array_copy, _sort_lt_comparator, _sort_le_comparator
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
@@ -6455,12 +6455,8 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 def _searchsorted(a, v, side):
   if len(a) == 0:
     return 0
-  op = operator.le if side == 'left' else operator.lt
-  # TODO(jakevdp): handle NaNs correctly for complex. This will likely involve
-  # adding lexicographic sorting capabilities to the following.
+  op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
   a, v = _promote_dtypes(a, v)
-  if issubdtype(a.dtype, floating):
-    a, v = map(_float_to_int_for_sort, (a, v))
   def body_fun(i, state):
     low, high = state
     mid = (low + high) // 2

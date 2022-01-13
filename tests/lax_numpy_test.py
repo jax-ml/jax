@@ -2968,7 +2968,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for ashape in [(15,), (16,), (17,)]
     for vshape in [(), (5,), (5, 5)]
     for side in ['left', 'right']
-    for dtype in default_dtypes
+    for dtype in number_dtypes
   ))
   def testSearchsorted(self, ashape, vshape, side, dtype):
     rng = jtu.rand_default(self.rng())
@@ -2989,6 +2989,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # The sign bit should not matter for 0.0 or NaN, so argsorting the above should be
     # equivalent to argsorting the following:
     x_equiv = np.array([0, 1, 2, 2, 3, 4, 5, 5])
+
+    if jnp.issubdtype(dtype, jnp.complexfloating):
+      x = np.array([complex(r, c) for r, c in itertools.product(x, repeat=2)])
+      x_equiv = np.array([complex(r, c) for r, c in itertools.product(x_equiv, repeat=2)])
 
     fun = partial(jnp.searchsorted, side=side)
     self.assertArraysEqual(fun(x, x), fun(x_equiv, x_equiv))

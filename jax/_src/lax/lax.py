@@ -3713,6 +3713,24 @@ def _float_to_int_for_sort(x):
 # This code adds complex-number support and lexicographic ordering to the algorithm from:
 # https://github.com/tensorflow/tensorflow/blob/ba43780830f09da72081fe5061c436f1c6203a92/tensorflow/compiler/xla/client/lib/comparators.h#L33
 def _sort_lt_comparator(*operands, num_keys=1):
+  x_keys, y_keys = _operands_to_keys(*operands, num_keys=num_keys)
+  p = None
+  for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
+    p = (bitwise_or(lt(xk, yk), bitwise_and(eq(xk, yk), p)) if p is not None
+         else lt(xk, yk))
+  return p
+
+# Similar to sort_lt_comparator, but implements less than or equal. Used by
+# the searchsorted() implementation.
+def _sort_le_comparator(*operands, num_keys=1):
+  x_keys, y_keys = _operands_to_keys(*operands, num_keys=num_keys)
+  p = None
+  for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
+    p = (bitwise_or(lt(xk, yk), bitwise_and(eq(xk, yk), p)) if p is not None
+         else le(xk, yk))
+  return p
+
+def _operands_to_keys(*operands, num_keys=1):
   assert len(operands) >= 2 and len(operands) % 2 == 0, operands
   assert len(operands) // 2 >= num_keys, (operands, num_keys)
   x_keys, y_keys = [], []
@@ -3727,12 +3745,7 @@ def _sort_lt_comparator(*operands, num_keys=1):
     else:
       x_keys.append(x)
       y_keys.append(y)
-
-  p = None
-  for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
-    p = (bitwise_or(lt(xk, yk), bitwise_and(eq(xk, yk), p)) if p is not None
-         else lt(xk, yk))
-  return p
+  return x_keys, y_keys
 
 
 def _sort_translation_rule(ctx, avals_in, avals_out, *operands, dimension,
