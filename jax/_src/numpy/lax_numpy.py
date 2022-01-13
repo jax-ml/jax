@@ -6769,6 +6769,7 @@ def _compress_method(a, condition, axis=None, out=None):
   return compress(condition, a, axis, out)
 
 
+@core.stash_axis_env()
 @partial(jit, static_argnums=(1,2,3))
 def _multi_slice(arr,
                  start_indices: Tuple[Tuple[int, ...]],

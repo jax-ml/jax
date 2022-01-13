@@ -62,9 +62,6 @@ def _initial_style_jaxpr(fun, in_avals):
 def _close_jaxpr(jaxpr):
   return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
-def _initial_style_staging() -> bool:
-  return core.thread_local_state.trace_state.initial_style
-
 def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
 

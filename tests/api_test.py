@@ -828,6 +828,19 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     with self.assertRaisesRegex(TypeError, "'<' not supported.*"):
       f({E.A: 1.0, E.B: 2.0})
 
+  def test_caches_depend_on_axis_env(self):
+    # https://github.com/google/jax/issues/9187
+    f = lambda: lax.psum(1, 'i')
+    g = jax.jit(f)
+    expected = jax.vmap(f, axis_name='i', axis_size=2, out_axes=None)()
+    ans      = jax.vmap(g, axis_name='i', axis_size=2, out_axes=None)()
+    self.assertEqual(ans, expected)
+
+    # This second call to g could erroneously get a cache hit.
+    expected = jax.vmap(f, axis_name='i', axis_size=3, out_axes=None)()
+    ans      = jax.vmap(g, axis_name='i', axis_size=3, out_axes=None)()
+    self.assertEqual(ans, expected)
+
 
 class PythonJitTest(CPPJitTest):
 

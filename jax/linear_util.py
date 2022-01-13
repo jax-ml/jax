@@ -260,10 +260,10 @@ def cache(call: Callable):
     cache = fun_caches.setdefault(fun.f, {})
     if config.jax_check_tracer_leaks:
       key = (_copy_main_traces(fun.transforms), fun.params, args,
-             config.x64_enabled, config._trace_context())
+             config.get_trace_state())
     else:
-      key = (fun.transforms, fun.params, args, config.x64_enabled,
-             config._trace_context())
+      key = (fun.transforms, fun.params, args,
+             config.get_trace_state())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result
