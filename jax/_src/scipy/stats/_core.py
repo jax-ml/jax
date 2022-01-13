@@ -17,13 +17,12 @@ from collections import namedtuple
 from jax._src.api import vmap
 import jax.numpy as jnp
 import warnings
-from numpy import  ma
-from . import mstats_basic
 import numpy as np
 from jax._src.numpy.lax_numpy import _check_arraylike
 from jax._src.numpy.util import _wraps
 import scipy
 from jax import core
+from functools import partial
 
 ModeResult = namedtuple('ModeResult', ('mode', 'count'))
 
@@ -62,7 +61,7 @@ def _contains_nan(a, nan_policy='propagate'):
     return contains_nan, nan_policy
 
 @_wraps(scipy.stats.mode)
-@jit
+@partial(jit, static_argnames=['axis', 'nan_policy'])
 def mode(a, axis=0, nan_policy='propagate'):
     _check_arraylike("mode",a)
     if axis is None:
