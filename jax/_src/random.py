@@ -71,7 +71,7 @@ def _check_prng_key(key):
           'Raw arrays as random keys to jax.random functions are deprecated. '
           'Assuming valid threefry2x32 key for now.',
           FutureWarning)
-    return prng.PRNGKeyArray(_get_default_prng_impl(), key), True
+    return prng.PRNGKeyArray(default_prng_impl(), key), True
   else:
     raise TypeError(f'unexpected PRNG key type {type(key)}')
 
@@ -94,7 +94,13 @@ PRNG_IMPLS = {
     'unsafe_rbg': prng.unsafe_rbg_prng_impl,
 }
 
-def _get_default_prng_impl():
+def default_prng_impl():
+  """Get the default PRNG implementation.
+
+  The default implementation is determined by ``config.jax_default_prng_impl``,
+  which specifies it by name. This function returns the corresponding
+  ``jax.prng.PRNGImpl`` instance.
+  """
   impl_name = config.jax_default_prng_impl
   assert impl_name in PRNG_IMPLS, impl_name
   return PRNG_IMPLS[impl_name]
@@ -117,13 +123,13 @@ def PRNGKey(seed: int) -> KeyArray:
     and ``fold_in``.
 
   """
-  impl = _get_default_prng_impl()
+  impl = default_prng_impl()
   key = prng.seed_with_impl(impl, seed)
   return _return_prng_keys(True, key)
 
 # TODO(frostig): remove once we always enable_custom_prng
 def _check_default_impl_with_no_custom_prng(impl, name):
-  default_impl = _get_default_prng_impl()
+  default_impl = default_prng_impl()
   default_name = config.jax_default_prng_impl
   if not config.jax_enable_custom_prng and default_impl is not impl:
     raise RuntimeError('jax_enable_custom_prng must be enabled in order '
