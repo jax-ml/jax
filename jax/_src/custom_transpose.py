@@ -24,6 +24,7 @@ from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_leaves, tree_unflatten,
                            treedef_tuple)
 from jax._src import ad_util
+from jax._src import custom_api_util
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -38,14 +39,17 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
+@custom_api_util.register_custom_decorator_type
 class custom_transpose:
   fun: Callable
   transpose: Optional[Callable]
 
   def __init__(self, fun: Callable):
+    functools.update_wrapper(self, fun)
     self.fun = fun  # type: ignore[assignment]
     self.transpose = None
-    functools.update_wrapper(self, fun)
+
+  __getattr__ = custom_api_util.forward_attr
 
   def def_transpose(self, transpose: Callable):
     self.transpose = transpose

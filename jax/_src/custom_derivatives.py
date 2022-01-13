@@ -24,6 +24,7 @@ from jax import linear_util as lu
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                         tree_multimap, treedef_is_leaf, treedef_tuple,
                         register_pytree_node_class)
+from jax._src import custom_api_util
 from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
 from jax._src.api_util import flatten_fun_nokwargs, argnums_partial
 from jax.core import raise_to_shaped
@@ -81,6 +82,7 @@ def _stop_gradient(x):
 ### JVPs
 ReturnValue = TypeVar('ReturnValue')
 
+@custom_api_util.register_custom_decorator_type
 class custom_jvp(Generic[ReturnValue]):
   """Set up a JAX-transformable function for a custom JVP rule definition.
 
@@ -122,12 +124,15 @@ class custom_jvp(Generic[ReturnValue]):
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Tuple[int, ...] = ()):
+    update_wrapper(self, fun)
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
     self.jvp: Optional[Callable[..., Tuple[ReturnValue, ReturnValue]]] = None
-    update_wrapper(self, fun)
 
-  def defjvp(self, jvp: Callable[..., Tuple[ReturnValue, ReturnValue]]) -> None:
+  __getattr__ = custom_api_util.forward_attr
+
+  def defjvp(self, jvp: Callable[..., Tuple[ReturnValue, ReturnValue]]
+    ) -> Callable[..., Tuple[ReturnValue, ReturnValue]]:
     """Define a custom JVP rule for the function represented by this instance.
 
     Args:
@@ -158,6 +163,7 @@ class custom_jvp(Generic[ReturnValue]):
         return primal_out, tangent_out
     """
     self.jvp = jvp
+    return jvp
 
   def defjvps(self, *jvps: Optional[Callable[..., ReturnValue]]):
     """Convenience wrapper for defining JVPs for each argument separately.
@@ -432,6 +438,7 @@ pe.partial_eval_jaxpr_custom_rules[custom_jvp_call_jaxpr_p] = \
 
 ### VJPs
 
+@custom_api_util.register_custom_decorator_type
 class custom_vjp(Generic[ReturnValue]):
   """Set up a JAX-transformable function for a custom VJP rule definition.
 
@@ -469,11 +476,13 @@ class custom_vjp(Generic[ReturnValue]):
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Tuple[int, ...] = ()):
+    update_wrapper(self, fun)
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
     self.fwd: Optional[Callable[..., Tuple[ReturnValue, Any]]] = None
     self.bwd: Optional[Callable[..., Tuple[Any, ...]]] = None
-    update_wrapper(self, fun)
+
+  __getattr__ = custom_api_util.forward_attr
 
   def defvjp(self,
              fwd: Callable[..., Tuple[ReturnValue, Any]],

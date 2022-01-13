@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import operator
 from typing import Callable, Optional, Sequence
 
@@ -24,6 +25,7 @@ from jax.interpreters.batching import not_mapped
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import (tree_flatten, tree_map, tree_structure,
                            tree_unflatten, treedef_tuple)
+from jax._src import custom_api_util
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -38,16 +40,21 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
+@custom_api_util.register_custom_decorator_type
 class custom_vmap:
   fun: Callable
   vmap_rule: Optional[Callable]
 
   def __init__(self, fun: Callable) -> None:
+    functools.update_wrapper(self, fun)
     self.fun = fun  # type: ignore[assignment]
     self.vmap_rule = None
 
-  def def_vmap(self, vmap_rule: Callable) -> None:
+  __getattr__ = custom_api_util.forward_attr
+
+  def def_vmap(self, vmap_rule: Callable) -> Callable:
     self.vmap_rule = vmap_rule
+    return vmap_rule
 
   @traceback_util.api_boundary
   def __call__(self, *args, **kwargs):
