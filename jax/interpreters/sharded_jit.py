@@ -289,6 +289,15 @@ xla.register_translation(sharded_call_p, _sharded_jit_translation_rule)
 mlir.register_lowering(sharded_call_p, _sharded_jit_lowering)
 
 
+class _UnconstrainedPartitionSingleton:
+
+    def __str__ (self):
+      return "UNCONSTRAINED"
+
+
+_UNCONSTRAINED_PARTITION = _UnconstrainedPartitionSingleton()
+
+
 class PartitionSpec(tuple):
   """Tuple of integer specifying how a value should be partitioned.
 
@@ -301,6 +310,9 @@ class PartitionSpec(tuple):
 
   def __repr__(self):
     return "PartitionSpec%s" % tuple.__repr__(self)
+
+  """A sentinel value representing a dim is unconstrained."""
+  UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
 
 def sharded_jit(

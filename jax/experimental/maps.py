@@ -1623,7 +1623,7 @@ def _xmap_translation_rule_spmd(ctx, avals_in, avals_out, *global_in_nodes,
     sharding_proto = global_sharding_spec(aval, aval_axes).sharding_proto()
     if not config.experimental_xmap_ensure_fixed_sharding:
       # Do not specify sharding on other dimensions.
-      unspecified_dims = list(range(aval.ndim))
+      unspecified_dims = set(range(aval.ndim))
       for axis in set(aval_axes.values()):
         unspecified_dims.remove(axis)
       return xla.set_sharding_proto(ctx.builder, node, sharding_proto,

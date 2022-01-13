@@ -23,8 +23,8 @@ import io
 import itertools
 import re
 import typing
-from typing import (Any, Callable, Dict, List, Optional, Sequence, Type, Union,
-                    Tuple)
+from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
+                    Type, Union)
 from typing_extensions import Protocol
 import warnings
 
@@ -760,11 +760,20 @@ def convert_mhlo(x, aval_in, aval_out):
   return mhlo.ConvertOp(aval_to_ir_type(aval_out), x).result
 
 
-def wrap_with_sharding_op(x, sharding_proto: xc.OpSharding):
+def wrap_with_sharding_op(x,
+                          sharding_proto: xc.OpSharding,
+                          unspecified_dims: Optional[Set[int]] = None):
+  # unspecified_dims indicate dimensions whose shardings are not specified and
+  # XLA sharding propagation can change them.
+  if unspecified_dims:
+    backend_config = "unspecified_dims=[" + ",".join(
+        [str(i) for i in sorted(unspecified_dims)]) + "]"
+  else:
+    backend_config = ""
   op = mhlo.CustomCallOp([x.type], [x],
                          call_target_name=ir.StringAttr.get("Sharding"),
                          has_side_effect=ir.BoolAttr.get(False),
-                         backend_config=ir.StringAttr.get(""),
+                         backend_config=ir.StringAttr.get(backend_config),
                          api_version=i32_attr(1),
                          called_computations=ir.ArrayAttr.get([]),
                          operand_layouts=None,

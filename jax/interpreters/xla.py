@@ -196,9 +196,10 @@ def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
   finally:
     builder.clear_sharding()
 
-def set_sharding(builder, op, sharding: SpatialSharding):
+def set_sharding(builder, op, sharding: SpatialSharding, unspecified_dims=None):
   """Uses CustomCall to annotate a value as sharded."""
-  return set_sharding_proto(builder, op, sharding_to_proto(sharding))
+  return set_sharding_proto(builder, op, sharding_to_proto(sharding),
+                            unspecified_dims)
 
 def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
