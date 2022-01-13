@@ -23,6 +23,13 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     environment variable, or the ```--flax_host_callback_ad_transforms``` flag.
     Additionally, added documentation for how to implement the old behavior
     using JAX custom AD APIs ({jax-issue}`#8678`).
+  * Sorting now matches the behavior of NumPy for ``0.0`` and ``NaN`` regardless of the
+    bit representation. In particular, ``0.0`` and ``-0.0`` are now treated as equivalent,
+    where previously ``-0.0`` was treated as less than ``0.0``. Additionally all ``NaN``
+    representations are now treated as equivalent and sorted to the end of the array.
+    Previously negative ``NaN`` values were sorted to the front of the array, and ``NaN``
+    values with different internal bit representations were not treated as equivalent, and
+    were sorted according to those bit patterns ({jax-issue}`#9178`).
 
 * Bug fixes:
   * host_callback now supports ad_checkpoint.checkpoint ({jax-issue}`#8907`).

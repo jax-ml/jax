@@ -960,8 +960,11 @@ def _reduce_and(operand: Array, axes: Sequence[int]) -> Array:
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Sort
-  <https://www.tensorflow.org/xla/operation_semantics#sort>`_
-  operator.
+  <https://www.tensorflow.org/xla/operation_semantics#sort>`_ operator.
+
+  For floating point inputs, -0.0 and 0.0 are treated as equivalent, and NaN values
+  are sorted to the end of the array. For complex inputs, the sort order is
+  lexicographic over the real and imaginary parts, with the real part primary.
 
   Args:
     operand : Array or sequence of arrays
@@ -3671,8 +3674,10 @@ def _float_to_int_for_sort(x):
   # x = bit_cast<int32>(f);
   # y = x < 0 ? int32_max - x : x;
   # then y is ordered as an int32 such that finite values have the obvious
-  # order, -0 is ordered before 0, and -NaN and NaN appear at the beginning
-  # and end of the ordering.
+  # order. In this scheme, -0 would be before 0, and -NaN and NaN appear at
+  # the beginning and end of the ordering. This causes issues for stable
+  # sorts, so we avoid this by standardizing the representation of zeros
+  # and NaNs in the output.
   # Note that in order to avoid -x to overflow, we calculate
   # int32_max - x as unsigned, and then convert back to signed.
   if x.dtype == dtypes.bfloat16:
@@ -3683,6 +3688,17 @@ def _float_to_int_for_sort(x):
 
   signed = bitcast_convert_type(x, signed_dtype)
   unsigned = bitcast_convert_type(x, unsigned_dtype)
+
+  # We cannot standardize zeros in x because XLA elides this is some cases.
+  # We cannot standardize NaNs in x because it triggers jax.debug_nans
+  # So instead we do these replacements in the signed integer representation.
+
+  # Standardize zeros:
+  signed = select(eq(x, _zero(x)), _zeros(signed), signed)
+  # Standardize nans:
+  signed_nan = x.dtype.type(np.nan).view(signed_dtype)
+  signed = select(_isnan(x), full_like(signed, signed_nan), signed)
+
   flipped = bitcast_convert_type(
     sub(unsigned_dtype.type(np.iinfo(signed_dtype).max), unsigned), signed_dtype)
   return select(lt(signed, _zero(signed)), flipped, signed)
@@ -3690,7 +3706,8 @@ def _float_to_int_for_sort(x):
 # Default comparator that sorts the operands lexicographically on the
 # first `num_keys` arguments.
 # For floating point types, a total order is created where
-# -NaN < -infinity < ... < -0 < 0 < ... < infinity < NaN.
+# -infinity < ... < 0 < ... < infinity < NaN.
+# 0.0 and -0.0 are treated as equivalent, as are all NaN representations.
 # For complex types, the (real, imag) pairs are sorted lexicographically
 # (following NumPy's semantics).
 # This code adds complex-number support and lexicographic ordering to the algorithm from:
@@ -4363,6 +4380,9 @@ _two: Callable = partial(full_like, shape=(), fill_value=2)
 
 dtype: Callable = partial(dtypes.dtype, canonicalize=True)
 _dtype: Callable = partial(dtypes.dtype, canonicalize=True)
+
+def _isnan(x) -> bool:
+  return ne(x, x)
 
 def _iscomplex(x) -> bool:
   return dtypes.issubdtype(_dtype(x), np.complexfloating)

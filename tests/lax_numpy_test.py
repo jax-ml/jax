@@ -2979,18 +2979,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
-    for dtype in inexact_dtypes))
-  def testSearchsortedNans(self, dtype):
+    {"testcase_name": f"_dtype={dtype.__name__}_side={side}", "dtype": dtype, "side": side}
+    for dtype in inexact_dtypes
+    for side in ['left', 'right']))
+  def testSearchsortedNans(self, dtype, side):
     if np.issubdtype(dtype, np.complexfloating):
       raise SkipTest("Known failure for complex inputs; see #9107")
-    sorted = jnp.array([-np.nan, -np.inf, -1, 0, 1, np.inf, np.nan], dtype=dtype)
-    self.assertArraysEqual(
-      jnp.searchsorted(sorted, sorted, side='left'),
-      jnp.arange(len(sorted)))
-    self.assertArraysEqual(
-      jnp.searchsorted(sorted, sorted, side='right'),
-      jnp.arange(1, 1 + len(sorted)))
+    x = np.array([-np.inf, -1.0, 0.0, -0.0, 1.0, np.inf, np.nan, -np.nan], dtype=dtype)
+    # The sign bit should not matter for 0.0 or NaN, so argsorting the above should be
+    # equivalent to argsorting the following:
+    x_equiv = np.array([0, 1, 2, 2, 3, 4, 5, 5])
+
+    fun = partial(jnp.searchsorted, side=side)
+    self.assertArraysEqual(fun(x, x), fun(x_equiv, x_equiv))
+    self.assertArraysEqual(jax.jit(fun)(x, x), fun(x_equiv, x_equiv))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_x={}_bins={}_right={}_reverse={}".format(
