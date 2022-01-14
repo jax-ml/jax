@@ -42,6 +42,15 @@ Follow these steps to contribute code:
    pip install -r build/test-requirements.txt  # Installs all testing requirements.
    pip install -e .[cpu]  # Installs JAX from the current directory in editable mode.
    ```
+   
+
+   *Note*: if you're using [zsh](https://en.wikipedia.org/wiki/Z_shell) on OS X and
+   the command `pip install -e .[cpu]` fails with the error
+   `zsh: no matches found: .[cpu]`, try running `pip install -e ."[cpu]"` instead.
+
+   zsh uses brackets for
+   [globbing](https://en.wikipedia.org/wiki/Glob_(programming)). Using quotes
+   causes zsh to pass the string as an arg to pip rather than globbing.
 
 4. Add the JAX repo as an upstream remote, so you can use it to sync your
    changes.
