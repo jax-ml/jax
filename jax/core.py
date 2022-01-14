@@ -16,6 +16,7 @@
 import collections
 from collections import namedtuple
 from contextlib import contextmanager
+import functools
 from functools import partial, partialmethod, total_ordering
 import gc
 import itertools as it
@@ -2050,10 +2051,6 @@ def typematch(aval1: AbstractValue, aval2: AbstractValue) -> bool:
 
 class JaxprTypeError(TypeError): pass
 
-def typecheck_assert(pred, msg):
-  if not pred:
-    raise JaxprTypeError(msg)
-
 custom_typechecks: Dict[Primitive, Callable] = {}
 
 def check_jaxpr(jaxpr: Jaxpr):
@@ -2067,13 +2064,17 @@ def check_jaxpr(jaxpr: Jaxpr):
   Raises `JaxprTypeError` if `jaxpr` is determined invalid. Returns `None`
   otherwise.
   """
-  ctx = JaxprPpContext()
-  try: pp_jaxpr(jaxpr, ctx)  # side-effect on ctx, build variable names
-  except: pass
+  @functools.lru_cache(maxsize=None)
+  def ctx_factory():
+    ctx = JaxprPpContext()
+    try: pp_jaxpr(jaxpr, ctx)  # side-effect on ctx, build variable names
+    except: pass
+    return ctx
 
   try:
-    _check_jaxpr(ctx, jaxpr, [v.aval for v in jaxpr.invars])
+    _check_jaxpr(ctx_factory, jaxpr, [v.aval for v in jaxpr.invars])
   except JaxprTypeError as e:
+    ctx = ctx_factory()
     if len(e.args) == 2:
       msg, eqnidx = e.args
       jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, eqnidx - 10, eqnidx + 10, ctx))
@@ -2083,22 +2084,28 @@ def check_jaxpr(jaxpr: Jaxpr):
     msg = "\n\n".join([msg, "while checking jaxpr:", jaxpr_str])
     raise JaxprTypeError(msg) from None
 
-def _check_jaxpr(ctx: 'JaxprPpContext', jaxpr: Jaxpr,
+def _check_jaxpr(ctx_factory: Callable[[], 'JaxprPpContext'], jaxpr: Jaxpr,
                  in_avals: Sequence[AbstractValue]) -> None:
 
   def read(v: Atom) -> AbstractValue:
     if isinstance(v, Literal):
       return raise_to_shaped(get_aval(v.val))
     else:
-      typecheck_assert(v in env, f"Variable '{pp_var(v, ctx)}' not defined")
+      if v not in env:
+        ctx = ctx_factory()
+        raise JaxprTypeError(f"Variable '{pp_var(v, ctx)}' not defined")
       return env[v]
 
   def write(v: Var, a: AbstractValue) -> None:
-    typecheck_assert(v not in env, f"Variable '{pp_var(v, ctx)}' already bound")
+    if v in env:
+      ctx = ctx_factory()
+      raise JaxprTypeError(f"Variable '{pp_var(v, ctx)}' already bound")
     if not isinstance(v, DropVar):
-      typecheck_assert(typecompat(v.aval, a),
-                       f"Variable '{pp_var(v, ctx)}' inconsistently typed as "
-                       f"{pp_aval(a, ctx)}, bound as {pp_aval(v.aval, ctx)}")
+      if not typecompat(v.aval, a):
+        ctx = ctx_factory()
+        raise JaxprTypeError(
+            f"Variable '{pp_var(v, ctx)}' inconsistently typed as "
+            f"{pp_aval(a, ctx)}, bound as {pp_aval(v.aval, ctx)}")
       env[v] = a
 
   env : Dict[Var, AbstractValue] = {}
@@ -2111,20 +2118,21 @@ def _check_jaxpr(ctx: 'JaxprPpContext', jaxpr: Jaxpr,
     prim = eqn.primitive
     try:
       in_avals = map(read, eqn.invars)
-      typecheck_assert(all(not isinstance(ina, ConcreteArray) for ina in in_avals),
-                       "Equation given ConcreteArray type inputs")
+      if any(isinstance(ina, ConcreteArray) for ina in in_avals):
+        raise JaxprTypeError("Equation given ConcreteArray type inputs")
       if prim in custom_typechecks:
         out_avals = custom_typechecks[prim](*in_avals, **eqn.params)
         if out_avals is None:
           out_avals = [v.aval for v in eqn.outvars]
       elif prim.call_primitive:
-        out_avals = check_call(ctx, prim, in_avals, eqn.params)
+        out_avals = check_call(ctx_factory, prim, in_avals, eqn.params)
       elif prim.map_primitive:
-        out_avals = check_map(ctx, prim, in_avals, eqn.params)
+        out_avals = check_map(ctx_factory, prim, in_avals, eqn.params)
       else:
         out_avals = check_eqn(prim, in_avals, eqn.params)
       map(write, eqn.outvars, out_avals)
     except JaxprTypeError as e:
+      ctx = ctx_factory()
       msg, = e.args
       src = source_info_util.summarize(eqn.source_info)
       msg = "\n\n".join([msg, "in equation:", str(pp.nest(2, pp_eqn(eqn, ctx))),
@@ -2142,57 +2150,58 @@ def check_eqn(prim, in_avals, params):
     out_avals = [out_avals]
   return out_avals
 
-def check_call(ctx, prim, in_avals, params):
-  typecheck_assert("call_jaxpr" in params,
-                   f"Call primitive {prim} missing 'call_jaxpr' parameter")
+def check_call(ctx_factory, prim, in_avals, params):
+  if "call_jaxpr" not in params:
+    raise JaxprTypeError(
+        f"Call primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
 
   # These checks also happen in recursive call, but give better errors here.
-  typecheck_assert(len(in_avals) == len(call_jaxpr.invars),
-                   f"Call primitive {prim} with {len(call_jaxpr.invars)} "
-                   f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
-                   f"inputs")
+  if len(in_avals) != len(call_jaxpr.invars):
+    raise JaxprTypeError(f"Call primitive {prim} with {len(call_jaxpr.invars)} "
+                         f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
+                         f"inputs")
   binder_avals = [v.aval for v in call_jaxpr.invars]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
-    typecheck_assert(typecompat(binder_aval, in_aval),
-                     f"Call primitive {prim} passes operand {in_aval} "
-                     f"to jaxpr expecting {binder_aval}")
+    if not typecompat(binder_aval, in_aval):
+      raise JaxprTypeError(f"Call primitive {prim} passes operand {in_aval} "
+                           f"to jaxpr expecting {binder_aval}")
 
-  _check_jaxpr(ctx, call_jaxpr, in_avals)
+  _check_jaxpr(ctx_factory, call_jaxpr, in_avals)
 
   out_avals = [v.aval for v in call_jaxpr.outvars]
   return out_avals
 
-def check_map(ctx, prim, in_avals, params):
-  typecheck_assert("call_jaxpr" in params,
-                   f"Map primitive {prim} missing 'call_jaxpr' parameter")
+def check_map(ctx_factory, prim, in_avals, params):
+  if "call_jaxpr" not in params:
+    raise JaxprTypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
-  typecheck_assert("axis_size" in params,
-                   f"Map primitive {prim} missing 'axis_size' parameter")
+  if "axis_size" not in params:
+    raise JaxprTypeError(f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
-  typecheck_assert("axis_name" in params,
-                   f"Map primitive {prim} missing 'axis_name' parameter")
+  if "axis_name" not in params:
+    raise JaxprTypeError(f"Map primitive {prim} missing 'axis_name' parameter")
   axis_name = params["axis_name"]
-  typecheck_assert("in_axes" in params,
-                   f"Map primitive {prim} missing 'in_axes' parameter")
+  if "in_axes" not in params:
+    raise JaxprTypeError(f"Map primitive {prim} missing 'in_axes' parameter")
   in_axes = params["in_axes"]
-  typecheck_assert("out_axes" in params,
-                   f"Map primitive {prim} missing 'out_axes' parameter")
+  if "out_axes" not in params:
+    raise JaxprTypeError(f"Map primitive {prim} missing 'out_axes' parameter")
   out_axes = params["out_axes"]
 
   binder_avals = [unmapped_aval(axis_size, axis_name, in_axis, v.aval)
                   if in_axis is not None else v.aval
                   for v, in_axis in zip(call_jaxpr.invars, in_axes)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
-    typecheck_assert(typecompat(binder_aval, in_aval),
-                     f"Call primitive {prim} passes operand {in_aval} "
-                     f"to jaxpr expecting {binder_aval}")
+    if not typecompat(binder_aval, in_aval):
+      raise JaxprTypeError(f"Call primitive {prim} passes operand {in_aval} "
+                           f"to jaxpr expecting {binder_aval}")
 
   mapped_avals = [mapped_aval(axis_size, in_axis, aval)
                   if in_axis is not None else aval
                   for aval, in_axis in zip(in_avals, in_axes)]
   with extend_axis_env(params['axis_name'], axis_size, None):
-    _check_jaxpr(ctx, call_jaxpr, mapped_avals)
+    _check_jaxpr(ctx_factory, call_jaxpr, mapped_avals)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval) if out_axis is not None else aval

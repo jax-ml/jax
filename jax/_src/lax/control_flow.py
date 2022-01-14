@@ -121,12 +121,13 @@ def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
 def _typecheck_param(prim, param, name, msg_required, pred):
-  msg = (f'invalid {prim} param {name} of type {type(param).__name__}, '
-         f'{msg_required} required:')
-  param_str = str(param)
-  sep = os.linesep if os.linesep in param_str else ' '
-  msg = sep.join([msg, param_str])
-  core.typecheck_assert(pred, msg)
+  if not pred:
+    msg = (f'invalid {prim} param {name} of type {type(param).__name__}, '
+           f'{msg_required} required:')
+    param_str = str(param)
+    sep = os.linesep if os.linesep in param_str else ' '
+    msg = sep.join([msg, param_str])
+    raise core.JaxprTypeError(msg)
 
 
 ### fori_loop and while_loop
@@ -1340,47 +1341,45 @@ def _cond_typecheck(*avals, branches, linear):
   tc(linear, 'linear', 'tuple of bool',
      type(linear) is tuple and all(type(x) is bool for x in linear))
 
-  core.typecheck_assert(
-      len(branches) > 0,
-      'cond requires at least one branch function')
-  core.typecheck_assert(
-      len(linear) + 1 == len(avals),
-      f'cond given {len(linear)} linear flags for '
-      f'{len(avals) - 1} non-predicate operands')
+  if len(branches) == 0:
+    raise core.JaxprTypeError('cond requires at least one branch function')
+  if len(linear) + 1 != len(avals):
+    raise core.JaxprTypeError(f'cond given {len(linear)} linear flags for '
+                              f'{len(avals) - 1} non-predicate operands')
 
   jaxpr0 = branches[0]
   jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
   jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
 
   for i, jaxpr in enumerate(branches[1:]):
-    core.typecheck_assert(
-        len(jaxpr0.in_avals) == len(jaxpr.in_avals),
+    if len(jaxpr0.in_avals) != len(jaxpr.in_avals):
+      raise core.JaxprTypeError(
         f'cond branch 0 takes {len(jaxpr0.in_avals)} inputs, '
         f'branch {i+1} takes {len(jaxpr.in_avals)}')
-    core.typecheck_assert(
-        len(jaxpr0.out_avals) == len(jaxpr.out_avals),
+    if len(jaxpr0.out_avals) != len(jaxpr.out_avals):
+      raise core.JaxprTypeError(
         f'cond branch 0 outputs {len(jaxpr0.out_avals)} values, '
         f'branch {i+1} outputs {len(jaxpr.out_avals)}')
-    core.typecheck_assert(
-        all(_map(core.typematch, jaxpr0.in_avals, jaxpr.in_avals)),
+    if not all(_map(core.typematch, jaxpr0.in_avals, jaxpr.in_avals)):
+      raise core.JaxprTypeError(
         f'cond branches 0 and {i+1} have mismatching input types: '
         f'{jaxpr0_in_avals_str} vs {_avals_short(jaxpr.in_avals)}')
-    core.typecheck_assert(
-        all(_map(core.typematch, jaxpr0.out_avals, jaxpr.out_avals)),
+    if not all(_map(core.typematch, jaxpr0.out_avals, jaxpr.out_avals)):
+      raise core.JaxprTypeError(
         f'cond branches 0 and {i+1} have mismatching output types: '
         f'{jaxpr0_out_avals_str} vs {_avals_short(jaxpr.out_avals)}')
 
-  core.typecheck_assert(
-      len(avals) == 1 + len(jaxpr0.in_avals),
+  if len(avals) != 1 + len(jaxpr0.in_avals):
+    raise core.JaxprTypeError(
       f'cond called with {len(avals) - 1} non-predicate operands, '
       f'but branches take {len(jaxpr0.in_avals)} inputs')
 
   index_aval, *op_avals = avals
-  core.typecheck_assert(
-      index_aval.dtype == np.int32,
+  if index_aval.dtype != np.int32:
+    raise core.JaxprTypeError(
       f'cond called with index of type {index_aval.dtype} instead of int32')
-  core.typecheck_assert(
-      all(_map(core.typecompat, jaxpr0.in_avals, op_avals)),
+  if not all(_map(core.typecompat, jaxpr0.in_avals, op_avals)):
+    raise core.JaxprTypeError(
       f'cond branches take input types {jaxpr0_in_avals_str}, '
       f'called with operands of type {_avals_short(op_avals)}')
 
@@ -2177,8 +2176,8 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
   tc(length, 'length', 'non-negative int',
      type(length) in length_types and length >= 0)
 
-  core.typecheck_assert(
-      len(linear) == len(avals),
+  if len(linear) != len(avals):
+    raise core.JaxprTypeError(
       f'scan param linear has length {len(linear)} for {len(avals)} operands')
 
   const_avals, init_avals, x_avals = split_list(avals, [num_consts, num_carry])
@@ -2187,20 +2186,20 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
   carry_avals_jaxpr, _ = split_list(jaxpr.out_avals, [num_carry])
   x_avals_mapped = _map(partial(core.mapped_aval, length, 0), x_avals)
 
-  core.typecheck_assert(
-      all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)),
+  if not all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)):
+    raise core.JaxprTypeError(
       f'scan input carry input and output types mismatch: '
       f'\n{_avals_short(init_avals_jaxpr)}\nvs\n{_avals_short(carry_avals_jaxpr)}')
-  core.typecheck_assert(
-      all(_map(core.typecompat, const_avals_jaxpr, const_avals)),
+  if not all(_map(core.typecompat, const_avals_jaxpr, const_avals)):
+    raise core.JaxprTypeError(
       f'scan jaxpr takes input const types\n{_avals_short(const_avals_jaxpr)},\n'
       f'called with consts of type\n{_avals_short(const_avals)}')
-  core.typecheck_assert(
-      all(_map(core.typecompat, init_avals_jaxpr, init_avals)),
+  if not all(_map(core.typecompat, init_avals_jaxpr, init_avals)):
+    raise core.JaxprTypeError(
       f'scan jaxpr takes input carry types\n{_avals_short(init_avals_jaxpr)},\n'
       f'called with initial carry of type\n{_avals_short(init_avals)}')
-  core.typecheck_assert(
-      all(_map(core.typecompat, x_avals_jaxpr, x_avals_mapped)),
+  if not all(_map(core.typecompat, x_avals_jaxpr, x_avals_mapped)):
+    raise core.JaxprTypeError(
       f'scan jaxpr takes input sequence types\n{_avals_short(x_avals_jaxpr)},\n'
       f'called with sequence of type\n{_avals_short(x_avals)}')
 
