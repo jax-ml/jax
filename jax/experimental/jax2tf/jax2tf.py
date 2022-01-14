@@ -1950,31 +1950,33 @@ tf_impl_with_avals[lax.reduce_p] = _reduce
 # cummin, cumsum and cumprod. This is efficient on TPU, but the complexity is
 # O(n^2) on other backends. This may be implemented using associative_scan
 # instead to favor different backends.
-tf_impl_with_avals[lax.cummin_p] = _convert_jax_impl(
-    partial(lax_control_flow._cumred_tpu_translation_rule,
-            lax._reduce_window_min),
-    multiple_results=False,
-    extra_name_stack="cummin")
-tf_impl_with_avals[lax.cummax_p] = _convert_jax_impl(
-    partial(lax_control_flow._cumred_tpu_translation_rule,
-            lax._reduce_window_max),
-    multiple_results=False,
-    extra_name_stack="cummin")
-# TODO(bchetioui): cumsum and cumprod can be converted using pure TF ops for
-# certain dtypes: bfloat16, float16, float32, float64, and int32. Other dtypes
-# will fail when running in compiled mode, but are otherwise compatible with
-# the operation. A non-XLA path can thus be defined for all dtypes, though the
-# tests will crash.
-tf_impl_with_avals[lax.cumsum_p] = _convert_jax_impl(
-    partial(lax_control_flow._cumred_tpu_translation_rule,
-            lax._reduce_window_sum),
-    multiple_results=False,
-    extra_name_stack="cumsum")
-tf_impl_with_avals[lax.cumprod_p] = _convert_jax_impl(
-    partial(lax_control_flow._cumred_tpu_translation_rule,
-            lax._reduce_window_prod),
-    multiple_results=False,
-    extra_name_stack="cumprod")
+def _cumred(lax_reduce_fn: Callable,
+            lax_reduce_window_fn: Callable,
+            extra_name_stack: str):
+  if config.jax2tf_associative_scan_reductions:
+    return _convert_jax_impl(partial(lax_control_flow.associative_scan,
+                                     lax_reduce_fn),
+                             multiple_results=False,
+                             extra_name_stack=extra_name_stack)
+  else:
+    return _convert_jax_impl(partial(lax_control_flow._cumred_tpu_translation_rule,
+                                     lax_reduce_window_fn),
+                             multiple_results=False,
+                             extra_name_stack=extra_name_stack)
+
+
+tf_impl_with_avals[lax.cummax_p] = _cumred(lax_reduce_window_fn=lax._reduce_window_max,
+                                           lax_reduce_fn=lax.max,
+                                           extra_name_stack="cummax")
+tf_impl_with_avals[lax.cummin_p] = _cumred(lax_reduce_window_fn=lax._reduce_window_min,
+                                           lax_reduce_fn=lax.min,
+                                           extra_name_stack="cummin")
+tf_impl_with_avals[lax.cumsum_p] = _cumred(lax_reduce_window_fn=lax._reduce_window_sum,
+                                           lax_reduce_fn=lax.add,
+                                           extra_name_stack="cumsum")
+tf_impl_with_avals[lax.cumprod_p] = _cumred(lax_reduce_window_fn=lax._reduce_window_prod,
+                                            lax_reduce_fn=lax.mul,
+                                            extra_name_stack="cumprod")
 
 
 def _select_and_scatter(operand, source, init_value, select_jaxpr,

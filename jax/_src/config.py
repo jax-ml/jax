@@ -473,6 +473,22 @@ flags.DEFINE_bool(
     )
 )
 
+# TODO(b/214340779): remove flag when XLA:CPU is improved.
+jax2tf_associative_scan_reductions = config.define_bool_state(
+    name='jax2tf_associative_scan_reductions',
+    default=False,
+    help=(
+        'JAX has two separate lowering rules for the cumulative reduction '
+        'primitives (cumsum, cumprod, cummax, cummin). On CPUs and GPUs it uses '
+        'a lax.associative_scan, while for TPUs it uses the HLO ReduceWindow. '
+        'The latter has a slow implementation on CPUs and GPUs. '
+        'By default, jax2tf uses the TPU lowering. Set this flag to True to '
+        'use the associative scan lowering usage, and only if it makes a difference '
+        'for your application. '
+        'See the jax2tf README.md for more details.'
+    )
+)
+
 enable_checks = config.define_bool_state(
     name='jax_enable_checks',
     default=False,

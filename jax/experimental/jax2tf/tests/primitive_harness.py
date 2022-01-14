@@ -1411,8 +1411,23 @@ def _make_cumreduce_harness(name,
       shape=shape,
       dtype=dtype,
       axis=axis,
-      reverse=reverse)
-
+      reverse=reverse,
+      associative_scan_reductions=False
+  )
+  define(
+      f_jax.__name__,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_associative_scan_reductions_axis={axis}_reverse={reverse}",
+      f_jax, [RandArg(shape, dtype),
+              StaticArg(axis),
+              StaticArg(reverse)],
+      jax_unimplemented=limitations,
+      f_jax=f_jax,
+      shape=shape,
+      dtype=dtype,
+      axis=axis,
+      reverse=reverse,
+      associative_scan_reductions=True
+  )
 
 # Validate dtypes for each function
 for f_jax in [
