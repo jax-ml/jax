@@ -1017,6 +1017,15 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: x.sum(), in_axis_resources=spec, out_axis_resources=None)(x)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
+  def testRankTooLowArgsAxisResourcesNone(self):
+    x = jnp.arange(2)
+    spec = P(None, None)
+    error = (r"One of pjit arguments.*" + spec_regex(spec) + r", which implies "
+             r"that it has a rank of at least 2, but it is 1")
+    with self.assertRaisesRegex(ValueError, error):
+      pjit(lambda x: x.sum(), in_axis_resources=spec, out_axis_resources=None)(x)
+
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testRankTooLowOuts(self):
     x = jnp.arange(2)
     spec = P('x', 'y')
