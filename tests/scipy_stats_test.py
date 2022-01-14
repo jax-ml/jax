@@ -531,8 +531,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(2, 3, 4), (4,), (4, 4)],
       ]
       for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
-      if (mean_shape is not None or mean_dtype == np.float32) and
-      (cov_shape is not None or cov_dtype == np.float32)))
+      if (mean_shape is not None or mean_dtype == np.float32) 
+      and (cov_shape is not None or cov_dtype == np.float32)))
   def testMultivariateNormalLogpdf(self, x_shape, x_dtype, mean_shape,
                                    mean_dtype, cov_shape, cov_dtype):
     rng = jtu.rand_default(self.rng())
@@ -578,8 +578,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(5, 3, 2), (1, 2,), (2, 2)],
       ]
       for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
-      if (mean_shape is not None or mean_dtype == np.float32) and
-      (cov_shape is not None or cov_dtype == np.float32)))
+      if (mean_shape is not None or mean_dtype == np.float32) 
+      and (cov_shape is not None or cov_dtype == np.float32)))
   def testMultivariateNormalLogpdfBroadcasted(self, x_shape, x_dtype, mean_shape,
                                               mean_dtype, cov_shape, cov_dtype):
     rng = jtu.rand_default(self.rng())
