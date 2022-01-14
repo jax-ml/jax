@@ -95,6 +95,7 @@ Parallelization (:code:`pmap`)
 
 .. autofunction:: jit
 .. autofunction:: disable_jit
+.. autofunction:: ensure_compile_time_eval
 .. autofunction:: xla_computation
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
