@@ -4935,7 +4935,13 @@ def tensordot(a, b, axes=2, *, precision=None):
                          precision=precision)
 
 
-@_wraps(np.einsum, lax_description=_PRECISION_DOC, skip_params=['out'])
+_EINSUM_DOC = _PRECISION_DOC + """\
+A tuple ``precision`` does not necessarily map to multiple arguments of ``einsum()``;
+rather, the specified ``precision`` is forwarded to each ``dot_general`` call used in
+the implementation.
+"""
+
+@_wraps(np.einsum, lax_description=_EINSUM_DOC, skip_params=['out'])
 def einsum(*operands, out=None, optimize='optimal', precision=None,
            _use_xeinsum=False):
   if out is not None:
