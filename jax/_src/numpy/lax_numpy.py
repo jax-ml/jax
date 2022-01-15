@@ -6107,7 +6107,7 @@ def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
-  if _all(e is None or e is Ellipsis or isinstance(e, slice) 
+  if _all(e is None or e is Ellipsis or isinstance(e, slice)
           or _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
     return False
   return _all(e is None or e is Ellipsis or isinstance(e, slice)
@@ -6115,7 +6115,7 @@ def _is_advanced_int_indexer(idx):
 
 def _is_int_arraylike(x):
   """Returns True if x is array-like with integer dtype, False otherwise."""
-  return (isinstance(x, int) and not isinstance(x, bool) 
+  return (isinstance(x, int) and not isinstance(x, bool)
           or issubdtype(getattr(x, "dtype", None), np.integer)
           or isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
 
