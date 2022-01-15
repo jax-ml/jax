@@ -2269,7 +2269,7 @@ def _split(op, ary, indices_or_sections, axis=0):
     elif op == "array_split":
       split_indices = np.concatenate(
           [np.arange(r + 1, dtype=np.int64) * (part_size + 1),
-           np.arange(indices_or_sections - r, dtype=np.int64) * part_size 
+           np.arange(indices_or_sections - r, dtype=np.int64) * part_size
            + ((r + 1) * (part_size + 1) - 1)])
     else:
       raise ValueError("array split does not result in an equal division")
@@ -6017,8 +6017,8 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
-  return (isinstance(x, (np.ndarray, ndarray)) and np.ndim(x) != 0 
-          or isinstance(x, (Sequence, slice)) 
+  return (isinstance(x, (np.ndarray, ndarray)) and np.ndim(x) != 0
+          or isinstance(x, (Sequence, slice))
           or x is Ellipsis or x is None)
 
 def _eliminate_deprecated_list_indexing(idx):
@@ -6049,8 +6049,8 @@ def _is_boolean_index(i):
     abstract_i = core.get_aval(i)
   except TypeError:
     abstract_i = None
-  return (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_) 
-          or isinstance(i, list) and i and _all(_is_scalar(e) 
+  return (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_)
+          or isinstance(i, list) and i and _all(_is_scalar(e)
           and issubdtype(_dtype(e), np.bool_) for e in i))
 
 def _expand_bool_indices(idx, shape):
@@ -6110,7 +6110,7 @@ def _is_advanced_int_indexer(idx):
   if _all(e is None or e is Ellipsis or isinstance(e, slice) 
           or _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
     return False
-  return _all(e is None or e is Ellipsis or isinstance(e, slice) 
+  return _all(e is None or e is Ellipsis or isinstance(e, slice)
               or _is_int_arraylike(e) for e in idx)
 
 def _is_int_arraylike(x):
@@ -6121,7 +6121,7 @@ def _is_int_arraylike(x):
 
 def _is_scalar(x):
   """Checks if a Python or NumPy scalar."""
-  return  np.isscalar(x) or (isinstance(x, (np.ndarray, ndarray)) 
+  return  np.isscalar(x) or (isinstance(x, (np.ndarray, ndarray))
                              and np.ndim(x) == 0)
 
 def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):

@@ -474,8 +474,8 @@ def _dtypes_are_compatible_for_bitwise_ops(args):
   # The following condition seems a little ad hoc, but seems to capture what
   # numpy actually implements.
   return (
-      is_signed(x) == is_signed(y) 
-      or (width(x) == 32 and width(y) == 32) 
+      is_signed(x) == is_signed(y)
+      or (width(x) == 32 and width(y) == 32)
       or (width(x) == 32 and width(y) == 64 and is_signed(y)))
 
 def _shapes_are_broadcast_compatible(shapes):
@@ -1450,8 +1450,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       # TODO(phawkins): support integer dtypes too.
       for lhs_shape, lhs_dtype in _shape_and_dtypes(all_shapes, inexact_dtypes)
       for rhs_shape, rhs_dtype in _shape_and_dtypes(all_shapes, inexact_dtypes)
-      if len(jtu._dims_of_shape(lhs_shape)) == 0 
-      or len(jtu._dims_of_shape(rhs_shape)) == 0 
+      if len(jtu._dims_of_shape(lhs_shape)) == 0
+      or len(jtu._dims_of_shape(rhs_shape)) == 0
       or lhs_shape[-1] == rhs_shape[-1]))
   def testInner(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     rng = jtu.rand_default(self.rng())
@@ -2895,7 +2895,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLdexp(self, x1_shape, x1_dtype, x2_shape, x1_rng_factory, x2_rng_factory):
     # integer types are converted to float64 in numpy's implementation
-    if (x1_dtype not in [jnp.bfloat16, np.float16, np.float32] 
+    if (x1_dtype not in [jnp.bfloat16, np.float16, np.float32]
         and not config.x64_enabled):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
     x1_rng = x1_rng_factory(self.rng())
@@ -2922,7 +2922,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype in default_dtypes))
   def testFrexp(self, shape, dtype, rng_factory):
     # integer types are converted to float64 in numpy's implementation
-    if (dtype not in [jnp.bfloat16, np.float16, np.float32] 
+    if (dtype not in [jnp.bfloat16, np.float16, np.float32]
         and not config.x64_enabled):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
     rng = rng_factory(self.rng())
@@ -3515,7 +3515,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "arg_shape": arg_shape, "dtype": dtype, "dim": dim}
       for arg_shape in [(), (3,), (3, 4)]
       for dtype in default_dtypes
-      for dim in (list(range(-len(arg_shape)+1, len(arg_shape))) 
+      for dim in (list(range(-len(arg_shape)+1, len(arg_shape)))
                   + [np.array(0), np.array(-1), (0,), [np.array(0)],
                      (len(arg_shape), len(arg_shape) + 1)])))
   def testExpandDimsStaticDim(self, arg_shape, dtype, dim):
@@ -6069,7 +6069,7 @@ class NumpyUfuncTests(jtu.JaxTestCase):
   def testUfuncInputTypes(self, name, arg_dtypes):
     # TODO(jakevdp): fix following failures and remove from this exception list.
     if (name in ['divmod', 'floor_divide', 'fmod', 'gcd', 'left_shift', 'mod',
-                 'power', 'remainder', 'right_shift', 'rint', 'square'] 
+                 'power', 'remainder', 'right_shift', 'rint', 'square']
         and 'bool_' in arg_dtypes):
       self.skipTest(f"jax.numpy does not support {name}{tuple(arg_dtypes)}")
     if name == 'arctanh' and jnp.issubdtype(arg_dtypes[0], jnp.complexfloating):

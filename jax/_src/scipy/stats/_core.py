@@ -92,3 +92,4 @@ def mode(a, axis=0, nan_policy='propagate'):
         return counts.max()
 
     return ModeResult(vmap(_mode, in_axes=(1,))(a.reshape(a.shape[0], -1)).reshape(a.shape[1:]), vmap(counts_of_mode, in_axes=(1,))(a.reshape(a.shape[0], -1)).reshape(a.shape[1:]))
+    
