@@ -985,6 +985,7 @@ tf_not_yet_impl = [
     "all_to_all",
     "create_token",
     "custom_transpose_call",
+    "custom_vmap_call",
     "infeed",
     "linear_call",
     "outfeed",

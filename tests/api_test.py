@@ -6899,6 +6899,69 @@ class CustomVmapTest(jtu.JaxTestCase):
         lambda: api.vmap(
             f_jvp, in_axes=(None, 0), out_axes=(None, 0))(x, txs))
 
+  def test_tree(self):
+    tree_sin = partial(tree_util.tree_map, jnp.sin)
+    tree_cos = partial(tree_util.tree_map, jnp.cos)
+
+    x, xs = jnp.array(1.), jnp.arange(3)
+    x  = (x,  [x  + 1, x  + 2], [x  + 3], x  + 4)
+    xs = (xs, [xs + 1, xs + 2], [xs + 3], xs + 4)
+    in_batched_ref = tree_util.tree_map(lambda _: True, x)
+
+    @api.custom_vmap
+    def f(xs): return tree_sin(xs)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      self.assertEqual(in_batched, [in_batched_ref])
+      sz, = set([z.shape[0] for z in tree_util.tree_leaves(xs)])
+      self.assertEqual(axis_size, sz)
+      return [tree_cos(xs)], in_batched
+
+    y = f(x)
+    self.assertAllClose(y, tree_sin(x))
+    ys = api.vmap(f)(xs)
+    self.assertAllClose(ys, tree_cos(xs))
+
+  def test_tree_with_nones(self):
+    tree_sin = partial(tree_util.tree_map, jnp.sin)
+    tree_cos = partial(tree_util.tree_map, jnp.cos)
+
+    x, xs = jnp.array(1.), jnp.arange(3)
+    x  = (x,  [x  + 1, None], [x  + 3], None)
+    xs = (xs, [xs + 1, None], [xs + 3], None)
+    in_batched_ref = tree_util.tree_map(lambda _: True, x)
+
+    @api.custom_vmap
+    def f(xs): return tree_sin(xs)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      self.assertEqual(in_batched, [in_batched_ref])
+      sz, = set([z.shape[0] for z in tree_util.tree_leaves(xs)])
+      self.assertEqual(axis_size, sz)
+      return [tree_cos(xs)], in_batched
+
+    y = f(x)
+    self.assertAllClose(y, tree_sin(x))
+    ys = api.vmap(f)(xs)
+    self.assertAllClose(ys, tree_cos(xs))
+
+  def test_jit(self):
+    @api.custom_vmap
+    def f(x): return jnp.sin(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      self.assertEqual(in_batched, [True])
+      self.assertEqual(axis_size, xs.shape[0])
+      return [jnp.cos(xs)], in_batched
+
+    x, xs = jnp.array(1.), jnp.arange(3)
+    self.assertAllClose(f(x), jit(f)(x))
+    self.assertAllClose(jit(api.vmap(f))(xs), api.vmap(f)(xs))
+    self.assertAllClose(api.vmap(jit(f))(xs), api.vmap(f)(xs))
+
 
 class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""
