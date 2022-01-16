@@ -42,6 +42,7 @@ import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import core, lax
+from jax import custom_batching
 from jax._src import api, dtypes
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
@@ -6961,6 +6962,48 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(f(x), jit(f)(x))
     self.assertAllClose(jit(api.vmap(f))(xs), api.vmap(f)(xs))
     self.assertAllClose(api.vmap(jit(f))(xs), api.vmap(f)(xs))
+
+  def test_sequential_vmap_basic(self):
+    @custom_batching.sequential_vmap
+    def f(x):
+      return x + 1.
+
+    def vmap_ref(xs):
+      return lax.map(f, xs)
+
+    xs = jnp.arange(3.)
+    jaxpr = api.make_jaxpr(api.vmap(f))(xs)
+    jaxpr_ref = api.make_jaxpr(vmap_ref)(xs)
+
+    self.assertEqual(str(jaxpr), str(jaxpr_ref))
+
+  def test_sequential_vmap_nary_same_batching(self):
+    @custom_batching.sequential_vmap
+    def f(x, y):
+      return x + y
+
+    def vmap_ref(xs, ys):
+      return lax.map(lambda args: f(*args), (xs, ys))
+
+    xs, ys = jnp.arange(3.), 4. + jnp.arange(3.)
+    jaxpr = api.make_jaxpr(api.vmap(f))(xs, ys)
+    jaxpr_ref = api.make_jaxpr(vmap_ref)(xs, ys)
+
+    self.assertEqual(str(jaxpr), str(jaxpr_ref))
+
+  def test_sequential_vmap_nary_mixed_batching(self):
+    @custom_batching.sequential_vmap
+    def f(x, y):
+      return x + y
+
+    def vmap_ref(xs, y):
+      return lax.map(lambda x: f(x, y), xs)
+
+    xs, y = jnp.arange(3.), 4.
+    jaxpr = api.make_jaxpr(api.vmap(f, in_axes=(0, None)))(xs, y)
+    jaxpr_ref = api.make_jaxpr(vmap_ref)(xs, y)
+
+    self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
 
 class CustomApiTest(jtu.JaxTestCase):
