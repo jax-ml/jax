@@ -30,6 +30,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     Previously negative ``NaN`` values were sorted to the front of the array, and ``NaN``
     values with different internal bit representations were not treated as equivalent, and
     were sorted according to those bit patterns ({jax-issue}`#9178`).
+  * {func}`jax.numpy.unique` now treats ``NaN`` values in the same way as `np.unique` in
+    NumPy versions 1.21 and newer: at most one ``NaN`` value will appear in the uniquified
+    output ({jax-issue}`9184`).
 
 * Bug fixes:
   * host_callback now supports ad_checkpoint.checkpoint ({jax-issue}`#8907`).
