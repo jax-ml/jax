@@ -2,7 +2,7 @@
 sphinx >=3
 sphinx_rtd_theme
 # Newer versions cause issues; see https://github.com/google/jax/pull/6449
-sphinx-autodoc-typehints==1.11.1
+sphinx-autodoc-typehints==1.15.2
 jupyter-sphinx>=0.3.2
 myst-nb
 
