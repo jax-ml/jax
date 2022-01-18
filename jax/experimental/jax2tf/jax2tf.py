@@ -389,7 +389,7 @@ def convert(fun: Callable,
 
         in_cts_flat_jax, in_cts_tree = tree_util.tree_flatten(in_cts_jax)
         def fix_in_ct(in_ct, arg_aval: core.ShapedArray):
-          if np.issubdtype(arg_aval.dtype, np.inexact):
+          if jnp.issubdtype(arg_aval.dtype, jnp.inexact):
             return in_ct
           else:
             assert in_ct.dtype == dtypes.float0
