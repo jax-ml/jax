@@ -21,7 +21,7 @@ import itertools
 import os
 import sys
 import threading
-from typing import Any, List, Callable, NamedTuple, Optional, Hashable
+from typing import Any, List, Callable, NamedTuple, Optional, Hashable, Tuple
 import warnings
 
 from jax._src import lib
@@ -409,7 +409,7 @@ def update_global_jit_state(**kw):
 
 class ThreadLocalJitState(NamedTuple):
   dynamic_trace_state: Optional[Hashable] = None
-  axis_env_state: Optional[Hashable] = None
+  axis_env_state: Tuple[Hashable, ...] = ()
   numpy_rank_promotion: Optional[str] = None
   default_matmul_precision: Optional[Hashable] = None
 
@@ -422,8 +422,9 @@ def update_thread_local_jit_state(**kw):
 
 def get_trace_state() -> Hashable:
   # This function is used for Python-based caching (as opposed to caching in C++
-  # dispatch code). It reads the axis_env_state from the C++ thread-local state,
-  # but gets everything else off the config object, which reflects the
+  # dispatch code). It reads the axis_env_state from the C++ thread-local state
+  # (because there is no process-global axis environment, just a thread-local
+  # one), but gets everything else off the config object, which reflects the
   # appropriate unification of global and thread-local settings.
   tls = jax_jit.thread_local_state()
   ctx = tls.extra_jit_context or ThreadLocalJitState()
