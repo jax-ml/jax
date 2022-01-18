@@ -1701,6 +1701,9 @@ def _add_vmap_primitive_harnesses():
       "lu",
       "custom_linear_solve",
 
+      # Broken by https://github.com/google/jax/pull/9094
+      "dynamic_update_slice",
+
       # We do *= shapes in the batching rule for conv_general_dilated
       "conv_general_dilated",
 
