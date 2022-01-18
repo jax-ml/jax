@@ -28,7 +28,7 @@ from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
 from jax import linear_util as lu
 from jax._src.util import (unzip2, safe_map, safe_zip, wrap_name, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
-                           curry, memoize)
+                           curry, memoize, cache)
 from jax.interpreters import partial_eval as pe
 
 map = safe_map
@@ -411,7 +411,15 @@ def batch_subtrace(main, in_dims, *in_vals):
 
 ### API for batching jaxprs
 
-def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name, main_type):
+def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
+                main_type):
+  inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
+  return _batch_jaxpr(closed_jaxpr, axis_size, tuple(in_batched), inst,
+                      axis_name, main_type)
+
+@cache()
+def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
+                 main_type):
   assert (isinstance(instantiate, bool) or
           isinstance(instantiate, (list, tuple)) and
           all(isinstance(b, bool) for b in instantiate))

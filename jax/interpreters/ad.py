@@ -27,8 +27,8 @@ from jax.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                     raise_to_shaped)
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_aval, zeros_like_p, Zero)
-from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
-                         wrap_name, as_hashable_function)
+from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
+                           as_hashable_function, cache)
 from jax.tree_util import register_pytree_node
 from jax import linear_util as lu
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
@@ -637,6 +637,11 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
 
 
 def jvp_jaxpr(jaxpr, nonzeros, instantiate):
+  inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
+  return _jvp_jaxpr(jaxpr, tuple(nonzeros), inst)
+
+@cache()
+def _jvp_jaxpr(jaxpr, nonzeros, instantiate):
   assert len(jaxpr.in_avals) == len(nonzeros)
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
