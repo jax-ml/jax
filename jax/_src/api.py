@@ -521,10 +521,23 @@ class Lowered:
         self._lowering.compile(), self.in_tree, self.out_tree,
         self.donate_argnums, self._no_kwargs)
 
-  def compiler_ir(self, dialect: Optional[str] = None):
+  def compiler_ir(self, dialect: Optional[str] = None, **kwargs):
+    """Gets compiler IR of a specified 'dialect'
+
+    Args:
+      dialect: One of 'mhlo' or 'hlo' (or None for 'hlo').
+      **kwargs: Dialect specific keyword arguments:
+        'hlo': None
+        'mhlo': Keyword arguments match the MLIR Operation.print() method.
+
+    Returns:
+      A dialect specific representation.
+    """
     if dialect == "mhlo":
-      return self._lowering.mhlo()
+      return self._lowering.mhlo(**kwargs)
     elif dialect == "hlo" or dialect is None:
+      if kwargs:
+        raise TypeError(f"Unsupported keyword arguments: {kwargs.keys()}")
       return self._lowering.hlo()
     else:
       raise ValueError(f"Unknown dialect {dialect}")

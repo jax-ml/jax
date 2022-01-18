@@ -405,10 +405,16 @@ def lower_jaxpr_to_module(
   ctx.module.operation.verify()
   return ctx.module
 
-def module_to_string(module: ir.Module) -> str:
-  output = io.StringIO()
-  module.operation.print(file=output, enable_debug_info=True,
-                         print_generic_op_form=False)
+def module_to_string(module: ir.Module, *,
+    binary: bool = False, enable_debug_info: bool = True,
+    print_generic_op_form: bool = False) -> Union[bytes, str]:
+  if binary:
+    output = io.BytesIO()
+  else:
+    output = io.StringIO()
+  module.operation.print(file=output, binary=binary,
+                         enable_debug_info=enable_debug_info,
+                         print_generic_op_form=print_generic_op_form)
   return output.getvalue()
 
 def _set_up_aliases(avals_in, avals_out, donated_args):

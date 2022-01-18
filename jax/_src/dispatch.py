@@ -510,12 +510,16 @@ class XlaComputation:
         mlir.module_to_string(self._hlo),
         use_tuple_args=self.compile_args["tuple_args"])
 
-  def mhlo(self) -> str:
+  def mhlo(self, *, binary=False, enable_debug_info=True,
+           print_generic_op_form=False) -> Union[str, bytes]:
     if self.is_trivial():
       raise ValueError("A trivial computation has no MHLO")
     if isinstance(self._hlo, xc.XlaComputation):
       return xe.mlir.xla_computation_to_mlir_module(self._hlo)
-    return mlir.module_to_string(self._hlo)
+    return mlir.module_to_string(
+        self._hlo, binary=binary,
+        enable_debug_info=enable_debug_info,
+        print_generic_op_form=print_generic_op_form)
 
   def compile(self) -> 'XlaCompiledComputation':
     if self._executable is None:
