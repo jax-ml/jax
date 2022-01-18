@@ -8,9 +8,24 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.27 (Unreleased)
+## jax 0.2.28 (Unreleased)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.26...main).
+  commits](https://github.com/google/jax/compare/jax-v0.2.27...main).
+
+## jaxlib 0.1.76 (Unreleased)
+
+* New features
+  * Includes precompiled SASS for NVidia compute capability 8.0 GPUS
+    (e.g. A100). Removes precompiled SASS for compute capability 6.1 so as not
+    to increase the number of compute capabilities: GPUs with compute capability
+    6.1 can use the 6.0 SASS.
+* Breaking changes
+  * Support for NumPy 1.18 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
+
+## jax 0.2.27 (Jan 18 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.26...jax-v0.2.27).
 
 * Breaking changes:
   * Support for NumPy 1.18 has been dropped, per the
@@ -48,16 +63,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     like JAX on CPU and GPU (to use an associative scan). See the jax2tf README
     for more details ({jax-issue}`#9189`).
 
-## jaxlib 0.1.76 (Unreleased)
-* New features
-  * Includes precompiled SASS for NVidia compute capability 8.0 GPUS
-    (e.g. A100). Removes precompiled SASS for compute capability 6.1 so as not
-    to increase the number of compute capabilities: GPUs with compute capability
-    6.1 can use the 6.0 SASS.
-* Breaking changes
-  * Support for NumPy 1.18 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
-    Please upgrade to a supported NumPy version.
 
 ## jaxlib 0.1.75 (Dec 8, 2021)
 * New features:
