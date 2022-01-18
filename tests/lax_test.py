@@ -1997,9 +1997,9 @@ class LaxTest(jtu.JaxTestCase):
       for method in ["sort", "scan"]
       for dtype in float_dtypes + int_dtypes
       for shape, queryshape, dimension, batch_dims in [
-        ((8,), (5,), 0, None),
-        ((4, 8), (), 0, None),
-        ((4, 8), (5, 4), 1, ((0,), (1,))),
+        ((8,), (5,), 0, 0),
+        ((4, 8), (), 0, 0),
+        ((4, 8), (4, 5), 1, 1),
       ]))
   def testSearchsorted(self, shape, queryshape, dtype, batch_dims, dimension, side, method):
     rng = jtu.rand_some_equal(self.rng())

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import operator
 
 import numpy as np
 
@@ -20,7 +21,6 @@ import jax
 from jax._src import ad_util
 from jax._src import api
 from jax._src import util
-from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax import lax
 from jax._src.lax.control_flow import fori_loop
 from jax import core
@@ -29,7 +29,7 @@ from jax.interpreters import batching
 from jax.interpreters import xla
 
 
-def searchsorted(sorted_arr, query, *, side='left', dimension=0, batch_dims=None, method="default"):
+def searchsorted(sorted_arr, query, *, side='left', dimension=0, batch_dims=0, method="default"):
   """Find indices of query values within a sorted array.
 
   Args:
@@ -39,8 +39,8 @@ def searchsorted(sorted_arr, query, *, side='left', dimension=0, batch_dims=None
     side : {'left', 'right'}. If 'left', find the index of the first suitable
       location. If 'right', find the index of the last.
     dimension : integer specifying the dimension along which to insert query values.
-    batch_dims : length-2 tuple of sequences specifying corresponding batch indices
-      for `sorted_arr` and `query`.
+    batch_dims : integer specifying the number of leading dimensions of `sorted_arr`
+      and `query` to treat as batch dimensions.
     method : {'default', 'scan', 'sort'} The method used to compute the result.
       Outside JIT, this defaults to "scan". Within JIT, this defaults to "scan"
       on CPU, and "sort" otherwise. Assume ``M = query.size`` and
@@ -55,11 +55,13 @@ def searchsorted(sorted_arr, query, *, side='left', dimension=0, batch_dims=None
     indices : an array specifying the insertion locations of `query` into `sorted_arr`.
   """
   dimension = util.canonicalize_axis(dimension, len(sorted_arr.shape))
-  batch_dims = ((), ()) if batch_dims is None else tuple(_ensure_index_tuple(d) for d in batch_dims)
+  batch_dims = core.concrete_or_error(operator.index, batch_dims, context="searchsorted batch_dims argument")
   return searchsorted_p.bind(sorted_arr, query, side=side, dimension=dimension, batch_dims=batch_dims, method=method)
 
 def _searchsorted_abstract_eval(sorted_arr, query, *, side, dimension, batch_dims, method):
-  lhs_batch, rhs_batch = batch_dims
+  batch_dims = operator.index(batch_dims)
+  if batch_dims < 0:
+    raise ValueError(f"batch_dims must be a non-negative integer; got {batch_dims}")
   if sorted_arr.dtype != query.dtype:
     raise ValueError("dtypes of sorted_arr and query must match; got "
                      f"{sorted_arr.dtype} and {query.dtype}")
@@ -67,21 +69,14 @@ def _searchsorted_abstract_eval(sorted_arr, query, *, side, dimension, batch_dim
     raise ValueError(f"invalid argument method={method!r}; expected 'default', 'scan', or 'sort'.")
   if side not in ["left", "right"]:
     raise ValueError(f"invalid argument side={side!r}, expected 'left' or 'right'")
-  if not 0 <= dimension < sorted_arr.ndim:
-    raise ValueError(f"dimension={dimension}")
-  if any(dim == dimension for dim in lhs_batch):
-    raise ValueError("dimension cannot appear among batch_dims")
-  if any(len(set(dims)) != len(dims) for dims in batch_dims):
-    raise ValueError(f"batch dimensions cannot have repeated entries; got {batch_dims}")
-  if not all((0 <= d1 < sorted_arr.ndim) and (0 <= d2 < query.ndim) for d1, d2 in zip(*batch_dims)):
-    raise ValueError(f"Out of range batch dimensions {batch_dims} for arrays of shape "
-                     f"{sorted_arr.shape} and {query.shape}")
-  if any(sorted_arr.shape[d1] != query.shape[d2] for d1, d2 in zip(*batch_dims)):
-    raise ValueError(f"Incompatible batch dimensions {batch_dims} for arrays of shape "
-                     f"{sorted_arr.shape} and {query.shape}")
-  shape = (*(sorted_arr.shape[d] for d in lhs_batch),
-           *(s for d, s in enumerate(sorted_arr.shape) if d not in (dimension, *lhs_batch)),
-           *(s for d, s in enumerate(query.shape) if d not in rhs_batch))
+  if not batch_dims <= dimension < sorted_arr.ndim:
+    raise ValueError(f"dimension={dimension} must be in range [{batch_dims}, {sorted_arr.ndim})")
+  if sorted_arr.shape[:batch_dims] != query.shape[:batch_dims]:
+    raise ValueError(f"batch dimension sizes must match; got {sorted_arr.shape[:batch_dims]} != "
+                     f"{query.shape[:batch_dims]}")
+  shape = (*sorted_arr.shape[:batch_dims],
+           *(s for d, s in enumerate(sorted_arr.shape) if d >= batch_dims and d != dimension),
+           *(s for d, s in enumerate(query.shape) if d >= batch_dims))
   dtype = np.int32 if sorted_arr.shape[dimension] < np.iinfo(np.int32).max else np.int64
   return core.ShapedArray(shape, dtype)
 
@@ -94,16 +89,11 @@ def _searchsorted_impl(sorted_arr, query, *, side, dimension, batch_dims, method
     raise ValueError(f"invalid argument method={method!r}; expected 'sort' or 'scan'")
   out_aval = _searchsorted_abstract_eval(sorted_arr, query, side=side, dimension=dimension,
                                          batch_dims=batch_dims, method=method)
-  lhs_batch, rhs_batch = batch_dims
-  lhs_extra = lax.remaining(range(len(sorted_arr.shape)), lhs_batch, [dimension])
-  rhs_extra = lax.remaining(range(len(query.shape)), rhs_batch)
-  sorted_arr = lax.transpose(sorted_arr, (*lhs_batch, *lhs_extra, dimension))
-  query = lax.transpose(query, (*rhs_batch, *rhs_extra))
+  sorted_arr = batching.moveaxis(sorted_arr, dimension, -1)
   fun = partial(_searchsorted, side=side, dtype=out_aval.dtype)
-
-  for _ in lhs_extra:
+  for _ in range(sorted_arr.ndim - batch_dims - 1):
     fun = api.vmap(fun, in_axes=(0, None))
-  for _ in lhs_batch:
+  for _ in range(batch_dims):
     fun = api.vmap(fun, in_axes=0)
   return fun(sorted_arr, query)
 
@@ -142,28 +132,26 @@ def _searchsorted_sort_unbatched(sorted_arr, query, *, side, dtype):
   return lax.reshape(lax.sub(index, _rank(index)), np.shape(query))
 
 def _searchsorted_batch_rule(batched_args, bdims, *, side, dimension, batch_dims, method):
-  sorted_arr, _ = batched_args
+  sorted_arr, query = batched_args
   lhs_bdim, rhs_bdim = bdims
 
-  lhs_batch, rhs_batch = batch_dims
-
-  if lhs_bdim is not None:
-    lhs_batch = tuple(d if d < lhs_bdim else d + 1 for d in lhs_batch)
-    if dimension >= lhs_bdim:
-      dimension += 1
-  if rhs_bdim is not None:
-    rhs_batch = tuple(d if d < rhs_bdim else d + 1 for d in rhs_batch)
-
-  if lhs_bdim is None:
-    out_bdim = sorted_arr.ndim - 1 + rhs_bdim - sum(d < rhs_bdim for d in rhs_batch)
-  elif rhs_bdim is None:
-    out_bdim = len(lhs_batch) + lhs_bdim - sum(d < lhs_bdim for d in (dimension, *lhs_batch))
+  if bdims[1] is None:
+    # Only sorted_arr is batched; move batched axis to just after batch_dims.
+    sorted_arr = batching.moveaxis(sorted_arr, bdims[0], batch_dims)
+    dimension = dimension if dimension > bdims[0] else dimension + 1
+    out_bdim = batch_dims
+  elif bdims[0] is None:
+    # Only query is batched; move batched axis to just after batch_dims.
+    query = batching.moveaxis(query, bdims[1], batch_dims)
+    out_bdim = sorted_arr.ndim - 1
   else:
-    lhs_batch = (lhs_bdim, *lhs_batch)
-    rhs_batch = (rhs_bdim, *rhs_batch)
+    # Both are batched; move to front and increment batch_dims.
+    sorted_arr = batching.moveaxis(sorted_arr, bdims[0], 0)
+    query = batching.moveaxis(query, bdims[1], 0)
+    dimension = dimension if dimension > bdims[0] else dimension + 1
+    batch_dims += 1
     out_bdim = 0
-
-  return searchsorted_p.bind(*batched_args, side=side, dimension=dimension, batch_dims=[lhs_batch, rhs_batch], method=method), out_bdim
+  return searchsorted(sorted_arr, query, side=side, dimension=dimension, batch_dims=batch_dims, method=method), out_bdim
 
 def _searchsorted_impl_scan_default(sorted_arr, query, *, side, dimension, batch_dims, method):
   return _searchsorted_impl(sorted_arr, query, side=side, dimension=dimension, batch_dims=batch_dims,
