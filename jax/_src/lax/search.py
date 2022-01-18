@@ -129,7 +129,7 @@ def _searchsorted_sort_unbatched(sorted_arr, query, *, side, dtype):
     index = _rank(lax.concatenate([query.ravel(), sorted_arr], 0))[:query.size]
   else:
     index = _rank(lax.concatenate([sorted_arr, query.ravel()], 0))[sorted_arr.size:]
-  return lax.reshape(lax.sub(index, _rank(index)), np.shape(query))
+  return lax.reshape(lax.sub(index, _rank(query.ravel())), np.shape(query))
 
 def _searchsorted_batch_rule(batched_args, bdims, *, side, dimension, batch_dims, method):
   sorted_arr, query = batched_args
