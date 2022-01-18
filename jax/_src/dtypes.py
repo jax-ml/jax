@@ -25,7 +25,6 @@ from typing import Any, Dict
 
 import numpy as np
 
-from jax._src import util
 from jax._src.config import flags, config
 from jax._src.lib import xla_client
 
@@ -56,19 +55,21 @@ _dtype_to_32bit_dtype = {
     np.dtype('complex128'): np.dtype('complex64'),
 }
 
-@util.memoize
-def canonicalize_dtype(dtype):
+@functools.lru_cache(maxsize=None)
+def _canonicalize_dtype(x64_enabled, dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   try:
     dtype = np.dtype(dtype)
   except TypeError as e:
     raise TypeError(f'dtype {dtype!r} not understood') from e
 
-  if config.x64_enabled:
+  if x64_enabled:
     return dtype
   else:
     return _dtype_to_32bit_dtype.get(dtype, dtype)
 
+def canonicalize_dtype(dtype):
+  return _canonicalize_dtype(config.x64_enabled, dtype)
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes : dict = {
