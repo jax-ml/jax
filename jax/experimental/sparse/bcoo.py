@@ -119,6 +119,23 @@ def _bcoo_sum_duplicates_unbatched(data, indices, *, shape, nse, remove_zeros):
   data_unique = jnp.where(oob_mask[(...,) + props.n_dense * (None,)], 0, data_unique)
   return data_unique, indices_unique, nse
 
+def _bcoo_sort_indices(data, indices, shape):
+  props = _validate_bcoo(data, indices, shape)
+  if props.n_sparse == 0:
+    return data, indices
+  def f(data, indices):
+    _, N = indices.shape
+    idx_cols = (indices[:, i] for i in range(N))
+    if data.ndim > 1:
+      *indices, i = lax.sort((*idx_cols, lax.iota(indices.dtype, len(data))), num_keys=N)
+      data = data[i]
+    else:
+      *indices, data = lax.sort((*idx_cols, data), num_keys=N)
+    return data, jnp.column_stack(indices)
+  for _ in range(props.n_batch):
+    f = broadcasting_vmap(f)
+  return f(data, indices)
+
 def _unbatch_bcoo(data, indices, shape):
   n_batch = _validate_bcoo(data, indices, shape).n_batch
   if n_batch == 0:
@@ -1239,6 +1256,11 @@ class BCOO(JAXSparse):
     """
     data, indices = _bcoo_sum_duplicates(self.data, self.indices, self.shape,
                                          nse=nse, remove_zeros=remove_zeros)
+    return BCOO((data, indices), shape=self.shape)
+
+  def sort_indices(self):
+    """Return a copy of the matrix with indices sorted."""
+    data, indices = _bcoo_sort_indices(self.data, self.indices, self.shape)
     return BCOO((data, indices), shape=self.shape)
 
   def todense(self):

@@ -1290,6 +1290,28 @@ class BCOOTest(jtu.JaxTestCase):
       self.assertAllClose(M.todense(), M_dedup.todense())
       self.assertEqual(M_dedup.nse, nse)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_bcoo_sort_indices(self, shape, dtype, n_batch, n_dense):
+    rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
+    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
+    M.indices = M.indices[..., ::-1, :]
+
+    M_sorted = M.sort_indices()
+    self.assertArraysEqual(M.todense(), M_sorted.todense())
+
+    indices = M_sorted.indices
+    if indices.size > 0:
+      flatind = indices.reshape(-1, *indices.shape[-2:]).transpose(0, 2, 1)
+      sorted = jax.vmap(jnp.lexsort)(flatind[:, ::-1])
+      self.assertTrue(jnp.all(sorted == jnp.arange(sorted.shape[-1])))
+
   def test_bcoo_sum_duplicates_inferred_nse(self):
     x = sparse.BCOO.fromdense(jnp.diag(jnp.arange(4)))
     self.assertEqual(x.nse, 3)
