@@ -70,7 +70,15 @@ def gda_construction_raw(mesh_shape, mesh_axes, state):
     gda.GlobalDeviceArray(global_input_shape, global_mesh, mesh_axes, dbs)
 
 
-def indices_replica_id_calc(mesh_shape, mesh_axes, state):
+def indices_replica_id_calc_uncached(mesh_shape, mesh_axes, state):
+  global_input_shape = (2048, 2048)
+  global_mesh = jtu.create_global_mesh(mesh_shape, ("x", "y"))
+
+  while state:
+    gda._get_shard_indices_replica_ids_uncached(global_input_shape, global_mesh, mesh_axes)
+
+
+def indices_replica_id_calc_cached(mesh_shape, mesh_axes, state):
   global_input_shape = (2048, 2048)
   global_mesh = jtu.create_global_mesh(mesh_shape, ("x", "y"))
 
@@ -88,8 +96,11 @@ for mesh_shape, axes in mesh_shapes_axes:
           partial(gda_construction_raw, mesh_shape, axes),
           name=f"gda_construction_raw_{mesh_shape}_{axes}"),
       google_benchmark.register(
-          partial(indices_replica_id_calc, mesh_shape, axes),
-          name=f"indices_replica_id_calc_{mesh_shape}_{axes}"),
+          partial(indices_replica_id_calc_uncached, mesh_shape, axes),
+          name=f"indices_replica_id_calc_uncached_{mesh_shape}_{axes}"),
+      google_benchmark.register(
+          partial(indices_replica_id_calc_cached, mesh_shape, axes),
+          name=f"indices_replica_id_calc_cached_{mesh_shape}_{axes}"),
   ])
 
 

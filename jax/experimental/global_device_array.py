@@ -22,7 +22,7 @@ from jax import core
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla, xla
-from jax._src.util import prod, safe_zip
+from jax._src.util import prod, safe_zip, cache
 from jax._src.api import device_put
 from jax.tree_util import tree_flatten
 from jax.interpreters.sharded_jit import PartitionSpec
@@ -33,6 +33,14 @@ DeviceArray = xc.Buffer
 Device = xc.Device
 ArrayLike = Union[np.ndarray, DeviceArray]
 Index = Tuple[slice, ...]
+
+
+def _convert_list_args_to_tuple(f):
+  def wrapper(*args, **kwargs):
+    args = [tuple(a) if isinstance(a, list) else a for a in args]
+    kwargs = {k: (tuple(v) if isinstance(v, list) else v) for k, v in kwargs.items()}
+    return f(*args, **kwargs)
+  return wrapper
 
 
 def _canonicalize_mesh_axes(mesh_axes):
@@ -62,6 +70,8 @@ def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
   return indices
 
 
+@_convert_list_args_to_tuple
+@cache()
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
@@ -95,7 +105,14 @@ def _calc_replica_ids(global_mesh: pxla.Mesh, mesh_axes: MeshAxes):
                                 np.array(mesh_values)[replicated_axis])
 
 
+@_convert_list_args_to_tuple
+@cache()
 def get_shard_indices_replica_ids(
+    global_shape: Shape, global_mesh: pxla.Mesh,
+    mesh_axes: MeshAxes) -> Mapping[Device, Tuple[Index, int]]:
+  return _get_shard_indices_replica_ids_uncached(global_shape, global_mesh, mesh_axes)
+
+def _get_shard_indices_replica_ids_uncached(
     global_shape: Shape, global_mesh: pxla.Mesh,
     mesh_axes: MeshAxes) -> Mapping[Device, Tuple[Index, int]]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
@@ -104,6 +121,8 @@ def get_shard_indices_replica_ids(
               for d, i, r in safe_zip(global_mesh.devices.flat, indices, replica_ids))
 
 
+@_convert_list_args_to_tuple
+@cache()
 def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   chunk_size = []
   for mesh_axis, size in zip(mesh_axes, global_shape):
