@@ -67,6 +67,7 @@ _reduce = functools.reduce
 
 T = TypeVar('T')
 Array = Any
+BooleanNumeric = Any  # A bool, or a Boolean array.
 
 @cache()
 def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
@@ -229,7 +230,7 @@ def fori_loop(lower, upper, body_fun, init_val):
 
 
 @api_boundary
-def while_loop(cond_fun: Callable[[T], bool],
+def while_loop(cond_fun: Callable[[T], BooleanNumeric],
                body_fun: Callable[[T], T],
                init_val: T) -> T:
   """Call ``body_fun`` repeatedly in a loop while ``cond_fun`` is True.
