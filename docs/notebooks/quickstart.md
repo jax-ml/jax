@@ -45,13 +45,6 @@ from jax import grad, jit, vmap
 from jax import random
 ```
 
-```{code-cell} ipython3
-:tags: [remove-cell]
-
-# Prevent GPU/TPU warning.
-import jax; jax.config.update('jax_platform_name', 'cpu')
-```
-
 +++ {"id": "FQ89jHCYfhpg"}
 
 ## Multiplying Matrices
