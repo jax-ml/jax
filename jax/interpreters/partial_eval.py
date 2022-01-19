@@ -1155,7 +1155,13 @@ class DynamicJaxprTracer(core.Tracer):
     return ()
 
   def _origin_msg(self):
-    invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
+    if not self._trace.main.jaxpr_stack:  # type: ignore
+      # If this Tracer has been leaked the jaxpr stack may no longer be
+      # available. So we can't print as much origin information.
+      return ("\nThis Tracer was created on line "
+              f"{source_info_util.summarize(self._line_info)}")
+    else:
+      invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
     dbg = self._trace.main.debug_info
     if dbg is None:
       return ""
@@ -1236,7 +1242,7 @@ def _const_folding_and_forwarding(jaxpr, constvals):
   for eqn in jaxpr.eqns:
     # always apply invar substitutions
     eqn = JaxprEqn([var_subs.get(v, v) for v in eqn.invars], eqn.outvars,
-                   eqn.primitive, eqn.params, eqn.source_info)
+                    eqn.primitive, eqn.params, eqn.source_info)
     # if any inputs are constants and we have a constant-folding rule, apply it
     if eqn.primitive in const_fold_rules and any(v in consts for v in eqn.invars):
       consts_in = [consts.get(v) for v in eqn.invars]
