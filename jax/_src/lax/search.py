@@ -122,14 +122,15 @@ def _searchsorted_scan_unbatched(sorted_arr, query, *, side, dtype):
 def _searchsorted_sort_unbatched(sorted_arr, query, *, side, dtype):
   assert sorted_arr.ndim == 1
   assert side in ['left', 'right']
+  working_dtype = np.int32 if sorted_arr.size + query.size < np.iinfo(np.int32).max else np.int64
   def _rank(x):
-    idx = lax.iota(dtype, len(x))
+    idx = lax.iota(working_dtype, len(x))
     return lax._zeros(idx).at[lax.sort_key_val(x, idx)[1]].set(idx)
   if side == 'left':
     index = _rank(lax.concatenate([query.ravel(), sorted_arr], 0))[:query.size]
   else:
     index = _rank(lax.concatenate([sorted_arr, query.ravel()], 0))[sorted_arr.size:]
-  return lax.reshape(lax.sub(index, _rank(query.ravel())), np.shape(query))
+  return lax.reshape(lax.sub(index, _rank(query.ravel())), np.shape(query)).astype(dtype)
 
 def _searchsorted_batch_rule(batched_args, bdims, *, side, dimension, batch_dims, method):
   sorted_arr, query = batched_args
