@@ -1040,7 +1040,8 @@ def lower_parallel_callable(
 
 
 class PmapComputation:
-  def __init__(self, hlo, **compile_args):
+  _hlo: Union[ir.Module, xc.XlaComputation]
+  def __init__(self, hlo: Union[ir.Module, xc.XlaComputation], **compile_args):
     self._executable = None
     self._hlo = hlo
     self.compile_args = compile_args
@@ -1054,10 +1055,12 @@ class PmapComputation:
           mlir.module_to_string(self._hlo),
           use_tuple_args=self.compile_args["tuple_args"])
 
-  def mhlo(self) -> str:
+  def mhlo(self) -> ir.Module:
     if isinstance(self._hlo, xc.XlaComputation):
-      return xe.mlir.xla_computation_to_mlir_module(self._hlo)
-    return mlir.module_to_string(self._hlo)
+      module_str = xe.mlir.xla_computation_to_mlir_module(self._hlo)
+      with mlir.make_ir_context():
+        return ir.Module.parse(module_str)
+    return self._hlo
 
   @profiler.annotate_function
   def compile(self):
@@ -2015,9 +2018,10 @@ def lower_mesh_computation(
 
 
 class MeshComputation:
+  _hlo: Union[ir.Module, xc.XlaComputation]
   _executable: Optional['MeshExecutable']
 
-  def __init__(self, name: str, hlo: Union[str, xc.XlaComputation],
+  def __init__(self, name: str, hlo: Union[ir.Module, xc.XlaComputation],
                donated_invars: Sequence[bool], **compile_args):
     self._name = name
     self._hlo = hlo
@@ -2035,8 +2039,10 @@ class MeshComputation:
 
   def mhlo(self) -> str:
     if isinstance(self._hlo, xc.XlaComputation):
-      return xe.mlir.xla_computation_to_mlir_module(self._hlo)
-    return mlir.module_to_string(self._hlo)
+      module_str = xe.mlir.xla_computation_to_mlir_module(self._hlo)
+      with mlir.make_ir_context():
+        return ir.Module.parse(module_str)
+    return self._hlo
 
   def compile(self,
               _allow_propagation_to_outputs : bool = False,

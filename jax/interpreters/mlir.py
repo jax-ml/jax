@@ -281,6 +281,14 @@ def _source_info_to_location(
 
 # Translation rules
 
+def make_ir_context() -> ir.Context:
+  """Creates an MLIR context suitable for JAX IR."""
+  context = ir.Context()
+  mhlo.register_mhlo_dialect(context)
+  chlo.register_chlo_dialect(context)
+  return context
+
+
 @dataclasses.dataclass
 class ModuleContext:
   """Module-wide context information for MLIR lowering."""
@@ -303,7 +311,7 @@ class ModuleContext:
       symbol_table: Optional[ir.SymbolTable] = None,
       cached_primitive_lowerings: Optional[Dict[Any, builtin.FuncOp]] = None):
     assert platform is not None
-    self.context = context or ir.Context()
+    self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
     self.ip = ip or ir.InsertionPoint(self.module.operation.opview.body)
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
@@ -312,8 +320,6 @@ class ModuleContext:
     self.name_stack = name_stack
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
                                        else cached_primitive_lowerings)
-    mhlo.register_mhlo_dialect(self.context)
-    chlo.register_chlo_dialect(self.context)
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 

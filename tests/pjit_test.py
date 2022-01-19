@@ -256,9 +256,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertLen(actual[0]['a'].device_buffers, 4)
 
-    compiler_ir = f.lower(x).compiler_ir(dialect="mhlo")
-    self.assertIn("unspecified_dims=[0]", compiler_ir)
-    self.assertIn("unspecified_dims=[1]", compiler_ir)
+    mhlo_str = str(f.lower(x).compiler_ir(dialect="mhlo"))
+    self.assertIn("unspecified_dims=[0]", mhlo_str)
+    self.assertIn("unspecified_dims=[1]", mhlo_str)
 
   def testCaching(self):
     def f(x):

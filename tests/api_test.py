@@ -1994,7 +1994,7 @@ class APITest(jtu.JaxTestCase):
     hlo = api.jit(e).lower(2.).compiler_ir(dialect="hlo").as_hlo_text()
     self.assertIn(' cosine', hlo)
     self.assertIn(' sine', hlo)
-    mhlo = api.jit(e).lower(2.).compiler_ir(dialect="mhlo")
+    mhlo = str(api.jit(e).lower(2.).compiler_ir(dialect="mhlo"))
     self.assertIn('mhlo.cosine', mhlo)
     self.assertIn('mhlo.sine', mhlo)
 
