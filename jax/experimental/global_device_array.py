@@ -17,7 +17,6 @@ import dataclasses
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
-from jax.experimental import maps
 from jax import core
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -433,10 +432,6 @@ xla.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
 xla.canonicalize_dtype_handlers[GlobalDeviceArray] = pxla.identity
 
 def _gda_shard_arg(x, devices, indices):
-  pjit_mesh = maps.thread_resources.env.physical_mesh
-  if x._global_mesh != pjit_mesh:
-    raise ValueError("Pjit's mesh and GDA's mesh should be equal. Got Pjit "
-                     f"mesh: {pjit_mesh},\n GDA mesh: {x._global_mesh}")
   return [s.data for s in x.local_shards]
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
