@@ -723,6 +723,11 @@ def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
   to obtain the full outputs once `jaxpr_unknown` is ran. Outputs known ahead of time will
   simply get passed as residual constants and returned immediately.
   """
+  instantiate = tuple(instantiate) if isinstance(instantiate, list) else instantiate
+  return _partial_eval_jaxpr(jaxpr, tuple(unknowns), instantiate)
+
+@cache()
+def _partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
   cell = []
