@@ -42,9 +42,8 @@ async def create_async_gda_from_callback(
 
   dbs = [jax.device_put(array, device)
          for array, device in zip(local_arrays, local_devices)]
-  local_idx_rid = dict((d, global_idx_rid[d]) for d in local_devices)
   return gda.GlobalDeviceArray(global_shape, global_mesh, mesh_axes, dbs,
-                               gda._GdaFastPathArgs(local_idx_rid, local_devices))
+                               gda._GdaFastPathArgs(global_idx_rid, local_devices))
 
 
 def _get_metadata(gda):

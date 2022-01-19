@@ -161,7 +161,7 @@ class Shard:
 
 
 class _GdaFastPathArgs(NamedTuple):
-  local_indices_replica_ids: Mapping[Device, Tuple[Index, int]]
+  global_indices_replica_ids: Mapping[Device, Tuple[Index, int]]
   local_devices: Sequence[Device]
 
 
@@ -315,17 +315,18 @@ class GlobalDeviceArray:
 
   def _create_local_shards(self) -> Sequence[Shard]:
     if self._gda_fast_path_args is not None:
-      local_idx_rid = self._gda_fast_path_args.local_indices_replica_ids
+      global_indices_rid = self._gda_fast_path_args.global_indices_replica_ids
     else:
       global_indices_rid = get_shard_indices_replica_ids(
         self._global_shape, self._global_mesh, self._mesh_axes)
-      local_idx_rid = dict((d, global_indices_rid[d])
-                           for d in self._local_devices)
-    device_to_buffer = dict((db.device(), db) for db in self._device_buffers)
-    return [
-        Shard(d, index, rid, device_to_buffer[d])
-        for d, (index, rid) in local_idx_rid.items()
-    ]
+
+    out = []
+    for db in self._device_buffers:
+      device = db.device()
+      index, rid = global_indices_rid[device]
+      out.append(Shard(device, index, rid, db))
+    return out
+
 
   @pxla.maybe_cached_property
   def local_shards(self) -> Sequence[Shard]:
@@ -379,9 +380,8 @@ class GlobalDeviceArray:
         device_put(data_callback(global_indices_rid[device][0]), device)
         for device in local_devices
     ]
-    local_idx_rid = dict((d, global_indices_rid[d]) for d in local_devices)
     return cls(global_shape, global_mesh, mesh_axes, dbs,
-               _gda_fast_path_args=_GdaFastPathArgs(local_idx_rid, local_devices))
+               _gda_fast_path_args=_GdaFastPathArgs(global_indices_rid, local_devices))
 
   @classmethod
   def from_batched_callback(cls, global_shape: Shape,
@@ -394,9 +394,8 @@ class GlobalDeviceArray:
     local_indices = [global_indices_rid[d][0] for d in local_devices]
     local_arrays = data_callback(local_indices)
     dbs = pxla.device_put(local_arrays, local_devices)
-    local_idx_rid = dict((d, global_indices_rid[d]) for d in local_devices)
     return cls(global_shape, global_mesh, mesh_axes, dbs,
-               _gda_fast_path_args=_GdaFastPathArgs(local_idx_rid, local_devices))
+               _gda_fast_path_args=_GdaFastPathArgs(global_indices_rid, local_devices))
 
   @classmethod
   def from_batched_callback_with_devices(
@@ -421,9 +420,8 @@ class GlobalDeviceArray:
         (index, tuple(devices)) for index, devices in index_to_device.values()
     ]
     dbs = data_callback(cb_inp)
-    local_idx_rid = dict((d, global_indices_rid[d]) for d in local_devices)
     return cls(global_shape, global_mesh, mesh_axes, dbs,
-               _gda_fast_path_args=_GdaFastPathArgs(local_idx_rid, local_devices))
+               _gda_fast_path_args=_GdaFastPathArgs(global_indices_rid, local_devices))
 
 
 core.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
@@ -445,8 +443,7 @@ def _gda_array_result_handler(global_aval, out_axis_resources, global_mesh):
   global_idx_rid = get_shard_indices_replica_ids(global_aval.shape, global_mesh,
                                                  out_axis_resources)
   local_devices = global_mesh.local_devices
-  local_idx_rid = dict((d, global_idx_rid[d]) for d in local_devices)
-  fast_path_args = _GdaFastPathArgs(local_idx_rid, local_devices)
+  fast_path_args = _GdaFastPathArgs(global_idx_rid, local_devices)
   return lambda bufs: GlobalDeviceArray(
       global_aval.shape, global_mesh, out_axis_resources, bufs, fast_path_args)
 pxla.global_result_handlers[core.ShapedArray] = _gda_array_result_handler
