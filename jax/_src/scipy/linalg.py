@@ -294,15 +294,15 @@ def _calc_P_Q(A):
    A = A / 2**n_squarings
    conds = jnp.array([1.495585217958292e-002, 2.539398330063230e-001,
                       9.504178996162932e-001, 2.097847961257068e+000, jnp.inf])
-   idx = jnp.argmax(A_L1 < conds)
-   U, V = lax.switch(idx, [_pade3, _pade5, _pade7, _pade9, _pade13])
+   idx = jnp.argwhere(A_L1 < conds, size=1).squeeze()
+   U, V = lax.switch(idx, [_pade3, _pade5, _pade7, _pade9, _pade13], A)
   elif A.dtype == 'float32' or A.dtype == 'complex64':
     maxnorm = 3.925724783138660
     n_squarings = jnp.maximum(0, jnp.floor(jnp.log2(A_L1 / maxnorm)))
     A = A / 2**n_squarings
     conds = jnp.array([4.258730016922831e-001, 1.880152677804762e+000, jnp.inf])
-    idx = jnp.argmax(A_L1 < conds)
-    U, V = lax.switch(idx, [_pade3, _pade5, _pade7])
+    idx = jnp.argwhere(A_L1 < conds, size=1).squeeze()
+    U, V = lax.switch(idx, [_pade3, _pade5, _pade7], A)
   else:
     raise TypeError("A.dtype={} is not supported.".format(A.dtype))
   P = U + V  # p_m(A) : numerator
