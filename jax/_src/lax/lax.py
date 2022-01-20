@@ -81,24 +81,6 @@ Shape = core.Shape
 
 T = TypeVar("T")
 
-@functools.partial(jax.jit, inline=True)
-def _array_copy(arr):
-  """Return an on-device copy of a DeviceArray.
-
-  This is a private method; users can access this via ``jnp.array(x, copy=True)``.
-
-  Why do we need copies in a purely functional langauge? Well, JAX is *almost*
-  purely functional: the semantics of `donate_argnums` mean that sometimes buffers
-  are consumed, and you actually need to ensure a copy is generated on device.
-  """
-  # TODO(jakevdp): There is no XLA copy operation, so for the time being we rely
-  # on an implementation detail: although XLA will optimize away non-operations like
-  # adding zero, it still results in a copied buffer. Eventually, we should move to
-  # a more direct method that avoids inserting a spurious add_p/or_p into the jaxpr.
-  if arr.dtype == bool:
-    return bitwise_or(arr, _const(arr, False))
-  return add(arr, _const(arr, 0))
-
 def _try_broadcast_shapes(
     shapes: Sequence[Tuple[int, ...]]) -> Optional[Tuple[int, ...]]:
   assert shapes
@@ -4181,6 +4163,21 @@ xla.register_translation(rng_bit_generator_p,
 
 RandomAlgorithm = xops.RandomAlgorithm
 RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
+
+def _array_copy(arr):
+  return copy_p.bind(arr)
+
+# The copy_p primitive exists for expressing making copies of runtime arrays.
+# For that reason we don't simplify it out of jaxprs (e.g. for jit invariance).
+# It's used in jnp.array(x, copy=True), which is the user-facing API.
+copy_p = core.Primitive('copy')
+copy_p.def_impl(partial(xla.apply_primitive, copy_p))
+copy_p.def_abstract_eval(lambda x: x)
+xla.register_translation(copy_p, lambda ctx, avals_in, avals_out, x: [x])
+mlir.register_lowering(copy_p, lambda ctx, x: [x])
+ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
+batching.defvectorized(copy_p)
+masking.defvectorized(copy_p)
 
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
