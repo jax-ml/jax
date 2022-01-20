@@ -2096,7 +2096,7 @@ class MeshExecutable:
 
   @staticmethod
   def from_hlo(name: str,
-               computation: Union[str, xc.XlaComputation],
+               computation: Union[ir.Module, xc.XlaComputation],
                mesh: Mesh,
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
