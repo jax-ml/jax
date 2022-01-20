@@ -1274,12 +1274,13 @@ def _inline_literals(jaxpr, constvals):
   # This function also ensures variables are labeled in a canonical ordering,
   # prunes unused constants, and inserts `dropvar` symbols.
   consts = dict(zip(jaxpr.constvars, constvals))
-  newvar = core.gensym()
-  newvars = {}
+  newname: Callable[[AbstractValue], Var] = core.gensym()
+  newvars: Dict[Var, Var] = {}
+  newvar = lambda aval: newname(_subs_vars_in_aval(newvars, aval))
   var = lambda v: newvars.get(v) or newvars.setdefault(v, newvar(v.aval))
 
-  def lit(var: Var) -> Optional[Any]:
-    val = consts.get(var)
+  def lit(v: Var) -> Optional[Literal]:
+    val = consts.get(v)
     if type(val) in core.literalable_types and not np.shape(val):
       return Literal(val)
     else:
@@ -1660,7 +1661,7 @@ def _substitute_tracers_in_aval(
   ) -> AbstractValue:
   # Substitute Tracers into a given AbstractValue using the given environment.
   # That is, the input is an AbstractValue possibly containing AbstractValues,
-  # and the output is an aval possibly containing Tracers.
+  # and the output is an AbstractValue possibly containing Tracers.
   if (isinstance(a, DShapedArray) and
       any(isinstance(d, AbstractValue) for d in a.shape)):
     shape = [env[id(d)] if isinstance(d, AbstractValue) else d for d in a.shape]
@@ -1690,6 +1691,18 @@ def _subs_avals_in_aval(
       any(isinstance(d, Tracer) for d in a.shape)):
     shape = [env.setdefault(id(d), d.aval) if isinstance(d, Tracer) else d
              for d in a.shape]
+    return a.update(shape=tuple(shape))
+  else:
+    return a
+
+def _subs_vars_in_aval(
+    env: Dict[Var, Var], a: AbstractValue
+  ) -> AbstractValue:
+  # Substitutes variables into a given AbstractValue using given environment.
+  # That is, the input is an AbstractValue possibly containing Vars, and the
+  # output is an aval possibly containing Vars.
+  if isinstance(a, DShapedArray) and any(isinstance(d, Var) for d in a.shape):
+    shape = [env[d] if isinstance(d, Var) else d for d in a.shape]
     return a.update(shape=tuple(shape))
   else:
     return a
