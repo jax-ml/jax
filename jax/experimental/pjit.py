@@ -369,6 +369,8 @@ class ParsedPartitionSpec:
 
   def __init__(self, user_spec, partitions, sync=SpecSync.IN_SYNC):
     self.unsafe_user_spec = user_spec
+    # None in partitions represents unconstrained dim.
+    # TODO(yashkatariya): May use a sentinel value.
     self.partitions = tuple(partitions)
     self.sync = sync
 
@@ -387,7 +389,7 @@ class ParsedPartitionSpec:
     if too_short > 0:
       parts += ((),) * too_short
     new_partitions = tuple_insert(parts, dim, val)
-    new_sync = SpecSync.DIM_PERMUTE if val == () else SpecSync.OUT_OF_SYNC
+    new_sync = SpecSync.DIM_PERMUTE if (val == () or val is None) else SpecSync.OUT_OF_SYNC
     return ParsedPartitionSpec(self.unsafe_user_spec, new_partitions, sync=new_sync)
 
   @classmethod
@@ -925,7 +927,8 @@ def _sharding_constraint_batcher(insert_axis, axis_size, axis_name, main_type, v
                                  axis_resources, resource_env):
   x, = vals_in
   d, = dims_in
-  new_parts = (axis_name,) if insert_axis else ()
+  # None means unconstrained in ParsedPartitionSpec
+  new_parts = (axis_name,) if insert_axis else None
   y = sharding_constraint_p.bind(
       x,
       axis_resources=axis_resources.insert_axis_partitions(d, new_parts),

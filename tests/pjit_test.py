@@ -385,7 +385,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(jax.vmap(f))(x)
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
-    self.assertEqual(constraint_eqn.params['axis_resources'].partitions, ((), ('x',)))
+    self.assertEqual(constraint_eqn.params['axis_resources'].partitions, (None, ('x',)))
     self.assertEqual(constraint_eqn.params['axis_resources'].sync, SpecSync.DIM_PERMUTE)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
