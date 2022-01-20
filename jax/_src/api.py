@@ -277,13 +277,16 @@ def jit(
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend: ``'cpu'``, ``'gpu'``, or
       ``'tpu'``.
-    donate_argnums: Specify which arguments are "donated" to the computation.
-      It is safe to donate arguments if you no longer need them once the
+    donate_argnums: Specify which argument buffers are "donated" to the computation.
+      It is safe to donate argument buffers if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
       buffers to reduce the amount of memory needed to perform a computation,
       for example recycling one of your input buffers to store a result. You
       should not reuse buffers that you donate to a computation, JAX will raise
-      an error if you try to. By default, no arguments are donated.
+      an error if you try to. By default, no argument buffers are donated.
+
+      For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+
     inline: Specify whether this function should be inlined into enclosing
       jaxprs (rather than being represented as an application of the xla_call
       primitive with its own subjaxpr). Default False.
@@ -1701,13 +1704,16 @@ def pmap(
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend. 'cpu', 'gpu', or 'tpu'.
     axis_size: Optional; the size of the mapped axis.
-    donate_argnums: Specify which arguments are "donated" to the computation.
-      It is safe to donate arguments if you no longer need them once the
+    donate_argnums: Specify which argument buffers are "donated" to the computation.
+      It is safe to donate argument buffers if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
       buffers to reduce the amount of memory needed to perform a computation,
       for example recycling one of your input buffers to store a result. You
       should not reuse buffers that you donate to a computation, JAX will raise
       an error if you try to.
+
+      For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+
     global_arg_shapes: Optional, must be set when using pmap(sharded_jit) and
       the partitioned values span multiple processes. The global cross-process
       per-replica shape of each argument, i.e. does not include the leading
