@@ -46,6 +46,7 @@ from jax._src.util import curry, unzip2, split_list, prod
 from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.lax.parallel import pgather
 from jax.interpreters import batching, pxla
+from jax.ad_checkpoint import checkpoint
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -616,6 +617,11 @@ class XMapTest(XMapTestCase):
         "Computation compiled for input types:\n.*float32.*\n"
         "called with:\n.*int32.*",
         lambda: f_exe(x_i32))
+
+  def testNewCheckpointError(self):
+    f = checkpoint(xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...]))
+    with self.assertRaisesRegex(NotImplementedError, 'xmap'):
+      jax.grad(f)(jnp.arange(3.))
 
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):

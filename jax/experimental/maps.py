@@ -1067,6 +1067,8 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   self.frame.eqns.append(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore
+pe.partial_eval_jaxpr_custom_rules[xmap_p] = \
+    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'xmap')
 
 
 @lu.transformation_with_aux

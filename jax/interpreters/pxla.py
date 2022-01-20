@@ -1535,6 +1535,8 @@ xla_pmap_p.def_impl(xla_pmap_impl)
 
 # Set param update handlers to update `donated_invars` just like xla_call_p
 pe.call_param_updaters[xla_pmap_p] = pe.call_param_updaters[xla.xla_call_p]
+pe.partial_eval_jaxpr_custom_rules[xla_pmap_p] = \
+    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'pmap')
 ad.call_param_updaters[xla_pmap_p] = ad.call_param_updaters[xla.xla_call_p]
 ad.call_transpose_param_updaters[xla_pmap_p] = \
     ad.call_transpose_param_updaters[xla.xla_call_p]

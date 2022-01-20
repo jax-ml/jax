@@ -617,7 +617,8 @@ xla.register_translation(while_p, _while_loop_translation_rule,
                          initial_style=True)
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
-pe.partial_eval_jaxpr_custom_rules[while_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
+pe.partial_eval_jaxpr_custom_rules[while_p] = \
+    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'while_loop')
 
 
 def _pred_bcast_select_mhlo(
@@ -1403,7 +1404,8 @@ pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.axis_primitive_batchers[cond_p] = _cond_batching_rule
 xla.register_translation(cond_p, _cond_translation_rule, initial_style=True)
 core.custom_typechecks[cond_p] = _cond_typecheck
-pe.partial_eval_jaxpr_custom_rules[cond_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
+pe.partial_eval_jaxpr_custom_rules[cond_p] = \
+    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'cond')
 
 if jax._src.lib._xla_extension_version < 51:
 
@@ -2225,7 +2227,8 @@ xla.register_translation(scan_p, xla.lower_fun(_scan_impl, new_style=True,
 batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
 masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
-pe.partial_eval_jaxpr_custom_rules[scan_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
+pe.partial_eval_jaxpr_custom_rules[scan_p] = \
+    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'scan')
 
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
@@ -2783,7 +2786,8 @@ xla.register_translation(
     initial_style=True)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
 batching.axis_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
-pe.partial_eval_jaxpr_custom_rules[linear_solve_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
+pe.partial_eval_jaxpr_custom_rules[linear_solve_p] = \
+    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'linear_solve')
 
 
 def _interleave(a, b, axis):
