@@ -622,6 +622,15 @@ class PJitTest(jtu.BufferDonationTestCase):
         "called with:\n.*int32.*",
         lambda: exe(x_i32, x_i32))
 
+  @jtu.with_mesh([('x', 2)])
+  def test_static_argnums(self):
+    @partial(pjit, in_axis_resources=None, out_axis_resources=None,
+             static_argnums=(1,))
+    def f(x, y):
+      return x + (3 if y == 'hi' else 4)
+
+    self.assertEqual(f(1, 'hi' ), 4)
+    self.assertEqual(f(1, 'bye'), 5)
 
 class GDAPjitTest(jtu.JaxTestCase):
 
