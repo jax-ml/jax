@@ -228,6 +228,8 @@ def pjit(fun: Callable,
     else:
       donated_invars = (False,) * len(args_flat)
 
+    _maybe_check_pjit_gda_mesh(args_flat, mesh)
+
     local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
     # TODO(yashkatariya): This is a hack. This should go away when avals have
     # is_global attribute.
@@ -1003,6 +1005,12 @@ def gda_mesh_axes_to_canonicalized_parsed_pspec(mesh_axes) -> CanonicalizedParse
     pspec = mesh_axes
   return CanonicalizedParsedPartitionSpec(ParsedPartitionSpec.from_user_input(
       pspec, arg_name='GDA mesh_axes'))
+
+def _maybe_check_pjit_gda_mesh(args, mesh):
+  for x in args:
+    if isinstance(x, GDA) and x._global_mesh != mesh:
+      raise ValueError("Pjit's mesh and GDA's mesh should be equal. Got Pjit "
+                       f"mesh: {mesh},\n GDA mesh: {x._global_mesh}")
 
 # -------------------- XLA OpSharding to PartitionSpec --------------------
 # Note that OpSharding is more expressive than PartitionSpecs, so it's not
