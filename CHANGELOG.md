@@ -11,6 +11,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.28 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.27...main).
+  * `jax.jit(f).lower(...).compiler_ir()` now defaults to the MHLO dialect if no
+    `dialect=` is passed.
   * The `jax.jit(f).lower(...).compiler_ir(dialect='mhlo')` now returns an MLIR
     `ir.Module` object instead of its string representation.
 

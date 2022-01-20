@@ -522,9 +522,9 @@ class Lowered:
         self.donate_argnums, self._no_kwargs)
 
   def compiler_ir(self, dialect: Optional[str] = None):
-    if dialect == "mhlo":
+    if dialect is None or dialect == "mhlo":
       return self._lowering.mhlo()
-    elif dialect == "hlo" or dialect is None:
+    elif dialect == "hlo":
       return self._lowering.hlo()
     else:
       raise ValueError(f"Unknown dialect {dialect}")
