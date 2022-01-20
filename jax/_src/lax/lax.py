@@ -701,7 +701,7 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   Args:
     operand: an array
     shape: the shape of the target array
-    broadcast_dimensions: which dimension in the target shape each dimension
+    broadcast_dimensions: to which dimension in the target shape each dimension
       of the operand shape corresponds to
 
   Returns:
@@ -2934,7 +2934,7 @@ mlir.register_lowering(squeeze_p, _squeeze_lower)
 
 
 
-def _shape_as_value(shape):
+def _shape_as_value(shape: core.Shape):
   """Converts a shape that may contain Poly values into a JAX value."""
   if len(shape) == 0:
     return full((0,), np.array(0, np.int64))
