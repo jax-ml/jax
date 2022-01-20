@@ -361,6 +361,13 @@ JAX_REDUCER_INITIAL_RECORDS = [
     op_record("max", 1, all_dtypes, all_shapes, jtu.rand_default, []),
     op_record("min", 1, all_dtypes, all_shapes, jtu.rand_default, []),
 ]
+if numpy_version >= (1, 22):  # initial & where keywords added in numpy 1.22
+  JAX_REDUCER_INITIAL_RECORDS += [
+      op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_small_positive, []),
+      op_record("nansum", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+      op_record("nanmax", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+      op_record("nanmin", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+  ]
 
 JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
     op_record("all", 1, bool_dtypes, all_shapes, jtu.rand_some_zero, []),
@@ -372,6 +379,15 @@ JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
     op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True),
 ]
+if numpy_version >= (1, 22):  # where keyword added in numpy 1.22
+  JAX_REDUCER_WHERE_NO_INITIAL_RECORDS += [
+      op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+                inexact=True),
+      op_record("nanvar", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+                inexact=True),
+      op_record("nanstd", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+                inexact=True),
+  ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("all", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
@@ -806,7 +822,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
     @jtu.ignore_warning(category=RuntimeWarning,
-                        message="All-NaN slice encountered.*")
+                        message="All-NaN (slice|axis) encountered.*")
     def np_fun(x):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
@@ -847,7 +863,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    tol = {jnp.bfloat16: 3E-2}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -6042,12 +6059,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
-      'nanmax': ['initial', 'where'],
-      'nanmean': ['where'],
-      'nanmin': ['initial', 'where'],
-      'nanprod': ['initial', 'where'],
-      'nanstd': ['where'],
-      'nanvar': ['where'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'tri': ['like'],
