@@ -4150,9 +4150,17 @@ def _rng_bit_generator_translation_rule(
   # sidestep issues with the jax_enable_x64=False configuration. As a result, we
   # need to convert u32[4] -> u64[2] here in the translation rule. However, we
   # also polymorphically allow a u64[2] for backward compatibility.
+  #
+  # Separately, xops.RngBitGenerator doesn't support generating u8 or
+  # u16, so we request u32 and truncate in that case.
   assert ((key_shape == (4,) and key_dtype == np.dtype('uint32')) or
           (key_shape == (2,) and key_dtype == np.dtype('uint64'))), (key_shape, key_dtype)
-  xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
+  dtype = np.dtype(dtype)
+  if dtype == np.dtype('uint32') or dtype == np.dtype('uint64'):
+    rbg_dtype = dtype
+  else:
+    rbg_dtype = np.dtype('uint32')
+  xla_shape = xc.Shape.array_shape(rbg_dtype, shape)
   if key_dtype == np.dtype('uint32'):
     u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
     key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
@@ -4161,6 +4169,9 @@ def _rng_bit_generator_translation_rule(
   if key_dtype == np.dtype('uint32'):
     u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
     out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
+  if rbg_dtype != dtype:
+    out_vals = xops.ConvertElementType(
+      out_vals, xla.dtype_to_primitive_type(dtype))
   return [out_key, out_vals]
 
 
@@ -4199,6 +4210,10 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
   friendly API.
   """
   shape = jax.core.canonicalize_shape(shape)
+  dtype = dtypes.canonicalize_dtype(dtype)
+  if np.dtype(dtype) not in {np.dtype('uint8'), np.dtype('uint16'),
+                             np.dtype('uint32'), np.dtype('uint64')}:
+    raise TypeError(f'rng_bit_generator: unsupported dtype {dtype}')
   return tuple(
       rng_bit_generator_p.bind(
           key, shape=shape, dtype=dtype, algorithm=algorithm))

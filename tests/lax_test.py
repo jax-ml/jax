@@ -2501,6 +2501,18 @@ class LaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(out[0], out_jit[0])
     self.assertArraysEqual(out[1], out_jit[1])
 
+  def testRngBitGenerator2(self):
+    def f(key):
+      return lax.rng_bit_generator(key, shape=(5, 7))
+
+    key = np.array((1, 2, 3, 4)).astype(np.uint32)
+    out1 = f(key)
+    out2 = jax.jit(f)(key)
+    self.assertEqual(out1[0].shape, (4,))
+    self.assertEqual(out1[1].shape, (5, 7))
+    self.assertArraysEqual(out1[0], out2[0])
+    self.assertArraysEqual(out1[1], out2[1])
+
   @jtu.skip_on_devices("tpu")
   def testRngBitGeneratorReturnedKey(self):
     # This test ensures that the key bit-packing/unpacking operations used in

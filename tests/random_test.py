@@ -51,6 +51,11 @@ def _prng_key_as_array(key):
   return key.unsafe_raw_array() if config.jax_enable_custom_prng else key
 
 
+PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
+              ('rbg', prng.rbg_prng_impl),
+              ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]
+
+
 @jtu.with_config(jax_numpy_rank_promotion="raise")
 class PrngTest(jtu.JaxTestCase):
 
@@ -127,6 +132,35 @@ class PrngTest(jtu.JaxTestCase):
     else:
       expected64 = np.array([676898860, 3164047411, 4010691890], dtype=np.uint32)
     self.assertArraysEqual(bits64, expected64)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_" + name, "prng_name": name}
+      for name, _ in PRNG_IMPLS))
+  def testRngRandomBitsShapeDtype(self, prng_name):
+    # Like testRngRandomBits, but only meant to exercise random_bits
+    # on every PRNG implementation. Instead of values, only checks
+    # that shapes/dtypes are as expected.
+
+    with jax.default_prng_impl(prng_name):
+      key = random.PRNGKey(1701)
+
+      bits8 = jax._src.random._random_bits(key, 8, (3,))
+      self.assertEqual(bits8.shape, (3,))
+      self.assertEqual(bits8.dtype, np.dtype('uint8'))
+
+      bits16 = jax._src.random._random_bits(key, 16, (3,))
+      self.assertEqual(bits16.shape, (3,))
+      self.assertEqual(bits16.dtype, np.dtype('uint16'))
+
+      bits32 = jax._src.random._random_bits(key, 32, (3,))
+      self.assertEqual(bits32.shape, (3,))
+      self.assertEqual(bits32.dtype, np.dtype('uint32'))
+
+      with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
+        bits64 = jax._src.random._random_bits(key, 64, (3,))
+      expected_dtype = np.dtype('uint64' if config.x64_enabled else 'uint32')
+      self.assertEqual(bits64.shape, (3,))
+      self.assertEqual(bits64.dtype, expected_dtype)
 
   def testRngRandomBitsViewProperty(self):
     # TODO: add 64-bit if it ever supports this property.
@@ -209,9 +243,7 @@ class PrngTest(jtu.JaxTestCase):
   def test_default_prng_selection(self):
     if not config.jax_enable_custom_prng:
       self.skipTest("test requires config.jax_enable_custom_prng")
-    for name, impl in [('threefry2x32', prng.threefry_prng_impl),
-                       ('rbg', prng.rbg_prng_impl),
-                       ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]:
+    for name, impl in PRNG_IMPLS:
       with jax.default_prng_impl(name):
         self.assertIs(random.default_prng_impl(), impl)
         key = random.PRNGKey(42)
@@ -223,9 +255,7 @@ class PrngTest(jtu.JaxTestCase):
   def test_default_prng_selection_without_custom_prng_mode(self):
     if config.jax_enable_custom_prng:
       self.skipTest("test requires that config.jax_enable_custom_prng is False")
-    for name, impl in [('threefry2x32', prng.threefry_prng_impl),
-                       ('rbg', prng.rbg_prng_impl),
-                       ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]:
+    for name, impl in PRNG_IMPLS:
       with jax.default_prng_impl(name):
         self.assertIs(random.default_prng_impl(), impl)
         key = random.PRNGKey(42)
@@ -1333,15 +1363,6 @@ class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
     keys = jnp.reshape(keys, (2, 2))
     keys = jnp.ravel(keys)
     self.assertEqual(keys.shape, (4,))
-
-def _sampler_unimplemented_with_rbg(*args, **kwargs):
-  # TODO(mattjj): enable these tests if/when RngBitGenerator supports them
-  raise SkipTest('8- and 16-bit types not supported with RBG PRNG')
-
-for attr in dir(LaxRandomWithRBGPRNGTest):
-  if 'int8' in attr or 'int16' in attr or 'float16' in attr:
-    setattr(LaxRandomWithRBGPRNGTest, attr, _sampler_unimplemented_with_rbg)
-    setattr(LaxRandomWithUnsafeRBGPRNGTest, attr, _sampler_unimplemented_with_rbg)
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
