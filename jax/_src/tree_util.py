@@ -16,8 +16,8 @@ import collections
 import functools
 from functools import partial
 import operator as op
-from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, Type,
-                    TypeVar, overload, TYPE_CHECKING)
+from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, List,
+                    Type, TypeVar, overload, TYPE_CHECKING)
 
 from jax._src.lib import pytree
 
@@ -335,3 +335,13 @@ register_pytree_node(
     lambda partial_: ((partial_.args, partial_.keywords), partial_.func),
     lambda func, xs: Partial(func, *xs[0], **xs[1]),  # type: ignore[index]
 )
+
+
+def broadcast_prefix(prefix_tree: Any, full_tree: Any,
+                     is_leaf: Optional[Callable[[Any], bool]] = None
+                     ) -> List[Any]:
+  result = []
+  num_leaves = lambda t: tree_structure(t).num_leaves
+  add_leaves = lambda x, subtree: result.extend([x] * num_leaves(subtree))
+  tree_map(add_leaves, prefix_tree, full_tree, is_leaf=is_leaf)
+  return result

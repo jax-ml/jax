@@ -664,9 +664,18 @@ enable_mlir = config.define_bool_state(
     help=('Enables an experimental code path that compiles JAX programs via '
           'emitting the MLIR MHLO dialect.'))
 
+
 # This flag is temporary and for internal use.
 # TODO(tianjianlu): Removes after providing the information in BCOO meta data.
 bcoo_cusparse_lowering = config.define_bool_state(
     name='jax_bcoo_cusparse_lowering',
     default=False,
     help=('Enables lowering BCOO ops to cuSparse.'))
+
+# TODO(mattjj): remove this flag when we ensure we only succeed at trace-staging
+# if the intended backend can handle lowering the result
+config.define_bool_state(
+    name='jax_dynamic_shapes',
+    default=False,
+    help=('Enables experimental features for staging out computations with '
+          'dynamic shapes.'))

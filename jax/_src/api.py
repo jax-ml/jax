@@ -32,7 +32,7 @@ import threading
 import weakref
 import types
 from typing import (Any, Callable, Iterable, NamedTuple, Mapping, Optional,
-                    Sequence, Tuple, TypeVar, Union, overload)
+                    Sequence, Tuple, TypeVar, Union, overload, Dict, Hashable)
 from warnings import warn
 
 import numpy as np
@@ -53,7 +53,8 @@ from jax._src.traceback_util import api_boundary
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
                            tree_multimap, treedef_is_leaf, treedef_children,
-                           Partial, PyTreeDef)
+                           Partial, PyTreeDef, all_leaves)
+from jax._src.tree_util import broadcast_prefix
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                            extend_name_stack, wrap_name, cache, wraps,
                            HashableFunction)
@@ -2626,6 +2627,7 @@ def make_jaxpr(fun: Callable,
                static_argnums: Union[int, Iterable[int]] = (),
                axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                return_shape: bool = False,
+               abstracted_axes: Optional[Any] = None,
                ) -> Callable[..., core.ClosedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
@@ -2686,20 +2688,44 @@ def make_jaxpr(fun: Callable,
   _check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)
 
+  def abstractify(args, kwargs):
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    if abstracted_axes is None:
+      return map(shaped_abstractify, flat_args), in_tree, [True] * len(flat_args)
+    else:
+      if kwargs: raise NotImplementedError
+      ax_leaf = lambda l: (isinstance(l, dict) and all_leaves(l.values()) or
+                           isinstance(l, tuple) and all_leaves(l))
+      axes_specs = broadcast_prefix(abstracted_axes, args, ax_leaf)
+      sizes: Dict[Hashable, int] = {}
+      env: Dict[Hashable, core.AbstractValue] = {}
+      def make_aval(arg, spec):
+        if isinstance(spec, tuple):
+            spec = dict(zip(range(len(arg.shape)), spec))
+        if not spec: return shaped_abstractify(arg)
+        assert all(arg.shape[i] == sizes.setdefault(name, arg.shape[i])
+                   for i, name in spec.items())
+        shape = [env.setdefault(spec[i], ShapedArray((), dtypes.dtype('int32')))
+                 if i in spec else d for i, d in enumerate(arg.shape)]
+        return core.DShapedArray(tuple(shape), arg.dtype, False)
+      in_avals = map(make_aval, flat_args, axes_specs)
+      keep_inputs = [False] * len(env) + [True] * len(flat_args)
+      return [*env.values(), *in_avals], in_tree, keep_inputs
+
   @wraps(fun)
   @api_boundary
   def jaxpr_maker(*args, **kwargs):
-    wrapped = lu.wrap_init(fun)
+    f = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      wrapped, args = argnums_partial(wrapped, dyn_argnums, args)
-    jax_args, in_tree = tree_flatten((args, kwargs))
-    jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    in_avals = map(shaped_abstractify, jax_args)
+      f, args = argnums_partial(f, dyn_argnums, args)
+    in_avals, in_tree, keep_inputs = abstractify(args, kwargs)
+    f, out_tree = flatten_fun(f, in_tree)
     with ExitStack() as stack:
       for axis_name, size in axis_env or []:
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
-      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, in_avals)
+      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
+          f, in_avals, keep_inputs=keep_inputs)
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     if return_shape:
       out_shapes_flat = [

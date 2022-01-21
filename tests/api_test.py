@@ -7383,5 +7383,410 @@ class CleanupTest(jtu.JaxTestCase):
     assert core.trace_state_clean()
 
 
+@jtu.with_config(jax_dynamic_shapes=True)
+class DynamicShapeTest(jtu.JaxTestCase):
+  def test_basic_staging(self):
+    def f(x, y):
+      return x
+
+    x = jnp.arange(3)
+    y = jnp.ones((3, 4))
+    jaxpr = jax.make_jaxpr(f, abstracted_axes={0: 'n'})(x, y)
+
+    # { lambda ; a:i32[] b:i32[a] c:f32[a,4]. let  in (b,) }
+    self.assertLen(jaxpr.in_avals, 3)
+    self.assertLen(jaxpr.in_avals[0].shape, 0)
+    self.assertLen(jaxpr.in_avals[1].shape, 1)
+    self.assertLen(jaxpr.in_avals[2].shape, 2)
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[1].shape[0])
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[2].shape[0])
+    self.assertLen(jaxpr.out_avals, 1)
+    self.assertLen(jaxpr.out_avals[0].shape, 1)
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.out_avals[0].shape[0])
+
+  def test_basic_staging_repeated(self):
+    def f(x, y):
+      return x
+
+    x = jnp.arange(3)
+    y = jnp.ones((3, 3))
+    jaxpr = jax.make_jaxpr(f, abstracted_axes=(('n',), ('n', 'n')))(x, y)
+
+    # { lambda ; a:i32[] b:i32[a] c:f32[a,a]. let  in (b,) }
+    self.assertLen(jaxpr.in_avals, 3)
+    self.assertLen(jaxpr.in_avals[0].shape, 0)
+    self.assertLen(jaxpr.in_avals[1].shape, 1)
+    self.assertLen(jaxpr.in_avals[2].shape, 2)
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[1].shape[0])
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[2].shape[0])
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[2].shape[1])
+    self.assertLen(jaxpr.out_avals, 1)
+    self.assertLen(jaxpr.out_avals[0].shape, 1)
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.out_avals[0].shape[0])
+
+  def test_basic_staging_multiple_shape_vars(self):
+    def f(x, y):
+      return x
+
+    x = jnp.arange(3)
+    y = jnp.ones((4, 3))
+    jaxpr = jax.make_jaxpr(f, abstracted_axes=(('n',), ('m', 'n')))(x, y)
+
+    # { lambda ; a:i32[] b: i32[] c:i32[a] d:f32[b,a]. let  in (c,) }
+    self.assertLen(jaxpr.in_avals, 4)
+    self.assertLen(jaxpr.in_avals[0].shape, 0)
+    self.assertLen(jaxpr.in_avals[1].shape, 0)
+    self.assertLen(jaxpr.in_avals[2].shape, 1)
+    self.assertLen(jaxpr.in_avals[3].shape, 2)
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[2].shape[0])
+    self.assertIs(jaxpr.jaxpr.invars[1], jaxpr.in_avals[3].shape[0])
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[3].shape[1])
+    self.assertLen(jaxpr.out_avals, 1)
+    self.assertLen(jaxpr.out_avals[0].shape, 1)
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.out_avals[0].shape[0])
+
+  def test_basic_add(self):
+    def f(x, y):
+      return x + y
+
+    x = jnp.arange(3)
+    y = jnp.arange(1, 4)
+    jaxpr = jax.make_jaxpr(f, abstracted_axes={0: 'n'})(x, y)
+
+    # { lambda ; a:i32[] b:i32[a] c:i32[a]. let d:i32[a] = add b c in (d,) }
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertLen(jaxpr.out_avals, 1)
+    self.assertLen(jaxpr.out_avals[0].shape, 1)
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.out_avals[0].shape[0])
+
+  def test_basic_jnp(self):
+    def f(x):
+      y = x + jnp.sin(x)
+      return y.sum()
+
+    x = jnp.ones((3, 4))
+    jaxpr = jax.make_jaxpr(f, abstracted_axes={0: 'n'})(x)
+
+    # { lambda ; a:i32[] b:f32[a,4]. let
+    #     c:f32[a,4] = sin b
+    #     d:f32[a,4] = add b c
+    #     e:f32[] = reduce_sum[axes=(0, 1)] d
+    #   in (e,) }
+    self.assertLen(jaxpr.in_avals, 2)
+    self.assertLen(jaxpr.eqns, 3)  # sin, add, and reduce_sum
+    self.assertLen(jaxpr.out_avals, 1)
+    self.assertLen(jaxpr.out_avals[0].shape, 0)
+
+  def test_shape_errors_var_and_lit(self):
+    def f(x, y):
+      return jnp.sin(x) + y
+
+    x = jnp.ones(3)
+    y = jnp.ones(3)
+    # TODO(mattjj,dougalm): improve error message
+    with self.assertRaisesRegex(TypeError, 'Shapes must be 1D sequences'):
+      _ = jax.make_jaxpr(f, abstracted_axes=({0: 'n'}, {}))(x, y)
+
+  def test_shape_errors_distinct_vars(self):
+    def f(x, y):
+      return jnp.sin(x) + y
+
+    x = jnp.ones(3)
+    y = jnp.ones(3)
+    # TODO(mattjj,dougalm): improve error message
+    with self.assertRaisesRegex(TypeError, 'Shapes must be 1D sequences'):
+      _ = jax.make_jaxpr(f, abstracted_axes=({0: 'n'}, {0: 'm'}))(x, y)
+
+  def test_basic_dot(self):
+    A = jnp.ones((3, 4))
+    x = jnp.ones(4)
+    jaxpr = jax.make_jaxpr(jnp.dot, abstracted_axes=(('m', 'n'), ('n',)))(A, x)
+
+    # { lambda ; a:i32[] b:i32[] c:f32[a,b] d:f32[b]. let
+    #     e:f32[a] = dot_general[dimension_numbers=(((1,), (0,)), ((), ()))] c d
+    #   in (e,) }
+    self.assertLen(jaxpr.in_avals, 4)
+    self.assertLen(jaxpr.in_avals[0].shape, 0)  # two shape vars
+    self.assertLen(jaxpr.in_avals[1].shape, 0)
+    self.assertLen(jaxpr.in_avals[2].shape, 2)  # one matrix
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[2].shape[0])
+    self.assertIs(jaxpr.jaxpr.invars[1], jaxpr.in_avals[2].shape[1])
+    self.assertLen(jaxpr.in_avals[3].shape, 1)  # one vector
+    self.assertIs(jaxpr.jaxpr.invars[1], jaxpr.in_avals[3].shape[0])
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertLen(jaxpr.out_avals, 1)
+    self.assertLen(jaxpr.out_avals[0].shape, 1)  # output vector
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.out_avals[0].shape[0])
+
+  def test_basic_broadcast(self):
+    def f(x, n):
+      return lax.broadcast(x, (n,))
+
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(4), 3)
+
+    # { lambda ; a:f32[4] b:i32[]. let
+    #     c:f32[b,4] = broadcast_in_dim[bcast_dims=(1,) shape=(None, 4)] a b
+    #   in (c,) }
+    self.assertLen(jaxpr.in_avals, 2)
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertLen(jaxpr.out_avals, 1)
+    self.assertLen(jaxpr.out_avals[0].shape, 2)
+    self.assertIs(jaxpr.jaxpr.invars[1], jaxpr.out_avals[0].shape[0])
+    self.assertEqual(4, jaxpr.out_avals[0].shape[1])
+
+  def test_basic_batchpoly_neuralnet(self):
+    def predict(params, inputs):
+      for W, b in params:
+        outputs = jnp.dot(inputs, W) + b
+        inputs = jnp.tanh(outputs)
+      return outputs
+
+    def loss(params, batch):
+      inputs, targets = batch
+      preds = predict(params, inputs)
+      return jnp.sum((preds - targets) ** 2)
+
+    sizes = [784, 128, 128, 10]
+    params = [(jnp.ones((input_dim, output_dim)), jnp.ones(output_dim))
+              for input_dim, output_dim in zip(sizes[:-1], sizes[1:])]
+    batch = (jnp.ones((32, 784)), jnp.ones((32, 10)))
+
+    # Mainly we want to test that make_jaxpr doesn't crash here.
+    jaxpr = jax.make_jaxpr(loss, abstracted_axes=({}, {0: 'n'}))(params, batch)
+    self.assertLen(jaxpr.in_avals, 9)
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[-2].shape[0])
+    self.assertIs(jaxpr.jaxpr.invars[0], jaxpr.in_avals[-1].shape[0])
+    self.assertLen(jaxpr.out_avals, 1)
+    self.assertLen(jaxpr.out_avals[0].shape, 0)
+
+  def test_closing_over_polymorphic_shape(self):
+    def f(n):
+      x = jnp.zeros(n)
+      return jax.jit(lambda: x)()
+
+    jaxpr = jax.make_jaxpr(f)(3)
+
+    # { lambda ; a:i32[]. let
+    #     b:f32[a] = bcast[dims=() shape=(None,)] 0.0 a
+    #     c:f32[a] = xla_call[
+    #       call_jaxpr={ lambda ; d:i32[] e:f32[d]. let  in (e,) }
+    #       name=<lambda>
+    #     ] a b
+    #   in (c,) }
+    a, = jaxpr.jaxpr.invars
+    c, = jaxpr.jaxpr.outvars
+    self.assertLen(c.aval.shape, 1)
+    self.assertIs(a, c.aval.shape[0])
+
+  def test_closing_over_dynamic_shape(self):
+    def f(n):
+      m = 2 * n
+      x = jnp.zeros(m)
+      return jax.jit(lambda: x)()
+
+    # { lambda ; a:i32[]. let
+    #     b:i32[] = mul a 2
+    #     c:f32[b] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] 0.0 b
+    #     d:f32[b] = xla_call[
+    #       call_jaxpr={ lambda ; e:i32[] f:f32[e]. let  in (f,) }
+    #       name=<lambda>
+    #     ] b c
+    #   in (d,) }
+    jaxpr = jax.make_jaxpr(f)(3)
+    b, = jaxpr.jaxpr.eqns[0].outvars
+    c, = jaxpr.jaxpr.eqns[1].outvars
+    d, = jaxpr.jaxpr.eqns[2].outvars
+    self.assertLen(c.aval.shape, 1)
+    self.assertIs(b, c.aval.shape[0])
+    self.assertLen(d.aval.shape, 1)
+    self.assertIs(b, d.aval.shape[0])
+
+  def test_closing_over_polymorphic_shape_and_adding(self):
+    def f(n):
+      x = jnp.zeros(n)
+      y = jnp.zeros(n)
+
+      @jax.jit
+      def g():
+        return x + y
+      return g()
+
+    # { lambda ; a:i32[]. let
+    #     b:f32[a] = bcast[broadcast_dimensions=() shape=(None,)] 0.0 a
+    #     c:f32[a] = bcast[broadcast_dimensions=() shape=(None,)] 0.0 a
+    #     d:f32[a] = xla_call[
+    #       call_jaxpr={ lambda ; e:i32[] f:f32[e] g:f32[e]. let
+    #           h:f32[e] = add f g
+    #         in (h,) }
+    #       name=g
+    #     ] a b c
+    #   in (d,) }
+    jaxpr = jax.make_jaxpr(f)(3)  # doesn't fail on the addition!
+    a, = jaxpr.jaxpr.invars
+    b, = jaxpr.jaxpr.eqns[0].outvars
+    c, = jaxpr.jaxpr.eqns[1].outvars
+    d, = jaxpr.jaxpr.eqns[2].outvars
+    self.assertIs(a, b.aval.shape[0])
+    self.assertIs(a, c.aval.shape[0])
+    self.assertIs(a, d.aval.shape[0])
+
+  def test_passing_in_equal_polymorphic_shapes_and_adding(self):
+    def f(n):
+      x = jnp.zeros(n)
+
+      @jax.jit
+      def g(x, y):
+        return x + y
+      return g(x, x)
+
+    # { lambda ; a:i32[]. let
+    #     b:f32[a] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] 0.0 a
+    #     c:f32[a] = xla_call[
+    #       call_jaxpr={ lambda ; d:i32[] e:f32[d] f:f32[d]. let
+    #           g:f32[d] = add e f
+    #         in (g,) }
+    #       name=g
+    #     ] a b b
+    #   in (c,) }
+    jaxpr = jax.make_jaxpr(f)(3)
+    a, = jaxpr.jaxpr.invars
+    c, = jaxpr.jaxpr.outvars
+    self.assertLen(c.aval.shape, 1)
+    self.assertIs(a, c.aval.shape[0])
+
+  def test_closing_over_and_passing_arg_addition(self):
+    # TODO(mattjj,dougalm): currently fails to notice equal shapes, fix!
+    def f(n):
+      x = jnp.zeros(n)
+
+      @jax.jit
+      def g(y):
+        return x + y
+      return g(x)
+
+    # doesn't work yet: shape error b/c we don't notice x and y same
+    raise unittest.SkipTest()
+    _ = jax.make_jaxpr(f)(3)
+
+  def test_closing_over_and_passing_size_addition(self):
+    # TODO(mattjj,dougalm): currently fails to notice equal shapes, fix!
+    def f(n):
+      x = jnp.zeros(n)
+
+      @jax.jit
+      def g(m):
+        return jnp.zeros(m) + x
+      return g(n)
+
+    # doesn't work yet: shape error b/c we don't notice x and jnp.zeros(m) same
+    raise unittest.SkipTest()
+    _ = jax.make_jaxpr(f)(3)
+
+  def test_closing_over_and_broadcasting_polymorphic_shape(self):
+    def f(n):
+      x = jnp.zeros(n)
+      @jax.jit
+      def g():
+        return jnp.zeros(n) + x
+      return g()
+
+    # { lambda ; a:i32[]. let
+    #     b:f32[a] = bcast[broadcast_dimensions=() shape=(None,)] 0.0 a
+    #     c:f32[a] = xla_call[
+    #       call_jaxpr={ lambda ; d:i32[] e:f32[d]. let
+    #           f:f32[d] = bcast[broadcast_dimensions=() shape=(None,)] 0.0 d
+    #           g:f32[d] = add f e
+    #         in (g,) }
+    #       name=g
+    #     ] a b
+    #   in (c,) }
+    # TODO(mattjj,dougalm): support dynamic shapes in type checker
+    with jax.enable_checks(False):
+      jaxpr = jax.make_jaxpr(f)(3)
+
+    a, = jaxpr.jaxpr.invars
+    c, = jaxpr.jaxpr.outvars
+    self.assertLen(c.aval.shape, 1)
+    self.assertIs(a, c.aval.shape[0])
+
+  def test_closing_over_repeated_shapes(self):
+    def zeros(shape):
+      if not isinstance(shape, (tuple, list)):
+        shape = shape,
+      return lax.broadcast(0., shape)
+
+    def f(n):
+      m = 2 * n
+      x = zeros((m, m))
+      return jax.jit(lambda: x.sum(0))()
+
+    # { lambda ; a:i32[]. let
+    #     b:i32[] = mul a 2
+    #     c:f32[b,b] = broadcast_in_dim[broadcast_dimensions=() shape=(None, None)] 0.0
+    #       b b
+    #     d:f32[b] = xla_call[
+    #       call_jaxpr={ lambda ; e:i32[] f:f32[e,e]. let
+    #           g:f32[e] = reduce_sum[axes=(0,)] f
+    #         in (g,) }
+    #       name=<lambda>
+    #     ] b c
+    #   in (d,) }
+    jaxpr = jax.make_jaxpr(f)(3)
+    a, = jaxpr.jaxpr.invars
+    b, = jaxpr.jaxpr.eqns[0].outvars
+    c, = jaxpr.jaxpr.eqns[1].outvars
+    d, = jaxpr.jaxpr.eqns[2].outvars
+    b_, c_ = jaxpr.jaxpr.eqns[2].invars
+    self.assertLen(c.aval.shape, 2)
+    self.assertIs(c.aval.shape[0], b)
+    self.assertIs(c.aval.shape[1], b)
+    self.assertIs(b, b_)
+    self.assertIs(c, c_)
+    self.assertLen(d.aval.shape, 1)
+    self.assertIs(d.aval.shape[0], b)
+
+  def test_staging_repeated_nested(self):
+    def zeros(shape):
+      if not isinstance(shape, (tuple, list)):
+        shape = shape,
+      return lax.broadcast(0., shape)
+
+    def f(n):
+      m = 2 * n
+      x = zeros((m, n))
+      y = zeros(m)
+      return jax.jit(lambda x, y: x.sum(1) + y)(x, y)
+
+    # { lambda ; a:i32[]. let
+    #     b:i32[] = mul a 2
+    #     c:f32[b,a] = broadcast_in_dim[broadcast_dimensions=() shape=(None, None)] 0.0
+    #       b a
+    #     d:f32[b] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] 1.0 b
+    #     e:f32[b] = xla_call[
+    #       call_jaxpr={ lambda ; f:i32[] g:i32[] h:f32[f,g] i:f32[f]. let
+    #           j:f32[f] = reduce_sum[axes=(1,)] h
+    #           k:f32[f] = add j i
+    #         in (k,) }
+    #       name=<lambda>
+    #     ] b a c d
+    #   in (e,) }
+    jaxpr = jax.make_jaxpr(f)(3)
+    a, = jaxpr.jaxpr.invars
+    b, = jaxpr.jaxpr.eqns[0].outvars
+    c, = jaxpr.jaxpr.eqns[1].outvars
+    d, = jaxpr.jaxpr.eqns[2].outvars
+    e, = jaxpr.jaxpr.eqns[3].outvars
+    b_, a_, c_, d_ = jaxpr.jaxpr.eqns[3].invars
+    self.assertLen(c.aval.shape, 2)
+    self.assertIs(c.aval.shape[0], b)
+    self.assertIs(c.aval.shape[1], a)
+    self.assertLen(e.aval.shape, 1)
+    self.assertIs(e.aval.shape[0], b)
+    self.assertIs(a, a_)
+    self.assertIs(b, b_)
+    self.assertIs(c, c_)
+    self.assertIs(d, d_)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

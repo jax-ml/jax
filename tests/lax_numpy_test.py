@@ -5735,7 +5735,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertRaisesRegex(
         TypeError,
         r"Shapes must be 1D sequences of concrete values of integer type.*\n"
-        "If using `jit`, try using `static_argnums` or applying `jit` to smaller subfunctions.",
+        "If using `jit`, try using `static_argnums` or applying `jit` to "
+        "smaller subfunctions.",
         lambda: jax.jit(jnp.zeros)(2))
 
   def testTraceMethod(self):

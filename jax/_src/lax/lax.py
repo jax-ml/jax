@@ -18,7 +18,8 @@ import functools
 from functools import partial
 import itertools
 import operator
-from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar, Union
+from typing import (Any, Callable, Optional, Sequence, Tuple, List, TypeVar,
+                    Union)
 import warnings
 
 import numpy as np
@@ -33,6 +34,7 @@ from jax._src import dispatch
 from jax import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util
+from jax._src import source_info_util
 from jax._src.config import config
 from jax.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                       raise_to_shaped, abstract_token, canonicalize_shape)
@@ -97,11 +99,28 @@ def _try_broadcast_shapes(
 
   return tuple(result_shape)
 
-@cache()
-def broadcast_shapes(*shapes: Tuple[int, ...]) -> Tuple[int, ...]:
+def broadcast_shapes(*shapes: Tuple[Union[int, core.Tracer], ...]
+                     ) -> Tuple[Union[int, core.Tracer], ...]:
   """Returns the shape that results from NumPy broadcasting of `shapes`."""
-  if len(shapes) == 1:
-    return shapes[0]
+  # NOTE: We have both cached and uncached versions to handle Tracers in shapes.
+  try:
+    return _broadcast_shapes_cached(*shapes)
+  except:
+    return _broadcast_shapes_uncached(*shapes)
+
+@cache()
+def _broadcast_shapes_cached(*shapes: Tuple[int, ...]) -> Tuple[int, ...]:
+  return _broadcast_shapes_uncached(*shapes)
+
+def _broadcast_shapes_uncached(*shapes):
+  fst, *rst = shapes
+  if not rst: return fst
+
+  # First check if we need only rank promotion (and not singleton-broadcasting).
+  try: return _reduce(_broadcast_ranks, rst, fst)
+  except ValueError: pass
+
+  # Next try singleton-broadcasting, padding out ranks using singletons.
   ndim = _max(len(shape) for shape in shapes)
   shape_list = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
   result_shape = _try_broadcast_shapes(shape_list)
@@ -109,6 +128,14 @@ def broadcast_shapes(*shapes: Tuple[int, ...]) -> Tuple[int, ...]:
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(shape_list)))
   return result_shape
+
+def _broadcast_ranks(s1, s2):
+  if len(s1) > len(s2):
+    s1, s2 = s2, s1
+  assert len(s1) <= len(s2)
+  s1_ = s2[len(s2) - len(s1):]
+  if core.symbolic_equal_shape(s1_, s1): return s2
+  else: raise ValueError
 
 def _identity(x): return x
 
@@ -471,6 +498,7 @@ def _convert_element_type(operand: Array, new_dtype: Optional[DType] = None,
   # an overflow error.
   if type(operand) is int:
     operand = np.asarray(operand, new_dtype)
+    old_weak_type = False
 
   if ((old_dtype, old_weak_type) == (new_dtype, new_weak_type)
       and isinstance(operand, (core.Tracer, device_array.DeviceArray))):
@@ -697,8 +725,16 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
       and isinstance(operand, (device_array.DeviceArray, core.Tracer))):
     return operand
+  if config.jax_dynamic_shapes:
+    # We must gate this behavior under a flag because otherwise the errors
+    # raised are different (and have worse source provenance information).
+    dyn_shape = [d for d in shape if isinstance(d, core.Tracer)]
+    shape_ = [d if not isinstance(d, core.Tracer) else None for d in shape]
+  else:
+    dyn_shape = []
+    shape_ = shape  # type: ignore
   return broadcast_in_dim_p.bind(
-      operand, shape=tuple(shape),
+      operand, *dyn_shape, shape=tuple(shape_),
       broadcast_dimensions=tuple(broadcast_dimensions))
 
 def broadcast_to_rank(x: Array, rank: int) -> Array:
@@ -2350,14 +2386,14 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
     msg = ("dot_general requires rhs batch dimensions to be disjoint from "
            "contracting dimensions, got rhs_batch {} and rhs_contracting {}.")
     raise TypeError(msg.format(rhs_batch, rhs_contracting))
-  lhs_batch_shape = np.take(lhs.shape, lhs_batch)
-  rhs_batch_shape = np.take(rhs.shape, rhs_batch)
+  lhs_batch_shape = tuple(lhs.shape[i] for i in lhs_batch)
+  rhs_batch_shape = tuple(rhs.shape[i] for i in rhs_batch)
   if not core.symbolic_equal_shape(lhs_batch_shape, rhs_batch_shape):
     msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
            "to have the same shape, got {} and {}.")
     raise TypeError(msg.format(lhs_batch_shape, rhs_batch_shape))
-  lhs_contracting_shape = np.take(lhs.shape, lhs_contracting)
-  rhs_contracting_shape = np.take(rhs.shape, rhs_contracting)
+  lhs_contracting_shape = tuple(lhs.shape[i] for i in lhs_contracting)
+  rhs_contracting_shape = tuple(rhs.shape[i] for i in rhs_contracting)
   if not core.symbolic_equal_shape(lhs_contracting_shape, rhs_contracting_shape):
     msg = ("dot_general requires contracting dimensions to have the same "
            "shape, got {} and {}.")
@@ -2367,12 +2403,17 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
 
 def _dot_general_shape_computation(lhs_shape, rhs_shape, dimension_numbers):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  batch_shape = tuple(np.take(lhs_shape, lhs_batch))
+  batch_shape = tuple(lhs_shape[i] for i in lhs_batch)
   lhs_contract_or_batch = tuple(sorted(tuple(lhs_contracting) + tuple(lhs_batch)))
-  lhs_tensored_shape = tuple(np.delete(lhs_shape, lhs_contract_or_batch))
+  lhs_tensored_shape = tuple_delete(lhs_shape, lhs_contract_or_batch)
   rhs_contract_or_batch = tuple(sorted(tuple(rhs_contracting) + tuple(rhs_batch)))
-  rhs_tensored_shape = tuple(np.delete(rhs_shape, rhs_contract_or_batch))
+  rhs_tensored_shape = tuple_delete(rhs_shape, rhs_contract_or_batch)
   return batch_shape + lhs_tensored_shape + rhs_tensored_shape
+
+def tuple_delete(tup, idx):
+  idx_ = set(idx)
+  return tuple(tup[i] for i in range(len(tup)) if i not in idx_)
+
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
                             preferred_element_type: Optional[DType]):
@@ -2599,18 +2640,38 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
   return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
 
 def _broadcast_in_dim_fwd_rule(eqn):
-  v, = eqn.invars
-  if core.symbolic_equal_shape(eqn.params['shape'], v.aval.shape):
+  v, *dyn = eqn.invars
+  if not dyn and core.symbolic_equal_shape(eqn.params['shape'], v.aval.shape):
     return [v], None
   else:
     return [None], eqn
 
+def _broadcast_in_dim_staging_rule(
+    trace, x, *dyn_shape, shape, broadcast_dimensions):
+  params = dict(shape=shape, broadcast_dimensions=broadcast_dimensions)
+  if not dyn_shape:
+    return trace.default_process_primitive(broadcast_in_dim_p, (x,), params)
+  assert len(dyn_shape) == sum(d is None for d in shape)
+  source_info = source_info_util.current()
+
+  ds = iter(dyn_shape)
+  out_shape_for_tracer: List[Union[int, core.Tracer]] = [
+    next(ds) if d is None else d for d in shape]
+  aval = core.DShapedArray(tuple(out_shape_for_tracer), x.dtype, x.weak_type)
+  out_tracer = pe.DynamicJaxprTracer(trace, aval, source_info)
+  invars = [trace.getvar(x), *(trace.getvar(d) for d in dyn_shape)]
+  eqn = pe.new_jaxpr_eqn(invars, [trace.makevar(out_tracer)],
+                         broadcast_in_dim_p, params, source_info)
+  trace.frame.eqns.append(eqn)
+
+  return out_tracer
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 ad.deflinear2(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
+pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 
 def _broadcast_in_dim_lower(ctx, x, *, shape, broadcast_dimensions):
   del shape
@@ -4373,6 +4434,9 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
   # bool(obj) for an ndarray raises an error, so we check len
   if not len(obj):  # pylint: disable=g-explicit-length-test
     return
+  if (config.jax_dynamic_shapes and isinstance(obj, (tuple, list)) and
+      any(isinstance(d, core.Tracer) for d in obj)):
+    return  # TODO(mattjj): handle more checks in the dynamic shape case
   obj_arr = np.array(obj)
   if obj_arr.ndim != 1:
     msg = "{} {} must be rank 1, got {}."

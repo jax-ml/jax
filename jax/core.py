@@ -224,13 +224,15 @@ class DropVar(Var):
   def __repr__(self): return '_'
 
 class Literal:
-  __slots__ = ["val", "hash"]
+  __slots__ = ["val", "aval", "hash"]
 
   val: Any
+  aval: 'AbstractValue'
   hash: Optional[int]
 
-  def __init__(self, val):
+  def __init__(self, val, aval):
     self.val = val
+    self.aval = aval
     try:
       self.hash = hash(val)
     except TypeError:
@@ -239,10 +241,6 @@ class Literal:
           self.hash = hash((val.item(), val.dtype))
         except (TypeError, AttributeError, ValueError):
           self.hash = None
-
-  @property
-  def aval(self):
-    return raise_to_shaped(get_aval(self.val))
 
   __hash__ = None  # type: ignore
 
@@ -1369,9 +1367,9 @@ class DimensionHandler:
   Dimension sizes are normally integer constants, but can also be symbolic,
   e.g., masking.Poly or jax2tf.shape_poly.DimVar.
 
-  The base class works for integers only. Subclasses are invoked when at
-  least one of the operands has a type registered in _SPECIAL_DIMENSION_HANDLERS.
-  In that case, all operands are guaranteed to be either the special dimension
+  The base class works for integers only. Subclasses are invoked when at least
+  one of the operands has a type registered in _SPECIAL_DIMENSION_HANDLERS. In
+  that case, all operands are guaranteed to be either the special dimension
   type, or Python integer scalars.
 
   Subclasses should raise InconclusiveDimensionOperation if the result cannot
@@ -1471,10 +1469,12 @@ def is_constant_dim(d: DimSize) -> bool:
   return handler.is_constant(*ds)
 
 def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
+  if d1 is d2: return True  # identical objects always compare equal
   handler, ds = _dim_handler_and_canonical(d1, d2)
   return handler.symbolic_equal(*ds)
 
 def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
+  if any(d1 is d for d in dlist): return True  # identical always implies equal
   handler, ds = _dim_handler_and_canonical(d1, *dlist)
   return any([handler.symbolic_equal(ds[0], d) for d in ds[1:]])
 
@@ -1483,6 +1483,10 @@ def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
           all(unsafe_map(symbolic_equal_dim, s1, s2)))
 
 def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
+  # TODO(mattjj): revise this temporary workaround for dynamic shapes
+  if isinstance(d1, Tracer) or isinstance(d2, Tracer):
+    return True
+
   handler, ds = _dim_handler_and_canonical(d1, d2)
   return handler.greater_equal(*ds)
 
@@ -1536,11 +1540,13 @@ def stride_shape(s: Shape, window_size: Shape, window_stride: Shape) -> Shape:
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX value that we can compute with.
      This is the identity function for constant dimensions."""
+  if isinstance(d, Tracer): return d
   handler, ds = _dim_handler_and_canonical(d)
   return handler.as_value(*ds)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
-  if type(dim) in _SPECIAL_DIMENSION_HANDLERS:
+  if (type(dim) in _SPECIAL_DIMENSION_HANDLERS or
+      isinstance(dim, Tracer) and config.jax_dynamic_shapes):
     return dim
   else:
     return operator.index(dim)
