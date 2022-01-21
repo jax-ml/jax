@@ -8,6 +8,7 @@ jax.experimental package
     :maxdepth: 1
 
     jax.experimental.ann
+    jax.experimental.global_device_array
     jax.experimental.host_callback
     jax.experimental.loops
     jax.experimental.maps
