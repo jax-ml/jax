@@ -371,7 +371,7 @@ class GlobalDeviceArray:
       def cb(index):
         return global_input_data[index]
       gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh, mesh_axes, cb)
-    
+
     Args:
       global_shape: The global shape of the array
       global_mesh: The global mesh representing devices across multiple
@@ -440,7 +440,7 @@ class GlobalDeviceArray:
     Like ``from_batched_callback``, except the callback function is responsible for returning on-device data (e.g. by calling ``jax.device_put``).
 
     Example::
-      
+
       global_input_shape = (8, 2)
       global_input_data = np.arange(prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
       def cb(cb_inp):
