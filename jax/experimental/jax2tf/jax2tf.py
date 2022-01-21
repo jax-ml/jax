@@ -1013,6 +1013,7 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
 
 tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[dispatch.device_put_p] = lambda x, device=None: x
+tf_impl[lax_internal.copy_p] = lambda x: x
 
 def _neg(x: TfVal) -> TfVal:
   if x.dtype.is_unsigned:
