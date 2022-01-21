@@ -1493,8 +1493,8 @@ def isreal(x):
   return lax.eq(i, lax._const(i, 0))
 
 @_wraps(np.angle)
-@jit
-def angle(z):
+@partial(jit, static_argnames=['deg'])
+def angle(z, deg=False):
   re = real(z)
   im = imag(z)
   dtype = _dtype(re)
@@ -1503,7 +1503,8 @@ def angle(z):
     dtype = dtypes.canonicalize_dtype(float_)
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
-  return lax.atan2(im, re)
+  result = lax.atan2(im, re)
+  return degrees(result) if deg else result
 
 
 @_wraps(np.diff)
