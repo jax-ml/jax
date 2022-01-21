@@ -2601,6 +2601,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
                     "[float or complex], and integer -> integer functions, "
                     f"but got {in_dtypes} -> {out_dtypes}.")
 
+  @api_boundary
   def transposed_fun(consts, out_cotangent):
     out_cotangents, out_tree2 = tree_flatten(out_cotangent)
     if out_tree() != out_tree2:

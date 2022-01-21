@@ -6382,6 +6382,38 @@ def transpose_unary(f, x_example):
   return transposed
 
 
+# This class wraps api.custom_transpose in order to pass in a
+# particular tree of output type on each call. Otherwise it forwards
+# all attribute access.
+class _custom_transpose:
+  def __init__(self, out_types, fun):
+    self.out_types = out_types
+    self.fun = api.custom_transpose(fun)
+
+  def __getattr__(self, name):
+    return getattr(self.fun, name)
+
+  def __call__(self, *args):
+    return self.fun(self.out_types, *args)
+
+
+# This function is meant to be used as a decorator that delegates to
+# custom_transpose but makes it easy to specify output argument types
+# by example. If used directly a decorator (i.e. not invoked with
+# example arguments), assumes a scalar-valued function.
+#
+# TODO(frostig): remove this (and its uses) once custom_transpose offers
+# an option of inferring output types.
+def custom_transpose(example_out):
+  if isinstance(example_out, Callable):
+    out_type = core.get_aval(0.).at_least_vspace()
+    return _custom_transpose(out_type, example_out)
+  return partial(
+      _custom_transpose,
+      tree_util.tree_map(
+          lambda x: core.get_aval(x).at_least_vspace(), example_out))
+
+
 class CustomTransposeTest(jtu.JaxTestCase):
 
   def test_linear_call(self):
@@ -6503,7 +6535,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
 
   def test_basic(self):
     def f(x, y):
-      @api.custom_transpose
+      @custom_transpose(jnp.ones(2))
       def fn(r, x): return x / r
       @fn.def_transpose
       def tp(r, t): return t / r
@@ -6524,7 +6556,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
 
   def test_incorrect_transpose(self):
     def f(x, y):
-      @api.custom_transpose
+      @custom_transpose(jnp.ones(2))
       def fn(r, x): return x / r
       @fn.def_transpose
       def tp(r, t): return t / (2. * r)  # nb: not the true transpose
@@ -6544,9 +6576,9 @@ class CustomTransposeTest(jtu.JaxTestCase):
                         transpose_unary(f1_ref, x)(x))
 
   def test_transpose_transpose_transpose(self):
-    @api.custom_transpose
+    @custom_transpose(jnp.ones(2))
     def fn(r, x): return x / r
-    @api.custom_transpose
+    @custom_transpose(jnp.ones(2))
     def tp(r, t): return t / (2. * r)  # nb: untrue transpose
 
     fn.def_transpose(tp)
@@ -6567,7 +6599,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
 
   def test_scalar_to_vector(self):
     def f(c, x):
-      @api.custom_transpose
+      @custom_transpose([0., 0.])
       def fn(_, x):
         return [x, x]
 
@@ -6590,8 +6622,8 @@ class CustomTransposeTest(jtu.JaxTestCase):
   def test_nested(self):
     # identity function with an untrue transpose of 0
     def id_(x):
-      f = api.custom_transpose(lambda _, x: x)
-      t = api.custom_transpose(lambda _, t: 0.)
+      f = custom_transpose(lambda _, x: x)
+      t = custom_transpose(lambda _, t: 0.)
       f.def_transpose(t)
       t.def_transpose(f)
       return f((), x)
@@ -6600,8 +6632,8 @@ class CustomTransposeTest(jtu.JaxTestCase):
     # forward and transpose have custom transpositions that should
     # never end up invoked.
     def f(x):
-      f_ = api.custom_transpose(lambda _, x: id_(x))
-      t_ = api.custom_transpose(lambda _, t: id_(7.))
+      f_ = custom_transpose(lambda _, x: id_(x))
+      t_ = custom_transpose(lambda _, t: id_(7.))
       f_.def_transpose(t_)
       t_.def_transpose(f_)
       return f_((), x)
@@ -6625,7 +6657,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
   def test_one_degree(self):
     T = lambda f: transpose_unary(f, 0.)
 
-    @api.custom_transpose
+    @custom_transpose
     def f(_, z): return 2. * z
     @f.def_transpose
     def ft(_, z): return 3. * z
@@ -6640,11 +6672,11 @@ class CustomTransposeTest(jtu.JaxTestCase):
   def test_two_degrees(self):
     T = lambda f: transpose_unary(f, 0.)
 
-    @api.custom_transpose
+    @custom_transpose
     def f(_, z): return 2. * z
 
     @f.def_transpose
-    @api.custom_transpose
+    @custom_transpose
     def ft(_, z): return 3. * z
 
     @ft.def_transpose
@@ -6660,9 +6692,9 @@ class CustomTransposeTest(jtu.JaxTestCase):
   def test_symmetric(self):
     T = lambda f: transpose_unary(f, 0.)
 
-    @api.custom_transpose
+    @custom_transpose
     def f(_, z): return 2. * z
-    @api.custom_transpose
+    @custom_transpose
     def g(_, z): return 3. * z
 
     f.def_transpose(g)
@@ -6678,7 +6710,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
   def test_recursive(self):
     T = lambda f: transpose_unary(f, 0.)
 
-    @api.custom_transpose
+    @custom_transpose
     def f(c, z): return c * z
 
     @f.def_transpose
@@ -6691,9 +6723,59 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(4., T(T(T(g)))(1.))
     self.assertAllClose(5., T(T(T(T(g))))(1.))  # ...
 
-  def test_jit(self):
+  def test_jvp_lin(self):
     def f(x, y):
-      @api.custom_transpose
+      @custom_transpose(jnp.ones(2))
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return t / r
+      return x + fn(y, x)
+
+    def f_ref(x, y): return x + x / y
+
+    x, y, tx = 6., 3., 1.
+    g = lambda x: f(x, y)
+    g_ref = lambda x: f_ref(x, y)
+    self.assertAllClose(api.jvp(g, [x], [tx]), api.jvp(g_ref, [x], [tx]))
+
+  def test_jvp_res(self):
+    raise unittest.SkipTest('unimplemented')  # TODO(frostig)
+
+    def f(x, y):
+      @custom_transpose(jnp.ones(2))
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return t / r
+      return x + fn(y, x)
+
+    def f_ref(x, y): return x + x / y
+
+    x, y, ty = 6., 3., 1.
+    g = lambda y: f(x, y)
+    g_ref = lambda y: f_ref(x, y)
+    self.assertAllClose(api.jvp(g, [y], [ty]), api.jvp(g_ref, [y], [ty]))
+
+  def test_jvp_both(self):
+    raise unittest.SkipTest('unimplemented')  # TODO(frostig)
+
+    def f(x, y):
+      @custom_transpose(jnp.ones(2))
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return t / r
+      return x + fn(y, x)
+
+    def f_ref(x, y): return x + x / y
+
+    x, y, tx, ty = 6., 3., 1., 1.
+    self.assertAllClose(api.jvp(f,     [x, y], [tx, ty]),
+                        api.jvp(f_ref, [x, y], [tx, ty]))
+
+  def test_jit(self):
+    raise unittest.SkipTest('unimplemented')  # TODO(frostig,mattjj)
+
+    def f(x, y):
+      @custom_transpose(jnp.ones(2))
       def fn(r, x): return x / r
       @fn.def_transpose
       def tp(r, t): return t / r
