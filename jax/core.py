@@ -1639,6 +1639,8 @@ class NamedShape:
             f"{', '.join(f'{k}={v}' for k, v in self.__named.items())})")
 
   def __eq__(self, other):
+    if other is None:
+      return False
     if isinstance(other, NamedShape):
       return (self.__positional, self.__named) == (other.__positional, other.__named)
     if isinstance(other, tuple):
