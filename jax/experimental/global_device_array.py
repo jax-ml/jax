@@ -196,23 +196,23 @@ class GlobalDeviceArray:
   ``jax.config.update('jax_parallel_functions_output_gda', True)``
 
   Args:
-    global_shape: The global shape of the array
+    global_shape: The global shape of the array.
     global_mesh: The global mesh representing devices across multiple
       processes.
     mesh_axes: A sequence with length less than or equal to the rank of the
       global array (i.e. the length of the global shape). Each element can be:
-        * An axis name of ``global_mesh``, indicating that the corresponding
-          global array axis is partitioned across the given device axis of
-          ``global_mesh``.
-        * A tuple of axis names of ``global_mesh``. This is like the above option
-          except the global array axis is partitioned across the product of axes
-          named in the tuple.
-        * None indicating that the corresponding global array axis is not
-          partitioned.
-        For more information, please see:
-        https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html#more-information-on-partitionspec
-    device_buffers: DeviceArrays that are on the local devices of
-      ``global_mesh``.
+
+      * An axis name of ``global_mesh``, indicating that the corresponding
+        global array axis is partitioned across the given device axis of
+        ``global_mesh``.
+      * A tuple of axis names of ``global_mesh``. This is like the above option
+        except the global array axis is partitioned across the product of axes
+        named in the tuple.
+      * None indicating that the corresponding global array axis is not
+        partitioned.
+      For more information, please see:
+      https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html#more-information-on-partitionspec
+    device_buffers: DeviceArrays that are on the local devices of ``global_mesh``.
 
   Attributes:
     shape: Global shape of the array.
