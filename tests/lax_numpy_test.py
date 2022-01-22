@@ -118,14 +118,14 @@ def _get_y_shapes(y_dtype, shape, rowvar):
 OpRecord = collections.namedtuple(
   "OpRecord",
   ["name", "nargs", "dtypes", "shapes", "rng_factory", "diff_modes",
-   "test_name", "check_dtypes", "tolerance", "inexact"])
+   "test_name", "check_dtypes", "tolerance", "inexact", "kwargs"])
 
 def op_record(name, nargs, dtypes, shapes, rng_factory, diff_modes,
               test_name=None, check_dtypes=True,
-              tolerance=None, inexact=False):
+              tolerance=None, inexact=False, kwargs=None):
   test_name = test_name or name
   return OpRecord(name, nargs, dtypes, shapes, rng_factory, diff_modes,
-                  test_name, check_dtypes, tolerance, inexact)
+                  test_name, check_dtypes, tolerance, inexact, kwargs)
 
 JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("abs", 1, number_dtypes + unsigned_dtypes + bool_dtypes,
@@ -213,6 +213,8 @@ JAX_COMPOUND_OP_RECORDS = [
     # angle has inconsistent 32/64-bit return types across numpy versions.
     op_record("angle", 1, number_dtypes, all_shapes, jtu.rand_default, [],
               check_dtypes=False, inexact=True),
+    op_record("angle", 1, number_dtypes, all_shapes, jtu.rand_default, [],
+              check_dtypes=False, inexact=True, test_name="angle_deg", kwargs={'deg': True}),
     op_record("atleast_1d", 1, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("atleast_2d", 1, default_dtypes, all_shapes, jtu.rand_default, []),
     op_record("atleast_3d", 1, default_dtypes, all_shapes, jtu.rand_default, []),
@@ -545,7 +547,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes,
          "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
          "check_dtypes": rec.check_dtypes, "tolerance": rec.tolerance,
-         "inexact": rec.inexact}
+         "inexact": rec.inexact, "kwargs": rec.kwargs or {}}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           itertools.combinations_with_replacement(rec.shapes, rec.nargs))
@@ -555,7 +557,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                  JAX_COMPOUND_OP_RECORDS)))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOp(self, np_op, jnp_op, rng_factory, shapes, dtypes, check_dtypes,
-             tolerance, inexact):
+             tolerance, inexact, kwargs):
+    np_op = partial(np_op, **kwargs)
+    jnp_op = partial(jnp_op, **kwargs)
     np_op = jtu.ignore_warning(category=RuntimeWarning,
                                message="invalid value.*")(np_op)
     np_op = jtu.ignore_warning(category=RuntimeWarning,
@@ -3741,6 +3745,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertFalse(x_copy.is_deleted())
     self.assertFalse(x_copy_jit.is_deleted())
 
+  def testArrayCopyAutodiff(self):
+    f = lambda x: jnp.array(x, copy=True)
+
+    x = jnp.ones(10)
+    xdot = jnp.ones(10)
+    y, ydot = jax.jvp(f, (x,), (xdot,))
+    self.assertIsNot(x, y)
+    self.assertIsNot(xdot, ydot)
+
+    ybar = jnp.ones(10)
+    y, f_vjp = jax.vjp(f, x)
+    xbar, = f_vjp(ybar)
+    self.assertIsNot(x, y)
+    self.assertIsNot(xbar, ybar)
+
+  def testArrayCopyVmap(self):
+    f = lambda x: jnp.array(x, copy=True)
+    x = jnp.ones(10)
+    y = jax.vmap(f)(x)
+    self.assertIsNot(x, y)
+
   def testArrayUnsupportedDtypeError(self):
     with self.assertRaisesRegex(TypeError,
                                 "JAX only supports number and bool dtypes.*"):
@@ -5998,7 +6023,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
-      'angle': ['deg'],
       'argmax': ['keepdims'],
       'argmin': ['keepdims'],
       'asarray': ['like'],

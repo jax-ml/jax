@@ -81,24 +81,6 @@ Shape = core.Shape
 
 T = TypeVar("T")
 
-@functools.partial(jax.jit, inline=True)
-def _array_copy(arr):
-  """Return an on-device copy of a DeviceArray.
-
-  This is a private method; users can access this via ``jnp.array(x, copy=True)``.
-
-  Why do we need copies in a purely functional langauge? Well, JAX is *almost*
-  purely functional: the semantics of `donate_argnums` mean that sometimes buffers
-  are consumed, and you actually need to ensure a copy is generated on device.
-  """
-  # TODO(jakevdp): There is no XLA copy operation, so for the time being we rely
-  # on an implementation detail: although XLA will optimize away non-operations like
-  # adding zero, it still results in a copied buffer. Eventually, we should move to
-  # a more direct method that avoids inserting a spurious add_p/or_p into the jaxpr.
-  if arr.dtype == bool:
-    return bitwise_or(arr, _const(arr, False))
-  return add(arr, _const(arr, 0))
-
 def _try_broadcast_shapes(
     shapes: Sequence[Tuple[int, ...]]) -> Optional[Tuple[int, ...]]:
   assert shapes
@@ -4150,9 +4132,17 @@ def _rng_bit_generator_translation_rule(
   # sidestep issues with the jax_enable_x64=False configuration. As a result, we
   # need to convert u32[4] -> u64[2] here in the translation rule. However, we
   # also polymorphically allow a u64[2] for backward compatibility.
+  #
+  # Separately, xops.RngBitGenerator doesn't support generating u8 or
+  # u16, so we request u32 and truncate in that case.
   assert ((key_shape == (4,) and key_dtype == np.dtype('uint32')) or
           (key_shape == (2,) and key_dtype == np.dtype('uint64'))), (key_shape, key_dtype)
-  xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
+  dtype = np.dtype(dtype)
+  if dtype == np.dtype('uint32') or dtype == np.dtype('uint64'):
+    rbg_dtype = dtype
+  else:
+    rbg_dtype = np.dtype('uint32')
+  xla_shape = xc.Shape.array_shape(rbg_dtype, shape)
   if key_dtype == np.dtype('uint32'):
     u64_etype = xla.dtype_to_primitive_type(np.dtype('uint64'))
     key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
@@ -4161,6 +4151,9 @@ def _rng_bit_generator_translation_rule(
   if key_dtype == np.dtype('uint32'):
     u32_etype = xla.dtype_to_primitive_type(np.dtype('uint32'))
     out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
+  if rbg_dtype != dtype:
+    out_vals = xops.ConvertElementType(
+      out_vals, xla.dtype_to_primitive_type(dtype))
   return [out_key, out_vals]
 
 
@@ -4182,6 +4175,21 @@ xla.register_translation(rng_bit_generator_p,
 RandomAlgorithm = xops.RandomAlgorithm
 RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
 
+def _array_copy(arr):
+  return copy_p.bind(arr)
+
+# The copy_p primitive exists for expressing making copies of runtime arrays.
+# For that reason we don't simplify it out of jaxprs (e.g. for jit invariance).
+# It's used in jnp.array(x, copy=True), which is the user-facing API.
+copy_p = core.Primitive('copy')
+copy_p.def_impl(partial(xla.apply_primitive, copy_p))
+copy_p.def_abstract_eval(lambda x: x)
+xla.register_translation(copy_p, lambda ctx, avals_in, avals_out, x: [x])
+mlir.register_lowering(copy_p, lambda ctx, x: [x])
+ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
+batching.defvectorized(copy_p)
+masking.defvectorized(copy_p)
+
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT):
@@ -4199,6 +4207,10 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
   friendly API.
   """
   shape = jax.core.canonicalize_shape(shape)
+  dtype = dtypes.canonicalize_dtype(dtype)
+  if np.dtype(dtype) not in {np.dtype('uint8'), np.dtype('uint16'),
+                             np.dtype('uint32'), np.dtype('uint64')}:
+    raise TypeError(f'rng_bit_generator: unsupported dtype {dtype}')
   return tuple(
       rng_bit_generator_p.bind(
           key, shape=shape, dtype=dtype, algorithm=algorithm))

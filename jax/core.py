@@ -747,7 +747,8 @@ the following:
   threading.current_thread().pydev_do_not_trace = True
 """
 
-def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]):
+def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]
+                              ) -> List[Tracer]:
   """Find the leaked tracers holding a reference to the MainTrace or SubLevel.
 
   It's possible there's none! eg. there's some cases where JAX itself holds a
@@ -761,6 +762,11 @@ def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]):
   traces = list(filter(lambda x: isinstance(x, Trace), gc.get_referrers(x)))
   tracers = list(filter(lambda x: isinstance(x, Tracer), gc.get_referrers(*traces)))
   return tracers
+
+def leaked_tracer_error(name: str, t, tracers: List[Tracer]) -> Exception:
+  assert tracers
+  msgs = '\n\n'.join(f'{tracer}{tracer._origin_msg()}' for tracer in tracers)
+  return Exception(f'Leaked {name} {t}. Leaked tracer(s):\n\n{msgs}\n')
 
 @contextmanager
 def new_main(trace_type: Type[Trace],
@@ -788,8 +794,7 @@ def new_main(trace_type: Type[Trace],
     del main
     if t() is not None:
       leaked_tracers = maybe_find_leaked_tracers(t())
-      if leaked_tracers:
-        raise Exception(f'Leaked level {t()}. Leaked tracer(s): {leaked_tracers}.')
+      if leaked_tracers: raise leaked_tracer_error("trace", t(), leaked_tracers)
 
 @contextmanager
 def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
@@ -811,8 +816,7 @@ def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
     del main
     if t() is not None:
       leaked_tracers = maybe_find_leaked_tracers(t())
-      if leaked_tracers:
-        raise Exception(f'Leaked level {t()}. Leaked tracer(s): {leaked_tracers}.')
+      if leaked_tracers: raise leaked_tracer_error("trace", t(), leaked_tracers)
 
 @contextmanager
 def ensure_compile_time_eval():
@@ -892,7 +896,7 @@ def new_sublevel() -> Generator[None, None, None]:
     if t() is not None:
       leaked_tracers = maybe_find_leaked_tracers(t())
       if leaked_tracers:
-        raise Exception(f'Leaked sublevel {t()}. Leaked tracer(s): {leaked_tracers}.')
+        raise leaked_tracer_error("sublevel", t(), leaked_tracers)
 
 def full_lower(val):
   if isinstance(val, Tracer):

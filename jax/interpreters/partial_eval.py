@@ -1157,7 +1157,13 @@ class DynamicJaxprTracer(core.Tracer):
     return ()
 
   def _origin_msg(self):
-    invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
+    if not self._trace.main.jaxpr_stack:  # type: ignore
+      # If this Tracer has been leaked the jaxpr stack may no longer be
+      # available. So we can't print as much origin information.
+      return ("\nThis Tracer was created on line "
+              f"{source_info_util.summarize(self._line_info)}")
+    else:
+      invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
     dbg = self._trace.main.debug_info
     if dbg is None:
       return ""
@@ -1238,7 +1244,7 @@ def _const_folding_and_forwarding(jaxpr, constvals):
   for eqn in jaxpr.eqns:
     # always apply invar substitutions
     eqn = JaxprEqn([var_subs.get(v, v) for v in eqn.invars], eqn.outvars,
-                   eqn.primitive, eqn.params, eqn.source_info)
+                    eqn.primitive, eqn.params, eqn.source_info)
     # if any inputs are constants and we have a constant-folding rule, apply it
     if eqn.primitive in const_fold_rules and any(v in consts for v in eqn.invars):
       consts_in = [consts.get(v) for v in eqn.invars]
@@ -1274,12 +1280,13 @@ def _inline_literals(jaxpr, constvals):
   # This function also ensures variables are labeled in a canonical ordering,
   # prunes unused constants, and inserts `dropvar` symbols.
   consts = dict(zip(jaxpr.constvars, constvals))
-  newvar = core.gensym()
-  newvars = {}
+  newname: Callable[[AbstractValue], Var] = core.gensym()
+  newvars: Dict[Var, Var] = {}
+  newvar = lambda aval: newname(_subs_vars_in_aval(newvars, aval))
   var = lambda v: newvars.get(v) or newvars.setdefault(v, newvar(v.aval))
 
-  def lit(var: Var) -> Optional[Any]:
-    val = consts.get(var)
+  def lit(v: Var) -> Optional[Literal]:
+    val = consts.get(v)
     if type(val) in core.literalable_types and not np.shape(val):
       return Literal(val)
     else:
@@ -1660,7 +1667,7 @@ def _substitute_tracers_in_aval(
   ) -> AbstractValue:
   # Substitute Tracers into a given AbstractValue using the given environment.
   # That is, the input is an AbstractValue possibly containing AbstractValues,
-  # and the output is an aval possibly containing Tracers.
+  # and the output is an AbstractValue possibly containing Tracers.
   if (isinstance(a, DShapedArray) and
       any(isinstance(d, AbstractValue) for d in a.shape)):
     shape = [env[id(d)] if isinstance(d, AbstractValue) else d for d in a.shape]
@@ -1690,6 +1697,18 @@ def _subs_avals_in_aval(
       any(isinstance(d, Tracer) for d in a.shape)):
     shape = [env.setdefault(id(d), d.aval) if isinstance(d, Tracer) else d
              for d in a.shape]
+    return a.update(shape=tuple(shape))
+  else:
+    return a
+
+def _subs_vars_in_aval(
+    env: Dict[Var, Var], a: AbstractValue
+  ) -> AbstractValue:
+  # Substitutes variables into a given AbstractValue using given environment.
+  # That is, the input is an AbstractValue possibly containing Vars, and the
+  # output is an aval possibly containing Vars.
+  if isinstance(a, DShapedArray) and any(isinstance(d, Var) for d in a.shape):
+    shape = [env[d] if isinstance(d, Var) else d for d in a.shape]
     return a.update(shape=tuple(shape))
   else:
     return a

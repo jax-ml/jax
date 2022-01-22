@@ -18,7 +18,6 @@ from functools import partial
 import gc
 import itertools as it
 import operator
-import unittest
 
 import numpy as np
 from absl.testing import absltest
@@ -519,7 +518,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
 
 class DynamicShapesTest(jtu.JaxTestCase):
 
-  @unittest.skip("needs a pe._inline_literals fix")  # TODO(mattjj)
   def test_staging_basic(self):
     n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
     a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
@@ -540,7 +538,6 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[0].aval.shape)
     self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[1].aval.shape)
 
-  @unittest.skip("needs a pe._inline_literals fix")  # TODO(mattjj)
   def test_staging_nested(self):
     n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
     a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
@@ -576,7 +573,6 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[3].aval.shape)
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
 
-  @unittest.skip("needs a pe._inline_literals fix")  # TODO(mattjj)
   def test_staging_nested_including_shape_arg(self):
     # This test covers the _get_tracers_only_in_shapes logic in partial_eval.py.
     n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
@@ -605,7 +601,6 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[3].aval.shape)
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
 
-  @unittest.skip("needs a pe._inline_literals fix")  # TODO(mattjj)
   def test_staging_primitive_applications(self):
     n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
     a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
