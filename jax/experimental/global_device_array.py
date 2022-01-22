@@ -210,6 +210,7 @@ class GlobalDeviceArray:
         named in the tuple.
       * None indicating that the corresponding global array axis is not
         partitioned.
+
       For more information, please see:
       https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html#more-information-on-partitionspec
     device_buffers: DeviceArrays that are on the local devices of ``global_mesh``.
@@ -217,9 +218,9 @@ class GlobalDeviceArray:
   Attributes:
     shape: Global shape of the array.
     dtype: Dtype of the global array.
-    local_shards: List of ``Shard``s on the local devices of the current process.
+    local_shards: List of ``Shard``\s on the local devices of the current process.
       Data is materialized for all local shards.
-    global_shards: List of all ``Shard``s of the global array. Data isn’t
+    global_shards: List of all ``Shard``\s of the global array. Data isn’t
       available if a shard is on a non-local device with respect to the current
       process.
     is_fully_replicated: True, if the full array value is present on all devices
