@@ -793,7 +793,24 @@ tf_impl_no_xla[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 tf_impl_no_xla[lax.sort_p] = _unimplemented("sort")
 
-def convert_scatter_jax_to_tf(tf_function):
+def _scatter_update(
+  operand, 
+  scatter_indices, 
+  updates, 
+  update_jaxpr, 
+  update_consts, # -1
+  dimension_numbers, #ScatterDimensionNumbers(update_window_dims=(0,), inserted_window_dims=(0,), scatter_dims_to_operand_dims=(0,))
+  indices_are_sorted: bool, 
+  unique_indices: bool,
+  mode, #=lax.GatherScatterMode.FILL_OR_DROP 
+  _in_avals: Sequence[core.ShapedArray],
+  _out_aval: core.ShapedArray):
+  return tf.tensor_scatter_nd_update(operand, scatter_indices, updates)
+tf_impl_no_xla[lax.scatter_p] = _scatter_update
+
+
+
+def convert_scatter_jax_to_tf(update_op):
   def _scatter(
     operand, 
     scatter_indices, 
@@ -806,30 +823,15 @@ def convert_scatter_jax_to_tf(tf_function):
     mode, #=lax.GatherScatterMode.FILL_OR_DROP 
     _in_avals: Sequence[core.ShapedArray],
     _out_aval: core.ShapedArray):
-    return tf_function(operand, scatter_indices, updates)
+    subarray = tf.gather_nd(operand, scatter_indices)
+    updates = update_op(subarray, updates)
+    return tf.tensor_scatter_nd_update(operand, scatter_indices, updates)
   return _scatter
 
 for (xla_op, tf_fn) in [
-  (lax.scatter_p    , tf.tensor_scatter_nd_update),
-  (lax.scatter_add_p, tf.tensor_scatter_nd_add),
-  (lax.scatter_min_p, tf.tensor_scatter_nd_min),
-  (lax.scatter_max_p, tf.tensor_scatter_nd_max)
+  (lax.scatter_add_p, tf.add),
+  (lax.scatter_min_p, tf.minimum),
+  (lax.scatter_max_p, tf.maximum),
+  (lax.scatter_mul_p, tf.multiply)
   ]:
   tf_impl_no_xla[xla_op] = convert_scatter_jax_to_tf(tf_fn)
-
-def _scatter_mul(
-  operand, 
-  scatter_indices, 
-  updates,
-  update_jaxpr, 
-  update_consts,
-  dimension_numbers,
-  indices_are_sorted: bool, 
-  unique_indices: bool,
-  mode,
-  _in_avals: Sequence[core.ShapedArray],
-  _out_aval: core.ShapedArray):
-  subarray = tf.gather_nd(operand, scatter_indices)
-  updates = subarray * updates
-  return tf.tensor_scatter_nd_update(operand, scatter_indices, updates)
-tf_impl_no_xla[lax.scatter_mul_p] = _scatter_mul
