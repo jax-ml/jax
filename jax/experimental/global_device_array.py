@@ -241,7 +241,7 @@ class GlobalDeviceArray:
 
     def get_local_data_slice(index):
       # index will be a tuple of slice objects, e.g. (slice(0, 16), slice(0, 4))
-      # This method will be called per-local device from the GSDA constructor.
+      # This method will be called per-local device from the GDA constructor.
       return global_input_data[index]
 
     gda = GlobalDeviceArray.from_callback(
