@@ -811,7 +811,8 @@ tf_impl_no_xla[lax.scatter_p] = _scatter_update
 
 
 def convert_scatter_jax_to_tf(segment_op, update_op):
-  def _scatter(
+  # Assumed scatter_indices are (n,1) in shape. (or (n,) in shape)
+  def _sparse_scatter(
     operand, 
     scatter_indices, 
     updates, 
@@ -823,15 +824,32 @@ def convert_scatter_jax_to_tf(segment_op, update_op):
     mode, #=lax.GatherScatterMode.FILL_OR_DROP 
     _in_avals: Sequence[core.ShapedArray],
     _out_aval: core.ShapedArray):
-    # Assumed scatter_indices are (n,1) in shape. (or (n,) in shape)
-    scatter_indices = tf.squeeze(scatter_indices, -1);
+    # Minimises indexs used for updates, does it just in the indexs present in scatter_indices
+    scatter_indices = tf.squeeze(scatter_indices, -1)
     index_in_operand, index_in_update = tf.unique(scatter_indices)
     updates = segment_op(updates, index_in_update, index_in_operand.shape[0])
     index_in_operand = tf.expand_dims(index_in_operand, -1) # regenerate that indexing dim into the tensor, which we assumed was 1 at the start
     suboperand = tf.gather_nd(operand, index_in_operand)
     updated_suboperand = update_op(suboperand, updates)
     return tf.tensor_scatter_nd_update(operand, index_in_operand, updated_suboperand)
-  return _scatter
+
+  def _dense_scatter(
+    operand, 
+    scatter_indices, 
+    updates, 
+    update_jaxpr, 
+    update_consts,
+    dimension_numbers,
+    indices_are_sorted: bool, 
+    unique_indices: bool,
+    mode,
+    _in_avals: Sequence[core.ShapedArray],
+    _out_aval: core.ShapedArray):
+    # Does the updates in operand shapes, inefficient
+    scatter_indices_flat = tf.squeeze(scatter_indices, -1)
+    updates = segment_op(updates, scatter_indices_flat, operand.shape[0])
+    return update_op(operand, updates)
+  return _dense_scatter
 
 for (xla_op, segment_op, update_op) in [
   (lax.scatter_add_p, tf.math.unsorted_segment_sum, tf.add),
