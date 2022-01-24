@@ -150,14 +150,15 @@ def pjit(fun: Callable,
       static.
 
       If ``static_argnums`` is not provided, no arguments are treated as static.
-    donate_argnums: Specify which arguments are "donated" to the computation.
-      It is safe to donate arguments if you no longer need them once the
+    donate_argnums: Specify which argument buffers are "donated" to the computation.
+      It is safe to donate argument buffers if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
       buffers to reduce the amount of memory needed to perform a computation,
       for example recycling one of your input buffers to store a result. You
       should not reuse buffers that you donate to a computation, JAX will raise
       an error if you try to.
 
+      For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation and
     automaticly partitioned by the mesh available at each call site.

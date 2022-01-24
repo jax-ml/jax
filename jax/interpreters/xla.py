@@ -789,15 +789,18 @@ def lower_jaxpr_to_xla_module(
     else:
       output = with_sharding(c, out_partitions, build_out_tuple)
 
-  if platform in ("gpu", "tpu"):
+  platforms_with_donation = ("gpu", "tpu")
+  if platform in platforms_with_donation:
     donated_invars = set_up_aliases(
         c, xla_args, c.GetShape(output), donated_invars, tuple_args)
   if any(donated_invars):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
     unused_donations = [str(c.GetShape(a))
                         for a, d in zip(xla_args, donated_invars) if d]
-    warnings.warn("Some donated buffers were not usable: {}".format(
-        ", ".join(unused_donations)))
+    msg = "See an explanation at https://jax.readthedocs.io/en/latest/notebooks/faq.html#buffer-donation."
+    if platform not in platforms_with_donation:
+      msg = f"Donation is not implemented for {platform}.\n{msg}"
+    warnings.warn(f"Some donated buffers were not usable: {', '.join(unused_donations)}.\n{msg}")
   return c.build(output)
 
 
