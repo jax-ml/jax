@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,13 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-# flake8: noqa: F401
-from jax.scipy import interpolate as interpolate
-from jax.scipy import linalg as linalg
-from jax.scipy import ndimage as ndimage
-from jax.scipy import signal as signal
-from jax.scipy import sparse as sparse
-from jax.scipy import special as special
-from jax.scipy import stats as stats
-from jax.scipy import fft as fft

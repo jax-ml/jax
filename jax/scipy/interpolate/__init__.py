@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,11 +13,8 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from jax.scipy import interpolate as interpolate
-from jax.scipy import linalg as linalg
-from jax.scipy import ndimage as ndimage
-from jax.scipy import signal as signal
-from jax.scipy import sparse as sparse
-from jax.scipy import special as special
-from jax.scipy import stats as stats
-from jax.scipy import fft as fft
+
+# Already deprecate namespaces that will be removed in SciPy v2.0.0
+
+from jax._src.third_party.scipy.interpolate import (
+    RegularGridInterpolator as RegularGridInterpolator)
