@@ -1579,6 +1579,9 @@ def _scatter_mul_transpose_rule(t, operand, indices, updates, *,
           indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
           mode=mode)
     if ad.is_undefined_primal(updates):
+      if not unique_indices:
+        raise NotImplementedError(
+          "scatter_mul gradients are only implemented if `unique_indices=True`")
       gather_dnums = GatherDimensionNumbers(
         offset_dims=dimension_numbers.update_window_dims,
         collapsed_slice_dims=dimension_numbers.inserted_window_dims,
@@ -1666,6 +1669,9 @@ scatter_mul_p = standard_primitive(
 
 def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
                          indices_are_sorted, unique_indices, mode, **kw):
+  if not unique_indices:
+    raise NotImplementedError(
+      "scatter_mul gradients are only implemented if `unique_indices=True`")
   return lax.mul(x, scatter_add(
       lax.zeros_like_array(x), i, g, dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,

@@ -1137,10 +1137,21 @@ class IndexedUpdateTest(jtu.JaxTestCase):
                                 indexer, op):
     rng = jtu.rand_default(self.rng())
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y,
-                                             unique_indices=True)
+                                           unique_indices=True)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
     check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
+
+  def testIndexMulGradFailsIfNotUnique(self):
+    y = jnp.ones((10,), jnp.int32)
+    f = lambda x, z: x.at[y].mul(z)
+
+    x = jnp.ones((100,), jnp.float32)
+    z = jnp.ones((10,), jnp.float32)
+    with self.assertRaises(NotImplementedError,
+                           msg="scatter_mul gradients are only implemented if "
+                           "`unique_indices=True`"):
+      jax.jvp(f, (x, z), (x, z))
 
   def testSegmentSumBehavior(self):
     # testAdvancedIndexing compares against NumPy, and as a result doesn't check
