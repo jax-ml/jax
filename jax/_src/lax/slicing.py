@@ -1415,7 +1415,7 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
   for i in update_scatter_dims:
     if scatter_dims_seen == index_vector_dim:
       scatter_dims_seen += 1
-    if updates.shape[i] != expanded_indices_shape[scatter_dims_seen]:
+    if not core.symbolic_equal_dim(updates.shape[i], expanded_indices_shape[scatter_dims_seen]):
       raise TypeError(f"Bounds of the scatter dimensions of updates must be "
                       f"the same as the bounds of the corresponding dimensions "
                       f"of scatter indices. For scatter dimension {i}, updates "
@@ -1437,10 +1437,11 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
       slice_sizes.append(updates.shape[dnums.update_window_dims[pos]])
       pos += 1
 
-  upper_bound = np.array([operand.shape[i] - slice_sizes[i]
-                          for i in dnums.scatter_dims_to_operand_dims],
-                         np.int64)
-  upper_bound = np.minimum(upper_bound, np.iinfo(indices.dtype).max)
+  upper_bounds: core.Shape = tuple(operand.shape[i] - slice_sizes[i]
+                                   for i in dnums.scatter_dims_to_operand_dims)
+  # Stack upper_bounds into a DeviceArray[n]
+  upper_bound = lax._shape_as_value(upper_bounds)
+  upper_bound = lax.min(upper_bound, np.iinfo(indices.dtype).max)
   upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,
                                      (len(indices.shape) - 1,))
   return lax.clamp(np.int64(0), lax.convert_element_type(indices, np.int64),

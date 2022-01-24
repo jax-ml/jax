@@ -1554,17 +1554,24 @@ _POLY_SHAPE_TEST_HARNESSES = [
     _make_harness("scatter_add", "",
                   partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True),
                   [RandArg((7, 4), _f32),
-                   np.array([[1], [2]], np.int32),  # indices
-                   RandArg((7, 2), _f32),  # updates
+                   np.array([[1], [2]], np.int32),  # indices: [2, 1]
+                   RandArg((7, 2), _f32),  # updates: [7, 2]
                    StaticArg(lax.ScatterDimensionNumbers((0,), (1,), (1,)))],
                   poly_axes=[0, None, 0]),
-    _make_harness("scatter_add", "clip",
+    _make_harness("scatter_add", "clip0",
                   partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True, mode=lax.GatherScatterMode.CLIP),
-                  [RandArg((7, 4), _f32),
-                   np.array([[1], [2]], np.int32),  # indices
-                   RandArg((7, 2), _f32),  # updates
+                  [RandArg((7, 4), _f32),  # [b, 4]
+                   np.array([[1], [2]], np.int32),  # indices: [2, 1]
+                   RandArg((7, 2), _f32),  # updates: [b, 2]
                    StaticArg(lax.ScatterDimensionNumbers((0,), (1,), (1,)))],
                   poly_axes=[0, None, 0]),
+    _make_harness("scatter_add", "clip1",
+                  partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True, mode=lax.GatherScatterMode.CLIP),
+                  [RandArg((7, 4), _f32),  # [b, 4]
+                   np.array([[1, 2], [-2, 0], [6, 4], [7, -1], [1, 0], [3, 0], [0, 5]], np.int32),  # indices: [b, 2]
+                   RandArg((7, 1), _f32),  # updates: [b, 1]
+                   StaticArg(lax.ScatterDimensionNumbers((1,), (0,), (0, 1,)))],
+                  poly_axes=[0, 0, 0]),
     _make_harness("select", "0",
                   # x.shape = (b, 3)
                   lambda x: lax.select(x > 5., x, x),
@@ -1700,9 +1707,6 @@ def _add_vmap_primitive_harnesses():
       # In linalg._lu_python we do reshape(-1, ...)
       "lu",
       "custom_linear_solve",
-
-      # Broken by https://github.com/google/jax/pull/9094
-      "dynamic_update_slice",
 
       # We do *= shapes in the batching rule for conv_general_dilated
       "conv_general_dilated",
