@@ -851,29 +851,12 @@ There are several drawbacks of using XLA TF ops:
 
    * These ops will only be executable by a consumer that has XLA linked in.
    This should not be a problem for TPU execution, since that requires XLA anyway.
-   But for other platforms (CPU, GPU, embedded) this can be a drawback in certain settings.
    * These ops are not yet recognized by tools that process
-   tf.Graph, e.g., TensorFlow.js converter.
+   tf.Graph, e.g., TensorFlow.js converter or the TensorFlow Lite converter.
 
-We use the following XLA TF ops:
-
-   * `XlaPad` (wraps XLA Pad operator). We use this instead of `tf.pad` in order to
-     support `lax.pad` interior padding (dilation) or negative edge padding.
-   * `XlaConv2` (wraps XLA ConvGeneralDilated operator).
-   * `XlaDotV2` (wraps XLA DotGeneral operator).
-   * `XlaGather` (wraps XLA Gather operator). We could use `tf.gather` in some
-     cases but not always. Also, `tf.gather` has a different semantics than `lax.gather`
-     for index out of bounds.
-   * `XlaScatter` (wraps XLA Scatter operator).
-   * `XlaSelectAndScatter` (wraps XLA SelectAndScatter operator).
-   * `XlaDynamicSlice` (wraps XLA DynamicSlice operator).
-     We use this instead of `tf.slice` for reasons explained above for `XlaGather`.
-   * `XlaDynamicUpdateSlice` (wraps XLA DynamicUpdateSlice operator).
-   * `XlaReduceWindow` (wraps XLA ReduceWindow operator). These are used
-     for `lax.reduce_window_sum_p`, `lax.reduce_window_min_p`,
-     `lax.reduce_window_max_p`, and `lax.reduce_window_p`.
-   * `XlaVariadicReduceV2` (for `lax.reduce`, `lax.argmin`, `lax.argmax`).
-   * `XlaVariadicSort` (wraps XLA Sort operator).
+As an experimental feature we implemented alternative conversions to avoid the XLA TF ops.
+You can enable this with the `enable_xla=False` parameter to `jax2tf.convert`.
+For more details see  [no_xla_limitations.md](g3doc/no_xla_limitations.md).
 
 ### Different performance characteristics
 
