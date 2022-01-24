@@ -834,9 +834,9 @@ def convert_scatter_jax_to_tf(segment_op, update_op):
   return _scatter
 
 for (xla_op, segment_op, update_op) in [
-  (lax.scatter_add_p, tf.math.segment_sum, tf.add),
-  (lax.scatter_min_p, tf.math.segment_min, tf.minimum),
-  (lax.scatter_max_p, tf.math.segment_max, tf.maximum),
-  (lax.scatter_mul_p, tf.math.segment_prod, tf.multiply)
+  (lax.scatter_add_p, tf.math.unsorted_segment_sum, tf.add),
+  (lax.scatter_min_p, tf.math.unsorted_segment_min, tf.minimum),
+  (lax.scatter_max_p, tf.math.unsorted_segment_max, tf.maximum),
+  (lax.scatter_mul_p, tf.math.unsorted_segment_prod, tf.multiply)
   ]:
   tf_impl_no_xla[xla_op] = convert_scatter_jax_to_tf(segment_op, update_op)
