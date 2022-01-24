@@ -810,7 +810,7 @@ tf_impl_no_xla[lax.scatter_p] = _scatter_update
 
 
 
-def convert_scatter_jax_to_tf(update_op):
+def convert_scatter_jax_to_tf(segment_op, update_op):
   def _scatter(
     operand, 
     scatter_indices, 
@@ -823,15 +823,20 @@ def convert_scatter_jax_to_tf(update_op):
     mode, #=lax.GatherScatterMode.FILL_OR_DROP 
     _in_avals: Sequence[core.ShapedArray],
     _out_aval: core.ShapedArray):
-    subarray = tf.gather_nd(operand, scatter_indices)
-    updates = update_op(subarray, updates)
-    return tf.tensor_scatter_nd_update(operand, scatter_indices, updates)
+    # Assumed scatter_indices are (n,1) in shape. (or (n,) in shape)
+    scatter_indices = tf.squeeze(scatter_indices, -1);
+    index_in_operand, index_in_update = tf.unique(scatter_indices)
+    updates = segment_op(updates, index_in_update, index_in_operand.shape[0])
+    index_in_operand = tf.expand_dims(index_in_operand, -1) # regenerate that indexing dim into the tensor, which we assumed was 1 at the start
+    suboperand = tf.gather_nd(operand, index_in_operand)
+    updated_suboperand = update_op(suboperand, updates)
+    return tf.tensor_scatter_nd_update(operand, index_in_operand, updated_suboperand)
   return _scatter
 
-for (xla_op, tf_fn) in [
-  (lax.scatter_add_p, tf.add),
-  (lax.scatter_min_p, tf.minimum),
-  (lax.scatter_max_p, tf.maximum),
-  (lax.scatter_mul_p, tf.multiply)
+for (xla_op, segment_op, update_op) in [
+  (lax.scatter_add_p, tf.math.segment_sum, tf.add),
+  (lax.scatter_min_p, tf.math.segment_min, tf.minimum),
+  (lax.scatter_max_p, tf.math.segment_max, tf.maximum),
+  (lax.scatter_mul_p, tf.math.segment_prod, tf.multiply)
   ]:
-  tf_impl_no_xla[xla_op] = convert_scatter_jax_to_tf(tf_fn)
+  tf_impl_no_xla[xla_op] = convert_scatter_jax_to_tf(segment_op, update_op)
