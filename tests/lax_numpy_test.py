@@ -1069,24 +1069,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "{}_inshape={}_axis={}".format(
+      {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
           rec.test_name.capitalize(),
-          jtu.format_shape_dtype_string(shape, dtype), axis),
+          jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-       "axis": axis}
+       "axis": axis, "keepdims": keepdims}
       for rec in JAX_ARGMINMAX_RECORDS
       for shape, dtype in _shape_and_dtypes(rec.shapes, rec.dtypes)
-      for axis in range(-len(shape), len(shape))))
-  def testArgMinMax(self, np_op, jnp_op, rng_factory, shape, dtype, axis):
+      for axis in range(-len(shape), len(shape))
+      for keepdims in [True, False]))
+  def testArgMinMax(self, np_op, jnp_op, rng_factory, shape, dtype, axis, keepdims):
     rng = rng_factory(self.rng())
     if dtype == np.complex128 and jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("complex128 reductions not supported on GPU")
     if "nan" in np_op.__name__ and dtype == jnp.bfloat16:
       raise unittest.SkipTest("NumPy doesn't correctly handle bfloat16 arrays")
+    if numpy_version < (1, 22) and keepdims:
+      raise unittest.SkipTest("NumPy < 1.22 does not support keepdims argument to argmin/argmax")
+    kwds = {"keepdims": True} if keepdims else {}
 
-    np_fun = jtu.with_jax_dtype_defaults(partial(np_op, axis=axis))
-    jnp_fun = partial(jnp_op, axis=axis)
+    np_fun = jtu.with_jax_dtype_defaults(partial(np_op, axis=axis, **kwds))
+    jnp_fun = partial(jnp_op, axis=axis, **kwds)
 
     args_maker = lambda: [rng(shape, dtype)]
     try:
@@ -6023,8 +6027,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
-      'argmax': ['keepdims'],
-      'argmin': ['keepdims'],
       'asarray': ['like'],
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
@@ -6040,8 +6042,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
-      'nanargmax': ['out', 'keepdims'],
-      'nanargmin': ['out', 'keepdims'],
       'nanmax': ['initial', 'where'],
       'nanmean': ['where'],
       'nanmin': ['initial', 'where'],
