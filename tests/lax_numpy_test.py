@@ -44,7 +44,7 @@ from jax._src import dtypes
 from jax import tree_util
 from jax.test_util import check_grads
 from jax._src.util import prod, safe_zip
-from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
+from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
 from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 
 from jax.config import config
@@ -6206,6 +6206,46 @@ class NumpyDocTests(jtu.JaxTestCase):
 
       if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
         raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_jit" if jit else "", "jit": jit} for jit in [True, False])
+  def test_wrapped_function_parameters(self, jit):
+    def orig(x):
+      """Example Docstring
+
+      Parameters
+      ----------
+      x : array_like
+        Input Data
+
+        .. versionadded:: 1.8.0
+      out : array_like, optional
+        Output to overwrite
+      other_arg : Any
+        not used
+
+      Returns
+      -------
+      x : input
+      """
+      return x
+
+    def wrapped(x, out=None):
+      return x
+
+    if jit:
+      wrapped = jax.jit(wrapped)
+
+    wrapped = _wraps(orig, skip_params=['out'])(wrapped)
+    doc = wrapped.__doc__
+
+    self.assertStartsWith(doc, "Example Docstring")
+    self.assertIn("Original docstring below", doc)
+    self.assertIn("Parameters", doc)
+    self.assertIn("Returns", doc)
+    self.assertNotIn('out', doc)
+    self.assertNotIn('other_arg', doc)
+    self.assertNotIn('versionadded', doc)
 
 
   def test_parse_numpydoc(self):

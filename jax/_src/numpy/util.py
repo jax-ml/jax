@@ -121,14 +121,15 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
       try:
         parsed = _parse_numpydoc(docstr)
 
-        if update_doc and hasattr(op, '__code__') and 'Parameters' in parsed.sections:
+        if update_doc and 'Parameters' in parsed.sections:
+          code = getattr(getattr(op, "__wrapped__", op), "__code__", None)
           # Remove unrecognized parameter descriptions.
           parameters = _parse_parameters(parsed.sections['Parameters'])
           parsed.sections['Parameters'] = (
             "Parameters\n"
             "----------\n" +
             "\n".join(_versionadded.split(desc)[0].rstrip() for p, desc in parameters.items()
-                      if p in op.__code__.co_varnames and p not in skip_params)
+                      if (code is None or p in code.co_varnames) and p not in skip_params)
           )
 
         docstr = parsed.summary.strip() + "\n" if parsed.summary else ""
