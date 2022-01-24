@@ -144,12 +144,12 @@ class Shard:
   """A single data shard of a GlobalDeviceArray.
 
   Args:
-    device: Which device this shard resides on.
-    index: The index into the global array of this shard.
-    replica_id: Integer id indicating which replica of the global array this
-      shard is part of. Always ``0`` for fully sharded data
+    device : Which device this shard resides on.
+    index : The index into the global array of this shard.
+    replica_id : Integer id indicating which replica of the global array this
+      shard is part of. Always 0 for fully sharded data
       (i.e. when there’s only 1 replica).
-    data: The data of this shard. None if ``device`` is non-local.
+    data : The data of this shard. None if ``device`` is non-local.
   """
   device: Device
   index: Index
@@ -196,10 +196,10 @@ class GlobalDeviceArray:
   ``jax.config.update('jax_parallel_functions_output_gda', True)``
 
   Args:
-    global_shape: The global shape of the array.
-    global_mesh: The global mesh representing devices across multiple
+    global_shape : The global shape of the array.
+    global_mesh : The global mesh representing devices across multiple
       processes.
-    mesh_axes: A sequence with length less than or equal to the rank of the
+    mesh_axes : A sequence with length less than or equal to the rank of the
       global array (i.e. the length of the global shape). Each element can be:
 
       * An axis name of ``global_mesh``, indicating that the corresponding
@@ -216,14 +216,14 @@ class GlobalDeviceArray:
     device_buffers: DeviceArrays that are on the local devices of ``global_mesh``.
 
   Attributes:
-    shape: Global shape of the array.
-    dtype: Dtype of the global array.
-    local_shards: List of ``Shard`` on the local devices of the current process.
+    shape : Global shape of the array.
+    dtype : Dtype of the global array.
+    local_shards : List of :class:`Shard` on the local devices of the current process.
       Data is materialized for all local shards.
-    global_shards: List of all ``Shard`` of the global array. Data isn’t
+    global_shards : List of all :class:`Shard` of the global array. Data isn’t
       available if a shard is on a non-local device with respect to the current
       process.
-    is_fully_replicated: True, if the full array value is present on all devices
+    is_fully_replicated : True if the full array value is present on all devices
       of the global mesh.
 
   Example::
@@ -374,11 +374,11 @@ class GlobalDeviceArray:
       gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh, mesh_axes, cb)
 
     Args:
-      global_shape: The global shape of the array
-      global_mesh: The global mesh representing devices across multiple
+      global_shape : The global shape of the array
+      global_mesh : The global mesh representing devices across multiple
         processes.
-      mesh_axes: See the ``mesh_axes`` parameter of GlobalDeviceArray.
-      data_callback: Callback that takes indices into the global array value as input and
+      mesh_axes : See the ``mesh_axes`` parameter of GlobalDeviceArray.
+      data_callback : Callback that takes indices into the global array value as input and
         returns the corresponding data of the global array value.  The data can be returned
         as any array-like object, e.g. a ``numpy.ndarray``.
     """
@@ -413,11 +413,11 @@ class GlobalDeviceArray:
       gda = GlobalDeviceArray.from_batched_callback(global_input_shape, global_mesh, mesh_axes, batched_cb)
 
     Args:
-      global_shape: The global shape of the array
-      global_mesh: The global mesh representing devices across multiple
+      global_shape : The global shape of the array
+      global_mesh : The global mesh representing devices across multiple
         processes.
-      mesh_axes: See the ``mesh_axes`` parameter of GlobalDeviceArray.
-      data_callback: Callback that takes a batch of indices into the global array value with
+      mesh_axes : See the ``mesh_axes`` parameter of GlobalDeviceArray.
+      data_callback : Callback that takes a batch of indices into the global array value with
         length equal to the number of local devices as input and returns the corresponding data for each index.
         The data can be returned as any array-like objects, e.g. ``numpy.ndarray``
 """
@@ -455,11 +455,11 @@ class GlobalDeviceArray:
       gda = GlobalDeviceArray.from_batched_callback_with_devices(global_input_shape, global_mesh, mesh_axes, cb)
 
     Args:
-      global_shape: The global shape of the array
-      global_mesh: The global mesh representing devices across multiple
+      global_shape : The global shape of the array
+      global_mesh : The global mesh representing devices across multiple
         processes.
-      mesh_axes: See the ``mesh_axes`` parameter of GlobalDeviceArray.
-      data_callback: Callback that takes agets batch of indices into the global array value with
+      mesh_axes : See the ``mesh_axes`` parameter of GlobalDeviceArray.
+      data_callback : Callback that takes agets batch of indices into the global array value with
         length equal to the number of local devices as input and returns the corresponding data for
         each index. The data must be returned as jax DeviceArrays.
 """
