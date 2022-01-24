@@ -32,7 +32,7 @@ cannot use a number of JAX ops directly, because they don't have a corresponding
 op in TF. For this, we provide support on a case-by-case basis.
 
 To track this, we use a list of known limitations of the `jax2tf` emitter when
-XLA support is not available in [no_xla_limitations.md](no_xla_limitations.md).
+XLA support is not available in [no_xla_limitations.md](../g3doc/no_xla_limitations.md).
 
 ## Description of Converters
 
@@ -50,7 +50,7 @@ for a list of known problems.
 ### `jax2tf_to_tflite`
 
 This converter first converts a JAX model to TF SavedModel format without XLA
-support. Please see [no_xla_limitations.md](no_xla_limitations.md) for a list
+support. Please see [no_xla_limitations.md](../g3doc/no_xla_limitations.md) for a list
 of known limitations for this conversion step.
 
 After that, it converts the SavedModel to TFLite using the
@@ -59,7 +59,7 @@ After that, it converts the SavedModel to TFLite using the
 ### `jax2tf_to_tfjs`
 
 This converter first converts a JAX model to TF SavedModel format without XLA
-support. Please see [no_xla_limitations.md](no_xla_limitations.md) for a list
+support. Please see [no_xla_limitations.md](../g3doc/no_xla_limitations.md) for a list
 of known limitations for this conversion step.
 
 After that, it converts the SavedModel to TF.js using the

@@ -36,7 +36,7 @@ For a detailed description of these XLA ops, please see the
 | XlaScatter | `lax.scatter_p`, `lax.scatter_min_p`, `lax.scatter_max_p`, `lax.scatter_mul_p`, `lax.scatter_add_p` | Unsupported |
 | XlaSelectAndScatter | `lax.select_and_scatter_add_p` | Unsupported |
 | XlaReduce | `lax.reduce`, `lax.argmin`, `lax.argmax` | Unsupported |
-| XlaSort | `lax.sort` | Unsupported |
+| XlaVariadicSort | `lax.sort` | Unsupported |
 
 
 ## Partially Supported JAX Primitives
