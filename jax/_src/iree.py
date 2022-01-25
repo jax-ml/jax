@@ -23,7 +23,6 @@ using IREE to compile and run JAX computations instead of XLA.
 from typing import Any, List, Sequence
 
 import iree.compiler
-from iree.compiler.api import driver as compiler_driver
 from iree import runtime as iree_runtime
 
 from jax._src.lib import xla_client
@@ -66,6 +65,11 @@ class IreeBuffer(xla_client.DeviceArrayBase):
   def to_iree(self):
     return self._npy_value
 
+  def platform(self):
+    return self.client.platform
+
+  def device(self):
+    return self._device
 
 class IreeExecutable:
 
@@ -102,10 +106,6 @@ class IreeClient:
     self.platform_version = "0.0.1"
     self.runtime_type = "iree"
     self.iree_config = iree_runtime.system_api.Config(runtime_driver)
-    self.compiler_options = compiler_driver.CompilerOptions()
-    self.compiler_options.set_input_dialect_mhlo()
-    for target_backend in compile_target_backends:
-      self.compiler_options.add_target_backend(target_backend)
     self._devices = [IreeDevice(self)]
 
   def process_index(self) -> int:
