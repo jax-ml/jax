@@ -3195,7 +3195,8 @@ class APITest(jtu.JaxTestCase):
       return jnp.dot(x, x)
 
     for f in [f_jit, f_cond]:
-      precision = config.jax_default_matmul_precision
+      # Use _read() to read the flag value rather than threadlocal value.
+      precision = config._read('jax_default_matmul_precision')
       try:
         num_traces = 0
         x = jnp.zeros((2, 2))
@@ -3349,8 +3350,6 @@ class APITest(jtu.JaxTestCase):
       api.make_jaxpr(lambda: jnp.array(3))()
     self.assertEqual(count[0], 0)
 
-
-class RankPromotionTest(jtu.JaxTestCase):
   def test_rank_promotion_forces_retrace(self):
     num_traces = 0
 
@@ -3368,8 +3367,10 @@ class RankPromotionTest(jtu.JaxTestCase):
       return x + x
 
     for f in [f_jit, f_cond]:
-      allow_promotion = config.jax_numpy_rank_promotion
+      # Use _read() to read the flag value rather than threadlocal value.
+      allow_promotion = config._read('jax_numpy_rank_promotion')
       try:
+        FLAGS.jax_numpy_rank_promotion = "allow"
         num_traces = 0
         @jax.jit
         def f(x):
