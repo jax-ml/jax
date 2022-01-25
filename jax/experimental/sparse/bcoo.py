@@ -98,7 +98,8 @@ def _bcoo_sum_duplicates_unbatched(data, indices, *, shape, nse, remove_zeros):
     data_unique = jnp.zeros_like(data, shape=(nse, *data.shape[1:])).at[0].set(data.sum(0))
     indices_unique = jnp.zeros_like(indices, shape=(nse, 0))
     return data_unique, indices_unique, nse
-  fill_value = jnp.array(shape[:props.n_sparse], dtype=indices.dtype)
+  fill_value = jnp.expand_dims(jnp.array(shape[:props.n_sparse], dtype=indices.dtype),
+                               range(indices.ndim - 1))
   out_of_bounds = (indices >= fill_value).any(-1, keepdims=True)
   if remove_zeros:
     data_all_zero = (data == 0).all(range(props.n_batch + 1, data.ndim))[:, None]
@@ -115,7 +116,7 @@ def _bcoo_sum_duplicates_unbatched(data, indices, *, shape, nse, remove_zeros):
       size=nse, fill_value=fill_value)
   data_shape = [indices_unique.shape[0], *data.shape[1:]]
   data_unique = jnp.zeros(data_shape, data.dtype).at[inv_idx].add(data)
-  oob_mask = jnp.all(indices_unique == jnp.array(shape[:props.n_sparse]), 1)
+  oob_mask = jnp.all(indices_unique == fill_value, 1)
   data_unique = jnp.where(oob_mask[(...,) + props.n_dense * (None,)], 0, data_unique)
   return data_unique, indices_unique, nse
 
@@ -316,7 +317,8 @@ def _bcoo_fromdense_impl(mat, *, nse, n_batch, n_dense, index_dtype):
     indices = jnp.moveaxis(jnp.array(indices, index_dtype), 0, n_batch + 1)
   data = bcoo_extract(indices, mat)
 
-  true_nonzeros = jnp.arange(nse) < mask.sum(list(range(n_batch, mask.ndim)))[..., None]
+  true_nonzeros = (lax.broadcasted_iota(jnp.int32, (1,) * n_batch + (nse,), n_batch) <
+                   mask.sum(list(range(n_batch, mask.ndim)))[..., None])
   true_nonzeros = true_nonzeros[(n_batch + 1) * (slice(None),) + n_dense * (None,)]
   data = jnp.where(true_nonzeros, data, 0)
 
@@ -814,9 +816,13 @@ def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, 
   #   jnp.isin() currently doesn't help much, because it also does all() over an outer
   #   comparison.
   overlap = (lhs_i[:, None] == rhs_i[None, :]).all(-1)
-  lhs_valid = (lhs_i < jnp.array([lhs_shape[d] for d in lhs_contracting])).all(-1)
-  rhs_valid = (rhs_i < jnp.array([rhs_shape[d] for d in rhs_contracting])).all(-1)
-  out_data = jnp.where(overlap & lhs_valid[:, None] & rhs_valid,
+  lhs_fill_value = jnp.expand_dims(
+    jnp.array([lhs_shape[d] for d in lhs_contracting]), range(lhs_i.ndim - 1))
+  rhs_fill_value = jnp.expand_dims(
+    jnp.array([rhs_shape[d] for d in rhs_contracting]), range(rhs_i.ndim - 1))
+  lhs_valid = (lhs_i < lhs_fill_value).all(-1)
+  rhs_valid = (rhs_i < rhs_fill_value).all(-1)
+  out_data = jnp.where(overlap & lhs_valid[:, None] & rhs_valid[None, :],
                        lhs_data[:, None] * rhs_data[None, :], 0).ravel()
 
   out_indices = jnp.empty([lhs.nse, rhs.nse, lhs_j.shape[-1] + rhs_j.shape[-1]],
@@ -1017,8 +1023,9 @@ def bcoo_reduce_sum(data, indices, *, spinfo, axes):
   data = data.sum(dense_axes)
   if n_sparse:
     # zero-out data corresponding to invalid indices.
-    sparse_shape = jnp.array(shape[n_batch: n_batch + n_sparse])
-    mask = jnp.all(indices < sparse_shape, -1)
+    fill_value = jnp.expand_dims(
+      jnp.array(shape[n_batch: n_batch + n_sparse]), range(indices.ndim - 1))
+    mask = jnp.all(indices < fill_value, -1)
     if data.ndim > mask.ndim:
       mask = lax.expand_dims(mask, tuple(range(mask.ndim, data.ndim)))
     data = jnp.where(mask, data, 0)
@@ -1093,7 +1100,7 @@ def _bcoo_multiply_sparse_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices
 
   # TODO(jakevdp): this is pretty inefficient. Can we do this membership check
   # without constructing the full (lhs.nse, rhs.nse) masking matrix?
-  mask = jnp.all(lhs_indices[:, None, dims] == rhs_indices[:, dims], -1)
+  mask = jnp.all(lhs_indices[:, None, dims] == rhs_indices[None, :, dims], -1)
   i_lhs, i_rhs = jnp.nonzero(mask, size=nse, fill_value=(lhs.nse, rhs.nse))
   data = (lhs_data.at[i_lhs].get(mode='fill', fill_value=0) *
           rhs_data.at[i_rhs].get(mode='fill', fill_value=0))
