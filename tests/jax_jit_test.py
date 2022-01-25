@@ -39,7 +39,7 @@ def _cpp_device_put(value, device):
   return jaxlib.jax_jit.device_put(value, config.x64_enabled, device)
 
 
-class JaxJitTest(parameterized.TestCase):
+class JaxJitTest(jtu.JaxTestCase):
 
   def test_is_float_0(self):
     self.assertTrue(
