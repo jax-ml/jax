@@ -159,7 +159,7 @@ def _sharded_callable(
   else:
     assert nparts == xb.device_count()
     devices = xb.devices()
-  device_assignment = np.array([[d.id for d in devices]])
+  device_assignment = np.array([[d for d in devices]])
   device_assignment = np.reshape(device_assignment, (-1, nparts))
   # device_assignment = None  # TODO(skye): replace with default device assignment?
 

@@ -124,6 +124,9 @@ def get_compile_options(
       msg = 'device_assignment does not match num_partitions: {} vs {}.'
       raise ValueError(msg.format(device_assignment, num_partitions))
 
+    if device_assignment.dtype == object:
+      device_assignment = np.vectorize(lambda d: d.id, otypes=[int])(
+          device_assignment)
     device_assignment = xla_client.DeviceAssignment.create(device_assignment)
     assert device_assignment.replica_count() == num_replicas
     assert device_assignment.computation_count() == num_partitions
