@@ -515,6 +515,13 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
     self.assertFalse(core.typecompat(aval1, aval3))
 
+  def test_named_shape_comparision(self):
+    self.assertTrue(core.NamedShape(2, 3) == (2, 3))
+    self.assertFalse(core.NamedShape(2, i=3) == (2,))
+    self.assertFalse(core.NamedShape(2, i=3) == (2, 3))
+    self.assertFalse(core.NamedShape(2, i=3) == None)
+    self.assertFalse(core.NamedShape() == [])
+
 
 class DynamicShapesTest(jtu.JaxTestCase):
 
