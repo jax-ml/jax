@@ -408,6 +408,21 @@ class XMapTest(XMapTestCase):
     self.assertNotDeleted(y)
     self.assertDeleted(x)
 
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
+  @jtu.with_mesh([('x', 1)])
+  def testBufferDonationNamedShape(self):
+    axis_resources = {'i': 'x'}
+    # named in_aval, unnamed out_aval
+    f = xmap(lambda _: jnp.ones((3, 5)),
+             in_axes=['i', ...], out_axes=[...],
+             axis_resources=axis_resources,
+             donate_argnums=0)
+    shard = xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...],
+                 axis_resources=dict(axis_resources))
+    x = shard(jnp.zeros((3, 5)) * 4)
+    f(x)
+    self.assertDeleted(x)
+
   def testControlFlow(self):
     x = jnp.arange(5)
     xmap(lambda x: lax.fori_loop(0, 10, lambda _, x: lax.psum(x, 'i'), x),
