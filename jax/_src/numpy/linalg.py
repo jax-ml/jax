@@ -141,7 +141,8 @@ def slogdet(a):
   lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   is_zero = jnp.any(diag == jnp.array(0, dtype=dtype), axis=-1)
-  parity = jnp.count_nonzero(pivot != jnp.arange(a_shape[-1]), axis=-1)
+  iota = lax.expand_dims(jnp.arange(a.shape[-1]), range(pivot.ndim - 1))
+  parity = jnp.count_nonzero(pivot != iota, axis=-1)
   if jnp.iscomplexobj(a):
     sign = jnp.prod(diag / jnp.abs(diag), axis=-1)
   else:
@@ -233,7 +234,8 @@ def _cofactor_solve(a, b):
   lu = jnp.broadcast_to(lu, batch_dims + lu.shape[-2:])
   # Compute (partial) determinant, ignoring last diagonal of LU
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
-  parity = jnp.count_nonzero(pivots != jnp.arange(a_shape[-1]), axis=-1)
+  iota = lax.expand_dims(jnp.arange(a_shape[-1]), range(pivots.ndim - 1))
+  parity = jnp.count_nonzero(pivots != iota, axis=-1)
   sign = jnp.asarray(-2 * (parity % 2) + 1, dtype=dtype)
   # partial_det[:, -1] contains the full determinant and
   # partial_det[:, -2] contains det(u) / u_{nn}.
@@ -356,7 +358,8 @@ def pinv(a, rcond=None):
   u, s, vh = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
-  cutoff = rcond[..., jnp.newaxis] * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
+  rcond = lax.expand_dims(rcond[..., jnp.newaxis], range(s.ndim - rcond.ndim - 1))
+  cutoff = rcond * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
   s = jnp.where(s > cutoff, s, jnp.inf)
   res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]))
   return lax.convert_element_type(res, a.dtype)
@@ -375,8 +378,10 @@ def _pinv_jvp(rcond, primals, tangents):
   # TODO(phawkins): on TPU, we would need to opt into high precision here.
   # TODO(phawkins): consider if this can be simplified in the Hermitian case.
   p_dot = -p @ a_dot @ p
-  p_dot = p_dot + p @ _H(p) @ _H(a_dot) @ (jnp.eye(m, dtype=a.dtype) - a @ p)
-  p_dot = p_dot + (jnp.eye(n, dtype=a.dtype) - p @ a) @ _H(a_dot) @ _H(p) @ p
+  I_n = lax.expand_dims(jnp.eye(m, dtype=a.dtype), range(a.ndim - 2))
+  p_dot = p_dot + p @ _H(p) @ _H(a_dot) @ (I_n - a @ p)
+  I_m = lax.expand_dims(jnp.eye(n, dtype=a.dtype), range(a.ndim - 2))
+  p_dot = p_dot + (I_m - p @ a) @ _H(a_dot) @ _H(p) @ p
   return p, p_dot
 
 

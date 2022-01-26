@@ -321,7 +321,8 @@ def cholesky_jvp_rule(primals, tangents):
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
   def phi(X):
     l = jnp.tril(X)
-    return l / (jnp._constant_like(X, 1) + jnp.eye(X.shape[-1], dtype=X.dtype))
+    return l / lax.expand_dims(jnp._constant_like(X, 1) + jnp.eye(X.shape[-1], dtype=X.dtype),
+                               range(l.ndim - 2))
 
   tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
                          conjugate_a=True, lower=True)
@@ -982,13 +983,13 @@ def _lu_jvp_rule(primals, tangents):
   l_padding[-1] = (0, m - k, 0)
   zero = jnp._constant_like(lu, 0)
   l = lax.pad(jnp.tril(lu[..., :, :k], -1), zero, l_padding)
-  l = l + jnp.eye(m, m, dtype=dtype)
+  l = l + lax.expand_dims(jnp.eye(m, m, dtype=dtype), range(l.ndim - 2))
 
   u_eye = lax.pad(jnp.eye(n - k, n - k, dtype=dtype), zero,
                   ((k, 0, 0), (k, 0, 0)))
   u_padding = [(0, 0, 0)] * ndims
   u_padding[-2] = (0, n - k, 0)
-  u = lax.pad(jnp.triu(lu[..., :k, :]), zero, u_padding) + u_eye
+  u = lax.pad(jnp.triu(lu[..., :k, :]), zero, u_padding) + lax.expand_dims(u_eye, range(lu.ndim - 2))
 
   la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
                         unit_diagonal=True)
@@ -1147,7 +1148,8 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   qt_dx_rinv_lower = jnp.tril(qt_dx_rinv, -1)
   do = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
   # The following correction is necessary for complex inputs
-  do = do + jnp.eye(n, dtype=do.dtype) * (qt_dx_rinv - jnp.real(qt_dx_rinv))
+  I = lax.expand_dims(jnp.eye(n, dtype=do.dtype), range(qt_dx_rinv.ndim - 2))
+  do = do + I * (qt_dx_rinv - jnp.real(qt_dx_rinv))
   dq = jnp.matmul(q, do - qt_dx_rinv) + dx_rinv
   dr = jnp.matmul(qt_dx_rinv - do, r)
   return (q, r), (dq, dr)
@@ -1289,6 +1291,7 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
 
   s_diffs = (s_dim + _T(s_dim)) * (s_dim - _T(s_dim))
   s_diffs_zeros = jnp.eye(s.shape[-1], dtype=s.dtype)  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
+  s_diffs_zeros = lax.expand_dims(s_diffs_zeros, range(s_diffs.ndim - 2))
   F = 1 / (s_diffs + s_diffs_zeros) - s_diffs_zeros
   dSS = s_dim * dS  # dS.dot(jnp.diag(s))
   SdS = _T(s_dim) * dS  # jnp.diag(s).dot(dS)
@@ -1302,9 +1305,11 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
 
   m, n = A.shape[-2:]
   if m > n:
-    dU = dU + jnp.matmul(jnp.eye(m, dtype=A.dtype) - jnp.matmul(U, Ut), jnp.matmul(dA, V)) / s_dim
+    I = lax.expand_dims(jnp.eye(m, dtype=A.dtype), range(U.ndim - 2))
+    dU = dU + jnp.matmul(I - jnp.matmul(U, Ut), jnp.matmul(dA, V)) / s_dim
   if n > m:
-    dV = dV + jnp.matmul(jnp.eye(n, dtype=A.dtype) - jnp.matmul(V, Vt), jnp.matmul(_H(dA), U)) / s_dim
+    I = lax.expand_dims(jnp.eye(n, dtype=A.dtype), range(V.ndim - 2))
+    dV = dV + jnp.matmul(I - jnp.matmul(V, Vt), jnp.matmul(_H(dA), U)) / s_dim
 
   return (s, U, Vt), (ds, dU, _H(dV))
 
