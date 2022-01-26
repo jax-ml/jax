@@ -480,11 +480,15 @@ the following in your cloud TPU VM:
 pip install --upgrade pip
 pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
+
+### pip installation: Colab TPU
 Colab TPU runtimes come with JAX pre-installed, but before importing JAX you must run the following code to initialize the TPU:
 ```python
 import jax.tools.colab_tpu
 jax.tools.colab_tpu.setup_tpu()
 ```
+Colab TPU runtimes use an older TPU architecture than Cloud TPU VMs, so installing `jax[tpu]` should be avoided on Colab.
+If for any reason you would like to update the jax & jaxlib libraries on a Colab TPU runtime, follow the CPU instructions above (i.e. install `jax[cpu]`).
 
 ### Building JAX from source
 See [Building JAX from
