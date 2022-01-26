@@ -93,8 +93,8 @@ def get_compile_options(
   Args:
     num_replicas: Number of replicas for which to compile.
     num_partitions: Number of partitions for which to compile.
-    device_assignment: Optional tuple of integers indicating the assignment of
-      logical replicas to physical devices (default inherited from
+    device_assignment: Optional ndarray of jax devices indicating the assignment
+      of logical replicas to physical devices (default inherited from
       xla_client.CompileOptions). Must be consistent with `num_replicas` and
       `num_partitions`.
     use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
@@ -124,6 +124,9 @@ def get_compile_options(
       msg = 'device_assignment does not match num_partitions: {} vs {}.'
       raise ValueError(msg.format(device_assignment, num_partitions))
 
+    if device_assignment.dtype == object:
+      device_assignment = np.vectorize(lambda d: d.id, otypes=[int])(
+          device_assignment)
     device_assignment = xla_client.DeviceAssignment.create(device_assignment)
     assert device_assignment.replica_count() == num_replicas
     assert device_assignment.computation_count() == num_partitions
