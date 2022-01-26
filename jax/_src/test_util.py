@@ -929,7 +929,7 @@ class JaxTestCase(parameterized.TestCase):
     super().setUp()
     self._original_config = {}
     for key, value in self._default_config.items():
-      self._original_config[key] = getattr(config, key)
+      self._original_config[key] = config._read(key)
       config.update(key, value)
 
     # We use the adler32 hash for two reasons.
