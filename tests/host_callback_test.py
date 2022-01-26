@@ -185,7 +185,7 @@ def helper_log_ir(name,
   backend = xla_bridge.get_backend()
   if num_partitions is not None:
     num_replicas = 1
-    device_assignment = np.arange(num_partitions * num_replicas)
+    device_assignment = np.array(jax.devices()[:num_partitions * num_replicas])
     device_assignment = np.reshape(device_assignment, (-1, num_partitions))
     use_spmd_partitioning = num_partitions > 1
     compile_options = xla_bridge.get_compile_options(

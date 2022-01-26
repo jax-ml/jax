@@ -1132,9 +1132,8 @@ class PmapExecutable:
     # 'devices' may be 1D or 2D at this point (e.g.
     # get_default_device_assignment() returns 2D assignment, caller may have
     # provided 1D list of devices).
-    device_assignment = tree_map(lambda d: d.id, devices)
     # Convert to 2D in case it's 1D and we have > 1 partitions.
-    device_assignment = np.array(device_assignment).reshape(
+    device_assignment = np.array(devices).reshape(
         (replicas.num_global_replicas, parts.num_partitions))
     # TODO(b/162356737): Enabling SPMD partitioning causes issues with some
     # non-partitioned workloads, so disable unless needed.
@@ -2113,7 +2112,7 @@ class MeshExecutable:
       num_replicas, num_partitions = 1, mesh.size
     else:
       num_replicas, num_partitions = mesh.size, 1
-    device_assignment = mesh.device_ids.reshape((num_replicas, num_partitions))
+    device_assignment = mesh.devices.reshape((num_replicas, num_partitions))
     compile_options = xb.get_compile_options(
         num_replicas=num_replicas,
         num_partitions=num_partitions,
