@@ -42,6 +42,7 @@ float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 
 
+@jtu.with_config(jax_numpy_rank_promotion='raise')
 class NumpyLinalgTest(jtu.JaxTestCase):
 
   def testNotImplemented(self):
@@ -338,8 +339,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                            UPLO=uplo, symmetrize_input=False)
     self.assertLessEqual(
         np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
-    self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
-                         tol * np.linalg.norm(a))
+    with jax.numpy_rank_promotion('allow'):
+      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
+                           tol * np.linalg.norm(a))
 
     self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
                           rtol=1e-3)
@@ -350,8 +352,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                   [-1.,  1.,  0., -1.],
                   [1., -1., -1.,  0.]], dtype=np.float32)
     w, v = jnp.linalg.eigh(a)
-    self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
-                         1e-3 * np.linalg.norm(a))
+    with jax.numpy_rank_promotion('allow'):
+      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
+                          1e-3 * np.linalg.norm(a))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
@@ -427,13 +430,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     new_a = (new_a + np.conj(new_a.T)) / 2
     # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
     RTOL = 1e-2
-    assert np.max(
-      np.abs((np.diag(np.dot(np.conj((v+dv).T), np.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL
-    # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
-    assert np.max(
-      np.linalg.norm(np.abs(new_w*(v+dv) - np.dot(new_a, (v+dv))), axis=0) /
-      np.linalg.norm(np.abs(new_w*(v+dv)), axis=0)
-    ) < RTOL
+    with jax.numpy_rank_promotion('allow'):
+      assert np.max(
+        np.abs((np.diag(np.dot(np.conj((v+dv).T), np.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL
+      # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
+      assert np.max(
+        np.linalg.norm(np.abs(new_w*(v+dv) - np.dot(new_a, (v+dv))), axis=0) /
+        np.linalg.norm(np.abs(new_w*(v+dv)), axis=0)
+      ) < RTOL
 
   def testEighGradPrecision(self):
     rng = jtu.rand_default(self.rng())
@@ -953,6 +957,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertFalse(np.any(np.isnan(cube_func(a))))
 
 
+@jtu.with_config(jax_numpy_rank_promotion='raise')
 class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1224,7 +1229,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     X = vmap(solve, bdims)(A, B)
     matmul = partial(jnp.matmul, precision=lax.Precision.HIGHEST)
     Y = matmul(A, X) if left_side else matmul(X, A)
-    np.testing.assert_allclose(Y - B, 0, atol=1e-4)
+    self.assertArraysAllClose(Y, jnp.broadcast_to(B, Y.shape), atol=1e-4)
 
   def testTriangularSolveGradPrecision(self):
     rng = jtu.rand_default(self.rng())
@@ -1369,6 +1374,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=1, atol=tol,
                       rtol=tol)
 
+@jtu.with_config(jax_numpy_rank_promotion='raise')
 class LaxLinalgTest(jtu.JaxTestCase):
 
   def run_test(self, alpha, beta):

@@ -136,7 +136,7 @@ def _lu(a, permute_l):
   lu, pivots, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
-  p = jnp.real(jnp.array(permutation == jnp.arange(m)[:, None], dtype=dtype))
+  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m)[:, None], dtype=dtype))
   k = min(m, n)
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
   u = jnp.triu(lu)[:k, :]
