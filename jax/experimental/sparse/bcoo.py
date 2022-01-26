@@ -1222,15 +1222,15 @@ class BCOO(JAXSparse):
     return cls((data, indices), shape=mat.shape)
 
   @classmethod
-  def _empty(cls, shape, *, dtype=None, index_dtype='int32', n_dense=0, n_batch=0):
+  def _empty(cls, shape, *, dtype=None, index_dtype='int32', n_dense=0, n_batch=0, nse=0):
     """Create an empty BCOO instance. Public method is sparse.empty()."""
     shape = tuple(shape)
     n_sparse = len(shape) - n_dense - n_batch
-    if n_sparse < 0 or n_dense < 0 or n_batch < 0:
-      raise ValueError("Invalid inputs: shape={shape}, n_dense={n_dense}, n_batch={n_batch}")
+    if n_sparse < 0 or n_dense < 0 or n_batch < 0 or nse < 0:
+      raise ValueError(f"Invalid inputs: shape={shape}, n_dense={n_dense}, n_batch={n_batch}, nse={nse}")
     batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
-    data = jnp.empty((*batch_shape, 0, *dense_shape), dtype)
-    indices = jnp.empty((*batch_shape, 0, n_sparse), index_dtype)
+    data = jnp.zeros((*batch_shape, nse, *dense_shape), dtype)
+    indices = jnp.full((*batch_shape, nse, n_sparse), jnp.array(sparse_shape), index_dtype)
     return cls((data, indices), shape=shape)
 
   def _unbatch(self):

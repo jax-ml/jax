@@ -1606,6 +1606,15 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), jnp.empty(shape))
 
   @parameterized.named_parameters(
+    {"testcase_name": "{}_BCOO{}".format(nse, shape), "shape": shape, "nse": nse}
+    for shape in ([2, 5], [5, 3])
+    for nse in [0, 2])
+  def test_empty_nse(self, shape, nse=2):
+    M = sparse.empty(shape, nse=nse)
+    self.assertEqual(M.nse, nse)
+    self.assertArraysEqual(M.todense(), jnp.empty(shape))
+
+  @parameterized.named_parameters(
     {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_block_until_ready(self, Obj, shape=(5, 8), dtype=np.float32):
