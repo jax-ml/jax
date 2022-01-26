@@ -5545,34 +5545,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testDisableNumpyRankPromotionBroadcasting(self):
     try:
-      prev_flag = config.jax_numpy_rank_promotion
+      prev_flag = config._read('jax_numpy_rank_promotion')
       FLAGS.jax_numpy_rank_promotion = "allow"
       jnp.ones(2) + jnp.ones((1, 2))  # works just fine
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
 
     try:
-      prev_flag = config.jax_numpy_rank_promotion
+      prev_flag = config._read('jax_numpy_rank_promotion')
       FLAGS.jax_numpy_rank_promotion = "raise"
       self.assertRaises(ValueError, lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      jnp.ones(2) + 3  # don't want to raise for scalars
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
 
     try:
-      prev_flag = config.jax_numpy_rank_promotion
+      prev_flag = config._read('jax_numpy_rank_promotion')
       FLAGS.jax_numpy_rank_promotion = "warn"
-      with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        jnp.ones(2) + jnp.ones((1, 2))
-        assert len(w) > 0
-        msg = str(w[-1].message)
-        expected_msg = ("Following NumPy automatic rank promotion for add on "
-                        "shapes (2,) (1, 2).")
-        self.assertEqual(msg[:len(expected_msg)], expected_msg)
-
-        prev_len = len(w)
-        jnp.ones(2) + 3
-        self.assertEqual(len(w), prev_len)  # don't want to warn for scalars
+      self.assertWarnsRegex(UserWarning, "Following NumPy automatic rank promotion for add on "
+                            r"shapes \(2,\) \(1, 2\).*", lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      jnp.ones(2) + 3  # don't want to warn for scalars
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
 
@@ -5583,20 +5575,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     with jax.numpy_rank_promotion("raise"):
       self.assertRaises(ValueError, lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      jnp.ones(2) + 3  # don't want to raise for scalars
 
     with jax.numpy_rank_promotion("warn"):
-      with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        jnp.ones(2) + jnp.ones((1, 2))
-        assert len(w) > 0
-        msg = str(w[-1].message)
-        expected_msg = ("Following NumPy automatic rank promotion for add on "
-                        "shapes (2,) (1, 2).")
-        self.assertEqual(msg[:len(expected_msg)], expected_msg)
-
-        prev_len = len(w)
-        jnp.ones(2) + 3
-        self.assertEqual(len(w), prev_len)  # don't want to warn for scalars
+      self.assertWarnsRegex(UserWarning, "Following NumPy automatic rank promotion for add on "
+                            r"shapes \(2,\) \(1, 2\).*", lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      jnp.ones(2) + 3  # don't want to warn for scalars
 
   def testStackArrayArgument(self):
     # tests https://github.com/google/jax/issues/1271
