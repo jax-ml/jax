@@ -27,6 +27,7 @@ from jax._src.test_util import (
   format_shape_dtype_string,
   rand_uniform,
   skip_on_devices,
+  with_config,
   xla_bridge,
   _default_tolerance
 )
