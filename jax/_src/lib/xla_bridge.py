@@ -41,7 +41,7 @@ iree: Optional[Any]
 
 try:
   import jax._src.iree as iree  # type: ignore
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
   iree = None
 
 traceback_util.register_exclusion(__file__)
