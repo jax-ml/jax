@@ -146,9 +146,15 @@ cc_library(
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
     deps = [
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
     ],
+)
+
+cc_library(
+    name = "lapack_kernels_using_lapack",
+    srcs = ["lapack_kernels_using_lapack.cc"],
+    deps = [":lapack_kernels"],
+    alwayslink = 1,
 )
 
 py_library(
@@ -219,6 +225,7 @@ cc_library(
     srcs = ["cpu_kernels.cc"],
     deps = [
         ":lapack_kernels",
+        ":lapack_kernels_using_lapack",
         ":pocketfft_kernels",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
     ],

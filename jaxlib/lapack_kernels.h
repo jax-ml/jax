@@ -19,6 +19,11 @@ limitations under the License.
 #include <complex>
 #include <cstdint>
 
+// Underlying function pointers (e.g., Trsm<double>::Fn) are initialized either
+// by the pybind wrapper that links them to an existing SciPy lapack instance,
+// or using the lapack_kernels_strong.cc static initialization to link them
+// directly to lapack for use in a pure C++ context.
+
 namespace jax {
 
 typedef int lapack_int;
