@@ -1377,14 +1377,17 @@ class DynamicJaxprTrace(core.Trace):
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
   def process_call(self, call_primitive, f, tracers, params):
+    if params.get('inline', False):
+      frame = self.frame
+      args = [frame.constvar_to_val.get(frame.tracer_to_var.get(id(t)), t)
+              for t in tracers]
+      return f.call_wrapped(*args)
     dim_tracers = _get_tracers_only_in_shapes(tracers)
     in_avals = _tracers_to_avals({}, dim_tracers + tracers)
     keep_inputs = [False] * len(dim_tracers) + [True] * len(tracers)
     with core.new_sublevel():
       jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(
         f, self.main, in_avals, keep_inputs=keep_inputs)
-    if params.get('inline', False):
-      return core.eval_jaxpr(jaxpr, consts, *dim_tracers, *tracers)
     source_info = source_info_util.current()
     env = {id(t.aval): t for t in _get_tracers_in_shapes(set(), tracers)}
     subs = partial(_substitute_tracers_in_aval, env)
