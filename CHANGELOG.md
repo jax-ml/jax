@@ -16,17 +16,25 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * The `jax.jit(f).lower(...).compiler_ir(dialect='mhlo')` now returns an MLIR
     `ir.Module` object instead of its string representation.
 
-## jaxlib 0.1.76 (Unreleased)
+## jaxlib 0.1.77 (Unreleased)
+
+## jaxlib 0.1.76 (Jan 27, 2022)
 
 * New features
   * Includes precompiled SASS for NVidia compute capability 8.0 GPUS
     (e.g. A100). Removes precompiled SASS for compute capability 6.1 so as not
     to increase the number of compute capabilities: GPUs with compute capability
     6.1 can use the 6.0 SASS.
+  * With jaxlib 0.1.76, JAX uses the MHLO MLIR dialect as its primary target compiler IR
+    by default.
 * Breaking changes
   * Support for NumPy 1.18 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
     Please upgrade to a supported NumPy version.
+* Bug fixes
+  * Fixed a bug where apparently identical pytreedef objects constructed by different routes
+    do not compare as equal (#9066).
+  * The JAX jit cache requires two static arguments to have identical types for a cache hit (#9311).
 
 ## jax 0.2.27 (Jan 18 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.26...jax-v0.2.27).
