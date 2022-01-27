@@ -150,6 +150,8 @@ def ComputeTfValueAndGrad(tf_f: Callable, tf_args: Sequence,
   return f1(*args1)
 
 
+# jax2tf explilcitly exercises implicit rank promotion in many places.
+@jtu.with_config(jax_numpy_rank_promotion="allow")
 class JaxToTfTestCase(jtu.JaxTestCase):
 
   def setUp(self):

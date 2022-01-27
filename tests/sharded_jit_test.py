@@ -329,7 +329,7 @@ class ShardedJitTestNoTpu(jtu.JaxTestCase):
     # Annotation from sharded_jit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
+
 class PmapOfShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):

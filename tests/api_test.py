@@ -70,7 +70,6 @@ python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CPPJitTest(jtu.BufferDonationTestCase):
   """Shared tests between the Python and the C++ jax,jit implementations.
 
@@ -852,7 +851,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       python_should_be_executing = False
       self.assertEqual(x, f(x))
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
+
 class PythonJitTest(CPPJitTest):
 
   @property
@@ -860,7 +859,6 @@ class PythonJitTest(CPPJitTest):
     return api._python_jit
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class APITest(jtu.JaxTestCase):
 
   def test_grad_item(self):
@@ -3398,7 +3396,6 @@ class APITest(jtu.JaxTestCase):
         FLAGS.jax_numpy_rank_promotion = allow_promotion
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class RematTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -4255,7 +4252,7 @@ class RematTest(jtu.JaxTestCase):
 
     _ = api.linearize(partial(f, core.unit), 3.)
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
+
 class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):
@@ -4399,7 +4396,6 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 0)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomJVPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -5374,7 +5370,6 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertEqual(shape, ())
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomVJPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -6343,7 +6338,6 @@ def transpose_unary(f, x_example):
   return transposed
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomTransposeTest(jtu.JaxTestCase):
 
   def test_linear_call(self):
@@ -6672,7 +6666,6 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_t(x), jax.jit(f_t)(x))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomVmapTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -7099,7 +7092,6 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""
 
@@ -7137,7 +7129,6 @@ class CustomApiTest(jtu.JaxTestCase):
           self.assertIsInstance(getattr(f, method), Callable)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class InvertibleADTest(jtu.JaxTestCase):
 
   @jtu.ignore_warning(message="Values that an @invertible function closes")
@@ -7246,7 +7237,6 @@ class InvertibleADTest(jtu.JaxTestCase):
                         check_dtypes=True)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BufferDonationTest(jtu.BufferDonationTestCase):
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
@@ -7269,7 +7259,6 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
     pmap_fun(a)  # doesn't crash
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NamedCallTest(jtu.JaxTestCase):
 
   def test_default_name(self):
@@ -7350,7 +7339,6 @@ class NamedCallTest(jtu.JaxTestCase):
     self.assertRaises(OverflowError, f, int_min - 1)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BackendsTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not sys.executable, "test requires sys.executable")
@@ -7373,7 +7361,6 @@ class BackendsTest(jtu.JaxTestCase):
     assert "No GPU/TPU found" not in result.stderr.decode()
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CleanupTest(jtu.JaxTestCase):
   def test_call_wrapped_second_phase_cleanup(self):
     try:

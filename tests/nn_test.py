@@ -230,7 +230,7 @@ INITIALIZER_RECS = [
     initializer_record("delta_orthogonal", nn.initializers.delta_orthogonal, jtu.dtypes.floating, 4, 4)
 ]
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
+
 class NNInitializersTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
