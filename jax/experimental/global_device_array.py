@@ -294,6 +294,15 @@ class GlobalDeviceArray:
         f"got: {[db.dtype for db in device_buffers]}")
     self.dtype = dtype
 
+  def __eq__(self, other: object):
+    raise NotImplementedError(
+        "GlobalDeviceArray equality is intentionally unimplemented. "
+        "Implement desired functionality explicitly, e.g. to check if all "
+        "values are equal: "
+        "pjit(lambda x, y: x == y, "
+        "in_axis_resources=FROM_GDA, out_axis_resources=None)"
+    )
+
   def __str__(self):
     return f'GlobalDeviceArray(shape={self.shape}, dtype={self.dtype})'
 
