@@ -17,6 +17,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     `ir.Module` object instead of its string representation.
 
 ## jaxlib 0.1.77 (Unreleased)
+* Changes
+  * Bazel 5.0.0 is now required to build jaxlib.
 
 ## jaxlib 0.1.76 (Jan 27, 2022)
 
