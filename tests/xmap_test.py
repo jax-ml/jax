@@ -207,6 +207,7 @@ def schedules(sizes: Dict[str, int]
           yield axis_resources, mesh_data
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class XMapTestCase(jtu.BufferDonationTestCase):
   pass
 
@@ -281,7 +282,7 @@ class XMapTest(XMapTestCase):
     x = jnp.arange(4)
     result = xmap(lambda x: lax.all_gather(x, 'i') + lax.axis_index('i'),
                   in_axes=['i', ...], out_axes=['i', ...])(x)
-    self.assertAllClose(result, x + x[jnp.newaxis].T)
+    self.assertAllClose(result, x[jnp.newaxis] + x[jnp.newaxis].T)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testOneLogicalTwoMeshAxesBasic(self):
@@ -365,7 +366,7 @@ class XMapTest(XMapTestCase):
     xshape = (4, 2, 5)
     x = jnp.arange(np.prod(xshape)).reshape(xshape)
     y = f(x)
-    self.assertAllClose(y, ((jnp.sin(x * 2) * np.arange(xshape[-1])).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
+    self.assertAllClose(y, ((jnp.sin(x * 2) * np.arange(xshape[-1])[None, None]).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
     self.assertEqual(y[0].sharding_spec.sharding,
                      (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
     self.assertEqual(y[0].sharding_spec.mesh_mapping,
@@ -1120,6 +1121,7 @@ class PDotTests(XMapTestCase):
     self.assertAllClose(out, expected, check_dtypes=True)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class XMapErrorTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 2)])
@@ -1351,6 +1353,7 @@ class XMapErrorTest(jtu.JaxTestCase):
       xmap(lambda x: x, (p,), (p, ['x']))([x, x, x])  # Error, we raise a generic tree mismatch message
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NamedAutodiffTests(jtu.JaxTestCase):
 
   def testVjpReduceAxes(self):

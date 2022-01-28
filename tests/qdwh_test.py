@@ -15,12 +15,12 @@
 """Tests for the library of QDWH-based polar decomposition."""
 import functools
 
-from jax import test_util as jtu
 from jax.config import config
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as osp_linalg
 from jax._src.lax import qdwh
+from jax._src import test_util as jtu
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -58,6 +58,7 @@ def _compute_relative_diff(actual, expected):
 _dot = functools.partial(jnp.dot, precision="highest")
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class QdwhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -72,7 +73,7 @@ class QdwhTest(jtu.JaxTestCase):
     a = jnp.triu(jnp.ones((m, n)))
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
-    s = jnp.linspace(cond, 1, min(m, n))
+    s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
     a = (u * s) @ v
     is_symmetric = _check_symmetry(a)
     max_iterations = 2
@@ -99,7 +100,7 @@ class QdwhTest(jtu.JaxTestCase):
     a = jnp.triu(jnp.ones((m, n))).astype(_QDWH_TEST_DTYPE)
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
-    s = jnp.linspace(cond, 1, min(m, n))
+    s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
     a = (u * s) @ v
     is_symmetric = _check_symmetry(a)
     max_iterations = 10
@@ -142,7 +143,7 @@ class QdwhTest(jtu.JaxTestCase):
     a = rng((m, n), _QDWH_TEST_DTYPE)
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
-    s = jnp.linspace(cond, 1, min(m, n))
+    s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
     a = (u * s) @ v
     is_symmetric = _check_symmetry(a)
     max_iterations = 10
@@ -181,7 +182,7 @@ class QdwhTest(jtu.JaxTestCase):
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
     s = jnp.linspace(cond, 1, min(m, n))
-    s = s.at[-1].set(0)
+    s = jnp.expand_dims(s.at[-1].set(0), range(u.ndim - 1))
     a = (u * s) @ v
 
     is_symmetric = _check_symmetry(a)

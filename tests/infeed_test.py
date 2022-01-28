@@ -26,8 +26,10 @@ import numpy as np
 
 config.parse_flags_with_absl()
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class InfeedTest(jtu.JaxTestCase):
 
+  @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.
   def testInfeed(self):
 
     @jax.jit
@@ -66,6 +68,7 @@ class InfeedTest(jtu.JaxTestCase):
     device.transfer_to_infeed(tuple(flat_to_infeed))
     self.assertAllClose(f(x), to_infeed)
 
+  @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.
   def testInfeedThenOutfeed(self):
     hcb.stop_outfeed_receiver()
 
