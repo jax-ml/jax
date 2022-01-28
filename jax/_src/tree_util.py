@@ -17,7 +17,7 @@ import functools
 from functools import partial
 import operator as op
 from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, List,
-                    Type, TypeVar, overload, TYPE_CHECKING)
+                    Dict, Type, TypeVar, overload, TYPE_CHECKING, NamedTuple)
 
 from jax._src.lib import pytree
 
@@ -361,8 +361,121 @@ register_pytree_node(
 def broadcast_prefix(prefix_tree: Any, full_tree: Any,
                      is_leaf: Optional[Callable[[Any], bool]] = None
                      ) -> List[Any]:
+  # If prefix_tree is not a tree prefix of full_tree, this code can raise a
+  # ValueError; use prefix_errors to find disagreements and raise more precise
+  # error messages.
   result = []
   num_leaves = lambda t: tree_structure(t).num_leaves
   add_leaves = lambda x, subtree: result.extend([x] * num_leaves(subtree))
   tree_map(add_leaves, prefix_tree, full_tree, is_leaf=is_leaf)
   return result
+
+def flatten_one_level(pytree: Any) -> Tuple[List[Any], Hashable]:
+  handler = _registry.get(type(pytree))
+  if handler:
+    children, meta = handler.to_iter(pytree)
+    return list(children), meta
+  elif isinstance(pytree, tuple) and hasattr(pytree, '_fields'):
+    return list(pytree), None
+  else:
+    raise ValueError(f"can't tree-flatten type: {type(pytree)}")
+
+def prefix_errors(prefix_tree: Any, full_tree: Any
+                  ) -> List[Callable[[str], ValueError]]:
+  return list(_prefix_error(KeyPath(()), prefix_tree, full_tree))
+
+class KeyPathEntry(NamedTuple):
+  key: Any
+  def pprint(self) -> str:
+    assert False  # must override
+
+class KeyPath(NamedTuple):
+  keys: Tuple[KeyPathEntry, ...]
+  def __add__(self, other):
+    if isinstance(other, KeyPathEntry):
+      return KeyPath(self.keys + (other,))
+    raise TypeError(type(other))
+  def pprint(self) -> str:
+    if not self.keys:
+      return ' tree root'
+    return ''.join(k.pprint() for k in self.keys)
+
+class GetitemKeyPathEntry(KeyPathEntry):
+  def pprint(self) -> str:
+    return f'[{repr(self.key)}]'
+
+class AttributeKeyPathEntry(KeyPathEntry):
+  def pprint(self) -> str:
+    return f'.{self.key}'
+
+class FlattenedKeyPathEntry(KeyPathEntry):  # fallback
+  def pprint(self) -> str:
+    return f'[<flat index {self.key}>]'
+
+def _child_keys(pytree: Any) -> List[KeyPathEntry]:
+  assert not treedef_is_leaf(tree_structure(pytree))
+  handler = _keypath_registry.get(type(pytree))
+  if handler:
+    return handler(pytree)
+  elif isinstance(pytree, tuple) and hasattr(pytree, '_fields'):
+    # handle namedtuple as a special case, based on heuristic
+    return [AttributeKeyPathEntry(s) for s in pytree._fields]
+  else:
+    num_children = len(treedef_children(tree_structure(pytree)))
+    return [FlattenedKeyPathEntry(i) for i in range(num_children)]
+
+_keypath_registry: Dict[Type, Callable[[Any], List[KeyPathEntry]]] = {}
+
+def register_keypaths(ty: Type, handler: Callable[[Any], List[KeyPathEntry]]
+                      ) -> None:
+  _keypath_registry[ty] = handler
+
+register_keypaths(tuple,
+                  lambda tup: [GetitemKeyPathEntry(i) for i in range(len(tup))])
+register_keypaths(list,
+                  lambda lst: [GetitemKeyPathEntry(i) for i in range(len(lst))])
+register_keypaths(dict,
+                  lambda dct: [GetitemKeyPathEntry(k) for k in sorted(dct)])
+
+def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any
+                  ) -> Iterable[Callable[[str], ValueError]]:
+  # A leaf is a valid prefix of any tree:
+  if treedef_is_leaf(tree_structure(prefix_tree)): return
+
+  # The subtrees may disagree because their roots are of different types:
+  if type(prefix_tree) != type(full_tree):
+    yield lambda name: ValueError(
+      "pytree structure error: different types "
+      f"at {{name}}{key_path.pprint()}: "
+      f"prefix pytree {{name}} has type {type(prefix_tree)} "
+      f"where full pytree has type {type(full_tree)}.".format(name=name))
+    return  # don't look for more errors in this subtree
+
+  # Or they may disagree if their roots have different numbers of children:
+  prefix_tree_children, prefix_tree_meta = flatten_one_level(prefix_tree)
+  full_tree_children, full_tree_meta = flatten_one_level(full_tree)
+  if len(prefix_tree_children) != len(full_tree_children):
+    yield lambda name: ValueError(
+      "pytree structure error: different numbers of pytree children "
+      f"at {{name}}{key_path.pprint()}: "
+      f"prefix pytree {{name}} has {len(prefix_tree_children)} children where "
+      f"full pytree has {len(full_tree_children)} children.".format(name=name))
+    return  # don't look for more errors in this subtree
+
+  # Or they may disagree if their roots have different pytree metadata:
+  if prefix_tree_meta != full_tree_meta:
+    yield lambda name: ValueError(
+      "pytree structure error: different pytree metadata "
+      f"at {{name}}{key_path.pprint()}: "
+      f"prefix pytree {{name}} has metadata {prefix_tree_meta} where "
+      f"full pytree has metadata {full_tree_meta}.".format(name=name))
+    return  # don't look for more errors in this subtree
+
+  # If the root types and numbers of children agree, there must be an error
+  # in a subtree, so recurse:
+  keys = _child_keys(prefix_tree)
+  keys_ = _child_keys(full_tree)
+  assert keys == keys_, \
+    f"equal pytree nodes gave differing keys: {keys} and {keys_}"
+  for k, t1, t2 in zip(keys, prefix_tree_children, full_tree_children):
+    yield from _prefix_error(key_path + k, t1, t2)
