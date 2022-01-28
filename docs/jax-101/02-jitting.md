@@ -31,7 +31,7 @@ We can show a representation of the jaxpr of a function by using `jax.make_jaxpr
 
 ```{code-cell}
 :id: P9Xj77Wx3Z2P
-:outputId: 77d28eec-bfbb-487b-b10f-e47bc8f7dd0d
+:outputId: 5a0597eb-86c9-4762-ce10-2811debbc732
 
 import jax
 import jax.numpy as jnp
@@ -61,7 +61,7 @@ Note: the Python `print()` function is not pure: the text output is a side-effec
 
 ```{code-cell}
 :id: JxV2p7e2RawC
-:outputId: af7472de-df57-412f-83cb-e468c4b02d64
+:outputId: 9dfe8a56-e553-4640-a04e-5405aea7832d
 
 def log2_with_print(x):
   print("printed x:", x)
@@ -84,7 +84,7 @@ A key thing to understand is that jaxpr captures the function as executed on the
 
 ```{code-cell}
 :id: hn0CuphEZKZm
-:outputId: 669c5880-790d-4e5c-b635-f3acc21a0e02
+:outputId: 99dae727-d2be-4577-831c-e1e14af5890a
 
 def log2_if_rank_2(x):
   if x.ndim == 2:
@@ -108,7 +108,7 @@ operation commonly used in deep learning:
 
 ```{code-cell}
 :id: JAXFYtlRvD6p
-:outputId: e850862d-c9b4-4cfe-85a2-fb707178a957
+:outputId: e94d7dc2-a9a1-4ac2-fd3f-152e3f6d141b
 
 import jax
 import jax.numpy as jnp
@@ -128,7 +128,7 @@ Naturally, what we want to do is give the XLA compiler as much code as possible,
 
 ```{code-cell}
 :id: nJVEwPcH6bQX
-:outputId: 64b5eeab-0861-4cac-9c48-34586aa14fb6
+:outputId: 289eb2f7-a5ce-4cec-f652-5c4e5b0b86cf
 
 selu_jit = jax.jit(selu)
 
@@ -158,7 +158,7 @@ After going through the example above, you might be wondering whether we should 
 
 ```{code-cell}
 :id: GO1Mwd_3_W6g
-:outputId: be3ebdb8-1c38-48a5-be62-c8bb730481b5
+:outputId: a6fcf6d1-7bd6-4bb7-99c3-2a5a827183e2
 :tags: [raises-exception]
 
 # Condition on value of x.
@@ -175,7 +175,7 @@ f_jit(10)  # Should raise an error.
 
 ```{code-cell}
 :id: LHlipkIMFUhi
-:outputId: 39fc5739-c74c-4deb-bc11-fde0e3b95625
+:outputId: 54935882-a180-45c0-ad03-9dfb5e3baa97
 :tags: [raises-exception]
 
 # While loop conditioned on x and n.
@@ -204,7 +204,7 @@ One way to deal with this problem is to rewrite the code to avoid conditionals o
 
 ```{code-cell}
 :id: OeR8hF-NHAML
-:outputId: 2b15ebbc-0fd8-4de1-e37f-a25fb5d4a522
+:outputId: d47fd6b2-8bbd-4939-a794-0b80183d3179
 
 # While loop conditioned on x and n with a jitted body.
 
@@ -227,7 +227,7 @@ If we really need to JIT a function that has a condition on the value of an inpu
 
 ```{code-cell}
 :id: 2yQmQTDNAenY
-:outputId: ab9737b2-b991-47fe-c3d7-ed4a39c38832
+:outputId: c48f07b8-c3f9-4d2a-9dfd-663838a52511
 
 f_jit_correct = jax.jit(f, static_argnums=0)
 print(f_jit_correct(10))
@@ -235,7 +235,7 @@ print(f_jit_correct(10))
 
 ```{code-cell}
 :id: R4SXUEu-M-u1
-:outputId: 7b704cea-188e-438b-9497-a6369a147f0d
+:outputId: 9e712e14-4e81-4744-dcf2-a10f470d9121
 
 g_jit_correct = jax.jit(g, static_argnums=1)
 print(g_jit_correct(10, 20))
@@ -249,7 +249,7 @@ In many of the the examples above, jitting is not worth it:
 
 ```{code-cell}
 :id: uMOqsNnqYApD
-:outputId: 96e4348d-0702-41f8-a097-c64e5f1da1dc
+:outputId: 2d6c5122-43ad-4257-e56b-e77c889131c2
 
 print("g jitted:")
 %timeit g_jit_correct(10, 20).block_until_ready()
@@ -274,25 +274,47 @@ Suppose I define `f = jax.jit(g)`. When I first invoke `f`, it will get compiled
 
 If I specify `static_argnums`, then the cached code will be used only for the same values of arguments labelled as static. If any of them change, recompilation occurs. If there are many values, then your program might spend more time compiling than it would have executing ops one-by-one.
 
-Avoid calling `jax.jit` inside loops. Doing that effectively creates a new `f` at each call, which will get compiled each time instead of reusing the same cached function:
+Avoid calling `jax.jit` inside loops. For most cases, JAX will be able to use the compiled, cached function in subsequent calls to `jax.jit`. However, because the cache relies on the hash of the function, it becomes problematic when equivalent functions are redefined. This will cause unnecessary compilation each time in the loop:
 
 ```{code-cell}
 :id: 6MDSXCfmSZVZ
-:outputId: cb955855-0d24-4ff1-fcf7-872dc46ee565
+:outputId: a035d0b7-6a4d-4a9e-c6b4-7521970829fc
+
+from functools import partial
 
 def unjitted_loop_body(prev_i):
   return prev_i + 1
 
-def g_inner_jitted_poorly(x, n):
+def g_inner_jitted_partial(x, n):
   i = 0
   while i < n:
-    # Don't do this!
+    # Don't do this! each time the partial returns
+    # a function with different hash
+    i = jax.jit(partial(unjitted_loop_body))(i)
+  return x + i
+
+def g_inner_jitted_lambda(x, n):
+  i = 0
+  while i < n:
+    # Don't do this!, lambda will also return
+    # a function with a different hash
+    i = jax.jit(lambda x: unjitted_loop_body(x))(i)
+  return x + i
+
+def g_inner_jitted_normal(x, n):
+  i = 0
+  while i < n:
+    # this is OK, since JAX can find the
+    # cached, compiled function
     i = jax.jit(unjitted_loop_body)(i)
   return x + i
 
-print("jit called outside the loop:")
-%timeit g_inner_jitted(10, 20).block_until_ready()
+print("jit called in a loop with partials:")
+%timeit g_inner_jitted_partial(10, 20).block_until_ready()
 
-print("jit called inside the loop:")
-%timeit g_inner_jitted_poorly(10, 20).block_until_ready()
+print("jit called in a loop with lambdas:")
+%timeit g_inner_jitted_lambda(10, 20).block_until_ready()
+
+print("jit called in a loop with caching:")
+%timeit g_inner_jitted_normal(10, 20).block_until_ready()
 ```
