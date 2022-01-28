@@ -189,6 +189,7 @@ def check_grads_bilinear(f, args, order,
   check_grads(lambda rhs: f(lhs, rhs), (rhs,), order,
               modes=modes, atol=atol, rtol=rtol, eps=1.)
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -845,6 +846,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           [(3, 4, 5), (np.array([0, 2]), np.array([1, 3])), (0, 1)],
           [(3, 4, 5), (np.array([0, 2]), np.array([1, 3])), (0, 2)],
       ]))
+  @jax.numpy_rank_promotion('allow')  # Test explicitly exercises implicit rank promotion.
   def testIndexTakeGrad(self, shape, dtype, idxs, axes):
     rng = jtu.rand_default(self.rng())
     src = rng(shape, dtype)

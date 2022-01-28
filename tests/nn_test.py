@@ -35,16 +35,8 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NNFunctionsTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    config.update("jax_numpy_rank_promotion", "raise")
-
-  def tearDown(self):
-    super().tearDown()
-    config.update("jax_numpy_rank_promotion", "allow")
-
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
@@ -238,16 +230,8 @@ INITIALIZER_RECS = [
     initializer_record("delta_orthogonal", nn.initializers.delta_orthogonal, jtu.dtypes.floating, 4, 4)
 ]
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NNInitializersTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    config.update("jax_numpy_rank_promotion", "raise")
-
-  def tearDown(self):
-    super().tearDown()
-    config.update("jax_numpy_rank_promotion", "allow")
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_{}_{}".format(
