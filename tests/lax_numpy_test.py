@@ -3810,22 +3810,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if config.x64_enabled:
       self.assertEqual(np.uint64(val), jnp.array(val, dtype='uint64'))
 
-  # TODO(jakevdp): fix list inputs to jnp.array and enable the following test
-  # def testArrayFromList(self):
-  #   int_max = jnp.iinfo(jnp.int64).max
-  #   int_min = jnp.iinfo(jnp.int64).min
-  #
-  #   # Values at extremes are converted correctly.
-  #   for val in [int_min, 0, int_max]:
-  #     self.assertEqual(jnp.array([val]).dtype, dtypes.canonicalize_dtype('int64'))
-  #
-  #   # list of values results in promoted type.
-  #   self.assertEqual(jnp.array([0, np.float16(1)]).dtype, jnp.result_type('int64', 'float16'))
-  #
-  #   # out of bounds leads to an OverflowError
-  #   val = int_min - 1
-  #   with self.assertRaisesRegex(OverflowError, f"Python int {val} too large to convert to int64"):
-  #     jnp.array([0, val])
+  def testArrayFromList(self):
+    int_max = jnp.iinfo(jnp.int64).max
+    int_min = jnp.iinfo(jnp.int64).min
+
+    # Values at extremes are converted correctly.
+    for val in [int_min, 0, int_max]:
+      self.assertEqual(jnp.array([val]).dtype, dtypes.canonicalize_dtype('int64'))
+
+    # list of values results in promoted type.
+    self.assertEqual(jnp.array([0, np.float16(1)]).dtype, jnp.result_type('int64', 'float16'))
+
+    # out of bounds leads to an OverflowError
+    val = int_min - 1
+    with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
+      jnp.array([0, val])
 
   def testIssue121(self):
     assert not np.isscalar(jnp.array(3))
