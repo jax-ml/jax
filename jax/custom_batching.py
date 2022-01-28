@@ -15,4 +15,5 @@
 # flake8: noqa: F401
 from jax._src.custom_batching import (
   custom_vmap,
+  sequential_vmap,
 )
