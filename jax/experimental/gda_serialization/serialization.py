@@ -101,6 +101,14 @@ async def async_serialize(ckpt_path: str, gda: gda.GlobalDeviceArray,
   return await asyncio.gather(*future_write_state)
 
 
+def run_serialization(ckpt_paths, gdas, tensorstore_specs):
+  async def _run_serializer():
+    future_writer = jax.tree_map(async_serialize, ckpt_paths, gdas,
+                                 tensorstore_specs)
+    return await asyncio.gather(*future_writer)
+  asyncio.run(_run_serializer())
+
+
 async def async_deserialize(ckpt_path, mesh, mesh_axes, tensorstore_spec):
   t = ts.open(ts.Spec(tensorstore_spec), open=True).result()
 
@@ -108,3 +116,11 @@ async def async_deserialize(ckpt_path, mesh, mesh_axes, tensorstore_spec):
     return await t[index].read()
 
   return await create_async_gda_from_callback(t.shape, mesh, mesh_axes, cb)
+
+
+def run_deserialization(ckpt_paths, global_meshes, mesh_axes, tensorstore_specs):
+  async def _run_deserializer():
+    future_gdas = jax.tree_map(async_deserialize, ckpt_paths, global_meshes,
+                               mesh_axes, tensorstore_specs)
+    return await asyncio.gather(*future_gdas)
+  return asyncio.run(_run_deserializer())

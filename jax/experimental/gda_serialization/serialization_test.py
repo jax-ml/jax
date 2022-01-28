@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for serialization and deserialization of GDA."""
-import asyncio
+
 import pathlib
 import unittest
 
@@ -49,45 +49,26 @@ class CheckpointTest(jtu.JaxTestCase):
     def cb1(index):
       return global_input_data1[index]
 
-    gsda1 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
-                                            mesh_axes, cb1)
+    gda1 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                           mesh_axes, cb1)
     ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
 
     global_input_data2 = np.arange(num, num + num).reshape(global_input_shape)
     def cb2(index):
       return global_input_data2[index]
 
-    gsda2 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
-                                            mesh_axes, cb2)
+    gda2 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                           mesh_axes, cb2)
     ckpt_dir2 = pathlib.Path(self.create_tempdir('second').full_path)
 
     ckpt_paths = [str(ckpt_dir1), str(ckpt_dir2)]
-
     tspecs = jax.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
 
-    # Async Serialization below.
-    async def run_serializer():
-      future_writer = jax.tree_map(
-          serialization.async_serialize,
-          ckpt_paths,
-          [gsda1, gsda2],
-          tspecs
-      )
-      return await asyncio.gather(*future_writer)
-    asyncio.run(run_serializer())
+    serialization.run_serialization(ckpt_paths, [gda1, gda2], tspecs)
 
-    # Async Deserialization below.
-    async def run():
-      future_gsdas = jax.tree_map(
-          serialization.async_deserialize,
-          ckpt_paths,
-          [global_mesh, global_mesh],
-          [mesh_axes, ['x']],
-          tspecs
-      )
-      return await asyncio.gather(*future_gsdas)
-
-    m1, m2 = asyncio.run(run())
+    m1, m2 = serialization.run_deserialization(ckpt_paths,
+                                               [global_mesh, global_mesh],
+                                               [mesh_axes, ['x']], tspecs)
 
     self.assertArraysEqual(m1.local_shards[0].data.to_py(),
                            np.array([[0], [2]]))
