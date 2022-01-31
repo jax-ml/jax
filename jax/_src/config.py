@@ -663,3 +663,10 @@ enable_mlir = config.define_bool_state(
     default=lib.mlir_api_version >= 1,
     help=('Enables an experimental code path that compiles JAX programs via '
           'emitting the MLIR MHLO dialect.'))
+
+# This flag is temporary and for internal use.
+# TODO(tianjianlu): Removes after providing the information in BCOO meta data.
+bcoo_cusparse_lowering = config.define_bool_state(
+    name='jax_bcoo_cusparse_lowering',
+    default=False,
+    help=('Enables lowering BCOO ops to cuSparse.'))

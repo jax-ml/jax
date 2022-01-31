@@ -831,6 +831,103 @@ class BCOOTest(jtu.JaxTestCase):
     # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
+  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_lhs_contracting={}_rhs_contracting={}"
+       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
+               jtu.format_shape_dtype_string(rhs_shape, dtype),
+               lhs_contracting, rhs_contracting),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "lhs_contracting": lhs_contracting, "rhs_contracting": rhs_contracting}
+      for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
+          [(5,), (5,), [0], [0]],
+          [(5,), (5, 7), [0], [0]],
+          [(5,), (7, 5), [0], [1]],
+          [(5, 7), (5,), [0], [0]],
+          [(7, 5), (5,), [1], [0]],
+          [(3, 5), (2, 5), [1], [1]],
+          [(3, 5), (5, 2), [1], [0]],
+          [(5, 3), (2, 5), [0], [1]],
+          [(5, 3), (5, 2), [0], [0]],
+      ]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_bcoo_dot_general_cusparse(
+    self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting):
+    rng = jtu.rand_small(self.rng())
+    rng_sparse = rand_sparse(self.rng())
+    def args_maker():
+      lhs = rng_sparse(lhs_shape, dtype)
+      rhs = rng(rhs_shape, dtype)
+      data, indices = sparse.bcoo_fromdense(lhs, index_dtype=jnp.int32)
+      return data, indices, lhs, rhs
+    dimension_numbers = ((lhs_contracting, rhs_contracting), ([], []))
+
+    def f_dense(data, indices, lhs, rhs):
+      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+
+    def f_sparse(data, indices, lhs, rhs):
+      return sparse.bcoo_dot_general(data, indices, rhs,
+                                     dimension_numbers=dimension_numbers,
+                                     lhs_spinfo=BCOOInfo(lhs.shape))
+
+    self._CompileAndCheck(f_sparse, args_maker)
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
+
+  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  def test_bcoo_dot_general_oob_and_unsorted_indices_cusparse(self):
+    """Tests bcoo dot general with out-of-bound and unsorted indices."""
+
+    rhs = jnp.ones((5, 3), dtype=jnp.float32)
+
+    # It creates out-of-bound indices when nse > nnz.
+    lhs_2d_dense = jnp.array([[1, 0, 2, 3, 0], [0, 0, 0, 4, 0]],
+                             dtype=jnp.float32)
+    lhs_2d_sparse, lhs_sparse_2d_indicdes = sparse.bcoo_fromdense(
+        lhs_2d_dense, nse=7)
+
+    def create_unsorted_indices(data, indices):
+      data_to_shuffle = jnp.hstack((jnp.expand_dims(data, axis=1), indices))
+      key = jax.random.PRNGKey(1701)
+      data_after_shuffle = jax.random.permutation(key, data_to_shuffle)
+      return (data_after_shuffle[:, 0],
+              data_after_shuffle[:, 1:].astype(dtype=jnp.int32))
+
+    # Random permutate the indices to make them unsorted.
+    lhs_2d_sparse, lhs_sparse_2d_indicdes = create_unsorted_indices(
+        lhs_2d_sparse, lhs_sparse_2d_indicdes)
+
+    dimension_numbers = (([1], [0]), ([], []))
+    expected_2d = lax.dot_general(
+        lhs_2d_dense, rhs, dimension_numbers=dimension_numbers)
+    actual_2d = sparse.bcoo_dot_general(
+        lhs_2d_sparse, lhs_sparse_2d_indicdes, rhs,
+        dimension_numbers=dimension_numbers,
+        lhs_spinfo=BCOOInfo(lhs_2d_dense.shape))
+
+    with self.subTest(msg="2D"):
+      self.assertAllClose(expected_2d, actual_2d)
+
+    # It creates out-of-bound indices when nse > nnz.
+    lhs_1d_dense = jnp.array([0, 1, 0, 2, 0], dtype=jnp.float32)
+    lhs_1d_sparse, lhs_sparse_1d_indicdes = sparse.bcoo_fromdense(
+        lhs_1d_dense, nse=7)
+
+    # Random permutate the indices to make them unsorted.
+    lhs_1d_sparse, lhs_sparse_1d_indicdes = create_unsorted_indices(
+        lhs_1d_sparse, lhs_sparse_1d_indicdes)
+
+    dimension_numbers = (([0], [0]), ([], []))
+    expected_1d = lax.dot_general(
+        lhs_1d_dense, rhs, dimension_numbers=dimension_numbers)
+    actual_1d = sparse.bcoo_dot_general(
+        lhs_1d_sparse, lhs_sparse_1d_indicdes, rhs,
+        dimension_numbers=dimension_numbers,
+        lhs_spinfo=BCOOInfo(lhs_1d_dense.shape))
+
+    with self.subTest(msg="1D"):
+      self.assertAllClose(expected_1d, actual_1d)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": props.testcase_name(), "props": props}
       for props in _generate_bcoo_dot_general_properties(
