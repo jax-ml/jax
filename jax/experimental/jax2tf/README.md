@@ -889,7 +889,7 @@ a “high-level” TensorFlow op for batch
 normalization is generated, and in the absence of XLA, on CPU or GPU,
 a custom C++ “high-level” kernel implementing batch normalization is executed.
 In JAX, there is no primitive for batch normalization, and instead the
-operation is decomposed into low-level primitives (e.g., [flax.nn.BatchNorm](https://flax.readthedocs.io/en/latest/_autosummary/flax.nn.BatchNorm.html#flax.nn.BatchNorm),
+operation is decomposed into low-level primitives (e.g., [flax.linen.BatchNorm](https://flax.readthedocs.io/en/latest/_autosummary/flax.linen.BatchNorm.html),
 or haiku.BatchNorm).
 Once those primitives are converted to TensorFlow, and the resulting code is
 run without XLA, the ensemble of the kernels executed will quite
