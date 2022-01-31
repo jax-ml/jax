@@ -13,13 +13,13 @@
 # limitations under the License.
 """pytest configuration"""
 
-import jax
-import numpy
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def add_imports(doctest_namespace):
+  import jax
+  import numpy
   doctest_namespace["jax"] = jax
   doctest_namespace["lax"] = jax.lax
   doctest_namespace["jnp"] = jax.numpy
