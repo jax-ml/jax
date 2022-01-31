@@ -1864,7 +1864,7 @@ def swapaxes(a, axis1: int, axis2: int):
   _check_arraylike("swapaxes", a)
   perm = np.arange(ndim(a))
   perm[axis1], perm[axis2] = perm[axis2], perm[axis1]
-  return lax.transpose(a, perm)
+  return lax.transpose(a, list(perm))
 
 
 @_wraps(np.moveaxis, lax_description=_ARRAY_VIEW_DOC)

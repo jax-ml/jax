@@ -92,7 +92,7 @@ def _parse_parameters(body: str) -> Dict[str, str]:
   return OrderedDict((p.partition(' : ')[0].partition(', ')[0], p) for p in parameters)
 
 
-def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
+def _wraps(fun: Optional[Callable], update_doc: bool = True, lax_description: str = "",
            sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
            skip_params: Sequence[str] = ()):
   """Specialized version of functools.wraps for wrapping numpy functions.
@@ -133,7 +133,8 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
           )
 
         docstr = parsed.summary.strip() + "\n" if parsed.summary else ""
-        docstr += f"\nLAX-backend implementation of :func:`{fun.__name__}`.\n"
+        name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
+        docstr += f"\nLAX-backend implementation of :func:`{name}`.\n"
         if lax_description:
           docstr += "\n" + lax_description.strip() + "\n"
         docstr += "\n*Original docstring below.*\n"
