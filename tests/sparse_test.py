@@ -116,6 +116,7 @@ def rand_sparse(rng, nse=0.5, post=lambda x: x, rand_method=jtu.rand_default):
   return _rand_sparse
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class cuSparseTest(jtu.JaxTestCase):
   def gpu_dense_conversion_warning_context(self, dtype):
     if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
@@ -553,6 +554,8 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
+
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BCOOTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
@@ -1310,7 +1313,7 @@ class BCOOTest(jtu.JaxTestCase):
     if indices.size > 0:
       flatind = indices.reshape(-1, *indices.shape[-2:]).transpose(0, 2, 1)
       sorted = jax.vmap(jnp.lexsort)(flatind[:, ::-1])
-      self.assertTrue(jnp.all(sorted == jnp.arange(sorted.shape[-1])))
+      self.assertArraysEqual(sorted, lax.broadcasted_iota(sorted.dtype, sorted.shape, sorted.ndim - 1))
 
   def test_bcoo_sum_duplicates_inferred_nse(self):
     x = sparse.BCOO.fromdense(jnp.diag(jnp.arange(4)))
@@ -1418,6 +1421,7 @@ class BCOOTest(jtu.JaxTestCase):
       for n_dense in range(len(lhs_shape) + 1 - n_batch)
       for lhs_dtype in all_dtypes
       for rhs_dtype in all_dtypes))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def test_bcoo_mul_dense(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, n_batch, n_dense):
     rng_lhs = rand_sparse(self.rng())
     rng_rhs = jtu.rand_default(self.rng())
@@ -1558,6 +1562,7 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertArraysEqual((y_sp @ x_sp).todense(), y_de @ x_de)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class SparseGradTest(jtu.JaxTestCase):
   def test_sparse_grad(self):
     rng_sparse = rand_sparse(self.rng())
@@ -1580,6 +1585,7 @@ class SparseGradTest(jtu.JaxTestCase):
     self.assertArraysEqual(grad_sparse.todense(), grad_sparse_from_dense)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class SparseObjectTest(jtu.JaxTestCase):
   def test_repr(self):
     M = sparse.BCOO.fromdense(jnp.arange(5, dtype='float32'))
@@ -1597,6 +1603,15 @@ class SparseObjectTest(jtu.JaxTestCase):
     M = sparse.empty(shape, sparse_format=sparse_format)
     self.assertIsInstance(M, cls)
     self.assertEqual(M.nse, 0)
+    self.assertArraysEqual(M.todense(), jnp.empty(shape))
+
+  @parameterized.named_parameters(
+    {"testcase_name": "{}_BCOO{}".format(nse, shape), "shape": shape, "nse": nse}
+    for shape in ([2, 5], [5, 3])
+    for nse in [0, 2])
+  def test_empty_nse(self, shape, nse=2):
+    M = sparse.empty(shape, nse=nse)
+    self.assertEqual(M.nse, nse)
     self.assertArraysEqual(M.todense(), jnp.empty(shape))
 
   @parameterized.named_parameters(
@@ -1765,6 +1780,8 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.sum(1), Msp.sum(1).todense())
     self.assertArraysEqual(M.sum(), Msp.sum())
 
+
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class SparseRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_indices_dtype={}_nbatch={}_ndense={}".format(

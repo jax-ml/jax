@@ -30,7 +30,7 @@ import collections
 from functools import partial
 import operator
 import types
-from typing import Sequence, FrozenSet, Optional, Tuple, Union, Set, Type, Callable
+from typing import Any, Sequence, FrozenSet, Optional, Tuple, Union, Set, Type, Callable
 from textwrap import dedent as _dedent
 import warnings
 
@@ -243,9 +243,9 @@ class ndarray(metaclass=ArrayMeta):
   def any(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
           keepdims=None): ...
   @abc.abstractmethod
-  def argmax(self, axis: Optional[int] = None, out=None): ...
+  def argmax(self, axis: Optional[int] = None, out=None, keepdims=None): ...
   @abc.abstractmethod
-  def argmin(self, axis: Optional[int] = None, out=None): ...
+  def argmin(self, axis: Optional[int] = None, out=None, keepdims=None): ...
   @abc.abstractmethod
   def argpartition(self, kth, axis=-1, kind='introselect', order=None): ...
   @abc.abstractmethod
@@ -2878,16 +2878,18 @@ def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
 @_wraps(np.nanmin, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'keepdims'))
 def nanmin(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
-           keepdims=None):
-  return _nan_reduction(a, 'nanmin', min, inf, nan_if_all_nan=True,
-                        axis=axis, out=out, keepdims=keepdims)
+           keepdims=None, initial=None, where=None):
+  return _nan_reduction(a, 'nanmin', min, inf, nan_if_all_nan=initial is None,
+                        axis=axis, out=out, keepdims=keepdims,
+                        initial=initial, where=where)
 
 @_wraps(np.nanmax, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'keepdims'))
 def nanmax(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
-           keepdims=None):
-  return _nan_reduction(a, 'nanmax', max, -inf, nan_if_all_nan=True,
-                        axis=axis, out=out, keepdims=keepdims)
+           keepdims=None, initial=None, where=None):
+  return _nan_reduction(a, 'nanmax', max, -inf, nan_if_all_nan=initial is None,
+                        axis=axis, out=out, keepdims=keepdims,
+                        initial=initial, where=where)
 
 @_wraps(np.nansum, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
@@ -2895,7 +2897,8 @@ def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, keepdims=None, initial=None, where=None):
   lax._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
-                        axis=axis, dtype=dtype, out=out, keepdims=keepdims)
+                        axis=axis, dtype=dtype, out=out, keepdims=keepdims,
+                        initial=initial, where=where)
 
 # Work around a sphinx documentation warning in NumPy 1.22.
 nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
@@ -2903,54 +2906,55 @@ nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
 @_wraps(np.nanprod, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanprod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-            out=None, keepdims=None):
+            out=None, keepdims=None, initial=None, where=None):
   lax._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
-                        axis=axis, dtype=dtype, out=out, keepdims=keepdims)
+                        axis=axis, dtype=dtype, out=out, keepdims=keepdims,
+                        initial=initial, where=where)
 
 @_wraps(np.nanmean, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanmean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-            out=None, keepdims=False):
+            out=None, keepdims=False, where=None):
   _check_arraylike("nanmean", a)
   lax._check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
   if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
-    return mean(a, axis, dtype, out, keepdims)
+    return mean(a, axis, dtype, out, keepdims, where=where)
   if dtype is None:
     dtype = _dtype(a)
   nan_mask = logical_not(isnan(a))
-  normalizer = sum(nan_mask, axis=axis, dtype=int32, keepdims=keepdims)
+  normalizer = sum(nan_mask, axis=axis, dtype=int32, keepdims=keepdims, where=where)
   normalizer = lax.convert_element_type(normalizer, dtype)
-  td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
+  td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims, where=where), normalizer)
   return td
 
 
 @_wraps(np.nanvar, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-           out=None, ddof=0, keepdims=False):
+           out=None, ddof=0, keepdims=False, where=None):
   _check_arraylike("nanvar", a)
   lax._check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
   a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
-  a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True)
+  a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True, where=where)
 
-  centered = where(isnan(a), 0, a - a_mean)  # double-where trick for gradients.
+  centered = _where(isnan(a), 0, a - a_mean)  # double-where trick for gradients.
   if issubdtype(centered.dtype, complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
   else:
     centered = lax.square(centered)
 
-  normalizer = sum(logical_not(isnan(a)), axis=axis, keepdims=keepdims)
+  normalizer = sum(logical_not(isnan(a)), axis=axis, keepdims=keepdims, where=where)
   normalizer = normalizer - ddof
   normalizer_mask = lax.le(normalizer, 0)
-  result = sum(centered, axis, keepdims=keepdims)
-  result = where(normalizer_mask, nan, result)
-  divisor = where(normalizer_mask, 1, normalizer)
+  result = sum(centered, axis, keepdims=keepdims, where=where)
+  result = _where(normalizer_mask, nan, result)
+  divisor = _where(normalizer_mask, 1, normalizer)
   out = lax.div(result, lax.convert_element_type(divisor, result.dtype))
   return lax.convert_element_type(out, dtype)
 
@@ -2958,12 +2962,12 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 @_wraps(np.nanstd, skip_params=['out'])
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanstd(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-           out=None, ddof=0, keepdims=False):
+           out=None, ddof=0, keepdims=False, where=None):
   _check_arraylike("nanstd", a)
   lax._check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
-  return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
+  return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
 
 
 def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_value=0):
@@ -5223,36 +5227,44 @@ def argwhere(a, *, size=None, fill_value=None):
 
 
 @_wraps(np.argmax, skip_params=['out'])
-def argmax(a, axis: Optional[int] = None, out=None):
-  return _argmax(a, None if axis is None else operator.index(axis))
+def argmax(a, axis: Optional[int] = None, out=None, keepdims=None):
+  return _argmax(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
-@partial(jit, static_argnames=('axis',), inline=True)
-def _argmax(a, axis: Optional[int] = None, out=None):
+@partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
+def _argmax(a, axis: Optional[int] = None, out=None, keepdims=False):
   _check_arraylike("argmax", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmax is not supported.")
   if axis is None:
+    dims = list(range(ndim(a)))
     a = ravel(a)
     axis = 0
+  else:
+    dims = [axis]
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmax of an empty sequence")
-  return lax.argmax(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
+  result = lax.argmax(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
+  return expand_dims(result, dims) if keepdims else result
 
 @_wraps(np.argmin, skip_params=['out'])
-def argmin(a, axis: Optional[int] = None, out=None):
-  return _argmin(a, None if axis is None else operator.index(axis))
+def argmin(a, axis: Optional[int] = None, out=None, keepdims=None):
+  return _argmin(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
-@partial(jit, static_argnames=('axis',), inline=True)
-def _argmin(a, axis: Optional[int] = None, out=None):
+@partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
+def _argmin(a, axis: Optional[int] = None, out=None, keepdims=False):
   _check_arraylike("argmin", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmin is not supported.")
   if axis is None:
+    dims = list(range(ndim(a)))
     a = ravel(a)
     axis = 0
+  else:
+    dims = [axis]
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmin of an empty sequence")
-  return lax.argmin(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
+  result = lax.argmin(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
+  return expand_dims(result, dims) if keepdims else result
 
 
 _NANARG_DOC = """\
@@ -5260,33 +5272,37 @@ Warning: jax.numpy.arg{} returns -1 for all-NaN slices and does not raise
 an error.
 """
 
-@_wraps(np.nanargmax, lax_description=_NANARG_DOC.format("max"))
-def nanargmax(a, axis: Optional[int] = None):
-  return _nanargmax(a, None if axis is None else operator.index(axis))
+@_wraps(np.nanargmax, lax_description=_NANARG_DOC.format("max"), skip_params=['out'])
+def nanargmax(a, axis: Optional[int] = None, out : Any = None, keepdims : Optional[bool] = None):
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.nanargmax is not supported.")
+  return _nanargmax(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
-@partial(jit, static_argnames=('axis',))
-def _nanargmax(a, axis: Optional[int] = None):
+@partial(jit, static_argnames=('axis', 'keepdims'))
+def _nanargmax(a, axis: Optional[int] = None, keepdims: bool = False):
   _check_arraylike("nanargmax", a)
   if not issubdtype(_dtype(a), inexact):
-    return argmax(a, axis=axis)
+    return argmax(a, axis=axis, keepdims=keepdims)
   nan_mask = isnan(a)
   a = where(nan_mask, -inf, a)
-  res = argmax(a, axis=axis)
-  return where(all(nan_mask, axis=axis), -1, res)
+  res = argmax(a, axis=axis, keepdims=keepdims)
+  return where(all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
-@_wraps(np.nanargmin, lax_description=_NANARG_DOC.format("min"))
-def nanargmin(a, axis: Optional[int] = None):
-  return _nanargmin(a, None if axis is None else operator.index(axis))
+@_wraps(np.nanargmin, lax_description=_NANARG_DOC.format("min"),  skip_params=['out'])
+def nanargmin(a, axis: Optional[int] = None, out : Any = None, keepdims : Optional[bool] = None):
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.nanargmin is not supported.")
+  return _nanargmin(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
-@partial(jit, static_argnames=('axis',))
-def _nanargmin(a, axis: Optional[int] = None):
+@partial(jit, static_argnames=('axis', 'keepdims'))
+def _nanargmin(a, axis: Optional[int] = None, keepdims : bool = False):
   _check_arraylike("nanargmin", a)
   if not issubdtype(_dtype(a), inexact):
-    return argmin(a, axis=axis)
+    return argmin(a, axis=axis, keepdims=keepdims)
   nan_mask = isnan(a)
   a = where(nan_mask, inf, a)
-  res = argmin(a, axis=axis)
-  return where(all(nan_mask, axis=axis), -1, res)
+  res = argmin(a, axis=axis, keepdims=keepdims)
+  return where(all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
 
 @_wraps(np.sort)

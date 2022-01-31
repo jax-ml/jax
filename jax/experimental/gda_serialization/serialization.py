@@ -85,22 +85,28 @@ async def async_serialize(ckpt_path: str, gda: gda.GlobalDeviceArray,
   if not tensorstore_spec.get('metadata'):
     tensorstore_spec['metadata'] = _get_metadata(gda)
 
+  t = await ts.open(
+      ts.Spec(tensorstore_spec),
+      create=True,
+      open=True,
+      context=ts.Context({'file_io_concurrency': {
+          'limit': 128
+      }}))
+
   async def _write_array(shard):
     if shard.replica_id == 0:
-      t = await ts.open(
-          ts.Spec(tensorstore_spec),
-          create=True,
-          open=True,
-          context=ts.Context({'file_io_concurrency': {
-              'limit': 128
-          }}))
       await t[shard.index].write(shard.data)
 
-  async def writer():
-    future_write_state = jax.tree_util.tree_map(_write_array,
-                                                tuple(gda.local_shards))
-    await asyncio.gather(*future_write_state)
-  return await writer()
+  future_write_state = jax.tree_util.tree_map(_write_array, tuple(gda.local_shards))
+  return await asyncio.gather(*future_write_state)
+
+
+def run_serialization(ckpt_paths, gdas, tensorstore_specs):
+  async def _run_serializer():
+    future_writer = jax.tree_map(async_serialize, ckpt_paths, gdas,
+                                 tensorstore_specs)
+    return await asyncio.gather(*future_writer)
+  asyncio.run(_run_serializer())
 
 
 async def async_deserialize(ckpt_path, mesh, mesh_axes, tensorstore_spec):
@@ -110,3 +116,11 @@ async def async_deserialize(ckpt_path, mesh, mesh_axes, tensorstore_spec):
     return await t[index].read()
 
   return await create_async_gda_from_callback(t.shape, mesh, mesh_axes, cb)
+
+
+def run_deserialization(ckpt_paths, global_meshes, mesh_axes, tensorstore_specs):
+  async def _run_deserializer():
+    future_gdas = jax.tree_map(async_deserialize, ckpt_paths, global_meshes,
+                               mesh_axes, tensorstore_specs)
+    return await asyncio.gather(*future_gdas)
+  return asyncio.run(_run_deserializer())

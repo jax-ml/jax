@@ -6,6 +6,10 @@ sphinx-autodoc-typehints==1.11.1
 jupyter-sphinx>=0.3.2
 myst-nb
 
+# Need to pin docutils to 0.16 to make bulleted lists appear correctly on
+# ReadTheDocs: https://stackoverflow.com/a/68008428
+docutils==0.16.0
+
 # Packages used for CI tests.
 pytest
 pytest-xdist

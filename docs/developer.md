@@ -194,6 +194,32 @@ pip install mypy
 mypy --config=mypy.ini --show-error-codes jax
 ```
 
+Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
+on all staged files in your git repository, automatically using the same mypy version as
+in the GitHub CI:
+
+```
+$ pre-commit run mypy
+```
+
+# Linting
+
+JAX uses the [flake8](https://flake8.pycqa.org/) linter to ensure code quality. You can check
+your local changes by running:
+
+```
+pip install flake8
+flake8 jax
+```
+
+Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
+on all staged files in your git repository, automatically using the same flake8 version as
+the GitHub tests:
+
+```
+$ pre-commit run flake8
+```
+
 # Update documentation
 
 To rebuild the documentation, install several packages:
@@ -242,11 +268,14 @@ using [jupytext](https://jupytext.readthedocs.io/) by running:
 $ jupytext --sync docs/notebooks/*
 ```
 
-Alternatively, you can run this command via the [pre-commit](https://pre-commit.com/)
-framework by executing the following in the main JAX directory:
+Be sure to use the version of jupytext specified in
+[.pre-commit-config.yaml](https://github.com/google/jax/blob/main/.pre-commit-config.yaml).
+
+Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
+on all staged files in your git repository, automatically using the correct jupytext version:
 
 ```
-$ pre-commit run --all
+$ pre-commit run jupytext
 ```
 
 See the pre-commit framework documentation for information on how to set your local git

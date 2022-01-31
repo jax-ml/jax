@@ -606,7 +606,7 @@ class XlaCompiledComputation:
     options = xb.get_compile_options(
         num_replicas=nreps,
         num_partitions=1,
-        device_assignment=(sticky_device.id,) if sticky_device else None)
+        device_assignment=(sticky_device,) if sticky_device else None)
     options.parameter_is_tupled_arguments = tuple_args
     with log_elapsed_time(f"Finished XLA compilation of {name} "
                           "in {elapsed_time} sec"):

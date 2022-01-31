@@ -44,7 +44,7 @@ from jax._src import dtypes
 from jax import tree_util
 from jax.test_util import check_grads
 from jax._src.util import prod, safe_zip
-from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
+from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
 from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 
 from jax.config import config
@@ -361,6 +361,13 @@ JAX_REDUCER_INITIAL_RECORDS = [
     op_record("max", 1, all_dtypes, all_shapes, jtu.rand_default, []),
     op_record("min", 1, all_dtypes, all_shapes, jtu.rand_default, []),
 ]
+if numpy_version >= (1, 22):  # initial & where keywords added in numpy 1.22
+  JAX_REDUCER_INITIAL_RECORDS += [
+      op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_small_positive, []),
+      op_record("nansum", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+      op_record("nanmax", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+      op_record("nanmin", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+  ]
 
 JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
     op_record("all", 1, bool_dtypes, all_shapes, jtu.rand_some_zero, []),
@@ -372,6 +379,15 @@ JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
     op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True),
 ]
+if numpy_version >= (1, 22):  # where keyword added in numpy 1.22
+  JAX_REDUCER_WHERE_NO_INITIAL_RECORDS += [
+      op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+                inexact=True),
+      op_record("nanvar", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+                inexact=True),
+      op_record("nanstd", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+                inexact=True),
+  ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("all", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
@@ -806,7 +822,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
     @jtu.ignore_warning(category=RuntimeWarning,
-                        message="All-NaN slice encountered.*")
+                        message="All-NaN (slice|axis) encountered.*")
     def np_fun(x):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
@@ -847,7 +863,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    tol = {jnp.bfloat16: 3E-2}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -1069,24 +1086,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "{}_inshape={}_axis={}".format(
+      {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
           rec.test_name.capitalize(),
-          jtu.format_shape_dtype_string(shape, dtype), axis),
+          jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-       "axis": axis}
+       "axis": axis, "keepdims": keepdims}
       for rec in JAX_ARGMINMAX_RECORDS
       for shape, dtype in _shape_and_dtypes(rec.shapes, rec.dtypes)
-      for axis in range(-len(shape), len(shape))))
-  def testArgMinMax(self, np_op, jnp_op, rng_factory, shape, dtype, axis):
+      for axis in range(-len(shape), len(shape))
+      for keepdims in [True, False]))
+  def testArgMinMax(self, np_op, jnp_op, rng_factory, shape, dtype, axis, keepdims):
     rng = rng_factory(self.rng())
     if dtype == np.complex128 and jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("complex128 reductions not supported on GPU")
     if "nan" in np_op.__name__ and dtype == jnp.bfloat16:
       raise unittest.SkipTest("NumPy doesn't correctly handle bfloat16 arrays")
+    if numpy_version < (1, 22) and keepdims:
+      raise unittest.SkipTest("NumPy < 1.22 does not support keepdims argument to argmin/argmax")
+    kwds = {"keepdims": True} if keepdims else {}
 
-    np_fun = jtu.with_jax_dtype_defaults(partial(np_op, axis=axis))
-    jnp_fun = partial(jnp_op, axis=axis)
+    np_fun = jtu.with_jax_dtype_defaults(partial(np_op, axis=axis, **kwds))
+    jnp_fun = partial(jnp_op, axis=axis, **kwds)
 
     args_maker = lambda: [rng(shape, dtype)]
     try:
@@ -3789,22 +3810,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if config.x64_enabled:
       self.assertEqual(np.uint64(val), jnp.array(val, dtype='uint64'))
 
-  # TODO(jakevdp): fix list inputs to jnp.array and enable the following test
-  # def testArrayFromList(self):
-  #   int_max = jnp.iinfo(jnp.int64).max
-  #   int_min = jnp.iinfo(jnp.int64).min
-  #
-  #   # Values at extremes are converted correctly.
-  #   for val in [int_min, 0, int_max]:
-  #     self.assertEqual(jnp.array([val]).dtype, dtypes.canonicalize_dtype('int64'))
-  #
-  #   # list of values results in promoted type.
-  #   self.assertEqual(jnp.array([0, np.float16(1)]).dtype, jnp.result_type('int64', 'float16'))
-  #
-  #   # out of bounds leads to an OverflowError
-  #   val = int_min - 1
-  #   with self.assertRaisesRegex(OverflowError, f"Python int {val} too large to convert to int64"):
-  #     jnp.array([0, val])
+  def testArrayFromList(self):
+    int_max = jnp.iinfo(jnp.int64).max
+    int_min = jnp.iinfo(jnp.int64).min
+
+    # Values at extremes are converted correctly.
+    for val in [int_min, 0, int_max]:
+      self.assertEqual(jnp.array([val]).dtype, dtypes.canonicalize_dtype('int64'))
+
+    # list of values results in promoted type.
+    self.assertEqual(jnp.array([0, np.float16(1)]).dtype, jnp.result_type('int64', 'float16'))
+
+    # out of bounds leads to an OverflowError
+    val = int_min - 1
+    with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
+      jnp.array([0, val])
 
   def testIssue121(self):
     assert not np.isscalar(jnp.array(3))
@@ -5524,34 +5544,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testDisableNumpyRankPromotionBroadcasting(self):
     try:
-      prev_flag = config.jax_numpy_rank_promotion
+      prev_flag = config._read('jax_numpy_rank_promotion')
       FLAGS.jax_numpy_rank_promotion = "allow"
       jnp.ones(2) + jnp.ones((1, 2))  # works just fine
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
 
     try:
-      prev_flag = config.jax_numpy_rank_promotion
+      prev_flag = config._read('jax_numpy_rank_promotion')
       FLAGS.jax_numpy_rank_promotion = "raise"
       self.assertRaises(ValueError, lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      jnp.ones(2) + 3  # don't want to raise for scalars
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
 
     try:
-      prev_flag = config.jax_numpy_rank_promotion
+      prev_flag = config._read('jax_numpy_rank_promotion')
       FLAGS.jax_numpy_rank_promotion = "warn"
-      with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        jnp.ones(2) + jnp.ones((1, 2))
-        assert len(w) > 0
-        msg = str(w[-1].message)
-        expected_msg = ("Following NumPy automatic rank promotion for add on "
-                        "shapes (2,) (1, 2).")
-        self.assertEqual(msg[:len(expected_msg)], expected_msg)
-
-        prev_len = len(w)
-        jnp.ones(2) + 3
-        self.assertEqual(len(w), prev_len)  # don't want to warn for scalars
+      self.assertWarnsRegex(UserWarning, "Following NumPy automatic rank promotion for add on "
+                            r"shapes \(2,\) \(1, 2\).*", lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      jnp.ones(2) + 3  # don't want to warn for scalars
     finally:
       FLAGS.jax_numpy_rank_promotion = prev_flag
 
@@ -5562,20 +5574,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     with jax.numpy_rank_promotion("raise"):
       self.assertRaises(ValueError, lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      jnp.ones(2) + 3  # don't want to raise for scalars
 
     with jax.numpy_rank_promotion("warn"):
-      with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        jnp.ones(2) + jnp.ones((1, 2))
-        assert len(w) > 0
-        msg = str(w[-1].message)
-        expected_msg = ("Following NumPy automatic rank promotion for add on "
-                        "shapes (2,) (1, 2).")
-        self.assertEqual(msg[:len(expected_msg)], expected_msg)
-
-        prev_len = len(w)
-        jnp.ones(2) + 3
-        self.assertEqual(len(w), prev_len)  # don't want to warn for scalars
+      self.assertWarnsRegex(UserWarning, "Following NumPy automatic rank promotion for add on "
+                            r"shapes \(2,\) \(1, 2\).*", lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      jnp.ones(2) + 3  # don't want to warn for scalars
 
   def testStackArrayArgument(self):
     # tests https://github.com/google/jax/issues/1271
@@ -6023,8 +6027,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
-      'argmax': ['keepdims'],
-      'argmin': ['keepdims'],
       'asarray': ['like'],
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
@@ -6040,14 +6042,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
-      'nanargmax': ['out', 'keepdims'],
-      'nanargmin': ['out', 'keepdims'],
-      'nanmax': ['initial', 'where'],
-      'nanmean': ['where'],
-      'nanmin': ['initial', 'where'],
-      'nanprod': ['initial', 'where'],
-      'nanstd': ['where'],
-      'nanvar': ['where'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'tri': ['like'],
@@ -6206,6 +6200,46 @@ class NumpyDocTests(jtu.JaxTestCase):
 
       if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
         raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_jit" if jit else "", "jit": jit} for jit in [True, False])
+  def test_wrapped_function_parameters(self, jit):
+    def orig(x):
+      """Example Docstring
+
+      Parameters
+      ----------
+      x : array_like
+        Input Data
+
+        .. versionadded:: 1.8.0
+      out : array_like, optional
+        Output to overwrite
+      other_arg : Any
+        not used
+
+      Returns
+      -------
+      x : input
+      """
+      return x
+
+    def wrapped(x, out=None):
+      return x
+
+    if jit:
+      wrapped = jax.jit(wrapped)
+
+    wrapped = _wraps(orig, skip_params=['out'])(wrapped)
+    doc = wrapped.__doc__
+
+    self.assertStartsWith(doc, "Example Docstring")
+    self.assertIn("Original docstring below", doc)
+    self.assertIn("Parameters", doc)
+    self.assertIn("Returns", doc)
+    self.assertNotIn('out', doc)
+    self.assertNotIn('other_arg', doc)
+    self.assertNotIn('versionadded', doc)
 
 
   def test_parse_numpydoc(self):

@@ -454,6 +454,16 @@ def xmap(fun: Callable,
       :py:func:`xmap` to one or more resource axes. Any array that has in its
       shape an axis with some resources assigned will be partitioned over the
       resources associated with the respective resource axes.
+    donate_argnums: Specify which argument buffers are "donated" to the computation.
+      It is safe to donate argument buffers if you no longer need them once the
+      computation has finished. In some cases XLA can make use of donated
+      buffers to reduce the amount of memory needed to perform a computation,
+      for example recycling one of your input buffers to store a result. You
+      should not reuse buffers that you donate to a computation, JAX will raise
+      an error if you try to.
+
+      For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend. 'cpu', 'gpu', or 'tpu'.
 

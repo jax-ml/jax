@@ -264,6 +264,22 @@ class GDATest(jtu.JaxTestCase):
         ("GlobalDeviceArray(shape=(8, 2), dtype=int32, "
         "global_mesh_shape={'x': 4, 'y': 2}, mesh_axes=[('x', 'y')])"))
 
+  def test_gda_equality_raises_not_implemented(self):
+    global_mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P(None,)
+    global_input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return global_input_data[index]
+    input_gda = GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+    same_input_gda = GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+    with self.assertRaisesRegex(NotImplementedError,
+        'GlobalDeviceArray equality is intentionally unimplemented.'):
+      input_gda == same_input_gda
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

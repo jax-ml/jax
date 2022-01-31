@@ -43,6 +43,8 @@ def genNamedParametersNArgs(n):
           for dtypes in itertools.combinations_with_replacement(jtu.dtypes.floating, n)))
 
 
+# Allow implicit rank promotion in these tests, as virtually every test exercises it.
+@jtu.with_config(jax_numpy_rank_promotion="allow")
 class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 

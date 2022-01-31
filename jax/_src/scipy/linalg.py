@@ -136,7 +136,7 @@ def _lu(a, permute_l):
   lu, pivots, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
-  p = jnp.real(jnp.array(permutation == jnp.arange(m)[:, None], dtype=dtype))
+  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m)[:, None], dtype=dtype))
   k = min(m, n)
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
   u = jnp.triu(lu)[:k, :]
@@ -275,7 +275,7 @@ def expm(A, *, upper_triangular=False, max_squarings=16):
   def _compute(args):
     A, P, Q = args
     R = _solve_P_Q(P, Q, upper_triangular)
-    R = _squaring(R, n_squarings)
+    R = _squaring(R, n_squarings, max_squarings)
     return R
 
   R = lax.cond(n_squarings > max_squarings, _nan, _compute, (A, P, Q))
@@ -318,8 +318,8 @@ def _solve_P_Q(P, Q, upper_triangular=False):
 def _precise_dot(A, B):
   return jnp.dot(A, B, precision=lax.Precision.HIGHEST)
 
-@jit
-def _squaring(R, n_squarings):
+@partial(jit, static_argnums=2)
+def _squaring(R, n_squarings, max_squarings):
   # squaring step to undo scaling
   def _squaring_precise(x):
     return _precise_dot(x, x)
@@ -329,7 +329,7 @@ def _squaring(R, n_squarings):
 
   def _scan_f(c, i):
     return lax.cond(i < n_squarings, _squaring_precise, _identity, c), None
-  res, _ = lax.scan(_scan_f, R, jnp.arange(16))
+  res, _ = lax.scan(_scan_f, R, jnp.arange(max_squarings))
 
   return res
 

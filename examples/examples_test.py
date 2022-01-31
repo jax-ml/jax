@@ -23,6 +23,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
+import jax
 from jax import lax
 from jax import random
 import jax.numpy as jnp
@@ -73,6 +74,7 @@ class ExamplesTest(parameterized.TestCase):
       for num_classes in [5, 10]
       for input_shape in [(224, 224, 3, 2)])
   @unittest.skipIf(config.x64_enabled, "skip in x64 mode")
+  @jax.numpy_rank_promotion("allow")  # Uses stax, which exercises implicit rank promotion.
   def testResNet50Shape(self, num_classes, input_shape):
     init_fun, apply_fun = resnet50.ResNet50(num_classes)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)

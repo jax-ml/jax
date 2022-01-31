@@ -118,6 +118,21 @@ def flatten_fun_nokwargs2(in_tree, *args_flat):
   aux_flat, aux_tree = tree_flatten(aux)
   yield (ans_flat, aux_flat), (ans_tree, aux_tree)
 
+class _HashableWithStrictTypeEquality:
+  """Box object used when comparing static arguments as a jit key.
+
+  Requires exact type equality using `is` and value equality."""
+  __slots__ = ["val"]
+
+  def __init__(self, val):
+    self.val = val
+
+  def __hash__(self):
+    return hash(self.val)
+
+  def __eq__(self, other):
+    return type(self.val) is type(other.val) and self.val == other.val
+
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   dyn_argnums = _ensure_index_tuple(dyn_argnums)
@@ -130,7 +145,7 @@ def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
             "Non-hashable static arguments are not supported, as this can lead "
             f"to unexpected cache-misses. Static argument (index {i}) of type "
             f"{type(arg)} for function {f.__name__} is non-hashable.")
-      fixed_args[i] = Hashable(arg)
+      fixed_args[i] = _HashableWithStrictTypeEquality(arg)
     else:
       fixed_args[i] = Unhashable(arg)
 
@@ -160,7 +175,7 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
           f"to unexpected cache-misses. Static argument (index {i}) of type "
           f"{type(static_arg)} for function {f.__name__} is non-hashable.")
     else:
-      fixed_args[i] = Hashable(static_arg)  # type: ignore
+      fixed_args[i] = _HashableWithStrictTypeEquality(static_arg)  # type: ignore
 
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 

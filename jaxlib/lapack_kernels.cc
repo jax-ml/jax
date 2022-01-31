@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstring>
 #include <limits>
 
-#include "absl/base/attributes.h"
 #include "absl/base/dynamic_annotations.h"
 
 namespace jax {
@@ -767,105 +766,4 @@ template struct RealGees<double>;
 template struct ComplexGees<std::complex<float>>;
 template struct ComplexGees<std::complex<double>>;
 
-// Normally JAX obtains its LAPACK/BLAS kernels via Scipy, but optionally
-// allow the user to link against LAPACK directly. This is useful when using
-// JAX-generated HLO from C++.
-
 }  // namespace jax
-
-#if ABSL_HAVE_ATTRIBUTE_WEAK
-
-extern "C" {
-
-jax::Trsm<float>::FnType strsm_ ABSL_ATTRIBUTE_WEAK;
-jax::Trsm<double>::FnType dtrsm_ ABSL_ATTRIBUTE_WEAK;
-jax::Trsm<std::complex<float>>::FnType ctrsm_ ABSL_ATTRIBUTE_WEAK;
-jax::Trsm<std::complex<double>>::FnType ztrsm_ ABSL_ATTRIBUTE_WEAK;
-
-jax::Getrf<float>::FnType sgetrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Getrf<double>::FnType dgetrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Getrf<std::complex<float>>::FnType cgetrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Getrf<std::complex<double>>::FnType zgetrf_ ABSL_ATTRIBUTE_WEAK;
-
-jax::Geqrf<float>::FnType sgeqrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Geqrf<double>::FnType dgeqrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Geqrf<std::complex<float>>::FnType cgeqrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Geqrf<std::complex<double>>::FnType zgeqrf_ ABSL_ATTRIBUTE_WEAK;
-
-jax::Orgqr<float>::FnType sorgqr_ ABSL_ATTRIBUTE_WEAK;
-jax::Orgqr<double>::FnType dorgqr_ ABSL_ATTRIBUTE_WEAK;
-jax::Orgqr<std::complex<float>>::FnType cungqr_ ABSL_ATTRIBUTE_WEAK;
-jax::Orgqr<std::complex<double>>::FnType zungqr_ ABSL_ATTRIBUTE_WEAK;
-
-jax::Potrf<float>::FnType spotrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Potrf<double>::FnType dpotrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Potrf<std::complex<float>>::FnType cpotrf_ ABSL_ATTRIBUTE_WEAK;
-jax::Potrf<std::complex<double>>::FnType zpotrf_ ABSL_ATTRIBUTE_WEAK;
-
-jax::RealGesdd<float>::FnType sgesdd_ ABSL_ATTRIBUTE_WEAK;
-jax::RealGesdd<double>::FnType dgesdd_ ABSL_ATTRIBUTE_WEAK;
-jax::ComplexGesdd<std::complex<float>>::FnType cgesdd_ ABSL_ATTRIBUTE_WEAK;
-jax::ComplexGesdd<std::complex<double>>::FnType zgesdd_ ABSL_ATTRIBUTE_WEAK;
-
-jax::RealSyevd<float>::FnType ssyevd_ ABSL_ATTRIBUTE_WEAK;
-jax::RealSyevd<double>::FnType dsyevd_ ABSL_ATTRIBUTE_WEAK;
-jax::ComplexHeevd<std::complex<float>>::FnType cheevd_ ABSL_ATTRIBUTE_WEAK;
-jax::ComplexHeevd<std::complex<double>>::FnType zheevd_ ABSL_ATTRIBUTE_WEAK;
-
-jax::RealGeev<float>::FnType sgeev_ ABSL_ATTRIBUTE_WEAK;
-jax::RealGeev<double>::FnType dgeev_ ABSL_ATTRIBUTE_WEAK;
-jax::ComplexGeev<std::complex<float>>::FnType cgeev_ ABSL_ATTRIBUTE_WEAK;
-jax::ComplexGeev<std::complex<double>>::FnType zgeev_ ABSL_ATTRIBUTE_WEAK;
-
-jax::RealGees<float>::FnType sgees_ ABSL_ATTRIBUTE_WEAK;
-jax::RealGees<double>::FnType dgees_ ABSL_ATTRIBUTE_WEAK;
-jax::ComplexGees<std::complex<float>>::FnType cgees_ ABSL_ATTRIBUTE_WEAK;
-jax::ComplexGees<std::complex<double>>::FnType zgees_ ABSL_ATTRIBUTE_WEAK;
-
-}  // extern "C"
-
-namespace jax {
-
-static auto init = []() -> int {
-  Trsm<float>::fn = strsm_;
-  Trsm<double>::fn = dtrsm_;
-  Trsm<std::complex<float>>::fn = ctrsm_;
-  Trsm<std::complex<double>>::fn = ztrsm_;
-  Getrf<float>::fn = sgetrf_;
-  Getrf<double>::fn = dgetrf_;
-  Getrf<std::complex<float>>::fn = cgetrf_;
-  Getrf<std::complex<double>>::fn = zgetrf_;
-  Geqrf<float>::fn = sgeqrf_;
-  Geqrf<double>::fn = dgeqrf_;
-  Geqrf<std::complex<float>>::fn = cgeqrf_;
-  Geqrf<std::complex<double>>::fn = zgeqrf_;
-  Orgqr<float>::fn = sorgqr_;
-  Orgqr<double>::fn = dorgqr_;
-  Orgqr<std::complex<float>>::fn = cungqr_;
-  Orgqr<std::complex<double>>::fn = zungqr_;
-  Potrf<float>::fn = spotrf_;
-  Potrf<double>::fn = dpotrf_;
-  Potrf<std::complex<float>>::fn = cpotrf_;
-  Potrf<std::complex<double>>::fn = zpotrf_;
-  RealGesdd<float>::fn = sgesdd_;
-  RealGesdd<double>::fn = dgesdd_;
-  ComplexGesdd<std::complex<float>>::fn = cgesdd_;
-  ComplexGesdd<std::complex<double>>::fn = zgesdd_;
-  RealSyevd<float>::fn = ssyevd_;
-  RealSyevd<double>::fn = dsyevd_;
-  ComplexHeevd<std::complex<float>>::fn = cheevd_;
-  ComplexHeevd<std::complex<double>>::fn = zheevd_;
-  RealGeev<float>::fn = sgeev_;
-  RealGeev<double>::fn = dgeev_;
-  ComplexGeev<std::complex<float>>::fn = cgeev_;
-  ComplexGeev<std::complex<double>>::fn = zgeev_;
-  RealGees<float>::fn = sgees_;
-  RealGees<double>::fn = dgees_;
-  ComplexGees<std::complex<float>>::fn = cgees_;
-  ComplexGees<std::complex<double>>::fn = zgees_;
-  return 0;
-}();
-
-}  // namespace jax
-
-#endif  // ABSL_HAVE_ATTRIBUTE_WEAK

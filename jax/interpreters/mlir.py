@@ -382,15 +382,18 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime."""
   input_output_aliases = None
-  if platform in ("gpu", "tpu"):
+  platforms_with_donation = ("gpu", "tpu")
+  if platform in platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(
         jaxpr.in_avals, jaxpr.out_avals, donated_args)
   if any(donated_args):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
     unused_donations = [str(a) for a, d in zip(jaxpr.in_avals, donated_args)
                         if d]
-    warnings.warn("Some donated buffers were not usable: {}".format(
-        ", ".join(unused_donations)))
+    msg = "See an explanation at https://jax.readthedocs.io/en/latest/notebooks/faq.html#buffer-donation."
+    if platform not in platforms_with_donation:
+      msg = f"Donation is not implemented for {platform}.\n{msg}"
+    warnings.warn(f"Some donated buffers were not usable: {', '.join(unused_donations)}.\n{msg}")
 
   ctx = ModuleContext(platform, axis_env, name_stack)
   with ctx.context, ir.Location.unknown(ctx.context):

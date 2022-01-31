@@ -40,6 +40,7 @@ config.parse_flags_with_absl()
 # These are 'manual' tests for batching (vmap). The more exhaustive, more
 # systematic tests are in lax_test.py's LaxVmapTest class.
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BatchingTest(jtu.JaxTestCase):
 
   def testConstantFunction(self):
@@ -888,7 +889,7 @@ class BatchingTest(jtu.JaxTestCase):
     vec = self.rng().randn(10)
 
     def f(scale):
-      scaled_mat = scale * psd_mat
+      scaled_mat = scale[jnp.newaxis] * psd_mat
       chol = jnp.linalg.cholesky(scaled_mat)
       return -0.5 * jnp.sum((jnp.einsum('ij,j->i', chol, vec))**2)
     vmapped_f = vmap(f)

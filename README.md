@@ -418,10 +418,32 @@ install [CUDA](https://developer.nvidia.com/cuda-downloads) and
 [CuDNN](https://developer.nvidia.com/CUDNN),
 if they have not already been installed. Unlike some other popular deep
 learning systems, JAX does not bundle CUDA or CuDNN as part of the `pip`
-package. JAX provides pre-built CUDA-compatible wheels for **linux only**;
-the CUDA 10 JAX wheels require CuDNN 7, whereas the CUDA 11 wheels of
-JAX require CuDNN 8. Other combinations of CUDA and CuDNN are possible but
-require building from source.
+package.
+
+JAX provides pre-built CUDA-compatible wheels for **Linux only**,
+with CUDA 11.1 or newer, and CuDNN 8.0.5 or newer. Other combinations of
+operating system, CUDA, and CuDNN are possible, but require building from
+source.
+
+* CUDA 11.1 or newer is required.
+  * You may be able to use older CUDA versions if you build from source, but
+    there are known bugs in CUDA in all CUDA versions older than 11.1.
+* The supported cuDNN versions for the prebuilt wheels are:
+  * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
+    installation is new enough, since it supports additional functionality.
+  * cuDNN 8.0.5 or newer.
+* To use the prebuilt wheels, we recommend you have NVidia driver 470.82.01 or
+  newer installed.
+  * If your GPU has a
+    [CUDA compute capability](https://developer.nvidia.com/cuda-gpus) that
+    matches one of the architectures that the JAX wheels are built for
+    (3.5, 5.2, 6.0, 7.0, and 8.0), you may also be able to use older drivers
+    that are version 450.80.02 or newer.
+  * If your GPU does not match one of those architectures, you must either
+    use driver 470.82.01 or newer, use the
+    [CUDA forward compatibility packages](https://docs.nvidia.com/deploy/cuda-compatibility/),
+    or build jaxlib from source.
+
 
 Next, run
 
@@ -431,25 +453,18 @@ pip install --upgrade pip
 pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_releases.html  # Note: wheels only available on linux.
 ```
 
-The jaxlib version must correspond to the version of the existing CUDA
-installation you want to use:
-* For CUDA 11.1 or newer use `cuda11`. The same wheel should work for
-  CUDA 11.x releases from 11.1 onwards.
-* Older CUDA versions are not supported.
-* The supported cuDNN versions for `cuda11` are:
-  * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
-    installation is new enough, since it supports additional functionality.
-  * cuDNN 8.0.5 or newer.
 
-You can specify a particular CUDA and cuDNN version for jaxlib explicitly:
+The jaxlib version must correspond to the version of the existing CUDA
+installation you want to use. You can specify a particular CUDA and CuDNN
+version for jaxlib explicitly:
 
 ```bash
 pip install --upgrade pip
 
-# Installs the wheel compatible with Cuda 11 and cudnn 8.2 or newer.
+# Installs the wheel compatible with Cuda >= 11.1 and cudnn >= 8.2
 pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
-# Installs the wheel compatible with Cuda 11 and cudnn 8.0.5 or newer.
+# Installs the wheel compatible with Cuda >= 11.1 and cudnn >= 8.0.5
 pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
@@ -480,11 +495,15 @@ the following in your cloud TPU VM:
 pip install --upgrade pip
 pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
+
+### pip installation: Colab TPU
 Colab TPU runtimes come with JAX pre-installed, but before importing JAX you must run the following code to initialize the TPU:
 ```python
 import jax.tools.colab_tpu
 jax.tools.colab_tpu.setup_tpu()
 ```
+Colab TPU runtimes use an older TPU architecture than Cloud TPU VMs, so installing `jax[tpu]` should be avoided on Colab.
+If for any reason you would like to update the jax & jaxlib libraries on a Colab TPU runtime, follow the CPU instructions above (i.e. install `jax[cpu]`).
 
 ### Building JAX from source
 See [Building JAX from

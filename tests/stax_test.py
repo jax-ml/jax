@@ -46,6 +46,8 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   test_case.assertEqual(result.shape, result_shape)
 
 
+# stax makes use of implicit rank promotion, so we allow it in the tests.
+@jtu.with_config(jax_numpy_rank_promotion="allow")
 class StaxTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(

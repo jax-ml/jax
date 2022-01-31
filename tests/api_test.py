@@ -42,6 +42,7 @@ import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import core, lax
+from jax import custom_batching
 from jax._src import api, dtypes
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
@@ -69,6 +70,7 @@ python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CPPJitTest(jtu.BufferDonationTestCase):
   """Shared tests between the Python and the C++ jax,jit implementations.
 
@@ -495,6 +497,10 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         ValueError,
         re.escape("static arguments should be comparable using __eq__")):
       jitted_f(1, HashableWithoutEq())
+      # __eq__ would only be called if we might have a cache hit. Call the
+      # function a second time with exactly the same arguments to make sure that
+      # we could.
+      jitted_f(1, HashableWithoutEq())
 
   @unittest.skipIf(jax._src.lib._xla_extension_version < 50,
                    "requires jaxlib >= 0.1.76")
@@ -829,6 +835,24 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       f({E.A: 1.0, E.B: 2.0})
 
 
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 56,
+                   "requires jaxlib >= 0.1.76")
+  def test_jit_static_argnums_requires_type_equality(self):
+    # See: https://github.com/google/jax/pull/9311
+    @partial(self.jit, static_argnums=(0,))
+    def f(k):
+      assert python_should_be_executing
+      return k
+
+    # Values of 'x' that compare as equal but have different types do not lead
+    # to cache hits.
+    for x in [1, True, 1.0]:
+      python_should_be_executing = True
+      self.assertEqual(x, f(x))
+      python_should_be_executing = False
+      self.assertEqual(x, f(x))
+
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PythonJitTest(CPPJitTest):
 
   @property
@@ -836,6 +860,7 @@ class PythonJitTest(CPPJitTest):
     return api._python_jit
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class APITest(jtu.JaxTestCase):
 
   def test_grad_item(self):
@@ -1759,7 +1784,7 @@ class APITest(jtu.JaxTestCase):
         self.dtype = np.dtype(dtype)
 
     A = MyArgArray((3, 4), jnp.float32)
-    b = MyArgArray((5,), jnp.float32)
+    b = MyArgArray((1, 5), jnp.float32)
     x = MyArgArray((4, 5), jnp.float32)
     out_shape = api.eval_shape(fun, A, b, x)
 
@@ -3171,7 +3196,8 @@ class APITest(jtu.JaxTestCase):
       return jnp.dot(x, x)
 
     for f in [f_jit, f_cond]:
-      precision = config.jax_default_matmul_precision
+      # Use _read() to read the flag value rather than threadlocal value.
+      precision = config._read('jax_default_matmul_precision')
       try:
         num_traces = 0
         x = jnp.zeros((2, 2))
@@ -3192,50 +3218,6 @@ class APITest(jtu.JaxTestCase):
         self.assertEqual(num_traces, nt + 1)
       finally:
         FLAGS.jax_default_matmul_precision = precision
-
-  def test_rank_promotion_forces_retrace(self):
-    num_traces = 0
-
-    def g(x):
-      nonlocal num_traces
-      num_traces += 1
-      return x + x
-    def f_cond(x):
-      return lax.cond(True, g, g, x)
-
-    @jax.jit
-    def f_jit(x):
-      nonlocal num_traces
-      num_traces += 1
-      return x + x
-
-    for f in [f_jit, f_cond]:
-      allow_promotion = config.jax_numpy_rank_promotion
-      try:
-        num_traces = 0
-        @jax.jit
-        def f(x):
-          nonlocal num_traces
-          num_traces += 1
-          return x + x
-        x = jnp.zeros((2, 2))
-        f(x)
-        self.assertEqual(num_traces, 1)
-        f(x)
-        self.assertEqual(num_traces, 1)
-        with jax.numpy_rank_promotion("warn"):
-          f(x)
-          self.assertEqual(num_traces, 2)
-          FLAGS.jax_numpy_rank_promotion = "raise"
-          f(x)
-          self.assertGreaterEqual(num_traces, 2)
-        nt = num_traces
-        f(x)
-        self.assertEqual(num_traces, nt + 1)
-        f(x)
-        self.assertEqual(num_traces, nt + 1)
-      finally:
-        FLAGS.jax_numpy_rank_promotion = allow_promotion
 
   def test_backward_pass_ref_dropping(self):
     refs = []
@@ -3333,7 +3315,7 @@ class APITest(jtu.JaxTestCase):
     def sigmoid(x):
       return 1. / (1. + jnp.exp(-x))
 
-    x = jnp.ones((50,))
+    x = jnp.ones((1, 50))
     A = jnp.array(npr.randn(50, 50))
 
     @jax.jit
@@ -3369,7 +3351,54 @@ class APITest(jtu.JaxTestCase):
       api.make_jaxpr(lambda: jnp.array(3))()
     self.assertEqual(count[0], 0)
 
+  def test_rank_promotion_forces_retrace(self):
+    num_traces = 0
 
+    def g(x):
+      nonlocal num_traces
+      num_traces += 1
+      return x + x
+    def f_cond(x):
+      return lax.cond(True, g, g, x)
+
+    @jax.jit
+    def f_jit(x):
+      nonlocal num_traces
+      num_traces += 1
+      return x + x
+
+    for f in [f_jit, f_cond]:
+      # Use _read() to read the flag value rather than threadlocal value.
+      allow_promotion = config._read('jax_numpy_rank_promotion')
+      try:
+        FLAGS.jax_numpy_rank_promotion = "allow"
+        num_traces = 0
+        @jax.jit
+        def f(x):
+          nonlocal num_traces
+          num_traces += 1
+          return x + x
+        x = jnp.zeros((2, 2))
+        f(x)
+        self.assertEqual(num_traces, 1)
+        f(x)
+        self.assertEqual(num_traces, 1)
+        with jax.numpy_rank_promotion("warn"):
+          f(x)
+          self.assertEqual(num_traces, 2)
+          FLAGS.jax_numpy_rank_promotion = "raise"
+          f(x)
+          self.assertGreaterEqual(num_traces, 2)
+        nt = num_traces
+        f(x)
+        self.assertEqual(num_traces, nt + 1)
+        f(x)
+        self.assertEqual(num_traces, nt + 1)
+      finally:
+        FLAGS.jax_numpy_rank_promotion = allow_promotion
+
+
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class RematTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -4226,6 +4255,7 @@ class RematTest(jtu.JaxTestCase):
 
     _ = api.linearize(partial(f, core.unit), 3.)
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):
@@ -4369,6 +4399,7 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 0)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomJVPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -5311,7 +5342,7 @@ class CustomJVPTest(jtu.JaxTestCase):
             for i in range(2):
                 buf = buf + jnp.matmul(mx, bd_colsum) / jnp.power(aux, i)
             buf = jnp.matmul(bd_rowsum, buf)
-            return buf * val
+            return buf * val[None, :]
         # -----
         # Vertorizing will raise shape error
         bd_buf = jax.vmap(operate, in_axes=(0, 0), out_axes=0)(bd_mat, bd_vec)
@@ -5343,6 +5374,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertEqual(shape, ())
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomVJPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -6311,6 +6343,7 @@ def transpose_unary(f, x_example):
   return transposed
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomTransposeTest(jtu.JaxTestCase):
 
   def test_linear_call(self):
@@ -6639,6 +6672,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_t(x), jax.jit(f_t)(x))
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomVmapTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -7022,7 +7056,50 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(jit(api.vmap(f))(xs), api.vmap(f)(xs))
     self.assertAllClose(api.vmap(jit(f))(xs), api.vmap(f)(xs))
 
+  def test_sequential_vmap_basic(self):
+    @custom_batching.sequential_vmap
+    def f(x):
+      return x + 1.
 
+    def vmap_ref(xs):
+      return lax.map(f, xs)
+
+    xs = jnp.arange(3.)
+    jaxpr = api.make_jaxpr(api.vmap(f))(xs)
+    jaxpr_ref = api.make_jaxpr(vmap_ref)(xs)
+
+    self.assertEqual(str(jaxpr), str(jaxpr_ref))
+
+  def test_sequential_vmap_nary_same_batching(self):
+    @custom_batching.sequential_vmap
+    def f(x, y):
+      return x + y
+
+    def vmap_ref(xs, ys):
+      return lax.map(lambda args: f(*args), (xs, ys))
+
+    xs, ys = jnp.arange(3.), 4. + jnp.arange(3.)
+    jaxpr = api.make_jaxpr(api.vmap(f))(xs, ys)
+    jaxpr_ref = api.make_jaxpr(vmap_ref)(xs, ys)
+
+    self.assertEqual(str(jaxpr), str(jaxpr_ref))
+
+  def test_sequential_vmap_nary_mixed_batching(self):
+    @custom_batching.sequential_vmap
+    def f(x, y):
+      return x + y
+
+    def vmap_ref(xs, y):
+      return lax.map(lambda x: f(x, y), xs)
+
+    xs, y = jnp.arange(3.), 4.
+    jaxpr = api.make_jaxpr(api.vmap(f, in_axes=(0, None)))(xs, y)
+    jaxpr_ref = api.make_jaxpr(vmap_ref)(xs, y)
+
+    self.assertEqual(str(jaxpr), str(jaxpr_ref))
+
+
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""
 
@@ -7060,6 +7137,7 @@ class CustomApiTest(jtu.JaxTestCase):
           self.assertIsInstance(getattr(f, method), Callable)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class InvertibleADTest(jtu.JaxTestCase):
 
   @jtu.ignore_warning(message="Values that an @invertible function closes")
@@ -7168,6 +7246,7 @@ class InvertibleADTest(jtu.JaxTestCase):
                         check_dtypes=True)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BufferDonationTest(jtu.BufferDonationTestCase):
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
@@ -7190,6 +7269,7 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
     pmap_fun(a)  # doesn't crash
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NamedCallTest(jtu.JaxTestCase):
 
   def test_default_name(self):
@@ -7270,6 +7350,7 @@ class NamedCallTest(jtu.JaxTestCase):
     self.assertRaises(OverflowError, f, int_min - 1)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BackendsTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not sys.executable, "test requires sys.executable")
@@ -7292,6 +7373,7 @@ class BackendsTest(jtu.JaxTestCase):
     assert "No GPU/TPU found" not in result.stderr.decode()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CleanupTest(jtu.JaxTestCase):
   def test_call_wrapped_second_phase_cleanup(self):
     try:

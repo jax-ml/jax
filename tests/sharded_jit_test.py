@@ -39,6 +39,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class ShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -242,7 +243,7 @@ class ShardedJitTest(jtu.JaxTestCase):
     def f(x):
       token = lax.create_token(x)
       (y, z), token = lax.infeed(token, infeed_shapes, partitions=infeed_parts)
-      return x @ y.T + z
+      return x @ y.T + z[jnp.newaxis]
 
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     y = x + 1
@@ -259,7 +260,7 @@ class ShardedJitTest(jtu.JaxTestCase):
     # waiting for the infeed data.
     result = f(x)
 
-    expected = x @ y.T + z
+    expected = x @ y.T + z[jnp.newaxis]
     self.assertAllClose(result, expected, check_dtypes=False)
 
   def testCompilationCache(self):
@@ -276,6 +277,7 @@ class ShardedJitTest(jtu.JaxTestCase):
 
 
 # TODO(skye): add more error tests
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class ShardedJitErrorsTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -298,6 +300,7 @@ class ShardedJitErrorsTest(jtu.JaxTestCase):
 
 
 # Tests that don't need a TPU to run.
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class ShardedJitTestNoTpu(jtu.JaxTestCase):
 
   def testTranslationRule(self):
@@ -326,6 +329,7 @@ class ShardedJitTestNoTpu(jtu.JaxTestCase):
     # Annotation from sharded_jit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PmapOfShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -420,7 +424,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     def f(x, y):
       a = lax.dot(x, y)
       b = a + jnp.ones(a.shape)
-      c = b + jnp.ones(a.shape[0])
+      c = b + jnp.ones(a.shape[0])[jnp.newaxis]
       return c
 
     self._runTest(f, in_partitions, out_partitions)
