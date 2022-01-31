@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import dataclasses
+import functools
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
@@ -34,6 +35,7 @@ Index = Tuple[slice, ...]
 
 
 def _convert_list_args_to_tuple(f):
+  @functools.wraps(f)
   def wrapper(*args, **kwargs):
     args = [tuple(a) if isinstance(a, list) else a for a in args]
     kwargs = {k: (tuple(v) if isinstance(v, list) else v) for k, v in kwargs.items()}
