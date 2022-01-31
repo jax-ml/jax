@@ -2147,6 +2147,7 @@ def where(condition, x=None, y=None, *, size=None, fill_value=None):
     _check_arraylike("where", condition)
     return nonzero(condition, size=size, fill_value=fill_value)
   else:
+    _check_arraylike("where", condition, x, y)
     if size is not None or fill_value is not None:
       raise ValueError("size and fill_value arguments cannot be used in three-term where function.")
     return _where(condition, x, y)
