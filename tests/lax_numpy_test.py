@@ -6105,13 +6105,8 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     self.assertEqual(mismatches, {})
 
 
-_all_dtypes: List[str] = [
-  "bool_",
-  "uint8", "uint16", "uint32", "uint64",
-  "int8", "int16", "int32", "int64",
-  "float16", "float32", "float64",
-  "complex64", "complex128",
-]
+_available_numpy_dtypes: List[str] = [dtype.__name__ for dtype in jtu.dtypes.all
+                                      if dtype != dtypes.bfloat16]
 
 
 def _all_numpy_ufuncs() -> Iterator[str]:
@@ -6125,7 +6120,7 @@ def _all_numpy_ufuncs() -> Iterator[str]:
 def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:
   """Generate valid dtypes of inputs to the given numpy ufunc."""
   func = getattr(np, name)
-  for arg_dtypes in itertools.product(_all_dtypes, repeat=func.nin):
+  for arg_dtypes in itertools.product(_available_numpy_dtypes, repeat=func.nin):
     args = (np.ones(1, dtype=dtype) for dtype in arg_dtypes)
     try:
       with warnings.catch_warnings():
@@ -6153,8 +6148,6 @@ class NumpyUfuncTests(jtu.JaxTestCase):
       self.skipTest(f"jax.numpy does not support {name}{tuple(arg_dtypes)}")
     if name == 'arctanh' and jnp.issubdtype(arg_dtypes[0], jnp.complexfloating):
       self.skipTest("np.arctanh & jnp.arctanh have mismatched NaNs for complex input.")
-    for dtype in arg_dtypes:
-      jtu.skip_if_unsupported_type(dtype)
 
     jnp_op = getattr(jnp, name)
     np_op = getattr(np, name)
