@@ -53,14 +53,6 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 ### utilities
 
-
-# TODO(mattjj,jakevdp): add more info to error message, use this utility more
-def _asarray(x):
-  """A more restrictive jnp.asarray, only accepts JAX arrays and np.ndarrays."""
-  if not isinstance(x, (np.ndarray, jnp.ndarray)):
-    raise TypeError(f"Function requires array input, got {x} of type {type(x)}.")
-  return jnp.asarray(x)
-
 def _check_prng_key(key):
   # TODO(frostig): remove once we always enable_custom_prng
   if type(key) is prng.PRNGKeyArray:
