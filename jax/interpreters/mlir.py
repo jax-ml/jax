@@ -241,9 +241,10 @@ def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
 register_constant_handler(np.ndarray, _ndarray_constant_handler)
 
 for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
-                    np.uint8, np.uint16, np.uint32, np.uint64,
-                    np.float16, np.float32, np.float64,
-                    np.bool_, np.longlong, dtypes.bfloat16]:
+                     np.uint8, np.uint16, np.uint32, np.uint64,
+                     np.float16, np.float32, np.float64,
+                     np.complex64, np.complex128,
+                     np.bool_, np.longlong, dtypes.bfloat16]:
   register_constant_handler(_scalar_type, _ndarray_constant_handler)
 
 def _python_scalar_handler(dtype, val, canonicalize_dtypes):
