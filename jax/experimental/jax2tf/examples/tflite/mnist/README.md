@@ -59,6 +59,15 @@ tf_predict = tf.function(
     autograph=False)
 ```
 
+Note the `enable_xla=False` parameter to `jax2tf.convert`.
+This is used to instruct the converter to avoid using a few special
+TensorFlow ops that are only available with the XLA compiler, and which
+are not understood (yet) by the TFLite converter to be used below.
+
+
+Check out [more details about this limitation](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/no_xla_limitations.md),
+including to which JAX primitives it applies.
+
 ### Convert the trained model to the TF Lite format
 
 The [TF Lite converter](https://www.tensorflow.org/lite/convert#python_api_)
@@ -126,9 +135,4 @@ android {
 }
 ```
 
-## Limitations
 
-* The TF Lite runtime currently doesn't support XLA ops.
-Therefore, you need to specify `enable_xla=False` to use the jax2tf
-conversion purely based on TensorFlow (not XLA).
-The support is limited to a subset of JAX ops.
