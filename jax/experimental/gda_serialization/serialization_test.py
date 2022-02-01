@@ -64,11 +64,10 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_paths = [str(ckpt_dir1), str(ckpt_dir2)]
     tspecs = jax.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
 
-    serialization.run_serialization(ckpt_paths, [gda1, gda2], tspecs)
+    serialization.run_serialization([gda1, gda2], tspecs)
 
-    m1, m2 = serialization.run_deserialization(ckpt_paths,
-                                               [global_mesh, global_mesh],
-                                               [mesh_axes, ['x']], tspecs)
+    m1, m2 = serialization.run_deserialization(
+        [global_mesh, global_mesh], [mesh_axes, ['x']], tspecs)
 
     self.assertArraysEqual(m1.local_shards[0].data.to_py(),
                            np.array([[0], [2]]))

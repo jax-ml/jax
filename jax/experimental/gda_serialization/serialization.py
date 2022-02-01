@@ -80,10 +80,9 @@ def get_tensorstore_spec(ckpt_path: str):
   return spec
 
 
-async def async_serialize(ckpt_path: str, gda: gda.GlobalDeviceArray,
-                          tensorstore_spec):
+async def async_serialize(gda_inp: gda.GlobalDeviceArray, tensorstore_spec):
   if not tensorstore_spec.get('metadata'):
-    tensorstore_spec['metadata'] = _get_metadata(gda)
+    tensorstore_spec['metadata'] = _get_metadata(gda_inp)
 
   t = await ts.open(
       ts.Spec(tensorstore_spec),
@@ -97,19 +96,19 @@ async def async_serialize(ckpt_path: str, gda: gda.GlobalDeviceArray,
     if shard.replica_id == 0:
       await t[shard.index].write(shard.data)
 
-  future_write_state = jax.tree_util.tree_map(_write_array, tuple(gda.local_shards))
+  future_write_state = jax.tree_util.tree_map(_write_array,
+                                              tuple(gda_inp.local_shards))
   return await asyncio.gather(*future_write_state)
 
 
-def run_serialization(ckpt_paths, gdas, tensorstore_specs):
+def run_serialization(gdas, tensorstore_specs):
   async def _run_serializer():
-    future_writer = jax.tree_map(async_serialize, ckpt_paths, gdas,
-                                 tensorstore_specs)
+    future_writer = jax.tree_map(async_serialize, gdas, tensorstore_specs)
     return await asyncio.gather(*future_writer)
   asyncio.run(_run_serializer())
 
 
-async def async_deserialize(ckpt_path, mesh, mesh_axes, tensorstore_spec):
+async def async_deserialize(mesh, mesh_axes, tensorstore_spec):
   t = ts.open(ts.Spec(tensorstore_spec), open=True).result()
 
   async def cb(index):
@@ -118,9 +117,9 @@ async def async_deserialize(ckpt_path, mesh, mesh_axes, tensorstore_spec):
   return await create_async_gda_from_callback(t.shape, mesh, mesh_axes, cb)
 
 
-def run_deserialization(ckpt_paths, global_meshes, mesh_axes, tensorstore_specs):
+def run_deserialization(global_meshes, mesh_axes, tensorstore_specs):
   async def _run_deserializer():
-    future_gdas = jax.tree_map(async_deserialize, ckpt_paths, global_meshes,
-                               mesh_axes, tensorstore_specs)
+    future_gdas = jax.tree_map(async_deserialize, global_meshes, mesh_axes,
+                               tensorstore_specs)
     return await asyncio.gather(*future_gdas)
   return asyncio.run(_run_deserializer())
