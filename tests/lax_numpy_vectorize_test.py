@@ -25,7 +25,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class VectorizeTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(

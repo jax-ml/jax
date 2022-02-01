@@ -42,7 +42,6 @@ float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 
 
-@jtu.with_config(jax_numpy_rank_promotion='raise')
 class NumpyLinalgTest(jtu.JaxTestCase):
 
   def testNotImplemented(self):
@@ -957,7 +956,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertFalse(np.any(np.isnan(cube_func(a))))
 
 
-@jtu.with_config(jax_numpy_rank_promotion='raise')
 class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1374,7 +1372,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=1, atol=tol,
                       rtol=tol)
 
-@jtu.with_config(jax_numpy_rank_promotion='raise')
+
 class LaxLinalgTest(jtu.JaxTestCase):
 
   def run_test(self, alpha, beta):

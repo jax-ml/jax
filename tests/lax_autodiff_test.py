@@ -189,7 +189,7 @@ def check_grads_bilinear(f, args, order,
   check_grads(lambda rhs: f(lhs, rhs), (rhs,), order,
               modes=modes, atol=atol, rtol=rtol, eps=1.)
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
+
 class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
