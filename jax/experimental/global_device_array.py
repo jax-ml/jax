@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import Counter
 import dataclasses
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
@@ -20,9 +21,8 @@ from jax import core
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla, xla
-from jax._src.util import prod, safe_zip, cache
+from jax._src.util import prod, safe_zip
 from jax._src.api import device_put
-from jax.tree_util import tree_flatten
 from jax.interpreters.sharded_jit import PartitionSpec
 
 Shape = Tuple[int, ...]
@@ -33,13 +33,7 @@ ArrayLike = Union[np.ndarray, DeviceArray]
 Index = Tuple[slice, ...]
 
 
-def _convert_list_args_to_tuple(f):
-  def wrapper(*args, **kwargs):
-    args = [tuple(a) if isinstance(a, list) else a for a in args]
-    kwargs = {k: (tuple(v) if isinstance(v, list) else v) for k, v in kwargs.items()}
-    return f(*args, **kwargs)
-  return wrapper
-
+_hashed_index = lambda x: hash(tuple((v.start, v.stop) for v in x))
 
 def _canonicalize_mesh_axes(mesh_axes):
   if not isinstance(mesh_axes, PartitionSpec):
@@ -68,8 +62,6 @@ def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
   return indices
 
 
-@_convert_list_args_to_tuple
-@cache()
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
@@ -79,48 +71,20 @@ def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
       for d, i in safe_zip(global_mesh.devices.flat, indices))  # type: ignore
 
 
-def _calc_replica_ids(global_mesh: pxla.Mesh, mesh_axes: MeshAxes):
-  pspec = _canonicalize_mesh_axes(mesh_axes)
-  mesh_values = list(global_mesh.shape.values())
-  flattened_pspec, _ = tree_flatten(tuple(pspec))
-  # Get the location (coordinates) of each device in the device mesh.
-  device_location = np.array(np.unravel_index(
-      [d.id for d in global_mesh.devices.flat], mesh_values))
-  # Find all the axes that were replicated.
-  # If mesh_axes = (('x', 'y'), None, 'z') and ('x', 'y', 'z') were the mesh's
-  # axis, then replicated axes will be None since all axes are being used to
-  # shard the input.
-  replicated_axis = np.isin(list(global_mesh.shape.keys()), flattened_pspec,
-                            invert=True)
-  # If all elements in replicated_axis are False then the input is fully sharded
-  # so replica ids should be all 0s.
-  if not any(replicated_axis):
-    return [0] * global_mesh.devices.size
-  else:
-    # Drop all the sharded axes and find the location of coordinates in a linear
-    # array.
-    return np.ravel_multi_index(device_location[replicated_axis],
-                                np.array(mesh_values)[replicated_axis])
-
-
-@_convert_list_args_to_tuple
-@cache()
 def get_shard_indices_replica_ids(
     global_shape: Shape, global_mesh: pxla.Mesh,
     mesh_axes: MeshAxes) -> Mapping[Device, Tuple[Index, int]]:
-  return _get_shard_indices_replica_ids_uncached(global_shape, global_mesh, mesh_axes)
-
-def _get_shard_indices_replica_ids_uncached(
-    global_shape: Shape, global_mesh: pxla.Mesh,
-    mesh_axes: MeshAxes) -> Mapping[Device, Tuple[Index, int]]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
-  replica_ids = _calc_replica_ids(global_mesh, mesh_axes)
-  return dict((d, (i, r))
-              for d, i, r in safe_zip(global_mesh.devices.flat, indices, replica_ids))
+  index_to_replica: Dict[int, int] = Counter()
+  out = {}
+  for device, index in safe_zip(global_mesh.devices.flat, indices):
+    h_index = _hashed_index(index)
+    replica_id = index_to_replica[h_index]
+    index_to_replica[h_index] += 1
+    out[device] = (index, replica_id)
+  return out
 
 
-@_convert_list_args_to_tuple
-@cache()
 def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   chunk_size = []
   for mesh_axis, size in zip(mesh_axes, global_shape):
@@ -134,9 +98,6 @@ def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   if len(chunk_size) != len(global_shape):
     chunk_size.extend(global_shape[len(chunk_size):])
   return tuple(chunk_size)
-
-
-_hashed_index = lambda x: hash(tuple((v.start, v.stop) for v in x))
 
 
 @dataclasses.dataclass(frozen=True)
