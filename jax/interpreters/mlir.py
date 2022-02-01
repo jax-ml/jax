@@ -225,7 +225,7 @@ def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
-                              for ax in range(val.ndim))]
+                              for ax in range(val.ndim))]  # type: ignore
     if canonicalize_types:
       collapsed_val = np.asarray(
           collapsed_val, dtypes.canonicalize_dtype(collapsed_val.dtype))

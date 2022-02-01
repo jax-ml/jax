@@ -218,7 +218,7 @@ def serial_loop(name: ResourceAxisName, length: int):
         in_axes=['i'], out_axes=['i'],
         axis_resources={'i': 'l'})(x)
   """
-  old_env = getattr(thread_resources, "env", EMPTY_ENV)
+  old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
   thread_resources.env = old_env.with_extra_loop(_Loop(name, length))
   try:
     yield
@@ -251,7 +251,7 @@ def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
         out_axes=['left', 'right', ...],
         axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
   """
-  old_env = getattr(thread_resources, "env", EMPTY_ENV)
+  old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
   thread_resources.env = old_env.with_mesh(Mesh(np.asarray(devices, dtype=object), axis_names))
   try:
     yield

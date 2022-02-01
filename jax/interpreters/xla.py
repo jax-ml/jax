@@ -158,7 +158,7 @@ def sharding_to_proto(sharding: SpatialSharding):
   else:
     proto.type = xc.OpSharding.Type.OTHER
     proto.tile_assignment_dimensions = list(sharding)
-    proto.tile_assignment_devices = list(range(np.product(sharding)))
+    proto.tile_assignment_devices = list(range(np.product(sharding)))  # type: ignore
   return proto
 
 def tuple_sharding_proto(elems):
