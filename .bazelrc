@@ -181,6 +181,8 @@ build:rbe_linux_cuda11.1_nvcc_py3.8 --config=rbe_linux_cuda11.1_nvcc_base --repo
 build:rbe_linux_cuda11.1_nvcc_py3.8 --python_path="/usr/local/bin/python3.8"
 build:rbe_linux_cuda11.1_nvcc_py3.9 --config=rbe_linux_cuda11.1_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.1-cudnn8-tensorrt7.2_config_python3.9"
 build:rbe_linux_cuda11.1_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
+build:rbe_linux_cuda11.1_nvcc_py3.10 --config=rbe_linux_cuda11.1_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.1-cudnn8-tensorrt7.2_config_python3.10"
+build:rbe_linux_cuda11.1_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
 
 build:rbe_linux_cuda11.4_nvcc_base --config=rbe_linux_cuda_base
 build:rbe_linux_cuda11.4_nvcc_base --action_env=TF_CUDA_VERSION=11
