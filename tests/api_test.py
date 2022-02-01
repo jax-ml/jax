@@ -3120,6 +3120,16 @@ class APITest(jtu.JaxTestCase):
     expected = jnp.arange(1) + 1
     self.assertAllClose(ans, expected)
 
+  @parameterized.named_parameters([
+      {"testcase_name": f"{dtype.__name__}", "dtype": dtype}
+      for dtype in jtu.dtypes.all])
+  def test_constant_handlers(self, dtype):
+    # https://github.com/google/jax/issues/9380
+    @jax.jit
+    def f():
+      return jnp.exp(dtype(0))
+    f()  # doesn't error
+
   def test_large_python_ints(self):
     with self.assertRaises(OverflowError):
       jnp.multiply(2 ** 100, 3.)
