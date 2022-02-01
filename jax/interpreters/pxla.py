@@ -1785,7 +1785,8 @@ class Mesh:
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self.axis_names, tuple(self.devices.flat)))
+      self._hash = hash(
+          (self.axis_names, tuple(self.devices.flat), self.devices.shape))
     return self._hash
 
   def __setattr__(self, name, value):

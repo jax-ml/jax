@@ -280,6 +280,16 @@ class GDATest(jtu.JaxTestCase):
         'GlobalDeviceArray equality is intentionally unimplemented.'):
       input_gda == same_input_gda
 
+  def test_mesh_hash(self):
+    global_mesh1 = jtu.create_global_mesh((4, 2), ('x', 'y'))
+
+    global_mesh2 = jtu.create_global_mesh((2, 4), ('x', 'y'))
+
+    global_mesh3 = jtu.create_global_mesh((4, 2), ('x', 'y'))
+
+    self.assertNotEqual(hash(global_mesh1), hash(global_mesh2))
+    self.assertEqual(hash(global_mesh1), hash(global_mesh3))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

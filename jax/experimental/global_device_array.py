@@ -14,6 +14,7 @@
 
 from collections import Counter
 import dataclasses
+import functools
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
@@ -21,7 +22,7 @@ from jax import core
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla, xla
-from jax._src.util import prod, safe_zip
+from jax._src.util import prod, safe_zip, cache
 from jax._src.api import device_put
 from jax.interpreters.sharded_jit import PartitionSpec
 
@@ -34,6 +35,16 @@ Index = Tuple[slice, ...]
 
 
 _hashed_index = lambda x: hash(tuple((v.start, v.stop) for v in x))
+
+
+def _convert_list_args_to_tuple(f):
+  @functools.wraps(f)
+  def wrapper(*args, **kwargs):
+    args = [tuple(a) if isinstance(a, list) else a for a in args]
+    kwargs = {k: (tuple(v) if isinstance(v, list) else v) for k, v in kwargs.items()}
+    return f(*args, **kwargs)
+  return wrapper
+
 
 def _canonicalize_mesh_axes(mesh_axes):
   if not isinstance(mesh_axes, PartitionSpec):
@@ -62,6 +73,8 @@ def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
   return indices
 
 
+@_convert_list_args_to_tuple
+@cache()
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
@@ -71,7 +84,14 @@ def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
       for d, i in safe_zip(global_mesh.devices.flat, indices))  # type: ignore
 
 
+@_convert_list_args_to_tuple
+@cache()
 def get_shard_indices_replica_ids(
+    global_shape: Shape, global_mesh: pxla.Mesh,
+    mesh_axes: MeshAxes) -> Mapping[Device, Tuple[Index, int]]:
+  return _get_shard_indices_replica_ids_uncached(global_shape, global_mesh, mesh_axes)
+
+def _get_shard_indices_replica_ids_uncached(
     global_shape: Shape, global_mesh: pxla.Mesh,
     mesh_axes: MeshAxes) -> Mapping[Device, Tuple[Index, int]]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
@@ -85,6 +105,8 @@ def get_shard_indices_replica_ids(
   return out
 
 
+@_convert_list_args_to_tuple
+@cache()
 def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   chunk_size = []
   for mesh_axis, size in zip(mesh_axes, global_shape):
