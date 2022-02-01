@@ -121,7 +121,8 @@ def _parse_input_dimensions(
     ndim = arg.ndim - len(core_dims)
     shapes.append(arg.shape[:ndim])
   broadcast_shape = lax.broadcast_shapes(*shapes)
-  return broadcast_shape, dim_sizes
+  # TODO(mattjj): this code needs updating for dynamic shapes (hence ignore)
+  return broadcast_shape, dim_sizes  # type: ignore
 
 
 def _check_output_dims(

@@ -45,7 +45,8 @@ from jax import core
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
 from jax import errors
-from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
+from jax.core import (UnshapedArray, ShapedArray, DShapedArray, ConcreteArray,
+                      canonicalize_shape)
 from jax.config import config
 from jax.interpreters import pxla
 from jax import lax
@@ -476,20 +477,21 @@ _INT_DTYPES = {
 }
 
 def _promote_shapes(fun_name, *args):
-  """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
+  """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
   if len(args) < 2:
     return args
   else:
     shapes = [shape(arg) for arg in args]
-    nonscalar_ranks = [len(shp) for shp in shapes if shp]
-    if not nonscalar_ranks or len(set(nonscalar_ranks)) == 1:
+    if _all(len(shapes[0]) == len(s) for s in shapes[1:]):
+      return args  # no need for rank promotion, so rely on lax promotion
+    nonscalar_ranks = {len(shp) for shp in shapes if shp}
+    if len(nonscalar_ranks) < 2:
       return args
     else:
       if config.jax_numpy_rank_promotion != "allow":
         _rank_promotion_warning_or_error(fun_name, shapes)
-      result_rank = len(lax.broadcast_shapes(*shapes))
-      return [broadcast_to(arg, (1,) * (result_rank - len(shp)) + shp)
-              for arg, shp in zip(args, shapes)]
+      result_shape = lax.broadcast_shapes(*shapes)
+      return [broadcast_to(arg, result_shape) for arg, shp in zip(args, shapes)]
 
 def _rank_promotion_warning_or_error(fun_name, shapes):
   if config.jax_numpy_rank_promotion == "warn":
@@ -2128,7 +2130,9 @@ def _where(condition, x=None, y=None):
     condition = lax.ne(condition, zeros_like(condition))
   x, y = _promote_dtypes(x, y)
   condition, x, y = broadcast_arrays(condition, x, y)
-  return lax.select(condition, x, y) if not core.is_empty_shape(np.shape(x)) else x
+  try: is_always_empty = core.is_empty_shape(np.shape(x))
+  except: is_always_empty = False  # can fail with dynamic shapes
+  return lax.select(condition, x, y) if not is_always_empty else x
 
 
 _WHERE_DOC = """\
@@ -2211,7 +2215,8 @@ def broadcast_shapes(*shapes):
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [shape(arg) for arg in args]
-  if len(set(shapes)) == 1:
+  if not shapes or _all(core.symbolic_equal_shape(shapes[0], s) for s in shapes):
+    # TODO(mattjj): remove the array(arg) here
     return [arg if isinstance(arg, ndarray) or isscalar(arg) else array(arg)
             for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)
@@ -2225,7 +2230,8 @@ def broadcast_to(arr, shape):
   if hasattr(arr, "broadcast_to"):
     return arr.broadcast_to(shape)
   arr = arr if isinstance(arr, ndarray) else array(arr)
-  shape = (shape,) if ndim(shape) == 0 else shape
+  if not isinstance(shape, tuple) and ndim(shape) == 0:
+    shape = (shape,)
   shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
   if core.symbolic_equal_shape(arr_shape, shape):
@@ -5595,7 +5601,8 @@ def take_along_axis(arr, indices, axis: Optional[int]):
       collapsed_slice_dims.append(i)
       j += 1
     elif idx_shape[i] != 1:
-      iota = lax.iota(_dtype(indices), out_shape[i])
+      # TODO(mattjj): next line needs updating for dynamic shapes
+      iota = lax.iota(_dtype(indices), out_shape[i])  # type: ignore
       iota = lax.broadcast_in_dim(iota, gather_index_shape, (j,))
       gather_indices.append(iota)
       slice_sizes.append(1)
@@ -7102,6 +7109,7 @@ def _set_shaped_array_attributes(shaped_array):
   setattr(shaped_array, "item", core.aval_method(device_array.DeviceArray.item))
 
 _set_shaped_array_attributes(ShapedArray)
+_set_shaped_array_attributes(DShapedArray)
 
 
 def _set_device_array_base_attributes(device_array):

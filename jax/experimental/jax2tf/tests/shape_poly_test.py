@@ -912,7 +912,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                                                                    four_ones)
 
     with self.assertRaisesRegex(TypeError,
-                                re.escape("dot_general requires contracting dimensions to have the same shape, got [4] and [v]")):
+                                re.escape("dot_general requires contracting dimensions to have the same shape, got (4,) and (v,)")):
       jax2tf.convert(lambda x: jnp.matmul(x, x),
                      polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
 

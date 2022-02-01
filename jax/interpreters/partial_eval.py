@@ -111,7 +111,9 @@ class JaxprTrace(Trace):
     return JaxprTracer(self, PartialVal.known(val), unit)
 
   def new_instantiated_literal(self, val) -> 'JaxprTracer':
-    return JaxprTracer(self, PartialVal.unknown(get_aval(val)), Literal(val))
+    aval = get_aval(val)
+    return JaxprTracer(self, PartialVal.unknown(aval),
+                       Literal(val, raise_to_shaped(aval)))
 
   def new_instantiated_const(self, val) -> 'JaxprTracer':
     return JaxprTracer(self, PartialVal.unknown(get_aval(val)), ConstVar(val))
@@ -1194,6 +1196,7 @@ class DynamicJaxprTracer(core.Tracer):
       raise core.escaped_tracer_error(self, None)
 
 TracerId = int
+AvalId = int
 ConstId = int
 class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
@@ -1291,17 +1294,25 @@ def _inline_literals(jaxpr, constvals):
   consts = dict(zip(jaxpr.constvars, constvals))
   newname: Callable[[AbstractValue], Var] = core.gensym()
   newvars: Dict[Var, Var] = {}
-  newvar = lambda aval: newname(_subs_vars_in_aval(newvars, aval))
+  newvar = lambda aval: newname(_substitute_vars_in_type(newvars, aval))
   var = lambda v: newvars.get(v) or newvars.setdefault(v, newvar(v.aval))
 
   def lit(v: Var) -> Optional[Literal]:
     val = consts.get(v)
     if type(val) in core.literalable_types and not np.shape(val):
-      return Literal(val)
+      return Literal(val, v.aval)
     else:
       return None
 
-  used = {v for eqn in jaxpr.eqns for v in eqn.invars} | set(jaxpr.outvars)
+  def vars_in_shape(aval: AbstractValue) -> Sequence[Var]:
+    if isinstance(aval, DShapedArray):
+      return [d for d in aval.shape if isinstance(d, Var)]
+    return []
+
+  used = {v for eqn in jaxpr.eqns for invar in eqn.invars
+          for v in it.chain([invar], vars_in_shape(invar.aval))}
+  used |= {v for outvar in jaxpr.outvars
+           for v in it.chain([outvar], vars_in_shape(outvar.aval))}
   new_constvars = [var(v) for v in jaxpr.constvars if v in used and not lit(v)]
   new_constvals = [c for v, c in zip(jaxpr.constvars, constvals)
                    if v in used and not lit(v)]
@@ -1335,14 +1346,37 @@ class DynamicJaxprTrace(core.Trace):
     tracer = self.frame.constid_to_tracer.get(id(c))
     if tracer is None:
       aval = raise_to_shaped(get_aval(c), weak_type=dtypes.is_weakly_typed(c))
-      tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
-      self.frame.tracers.append(tracer)
-      self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
-      self.frame.constid_to_tracer[id(c)] = tracer
-      self.frame.constvar_to_val[var] = c
+      tracer = self._new_const(aval, c)
     return tracer
 
-  pure = lift = sublift = new_const
+  pure = lift = new_const
+
+  def _new_const(self, aval, c):
+    tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
+    self.frame.tracers.append(tracer)
+    self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
+    self.frame.constid_to_tracer[id(c)] = tracer
+    self.frame.constvar_to_val[var] = c
+    return tracer
+
+  def sublift(self, t):
+    # When lifting closed-over tracers corresponding to this same trace, the
+    # variable to lift could have tracers (representing axis size variables) in
+    # its shape. We must lift those too!
+    tracer = self.frame.constid_to_tracer.get(id(t))
+    if tracer is None:
+      aval = raise_to_shaped(get_aval(t), weak_type=dtypes.is_weakly_typed(t))
+      aval = self._lift_tracers_in_aval(aval)
+      tracer = self._new_const(aval, t)
+    return tracer
+
+  def _lift_tracers_in_aval(self, aval):
+    if (not isinstance(aval, DShapedArray) or
+        not any(isinstance(d, Tracer) for d in aval.shape)):
+      return aval
+    shape = [self.full_raise(d) if isinstance(d, Tracer) else d
+             for d in aval.shape]
+    return aval.update(shape=tuple(shape))
 
   def getvar(self, tracer):
     var = self.frame.tracer_to_var.get(id(tracer))
@@ -1365,6 +1399,11 @@ class DynamicJaxprTrace(core.Trace):
       return self.new_const(val)
 
   def process_primitive(self, primitive, tracers, params):
+    if primitive in custom_staging_rules:
+      return custom_staging_rules[primitive](self, *tracers, **params)
+    return self.default_process_primitive(primitive, tracers, params)
+
+  def default_process_primitive(self, primitive, tracers, params):
     avals = [t.aval for t in tracers]
     out_avals = primitive.abstract_eval(*avals, **params)
     out_avals = [out_avals] if not primitive.multiple_results else out_avals
@@ -1378,7 +1417,7 @@ class DynamicJaxprTrace(core.Trace):
 
   def process_call(self, call_primitive, f, tracers, params):
     dim_tracers = _get_tracers_only_in_shapes(tracers)
-    in_avals = _tracers_to_avals({}, dim_tracers + tracers)
+    in_avals = _tracers_to_avals(dim_tracers + tracers)
     keep_inputs = [False] * len(dim_tracers) + [True] * len(tracers)
     with core.new_sublevel():
       jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(
@@ -1386,8 +1425,10 @@ class DynamicJaxprTrace(core.Trace):
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *dim_tracers, *tracers)
     source_info = source_info_util.current()
-    env = {id(t.aval): t for t in _get_tracers_in_shapes(set(), tracers)}
-    subs = partial(_substitute_tracers_in_aval, env)
+    env = {v: t for v, t in zip((*jaxpr.constvars, *jaxpr.invars),
+                                (*consts, *dim_tracers, *tracers))
+           if isinstance(t, Tracer)}
+    subs = partial(_substitute_tracers_in_type, env)
     out_tracers = [DynamicJaxprTracer(self, subs(a), source_info)
                    for a in out_avals]
     invars = map(self.getvar, dim_tracers + tracers)
@@ -1486,6 +1527,8 @@ class DynamicJaxprTrace(core.Trace):
 
   def post_process_custom_vjp_call(self, out_tracers, _):
     assert False  # unreachable
+
+custom_staging_rules: Dict[Primitive, Callable] = {}
 
 def _memoize(thunk):
   if config.jax_check_tracer_leaks:
@@ -1614,14 +1657,8 @@ def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
     ans = fun.call_wrapped(*in_tracers_)
     out_tracers = map(trace.full_raise, ans)
     jaxpr, consts = frame.to_jaxpr(out_tracers)
-
-    # AbstractValue object id corresponds to a kind of name; we want out_avals
-    # to refer to names bound in in_avals.
-    tracerid_to_aval = {id(t): a for t, a in zip(in_tracers, in_avals)}
-    out_avals = _tracers_to_avals(tracerid_to_aval, out_tracers)
-
     del fun, main, trace, frame, in_tracers, out_tracers, ans
-  return jaxpr, out_avals, consts
+  return jaxpr, [v.aval for v in jaxpr.outvars], consts
 
 @contextlib.contextmanager
 def extend_jaxpr_stack(main, frame):
@@ -1653,13 +1690,12 @@ def partial_eval_to_jaxpr_dynamic(fun: lu.WrappedFun, in_pvals: Sequence[Partial
     return trace_to_jaxpr(fun, in_pvals)
 
 
-AvalId = int
 def _avals_to_tracers(
     trace: DynamicJaxprTrace, in_avals: Sequence[AbstractValue]
   )  -> Sequence[Tracer]:
-  # Create input Tracers given input abstract values, handling nesting: each
-  # element `a` of `in_avals` can have abstract values in its shape, which must
-  # occur to the left of `a`.
+  # Create input Tracers given input AbstractValues, each of which can contain
+  # other AbstractValues. That is, each element `a` of `in_avals` can have
+  # abstract values in its shape, which must occur to the left of `a`.
   env: Dict[AvalId, Tracer] = {}
   in_tracers: List[Tracer] = []
   for a in in_avals:
@@ -1679,20 +1715,19 @@ def _substitute_tracers_in_aval(
     return a.update(shape=tuple(shape))
   return a
 
-def _tracers_to_avals(
-    env: Dict[TracerId, AbstractValue], tracers: Sequence[Tracer]
-  ) -> List[AbstractValue]:
+def _tracers_to_avals(tracers: Sequence[Tracer]) -> List[AbstractValue]:
   # Replace Tracers with corresponding abstract values, handling Tracers in
   # shapes and ensuring each Tracer object is mapped to a single AbstractValue.
+  env: Dict[TracerId, AbstractValue] = {}
   avals: List[AbstractValue] = []
   for t in tracers:
     aval = env.get(id(t))
     if aval is None:
-      aval = env[id(t)] = _subs_avals_in_aval(env, t.aval)
+      aval = env[id(t)] = _substitute_avals_in_aval(env, t.aval)
     avals.append(aval)
   return avals
 
-def _subs_avals_in_aval(
+def _substitute_avals_in_aval(
     env: Dict[TracerId, AbstractValue], a: AbstractValue
   ) -> AbstractValue:
   # Substitute AbstractValues into given AbstractValue using given environment.
@@ -1706,12 +1741,24 @@ def _subs_avals_in_aval(
   else:
     return a
 
-def _subs_vars_in_aval(
+def _substitute_vars_in_type(
     env: Dict[Var, Var], a: AbstractValue
   ) -> AbstractValue:
   # Substitutes variables into a given AbstractValue using given environment.
   # That is, the input is an AbstractValue possibly containing Vars, and the
   # output is an aval possibly containing Vars.
+  if isinstance(a, DShapedArray) and any(isinstance(d, Var) for d in a.shape):
+    shape = [env[d] if isinstance(d, Var) else d for d in a.shape]
+    return a.update(shape=tuple(shape))
+  else:
+    return a
+
+def _substitute_tracers_in_type(
+    env: Dict[Var, Tracer], a: AbstractValue
+  ) -> AbstractValue:
+  # Substitutes variables into a given AbstractValue using given environment.
+  # That is, the input is an AbstractValue possibly containing Vars, and the
+  # output is an aval possibly containing Tracers.
   if isinstance(a, DShapedArray) and any(isinstance(d, Var) for d in a.shape):
     shape = [env[d] if isinstance(d, Var) else d for d in a.shape]
     return a.update(shape=tuple(shape))
