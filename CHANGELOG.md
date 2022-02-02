@@ -8,7 +8,11 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.28 (Unreleased)
+## jax 0.2.29 (Unreleased)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.28...main).
+
+## jax 0.2.28 (Feb 1 2022)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.27...main).
   * `jax.jit(f).lower(...).compiler_ir()` now defaults to the MHLO dialect if no
