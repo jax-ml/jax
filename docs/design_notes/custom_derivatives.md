@@ -13,7 +13,7 @@ There are two ways to define differentiation rules in JAX:
 
 This document is about #1 only.
 
-### Contents
+## Contents
 
 * [Goals](#goals)
 * [Non-goals](#non-goals)
@@ -266,7 +266,7 @@ vmap(custom_jvp_call(f, f_jvp)) == custom_jvp_call(vmap(f), vmap(f_jvp))
 ```
 
 This behavior means we’ve solved the [vmap-removes-custom-jvp semantics
-problem](the-vmap-removes-custom-jvp-semantics-problem).
+problem](#the-vmap-removes-custom-jvp-semantics-problem).
 
 The `jvp` transformation interacts as one might expect: it just calls `f_jvp`,
 
@@ -280,7 +280,7 @@ jvp(custom_jvp_call(f, f_jvp)) == f_jvp
 Because `custom_jvp_call` acts like `core.call` (and not like `xla.xla_call`) in
 that it doesn’t raise the abstraction level of its inputs (because it’s not
 delaying anything or staging anything out), it means we’ve solved [the Python
-flexibility problem](the-python-flexibility-problem): there are no constraints
+flexibility problem](#the-python-flexibility-problem): there are no constraints
 on the user Python function (above the usual functional programming constraints
 required by `jvp` or `vjp`).
 
@@ -332,7 +332,7 @@ because it may call the custom-JVP function and thus eager processing would lead
 to an infinite recursion. We delay that jaxpr formation in a thunk.)
 
 If we gave up on [the Python flexibility
-problem](the-python-flexibility-problem), we could get away with only having
+problem](#the-python-flexibility-problem), we could get away with only having
 `custom_jvp_call_jaxpr` and not having the separate Python-level primitive
 `custom_jvp_call`.
 

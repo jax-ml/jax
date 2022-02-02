@@ -13,7 +13,7 @@ As a corollary of these we believe the design should be functional. Another coro
 > TLDR
 > **JAX PRNG = [Threefry counter PRNG](http://www.thesalmons.org/john/random123/papers/random123sc11.pdf) + a functional array-oriented [splitting model](https://dl.acm.org/citation.cfm?id=2503784)**
 
-### Contents
+## Contents
 * [Three programming models and toy example programs](#three-programming-models-and-toy-example-programs)
 * [Design](#design)
 * [More realistic example user programs](#more-realistic-example-user-programs)

@@ -4,7 +4,7 @@ _Sept 25 2020_
 
 This is more of an upgrade guide than a design doc.
 
-### Contents
+## Contents
 
 * [tl;dr](#tldr)
 * [What is "omnistaging" and why is it useful?](#what-is-omnistaging-and-why-is-it-useful)
