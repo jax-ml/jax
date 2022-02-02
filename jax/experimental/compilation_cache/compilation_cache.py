@@ -93,7 +93,7 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
   _hash_compile_options(hash_obj, compile_options)
   _log_cache_key_hash(hash_obj, "compile_options")
 
-  hash_obj.update(bytes(jax._src.lib.version))
+  hash_obj.update(jax._src.lib.version_str.encode('utf-8'))
   _log_cache_key_hash(hash_obj, "jax_lib version")
 
   _hash_platform(hash_obj, backend)

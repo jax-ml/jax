@@ -61,7 +61,6 @@ from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src.lib import jax_jit
-from jax._src.lib import version
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
