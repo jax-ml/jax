@@ -4072,9 +4072,12 @@ def _infeed_lowering(ctx, token, *, shapes, partitions):
   ])
   output_and_token_tuple_type = ir.TupleType.get_tuple(
       [output_tuple_type, mhlo.TokenType.get()])
-  infeed = mhlo.InfeedOp(
-      output_and_token_tuple_type, token, ir.StringAttr.get(""),
-      layouts)
+  if jax._src.lib.mlir_api_version >= 2:
+    infeed = mhlo.InfeedOp([output_and_token_tuple_type], token,
+                           ir.StringAttr.get(''), layouts)
+  else:
+    infeed = mhlo.InfeedOp(output_and_token_tuple_type, token,
+                           ir.StringAttr.get(''), layouts)
   if partitions is not None:
     mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
   outs_tuple = mhlo.GetTupleElementOp(output_tuple_type, infeed.result,
@@ -4129,8 +4132,12 @@ def _outfeed_lowering(ctx, token, *xs, partitions):
   flat_input_types = util.flatten(input_types)
   input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
   tup = mhlo.TupleOp(input_tuple_type, mlir.flatten_lowering_ir_args(xs)).result
-  outfeed = mhlo.OutfeedOp(mlir.aval_to_ir_type(token_aval), tup, token,
-                        ir.StringAttr.get(""))
+  if jax._src.lib.mlir_api_version >= 2:
+    outfeed = mhlo.OutfeedOp(
+        mlir.aval_to_ir_type(token_aval), [tup], token, ir.StringAttr.get(''))
+  else:
+    outfeed = mhlo.OutfeedOp(
+        mlir.aval_to_ir_type(token_aval), tup, token, ir.StringAttr.get(''))
   if partitions is not None:
     mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
   return outfeed.results
