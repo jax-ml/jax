@@ -102,6 +102,12 @@ class FftTest(jtu.JaxTestCase):
       with self.assertRaises(NotImplementedError):
         func()
 
+  def testLaxFftAcceptsStringTypes(self):
+    rng = jtu.rand_default(self.rng())
+    x = rng((10,), np.complex64)
+    self.assertAllClose(np.fft.fft(x), lax.fft(x, "FFT", fft_lengths=(10,)))
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}_shape={}_axes={}_s={}_norm={}".format(
           inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes, s, norm),
