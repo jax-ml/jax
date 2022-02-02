@@ -54,13 +54,8 @@ class AnnTest(jtu.JaxTestCase):
     _, gt_args = lax.top_k(scores, k)
     _, ann_args = ann.approx_max_k(scores, k, recall_target=recall)
     self.assertEqual(k, len(ann_args[0]))
-    gt_args_sets = [set(np.asarray(x)) for x in gt_args]
-    hits = sum(
-        len(list(x
-                 for x in ann_args_per_q
-                 if x.item() in gt_args_sets[q]))
-        for q, ann_args_per_q in enumerate(ann_args))
-    self.assertGreater(hits / (qy_shape[0] * k), recall)
+    ann_recall = ann.ann_recall(np.asarray(ann_args), np.asarray(gt_args))
+    self.assertGreater(ann_recall, recall)
 
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -82,13 +77,8 @@ class AnnTest(jtu.JaxTestCase):
     _, gt_args = lax.top_k(-scores, k)
     _, ann_args = ann.approx_min_k(scores, k, recall_target=recall)
     self.assertEqual(k, len(ann_args[0]))
-    gt_args_sets = [set(np.asarray(x)) for x in gt_args]
-    hits = sum(
-        len(list(x
-                 for x in ann_args_per_q
-                 if x.item() in gt_args_sets[q]))
-        for q, ann_args_per_q in enumerate(ann_args))
-    self.assertGreater(hits / (qy_shape[0] * k), recall)
+    ann_recall = ann.ann_recall(np.asarray(ann_args), np.asarray(gt_args))
+    self.assertGreater(ann_recall, recall)
 
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -130,7 +120,6 @@ class AnnTest(jtu.JaxTestCase):
     db_size = db.shape[0]
     gt_scores = lax.dot_general(qy, db, (([1], [1]), ([], [])))
     _, gt_args = lax.top_k(-gt_scores, k)  # negate the score to get min-k
-    gt_args_sets = [set(np.asarray(x)) for x in gt_args]
     db_per_device = db_size//num_devices
     sharded_db = db.reshape(num_devices, db_per_device, 128)
     db_offsets = np.arange(num_devices, dtype=np.int32) * db_per_device
@@ -151,12 +140,8 @@ class AnnTest(jtu.JaxTestCase):
     ann_args = lax.collapse(ann_args, 1, 3)
     ann_vals, ann_args = lax.sort_key_val(ann_vals, ann_args, dimension=1)
     ann_args = lax.slice_in_dim(ann_args, start_index=0, limit_index=k, axis=1)
-    hits = sum(
-        len(list(x
-                 for x in ann_args_per_q
-                 if x.item() in gt_args_sets[q]))
-        for q, ann_args_per_q in enumerate(ann_args))
-    self.assertGreater(hits / (qy_shape[0] * k), recall)
+    ann_recall = ann.ann_recall(np.asarray(ann_args), np.asarray(gt_args))
+    self.assertGreater(ann_recall, recall)
 
 
 if __name__ == "__main__":
