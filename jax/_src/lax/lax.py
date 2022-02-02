@@ -1904,9 +1904,18 @@ def _integer_pow(x, *, y):
       x = mul(x, x)
   return div(full_like(acc, 1), acc) if is_reciprocal else acc
 
-mlir.register_lowering(
-    integer_pow_p,
-    mlir.cache_lowering(mlir.lower_fun(_integer_pow, multiple_results=False)))
+
+def _integer_pow_lowering(ctx, x, *, y):
+  lowering = mlir.lower_fun(_integer_pow, multiple_results=False)
+  # TODO(b/217551391): emitting an out-of-line call leads to a large
+  # expansion when the MHLO is lowered to HLO, because the HLO lowering
+  # clones the callee. Consider unconditionally caching when the MHLO->HLO
+  # lowering doesn't expand the program.
+  if y >= 4:
+    lowering = mlir.cache_lowering(lowering)
+  return lowering(ctx, x, y=y)
+
+mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
 
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
