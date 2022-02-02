@@ -55,7 +55,7 @@ def _get_metadata(gda):
 
   return {
       'compressor': {
-          'id': 'blosc'
+          'id': 'gzip'
       },
       'shape': gda.shape,
       'chunks': np.array(gda.local_data(0).shape),
