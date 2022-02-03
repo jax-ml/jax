@@ -736,6 +736,9 @@ def reset_trace_state() -> bool:
 def cur_sublevel() -> Sublevel:
   return thread_local_state.trace_state.substack[-1]
 
+def cur_level() -> int:
+  return thread_local_state.trace_state.trace_stack.stack[-1].level
+
 TRACER_LEAK_DEBUGGER_WARNING = """\
 JAX check_tracer_leaks behavior can trigger false positives when used with a debugger.
 To avoid false positives and silence this warning, you can disable thread tracing using
