@@ -200,6 +200,16 @@ class TreeTest(jtu.JaxTestCase):
     h = tree_util.Partial(g, 3)
     self.assertEqual(h.args, (3,))
 
+  def testPartialFuncAttributeHasStableHash(self):
+    # https://github.com/google/jax/issues/9429
+    fun = functools.partial(print, 1)
+    p1 = tree_util.Partial(fun, 2)
+    p2 = tree_util.Partial(fun, 2)
+    self.assertEqual(fun, p1.func)
+    self.assertEqual(p1.func, fun)
+    self.assertEqual(p1.func, p2.func)
+    self.assertEqual(hash(p1.func), hash(p2.func))
+
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripViaBuild(self, inputs):
     xs, tree = _process_pytree(tuple, inputs)
