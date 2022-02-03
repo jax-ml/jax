@@ -490,8 +490,16 @@ def _promote_shapes(fun_name, *args):
     else:
       if config.jax_numpy_rank_promotion != "allow":
         _rank_promotion_warning_or_error(fun_name, shapes)
-      result_shape = lax.broadcast_shapes(*shapes)
-      return [broadcast_to(arg, result_shape) for arg, shp in zip(args, shapes)]
+      if config.jax_dynamic_shapes:
+        # With dynamic shapes we don't support singleton-dimension broadcasting;
+        # we instead broadcast out to the full shape as a temporary workaround.
+        res_shape = lax.broadcast_shapes(*shapes)
+        return [broadcast_to(arg, res_shape) for arg, shp in zip(args, shapes)]
+      else:
+        result_rank = len(lax.broadcast_shapes(*shapes))
+        return [broadcast_to(arg, (1,) * (result_rank - len(shp)) + shp)
+                for arg, shp in zip(args, shapes)]
+
 
 def _rank_promotion_warning_or_error(fun_name, shapes):
   if config.jax_numpy_rank_promotion == "warn":
