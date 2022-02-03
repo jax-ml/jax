@@ -154,7 +154,7 @@ html_theme = 'furo'
 # further.  For a list of options available for each theme, see the
 # documentation.
 html_theme_options = {
-    'logo_only': True,
+    # 'logo_only': True,
 }
 
 # The name of an image file (relative to this directory) to place at the top
