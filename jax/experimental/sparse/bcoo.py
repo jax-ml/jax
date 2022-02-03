@@ -426,10 +426,14 @@ def _bcoo_extract_batching_rule(batched_args, batch_dims):
     bdim = batch_dims[1]
     indices = lax.expand_dims(indices, (bdim,))
   elif batch_dims[1] is None:
+    # TODO(jakevdp) can we handle this case without explicit broadcasting?
     bdim = batch_dims[0]
-    mat = lax.expand_dims(mat, (bdim,))
+    result_shape = list(mat.shape)
+    result_shape.insert(bdim, indices.shape[bdim])
+    mat = lax.broadcast_in_dim(mat, result_shape, (bdim,))
   else:
-    assert batch_dims[0] == batch_dims[1]
+    if batch_dims[0] != batch_dims[1]:
+      raise NotImplementedError("bcoo_extract with unequal batch dimensions.")
     bdim = batch_dims[0]
   n_batch = indices.ndim - 2
   if bdim >= n_batch:
