@@ -1086,8 +1086,8 @@ cannot be sure that the shape-polymorphic conversion is safe.
 
 ## TensorFlow versions supported
 
-The ``jax2tf.convert`` and `call_tf` require very recent versions of TensorFlow.
-As of today, the tests are run using `tf_nightly==2.7.0.dev20210715`.
+The ``jax2tf.convert`` and `call_tf` require fairly recent versions of TensorFlow.
+As of today, the tests are run using `tf_nightly==2.9.0.dev20220202`.
 
 ## Running on GPU
 

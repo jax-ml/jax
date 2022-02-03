@@ -1499,19 +1499,29 @@ def _conv_general_dilated(lhs, rhs, *,
   precision_config_proto = _precision_config_proto(precision)
 
   def gen_conv(lhs, rhs, preferred_element_type: Optional[DType]):
-    out = tfxla.conv(
-        lhs,
-        rhs,
-        window_strides,
-        padding,
-        lhs_dilation,
-        rhs_dilation,
-        dnums_proto,
-        feature_group_count=feature_group_count,
-        batch_group_count=batch_group_count,
-        precision_config=precision_config_proto,
-        preferred_element_type=preferred_element_type,
-        use_v2=True)
+    if tf.__version__ >= "2.8.0":
+      # TODO(necula): remove when 2.8.0 is the stable TF version (and supports
+      # batch_group_count.
+      out = tfxla.conv(
+          lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+          dnums_proto,
+          feature_group_count=feature_group_count,
+          batch_group_count=batch_group_count,
+          precision_config=precision_config_proto,
+          preferred_element_type=preferred_element_type,
+          use_v2=True)
+    else:
+      if batch_group_count != 1:
+        raise ValueError(
+            "The batch_group_count parameter for conv requires TF version "
+            "at least 2.8.0. You may want to use tf-nightly.")
+      out = tfxla.conv(
+          lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+          dnums_proto,
+          feature_group_count=feature_group_count,
+          precision_config=precision_config_proto,
+          preferred_element_type=preferred_element_type,
+          use_v2=True)
     # TODO: implement shape inference for XlaConv
     out.set_shape(out_tf_shape)
     if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
