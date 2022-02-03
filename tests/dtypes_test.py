@@ -136,33 +136,52 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
 
   def testPromoteDtypes(self):
-    for t1 in all_dtypes:
-      self.assertEqual(t1, dtypes.promote_types(t1, t1))
+    inexact_types = float_dtypes + complex_dtypes
+    exact_types = bool_dtypes + signed_dtypes + [
+      t for t in unsigned_dtypes if t != np.uint64]
 
+    for t1 in inexact_types + exact_types:
+      self.assertEqual(t1, dtypes.promote_types(t1, t1))
       self.assertEqual(t1, dtypes.promote_types(t1, np.bool_))
       self.assertEqual(np.dtype(np.complex128),
                        dtypes.promote_types(t1, np.complex128))
 
-      for t2 in all_dtypes:
+      for t2 in inexact_types + exact_types:
         # Symmetry
         self.assertEqual(dtypes.promote_types(t1, t2),
                          dtypes.promote_types(t2, t1))
 
-    self.assertEqual(np.dtype(np.float32),
-                     dtypes.promote_types(np.float16, dtypes.bfloat16))
+    # bfloat16 promotes like float16, but bfloat16 + float16 -> float32
+    for t in inexact_types + exact_types:
+      result_bf16 = dtypes.promote_types(t, dtypes.bfloat16)
+      result_f16 = dtypes.promote_types(t, np.float16)
+      if t == dtypes.bfloat16:
+        self.assertEqual(np.dtype(dtypes.bfloat16), result_bf16)
+      elif t == np.float16:
+        self.assertEqual(np.dtype(np.float32), result_bf16)
+      elif result_f16 == np.float16:
+        self.assertEqual(np.dtype(dtypes.bfloat16), result_bf16)
+      else:
+        self.assertEqual(result_f16, result_bf16)
 
-    # Promotions of non-inexact types against inexact types always prefer
-    # the inexact types.
-    for t in float_dtypes + complex_dtypes:
-      for i in bool_dtypes + signed_dtypes + unsigned_dtypes:
-        self.assertEqual(t, dtypes.promote_types(t, i))
+    # Promotions of exact types against inexact types always defer
+    # to the inexact type.
+    for inexact_type in inexact_types:
+      for exact_type in exact_types:
+        self.assertEqual(inexact_type, dtypes.promote_types(inexact_type, exact_type))
 
-    # Promotions between exact types, or between inexact types, match NumPy.
-    for groups in [bool_dtypes + signed_dtypes + unsigned_dtypes,
-                   np_float_dtypes + complex_dtypes]:
-      for t1, t2 in itertools.combinations(groups, 2):
+    # Promotions among exact types or among inexact types match NumPy,
+    # with the exception of uint64.
+    for group in [exact_types, np_float_dtypes + complex_dtypes]:
+      for t1, t2 in itertools.combinations(group, 2):
         self.assertEqual(np.promote_types(t1, t2),
                          dtypes.promote_types(t1, t2))
+
+    # uint64 only promotes with bool and unsigned
+    for t in bool_dtypes + unsigned_dtypes:
+      self.assertEqual(np.uint64, dtypes.promote_types(t, np.uint64))
+    for t in complex_dtypes + float_dtypes + signed_dtypes:
+      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t, np.uint64)
 
   @parameterized.parameters([jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64])
   def testScalarInstantiation(self, scalar_type):
@@ -277,20 +296,20 @@ class TestPromotionTables(jtu.JaxTestCase):
         ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f*','c*'],
         ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f*','c*'],
         ['u4','u4','u4','u4','u8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','u4','f*','c*'],
-        ['u8','u8','u8','u8','u8','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','u8','f*','c*'],
-        ['i1','i2','i4','i8','f*','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f*','c*'],
-        ['i2','i2','i4','i8','f*','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f*','c*'],
-        ['i4','i4','i4','i8','f*','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f*','c*'],
-        ['i8','i8','i8','i8','f*','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f*','c*'],
-        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c4'],
-        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c4'],
-        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c4'],
-        ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
-        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
-        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
+        ['u8','u8','u8','u8','u8','--','--','--','--','--','--','--','--','--','--','u8','--','--'],
+        ['i1','i2','i4','i8','--','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f*','c*'],
+        ['i2','i2','i4','i8','--','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f*','c*'],
+        ['i4','i4','i4','i8','--','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f*','c*'],
+        ['i8','i8','i8','i8','--','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f*','c*'],
+        ['bf','bf','bf','bf','--','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c4'],
+        ['f2','f2','f2','f2','--','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c4'],
+        ['f4','f4','f4','f4','--','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c4'],
+        ['f8','f8','f8','f8','--','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
+        ['c4','c4','c4','c4','--','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
+        ['c8','c8','c8','c8','--','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
         ['i*','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
-        ['f*','f*','f*','f*','f*','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
-        ['c*','c*','c*','c*','c*','c*','c*','c*','c*','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
+        ['f*','f*','f*','f*','--','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
+        ['c*','c*','c*','c*','--','c*','c*','c*','c*','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
       ]
     else:
       expected = [
@@ -332,16 +351,21 @@ class TestPromotionTables(jtu.JaxTestCase):
         val = val.item()
       return val
 
-    def val_to_typecode(val):
-      dtype = dtypes.result_type(val)
-      weak_type = dtypes.is_weakly_typed(val)
-      typecode = dtype_to_typecode[dtype]
-      if weak_type:
-        typecode = typecode[:-1] + '*'
+    def promotion_typecode(val1, val2):
+      try:
+        val = val1 + val2
+      except ValueError:
+        typecode = '--'
+      else:
+        dtype = dtypes.result_type(val)
+        weak_type = dtypes.is_weakly_typed(val)
+        typecode = dtype_to_typecode[dtype]
+        if weak_type:
+          typecode = typecode[:-1] + '*'
       return typecode
 
     vals = [typecode_to_val(t) for t in typecodes]
-    table = [[val_to_typecode(v1 + v2) for v1 in vals] for v2 in vals]
+    table = [[promotion_typecode(v1, v2) for v1 in vals] for v2 in vals]
 
     def show_differences(epected, actual):
       diffs = ""

@@ -11,6 +11,13 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.29 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.28...main).
+  * In `jax.numpy` type promotion, values of type `np.uint64` now raise a `TypePromotionError`
+    in case of implicit type promotion to float. This affects its use in binary operations,
+    such as `2.0 * x`, which for `x` of type `uint64` previously returned `float64` and now
+    raises an error. It also affects any function that implicitly casts inputs to float, such
+    as `jnp.exp(x)`, which for `x` of type `uint64` previously returned `float64` and now
+    raises an error. The workaround in either case is to explicitly cast values to
+    `float64` when this behavior is desired; e.g. `2.0 * jnp.float64(x)`.
 
 ## jax 0.2.28 (Feb 1 2022)
 * [GitHub

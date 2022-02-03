@@ -259,7 +259,7 @@ def _type_promotion_lattice():
   i_, f_, c_ = _weak_types
   return {
     b1: [i_],
-    u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+    u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [],
     i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
     f_: [bf, f2, c_], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
     c_: [c4], c4: [c8], c8: [],
@@ -278,6 +278,11 @@ def _make_lattice_upper_bounds():
       upper_bounds[n] |= new_upper_bounds
   return upper_bounds
 _lattice_upper_bounds = _make_lattice_upper_bounds()
+
+
+class TypePromotionError(ValueError):
+  pass
+
 
 @functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
 def _least_upper_bound(*nodes):
@@ -313,7 +318,8 @@ def _least_upper_bound(*nodes):
   if len(LUB) == 1:
     return LUB.pop()
   else:
-    raise ValueError(f"{nodes} do not have a unique least upper bound.")
+    raise TypePromotionError(f"{nodes} have no available type promotion path. Try explicitly "
+                             "casting inputs to the desired output type.")
 
 def promote_types(a, b):
   """Returns the type to which a binary operation should cast its arguments.

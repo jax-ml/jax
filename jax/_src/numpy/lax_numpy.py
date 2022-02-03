@@ -531,6 +531,10 @@ def _promote_dtypes_inexact(*args):
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  if to_dtype == np.uint64:
+    # This case errors in dtypes.result_type; catch it here for a more pointed error message.
+    raise dtypes.TypePromotionError("uint64 values cannot be implicitly promoted to float. Try "
+                                    "explicitly casting the value using jnp.float64(value).")
   to_dtype_inexact = _to_inexact_dtype(to_dtype)
   weak_type = (weak_type and to_dtype == to_dtype_inexact)
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type) for x in args]

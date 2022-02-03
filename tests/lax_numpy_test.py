@@ -68,6 +68,7 @@ float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
 unsigned_dtypes = jtu.dtypes.all_unsigned
+unsigned_dtypes_no64 = [d for d in unsigned_dtypes if d != np.uint64]
 bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 inexact_dtypes = float_dtypes + complex_dtypes
@@ -76,9 +77,6 @@ all_dtypes = number_dtypes + bool_dtypes
 
 
 python_scalar_dtypes = [jnp.bool_, jnp.int_, jnp.float_, jnp.complex_]
-
-# uint64 is problematic because with any uint type it promotes to float:
-int_dtypes_no_uint64 = [d for d in int_dtypes + unsigned_dtypes if d != np.uint64]
 
 def _indexer_with_default_outputs(indexer, use_defaults=True):
   """Like jtu.with_jax_dtype_defaults, but for __getitem__ APIs"""
@@ -132,7 +130,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
               all_shapes, jtu.rand_default, ["rev"]),
     op_record("add", 2, all_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("ceil", 1, float_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("ceil", 1, int_dtypes + unsigned_dtypes, all_shapes,
+    op_record("ceil", 1, int_dtypes + unsigned_dtypes_no64, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
     op_record("conj", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal, []),
@@ -145,7 +143,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
                          np.float64: 1e-12, np.complex64: 2e-4,
                          np.complex128: 1e-12}, check_dtypes=False),
     op_record("floor", 1, float_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("floor", 1, int_dtypes + unsigned_dtypes, all_shapes,
+    op_record("floor", 1, int_dtypes + unsigned_dtypes_no64, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
     op_record("greater", 2, all_dtypes, all_shapes, jtu.rand_some_equal, []),
     op_record("greater_equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal, []),
@@ -174,7 +172,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("signbit", 1, default_dtypes + bool_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, ["rev"]),
     op_record("trunc", 1, float_dtypes, all_shapes, jtu.rand_some_inf_and_nan, []),
-    op_record("trunc", 1, int_dtypes + unsigned_dtypes, all_shapes,
+    op_record("trunc", 1, int_dtypes + unsigned_dtypes_no64, all_shapes,
               jtu.rand_some_inf_and_nan, [], check_dtypes=False),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
               inexact=True),
@@ -235,11 +233,11 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_small_positive,
               [], tolerance={np.float64: 1e-8}, inexact=True),
     op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("fix", 1, int_dtypes + unsigned_dtypes, all_shapes,
+    op_record("fix", 1, int_dtypes + unsigned_dtypes_no64, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
     op_record("floor_divide", 2, float_dtypes + int_dtypes,
               all_shapes, jtu.rand_nonzero, ["rev"]),
-    op_record("floor_divide", 2, unsigned_dtypes, all_shapes,
+    op_record("floor_divide", 2, unsigned_dtypes_no64, all_shapes,
               jtu.rand_nonzero, ["rev"]),
     op_record("fmin", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("fmax", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
@@ -288,18 +286,18 @@ JAX_COMPOUND_OP_RECORDS = [
               tolerance={np.float16: 1e-2}),
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
     op_record("modf", 1, float_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("modf", 1, int_dtypes + unsigned_dtypes, all_shapes,
+    op_record("modf", 1, int_dtypes + unsigned_dtypes_no64, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
     op_record("rint", 1, inexact_dtypes, all_shapes, jtu.rand_some_inf_and_nan,
               []),
-    op_record("rint", 1, int_dtypes + unsigned_dtypes, all_shapes,
+    op_record("rint", 1, int_dtypes + unsigned_dtypes_no64, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
     op_record("sign", 1, number_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_some_inf_and_nan, []),
     # numpy 1.16 has trouble mixing uint and bfloat16, so we test these separately.
     op_record("copysign", 2, default_dtypes,
               all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
-    op_record("copysign", 2, unsigned_dtypes,
+    op_record("copysign", 2, unsigned_dtypes_no64,
               all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
     op_record("sinc", 1, [t for t in number_dtypes if t != jnp.bfloat16],
               all_shapes, jtu.rand_default, ["rev"],
@@ -327,8 +325,8 @@ JAX_COMPOUND_OP_RECORDS = [
               tolerance={dtypes.bfloat16: 1e-1, np.float16: 1e-1}),
     op_record("isclose", 2, [t for t in all_dtypes if t != jnp.bfloat16],
               all_shapes, jtu.rand_small_positive, []),
-    op_record("gcd", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
-    op_record("lcm", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
+    op_record("gcd", 2, int_dtypes + unsigned_dtypes_no64, all_shapes, jtu.rand_default, []),
+    op_record("lcm", 2, int_dtypes + unsigned_dtypes_no64, all_shapes, jtu.rand_default, []),
 ]
 
 JAX_BITWISE_OP_RECORDS = [
@@ -442,8 +440,8 @@ JAX_OPERATOR_OVERLOADS = [
     # op_record("__and__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     # op_record("__xor__", 2, number_dtypes, all_shapes, jtu.rand_bool, []),
     # op_record("__divmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, []),
-    op_record("__lshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), []),
-    op_record("__rshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), []),
+    op_record("__lshift__", 2, int_dtypes + unsigned_dtypes_no64, all_shapes, partial(jtu.rand_int, high=8), []),
+    op_record("__rshift__", 2, int_dtypes + unsigned_dtypes_no64, all_shapes, partial(jtu.rand_int, high=8), []),
 ]
 
 JAX_RIGHT_OPERATOR_OVERLOADS = [
@@ -462,8 +460,8 @@ JAX_RIGHT_OPERATOR_OVERLOADS = [
     # op_record("__rand__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     # op_record("__rxor__", 2, number_dtypes, all_shapes, jtu.rand_bool, []),
     # op_record("__rdivmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, []),
-    op_record("__rlshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), []),
-    op_record("__rrshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), [])
+    op_record("__rlshift__", 2, int_dtypes + unsigned_dtypes_no64, all_shapes, partial(jtu.rand_int, high=8), []),
+    op_record("__rrshift__", 2, int_dtypes + unsigned_dtypes_no64, all_shapes, partial(jtu.rand_int, high=8), [])
 ]
 
 class _OverrideEverything(object):
@@ -742,7 +740,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       # TODO numpy always promotes to shift dtype for zero-dim shapes:
       itertools.combinations_with_replacement(nonzerodim_shapes, 2))
     for dtypes in itertools.product(
-      *(_valid_dtypes_for_shape(s, int_dtypes_no_uint64) for s in shapes))))
+      *(_valid_dtypes_for_shape(s, int_dtypes + unsigned_dtypes_no64) for s in shapes))))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testShiftOpAgainstNumpy(self, op, dtypes, shapes):
     dtype, shift_dtype = dtypes
@@ -6105,9 +6103,10 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     self.assertEqual(mismatches, {})
 
 
-_all_dtypes: List[str] = [
+# Skip uint64 because it cannot be promoted to inexact.
+_all_dtypes_but_uint64: List[str] = [
   "bool_",
-  "uint8", "uint16", "uint32", "uint64",
+  "uint8", "uint16", "uint32",
   "int8", "int16", "int32", "int64",
   "float16", "float32", "float64",
   "complex64", "complex128",
@@ -6125,7 +6124,7 @@ def _all_numpy_ufuncs() -> Iterator[str]:
 def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:
   """Generate valid dtypes of inputs to the given numpy ufunc."""
   func = getattr(np, name)
-  for arg_dtypes in itertools.product(_all_dtypes, repeat=func.nin):
+  for arg_dtypes in itertools.product(_all_dtypes_but_uint64, repeat=func.nin):
     args = (np.ones(1, dtype=dtype) for dtype in arg_dtypes)
     try:
       with warnings.catch_warnings():

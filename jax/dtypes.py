@@ -23,4 +23,5 @@ from jax._src.dtypes import (
     issubdtype,  # TODO(phawkins): switch callers to jnp.issubdtype?
     result_type as result_type,
     scalar_type_of as scalar_type_of,
+    TypePromotionError as TypePromotionError,
 )

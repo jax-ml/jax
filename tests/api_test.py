@@ -3127,7 +3127,7 @@ class APITest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/9380
     @jax.jit
     def f():
-      return jnp.exp(dtype(0))
+      return jnp.add(dtype(0), dtype(1))
     f()  # doesn't error
 
   def test_large_python_ints(self):
