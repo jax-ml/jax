@@ -693,6 +693,26 @@ class BCOOTest(jtu.JaxTestCase):
     data3 = jit(sparse.bcoo_extract)(indices, M)
     self.assertArraysEqual(data, data3)
 
+  def test_bcoo_extract_batching(self):
+    # https://github.com/google/jax/issues/9431
+    indices = jnp.zeros((4, 1, 1), dtype=int)
+    mat = jnp.arange(4.).reshape((4, 1))
+
+    # in_axes = (0, None)
+    expected = jnp.vstack([sparse.bcoo_extract(i, mat[0]) for i in indices])
+    actual = vmap(sparse.bcoo_extract, in_axes=(0, None))(indices, mat[0])
+    self.assertArraysEqual(expected, actual)
+
+    # in_axes = (None, 0)
+    expected = jnp.vstack([sparse.bcoo_extract(indices[0], m) for m in mat])
+    actual = vmap(sparse.bcoo_extract, in_axes=(None, 0))(indices[0], mat)
+    self.assertArraysEqual(expected, actual)
+
+    # in_axes = (0, 0)
+    expected = jnp.vstack([sparse.bcoo_extract(i, m) for i, m in zip(indices, mat)])
+    actual = vmap(sparse.bcoo_extract, in_axes=0)(indices, mat)
+    self.assertArraysEqual(expected, actual)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
