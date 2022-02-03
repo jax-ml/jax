@@ -58,7 +58,7 @@ def _get_metadata(gda):
           'id': 'gzip'
       },
       'shape': gda.shape,
-      'chunks': np.array(gda.local_data(0).shape),
+      'chunks': np.array(np.maximum(1, gda.local_data(0).shape)),
       'dtype': dtype,
   }
 
