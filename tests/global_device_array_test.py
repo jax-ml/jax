@@ -23,6 +23,7 @@ from jax._src import test_util as jtu
 from jax._src.util import prod, safe_zip
 
 from jax.experimental import PartitionSpec as P
+import jax.experimental.global_device_array as gda_lib
 from jax.experimental.global_device_array import GlobalDeviceArray
 
 from jax.config import config
@@ -166,6 +167,24 @@ class GDATest(jtu.JaxTestCase):
     self.assertEqual(gda.local_data(0).shape, expected_shard_shape)
     replica_ids = [i.replica_id for i in gda.local_shards]
     self.assertListEqual(replica_ids, expected_replica_ids)
+
+  def test_gda_shape_0_1d_mesh(self):
+    global_mesh = jtu.create_global_mesh((8,), ('x'))
+    global_input_shape = (0,)
+    mesh_axes = [None]
+    def cb(index):
+      return np.array([])
+    gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                          mesh_axes, cb)
+    for i, s in enumerate(gda.local_shards):
+      self.assertEqual(s.index, (slice(None),))
+      self.assertEqual(s.replica_id, i)
+      self.assertArraysEqual(s.data.to_py(), np.array([]))
+    self.assertEqual(gda.dtype, np.float32)
+    self.assertEqual(
+        gda_lib.get_shard_shape(global_input_shape, global_mesh, mesh_axes),
+        (0,))
+
 
   @parameterized.named_parameters(
       ("mesh_x_y", ["x", "y"],
