@@ -1,6 +1,6 @@
 # sphinx >=3 required by sphinx-autodoc-typehints v1.11.1 (Oct 2020)
 sphinx >=3
-furo
+sphinx_book_theme
 # Newer versions cause issues; see https://github.com/google/jax/pull/6449
 sphinx-autodoc-typehints==1.11.1
 jupyter-sphinx>=0.3.2
