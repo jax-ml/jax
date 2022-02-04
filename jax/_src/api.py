@@ -1404,11 +1404,12 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
       range ``[-ndim, ndim)`` for each array, where ``ndim`` is the number of
       dimensions (axes) of the corresponding input array.
 
-      If the positional arguments to ``fun`` are container types, the
+      If the positional arguments to ``fun`` are container (pytree) types, the
       corresponding element of ``in_axes`` can itself be a matching container,
       so that distinct array axes can be mapped for different container
       elements. ``in_axes`` must be a container tree prefix of the positional
-      argument tuple passed to ``fun``.
+      argument tuple passed to ``fun``. See this link for more detail:
+      https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees
 
       Either ``axis_size`` must be provided explicitly, or at least one
       positional argument must have ``in_axes`` not None. The sizes of the
