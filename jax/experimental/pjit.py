@@ -573,7 +573,7 @@ def _pjit_lower(
   return pxla.lower_mesh_computation(
       fun, name, resource_env.physical_mesh,
       in_axes, out_axes, donated_invars,
-      True, jaxpr.in_avals, tile_by_mesh_axes=False, in_is_gda=in_is_gda)
+      True, jaxpr.in_avals, tiling_method=None, in_is_gda=in_is_gda)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env,

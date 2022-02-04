@@ -747,11 +747,15 @@ def make_xmap_callable(fun: lu.WrappedFun,
     mesh = resource_env.physical_mesh
     global_in_avals = [mesh.local_to_global(ax, av)
                        for ax, av in safe_zip(mesh_in_axes, in_avals)]
+    if config.experimental_xmap_spmd_lowering_manual:
+      tiling_method = pxla.TilingMethod.MANUAL
+    else:
+      tiling_method = pxla.TilingMethod.VECTORIZE
     return pxla.lower_mesh_computation(
         f, name, mesh,
         mesh_in_axes, mesh_out_axes, donated_invars,
         use_spmd_lowering, global_in_avals,
-        tile_by_mesh_axes=True, in_is_gda=[False] * len(global_in_avals))
+        tiling_method=tiling_method, in_is_gda=[False] * len(global_in_avals))
   else:
     return dispatch.lower_xla_callable(
         f, None, backend, name, donated_invars, *((a, None) for a in in_avals))
@@ -1307,7 +1311,9 @@ pxla.SPMDBatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, True
 # -------- nested xmap handling --------
 
 def _xmap_lowering_rule(*args, **kwargs):
-  if config.experimental_xmap_spmd_lowering:
+  if config.experimental_xmap_spmd_lowering_manual:
+    raise NotImplementedError
+  elif config.experimental_xmap_spmd_lowering:
     return _xmap_lowering_rule_spmd(*args, **kwargs)
   else:
     return _xmap_lowering_rule_replica(*args, **kwargs)
@@ -1454,7 +1460,9 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
 
 
 def _xmap_translation_rule(*args, **kwargs):
-  if config.experimental_xmap_spmd_lowering:
+  if config.experimental_xmap_spmd_lowering_manual:
+    raise NotImplementedError("Manual lowering only supported in MLIR lowering")
+  elif config.experimental_xmap_spmd_lowering:
     return _xmap_translation_rule_spmd(*args, **kwargs)
   else:
     return _xmap_translation_rule_replica(*args, **kwargs)
@@ -1960,14 +1968,37 @@ def _thread_local_flag_unsupported(_):
 def _clear_compilation_cache(_):
   make_xmap_callable.cache_clear()  # type: ignore
 
+def _ensure_spmd_and(f):
+  def update(v):
+    if v and not config.experimental_xmap_spmd_lowering:
+      raise RuntimeError("This flag requires enabling the experimental_xmap_spmd_lowering flag")
+    return f(v)
+  return update
+
+def _ensure_supports_manual_and(f):
+  def update(v):
+    if v and not hasattr(xc.OpSharding.Type, "MANUAL"):
+      raise RuntimeError("This flag requires a version of jaxlib that supports MANUAL sharding type")
+    return f(v)
+  return update
+
 try:
   config.define_bool_state(
       name="experimental_xmap_spmd_lowering",
       default=False,
-      help=("When set, multi-device xmaps computations will be compiled through "
+      help=("When set, multi-device xmap computations will be compiled through "
             "the XLA SPMD partitioner instead of explicit cross-replica collectives. "
             "Not supported on CPU!"),
       update_global_hook=_clear_compilation_cache,
+      update_thread_local_hook=_thread_local_flag_unsupported)
+  config.define_bool_state(
+      name="experimental_xmap_spmd_lowering_manual",
+      default=False,
+      help=("When set, multi-device xmap computations will be compiled using "
+            "the MANUAL partitioning feature of the XLA SPMD partitioner instead of "
+            "sharding constraints on vectorized code. "
+            "Requires experimental_xmap_spmd_lowering!"),
+      update_global_hook=_ensure_supports_manual_and(_ensure_spmd_and(_clear_compilation_cache)),
       update_thread_local_hook=_thread_local_flag_unsupported)
   config.define_bool_state(
       name="experimental_xmap_ensure_fixed_sharding",
@@ -1975,7 +2006,7 @@ try:
       help=("When set and `experimental_xmap_spmd_lowering` is enabled, the lowering will "
             "try to limit the flexibility of the automated SPMD partitioner heuristics "
             "by emitting additional sharding annotations for program intermediates."),
-      update_global_hook=_clear_compilation_cache,
+      update_global_hook=_ensure_spmd_and(_clear_compilation_cache),
       update_thread_local_hook=_thread_local_flag_unsupported)
 except Exception:
   raise ImportError("jax.experimental.maps has to be imported before JAX flags "

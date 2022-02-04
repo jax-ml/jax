@@ -769,10 +769,11 @@ def convert_mhlo(x, aval_in, aval_out):
         ir.StringAttr.get("NE"), ir.StringAttr.get(compare_type)).result
   return mhlo.ConvertOp(aval_to_ir_type(aval_out), x).result
 
-
-def wrap_with_sharding_op(x,
-                          sharding_proto: xc.OpSharding,
-                          unspecified_dims: Optional[Set[int]] = None):
+def _wrap_with_spmd_op(name: str,
+                       result_type: ir.Type,
+                       x: ir.Value,
+                       sharding_proto: xc.OpSharding,
+                       unspecified_dims: Optional[Set[int]] = None):
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
   if unspecified_dims:
@@ -780,8 +781,8 @@ def wrap_with_sharding_op(x,
         [str(i) for i in sorted(unspecified_dims)]) + "]"
   else:
     backend_config = ""
-  op = mhlo.CustomCallOp([x.type], [x],
-                         call_target_name=ir.StringAttr.get("Sharding"),
+  op = mhlo.CustomCallOp([result_type], [x],
+                         call_target_name=ir.StringAttr.get(name),
                          has_side_effect=ir.BoolAttr.get(False),
                          backend_config=ir.StringAttr.get(backend_config),
                          api_version=i32_attr(1),
@@ -791,6 +792,14 @@ def wrap_with_sharding_op(x,
   op.attributes["mhlo.sharding"] = ir.StringAttr.get(
       sharding_proto.SerializeToString())
   return op.result
+
+def wrap_with_sharding_op(x: ir.Value,
+                          sharding_proto: xc.OpSharding,
+                          unspecified_dims: Optional[Set[int]] = None):
+  return _wrap_with_spmd_op("Sharding", x.type, x, sharding_proto, unspecified_dims)
+
+wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
+wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 def set_sharding(op, sharding_proto: xc.OpSharding):
   op.attributes["mhlo.sharding"] = ir.StringAttr.get(

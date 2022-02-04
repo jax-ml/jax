@@ -36,7 +36,8 @@ import itertools as it
 import operator as op
 import threading
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional,
-                    Sequence, Set, Tuple, Type, Union, Iterable)
+                    Sequence, Set, Tuple, Type, Union, Iterable, cast)
+import enum
 import sys
 
 from absl import logging
@@ -127,7 +128,7 @@ def sharding_spec_sharding_proto(self):
   Unfortunately the semantics are not very well described in the proto spec, but the code here might help:
   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/experimental/xla_sharding/xla_sharding.py
   """
-  mesh_shape = self.mesh_shape
+  mesh_shape = cast(Tuple[int, ...], self.mesh_shape)
   mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
 
   sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
@@ -1918,6 +1919,82 @@ def vtile_by_mesh(fun: lu.WrappedFun,
                          main_type=SPMDBatchTrace)
   return fun
 
+full_to_shard_p = core.Primitive('full_to_shard')
+
+@full_to_shard_p.def_abstract_eval
+def _full_to_shard_abstract_eval(x, axes, mesh):
+  # TODO: Assert x is a global aval! Or ideally check that it's global in dims from axes!
+  return tile_aval_nd(mesh.shape, axes, x)
+
+def _manual_proto(aval, axes, mesh):
+  """Create an OpSharding proto that declares all mesh axes from `axes` as manual
+  and all others as replicated.
+  """
+  named_mesh_shape = mesh.shape
+  mesh_shape = list(named_mesh_shape.values())
+  axis_order = {axis: i for i, axis in enumerate(mesh.axis_names)}
+
+  manual_axes = list(axes)
+  replicated_axes = list(axis for axis in mesh.axis_names if axis not in axes)
+
+  tad_perm = ([axis_order[a] for a in replicated_axes] +
+              [axis_order[a] for a in manual_axes])
+  tad_shape = [1] * aval.ndim
+  tad_shape.append(int(np.prod([named_mesh_shape[a] for a in replicated_axes], dtype=int)))
+  tad_shape.append(int(np.prod([named_mesh_shape[a] for a in manual_axes], dtype=int)))
+
+  raw_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+  proto = xc.OpSharding()
+  proto.type = xc.OpSharding.Type.OTHER
+  proto.tile_assignment_dimensions = tad_shape
+  proto.tile_assignment_devices = list(raw_mesh.transpose(tad_perm).reshape(tad_shape).flat)
+  proto.last_tile_dims = [xc.OpSharding.Type.REPLICATED, xc.OpSharding.Type.MANUAL]
+  return proto
+
+@partial(mlir.register_lowering, full_to_shard_p)
+def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh):
+  # TODO: Can we short-circuit for replicated values? Probably not.
+  aval_in, = ctx.avals_in
+  aval_out, = ctx.avals_out
+  sharding_proto = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval_in, axes).sharding_proto()
+  unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
+  sx = mlir.wrap_with_sharding_op(x, sharding_proto, unspecified_dims=unspecified_dims)
+  manual_proto = _manual_proto(aval_in, axes, mesh)
+  result_type, = mlir.aval_to_ir_types(aval_out)
+  return [mlir.wrap_with_full_to_shard_op(result_type, sx, manual_proto, unspecified_dims=set(range(aval_in.ndim)))]
+
+shard_to_full_p = core.Primitive('shard_to_full')
+
+@shard_to_full_p.def_abstract_eval
+def _shard_to_full_abstract_eval(x, axes, mesh):
+  # TODO: Assert x is a global aval! Or ideally check that it's global in dims from axes!
+  return untile_aval_nd(mesh.shape, axes, x)
+
+@partial(mlir.register_lowering, shard_to_full_p)
+def _shard_to_full_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh):
+  aval_in, = ctx.avals_in
+  aval_out, = ctx.avals_out
+  manual_proto = _manual_proto(aval_in, axes, mesh)
+  result_type, = mlir.aval_to_ir_types(aval_out)
+  sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=set(range(aval_in.ndim)))
+  sharding_proto = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval_in, axes).sharding_proto()
+  unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
+  return [mlir.wrap_with_shard_to_full_op(result_type, sx, sharding_proto, unspecified_dims)]
+
+@lu.transformation
+def vtile_manual(mesh: Mesh,
+                 in_axes: Sequence[ArrayMapping],
+                 out_axes: Sequence[ArrayMapping],
+                 *args):
+  tiled_args = [full_to_shard_p.bind(arg, axes=axes, mesh=mesh)
+                for arg, axes in zip(args, in_axes)]
+  tiled_outs = yield tiled_args, {}
+  outs = [shard_to_full_p.bind(out, axes=axes, mesh=mesh)
+          for out, axes in zip(tiled_outs, out_axes)]
+  yield outs
+
+TilingMethod = enum.Enum("TilingMethod", ["VECTORIZE", "MANUAL"])
+
 @profiler.annotate_function
 def lower_mesh_computation(
     fun: lu.WrappedFun,
@@ -1928,7 +2005,7 @@ def lower_mesh_computation(
     donated_invars: Sequence[bool],
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
-    tile_by_mesh_axes: bool,
+    tiling_method: Optional[TilingMethod],
     in_is_gda: Sequence[bool]):
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
@@ -1949,12 +2026,18 @@ def lower_mesh_computation(
                     for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)]
   if spmd_lowering:
     # TODO: Consider handling xmap's 'vectorize' in here. We can vmap once instead of vtile twice!
-    if tile_by_mesh_axes:
+    if tiling_method is not None:
+      if tiling_method is TilingMethod.VECTORIZE:
+        tiling_transform = vtile_by_mesh
+      elif tiling_method is TilingMethod.MANUAL:
+        tiling_transform = vtile_manual
+      else:
+        raise NotImplementedError(f"Unrecognized tiling method: {tiling_method}")
       assert not callable(out_axes)
-      fun = vtile_by_mesh(fun, mesh, in_axes, out_axes)
+      fun = tiling_transform(fun, mesh, in_axes, out_axes)
     in_jaxpr_avals = global_in_avals
   else:
-    assert tile_by_mesh_axes
+    assert tiling_method is TilingMethod.VECTORIZE
     in_jaxpr_avals = in_tiled_avals
   with core.extend_axis_env_nd(mesh.shape.items()):
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
@@ -2228,9 +2311,10 @@ def mesh_sharding_specs(axis_sizes, axis_names):
     for name, axis in sorted(aval_axes.items(), key=lambda x: x[1]):
       assert aval_shape[axis] % axis_sizes[name] == 0, (axis_sizes[name], aval.shape[axis])
       aval_shape[axis] //= axis_sizes[name]
-      if isinstance(sharding[axis], NoSharding):
-        sharding[axis] = Chunked([])
-      sharding[axis] = Chunked(sharding[axis].chunks + [axis_sizes[name]])
+      chunked = sharding[axis]
+      if isinstance(chunked, NoSharding):
+        chunked = Chunked([])
+      sharding[axis] = Chunked(list(chunked.chunks) + [axis_sizes[name]])
       assert isinstance(mesh_mapping[mesh_axis_pos[name]], Replicated), \
           "Value mapped to the same mesh axis twice"
       mesh_mapping[mesh_axis_pos[name]] = ShardedAxis(next_sharded_axis)

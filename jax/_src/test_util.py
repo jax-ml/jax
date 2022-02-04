@@ -1129,6 +1129,16 @@ def restore_spmd_lowering_flag():
   if old_spmd_lowering_flag is None: return
   config.update('experimental_xmap_spmd_lowering', old_spmd_lowering_flag)
 
+old_spmd_manual_lowering_flag = None
+def set_spmd_manual_lowering_flag(val: bool):
+  global old_spmd_manual_lowering_flag
+  old_spmd_manual_lowering_flag = config.experimental_xmap_spmd_lowering_manual
+  config.update('experimental_xmap_spmd_lowering_manual', val)
+
+def restore_spmd_manual_lowering_flag():
+  if old_spmd_manual_lowering_flag is None: return
+  config.update('experimental_xmap_spmd_lowering_manual', old_spmd_manual_lowering_flag)
+
 def create_global_mesh(mesh_shape, axis_names):
   size = prod(mesh_shape)
   if len(api.devices()) < size:
