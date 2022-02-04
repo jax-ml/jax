@@ -35,6 +35,7 @@ Just-in-time compilation (:code:`jit`)
 --------------------------------------
 
 .. autosummary::
+  :toctree: _autosummary
 
     jit
     disable_jit
@@ -48,6 +49,7 @@ Just-in-time compilation (:code:`jit`)
     device_get
     default_backend
     named_call
+    block_until_ready
 
 .. _jax-grad:
 
@@ -55,6 +57,7 @@ Automatic differentiation
 -------------------------
 
 .. autosummary::
+  :toctree: _autosummary
 
     grad
     value_and_grad
@@ -75,14 +78,16 @@ Vectorization (:code:`vmap`)
 ----------------------------
 
 .. autosummary::
+  :toctree: _autosummary
 
     vmap
-    jax.numpy.vectorize
+    numpy.vectorize
 
 Parallelization (:code:`pmap`)
 ------------------------------
 
 .. autosummary::
+  :toctree: _autosummary
 
     pmap
     devices
@@ -91,52 +96,3 @@ Parallelization (:code:`pmap`)
     device_count
     local_device_count
     process_count
-
-
-.. autofunction:: jit
-.. autofunction:: disable_jit
-.. autofunction:: ensure_compile_time_eval
-.. autofunction:: xla_computation
-.. autofunction:: make_jaxpr
-.. autofunction:: eval_shape
-.. autofunction:: device_put
-.. autofunction:: device_put_replicated
-.. autofunction:: device_put_sharded
-.. autofunction:: device_get
-.. autofunction:: block_until_ready
-.. autofunction:: default_backend
-.. autofunction:: named_call
-
-.. autofunction:: grad
-.. autofunction:: value_and_grad
-.. autofunction:: jacfwd
-.. autofunction:: jacrev
-.. autofunction:: hessian
-.. autofunction:: jvp
-.. autofunction:: linearize
-.. autofunction:: linear_transpose
-.. autofunction:: vjp
-.. autoclass:: custom_jvp
-
-    .. automethod:: defjvp
-    .. automethod:: defjvps
-
-.. autoclass:: custom_vjp
-
-    .. automethod:: defvjp
-
-.. autofunction:: closure_convert
-
-.. autofunction:: checkpoint
-
-.. autofunction:: vmap
-.. autofunction:: jax.numpy.vectorize
-  :noindex:
-
-.. autofunction:: pmap
-.. autofunction:: devices
-.. autofunction:: local_devices
-.. autofunction:: process_index
-.. autofunction:: device_count
-.. autofunction:: local_device_count
-.. autofunction:: process_count
