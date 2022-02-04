@@ -43,8 +43,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
     super().setUp()
     if jtu.device_under_test() != "tpu":
         raise SkipTest("serialize executable only works on TPU")
-    if jax._src.lib.xla_bridge.get_backend().runtime_type == "tfrt":
-        raise SkipTest("the new TFRT runtime does not support serialization")
 
   def tearDown(self):
       super().tearDown()
