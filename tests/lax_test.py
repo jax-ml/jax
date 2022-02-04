@@ -759,6 +759,86 @@ class LaxTest(jtu.JaxTestCase):
         [out_spec.index(c) for c in out_spec if c not in ('N', 'C')])
     self.assertAllClose(out, patches)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {
+          "testcase_name":
+              f"_dtype={dtype}_precision={precision}_n={n}_{padding}"
+              f"_dn={lhs_spec, rhs_spec, out_spec}]",
+          "dtype": dtype,
+          "rng_factory": rng_factory,
+          "precision": precision,
+          "n": n,
+          "padding": padding,
+          "lhs_spec": lhs_spec,
+          "rhs_spec": rhs_spec,
+          "out_spec": out_spec
+      }
+      for dtype in inexact_dtypes
+      for rng_factory in [jtu.rand_small]
+      for precision in [None,
+                        lax.Precision.DEFAULT,
+                        lax.Precision.HIGH,
+                        lax.Precision.HIGHEST,
+                        (lax.Precision.DEFAULT,
+                         lax.Precision.HIGHEST)]
+      for n in [1, 2]
+      for padding in ['SAME', 'VALID']
+      for lhs_spec in [''.join(s)
+                       for s in itertools.permutations('NCHWD'[:n + 2])]
+      for rhs_spec in [''.join(s)
+                       for s in itertools.permutations('OIHWDX'[:n + 2])]
+      for out_spec in [''.join(s)
+                       for s in itertools.permutations('NCHWDX'[:n + 2])]))
+  def testConvGeneralDilatedLocal(self, dtype, rng_factory, precision, n,
+                                  padding, lhs_spec, rhs_spec, out_spec):
+    """Make sure LCN with tiled CNN kernel matches CNN."""
+    lhs_spec_default = 'NCHWDX'[:n + 2]
+    rhs_spec_default = 'OIHWDX'[:n + 2]
+
+    rng = rng_factory(self.rng())
+
+    lhs_default = rng((2, 4, 7, 6, 5, 8)[:n + 2], dtype)
+    rhs_default = rng((5, 4, 2, 3, 1, 2)[:n + 2], dtype)
+
+    window_strides = (1, 2, 3, 4)[:n]
+    rhs_dilation = (2, 1, 3, 2)[:n]
+
+    lhs_perm = [lhs_spec_default.index(c) for c in lhs_spec]
+    lhs = np.transpose(lhs_default, lhs_perm)
+
+    rhs_perm = [rhs_spec_default.index(c) for c in rhs_spec]
+    rhs = np.transpose(rhs_default, rhs_perm)
+
+    kwargs = dict(
+        lhs=lhs,
+        window_strides=window_strides,
+        padding=padding,
+        rhs_dilation=rhs_dilation,
+        dimension_numbers=(lhs_spec, rhs_spec, out_spec),
+        precision=precision
+    )
+
+    out_conv = lax.conv_general_dilated(rhs=rhs, **kwargs)
+
+    rhs_local = np.moveaxis(rhs, (rhs_spec.index('O'), rhs_spec.index('I')),
+                            (0, 1))
+    rhs_local = rhs_local.reshape((rhs_local.shape[0], -1) + (1,) * n)
+
+    rhs_shape = (rhs_local.shape[:2] +
+                 tuple(out_conv.shape[out_spec.index(c)]
+                       for c in rhs_spec_default[2:]))
+
+    rhs_local = np.broadcast_to(rhs_local, rhs_shape)
+    rhs_local = np.transpose(rhs_local, rhs_perm)
+
+    filter_shape = [rhs.shape[i]
+                    for i in range(n + 2) if rhs_spec[i] not in ('O', 'I')]
+    out_local = lax.conv_general_dilated_local(rhs=rhs_local,
+                                               filter_shape=filter_shape,
+                                               **kwargs)
+
+    self.assertAllClose(out_conv, out_local)
+
   # TODO(mattjj): test conv_general_dilated against numpy
 
   def testConv0DIsDot(self):

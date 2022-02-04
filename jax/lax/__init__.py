@@ -364,6 +364,7 @@ from jax._src.lax.parallel import (
   xeinsum as xeinsum,
 )
 from jax._src.lax.other import (
+  conv_general_dilated_local as conv_general_dilated_local,
   conv_general_dilated_patches as conv_general_dilated_patches
 )
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
