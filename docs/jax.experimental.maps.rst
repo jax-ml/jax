@@ -6,5 +6,8 @@ jax.experimental.maps module
 API
 ---
 
-.. autofunction:: mesh
-.. autofunction:: xmap
+.. autosummary::
+   :toctree: _autosummary
+  
+   mesh
+   xmap

@@ -6,5 +6,8 @@ jax.experimental.ann module
 API
 ---
 
-.. autofunction:: approx_max_k
-.. autofunction:: approx_min_k
+.. autosummary::
+   :toctree: _autosummary
+
+   approx_max_k
+   approx_min_k

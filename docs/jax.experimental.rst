@@ -1,8 +1,13 @@
+.. currentmodule:: jax.experimental
+
 jax.experimental package
 ========================
 
 ``jax.experimental.optix`` has been moved into its own Python package
-(``optax``).
+(https://github.com/deepmind/optax).
+
+Experimental Modules
+--------------------
 
 .. toctree::
     :maxdepth: 1
@@ -15,7 +20,11 @@ jax.experimental package
     jax.experimental.pjit
     jax.experimental.sparse
 
-.. automodule:: jax.experimental
+Experimental APIs
+-----------------
 
-.. autofunction:: enable_x64
-.. autofunction:: disable_x64
+.. autosummary::
+   :toctree: _autosummary
+
+   enable_x64
+   disable_x64

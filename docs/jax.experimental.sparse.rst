@@ -6,5 +6,8 @@ jax.experimental.sparse module
 API
 ---
 
-.. autoclass:: BCOO
-.. autofunction:: sparsify
+.. autosummary::
+   :toctree: _autosummary
+
+   BCOO
+   sparsify
