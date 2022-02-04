@@ -69,6 +69,7 @@ extensions = [
     'matplotlib.sphinxext.plot_directive',
     'sphinx_autodoc_typehints',
     'myst_nb',
+    "sphinx_remove_toctrees",
     'jax_extensions',
 ]
 
@@ -148,13 +149,14 @@ napolean_use_rtype = False
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'sphinx_rtd_theme'
+html_theme = 'sphinx_book_theme'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
 html_theme_options = {
     'logo_only': True,
+    'show_toc_level': 2,
 }
 
 # The name of an image file (relative to this directory) to place at the top
@@ -280,3 +282,7 @@ epub_exclude_files = ['search.html']
 # Tell sphinx-autodoc-typehints to generate stub parameter annotations including
 # types, even if the parameters aren't explicitly documented.
 always_document_param_types = True
+
+
+# Remove auto-generated API docs from sidebars. They take too long to build.
+remove_from_toctrees = ["_autosummary/*"]
