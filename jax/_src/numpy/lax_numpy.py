@@ -2260,6 +2260,8 @@ def broadcast_to(arr, shape):
 
 
 def _split(op, ary, indices_or_sections, axis=0):
+  _check_arraylike(op, ary)
+  ary = asarray(ary)
   axis = core.concrete_or_error(int, axis, f"in jax.numpy.{op} argument `axis`")
   size = ary.shape[axis]
   if isinstance(indices_or_sections, (tuple, list)):
@@ -2298,15 +2300,15 @@ def _split(op, ary, indices_or_sections, axis=0):
 def split(ary, indices_or_sections, axis: int = 0):
   return _split("split", ary, indices_or_sections, axis=axis)
 
-def _split_on_axis(np_fun, axis):
-  @_wraps(np_fun, update_doc=False)
+def _split_on_axis(op, axis):
+  @_wraps(getattr(np, op), update_doc=False)
   def f(ary, indices_or_sections):
-    return split(ary, indices_or_sections, axis=axis)
+    return _split(op, ary, indices_or_sections, axis=axis)
   return f
 
-vsplit = _split_on_axis(np.vsplit, axis=0)
-hsplit = _split_on_axis(np.hsplit, axis=1)
-dsplit = _split_on_axis(np.dsplit, axis=2)
+vsplit = _split_on_axis("vsplit", axis=0)
+hsplit = _split_on_axis("hsplit", axis=1)
+dsplit = _split_on_axis("dsplit", axis=2)
 
 @_wraps(np.array_split)
 def array_split(ary, indices_or_sections, axis: int = 0):
