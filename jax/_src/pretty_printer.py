@@ -29,6 +29,7 @@ import abc
 import enum
 from functools import partial
 from typing import List, NamedTuple, Optional, Sequence, Tuple, Union
+from jax.config import config
 
 try:
   import colorama  # pytype: disable=import-error
@@ -41,6 +42,7 @@ class Doc(abc.ABC):
 
   def format(self, width: int = 80, use_color: bool = False,
              annotation_prefix=" # ") -> str:
+    use_color = use_color or config.FLAGS.jax_pprint_use_color
     return _format(self, width, use_color=use_color,
                    annotation_prefix=annotation_prefix)
 
@@ -374,8 +376,9 @@ def color(doc: Doc, *, foreground: Optional[Color] = None,
                    intensity=intensity)
 
 
-dim = partial(color, intensity=Intensity.DIM)
-bright = partial(color, intensity=Intensity.BRIGHT)
+type_annotation = partial(color, intensity=Intensity.NORMAL,
+                          foreground=Color.MAGENTA)
+keyword = partial(color, intensity=Intensity.BRIGHT, foreground=Color.BLUE)
 
 
 def join(sep: Doc, docs: Sequence[Doc]) -> Doc:

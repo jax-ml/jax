@@ -87,6 +87,9 @@ class Jaxpr:
                    custom_pp_eqn_rules=custom_pp_eqn_rules)
     return doc.format(**kw)
 
+  def _repr_pretty_(self, p, cycle):
+    return p.text(self.pretty_print(use_color=True))
+
 
 def jaxprs_in_params(params) -> Iterator[Jaxpr]:
   for val in params.values():
@@ -141,6 +144,10 @@ class ClosedJaxpr:
   def pretty_print(self, *, source_info=False, print_shapes=True, **kw):
     return pp_jaxpr(self.jaxpr, JaxprPpContext(), source_info=source_info,
                     print_shapes=print_shapes).format(**kw)
+
+
+  def _repr_pretty_(self, p, cycle):
+    return p.text(self.pretty_print(use_color=True))
 
 @curry
 def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
@@ -2248,7 +2255,7 @@ def pp_vars(vs: Sequence[Any], context: JaxprPpContext,
     return pp.nest(2, pp.group(
       pp.join(pp.text(separator) + pp.group(pp.brk()), [
         pp.text(pp_var(v, context)) +
-        pp.dim(pp.text(":" + pp_aval(v.aval, context)))
+        pp.type_annotation(pp.text(":" + pp_aval(v.aval, context)))
         for v in vs
       ])
     ))
@@ -2321,11 +2328,11 @@ def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext, *,
     pp.text("("), pp_vars(jaxpr.outvars, context, separator=","),
     pp.text(")" if len(jaxpr.outvars) != 1 else ",)")])
   return pp.group(pp.nest(2, pp.concat([
-    pp.text("{ "), pp.bright(pp.text("lambda ")),
+    pp.text("{ "), pp.keyword(pp.text("lambda ")),
     constvars, pp.text("; "), invars,
-    pp.text(". "), pp.bright(pp.text("let")),
+    pp.text(". "), pp.keyword(pp.text("let")),
     pp.nest(2, pp.brk() + eqns), pp.brk(),
-    pp.bright(pp.text("in ")), outvars
+    pp.keyword(pp.text("in ")), outvars
   ])) + pp.text(" }"))
 
 

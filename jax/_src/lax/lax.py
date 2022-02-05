@@ -47,6 +47,7 @@ from jax.interpreters import ad
 from jax.interpreters import invertible_ad as iad
 from jax.interpreters import batching
 from jax.interpreters import masking
+import jax._src.pretty_printer as pp
 from jax._src import util
 from jax._src.util import (cache, safe_zip, prod, safe_map, canonicalize_axis,
                            split_list)
@@ -2250,6 +2251,16 @@ def _convert_elt_type_fwd_rule(eqn):
   else:
     return [None], eqn
 
+def _convert_elt_type_pp_rule(eqn, context):
+  # don't print new_dtype because the output binder shows it
+  printed_params = {}
+  if eqn.params['weak_type']:
+    printed_params['weak_type'] = True
+  return [pp.text(eqn.primitive.name),
+          core.pp_kv_pairs(sorted(printed_params.items()), context),
+          pp.text(" ") + core.pp_vars(eqn.invars, context)]
+
+
 convert_element_type_p = Primitive('convert_element_type')
 convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
@@ -2264,6 +2275,8 @@ batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
+# TODO(mattjj): un-comment the next line (see #9456)
+# core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype
 
