@@ -1646,6 +1646,11 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(pytree[0], jnp.array(1.), check_dtypes=False)
     self.assertAllClose(pytree[1], np.ones(3), check_dtypes=False)
 
+  def test_blocking_transform(self):
+    # Just tests that we don't error...
+    pytree = jax.blocking(lambda x, y: jnp.abs(x + y))(1.0, y=-2.0)
+    self.assertAllClose(pytree, jnp.array(1.), check_dtypes=False)
+
   def test_devicearray_weakref_friendly(self):
     x = device_put(1.)
     y = weakref.ref(x)

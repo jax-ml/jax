@@ -3234,3 +3234,21 @@ def block_until_ready(x):
     except AttributeError:
       return x
   return jax.tree_util.tree_map(try_to_block, x)
+
+def blocking(func):
+  """
+  Creates a blocking version of `func`.
+
+  Blocking is achieved by calling ``block_until_ready`` with the given method's output.
+
+  Args:
+    func: Some function.
+
+  Returns:
+    A new blocking version of func.
+  """
+  @wraps(func)
+  def wrapper(*args, **kwargs):
+    return block_until_ready(func)(*args, **kwargs)
+
+  return wrapper
