@@ -12,64 +12,60 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ANN (Approximate Nearest Neighbor) computes top-k with a configurable recall rate on TPU.
+"""ANN (Approximate Nearest Neighbor) computes top-k with a configurable recall rate.
 
-TPUs are highly efficient on matrix multiplication, which scales up by TPU
-generation. Nevertheless, TPUs are surprisingly inefficient in the other
-generalized instructions used in standard algorithm designs.
-
-We can illustrate the inefficiency of writing general algorithms on TPU by
-comparing general instructions and matrix multiplication instruction throughput.
-We could only use no more than ten vector instructions per matrix
-multiplication; otherwise, we would see a significant performance regression.
-This constraint prevents us from almost all standard exact top-k algorithms,
-including parallel binary-heap, median-of-medians, and bitonic sort.
-
-Our approach to this problem is to reshape the inputs into equally sized
-windows,
-and return the top-1s in each window containing the true top-k. Suppose we have
-the actual top-k elements randomly spreaded in the windows, and we select the
-top-1 from each window. The collision rate of the top-k affects the accuracy,
-which we can model by the number of people with shared birthdays in the Birthday
-problem.
-
-The recall of this approximation depends on the output size :math:`M` and
-desired :math`K` elements in top-k. The recall is approximately
-:math:`\\exp\\left(\\frac{1-K}{M}\\right)`.  A quick estimate is the output
-would roughly be :math:`M=10\\cdot K` for 90% target recall, and
-:math:`M=100\\cdot K` for 99% target recall. The smaller the output, the smaller
-memory bandwidth it consumes.
+This package only optimizes the TPU backend. For other device types it fallbacks
+to sort and slice.
 
 Usage::
 
+  import functools
+  import jax
   from jax.experimental import ann
-  # Maximum inner product search
-  # qy shape: [qy_size, feature_dim]
-  # db shape: [feature_dim, db_size]
-  scores, docids = ann.approx_max_k(lax.dot(qy, db), k=10, recall_target=0.95)
 
-  # Pmap Maximum inner product search
-  # qy shape: [qy_size, feature_dim]
-  # db shape: [num_devices, per_device_db_size, feature_dim]
-  db_offsets = np.arange(num_devices, dtype=np.int32) * per_device_db_size
-  def parallel_topk(qy, db, db_offset):
-    scores = lax.dot_general(qy, db, (([1],[1]),([],[])))
-    ann_vals, ann_args = ann.approx_max_k(scores, k, recall_target=0.95,
-                                          reduction_input_size_override=db_size,
-                                          aggregate_to_topk=False)
-    return (ann_vals, ann_docids + db_offset)
-  # shape = [qy_size, num_devices, approx_dp]
-  ann_vals, ann_docids = jax.pmap(
-      parallel_topk,
-      in_axes(None, 0, 0),  # broadcast qy, shard db and db_offsets
-      out_axes(1, 1))(qy, db, db_offsets)
-  # collapse num_devices and approx_dp
-  ann_vals = lax.collapse(ann_vals, 1, 3)
-  ann_docids = lax.collapse(ann_docids, 1, 3)
-  ann_vals, ann_docids = lax.sort_key_val(-ann_vals, ann_docids, dimension=1)
-  # slice to k
-  ann_vals = lax.slice_in_dim(ann_vals, start_index=0, limit_index=k, axis=1)
-  ann_docids = lax.slice_in_dim(ann_docids, start_index=0, limit_index=k, axis=1)
+  # MIPS := maximal inner product search
+  # Inputs:
+  #   qy: f32[qy_size, feature_dim]
+  #   db: f32[db_size, feature_dim]
+  #
+  # Returns:
+  #   (f32[qy_size, k], i32[qy_size, k])
+  @functools.partial(jax.jit, static_argnames=["k", "recall_target"])
+  def mips(qy, db, k=10, recall_target=0.95):
+    dists = jax.lax.dot(qy, db.transpose())
+    # Computes max_k along the last dimension
+    # returns (f32[qy_size, k], i32[qy_size, k])
+    return ann.approx_max_k(dists, k=k, recall_target=recall_target)
+
+  # Obtains the top-10 dot products and its offsets in db.
+  dot_products, neighbors = mips(qy, db, k=10)
+  # Computes the recall against the true neighbors.
+  recall = ann.ann_recall(neighbors, true_neighbors)
+
+  # Multi-core example
+  # Inputs:
+  #   qy: f32[num_devices, qy_size, feature_dim]
+  #   db: f32[num_devices, per_device_db_size, feature_dim]
+  #   db_offset: i32[num_devices]
+  #
+  # Returns:
+  #   (f32[qy_size, num_devices, k], i32[qy_size, num_devices, k])
+  @functools.partial(
+      jax.pmap,
+      # static args: db_size, k, recall_target
+      static_broadcasted_argnums=[3, 4, 5],
+      out_axes=(1, 1))
+  def pmap_mips(qy, db, db_offset, db_size, k, recall_target):
+    dists = jax.lax.dot(qy, db.transpose())
+    dists, neighbors = ann.approx_max_k(
+        dists, k=k, recall_target=recall_target,
+        reduction_input_size_override=db_size)
+    return (dists, neighbors + db_offset)
+
+  # i32[qy_size, num_devices, k]
+  pmap_neighbors = pmap_mips(qy, db, db_offset, db_size, 10, 0.95)[1]
+  # i32[qy_size, num_devices * k]
+  neighbors = jax.lax.collapse(pmap_neighbors, start_dimension=1, stop_dimension=3)
 
 Todos::
 
