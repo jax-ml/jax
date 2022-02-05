@@ -3249,6 +3249,6 @@ def blocking(func):
   """
   @wraps(func)
   def wrapper(*args, **kwargs):
-    return block_until_ready(func)(*args, **kwargs)
+    return block_until_ready(func(*args, **kwargs))
 
   return wrapper
