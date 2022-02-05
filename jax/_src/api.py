@@ -3245,7 +3245,7 @@ def blocking(func):
     func: Some function.
 
   Returns:
-    A new blocking version of func.
+    A new blocking version of `func`.
   """
   @wraps(func)
   def wrapper(*args, **kwargs):
