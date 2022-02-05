@@ -19,12 +19,17 @@ Activation functions
   :toctree: _autosummary
 
     relu
+    relu6
     sigmoid
     softplus
     soft_sign
+    silu
     swish
     log_sigmoid
     leaky_relu
+    hard_sigmoid
+    hard_silu
+    hard_swish
     hard_tanh
     elu
     celu
@@ -40,4 +45,6 @@ Other functions
 
     softmax
     log_softmax
+    logsumexp
     normalize
+    one_hot

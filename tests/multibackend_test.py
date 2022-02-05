@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 import numpy.random as npr
 from unittest import SkipTest
 
-from jax import api
-from jax import test_util as jtu
-from jax import numpy as np
+import jax
+from jax._src import test_util as jtu
+from jax import numpy as jnp
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -46,15 +43,15 @@ class MultiBackendTest(jtu.JaxTestCase):
         ))
   def testMultiBackend(self, backend):
     if backend not in ('cpu', jtu.device_under_test(), None):
-      raise SkipTest()
-    @partial(api.jit, backend=backend)
+      raise SkipTest("Backend is not CPU or the device under test")
+    @partial(jax.jit, backend=backend)
     def fun(x, y):
-        return np.matmul(x, y)
+        return jnp.matmul(x, y)
     x = npr.uniform(size=(10,10))
     y = npr.uniform(size=(10,10))
-    z_host = onp.matmul(x, y)
+    z_host = np.matmul(x, y)
     z = fun(x, y)
-    self.assertAllClose(z, z_host, check_dtypes=True, rtol=1e-2)
+    self.assertAllClose(z, z_host, rtol=1e-2)
     correct_platform = backend if backend else jtu.device_under_test()
     self.assertEqual(z.device_buffer.platform(), correct_platform)
 
@@ -65,18 +62,18 @@ class MultiBackendTest(jtu.JaxTestCase):
   def testMultiBackendNestedJit(self, ordering):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
-      raise SkipTest()
-    @partial(api.jit, backend=outer)
+      raise SkipTest("Backend is not CPU or the device under test")
+    @partial(jax.jit, backend=outer)
     def fun(x, y):
-        @partial(api.jit, backend=inner)
+        @partial(jax.jit, backend=inner)
         def infun(x, y):
-            return np.matmul(x, y)
-        return infun(x, y) + np.ones_like(x)
+            return jnp.matmul(x, y)
+        return infun(x, y) + jnp.ones_like(x)
     x = npr.uniform(size=(10,10))
     y = npr.uniform(size=(10,10))
-    z_host = onp.matmul(x, y) + onp.ones_like(x)
+    z_host = np.matmul(x, y) + np.ones_like(x)
     z = fun(x, y)
-    self.assertAllClose(z, z_host, check_dtypes=True, rtol=1e-2)
+    self.assertAllClose(z, z_host, rtol=1e-2)
     correct_platform = outer if outer else jtu.device_under_test()
     self.assertEqual(z.device_buffer.platform(), correct_platform)
 
@@ -91,15 +88,18 @@ class MultiBackendTest(jtu.JaxTestCase):
   def testMultiBackendNestedJitConflict(self, ordering):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
-      raise SkipTest()
+      raise SkipTest("Backend is not CPU or the device under test")
     if inner not in ('cpu', jtu.device_under_test(), None):
-      raise SkipTest()
-    @partial(api.jit, backend=outer)
+      raise SkipTest("Backend is not CPU or the device under test")
+    if outer is None and inner == jtu.device_under_test():
+      raise SkipTest("(None, device) is allowed")
+
+    @partial(jax.jit, backend=outer)
     def fun(x, y):
-        @partial(api.jit, backend=inner)
+        @partial(jax.jit, backend=inner)
         def infun(x, y):
-            return np.matmul(x, y)
-        return infun(x, y) + np.ones_like(x)
+            return jnp.matmul(x, y)
+        return infun(x, y) + jnp.ones_like(x)
     x = npr.uniform(size=(10,10))
     y = npr.uniform(size=(10,10))
     self.assertRaises(ValueError, lambda: fun(x, y))
@@ -111,42 +111,87 @@ class MultiBackendTest(jtu.JaxTestCase):
         ))
   def testGpuMultiBackendOpByOpReturn(self, backend):
     if backend not in ('cpu', jtu.device_under_test()):
-      raise SkipTest()
-    @partial(api.jit, backend=backend)
+      raise SkipTest("Backend is not CPU or the device under test")
+    @partial(jax.jit, backend=backend)
     def fun(x, y):
-        return np.matmul(x, y)
+        return jnp.matmul(x, y)
     x = npr.uniform(size=(10,10))
     y = npr.uniform(size=(10,10))
     z = fun(x, y)
-    w = np.sin(z)
+    w = jnp.sin(z)
     self.assertEqual(z.device_buffer.platform(), backend)
     self.assertEqual(w.device_buffer.platform(), backend)
 
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
   def testJitCpu(self):
-    @partial(api.jit, backend='cpu')
+    @partial(jax.jit, backend='cpu')
     def get_arr(scale):
-      return scale + np.ones((2, 2))
+      return scale + jnp.ones((2, 2))
 
     x = get_arr(0.1)
 
     a = x / x.shape[0]
-    b = x + np.ones_like(x)
-    c = x + np.eye(2)
+    b = x + jnp.ones_like(x)
+    c = x + jnp.eye(2)
 
-    self.assertEqual(a.device_buffer.device(), api.devices('cpu')[0])
-    self.assertEqual(b.device_buffer.device(), api.devices('cpu')[0])
-    self.assertEqual(c.device_buffer.device(), api.devices('cpu')[0])
+    self.assertEqual(a.device_buffer.device(), jax.devices('cpu')[0])
+    self.assertEqual(b.device_buffer.device(), jax.devices('cpu')[0])
+    self.assertEqual(c.device_buffer.device(), jax.devices('cpu')[0])
 
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
   def test_closed_over_values_device_placement(self):
     # see https://github.com/google/jax/issues/1431
-    def f(): return np.add(3., 4.)
-    self.assertNotEqual(api.jit(f)().device_buffer.device(),
-                        api.devices('cpu')[0])
-    self.assertEqual(api.jit(f, backend='cpu')().device_buffer.device(),
-                     api.devices('cpu')[0])
+    def f(): return jnp.add(3., 4.)
+    self.assertNotEqual(jax.jit(f)().device_buffer.device(),
+                        jax.devices('cpu')[0])
+    self.assertEqual(jax.jit(f, backend='cpu')().device_buffer.device(),
+                     jax.devices('cpu')[0])
+
+  @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
+  def test_jit_on_nondefault_backend(self):
+    cpus = jax.devices("cpu")
+    self.assertNotEmpty(cpus)
+
+    # Since we are not on CPU, some other backend will be the default
+    default_dev = jax.devices()[0]
+    self.assertNotEqual(default_dev.platform, "cpu")
+
+    data_on_cpu = jax.device_put(1, device=cpus[0])
+    self.assertEqual(data_on_cpu.device_buffer.device(), cpus[0])
+
+    def my_sin(x): return jnp.sin(x)
+    # jit without any device spec follows the data
+    result1 = jax.jit(my_sin)(2)
+    self.assertEqual(result1.device_buffer.device(), default_dev)
+    result2 = jax.jit(my_sin)(data_on_cpu)
+    self.assertEqual(result2.device_buffer.device(), cpus[0])
+
+    # jit with `device` spec places the data on the specified device
+    result3 = jax.jit(my_sin, device=cpus[0])(2)
+    self.assertEqual(result3.device_buffer.device(), cpus[0])
+
+    # jit with `backend` spec places the data on the specified backend
+    result4 = jax.jit(my_sin, backend="cpu")(2)
+    self.assertEqual(result4.device_buffer.device(), cpus[0])
+
+  @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
+  def test_indexing(self):
+    # https://github.com/google/jax/issues/2905
+    cpus = jax.devices("cpu")
+
+    x = jax.device_put(np.ones(2), cpus[0])
+    y = x[0]
+    self.assertEqual(y.device_buffer.device(), cpus[0])
+
+  @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
+  def test_sum(self):
+    # https://github.com/google/jax/issues/2905
+    cpus = jax.devices("cpu")
+
+    x = jax.device_put(np.ones(2), cpus[0])
+    y = x.sum()
+    self.assertEqual(y.device_buffer.device(), cpus[0])
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

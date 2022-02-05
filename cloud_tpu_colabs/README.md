@@ -1,31 +1,48 @@
-# JAX Cloud TPU Preview
+# JAX on Cloud TPU examples
 
-JAX now runs on Cloud TPUs! **This is a preview**, and we're still working on it. Help us out by kicking the tires, and letting us know if you run into any problems (see the [Reporting issues](#reporting-issues) section below).
+The same JAX code that runs on CPU and GPU can also be run on TPU. Cloud TPUs
+have the advantage of quickly giving you access to multiple TPU accelerators,
+including in [Colab](https://research.google.com/colaboratory/). All of the
+example notebooks here use
+[`jax.pmap`](https://jax.readthedocs.io/en/latest/jax.html#jax.pmap) to run JAX
+computation across multiple TPU cores from Colab. You can also run the same code
+directly on a [Cloud TPU
+VM](https://cloud.google.com/tpu/docs/jax-quickstart-tpu-vm).
+
+## Update (June 2021): introducing Cloud TPU VMs
+
+A new Cloud TPU architecture was recently
+[announced](https://cloud.google.com/blog/products/compute/introducing-cloud-tpu-vms)
+that gives you direct access to a VM with TPUs attached, enabling significant
+performance and usability improvements when using JAX on Cloud TPU. As of
+writing, Colab still uses the previous architecture, but the same JAX code
+generally will run on either architecture (there are a few features that are
+only available with the new architecture, such as complex number support).
 
 ## Example Cloud TPU notebooks
 
 The following notebooks showcase how to use and what you can do with Cloud TPUs on Colab:
 
-### [Pmap Cookbook](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
+### [Pmap Cookbook](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Pmap_Cookbook.ipynb)
 A guide to getting started with `pmap`, a transform for easily distributing SPMD
 computations across devices.
 
-### [Lorentz ODE Solver](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Lorentz_ODE_Solver.ipynb)
+### [Lorentz ODE Solver](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Lorentz_ODE_Solver.ipynb)
 Contributed by Alex Alemi (alexalemi@)
 
 Solve and plot parallel ODE solutions with `pmap`.
 
-<img src="https://raw.githubusercontent.com/google/jax/master/cloud_tpu_colabs/images/lorentz.png" width=65%></image>
+<img src="https://raw.githubusercontent.com/google/jax/main/cloud_tpu_colabs/images/lorentz.png" width=65%></image>
 
-### [Wave Equation](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/Wave_Equation.ipynb)
+### [Wave Equation](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/Wave_Equation.ipynb)
 Contributed by Stephan Hoyer (shoyer@)
 
 Solve the wave equation with `pmap`, and make cool movies! The spatial domain is partitioned across the 8 cores of a Cloud TPU.
 
-![](https://raw.githubusercontent.com/google/jax/master/cloud_tpu_colabs/images/wave_movie.gif)
+![](https://raw.githubusercontent.com/google/jax/main/cloud_tpu_colabs/images/wave_movie.gif)
 
-### [JAX Demo](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/NeurIPS_2019_JAX_demo.ipynb)
-An overview of JAX presented at the [Program Transformations for ML workshop at NeurIPS 2019](https://program-transformations.github.io/). Covers basic numpy usage, `grad`, `jit`, `vmap`, and `pmap`.
+### [JAX Demo](https://colab.research.google.com/github/google/jax/blob/main/cloud_tpu_colabs/JAX_demo.ipynb)
+An overview of JAX presented at the [Program Transformations for ML workshop at NeurIPS 2019](https://program-transformations.github.io/) and the [Compilers for ML workshop at CGO 2020](https://www.c4ml.org/). Covers basic numpy usage, `grad`, `jit`, `vmap`, and `pmap`.
 
 ## Performance notes
 
@@ -46,87 +63,21 @@ By default\*, matrix multiplication in JAX on TPUs [uses bfloat16](https://cloud
 
 JAX also adds the `bfloat16` dtype, which you can use to explicitly cast arrays to bfloat16, e.g., `jax.numpy.array(x, dtype=jax.numpy.bfloat16)`.
 
-\* We might change the default precision in the future, since it is arguably surprising. Please comment/vote on [this issue](https://github.com/google/jax/issues/1856) if it affects you!
+\* We might change the default precision in the future, since it is arguably surprising. Please comment/vote on [this issue](https://github.com/google/jax/issues/2161) if it affects you!
 
-## Running JAX on a Cloud TPU from a GCE VM
+## Running JAX on a Cloud TPU VM
 
-Creating a [Cloud TPU](https://cloud.google.com/tpu/docs/quickstart) involves creating the user GCE VM and the TPU node.
+Refer to the [Cloud TPU VM
+documentation](https://cloud.google.com/tpu/docs/jax-quickstart-tpu-vm).
 
-To create a user GCE VM, run the following command from your GCP console or your computer terminal where you have [gcloud installed](https://cloud.google.com/sdk/install).
+## Reporting issues and getting help
 
-```
-export ZONE=us-central1-c
-gcloud compute instances create $USER-user-vm-0001 \
-   --machine-type=n1-standard-1 \
-   --image-project=ml-images \
-   --image-family=tf-1-14 \
-   --boot-disk-size=200GB \
-   --scopes=cloud-platform \
-   --zone=$ZONE
-```
-
-To create a larger GCE VM, choose a different [machine type](https://cloud.google.com/compute/docs/machine-types).
-
-Next, create the TPU node, following these [guidelines](https://cloud.google.com/tpu/docs/internal-ip-blocks) to choose a <TPU_IP_ADDRESS>.
-
-```
-export TPU_IP_ADDRESS=<TPU_IP_ADDRESS>
-gcloud compute tpus create $USER-tpu-0001 \
-      --zone=$ZONE \
-      --network=default \
-      --accelerator-type=v2-8 \
-      --range=$TPU_IP_ADDRESS \
-      --version=tpu_driver_nightly
-```
-
-Now that you have created both the user GCE VM and the TPU node, ssh to the GCE VM by executing the following command:
-
-```
-gcloud compute ssh $USER-user-vm-0001
-```
-
-Once you are in the VM, from your ssh terminal session, follow the example below to run a simple JAX program.
-
-**Install jax and jaxlib wheels:**
-
-
-```
-pip install --user jax==0.1.54 jaxlib==0.1.37
-```
-
-
-**Create a program, simple_jax.py:**
-
-**IMPORTANT**: Replace <TPU_IP_ADDRESS> below with the TPU node’s IP address. You can get the IP address from the GCP console: Compute Engine > TPUs.
-
-```
-from jax.config import config
-from jax import random
-
-# The following is required to use TPU Driver as JAX's backend.
-config.FLAGS.jax_xla_backend = "tpu_driver"
-config.FLAGS.jax_backend_target = "grpc://<TPU-IP-ADDRESS>:8470"
-
-key = random.PRNGKey(0)
-x = random.normal(key, (10,))
-print(x)
-```
-
-**Run the program:**
-
-```
-python simple_jax.py
-```
-
-## Reporting issues
-
-If you believe you’re experiencing a problem specific to using Cloud TPUs,
-please create an issue in the [Cloud TPU issue
-tracker](https://issuetracker.google.com/issues/new?component=507145). If you’re
-unsure whether it’s problem with Cloud TPUs, JAX, Colab, or anything else, feel
-free to create an issue in the [JAX issue
-tracker](https://github.com/google/jax/issues) and we'll triage it
-appropriately.
+If you run into Cloud TPU-specific issues (e.g. trouble creating a Cloud TPU
+VM), please email <cloud-tpu-support@google.com>, or <trc-support@google.com> if
+you are a [TRC](https://sites.research.google/trc/) member. You can also [file a
+JAX issue](https://github.com/google/jax/issues) or [ask a discussion
+question](https://github.com/google/jax/discussions) for any issues with these
+notebooks or using JAX in general.
 
 If you have any other questions or comments regarding JAX on Cloud TPUs, please
-email jax-tpu@google.com. We’d like to hear from you!
+email <jax-cloud-tpu-team@google.com>. We’d like to hear from you!

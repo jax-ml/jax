@@ -18,7 +18,7 @@ This script contains a JAX implementation of Differentially Private Stochastic
 Gradient Descent (https://arxiv.org/abs/1607.00133). DPSGD requires clipping
 the per-example parameter gradients, which is non-trivial to implement
 efficiently for convolutional neural networks.  The JAX XLA compiler shines in
-this setting by optimizing the minibatch-vectorized computation for 
+this setting by optimizing the minibatch-vectorized computation for
 convolutional architectures. Train time takes a few seconds per epoch on a
 commodity GPU.
 
@@ -30,7 +30,7 @@ This code depends on tensorflow_privacy (https://github.com/tensorflow/privacy)
     $ pip install .
 
 The results match those in the reference TensorFlow baseline implementation:
-  https://github.com/tensorflow/privacy/tree/master/tutorials
+  https://github.com/tensorflow/privacy/tree/main/tutorials
 
 Example invocations:
   # this non-private baseline should get ~99% acc
@@ -63,9 +63,6 @@ Example invocations:
    --epochs=45 \
    --learning_rate=.25 \
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import itertools
 import time
@@ -76,20 +73,18 @@ from absl import flags
 
 from jax import grad
 from jax import jit
-from jax import partial
 from jax import random
-from jax import tree_util
 from jax import vmap
-from jax.experimental import optimizers
-from jax.experimental import stax
-from jax.lax import stop_gradient
-import jax.numpy as np
-from examples import datasets
+from jax.example_libraries import optimizers
+from jax.example_libraries import stax
+from jax.tree_util import tree_flatten, tree_unflatten
+import jax.numpy as jnp
+from jax.examples import datasets
 import numpy.random as npr
 
 # https://github.com/tensorflow/privacy
-from privacy.analysis.rdp_accountant import compute_rdp
-from privacy.analysis.rdp_accountant import get_privacy_spent
+from tensorflow_privacy.privacy.analysis.rdp_accountant import compute_rdp
+from tensorflow_privacy.privacy.analysis.rdp_accountant import get_privacy_spent
 
 FLAGS = flags.FLAGS
 
@@ -127,55 +122,52 @@ def loss(params, batch):
   inputs, targets = batch
   logits = predict(params, inputs)
   logits = stax.logsoftmax(logits)  # log normalize
-  return -np.mean(np.sum(logits * targets, axis=1))  # cross entropy loss
+  return -jnp.mean(jnp.sum(logits * targets, axis=1))  # cross entropy loss
 
 
 def accuracy(params, batch):
   inputs, targets = batch
-  target_class = np.argmax(targets, axis=1)
-  predicted_class = np.argmax(predict(params, inputs), axis=1)
-  return np.mean(predicted_class == target_class)
+  target_class = jnp.argmax(targets, axis=1)
+  predicted_class = jnp.argmax(predict(params, inputs), axis=1)
+  return jnp.mean(predicted_class == target_class)
+
+
+def clipped_grad(params, l2_norm_clip, single_example_batch):
+  """Evaluate gradient for a single-example batch and clip its grad norm."""
+  grads = grad(loss)(params, single_example_batch)
+  nonempty_grads, tree_def = tree_flatten(grads)
+  total_grad_norm = jnp.linalg.norm(
+      [jnp.linalg.norm(neg.ravel()) for neg in nonempty_grads])
+  divisor = jnp.maximum(total_grad_norm / l2_norm_clip, 1.)
+  normalized_nonempty_grads = [g / divisor for g in nonempty_grads]
+  return tree_unflatten(tree_def, normalized_nonempty_grads)
 
 
 def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
                  batch_size):
   """Return differentially private gradients for params, evaluated on batch."""
-
-  def _clipped_grad(params, single_example_batch):
-    """Evaluate gradient for a single-example batch and clip its grad norm."""
-    grads = grad(loss)(params, single_example_batch)
-
-    nonempty_grads, tree_def = tree_util.tree_flatten(grads)
-    total_grad_norm = np.linalg.norm(
-        [np.linalg.norm(neg.ravel()) for neg in nonempty_grads])
-    divisor = stop_gradient(np.amax((total_grad_norm / l2_norm_clip, 1.)))
-    normalized_nonempty_grads = [g / divisor for g in nonempty_grads]
-    return tree_util.tree_unflatten(tree_def, normalized_nonempty_grads)
-
-  px_clipped_grad_fn = vmap(partial(_clipped_grad, params))
-  std_dev = l2_norm_clip * noise_multiplier
-  noise_ = lambda n: n + std_dev * random.normal(rng, n.shape)
-  normalize_ = lambda n: n / float(batch_size)
-  tree_map = tree_util.tree_map
-  sum_ = lambda n: np.sum(n, 0)  # aggregate
-  aggregated_clipped_grads = tree_map(sum_, px_clipped_grad_fn(batch))
-  noised_aggregated_clipped_grads = tree_map(noise_, aggregated_clipped_grads)
-  normalized_noised_aggregated_clipped_grads = (
-      tree_map(normalize_, noised_aggregated_clipped_grads)
-  )
-  return normalized_noised_aggregated_clipped_grads
+  clipped_grads = vmap(clipped_grad, (None, None, 0))(params, l2_norm_clip, batch)
+  clipped_grads_flat, grads_treedef = tree_flatten(clipped_grads)
+  aggregated_clipped_grads = [g.sum(0) for g in clipped_grads_flat]
+  rngs = random.split(rng, len(aggregated_clipped_grads))
+  noised_aggregated_clipped_grads = [
+      g + l2_norm_clip * noise_multiplier * random.normal(r, g.shape)
+      for r, g in zip(rngs, aggregated_clipped_grads)]
+  normalized_noised_aggregated_clipped_grads = [
+      g / batch_size for g in noised_aggregated_clipped_grads]
+  return tree_unflatten(grads_treedef, normalized_noised_aggregated_clipped_grads)
 
 
 def shape_as_image(images, labels, dummy_dim=False):
   target_shape = (-1, 1, 28, 28, 1) if dummy_dim else (-1, 28, 28, 1)
-  return np.reshape(images, target_shape), labels
+  return jnp.reshape(images, target_shape), labels
 
 
 def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
   if num_examples * target_delta > 1.:
     warnings.warn('Your delta might be too high.')
   q = FLAGS.batch_size / float(num_examples)
-  orders = list(np.linspace(1.1, 10.9, 99)) + range(11, 64)
+  orders = list(jnp.linspace(1.1, 10.9, 99)) + list(range(11, 64))
   rdp_const = compute_rdp(q, FLAGS.noise_multiplier, steps, orders)
   eps, _, _ = get_privacy_spent(orders, rdp_const, target_delta=target_delta)
   return eps
@@ -228,7 +220,6 @@ def main(_):
   print('\nStarting training...')
   for epoch in range(1, FLAGS.epochs + 1):
     start_time = time.time()
-    # pylint: disable=no-value-for-parameter
     for _ in range(num_batches):
       if FLAGS.dpsgd:
         opt_state = \
@@ -238,7 +229,6 @@ def main(_):
       else:
         opt_state = update(
             key, next(itercount), opt_state, shape_as_image(*next(batches)))
-    # pylint: enable=no-value-for-parameter
     epoch_time = time.time() - start_time
     print('Epoch {} in {:0.2f} sec'.format(epoch, epoch_time))
 

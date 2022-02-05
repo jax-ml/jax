@@ -1,5 +1,5 @@
 jax.lax package
-================
+===============
 
 .. automodule:: jax.lax
 
@@ -26,20 +26,25 @@ Operators
     abs
     add
     acos
+    argmax
+    argmin
     asin
     atan
     atan2
     batch_matmul
     bessel_i0e
     bessel_i1e
+    betainc
     bitcast_convert_type
     bitwise_not
     bitwise_and
     bitwise_or
     bitwise_xor
+    population_count
     broadcast
     broadcasted_iota
     broadcast_in_dim
+    cbrt
     ceil
     clamp
     collapse
@@ -48,11 +53,18 @@ Operators
     conj
     conv
     convert_element_type
+    conv_dimension_numbers
     conv_general_dilated
+    conv_general_dilated_local
+    conv_general_dilated_patches
     conv_with_general_padding
     conv_transpose
     cos
     cosh
+    cummax
+    cummin
+    cumprod
+    cumsum
     digamma
     div
     dot
@@ -60,6 +72,7 @@ Operators
     dynamic_index_in_dim
     dynamic_slice
     dynamic_slice_in_dim
+    dynamic_update_slice
     dynamic_update_index_in_dim
     dynamic_update_slice_in_dim
     eq
@@ -67,6 +80,7 @@ Operators
     erfc
     erf_inv
     exp
+    expand_dims
     expm1
     fft
     floor
@@ -75,6 +89,8 @@ Operators
     gather
     ge
     gt
+    igamma
+    igammac
     imag
     index_in_dim
     index_take
@@ -96,6 +112,7 @@ Operators
     real
     reciprocal
     reduce
+    reduce_precision
     reduce_window
     reshape
     rem
@@ -104,6 +121,9 @@ Operators
     rsqrt
     scatter
     scatter_add
+    scatter_max
+    scatter_min
+    scatter_mul
     select
     shift_left
     shift_right_arithmetic
@@ -117,11 +137,14 @@ Operators
     sort_key_val
     sqrt
     square
+    squeeze
     sub
     tan
     tie_in
+    top_k
     transpose
 
+.. _lax-control-flow:
 
 Control flow operators
 ----------------------
@@ -129,10 +152,12 @@ Control flow operators
 .. autosummary::
   :toctree: _autosummary
 
+    associative_scan
     cond
     fori_loop
     map
     scan
+    switch
     while_loop
 
 Custom gradient operators
@@ -145,6 +170,8 @@ Custom gradient operators
     custom_linear_solve
     custom_root
 
+.. _jax-parallel-operators:
+
 Parallel operators
 ------------------
 
@@ -153,9 +180,43 @@ Parallelism support is experimental.
 .. autosummary::
   :toctree: _autosummary
 
+    all_gather
     all_to_all
     psum
     pmax
     pmin
+    pmean
     ppermute
+    pshuffle
     pswapaxes
+    axis_index
+
+Linear algebra operators (jax.lax.linalg)
+-----------------------------------------
+
+.. automodule:: jax.lax.linalg
+
+.. autosummary::
+  :toctree: _autosummary
+
+    cholesky
+    eig
+    eigh
+    lu
+    qdwh
+    qr
+    svd
+    triangular_solve
+
+Argument classes
+----------------
+
+.. currentmodule:: jax.lax
+
+.. autoclass:: ConvDimensionNumbers
+.. autoclass:: ConvGeneralDilatedDimensionNumbers
+.. autoclass:: GatherDimensionNumbers
+.. autoclass:: GatherScatterMode
+.. autoclass:: Precision
+.. autoclass:: RoundingMethod
+.. autoclass:: ScatterDimensionNumbers

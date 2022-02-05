@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from . import linalg
-from . import ndimage
-from . import special
-from . import stats
+# flake8: noqa: F401
+from jax.scipy import interpolate as interpolate
+from jax.scipy import linalg as linalg
+from jax.scipy import ndimage as ndimage
+from jax.scipy import signal as signal
+from jax.scipy import sparse as sparse
+from jax.scipy import special as special
+from jax.scipy import stats as stats
+from jax.scipy import fft as fft

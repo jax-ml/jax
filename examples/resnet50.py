@@ -17,20 +17,16 @@
 This file uses the stax neural network definition library and the optimizers
 optimization library.
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import numpy.random as npr
 
-import jax.numpy as np
-from jax.config import config
+import jax.numpy as jnp
 from jax import jit, grad, random
-from jax.experimental import optimizers
-from jax.experimental import stax
-from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
-                                   FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, LogSoftmax)
+from jax.example_libraries import optimizers
+from jax.example_libraries import stax
+from jax.example_libraries.stax import (AvgPool, BatchNorm, Conv, Dense,
+                                        FanInSum, FanOut, Flatten, GeneralConv,
+                                        Identity, MaxPool, Relu, LogSoftmax)
 
 
 # ResNet blocks compose other layers
@@ -99,20 +95,20 @@ if __name__ == "__main__":
   def loss(params, batch):
     inputs, targets = batch
     logits = predict_fun(params, inputs)
-    return -np.sum(logits * targets)
+    return -jnp.sum(logits * targets)
 
   def accuracy(params, batch):
     inputs, targets = batch
-    target_class = np.argmax(targets, axis=-1)
-    predicted_class = np.argmax(predict_fun(params, inputs), axis=-1)
-    return np.mean(predicted_class == target_class)
+    target_class = jnp.argmax(targets, axis=-1)
+    predicted_class = jnp.argmax(predict_fun(params, inputs), axis=-1)
+    return jnp.mean(predicted_class == target_class)
 
   def synth_batches():
     rng = npr.RandomState(0)
     while True:
       images = rng.rand(*input_shape).astype('float32')
       labels = rng.randint(num_classes, size=(batch_size, 1))
-      onehot_labels = labels == np.arange(num_classes)
+      onehot_labels = labels == jnp.arange(num_classes)
       yield images, onehot_labels
 
   opt_init, opt_update, get_params = optimizers.momentum(step_size, mass=0.9)
@@ -127,4 +123,3 @@ if __name__ == "__main__":
   for i in range(num_steps):
     opt_state = update(i, opt_state, next(batches))
   trained_params = get_params(opt_state)
-

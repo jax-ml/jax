@@ -1,15 +1,26 @@
 *.pyc
 *.so
 *.egg-info
+*.whl
+build/bazel*
+dist/
 .ipynb_checkpoints
 /bazel-*
-.bazelrc
+.jax_configure.bazelrc
 /tensorflow
 .DS_Store
-build/
-dist/
 .mypy_cache/
+.pytype/
+docs/build
 docs/notebooks/.ipynb_checkpoints/
 docs/_autosummary
 .idea
+.vscode
+jax.iml
 
+# virtualenv/venv directories
+venv/
+bin/
+include/
+lib/
+share/

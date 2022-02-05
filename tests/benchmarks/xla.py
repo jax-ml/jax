@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import enum
 import pytest
 import numpy as np
 
-import jax
 from jax import numpy as jnp
 from jax.interpreters import xla
 

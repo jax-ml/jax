@@ -1,0 +1,27 @@
+# Install the pre-commit hooks below with
+# 'pre-commit install'
+
+# Auto-update the version of the hooks with
+# 'pre-commit autoupdate'
+
+# Run the hooks on all files with
+# 'pre-commit run --all'
+
+repos:
+- repo: https://gitlab.com/pycqa/flake8
+  rev: '4.0.1'
+  hooks:
+  - id: flake8
+
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: 'v0.931'
+  hooks:
+  - id: mypy
+    files: jax/
+    additional_dependencies: [types-requests==0.1.11, jaxlib==0.1.74]
+
+- repo: https://github.com/mwouts/jupytext
+  rev: v1.13.6
+  hooks:
+  - id: jupytext
+    args: [--sync]

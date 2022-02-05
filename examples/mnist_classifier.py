@@ -14,39 +14,35 @@
 
 """A basic MNIST example using JAX with the mini-libraries stax and optimizers.
 
-The mini-library jax.experimental.stax is for neural network building, and
-the mini-library jax.experimental.optimizers is for first-order stochastic
+The mini-library jax.example_libraries.stax is for neural network building, and
+the mini-library jax.example_libraries.optimizers is for first-order stochastic
 optimization.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import time
 import itertools
 
 import numpy.random as npr
 
-import jax.numpy as np
-from jax.config import config
+import jax.numpy as jnp
 from jax import jit, grad, random
-from jax.experimental import optimizers
-from jax.experimental import stax
-from jax.experimental.stax import Dense, Relu, LogSoftmax
+from jax.example_libraries import optimizers
+from jax.example_libraries import stax
+from jax.example_libraries.stax import Dense, Relu, LogSoftmax
 from examples import datasets
 
 
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
-  return -np.mean(np.sum(preds * targets, axis=1))
+  return -jnp.mean(jnp.sum(preds * targets, axis=1))
 
 def accuracy(params, batch):
   inputs, targets = batch
-  target_class = np.argmax(targets, axis=1)
-  predicted_class = np.argmax(predict(params, inputs), axis=1)
-  return np.mean(predicted_class == target_class)
+  target_class = jnp.argmax(targets, axis=1)
+  predicted_class = jnp.argmax(predict(params, inputs), axis=1)
+  return jnp.mean(predicted_class == target_class)
 
 init_random_params, predict = stax.serial(
     Dense(1024), Relu,

@@ -12,6 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-
-from .scatter import index, index_add, index_update, index_min, index_max, segment_sum
+# flake8: noqa: F401
+from jax._src.ops.scatter import (
+  index as index,
+  index_add as index_add,
+  index_mul as index_mul,
+  index_update as index_update,
+  index_min as index_min,
+  index_max as index_max,
+  segment_sum as segment_sum,
+  segment_prod as segment_prod,
+  segment_min as segment_min,
+  segment_max as segment_max,
+)

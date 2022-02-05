@@ -12,119 +12,144 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import enum
 import itertools
 import operator
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 
 import jax
-from jax import dtypes
-from jax import numpy as np
-from jax import test_util as jtu
-from jax.interpreters import xla
+from jax._src import dtypes
+from jax import lax
+from jax import numpy as jnp
+from jax._src import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
+
 FLAGS = config.FLAGS
 
-bool_dtypes = [onp.dtype('bool')]
+bool_dtypes = [np.dtype('bool')]
 
-signed_dtypes = [onp.dtype('int8'), onp.dtype('int16'), onp.dtype('int32'),
-                 onp.dtype('int64')]
+signed_dtypes = [np.dtype('int8'), np.dtype('int16'), np.dtype('int32'),
+                 np.dtype('int64')]
 
-unsigned_dtypes = [onp.dtype('uint8'), onp.dtype('uint16'), onp.dtype('uint32'),
-                   onp.dtype('uint64')]
+unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
+                   np.dtype('uint64')]
 
-onp_float_dtypes = [onp.dtype('float16'), onp.dtype('float32'),
-                    onp.dtype('float64')]
+np_float_dtypes = [np.dtype('float16'), np.dtype('float32'),
+                   np.dtype('float64')]
 
-float_dtypes = [onp.dtype(dtypes.bfloat16)] + onp_float_dtypes
+float_dtypes = [np.dtype(dtypes.bfloat16)] + np_float_dtypes
 
-complex_dtypes = [onp.dtype('complex64'), onp.dtype('complex128')]
+complex_dtypes = [np.dtype('complex64'), np.dtype('complex128')]
 
 
 all_dtypes = (bool_dtypes + signed_dtypes + unsigned_dtypes + float_dtypes +
               complex_dtypes)
 
-scalar_types = [np.bool_, np.int8, np.int16, np.int32, np.int64,
-                np.uint8, np.uint16, np.uint32, np.uint64,
-                np.bfloat16, np.float16, np.float32, np.float64,
-                np.complex64, np.complex128]
+scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+                jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+                jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
+                jnp.complex64, jnp.complex128]
+
+python_scalar_types = [bool, int, float, complex]
+
+_EXPECTED_CANONICALIZE_X64 = {value: value for value in scalar_types}
+
+_EXPECTED_CANONICALIZE_X32 = {value: value for value in scalar_types}
+_EXPECTED_CANONICALIZE_X32[np.int64] = np.int32
+_EXPECTED_CANONICALIZE_X32[np.uint64] = np.uint32
+_EXPECTED_CANONICALIZE_X32[np.float64] = np.float32
+_EXPECTED_CANONICALIZE_X32[np.complex128] = np.complex64
+_EXPECTED_CANONICALIZE_X32[np.longlong] = np.int32
+
+def identity(x):
+  """A named identity function for use in tests"""
+  return x
+
 
 class DtypesTest(jtu.JaxTestCase):
 
+  def test_canonicalize_type(self):
+    expected = {
+        True: _EXPECTED_CANONICALIZE_X64,
+        False: _EXPECTED_CANONICALIZE_X32,
+    }
+    for in_dtype, expected_dtype in expected[config.x64_enabled].items():
+      self.assertEqual(dtypes.canonicalize_dtype(in_dtype), expected_dtype)
+
   @parameterized.named_parameters(
-    {"testcase_name": "_type={}".format(type.__name__), "type": type,
-     "dtype": dtype}
-    for type, dtype in [(bool, np.bool_), (int, np.int_), (float, np.float_),
-                        (complex, np.complex_)])
-  def testDefaultTypes(self, type, dtype):
-    for f in [np.array, jax.jit(np.array), jax.jit(lambda x: x)]:
+    {"testcase_name": "_type={}".format(type.__name__), "type": type}
+    for type in python_scalar_types)
+  def testDefaultTypes(self, type):
+    expected_dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type])
+    for f in [jnp.array, jax.jit(jnp.array), jax.jit(lambda x: x)]:
       y = f(type(0))
-      self.assertTrue(isinstance(y, np.ndarray), msg=(f, y))
-      self.assertEqual(y.dtype, dtypes.canonicalize_dtype(dtype), msg=(f, y))
+      self.assertTrue(isinstance(y, jnp.ndarray), msg=(f, y))
+      self.assertEqual(y.dtype, expected_dtype, msg=(f, y))
+
+  def testUnsupportedType(self):
+    with self.assertRaisesRegex(TypeError, "nonsense.* not understood"):
+      dtypes.canonicalize_dtype("nonsense")
 
   @parameterized.named_parameters(
     {"testcase_name": "_swap={}_jit={}".format(swap, jit),
-     "swap": swap, "jit": jit} 
+     "swap": swap, "jit": jit}
     for swap in [False, True] for jit in [False, True])
-  @jtu.skip_on_devices("tpu")  # F16 not supported on TPU
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
   def testBinaryPromotion(self, swap, jit):
     testcases = [
-      (np.array(1.), 0., np.float_),
-      (np.array(1.), np.array(0.), np.float_),
-      (np.array(1.), np.array(0., dtype=np.float16), np.float_),
-      (np.array(1.), np.array(0., dtype=np.float32), np.float_),
-      (np.array(1.), np.array(0., dtype=np.float64), np.float64),
-      (np.array(1., dtype=np.float16), 0., np.float16),
-      (np.array(1., dtype=np.float32), 0., np.float32),
-      (np.array(1., dtype=np.float64), 0., np.float64),
-      (np.array(1., dtype=np.float16), np.array(0., dtype=np.float16), np.float16),
-      (np.array(1., dtype=np.float16), np.array(0., dtype=np.float32), np.float32),
-      (np.array(1., dtype=np.float16), np.array(0., dtype=np.float64), np.float64),
-      (np.array(1., dtype=np.float32), np.array(0., dtype=np.float32), np.float32),
-      (np.array(1., dtype=np.float32), np.array(0., dtype=np.float64), np.float64),
-      (np.array(1., dtype=np.float64), np.array(0., dtype=np.float64), np.float64),
-      (np.array([1.]), 0., np.float_),
-      (np.array([1.]), np.array(0.), np.float_),
-      (np.array([1.]), np.array(0., dtype=np.float16), np.float_),
-      (np.array([1.]), np.array(0., dtype=np.float32), np.float_),
-      (np.array([1.]), np.array(0., dtype=np.float64), np.float64),
-      (np.array([1.], dtype=np.float32), np.array(0., dtype=np.float16), np.float32),
-      (np.array([1.], dtype=np.float16), np.array(0., dtype=np.float32), np.float32),
-      (np.array([1.], dtype=np.float16), 0., np.float16),
+      (jnp.array(1.), 0., jnp.float64),
+      (jnp.array(1.), jnp.array(0.), jnp.float64),
+      (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float16),
+      (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float32),
+      (jnp.array(1.), jnp.array(0., dtype=jnp.float64), jnp.float64),
+      (jnp.array(1., dtype=jnp.float16), 0., jnp.float16),
+      (jnp.array(1., dtype=jnp.float32), 0., jnp.float32),
+      (jnp.array(1., dtype=jnp.float64), 0., jnp.float64),
+      (jnp.array(1., dtype=jnp.float16), jnp.array(0., dtype=jnp.float16), jnp.float16),
+      (jnp.array(1., dtype=jnp.float16), jnp.array(0., dtype=jnp.float32), jnp.float32),
+      (jnp.array(1., dtype=jnp.float16), jnp.array(0., dtype=jnp.float64), jnp.float64),
+      (jnp.array(1., dtype=jnp.float32), jnp.array(0., dtype=jnp.float32), jnp.float32),
+      (jnp.array(1., dtype=jnp.float32), jnp.array(0., dtype=jnp.float64), jnp.float64),
+      (jnp.array(1., dtype=jnp.float64), jnp.array(0., dtype=jnp.float64), jnp.float64),
+      (jnp.array([1.]), 0., jnp.float_),
+      (jnp.array([1.]), jnp.array(0.), jnp.float_),
+      (jnp.array([1.]), jnp.array(0., dtype=jnp.float16), jnp.float_),
+      (jnp.array([1.]), jnp.array(0., dtype=jnp.float32), jnp.float_),
+      (jnp.array([1.]), jnp.array(0., dtype=jnp.float64), jnp.float64),
+      (jnp.array([1.], dtype=jnp.float32), jnp.array(0., dtype=jnp.float16), jnp.float32),
+      (jnp.array([1.], dtype=jnp.float16), jnp.array(0., dtype=jnp.float32), jnp.float32),
+      (jnp.array([1.], dtype=jnp.float16), 0., jnp.float16),
     ]
     op = jax.jit(operator.add) if jit else operator.add
     for x, y, dtype in testcases:
       x, y = (y, x) if swap else (x, y)
-      z = x + y
-      self.assertTrue(isinstance(z, np.ndarray), msg=(x, y, z))
+      z = op(x, y)
+      self.assertTrue(isinstance(z, jnp.ndarray), msg=(x, y, z))
       self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
 
   def testPromoteDtypes(self):
     for t1 in all_dtypes:
       self.assertEqual(t1, dtypes.promote_types(t1, t1))
 
-      self.assertEqual(t1, dtypes.promote_types(t1, onp.bool_))
-      self.assertEqual(onp.dtype(onp.complex128),
-                       dtypes.promote_types(t1, onp.complex128))
+      self.assertEqual(t1, dtypes.promote_types(t1, np.bool_))
+      self.assertEqual(np.dtype(np.complex128),
+                       dtypes.promote_types(t1, np.complex128))
 
       for t2 in all_dtypes:
         # Symmetry
         self.assertEqual(dtypes.promote_types(t1, t2),
                          dtypes.promote_types(t2, t1))
 
-    self.assertEqual(onp.dtype(onp.float32),
-                     dtypes.promote_types(onp.float16, dtypes.bfloat16))
+    self.assertEqual(np.dtype(np.float32),
+                     dtypes.promote_types(np.float16, dtypes.bfloat16))
 
     # Promotions of non-inexact types against inexact types always prefer
     # the inexact types.
@@ -134,45 +159,259 @@ class DtypesTest(jtu.JaxTestCase):
 
     # Promotions between exact types, or between inexact types, match NumPy.
     for groups in [bool_dtypes + signed_dtypes + unsigned_dtypes,
-                   onp_float_dtypes + complex_dtypes]:
+                   np_float_dtypes + complex_dtypes]:
       for t1, t2 in itertools.combinations(groups, 2):
-          self.assertEqual(onp.promote_types(t1, t2),
-                           dtypes.promote_types(t1, t2))
+        self.assertEqual(np.promote_types(t1, t2),
+                         dtypes.promote_types(t1, t2))
 
-  def testScalarInstantiation(self):
-    for t in [np.bool_, np.int32, np.bfloat16, np.float32, np.complex64]:
-      a = t(1)
-      self.assertEqual(a.dtype, np.dtype(t))
-      self.assertIsInstance(a, xla.DeviceArray)
-      self.assertEqual(0, np.ndim(a))
+  @parameterized.parameters([jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64])
+  def testScalarInstantiation(self, scalar_type):
+    a = scalar_type(1)
+    self.assertEqual(a.dtype, jnp.dtype(scalar_type))
+    self.assertIsInstance(a, jnp.DeviceArray)
+    self.assertEqual(0, jnp.ndim(a))
+    self.assertIsInstance(np.dtype(scalar_type).type(1), scalar_type)
 
   def testIsSubdtype(self):
     for t in scalar_types:
       self.assertTrue(dtypes.issubdtype(t, t))
-      self.assertTrue(dtypes.issubdtype(onp.dtype(t).type, t))
-      self.assertTrue(dtypes.issubdtype(t, onp.dtype(t).type))
-      if t != np.bfloat16:
-        for category in [onp.generic, np.inexact, np.integer, np.signedinteger,
-                         np.unsignedinteger, np.floating, np.complexfloating]:
+      self.assertTrue(dtypes.issubdtype(np.dtype(t).type, t))
+      self.assertTrue(dtypes.issubdtype(t, np.dtype(t).type))
+      self.assertTrue(dtypes.issubdtype(t, np.dtype(t)))
+      if t != jnp.bfloat16:
+        for category in [np.generic, jnp.inexact, jnp.integer, jnp.signedinteger,
+                         jnp.unsignedinteger, jnp.floating, jnp.complexfloating]:
           self.assertEqual(dtypes.issubdtype(t, category),
-                           onp.issubdtype(onp.dtype(t).type, category))
+                           np.issubdtype(np.dtype(t).type, category))
           self.assertEqual(dtypes.issubdtype(t, category),
-                           onp.issubdtype(onp.dtype(t).type, category))
+                           np.issubdtype(np.dtype(t).type, category))
 
   def testArrayCasts(self):
-    for t in [np.bool_, np.int32, np.bfloat16, np.float32, np.complex64]:
-      a = onp.array([1, 2.5, -3.7])
-      self.assertEqual(a.astype(t).dtype, np.dtype(t))
-      self.assertEqual(np.array(a).astype(t).dtype, np.dtype(t))
+    for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:
+      a = np.array([1, 2.5, -3.7])
+      self.assertEqual(a.astype(t).dtype, jnp.dtype(t))
+      self.assertEqual(jnp.array(a).astype(t).dtype, jnp.dtype(t))
 
   def testEnumPromotion(self):
     class AnEnum(enum.IntEnum):
       A = 42
       B = 101
-    onp.testing.assert_equal(onp.array(42), onp.array(AnEnum.A))
-    onp.testing.assert_equal(np.array(42), np.array(AnEnum.A))
-    onp.testing.assert_equal(onp.int32(101), onp.int32(AnEnum.B))
-    onp.testing.assert_equal(np.int32(101), np.int32(AnEnum.B))
+    np.testing.assert_equal(np.array(42), np.array(AnEnum.A))
+    np.testing.assert_equal(jnp.array(42), jnp.array(AnEnum.A))
+    np.testing.assert_equal(np.int32(101), np.int32(AnEnum.B))
+    np.testing.assert_equal(jnp.int32(101), jnp.int32(AnEnum.B))
+
+  def testScalarCastInsideJitWorks(self):
+    # jnp.int32(tracer) should work.
+    self.assertEqual(jnp.int32(101),
+                     jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
+
+  @parameterized.parameters(python_scalar_types)
+  def testDtypeFromScalarType(self, typ):
+    self.assertEqual(dtypes.dtype(typ), dtypes.python_scalar_dtypes[typ])
+
+  @parameterized.parameters(python_scalar_types)
+  def testDtypeFromScalarValue(self, typ):
+    self.assertEqual(dtypes.dtype(typ(0)), dtypes.python_scalar_dtypes[typ])
+
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromValue(self, dtype):
+    self.assertEqual(dtypes.dtype(dtype.type(0)), dtype)
+
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromDtype(self, dtype):
+    self.assertEqual(dtypes.dtype(dtype), dtype)
+
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromString(self, dtype):
+    self.assertEqual(dtypes.dtype(str(dtype)), dtype)
+
+  def testDtypeFromNone(self):
+    with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
+      dtypes.dtype(None)
+
+  def testDefaultDtypes(self):
+    precision = config.jax_default_dtype_bits
+    assert precision in ['32', '64']
+    self.assertEqual(dtypes.bool_, np.bool_)
+    self.assertEqual(dtypes.int_, np.int32 if precision == '32' else np.int64)
+    self.assertEqual(dtypes.uint, np.uint32 if precision == '32' else np.uint64)
+    self.assertEqual(dtypes.float_, np.float32 if precision == '32' else np.float64)
+    self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
+
+
+class TestPromotionTables(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_jaxtype={}".format(jaxtype),
+     "jaxtype": jaxtype}
+     for jaxtype in dtypes._jax_types)
+  def testJaxTypeFromType(self, jaxtype):
+    self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_jaxtype={}".format(jaxtype),
+     "jaxtype": jaxtype}
+     for jaxtype in dtypes._jax_types)
+  def testJaxTypeFromVal(self, jaxtype):
+    try:
+      val = jaxtype(0)
+    except TypeError:
+      val = jaxtype.type(0)
+    self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(val)), jaxtype)
+
+  def testResultTypeNone(self):
+    # This matches the behavior of np.result_type(None) => np.float_
+    self.assertEqual(dtypes.result_type(None), dtypes.canonicalize_dtype(dtypes.float_))
+
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
+  def testObservedPromotionTable(self):
+    """Test that the weak & strong dtype promotion table does not change over time."""
+    # Note: * here refers to weakly-typed values
+    typecodes = \
+        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
+    if config.x64_enabled:
+      expected = [
+        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+        ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f*','c*'],
+        ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f*','c*'],
+        ['u4','u4','u4','u4','u8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','u4','f*','c*'],
+        ['u8','u8','u8','u8','u8','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','u8','f*','c*'],
+        ['i1','i2','i4','i8','f*','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f*','c*'],
+        ['i2','i2','i4','i8','f*','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f*','c*'],
+        ['i4','i4','i4','i8','f*','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f*','c*'],
+        ['i8','i8','i8','i8','f*','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f*','c*'],
+        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c4'],
+        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c4'],
+        ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
+        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
+        ['i*','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+        ['f*','f*','f*','f*','f*','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
+        ['c*','c*','c*','c*','c*','c*','c*','c*','c*','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
+      ]
+    else:
+      expected = [
+        ['b1','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i*','f*','c*'],
+        ['u1','u1','u2','u4','u4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','u1','f*','c*'],
+        ['u2','u2','u2','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u2','f*','c*'],
+        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f*','c*'],
+        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f*','c*'],
+        ['i1','i2','i4','i4','i4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i1','f*','c*'],
+        ['i2','i2','i4','i4','i4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','i2','f*','c*'],
+        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f*','c*'],
+        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f*','c*'],
+        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f4','c4','c4','bf','bf','c4'],
+        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f4','c4','c4','f2','f2','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','c4','c4','f4','f4','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','c4','c4','f4','f4','c4'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4'],
+        ['i*','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i*','f*','c*'],
+        ['f*','f*','f*','f*','f*','f*','f*','f*','f*','bf','f2','f4','f4','c4','c4','f*','f*','c*'],
+        ['c*','c*','c*','c*','c*','c*','c*','c*','c*','c4','c4','c4','c4','c4','c4','c*','c*','c*'],
+      ]
+    typecode_to_dtype = {
+      'b1': jnp.bool_,
+      'u1': jnp.uint8, 'u2': jnp.uint16, 'u4': jnp.uint32, 'u8': jnp.uint64,
+      'i1': jnp.int8, 'i2': jnp.int16, 'i4': jnp.int32, 'i8': jnp.int64,
+      'bf': jnp.bfloat16, 'f2': jnp.float16, 'f4': jnp.float32, 'f8': jnp.float64,
+      'c4': jnp.complex64, 'c8': jnp.complex128,
+      'i*': jnp.int64, 'f*': jnp.float64, 'c*': jnp.complex128,
+    }
+    dtype_to_typecode = {jnp.dtype(v): k for k, v in typecode_to_dtype.items()
+                        if not k.endswith('*')}
+
+    def typecode_to_val(typecode):
+      weak_type = typecode.endswith('*')
+      dtype = typecode_to_dtype[typecode]
+      val = dtype(0)
+      if weak_type:
+        val = val.item()
+      return val
+
+    def val_to_typecode(val):
+      dtype = dtypes.result_type(val)
+      weak_type = dtypes.is_weakly_typed(val)
+      typecode = dtype_to_typecode[dtype]
+      if weak_type:
+        typecode = typecode[:-1] + '*'
+      return typecode
+
+    vals = [typecode_to_val(t) for t in typecodes]
+    table = [[val_to_typecode(v1 + v2) for v1 in vals] for v2 in vals]
+
+    def show_differences(epected, actual):
+      diffs = ""
+      for i, t1 in enumerate(typecodes):
+        for j, t2 in enumerate(typecodes):
+          if expected[i][j] != actual[i][j]:
+            diffs += f"\n{t1}, {t2} -> want {expected[i][j]}, got {actual[i][j]}"
+      return diffs
+
+    self.assertEqual(table, expected, show_differences(expected, table))
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_xtype={}_ytype={}_xfun={}_yfun={}".format(
+      xtype.__name__, ytype.__name__, xfun.__name__, yfun.__name__),
+     "xtype": xtype, "ytype": ytype, "xfun": xfun, "yfun": yfun}
+    for xtype, ytype in itertools.product(
+      [int, float, jnp.int16, jnp.int32, jnp.float16, jnp.float32], repeat=2)
+    for xfun, yfun in itertools.product(
+      [identity, abs, jnp.array], repeat=2)
+    )
+  def testBinaryPromotionJitInvariance(self, xtype, ytype, xfun, yfun):
+    """Test jit invariance of simple binary promotion rules with and without weak types."""
+    f = lambda x, y: xfun(x) + yfun(y)
+    args_maker = lambda: [xtype(1), ytype(1)]
+    self._CompileAndCheck(f, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+     "dtype": dtype, "weak_type": weak_type}
+    for dtype in all_dtypes
+    for weak_type in [True, False]
+  )
+  def testUnaryPromotion(self, dtype, weak_type):
+    # Regression test for https://github.com/google/jax/issues/6051
+    x = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    if weak_type:
+      expected = dtypes.canonicalize_dtype(
+        dtypes._default_types['f' if x.dtype == 'bfloat16' else x.dtype.kind])
+    else:
+      expected = x.dtype
+    self.assertEqual(dtypes.result_type(x), expected)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+     "dtype": dtype, "weak_type": weak_type}
+    for dtype in all_dtypes
+    for weak_type in [True, False]
+  )
+  def testBinaryNonPromotion(self, dtype, weak_type):
+    # Regression test for https://github.com/google/jax/issues/6051
+    x = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    y = (x + x)
+    assert x.dtype == y.dtype
+    assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+     "dtype": dtype, "weak_type": weak_type}
+    for dtype in all_dtypes
+    for weak_type in [True, False]
+  )
+  def testDeviceArrayRepr(self, dtype, weak_type):
+    val = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    rep = repr(val)
+    self.assertStartsWith(rep, 'DeviceArray(')
+    if weak_type:
+      self.assertEndsWith(rep, f"dtype={val.dtype.name}, weak_type=True)")
+    else:
+      self.assertEndsWith(rep, f"dtype={val.dtype.name})")
+
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

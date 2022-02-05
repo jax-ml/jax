@@ -1,6 +1,17 @@
 jax.scipy package
 =================
 
+jax.scipy.fft
+-------------
+
+.. automodule:: jax.scipy.fft
+
+.. autosummary::
+  :toctree: _autosummary
+
+   dct
+   dctn
+
 jax.scipy.linalg
 ----------------
 
@@ -9,11 +20,14 @@ jax.scipy.linalg
 .. autosummary::
   :toctree: _autosummary
 
+   block_diag
    cho_factor
    cho_solve
    cholesky
    det
    eigh
+   expm
+   expm_frechet
    inv
    lu
    lu_factor
@@ -35,6 +49,42 @@ jax.scipy.ndimage
 
    map_coordinates
 
+jax.scipy.optimize
+------------------
+
+.. automodule:: jax.scipy.optimize
+
+.. autosummary::
+  :toctree: _autosummary
+
+   minimize
+   OptimizeResults
+
+jax.scipy.signal
+----------------
+
+.. automodule:: jax.scipy.signal
+
+.. autosummary::
+  :toctree: _autosummary
+
+   convolve
+   convolve2d
+   correlate
+   correlate2d
+
+jax.scipy.sparse.linalg
+-----------------------
+
+.. automodule:: jax.scipy.sparse.linalg
+
+.. autosummary::
+  :toctree: _autosummary
+
+   bicgstab
+   cg
+   gmres
+
 jax.scipy.special
 -----------------
 
@@ -43,31 +93,96 @@ jax.scipy.special
 .. autosummary::
   :toctree: _autosummary
 
+   betainc
    digamma
    entr
    erf
    erfc
    erfinv
+   exp1
+   expi
    expit
+   expn
+   gammainc
+   gammaincc
    gammaln
+   i0
    i0e
+   i1
    i1e
    log_ndtr
    logit
    logsumexp
+   lpmn
+   lpmn_values
    multigammaln
    ndtr
    ndtri
+   polygamma
+   sph_harm
    xlog1py
    xlogy
+   zeta
 
 
 jax.scipy.stats
 ---------------
 
+jax.scipy.stats.bernoulli
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.bernoulli
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
 jax.scipy.stats.beta
 ~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.beta
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+jax.scipy.stats.betabinom
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.betabinom
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
+jax.scipy.stats.cauchy
+~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.cauchy
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+jax.scipy.stats.chi2
+~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.chi2
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+
+
+jax.scipy.stats.dirichlet
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.dirichlet
 
 .. autosummary::
   :toctree: _autosummary
@@ -93,6 +208,16 @@ jax.scipy.stats.gamma
    logpdf
    pdf
 
+jax.scipy.stats.geom
+~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.geom
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
 jax.scipy.stats.laplace
 ~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.laplace
@@ -100,6 +225,28 @@ jax.scipy.stats.laplace
   :toctree: _autosummary
 
    cdf
+   logpdf
+   pdf
+
+jax.scipy.stats.logistic
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.logistic
+.. autosummary::
+  :toctree: _autosummary
+
+   cdf
+   isf
+   logpdf
+   pdf
+   ppf
+   sf
+
+jax.scipy.stats.multivariate_normal
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.multivariate_normal
+.. autosummary::
+  :toctree: _autosummary
+
    logpdf
    pdf
 
@@ -111,6 +258,34 @@ jax.scipy.stats.norm
 
    cdf
    logcdf
+   logpdf
+   pdf
+   ppf
+
+jax.scipy.stats.pareto
+~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.pareto
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+jax.scipy.stats.poisson
+~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.poisson
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
+jax.scipy.stats.t
+~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.t
+.. autosummary::
+  :toctree: _autosummary
+
    logpdf
    pdf
 

@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple
 from functools import partial
@@ -24,16 +21,16 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import itertools as it
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import jit, jvp, vjp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
 
 npr.seed(0)
 
-from jax.util import unzip2, safe_zip, safe_map
+from jax._src.util import unzip2, safe_zip, safe_map
 
 map = safe_map
 zip = safe_zip
@@ -99,7 +96,22 @@ def eval_fun(fun, *args):
 
 def maybe_jit(f, num_args):
   static_argnums = thin(range(num_args), 0.5)
-  return jit(f, static_argnums=static_argnums)
+
+  def fun(*args):
+    partial_args = list(args)
+    for i in static_argnums:
+      partial_args[i] = None
+
+    @jit
+    def jitted_fun(*partial_args):
+      full_args = list(partial_args)
+      for i in static_argnums:
+        full_args[i] = args[i]
+      return f(*full_args)
+
+    return jitted_fun(*partial_args)
+
+  return fun
 
 counter = it.count()
 def fresh_var(ty):
@@ -107,7 +119,7 @@ def fresh_var(ty):
 
 def gen_array_type(size):
   # TODO(dougalm): randomize this
-  return ArrayType((2,2), np.float32)
+  return ArrayType((2,2), jnp.float32)
 
 def gen_array_val(array_type):
   # TODO(dougalm): different sizes and dtypes
@@ -117,7 +129,7 @@ def gen_neg(size, t):
   return (lambda x: -x), t
 
 def gen_trig(size, t):
-  op = choice([np.sin, np.cos])
+  op = choice([jnp.sin, jnp.cos])
   return op, t
 
 def gen_binop(size, t1, t2):
@@ -186,10 +198,10 @@ def gen_vals(vs):
 def inner_prod(xs, ys):
   xys = zip(xs, ys)
   assert all(x.shape == y.shape for x, y in xys)
-  return sum(np.sum(x * y) for x, y in xys)
+  return sum(jnp.sum(x * y) for x, y in xys)
 
 def jvp_fd(fun, args, tangents):
-  EPS = 1e-4
+  EPS = 1e-3
   def eval_eps(eps):
     return fun(*[x if t is None else x + eps * t
                  for x, t in zip(args, tangents)])
@@ -205,10 +217,10 @@ def check_all_close(xs, ys, tol=1e-3):
     check_close(x, y, tol)
 
 def check_close(x, y, tol=1e-3):
-  assert np.shape(x) == np.shape(y)
+  assert jnp.shape(x) == jnp.shape(y)
   # TODO(dougalm): re-enable once we've tackled the less pendantic bugs
   # assert x.dtype == y.dtype
-  assert np.allclose(x, y, rtol=tol, atol=tol), \
+  assert jnp.allclose(x, y, rtol=tol, atol=tol), \
      "Value mismatch:\n{}\n  vs\n{}\n".format(x, y)
 
 def partial_argnums(f, args, dyn_argnums):
@@ -231,8 +243,7 @@ class GeneratedFunTest(jtu.JaxTestCase):
     vals = gen_vals(fun.in_vars)
     fun = partial(eval_fun, fun)
     ans = fun(*vals)
-    static_argnums = thin(range(len(vals)), 0.5)
-    ans_jitted = jit(fun, static_argnums=static_argnums)(*vals)
+    ans_jitted = maybe_jit(fun, len(vals))(*vals)
     try:
       check_all_close(ans, ans_jitted)
     except:
@@ -271,4 +282,4 @@ class GeneratedFunTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

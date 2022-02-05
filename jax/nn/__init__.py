@@ -14,5 +14,32 @@
 
 """Common functions for neural network libraries."""
 
-from . import initializers
-from .functions import *
+# flake8: noqa: F401
+
+from jax.numpy import tanh as tanh
+from jax.nn import initializers as initializers
+from jax._src.nn.functions import (
+  celu as celu,
+  elu as elu,
+  gelu as gelu,
+  glu as glu,
+  hard_sigmoid as hard_sigmoid,
+  hard_silu as hard_silu,
+  hard_swish as hard_swish,
+  hard_tanh as hard_tanh,
+  leaky_relu as leaky_relu,
+  log_sigmoid as log_sigmoid,
+  log_softmax as log_softmax,
+  logsumexp as logsumexp,
+  normalize as normalize,
+  one_hot as one_hot,
+  relu as relu,
+  relu6 as relu6,
+  selu as selu,
+  sigmoid as sigmoid,
+  soft_sign as soft_sign,
+  softmax as softmax,
+  softplus as softplus,
+  silu as silu,
+  swish as swish,
+)

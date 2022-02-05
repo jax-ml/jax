@@ -1,7 +1,7 @@
 .. currentmodule:: jax
 
-jax package
-===========
+Public API: jax package
+=======================
 
 Subpackages
 -----------
@@ -11,24 +11,101 @@ Subpackages
 
     jax.numpy
     jax.scipy
+    jax.example_libraries
     jax.experimental
+    jax.image
     jax.lax
     jax.nn
     jax.ops
     jax.random
     jax.tree_util
+    jax.flatten_util
+    jax.dlpack
+    jax.profiler
+    jax.config
+
+.. toctree::
+   :hidden:
+
+   jax.lib
+
+.. _jax-jit:
 
 Just-in-time compilation (:code:`jit`)
 --------------------------------------
 
-.. autofunction:: jit
-.. autofunction:: disable_jit
-.. autofunction:: xla_computation
-.. autofunction:: make_jaxpr
-.. autofunction:: eval_shape
+.. autosummary::
+
+    jit
+    disable_jit
+    ensure_compile_time_eval
+    xla_computation
+    make_jaxpr
+    eval_shape
+    device_put
+    device_put_replicated
+    device_put_sharded
+    device_get
+    default_backend
+    named_call
+
+.. _jax-grad:
 
 Automatic differentiation
 -------------------------
+
+.. autosummary::
+
+    grad
+    value_and_grad
+    jacfwd
+    jacrev
+    hessian
+    jvp
+    linearize
+    linear_transpose
+    vjp
+    custom_jvp
+    custom_vjp
+    closure_convert
+    checkpoint
+
+
+Vectorization (:code:`vmap`)
+----------------------------
+
+.. autosummary::
+
+    vmap
+    jax.numpy.vectorize
+
+Parallelization (:code:`pmap`)
+------------------------------
+
+.. autosummary::
+
+    pmap
+    devices
+    local_devices
+    process_index
+    device_count
+    local_device_count
+    process_count
+
+
+.. autofunction:: jit
+.. autofunction:: disable_jit
+.. autofunction:: ensure_compile_time_eval
+.. autofunction:: xla_computation
+.. autofunction:: make_jaxpr
+.. autofunction:: eval_shape
+.. autofunction:: device_put
+.. autofunction:: device_put_replicated
+.. autofunction:: device_put_sharded
+.. autofunction:: device_get
+.. autofunction:: block_until_ready
+.. autofunction:: default_backend
+.. autofunction:: named_call
 
 .. autofunction:: grad
 .. autofunction:: value_and_grad
@@ -37,29 +114,29 @@ Automatic differentiation
 .. autofunction:: hessian
 .. autofunction:: jvp
 .. autofunction:: linearize
+.. autofunction:: linear_transpose
 .. autofunction:: vjp
-.. autofunction:: custom_transforms
-.. autofunction:: defjvp
-.. autofunction:: defjvp_all
-.. autofunction:: defvjp
-.. autofunction:: defvjp_all
-.. autofunction:: custom_gradient
+.. autoclass:: custom_jvp
 
+    .. automethod:: defjvp
+    .. automethod:: defjvps
 
-Vectorization (:code:`vmap`)
-----------------------------
+.. autoclass:: custom_vjp
+
+    .. automethod:: defvjp
+
+.. autofunction:: closure_convert
+
+.. autofunction:: checkpoint
 
 .. autofunction:: vmap
-
-
-Parallelization (:code:`pmap`)
-------------------------------
+.. autofunction:: jax.numpy.vectorize
+  :noindex:
 
 .. autofunction:: pmap
 .. autofunction:: devices
 .. autofunction:: local_devices
-.. autofunction:: host_id
-.. autofunction:: host_ids
+.. autofunction:: process_index
 .. autofunction:: device_count
 .. autofunction:: local_device_count
-.. autofunction:: host_count
+.. autofunction:: process_count

@@ -1,21 +1,5 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-http_archive(
-    name = "io_bazel_rules_closure",
-    sha256 = "e0a111000aeed2051f29fcc7a3f83be3ad8c6c93c186e64beb1ad313f0c7f9f9",
-    strip_prefix = "rules_closure-cf1e44edb908e9616030cc83d085989b8e6cd6df",
-    urls = [
-        "http://mirror.tensorflow.org/github.com/bazelbuild/rules_closure/archive/cf1e44edb908e9616030cc83d085989b8e6cd6df.tar.gz",
-        "https://github.com/bazelbuild/rules_closure/archive/cf1e44edb908e9616030cc83d085989b8e6cd6df.tar.gz",  # 2019-04-04
-    ],
-)
-
-http_archive(
-    name = "bazel_skylib",
-    sha256 = "2ef429f5d7ce7111263289644d233707dba35e39696377ebab8b0bc701f7818e",
-    urls = ["https://github.com/bazelbuild/bazel-skylib/releases/download/0.8.0/bazel-skylib.0.8.0.tar.gz"],
-)  # https://github.com/bazelbuild/bazel-skylib/releases
-
 # To update TensorFlow to a new revision,
 # a) update URL and strip_prefix to the new git commit hash
 # b) get the sha256 hash of the commit by running:
@@ -23,10 +7,10 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "d01c8cafd20c842b7e1af0eb15c45699c12aceb159e002a5cab56af187906d58",
-    strip_prefix = "tensorflow-84add98ff286a5b805d6b45d016f484b7c4f42ba",
+    sha256 = "3e6c98de0842520a65978549be7b1b6061080ecf9fa9f3a87739e19a0447a85c",
+    strip_prefix = "tensorflow-1f8f692143aa9a42c55f8b35d09aeed93bdab66e",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/84add98ff286a5b805d6b45d016f484b7c4f42ba.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/1f8f692143aa9a42c55f8b35d09aeed93bdab66e.tar.gz",
     ],
 )
 
@@ -36,11 +20,18 @@ http_archive(
 #    path = "tensorflow",
 # )
 
-load("@org_tensorflow//tensorflow:workspace.bzl", "tf_workspace", "tf_bind")
+load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
+pocketfft()
 
-tf_workspace(
-    path_prefix = "",
-    tf_repo_name = "org_tensorflow",
-)
+# Initialize TensorFlow's external dependencies.
+load("@org_tensorflow//tensorflow:workspace3.bzl", "tf_workspace3")
+tf_workspace3()
 
-tf_bind()
+load("@org_tensorflow//tensorflow:workspace2.bzl", "tf_workspace2")
+tf_workspace2()
+
+load("@org_tensorflow//tensorflow:workspace1.bzl", "tf_workspace1")
+tf_workspace1()
+
+load("@org_tensorflow//tensorflow:workspace0.bzl", "tf_workspace0")
+tf_workspace0()

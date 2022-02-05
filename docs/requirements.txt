@@ -1,11 +1,23 @@
-sphinx
+# sphinx >=3 required by sphinx-autodoc-typehints v1.11.1 (Oct 2020)
+sphinx >=3
 sphinx_rtd_theme
-jaxlib
-ipykernel
-nbsphinx
-# The next packages are for notebooks
-matplotlib
-sklearn
-# Must install jax itself for notebook execution to work
-.
+sphinx-book-theme
+sphinx-remove-toctrees
+# Newer versions cause issues; see https://github.com/google/jax/pull/6449
+sphinx-autodoc-typehints==1.11.1
+jupyter-sphinx>=0.3.2
+myst-nb
 
+# Need to pin docutils to 0.16 to make bulleted lists appear correctly on
+# ReadTheDocs: https://stackoverflow.com/a/68008428
+docutils==0.16.0
+
+# Packages used for CI tests.
+pytest
+pytest-xdist
+
+# Packages used for notebook execution
+matplotlib
+scikit-learn
+numpy
+.[cpu]  # Install jax from the current directory; jaxlib from pypi.

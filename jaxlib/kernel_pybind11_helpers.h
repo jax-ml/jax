@@ -16,8 +16,9 @@ limitations under the License.
 #ifndef JAXLIB_KERNEL_PYBIND11_HELPERS_H_
 #define JAXLIB_KERNEL_PYBIND11_HELPERS_H_
 
-#include "include/pybind11/pybind11.h"
+#include "absl/base/casts.h"
 #include "jaxlib/kernel_helpers.h"
+#include "include/pybind11/pybind11.h"
 
 namespace jax {
 
@@ -36,7 +37,8 @@ pybind11::bytes PackDescriptor(const T& descriptor) {
 
 template <typename T>
 pybind11::capsule EncapsulateFunction(T* fn) {
-  return pybind11::capsule(absl::bit_cast<void*>(fn), "xla._CUSTOM_CALL_TARGET");
+  return pybind11::capsule(absl::bit_cast<void*>(fn),
+                           "xla._CUSTOM_CALL_TARGET");
 }
 
 }  // namespace jax

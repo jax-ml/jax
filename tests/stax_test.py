@@ -13,18 +13,16 @@
 # limitations under the License.
 
 """Tests for Stax library."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import random
-from jax.experimental import stax
+from jax.example_libraries import stax
+from jax import dtypes
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -32,7 +30,7 @@ config.parse_flags_with_absl()
 
 def random_inputs(rng, input_shape):
   if type(input_shape) is tuple:
-    return rng.randn(*input_shape).astype(onp.float32)
+    return rng.randn(*input_shape).astype(dtypes.canonicalize_dtype(np.float_))
   elif type(input_shape) is list:
     return [random_inputs(rng, shape) for shape in input_shape]
   else:
@@ -43,11 +41,13 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   rng_key = random.PRNGKey(0)
   rng_key, init_key = random.split(rng_key)
   result_shape, params = init_fun(init_key, input_shape)
-  inputs = random_inputs(onp.random.RandomState(0), input_shape)
+  inputs = random_inputs(test_case.rng(), input_shape)
   result = apply_fun(params, inputs, rng=rng_key)
   test_case.assertEqual(result.shape, result_shape)
 
 
+# stax makes use of implicit rank promotion, so we allow it in the tests.
+@jtu.with_config(jax_numpy_rank_promotion="allow")
 class StaxTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -207,20 +207,33 @@ class StaxTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     init_fun, apply_fun = stax.Softmax
     input_shape = (10, 3)
-    inputs = onp.arange(30.).astype("float32").reshape(input_shape)
+    inputs = np.arange(30.).astype("float32").reshape(input_shape)
 
     out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)
 
     assert out_shape == out.shape
-    assert onp.allclose(onp.sum(onp.asarray(out), -1), 1.)
+    assert np.allclose(np.sum(np.asarray(out), -1), 1.)
 
+  def testBatchNormNoScaleOrCenter(self):
+    key = random.PRNGKey(0)
+    axes = (0, 1, 2)
+    init_fun, apply_fun = stax.BatchNorm(axis=axes, center=False, scale=False)
+    input_shape = (4, 5, 6, 7)
+    inputs = random_inputs(self.rng(), input_shape)
+
+    out_shape, params = init_fun(key, input_shape)
+    out = apply_fun(params, inputs)
+    means = np.mean(out, axis=(0, 1, 2))
+    std_devs = np.std(out, axis=(0, 1, 2))
+    assert np.allclose(means, np.zeros_like(means), atol=1e-4)
+    assert np.allclose(std_devs, np.ones_like(std_devs), atol=1e-4)
 
   def testBatchNormShapeNHWC(self):
     key = random.PRNGKey(0)
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 1, 2))
     input_shape = (4, 5, 6, 7)
-    inputs = random_inputs(onp.random.RandomState(0), input_shape)
+    inputs = random_inputs(self.rng(), input_shape)
 
     out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)
@@ -236,7 +249,7 @@ class StaxTest(jtu.JaxTestCase):
     # Regression test for https://github.com/google/jax/issues/461
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 2, 3))
     input_shape = (4, 5, 6, 7)
-    inputs = random_inputs(onp.random.RandomState(0), input_shape)
+    inputs = random_inputs(self.rng(), input_shape)
 
     out_shape, params = init_fun(key, input_shape)
     out = apply_fun(params, inputs)
@@ -248,4 +261,4 @@ class StaxTest(jtu.JaxTestCase):
     self.assertEqual(out_shape, out.shape)
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

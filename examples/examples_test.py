@@ -12,21 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import os
 import sys
+import unittest
+import zlib
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 
-from jax import test_util as jtu
+import jax
+from jax import lax
 from jax import random
-import jax.numpy as np
+import jax.numpy as jnp
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from examples import kernel_lsq
@@ -35,24 +35,25 @@ sys.path.pop()
 
 from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   jax_rng = random.PRNGKey(0)
   result_shape, params = init_fun(jax_rng, input_shape)
-  rng = onp.random.RandomState(0)
-  result = apply_fun(params, rng.randn(*input_shape).astype(dtype="float32"))
+  result = apply_fun(params, test_case.rng.normal(size=input_shape).astype("float32"))
   test_case.assertEqual(result.shape, result_shape)
 
 
-class ExamplesTest(jtu.JaxTestCase):
+class ExamplesTest(parameterized.TestCase):
+
+  def setUp(self):
+    self.rng = np.random.default_rng(zlib.adler32(self.__class__.__name__.encode()))
 
   @parameterized.named_parameters(
       {"testcase_name": "_input_shape={}".format(input_shape),
        "input_shape": input_shape}
       for input_shape in [(2, 20, 25, 2)])
-  @jtu.skip_on_flag('jax_enable_x64', True)
+  @unittest.skipIf(config.x64_enabled, "skip in x64 mode")
   def testIdentityBlockShape(self, input_shape):
     init_fun, apply_fun = resnet50.IdentityBlock(2, (4, 3))
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
@@ -61,7 +62,7 @@ class ExamplesTest(jtu.JaxTestCase):
       {"testcase_name": "_input_shape={}".format(input_shape),
        "input_shape": input_shape}
       for input_shape in [(2, 20, 25, 3)])
-  @jtu.skip_on_flag('jax_enable_x64', True)
+  @unittest.skipIf(config.x64_enabled, "skip in x64 mode")
   def testConvBlockShape(self, input_shape):
     init_fun, apply_fun = resnet50.ConvBlock(3, (2, 3, 4))
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
@@ -72,31 +73,26 @@ class ExamplesTest(jtu.JaxTestCase):
        "num_classes": num_classes, "input_shape": input_shape}
       for num_classes in [5, 10]
       for input_shape in [(224, 224, 3, 2)])
-  @jtu.skip_on_flag('jax_enable_x64', True)
+  @unittest.skipIf(config.x64_enabled, "skip in x64 mode")
+  @jax.numpy_rank_promotion("allow")  # Uses stax, which exercises implicit rank promotion.
   def testResNet50Shape(self, num_classes, input_shape):
     init_fun, apply_fun = resnet50.ResNet50(num_classes)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   def testKernelRegressionGram(self):
     n, d = 100, 20
-    rng = onp.random.RandomState(0)
-    truth = rng.randn(d)
-    xs = rng.randn(n, d)
-    ys = np.dot(xs, truth)
-    kernel = lambda x, y: np.dot(x, y)
-    self.assertAllClose(kernel_lsq.gram(kernel, xs), np.dot(xs, xs.T),
-                        check_dtypes=False)
+    xs = self.rng.normal(size=(n, d))
+    kernel = lambda x, y: jnp.dot(x, y)
+    np.testing.assert_allclose(kernel_lsq.gram(kernel, xs), jnp.dot(xs, xs.T), atol=1E-5)
 
   def testKernelRegressionTrainAndPredict(self):
     n, d = 100, 20
-    rng = onp.random.RandomState(0)
-    truth = rng.randn(d)
-    xs = rng.randn(n, d)
-    ys = np.dot(xs, truth)
-    kernel = lambda x, y: np.dot(x, y)
+    truth = self.rng.normal(size=d)
+    xs = self.rng.normal(size=(n, d))
+    ys = jnp.dot(xs, truth)
+    kernel = lambda x, y: jnp.dot(x, y, precision=lax.Precision.HIGH)
     predict = kernel_lsq.train(kernel, xs, ys)
-    self.assertAllClose(predict(xs), ys, atol=1e-3, rtol=1e-3,
-                        check_dtypes=False)
+    np.testing.assert_allclose(predict(xs), ys, atol=1e-3, rtol=1e-3)
 
 
 if __name__ == "__main__":

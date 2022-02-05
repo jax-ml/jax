@@ -62,13 +62,21 @@ dynamic positional arguments for the generators, and also the auxiliary output
 data must be immutable, because it will be stored in function memoization tables.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
+import threading
+from functools import partial
+from typing import Any, Tuple, Callable
 import weakref
 
-from .util import curry
+from jax import core
+from jax._src.util import curry
+from jax.tree_util import tree_map
+
+from jax._src import traceback_util
+
+from jax.config import config
+
+traceback_util.register_exclusion(__file__)
+
 
 class StoreException(Exception): pass
 
@@ -84,8 +92,13 @@ class Store(object):
     self._val = _EMPTY_STORE_VALUE
 
   def store(self, val):
-    assert self._val is _EMPTY_STORE_VALUE, "Store occupied"
+    if self._val is not _EMPTY_STORE_VALUE:
+      raise StoreException("Store occupied")
     self._val = val
+
+  def reset(self):
+    # This should only be called in exceptional circumstances (e.g. debugging).
+    self._val = _EMPTY_STORE_VALUE
 
   @property
   def val(self):
@@ -102,7 +115,7 @@ class Store(object):
 class WrappedFun(object):
   """Represents a function `f` to which `transforms` are to be applied.
 
-  Arguments:
+  Args:
     f: the function to be transformed.
     transforms: a list of `(gen, gen_static_args)` tuples representing
       transformations to apply to `f.` Here `gen` is a generator function
@@ -125,7 +138,7 @@ class WrappedFun(object):
   def __name__(self):
     return getattr(self.f, '__name__', '<unnamed wrapped function>')
 
-  def wrap(self, gen, gen_static_args, out_store):
+  def wrap(self, gen, gen_static_args, out_store) -> 'WrappedFun':
     """Add another transform and its store."""
     return WrappedFun(self.f, ((gen, gen_static_args),) + self.transforms,
                       (out_store,) + self.stores, self.params)
@@ -147,13 +160,32 @@ class WrappedFun(object):
       gen = gen(*(gen_static_args + tuple(args)), **kwargs)
       args, kwargs = next(gen)
       stack.append((gen, out_store))
-    gen = None
+    gen = gen_static_args = out_store = None
 
-    ans = self.f(*args, **dict(self.params, **kwargs))
-    del args
+    try:
+      ans = self.f(*args, **dict(self.params, **kwargs))
+    except:
+      # Some transformations yield from inside context managers, so we have to
+      # interrupt them before reraising the exception. Otherwise they will only
+      # get garbage-collected at some later time, running their cleanup tasks
+      # only after this exception is handled, which can corrupt the global
+      # state.
+      while stack:
+        stack.pop()[0].close()
+      raise
+
+    args = kwargs = None
     while stack:
       gen, out_store = stack.pop()
-      ans = gen.send(ans)
+      try:
+        ans = gen.send(ans)
+      except:
+        # As above does for the first half of the transformation, exceptions
+        # raised in the second half of the transformation also require us to
+        # clean up references here.
+        while stack:
+          stack.pop()[0].close()
+        raise
       if out_store is not None:
         ans, side = ans
         out_store.store(side)
@@ -175,7 +207,7 @@ class WrappedFun(object):
             self.params == other.params)
 
 @curry
-def transformation(gen, fun, *gen_static_args):
+def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   """Adds one more transformation to a WrappedFun.
   Args:
     gen: the transformation generator function
@@ -185,7 +217,7 @@ def transformation(gen, fun, *gen_static_args):
   return fun.wrap(gen, gen_static_args, None)
 
 @curry
-def transformation_with_aux(gen, fun, *gen_static_args):
+def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args) -> Tuple[WrappedFun, Any]:
   """Adds one more transformation with auxiliary output to a WrappedFun."""
   out_store = Store()
   out_thunk = lambda: out_store.val
@@ -197,24 +229,41 @@ def fun_name(f):
   except:
     return str(f)
 
-def wrap_init(f, params={}):
+def wrap_init(f, params=None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
-  return WrappedFun(f, (), (), tuple(sorted(params.items())))
+  return WrappedFun(f, (), (),
+                    () if params is None else tuple(sorted(params.items())))
 
 
-def cache(call):
-  """Cache decorator for WrappedFun calls.
+class _CacheLocalContext(threading.local):
+
+  def __init__(self):
+    super().__init__()
+    self.most_recent_entry = None
+
+
+def cache(call: Callable):
+  """Memoization decorator for functions taking a WrappedFun as first argument.
+
   Args:
-    call: a function that takes a WrappedFun as a first argument
+    call: a Python callable that takes a WrappedFun as its first argument. The
+      underlying transforms and params on the WrappedFun are used as part of the
+      memoization cache key.
 
   Returns:
-     the memoized `call` function.
+     A memoized version of ``call``.
   """
-  fun_caches = weakref.WeakKeyDictionary()
+  fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+  thread_local: threading.local = _CacheLocalContext()
 
-  def memoized_fun(fun, *args):
+  def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
-    key = (fun.transforms, fun.params, args)
+    if config.jax_check_tracer_leaks:
+      key = (_copy_main_traces(fun.transforms), fun.params, args,
+             config.x64_enabled, config._trace_context())
+    else:
+      key = (fun.transforms, fun.params, args, config.x64_enabled,
+             config._trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result
@@ -222,12 +271,52 @@ def cache(call):
     else:
       ans = call(fun, *args)
       cache[key] = (ans, fun.stores)
+
+    thread_local.most_recent_entry = weakref.ref(ans)
     return ans
 
-  memoized_fun.cache_clear = fun_caches.clear
+  def _most_recent_entry():
+    most_recent_entry = thread_local.most_recent_entry
+    if most_recent_entry is not None:
+      result = most_recent_entry()
+      thread_local.most_recent_entry = None
+      return result
+
+  memoized_fun.most_recent_entry = _most_recent_entry  # type: ignore
+  memoized_fun.cache_clear = fun_caches.clear  # type: ignore
+
   return memoized_fun
+
+@partial(partial, tree_map)
+def _copy_main_traces(x):
+  if isinstance(x, core.MainTrace):
+    return core.MainTrace(x.level, x.trace_type, **x.payload)
+  else:
+    return x
+
 
 @transformation
 def hashable_partial(x, *args):
   ans = yield (x,) + args, {}
   yield ans
+
+
+def merge_linear_aux(aux1, aux2):
+  try:
+    out1 = aux1()
+  except StoreException:
+    # store 1 was not occupied, so store 2 better be
+    try:
+      out2 = aux2()
+    except StoreException:
+      raise StoreException("neither store occupied") from None
+    else:
+      return False, out2
+  else:
+    # store 1 was occupied, so let's check store 2 is not occupied
+    try:
+      out2 = aux2()
+    except StoreException:
+      return True, out1
+    else:
+      raise StoreException("both stores occupied")
