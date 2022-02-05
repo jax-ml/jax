@@ -3235,7 +3235,7 @@ def block_until_ready(x):
       return x
   return jax.tree_util.tree_map(try_to_block, x)
 
-def blocking(func):
+def blocking(func: Callable) -> Callable:
   """
   Creates a blocking version of `func`.
 
