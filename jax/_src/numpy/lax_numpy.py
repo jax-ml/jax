@@ -6406,13 +6406,31 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
                      "'midpoint', or 'nearest'")
   a, q = _promote_dtypes_inexact(a, q)
+  keepdim = []
   if issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
   if axis is None:
     a = ravel(a)
     axis = 0
   elif isinstance(axis, tuple):
-    raise NotImplementedError("Tuple values for axis are not implemented")
+    keepdim = list(shape(a))
+    nd = ndim(a)
+    axis = tuple([_canonicalize_axis(ax, nd) for ax in axis])
+    if len(set(axis)) != len(axis):
+        raise ValueError('repeated axis')
+    for ax in axis:
+      keepdim[ax] = 1
+
+    keep = set(range(nd)) - set(axis)
+    # prepare permutation
+    dimensions = list(range(nd))
+    for i, s in enumerate(sorted(keep)):
+      dimensions[i], dimensions[s] = dimensions[s], dimensions[i]
+    do_not_touch_shape = tuple(x for idx,x in enumerate(shape(a)) if idx not in axis)
+    touch_shape = tuple(x for idx,x in enumerate(shape(a)) if idx in axis)
+    a = lax.reshape(a, do_not_touch_shape + (int(np.prod(touch_shape)),), dimensions)
+    keepdim = tuple(keepdim)
+    axis = _canonicalize_axis(-1, ndim(a))
   else:
     axis = _canonicalize_axis(axis, ndim(a))
 
@@ -6499,7 +6517,10 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     result = lax.mul(lax.add(low_value, high_value), _constant_like(low_value, 0.5))
   else:
     raise ValueError(f"interpolation={interpolation!r} not recognized")
-
+  if keepdims and keepdim:
+    if q_ndim > 0:
+        keepdim = (shape(q)[0],) + keepdim
+    result = reshape(result,  keepdim)
   return lax.convert_element_type(result, a.dtype)
 
 
