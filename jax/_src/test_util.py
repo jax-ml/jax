@@ -609,7 +609,10 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     An ndarray of the given shape and dtype using random values based on a call
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
-  r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
+  if _dtypes.issubdtype(dtype, np.unsignedinteger):
+    r = lambda: np.asarray(scale * abs(rand(*_dims_of_shape(shape))), dtype)
+  else:
+    r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
   if _dtypes.issubdtype(dtype, np.complexfloating):
     vals = r() + 1.0j * r()
   else:
