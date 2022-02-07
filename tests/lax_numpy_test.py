@@ -71,7 +71,7 @@ unsigned_dtypes = jtu.dtypes.all_unsigned
 bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 inexact_dtypes = float_dtypes + complex_dtypes
-number_dtypes = float_dtypes + complex_dtypes + int_dtypes
+number_dtypes = float_dtypes + complex_dtypes + int_dtypes + unsigned_dtypes
 all_dtypes = number_dtypes + bool_dtypes
 
 
@@ -128,7 +128,7 @@ def op_record(name, nargs, dtypes, shapes, rng_factory, diff_modes,
                   test_name, check_dtypes, tolerance, inexact, kwargs)
 
 JAX_ONE_TO_ONE_OP_RECORDS = [
-    op_record("abs", 1, number_dtypes + unsigned_dtypes + bool_dtypes,
+    op_record("abs", 1, all_dtypes,
               all_shapes, jtu.rand_default, ["rev"]),
     op_record("add", 2, all_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("ceil", 1, float_dtypes, all_shapes, jtu.rand_default, []),
@@ -237,10 +237,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("fix", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
-    op_record("floor_divide", 2, float_dtypes + int_dtypes,
+    op_record("floor_divide", 2, default_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_nonzero, ["rev"]),
-    op_record("floor_divide", 2, unsigned_dtypes, all_shapes,
-              jtu.rand_nonzero, ["rev"]),
     op_record("fmin", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("fmax", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("fmod", 2, default_dtypes, all_shapes, jtu.rand_some_nan, []),
@@ -294,12 +292,9 @@ JAX_COMPOUND_OP_RECORDS = [
               []),
     op_record("rint", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
-    op_record("sign", 1, number_dtypes + unsigned_dtypes,
-              all_shapes, jtu.rand_some_inf_and_nan, []),
+    op_record("sign", 1, number_dtypes, all_shapes, jtu.rand_some_inf_and_nan, []),
     # numpy 1.16 has trouble mixing uint and bfloat16, so we test these separately.
-    op_record("copysign", 2, default_dtypes,
-              all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
-    op_record("copysign", 2, unsigned_dtypes,
+    op_record("copysign", 2, default_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
     op_record("sinc", 1, [t for t in number_dtypes if t != jnp.bfloat16],
               all_shapes, jtu.rand_default, ["rev"],
@@ -773,7 +768,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
          "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
         for shape in rec.shapes for dtype in rec.dtypes
-        for out_dtype in [None] + rec.dtypes
+        for out_dtype in [None] + rec.dtypes if out_dtype not in unsigned_dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
         for keepdims in [False, True])
       for rec in JAX_REDUCER_RECORDS))
@@ -1541,6 +1536,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                            (np.full(1, -0.9), np.ones(1))]))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testClipStaticBounds(self, shape, dtype, a_min, a_max):
+    if np.issubdtype(dtype, np.unsignedinteger):
+      a_min = None if a_min is None else abs(a_min)
+      a_max = None if a_max is None else abs(a_max)
     rng = jtu.rand_default(self.rng())
     np_fun = lambda x: np.clip(x, a_min=a_min, a_max=a_max)
     jnp_fun = lambda x: jnp.clip(x, a_min=a_min, a_max=a_max)
@@ -1627,6 +1625,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ((mode == 'constant' and constant_values is not None) or
            (mode != 'constant' and constant_values is None)))))
   def testPad(self, shape, dtype, mode, pad_width, constant_values):
+    if np.issubdtype(dtype, np.unsignedinteger):
+      constant_values = tree_util.tree_map(abs, constant_values)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     if constant_values is None:
@@ -1729,7 +1729,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), "linear_ramp", pad_width, end_values),
        "shape": shape, "dtype": dtype, "pad_width": pad_width,
        "end_values": end_values}
-      for shape, dtype in _shape_and_dtypes(nonempty_shapes, all_dtypes)
+      for shape, dtype in _shape_and_dtypes(nonempty_shapes, default_dtypes + complex_dtypes)
       for pad_width in [
         # ((before_1, after_1), ..., (before_N, after_N))
         tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
@@ -4625,7 +4625,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
-    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
+    tol_spec = {np.float16: 1E-2, np.float32: 2e-4, np.float64: 5e-6}
     tol = max(jtu.tolerance(a_dtype, tol_spec),
               jtu.tolerance(q_dtype, tol_spec))
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
@@ -4994,7 +4994,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jtu.cases_from_list(
         {"testcase_name":
          "_shape={}_dtype={}_out_dtype={}_axis={}_ddof={}_keepdims={}"
-         .format(shape, dtype, out_dtype, axis, ddof, keepdims),
+         .format(shape, dtype.__name__, out_dtype.__name__, axis, ddof, keepdims),
          "shape": shape, "dtype": dtype, "out_dtype": out_dtype, "axis": axis,
          "ddof": ddof, "keepdims": keepdims}
         for shape in [(5,), (10, 5)]
