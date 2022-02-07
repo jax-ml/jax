@@ -17,6 +17,8 @@ import re
 import textwrap
 from typing import Callable, NamedTuple, Optional, Dict, Sequence
 
+from jax._src.config import config
+
 _parameter_break = re.compile("\n(?=[A-Za-z_])")
 _section_break = re.compile(r"\n(?=[^\n]{3,15}\n-{3,15})", re.MULTILINE)
 _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\([\w\W]*?\)$', re.MULTILINE)
@@ -151,6 +153,8 @@ def _wraps(fun: Optional[Callable], update_doc: bool = True, lax_description: st
         if kept_sections:
           docstr += "\n" + "\n\n".join(kept_sections) + "\n"
       except:
+        if config.jax_enable_checks:
+          raise
         docstr = fun.__doc__
 
     op.__doc__ = docstr
