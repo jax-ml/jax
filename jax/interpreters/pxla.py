@@ -36,7 +36,7 @@ import itertools as it
 import operator as op
 import threading
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional,
-                    Sequence, Set, Tuple, Type, Union, Iterable, cast)
+                    Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast)
 import enum
 import sys
 
@@ -104,6 +104,9 @@ AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 ShardingSpec = pmap_lib.ShardingSpec
 
+MeshAxisName = Any
+OpShardingType = Any
+
 
 def sharding_spec_mesh_shape(self):
   sharded_axis_sizes = []
@@ -119,7 +122,7 @@ def sharding_spec_mesh_shape(self):
   return tuple(sharded_axis_sizes[a.axis] if isinstance(a, ShardedAxis) else a.replicas
                for a in self.mesh_mapping)
 
-def sharding_spec_sharding_proto(self):
+def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType] = {}):
   """Converts a ShardingSpec to an OpSharding proto.
 
   See
@@ -135,14 +138,14 @@ def sharding_spec_sharding_proto(self):
   replicated_maxes = []  # lists mesh axis identifiers to replicate over
   for maxis, assignment in enumerate(self.mesh_mapping):
     if isinstance(assignment, Replicated):
-      replicated_maxes.append(maxis)
+      replicated_maxes.append((maxis, assignment.replicas))
     elif isinstance(assignment, ShardedAxis):
       sharded_axes[assignment.axis] = maxis
     else:
       assert_unreachable(assignment)
 
   proto = xc.OpSharding()
-  if len(replicated_maxes) == len(self.mesh_mapping):
+  if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
     proto.type = xc.OpSharding.Type.REPLICATED
     return proto
   else:
@@ -166,11 +169,22 @@ def sharding_spec_sharding_proto(self):
     else:
       assert_unreachable(sharding)
 
-  # Create the partial sharding proto if tensor is replicated over some mesh axes
+  # Create a partial sharding proto if tensor is replicated or partitioned
+  # specially over some mesh axes.
   if replicated_maxes:
-    new_mesh_shape.append(-1)
-    mesh_permutation.extend(replicated_maxes)
-    proto.replicate_on_last_tile_dim = True
+    last_tile_dims = []
+    axes_by_type: Dict[OpShardingType, List[MeshAxisName]] = {}
+    size_by_type: Dict[OpShardingType, int] = defaultdict(lambda: 1)
+    assert set(x[0] for x in replicated_maxes).issuperset(set(special_axes.keys()))
+    for axis, size in replicated_maxes:
+      ty = special_axes.get(axis, xc.OpSharding.Type.REPLICATED)
+      axes_by_type.setdefault(ty, []).append(axis)
+      size_by_type[ty] *= size
+    for ty, axes in sorted(axes_by_type.items(), key=lambda x: x[0].value):
+      last_tile_dims.append(ty)
+      new_mesh_shape.append(size_by_type[ty])
+      mesh_permutation.extend(axes)
+    proto.last_tile_dims = last_tile_dims
 
   proto_mesh = mesh.transpose(mesh_permutation).reshape(new_mesh_shape)
   proto.tile_assignment_dimensions = list(proto_mesh.shape)
@@ -383,7 +397,6 @@ def _shard_abstract_array(size, axis: int, x):
   return x.update(shape=tuple_delete(x.shape, axis))
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
-MeshAxisName = Any
 """
 ArrayMapping specifies how an ndarray should map to mesh axes.
 
@@ -1033,7 +1046,7 @@ def lower_parallel_callable(
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     if config.jax_enable_mlir:
       module = mlir.lower_jaxpr_to_module(
-          module_name, closed_jaxpr, backend.platform, axis_env,
+          module_name, closed_jaxpr, backend.platform, mlir.ReplicaAxisContext(axis_env),
           name_stack, donated_invars, replicated_args=replicated_args,
           arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
           result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
@@ -1757,7 +1770,7 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
 
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     sub_ctx = ctx.module_context.replace(
-        axis_env=new_env,
+        axis_context=mlir.ReplicaAxisContext(new_env),
         name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                          util.wrap_name(name, 'pmap')))
     sharded_outs = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, (),
@@ -2066,6 +2079,7 @@ def lower_mesh_computation(
   tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
   in_partitions: Optional[List[Optional[xc.OpSharding]]]
   out_partitions: Optional[List[Optional[xc.OpSharding]]]
+  axis_ctx: mlir.AxisContext
   if spmd_lowering:
     replicated_args = [False] * len(in_jaxpr_avals)
     global_sharding_spec = mesh_sharding_specs(global_axis_sizes, mesh.axis_names)
@@ -2076,7 +2090,7 @@ def lower_mesh_computation(
                       for aval, aval_out_axes in safe_zip(global_out_avals, out_axes)]
     out_partitions_t = xla.tuple_sharding_proto(out_partitions)
     partitions_proto = True
-    axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())  # All named axes have been vmapped
+    axis_ctx = mlir.SPMDAxisContext(mesh)
   else:
     replicated_args = [not axis for axis in in_axes]
     in_partitions = None
@@ -2086,13 +2100,14 @@ def lower_mesh_computation(
     axis_env = xla.AxisEnv(nreps=mesh.size,
                            names=tuple(global_axis_sizes.keys()),
                            sizes=tuple(global_axis_sizes.values()))
+    axis_ctx = mlir.ReplicaAxisContext(axis_env)
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module: Union[str, xc.XlaComputation]
   module_name = f"xmap_{fun.__name__}"
   with core.extend_axis_env_nd(mesh.shape.items()):
     if config.jax_enable_mlir:
       module = mlir.lower_jaxpr_to_module(
-          module_name, closed_jaxpr, backend.platform, axis_env, name_stack,
+          module_name, closed_jaxpr, backend.platform, axis_ctx, name_stack,
           donated_invars, replicated_args=replicated_args,
           arg_shardings=in_partitions, result_shardings=out_partitions)
     else:

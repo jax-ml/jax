@@ -15,7 +15,7 @@
 from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
-from typing import Callable, Sequence, Tuple, Union
+from typing import Callable, Sequence, Tuple, Union, Optional
 from warnings import warn
 import itertools as it
 from functools import partial
@@ -587,6 +587,7 @@ def _pjit_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
                            jaxpr, in_axis_resources, out_axis_resources,
                            resource_env, donated_invars, in_positional_semantics,
                            out_positional_semantics):
+  # TODO: Make this into an MLIR rule and use manual_axes!
   mesh = resource_env.physical_mesh
   subc = xc.XlaBuilder(f"pjit_{name}")
 
@@ -918,7 +919,7 @@ def _sharding_constraint_mhlo_lowering(ctx, x_node, *, axis_resources,
   return [
       mlir.wrap_with_sharding_op(
           x_node,
-          get_aval_sharding_proto(aval, axis_resources, mesh),
+          get_aval_sharding_proto(aval, axis_resources, mesh, ctx.module_context.axis_context),
           unspecified_dims=get_unconstrained_dims(axis_resources))
   ]
 mlir.register_lowering(sharding_constraint_p,
@@ -957,11 +958,17 @@ def get_array_mapping(axis_resources: ParsedPartitionSpec) -> pxla.ArrayMapping:
 
 def get_aval_sharding_proto(aval: core.AbstractValue,
                             axis_resources: ParsedPartitionSpec,
-                            mesh: maps.Mesh) -> xc.OpSharding:
+                            mesh: maps.Mesh,
+                            axis_ctx: Optional[mlir.SPMDAxisContext] = None) -> xc.OpSharding:
   array_mapping = get_array_mapping(axis_resources)
   sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(
       aval, array_mapping)
-  return sharding_spec.sharding_proto()
+  special_axes = {}
+  if axis_ctx is not None:
+    axis_names = mesh.axis_names
+    for manual_axis in axis_ctx.manual_axes:
+      special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
+  return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
 def get_unconstrained_dims(axis_resources: ParsedPartitionSpec):
@@ -1135,7 +1142,13 @@ def parse_op_sharding(op_sharding, mesh):
         dim_size //= axis_size
         dim_partitions.append(axis)
       partitions.append(tuple(dim_partitions))
-    if op_sharding.replicate_on_last_tile_dim:
+    if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
+      replicate_on_last_tile_dim = True
+    else:
+      replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
+      if op_sharding.last_tile_dims:
+        raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
+    if replicate_on_last_tile_dim:
       partitions = partitions[:-1]
     return ParsedPartitionSpec('<internally generated spec>', partitions)
   else:

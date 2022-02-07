@@ -39,7 +39,7 @@ from jax import lax
 from jax import core
 from jax.core import NamedShape, JaxprTypeError
 from jax.experimental import maps
-from jax.experimental.pjit import pjit
+from jax.experimental.pjit import pjit, with_sharding_constraint
 from jax.experimental.pjit import PartitionSpec as P
 from jax.experimental.maps import Mesh, mesh, xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
@@ -721,6 +721,15 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     f = xmap(lambda x: jnp.sin(x) + x, in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
     h = pjit(lambda x: f(x * x) + x, in_axis_resources=P('y'), out_axis_resources=None)
     x = jnp.arange(20, dtype=jnp.float32)
+    self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
+
+  @jtu.with_mesh([('x', 2), ('y', 1)])
+  def testNestedConstraint(self):
+    # TODO(b/219691408): Using P('y') instead of P() causes an XLA crash!
+    fimpl = lambda x: with_sharding_constraint(jnp.sin(x), P()) + x
+    f = xmap(fimpl, in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
+    h = pjit(lambda x: f(x * x) + x, in_axis_resources=P('y'), out_axis_resources=None)
+    x = jnp.arange(20, dtype=jnp.float32).reshape(4, 5)
     self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
 
 

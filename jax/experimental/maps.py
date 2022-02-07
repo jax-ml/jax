@@ -1372,13 +1372,16 @@ pxla.SPMDBatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, True
 
 # -------- nested xmap handling --------
 
-def _xmap_lowering_rule(*args, **kwargs):
-  if config.experimental_xmap_spmd_lowering_manual:
-    return _xmap_lowering_rule_spmd_manual(*args, **kwargs)
-  elif config.experimental_xmap_spmd_lowering:
-    return _xmap_lowering_rule_spmd(*args, **kwargs)
+def _xmap_lowering_rule(ctx, *args, **kwargs):
+  if isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext):
+    if config.experimental_xmap_spmd_lowering_manual:
+      return _xmap_lowering_rule_spmd_manual(ctx, *args, **kwargs)
+    else:
+      return _xmap_lowering_rule_spmd(ctx, *args, **kwargs)
+  elif isinstance(ctx.module_context.axis_context, mlir.ReplicaAxisContext):
+    return _xmap_lowering_rule_replica(ctx, *args, **kwargs)
   else:
-    return _xmap_lowering_rule_replica(*args, **kwargs)
+    raise AssertionError("Unrecognized axis context type!")
 mlir.register_lowering(xmap_p, _xmap_lowering_rule)
 
 def _xmap_lowering_rule_replica(ctx, *in_nodes,
@@ -1547,9 +1550,12 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
+  manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
+  assert isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext)
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       xla.wrap_name(name, 'xmap')))
+                                       xla.wrap_name(name, 'xmap')),
+      axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
   global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
                                         *([n] for n in global_in_nodes))
 
