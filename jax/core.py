@@ -1795,10 +1795,9 @@ def map_bind(primitive: 'MapPrimitive', fun, *args, out_axes_thunk, **params):
       out_axes = t(out_axes)
     return out_axes
   params = dict(params, out_axes_thunk=new_out_axes_thunk)
-  params_tuple = tuple(params.items())
   top_trace = find_top_trace(args)
   fun, todo_and_xforms = process_env_traces_map(
-      fun, primitive, top_trace and top_trace.level, params_tuple)
+      fun, primitive, top_trace and top_trace.level, tuple(params.items()))
   tracers = map(top_trace.full_raise, args)
   outs = primitive.process(top_trace, fun, tracers, params)
   env_trace_todo, _ = todo_and_xforms()
@@ -1826,14 +1825,16 @@ def process_env_traces_map(primitive: MapPrimitive, level: int,
   yield outs, (tuple(todo), tuple(out_axes_transforms))
 
 
-def mapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
+def mapped_aval(size: int, axis: Optional[int], aval: AbstractValue
+                ) -> AbstractValue:
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, aval)
   else:
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
-def unmapped_aval(size: int, axis_name, axis: int, aval: AbstractValue) -> AbstractValue:
+def unmapped_aval(size: int, axis_name, axis: Optional[int], aval: AbstractValue
+                  ) -> AbstractValue:
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis_name, axis, aval)
@@ -1843,16 +1844,20 @@ def unmapped_aval(size: int, axis_name, axis: int, aval: AbstractValue) -> Abstr
 def _map_unit(*_) -> AbstractUnit:
   return abstract_unit
 
-def _map_shaped_array(size: int, axis: int, aval: ShapedArray) -> ShapedArray:
-  assert aval.shape[axis] == size
+def _map_shaped_array(size: int, axis: Optional[int], aval: ShapedArray
+                      ) -> ShapedArray:
+  assert axis is None or aval.shape[axis] == size
   # TODO: Extend the named shape
+  if axis is None: return aval
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      named_shape=aval.named_shape)
 
-def _unmap_shaped_array(size: int, axis_name, axis: int, aval: ShapedArray) -> ShapedArray:
+def _unmap_shaped_array(size: int, axis_name, axis: Optional[int],
+                        aval: ShapedArray) -> ShapedArray:
   named_shape = dict(aval.named_shape)
   # TODO: Make this mandatory
   named_shape.pop(axis_name, None)
+  if axis is None: return aval.replace(named_shape=named_shape)
   return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                      named_shape=named_shape)
 
