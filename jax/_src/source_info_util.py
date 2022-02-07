@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import functools
 import itertools
 import os.path
 import threading
@@ -60,6 +61,7 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   return (x for x in (traceback.frames if traceback else [])
           if is_user_filename(x.file_name))
 
+@functools.lru_cache(maxsize=64)
 def user_frame(source_info: SourceInfo) -> Optional[Frame]:
   return next(user_frames(source_info), None)
 
