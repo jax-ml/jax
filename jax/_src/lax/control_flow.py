@@ -1074,8 +1074,8 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
     for i, jaxpr in enumerate(branches_batched):
       # Perform a select on the inputs for safety of reverse-mode autodiff; see
       # https://github.com/google/jax/issues/1052
-      ops_ = [_bcast_select(lax.eq(index, lax._const(index, i)),
-                            x, lax.stop_gradient(x))
+      predicate = lax.eq(index, lax._const(index, i))
+      ops_ = [_bcast_select(predicate, x, lax.stop_gradient(x))
               if x is not core.unit else x for x in ops]
       branch_outs.append(core.jaxpr_as_fun(jaxpr)(*ops_))
     out = [_select_tree(index, outs) if outs[0] is not core.unit else outs[0]
