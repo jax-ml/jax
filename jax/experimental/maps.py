@@ -1312,7 +1312,7 @@ pxla.SPMDBatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, True
 
 def _xmap_lowering_rule(*args, **kwargs):
   if config.experimental_xmap_spmd_lowering_manual:
-    raise NotImplementedError
+    return _xmap_lowering_rule_spmd_manual(*args, **kwargs)
   elif config.experimental_xmap_spmd_lowering:
     return _xmap_lowering_rule_spmd(*args, **kwargs)
   else:
@@ -1428,9 +1428,6 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
         axes[dim_extra_axis] = dim
   add_spmd_axes(mesh_in_axes, spmd_in_axes)
   add_spmd_axes(mesh_out_axes, spmd_out_axes)
-  # NOTE: We don't extend the resource env with the mesh shape, because those
-  #       resources are already in scope! It's the outermost xmap that introduces
-  #       them!
   global_in_avals = ctx.avals_in
   vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
   assert not consts
@@ -1457,6 +1454,44 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   ]
 
   return sharded_global_out_nodes
+
+
+def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
+                                    call_jaxpr, name, in_axes, out_axes,
+                                    donated_invars, global_axis_sizes, spmd_in_axes,
+                                    spmd_out_axes, positional_semantics,
+                                    axis_resources, resource_env, backend):
+  assert spmd_in_axes is None and spmd_out_axes is None
+  # This first part (up to vtile_manual) is shared with non-MANUAL SPMD rule.
+  xla.check_backend_matches(backend, ctx.module_context.platform)
+  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env, global_axis_sizes)
+
+  resource_call_jaxpr = plan.subst_axes_with_resources(call_jaxpr)
+  f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
+  f = hide_mapped_axes(f, in_axes, out_axes)
+  f = plan.vectorize_and_loop(f, in_axes, out_axes)
+
+  # NOTE: Sharding constraints are handled entirely by vtile_manual!
+  mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
+  mesh = resource_env.physical_mesh
+  f = pxla.vtile_manual(f, mesh, mesh_in_axes, mesh_out_axes)
+
+  # NOTE: We don't extend the resource env with the mesh shape, because those
+  #       resources are already in scope! It's the outermost xmap that introduces
+  #       them!
+  global_in_avals = ctx.avals_in
+  vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
+  assert not consts
+
+  # We in-line here rather than generating a Call HLO as in the xla_call
+  # translation rule just because the extra tuple stuff is a pain.
+  sub_ctx = ctx.module_context.replace(
+      name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
+                                       xla.wrap_name(name, 'xmap')))
+  global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
+                                        *([n] for n in global_in_nodes))
+
+  return global_out_nodes
 
 
 def _xmap_translation_rule(*args, **kwargs):

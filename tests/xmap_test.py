@@ -39,6 +39,8 @@ from jax import lax
 from jax import core
 from jax.core import NamedShape, JaxprTypeError
 from jax.experimental import maps
+from jax.experimental.pjit import pjit
+from jax.experimental.pjit import PartitionSpec as P
 from jax.experimental.maps import Mesh, mesh, xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
 from jax._src.lib import xla_bridge
@@ -692,6 +694,13 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     fx = xmap(f, in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
     x = jnp.arange(20, dtype=jnp.float32)
     self.assertAllClose(fx(x), f(x))
+
+  @jtu.with_mesh([('x', 2), ('y', 1)])
+  def testInPJit(self):
+    f = xmap(lambda x: jnp.sin(x) + x, in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
+    h = pjit(lambda x: f(x * x) + x, in_axis_resources=P('y'), out_axis_resources=None)
+    x = jnp.arange(20, dtype=jnp.float32)
+    self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
 
 
 class NamedNumPyTest(XMapTestCase):
