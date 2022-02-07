@@ -802,22 +802,21 @@ def lower_jaxpr_to_xla_module(
   return c.build(output)
 
 
-
 xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
 xla_call = xla_call_p.bind
 
-def _xla_call_partial_eval_update_params(params, in_unknowns):
-  call_jaxpr = params['call_jaxpr']
+def _xla_call_partial_eval_update_params(params, kept_inputs, num_new_inputs):
   donated_invars = params['donated_invars']
-  if not in_unknowns and donated_invars:
+  if not kept_inputs and donated_invars:
     # JaxprTrace.post_process_call creates a call with no input tracers
-    new_donated_invars = (False,) * len(call_jaxpr.invars)
+    donated_invars = (False,) * num_new_inputs
   else:
+    assert len(kept_inputs) == len(donated_invars)
     # JaxprTrace.process_call drops known input tracers
-    donated_invars = [d for d, uk in zip(donated_invars, in_unknowns) if uk]
-    new_donated_invars = ((False,) * (len(call_jaxpr.invars) - len(donated_invars))
-                          + tuple(donated_invars))
-  return dict(params, donated_invars=new_donated_invars)
+    donated_invars = [d for d, kept in zip(donated_invars, kept_inputs) if kept]
+    # Any new inputs are prepended to the left, so mark those as not donated.
+    donated_invars = [False] * num_new_inputs + donated_invars
+  return dict(params, donated_invars=tuple(donated_invars))
 pe.call_param_updaters[xla_call_p] = _xla_call_partial_eval_update_params
 
 def _xla_call_jvp_update_params(params, nz_tangents, nz_tangents_out_thunk):
