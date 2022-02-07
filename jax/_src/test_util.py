@@ -458,12 +458,6 @@ def supported_dtypes():
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
 
-def skip_if_unsupported_type(dtype):
-  dtype = np.dtype(dtype)
-  if dtype.type not in supported_dtypes():
-    raise unittest.SkipTest(
-      f"Type {dtype.name} not supported on {device_under_test()}")
-
 def is_device_rocm():
   return xla_bridge.get_backend().platform_version.startswith('rocm')
 
