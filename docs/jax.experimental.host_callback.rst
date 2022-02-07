@@ -7,11 +7,14 @@ jax.experimental.host_callback module
 API
 ---
 
-.. autofunction:: id_tap
-.. autofunction:: id_print
-.. autofunction:: call
-.. autofunction:: barrier_wait
-.. autoexception:: CallbackException
+.. autosummary::
+   :toctree: _autosummary
+
+   id_tap
+   id_print
+   call
+   barrier_wait
+   CallbackException
 
 
 

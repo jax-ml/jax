@@ -6,6 +6,8 @@ jax.experimental.global_device_array module
 API
 ---
 
-.. autoclass:: GlobalDeviceArray
-    :members:
-.. autoclass:: Shard
+.. autosummary::
+   :toctree: _autosummary
+
+   GlobalDeviceArray
+   Shard
