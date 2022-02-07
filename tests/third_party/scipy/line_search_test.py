@@ -1,11 +1,11 @@
 from absl.testing import absltest, parameterized
+import scipy.optimize
 
 from jax import grad
 from jax.config import config
 import jax.numpy as jnp
 import jax._src.test_util as jtu
 from jax._src.scipy.optimize.line_search import line_search
-from scipy.optimize.linesearch import line_search_wolfe2
 
 
 config.parse_flags_with_absl()
@@ -156,7 +156,7 @@ class TestLineSearch(jtu.JaxTestCase):
     pk = jnp.array([-0.5, -0.25])
     res = line_search(f, xk, pk, maxiter=100)
 
-    scipy_res = line_search_wolfe2(f, grad(f), xk, pk)
+    scipy_res = scipy.optimize.line_search(f, grad(f), xk, pk)
 
     self.assertAllClose(scipy_res[0], res.a_k, atol=1e-5, check_dtypes=False)
     self.assertAllClose(scipy_res[3], res.f_k, atol=1e-5, check_dtypes=False)
