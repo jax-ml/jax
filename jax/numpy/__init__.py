@@ -160,6 +160,7 @@ from jax._src.numpy.lax_numpy import (
     full as full,
     full_like as full_like,
     gcd as gcd,
+    generic as generic,
     geomspace as geomspace,
     get_printoptions as get_printoptions,
     gradient as gradient,

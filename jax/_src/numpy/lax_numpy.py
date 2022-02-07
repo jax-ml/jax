@@ -424,6 +424,7 @@ uint = uint32 if dtypes.uint == np.uint32 else uint64
 float_ = float32 if dtypes.float_ == np.float32 else float64
 complex_ = complex64 if dtypes.complex_ == np.complex64 else complex128
 
+generic = np.generic
 number = np.number
 inexact = np.inexact
 complexfloating = np.complexfloating
