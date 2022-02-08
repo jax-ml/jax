@@ -740,9 +740,15 @@ def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
                                    canonicalize_types=canonicalize_types)
 
 
+def _sharded_device_array_mlir_constant_handler(val, canonicalize_types=True):
+  return mlir.ir_constants(np.asarray(val),
+                           canonicalize_types=canonicalize_types)
+
 def _register_handlers_for_sharded_device_array(sda):
   shard_arg_handlers[sda] = _shard_sharded_device_array_slow_path
   xla.register_constant_handler(sda, _sharded_device_array_constant_handler)
+  mlir.register_constant_handler(sda,
+                                 _sharded_device_array_mlir_constant_handler)
 
   core.pytype_aval_mappings[sda] = abstract_arrays.canonical_concrete_aval
   dispatch.device_put_handlers[sda] = dispatch._device_put_array
