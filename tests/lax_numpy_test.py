@@ -4595,10 +4595,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for a_shape, axis in (
           ((7,), None),
           ((47, 7), 0),
+          ((47, 7), ()),
           ((4, 101), 1),
+          ((4, 47, 7), (1, 2)),
+          ((4, 47, 7), (0, 2)),
+          ((4, 47, 7), (1, 0, 2)),
         )
         for q_dtype in [np.float32]
-        for q_shape in scalar_shapes + [(4,)]
+        for q_shape in scalar_shapes + [(1,), (4,)]
         for keepdims in [False, True]
         for method in ['linear', 'lower', 'higher', 'nearest', 'midpoint']))
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
