@@ -1544,7 +1544,7 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
 
   @wraps(fun, docstr=docstr)
   @api_boundary
-  def batched_fun(*args, **kwargs):
+  def vmap_f(*args, **kwargs):
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
@@ -1558,7 +1558,7 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
     ).call_wrapped(*args_flat)
     return tree_unflatten(out_tree(), out_flat)
 
-  return batched_fun
+  return vmap_f
 
 def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
   if not vals:
@@ -1965,7 +1965,7 @@ def _get_f_mapped(
     donate_tuple: Tuple[int],
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]],
 ):
-  def f_pmapped(*args, **kwargs):
+  def pmap_f(*args, **kwargs):
     p = _prepare_pmap(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
         global_arg_shapes, args, kwargs)
@@ -1978,7 +1978,7 @@ def _get_f_mapped(
         global_arg_shapes=p.global_arg_shapes_flat)
     return p.out_tree, out
 
-  return f_pmapped
+  return pmap_f
 
 
 def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
@@ -2022,7 +2022,7 @@ def _python_pmap(
 
   @wraps(fun)
   @api_boundary
-  def f_pmapped(*args, **kwargs):
+  def pmap_f(*args, **kwargs):
     f_pmapped_ = _get_f_mapped(
         fun=fun,
         axis_name=axis_name,
@@ -2038,11 +2038,11 @@ def _python_pmap(
     out_tree, out_flat = f_pmapped_(*args, **kwargs)
     return tree_unflatten(out_tree(), out_flat)
 
-  f_pmapped.lower = _pmap_lower(
+  pmap_f.lower = _pmap_lower(
       fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
       backend, axis_size, global_arg_shapes, donate_tuple)
 
-  return f_pmapped
+  return pmap_f
 
 
 class _PmapFastpathData(NamedTuple):
@@ -2133,13 +2133,13 @@ def _cpp_pmap(
   cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,
                                static_broadcasted_tuple, pxla._shard_arg)
 
-  f_pmapped = wraps(fun)(cpp_mapped_f)
+  pmap_f = wraps(fun)(cpp_mapped_f)
 
-  f_pmapped.lower = _pmap_lower(
+  pmap_f.lower = _pmap_lower(
       fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
       backend, axis_size, global_arg_shapes, donate_tuple)
 
-  return f_pmapped
+  return pmap_f
 
 
 def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
@@ -2714,7 +2714,7 @@ def make_jaxpr(fun: Callable,
 
   @wraps(fun)
   @api_boundary
-  def jaxpr_maker(*args, **kwargs):
+  def make_jaxpr_f(*args, **kwargs):
     f = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
@@ -2733,8 +2733,8 @@ def make_jaxpr(fun: Callable,
       return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)
     return closed_jaxpr
 
-  jaxpr_maker.__name__ = f"make_jaxpr({jaxpr_maker.__name__})"
-  return jaxpr_maker
+  make_jaxpr_f.__name__ = f"make_jaxpr({make_jaxpr.__name__})"
+  return make_jaxpr_f
 
 
 def device_put(x, device: Optional[xc.Device] = None):
@@ -3149,7 +3149,7 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
   """
   @wraps(fun)
   @api_boundary
-  def fun_remat(*args, **kwargs):
+  def remat_f(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
     out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
@@ -3157,7 +3157,7 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
                              differentiated=False,
                              policy=policy)
     return tree_unflatten(out_tree(), out_flat)
-  return fun_remat
+  return remat_f
 remat = checkpoint  # type: ignore
 
 def named_call(
@@ -3194,13 +3194,13 @@ def named_call(
   _, in_tree = tree_flatten(())
 
   @functools.wraps(fun)
-  def named_f(*args, **kwargs):
+  def named_call_f(*args, **kwargs):
     lu_f = lu.wrap_init(lambda: fun(*args, **kwargs))
     flat_f, out_tree = flatten_fun_nokwargs(lu_f, in_tree)
     out_flat = core.named_call_p.bind(flat_f, name=name)
     return tree_unflatten(out_tree(), out_flat)
 
-  return named_f
+  return named_call_f
 
 def invertible(fun: Callable) -> Callable:
   """Asserts that the decorated function is invertible.
