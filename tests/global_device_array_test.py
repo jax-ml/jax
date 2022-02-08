@@ -15,6 +15,7 @@
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import unittest
 import numpy as np
 
 import jax
@@ -23,8 +24,9 @@ from jax._src import test_util as jtu
 from jax._src.util import prod, safe_zip
 
 from jax.experimental import PartitionSpec as P
+from jax.experimental.maps import Mesh
 import jax.experimental.global_device_array as gda_lib
-from jax.experimental.global_device_array import GlobalDeviceArray
+from jax.experimental.global_device_array import GlobalDeviceArray, get_shard_indices
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -308,6 +310,31 @@ class GDATest(jtu.JaxTestCase):
 
     self.assertNotEqual(hash(global_mesh1), hash(global_mesh2))
     self.assertEqual(hash(global_mesh1), hash(global_mesh3))
+
+  def test_device_mismatch(self):
+    devices = jax.devices()
+    if len(devices) < 8:
+      raise unittest.SkipTest("Test requires 8 global devices.")
+    mesh_devices = np.array([[devices[0], devices[2]],
+                             [devices[3], devices[1]],
+                             [devices[4], devices[6]],
+                             [devices[7], devices[5]]])
+    global_mesh = Mesh(mesh_devices, ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = ['x', 'y']
+    global_input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    indices = get_shard_indices(global_input_shape, global_mesh, mesh_axes)
+
+    dbs = [
+        jax.device_put(global_input_data[indices[d]], d)
+        for d in jax.local_devices()
+    ]
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'The `global_mesh.local_devices` and `device_buffers` device order'):
+      GlobalDeviceArray(global_input_shape, global_mesh, mesh_axes, dbs)
 
 
 if __name__ == '__main__':
