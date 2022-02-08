@@ -303,6 +303,8 @@ class JetTest(jtu.JaxTestCase):
   def test_cummax(self):     self.unary_check(partial(lax.cummax, axis=0))
   @jtu.skip_on_devices("tpu")
   def test_cummin(self):     self.unary_check(partial(lax.cummin, axis=0))
+  @jtu.skip_on_devices("tpu")
+  def test_dynamic_slice(self):     self.unary_check(partial(lax.dynamic_slice, start_indices=(0,0), slice_sizes=(1,1)))
 
 
   @jtu.skip_on_devices("tpu")
