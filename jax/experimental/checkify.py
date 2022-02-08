@@ -278,10 +278,10 @@ def check_error(error: Error) -> None:
   """Raise an Exception if `error` represents a failure. Functionalized by `checkify`.
 
   The semantics of this function are equivalent to:
-  
+
     def check_error(err: Error) -> None:
       err.throw()  # can raise ValueError Exception
-      
+
   But unlike that implementation, `check_error` can be functionalized using
   the `checkify` transformation.
 
@@ -291,17 +291,19 @@ def check_error(error: Error) -> None:
   this function raise a Python Exception on failure (a side-effect), and thus
   cannot be staged out by `jit`, `pmap`, `scan`, etc. Both also can be
   functionalized by using `checkify`.
-  
-  But unlike `check`, this function is like a direct inverse of `checkify`: whereas
-  `checkify` takes as input a function which can raise a Python Exception and
-  produces a new function without that effect but which produces an `Error`
-  value as output, this `check_error` function can accept an `Error` value as
-  input and can produce the side-effect of raising an Exception. That is, while
-  `checkify` goes from functionalizable Exception effect to error value, this
-  `check_error` goes from error value to functionalizable Exception effect.
 
-  `check_error` is useful when you want to turn checks represented by an `Error` value
-  (produced by functionalizing `check`s via `checkify`) back into Python Exceptions.
+  But unlike `check`, this function is like a direct inverse of `checkify`:
+  whereas `checkify` takes as input a function which can raise a Python
+  Exception and produces a new function without that effect but which
+  produces an `Error` value as output, this `check_error` function can accept
+  an `Error` value as input and can produce the side-effect of raising an
+  Exception. That is, while `checkify` goes from functionalizable Exception
+  effect to error value, this `check_error` goes from error value to
+  functionalizable Exception effect.
+
+  `check_error` is useful when you want to turn checks represented by an
+  `Error` value (produced by functionalizing `check`s via `checkify`) back
+  into Python Exceptions.
 
   Args:
     error: Error to check
@@ -593,7 +595,7 @@ Out = TypeVar('Out')
 
 
 def checkify(fun: Callable[..., Out],
-             errors: Set[ErrorCategory] = user_checks
+             errors: FrozenSet[ErrorCategory] = user_checks
              ) -> Callable[..., Tuple[Error, Out]]:
   """Functionalize `check` calls in `fun`, and optionally add run-time error checks.
 
@@ -601,10 +603,10 @@ def checkify(fun: Callable[..., Out],
   automatically added checks like NaN checks, depending on the ``errors``
   argument.
 
-  The returned function will return an Error object `err` along with the output of
-  the original function. ``err.get()`` will either return ``None`` (if no error occurred)
-  or a string containing an error message. This error message will correspond to
-  the first error which occurred.
+  The returned function will return an Error object `err` along with the output
+  of the original function. ``err.get()`` will either return ``None`` (if no
+  error occurred) or a string containing an error message. This error message
+  will correspond to the first error which occurred.
 
   The kinds of errors are:
     - ErrorCategory.USER_CHECK: a ``checkify.check`` predicate evaluated
@@ -614,17 +616,21 @@ def checkify(fun: Callable[..., Out],
     - ErrorCategory.DIV: division by zero
     - ErrorCategory.OOB: an indexing operation was out-of-bounds
 
-  Multiple categories can be enabled together by creating a `Set` (eg. ``errors={ErrorCategory.NAN,
-  ErrorCategory.OOB}``).
+  Multiple categories can be enabled together by creating a `Set` (eg.
+  ``errors={ErrorCategory.NAN, ErrorCategory.OOB}``).
 
   Args:
     fun: Callable which can contain user checks (see ``check``).
-    errors: Enabled errors. Options are NAN, OOB, DIV. By default USER_CHECK is
-      enabled.
+    errors: A set of ErrorCategory values which defines the set of enabled
+      checks. By default only explicit ``check``s are enabled
+      (``{ErrorCategory.USER_CHECK}``). You can also for example enable NAN and
+      DIV errors through passing the ``checkify.float_errors`` set, or for
+      example combine multiple sets through set operations
+      (``checkify.float_errors|checkify.user_checks``)
   Returns:
     A function which accepts the same arguments as ``fun`` and returns as output
-    a pair where the first element is an ``Error`` value, representing any failed
-    ``check``s, and the second element is the original output of ``fun``.
+    a pair where the first element is an ``Error`` value, representing any
+    failed ``check``s, and the second element is the original output of ``fun``.
 
   For example:
 
