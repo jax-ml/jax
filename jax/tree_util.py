@@ -55,4 +55,7 @@ from jax._src.tree_util import (
   treedef_children as treedef_children,
   treedef_is_leaf as treedef_is_leaf,
   treedef_tuple as treedef_tuple,
+  register_keypaths as register_keypaths,
+  AttributeKeyPathEntry as AttributeKeyPathEntry,
+  GetitemKeyPathEntry as GetitemKeyPathEntry,
 )
