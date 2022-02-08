@@ -522,8 +522,6 @@ deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
 
 def instantiate_zeros(tangent):
   if type(tangent) is Zero:
-    if isinstance(tangent.aval, Tracer):
-      return tangent.aval
     return zeros_like_aval(tangent.aval)
   else:
     return tangent

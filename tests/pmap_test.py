@@ -643,6 +643,11 @@ class PythonPmapTest(jtu.JaxTestCase):
     # test that the repr doesn't crash
     repr(z)
 
+    # test that we can lexically capture a sda as a constant.
+    g = jit(lambda z: z + y)
+    self.assertAllClose(g(7), y + 7)
+
+
   # Tests edge cases in lax._reshape_sharded_device_array
   @parameterized.named_parameters(
       {"testcase_name": "_in={}_out={}".format(in_shape, out_shape)

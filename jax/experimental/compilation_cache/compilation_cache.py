@@ -85,7 +85,7 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
       ("compile_options",
        lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
       ("jax_lib version",
-       lambda hash_obj: hash_obj.update(bytes(jax._src.lib.version))),
+       lambda hash_obj: hash_obj.update(bytes(jax._src.lib.version_str.encode('utf-8')))),
       ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
       ("XLA flags", _hash_xla_flags),
   ]

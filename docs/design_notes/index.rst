@@ -5,5 +5,6 @@ Design Notes
    :maxdepth: 1
 
    custom_derivatives
+   jax_versioning
    omnistaging
    prng
