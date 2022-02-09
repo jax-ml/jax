@@ -16,11 +16,16 @@ from jax import core
 from jax import numpy as jnp
 from jax._src import device_array
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_bridge
 
-SUPPORTED_DTYPES = set([jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-                        jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
-                        jnp.float16, jnp.bfloat16, jnp.float32, jnp.float64])
+SUPPORTED_DTYPES = frozenset({
+    jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.uint8, jnp.uint16,
+    jnp.uint32, jnp.uint64, jnp.float16, jnp.bfloat16, jnp.float32,
+    jnp.float64})
+
+if xla_extension_version >= 58:
+  SUPPORTED_DTYPES = SUPPORTED_DTYPES | {jnp.complex64, jnp.complex128}
 
 
 def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False):
