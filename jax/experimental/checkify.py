@@ -186,6 +186,34 @@ class CheckifyTrace(core.Trace):
       return (0, 0, *out_axes)
     return (err, code, *vals), (todo, out_axes_transform)
 
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+    in_vals = [t.val for t in tracers]
+    e = popattr(self.main, 'error')
+    msgs = tuple(e.msgs.items())
+    fun, msgs1 = checkify_subtrace(fun, self.main, msgs)
+    jvp, msgs2 = checkify_custom_jvp_subtrace(jvp, self.main, msgs)
+    err, code, *out_vals = prim.bind(fun, jvp, e.err, e.code, *in_vals)
+    fst, out_msgs = lu.merge_linear_aux(msgs1, msgs2)
+    setattr(self.main, 'error', Error(err, code, out_msgs))
+    return [CheckifyTracer(self, x) for x in out_vals]
+
+  def post_process_custom_jvp_call(self, out_tracers, jvp_was_run):
+    if jvp_was_run:
+      msg = ("support for custom_jvp rules which close over checkify values is "
+             "not implemented. If you see this, open an issue at "
+             "https://github.com/google/jax/issues!")
+      raise NotImplementedError(msg)
+    vals = [t.val for t in out_tracers]
+    main = self.main
+    e = popattr(main, 'error')
+    err, code, main.msgs = e.err, e.code, e.msgs
+    def todo(vals):
+      err, code, *vals = vals
+      setnewattr(main, 'error', Error(err, code, popattr(main, 'msgs')))
+      trace = main.with_cur_sublevel()
+      return [CheckifyTracer(trace, x) for x in vals]
+    return (err, code, *vals), todo
+
 def _reduce_any_error(errs, codes):
   errs_, codes_ = lax.sort_key_val(errs, codes, dimension=0)
   return errs_[-1], codes_[-1]
@@ -219,6 +247,32 @@ def checkify_subtrace(main, msgs, err, code, *args):
   del main.error
   yield (err, code, *out_vals), msgs
 
+@lu.transformation_with_aux
+def checkify_custom_jvp_subtrace(main, msgs, *args):
+  # Like checkify_subtrace, but used specifically on the custom JVP rules
+  # associated with a custom_jvp. This code is called in the context of a
+  # jvp-of-checkify-of-custom_jvp. It takes both primal and tangent inputs,
+  # flattened into a single args tuple, and similarly must produce flattened
+  # primal and tangent outputs. Both primals and tangents include error values,
+  # but the tangent error values are trivially zero.
+  # The types to have in mind are:
+  #   jvp : (a -> b) -> (a, T a) -> (b, T b)
+  #   checkify : (a -> b) -> a -> Err b
+  #   jvp-of-checkify : (a -> b) -> (a, T a) -> (Err b, T (Err b))
+  # where because Err is a pytree, we necessarily have T (Err b) = Err' (T b)
+  # where the other Err' components are trivial (of float0 dtype).
+  # Semantically, we don't add checks to the JVP rule. To check the result of a
+  # JVP rule, one must instead use checkify-of-jvp. Thus this implementation
+  # just forwards the input error and code (and trivial tangents) to the output.
+  n, ragged = divmod(len(args), 2)
+  assert not ragged
+  (err,), (code,), primals = split_list(args[:n], [1, 1])
+  (err_dot,), (code_dot,), tangents = split_list(args[n:], [1, 1])
+  outs = yield (*primals, *tangents), {}
+  m, ragged = divmod(len(outs), 2)
+  assert not ragged
+  out_primals, out_tangents = outs[:m], outs[m:]
+  yield (err, code, *out_primals, err_dot, code_dot, *out_tangents), dict(msgs)
 
 # TODO take (error_aval, code_aval) instead of error here?
 def checkify_jaxpr(jaxpr, error, enabled_errors):
