@@ -1639,7 +1639,25 @@ def _rev(operand, *, dimensions):
 
 tf_impl[lax.rev_p] = _rev
 
-tf_impl[lax.select_p] = tf.where
+
+def _where(which, *cases):
+  if which.dtype == tf.bool:
+    assert len(cases) <= 2
+    return cases if len(cases) == 1 else tf.where(which, cases[1], cases[0])
+
+  def _select(offset, cases):
+    assert len(cases) > 0
+    if len(cases) == 1:
+      return cases[0]
+    mid = len(cases) // 2
+    return tf.where(tf.less(which, offset + mid),
+                    _select(offset, cases[:mid]),
+                    _select(mid, cases[mid:]))
+
+  return _select(0, cases)
+
+
+tf_impl[lax.select_n_p] = _where
 
 
 def _transpose(operand, *, permutation):
@@ -1749,7 +1767,7 @@ def _select_and_gather_add(
 
   def reducer(x, y):
     which = tf_impl[select_prim]
-    return tf_impl[lax.select_p](which(fst(x), fst(y)), x=x, y=y)
+    return tf_impl[lax.select_n_p](which(fst(x), fst(y)), y, x)
 
   init = -np.inf if select_prim is lax.ge_p else np.inf
   init_identity = lambda x: pack(const(dtype, init), const(dtype, 0))

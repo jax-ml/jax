@@ -1476,6 +1476,26 @@ class LaxTest(jtu.JaxTestCase):
     return self._CompileAndCheck(lax.select, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_predshape={}_argshapes={}_n={}".format(
+          jtu.format_shape_dtype_string(pred_shape, pred_dtype),
+          jtu.format_shape_dtype_string(arg_shape, arg_dtype), num_args),
+       "pred_dtype": pred_dtype, "pred_shape": pred_shape,
+       "arg_shape": arg_shape, "arg_dtype": arg_dtype, "num_args": num_args}
+      for arg_shape in [(), (3,), (2, 3)]
+      for pred_shape in ([(), arg_shape] if arg_shape else [()])
+      for arg_dtype in default_dtypes
+      for (pred_dtype, num_args) in (
+          list(itertools.product([np.dtype(np.bool_), np.dtype(np.int32)],
+                                 [1, 2])) +
+          [(np.dtype(np.int32), 3)])))
+  def testSelectN(self, pred_dtype, pred_shape, arg_shape, arg_dtype, num_args):
+    rng = jtu.rand_default(self.rng())
+    def args_maker():
+      return [rng(pred_shape, pred_dtype)] + (
+          [rng(arg_shape, arg_dtype)] * num_args)
+    return self._CompileAndCheck(lax.select_n, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}".format(
           jtu.format_shape_dtype_string(pred_shape, np.bool_),
           jtu.format_shape_dtype_string(arg_shape, arg_dtype)),

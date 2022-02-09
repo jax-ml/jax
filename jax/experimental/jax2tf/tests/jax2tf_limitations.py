@@ -139,7 +139,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "reduce_window_add", "reduce_window_mul", "reduce_window_min",
       "reduce_window_max",
       "real", "reshape", "rev", "rsqrt", "scatter_max", "scatter_min",
-      "select", "select_and_scatter_add",
+      "select_n", "select_and_scatter_add",
       "shift_left", "shift_right_logical", "shift_right_arithmetic", "sign",
       "sin", "sinh", "slice", "sqrt", "squeeze", "stop_gradient", "sub",
       "tie_in", "transpose", "xor", "zeros_like"

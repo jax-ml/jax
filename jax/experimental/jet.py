@@ -541,13 +541,13 @@ def _abs_taylor_rule(x, series_in, **params):
   return primal_out, series_out
 jet_rules[lax.abs_p] = _abs_taylor_rule
 
-def _select_taylor_rule(primal_in, series_in, **params):
-  b, x, y = primal_in
-  primal_out = lax.select_p.bind(b, x, y, **params)
-  sel = lambda _, x, y: lax.select(b, x, y)
-  series_out = [sel(*terms_in, **params) for terms_in in zip(*series_in)]
+def _select_n_taylor_rule(primal_in, series_in, **params):
+  b, *cases = primal_in
+  primal_out = lax.select_n(b, *cases)
+  sel = lambda _, *xs: lax.select_n(b, *xs)
+  series_out = [sel(*terms_in) for terms_in in zip(*series_in)]
   return primal_out, series_out
-jet_rules[lax.select_p] = _select_taylor_rule
+jet_rules[lax.select_n_p] = _select_n_taylor_rule
 
 def _lax_max_taylor_rule(primal_in, series_in):
     x, y = primal_in

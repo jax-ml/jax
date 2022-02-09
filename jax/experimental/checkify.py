@@ -567,7 +567,7 @@ add_nan_check(lax.conv_general_dilated_p)
 add_nan_check(lax.reduce_max_p)
 add_nan_check(lax.reduce_min_p)
 add_nan_check(lax.abs_p)
-add_nan_check(lax.select_p)
+add_nan_check(lax.select_n_p)
 add_nan_check(lax.max_p)
 add_nan_check(lax.min_p)
 

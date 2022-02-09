@@ -1039,20 +1039,18 @@ def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
   return xla.xla_destructure(
       c, xops.Conditional(index, branch_computations, [op] * len(branches)))
 
-def _select_tree(indices, branch_vals):
-  assert len(branch_vals) > 0
-  if len(branch_vals) == 1:
-    return branch_vals[0]
-  mid = lax._const(indices, len(branch_vals) // 2)
-  return _bcast_select(lax.lt(indices, mid),
-                       _select_tree(indices, branch_vals[:mid]),
-                       _select_tree(indices - mid, branch_vals[mid:]))
 
 def _bcast_select(pred, on_true, on_false):
   if np.ndim(pred) != np.ndim(on_true):
     idx = list(range(np.ndim(pred)))
     pred = lax.broadcast_in_dim(pred, np.shape(on_true), idx)
   return lax.select(pred, on_true, on_false)
+
+def _bcast_select_n(pred, *cases):
+  if np.ndim(pred) != np.ndim(cases[0]):
+    idx = list(range(np.ndim(pred)))
+    pred = lax.broadcast_in_dim(pred, np.shape(cases[0]), idx)
+  return lax.select_n(pred, *cases)
 
 def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, linear):
   index, *ops = args
@@ -1078,7 +1076,7 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
       ops_ = [_bcast_select(predicate, x, lax.stop_gradient(x))
               if x is not core.unit else x for x in ops]
       branch_outs.append(core.jaxpr_as_fun(jaxpr)(*ops_))
-    out = [_select_tree(index, outs) if outs[0] is not core.unit else outs[0]
+    out = [_bcast_select_n(index, *outs) if outs[0] is not core.unit else outs[0]
            for outs in zip(*branch_outs)]
     return out, [0] * len(branch_outs[0])
   else:
