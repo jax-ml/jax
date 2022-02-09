@@ -152,3 +152,6 @@ cuda_path: Optional[str]
 cuda_path = os.path.join(os.path.dirname(jaxlib.__file__), "cuda")
 if not os.path.isdir(cuda_path):
   cuda_path = None
+
+if xla_extension_version >= 58:
+  transfer_guard_lib = xla_client._xla.transfer_guard_lib

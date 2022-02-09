@@ -21,11 +21,13 @@ import itertools
 import os
 import sys
 import threading
-from typing import Any, List, Callable, NamedTuple, Optional
+from typing import Any, List, Callable, NamedTuple, Iterator, Optional
 import warnings
 
 from jax._src import lib
 from jax._src.lib import jax_jit
+if lib.xla_extension_version >= 58:
+  from jax._src.lib import transfer_guard_lib
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.
@@ -679,3 +681,140 @@ config.define_bool_state(
     default=False,
     help=('Enables experimental features for staging out computations with '
           'dynamic shapes.'))
+
+if lib.xla_extension_version < 58:
+  @contextlib.contextmanager
+  def explicit_device_put_scope() -> Iterator[None]:
+    """Indicates that the current context is an explicit device_put*() call."""
+    yield
+
+  @contextlib.contextmanager
+  def explicit_device_get_scope() -> Iterator[None]:
+    """Indicates that the current context is an explicit device_get() call."""
+    yield
+
+  @contextlib.contextmanager
+  def _transfer_guard(new_val: str) -> Iterator[None]:
+    raise NotImplementedError("jaxlib version is too low for transfer guards")
+
+  transfer_guard_host_to_device = _transfer_guard
+  transfer_guard_device_to_device = _transfer_guard
+  transfer_guard_device_to_host = _transfer_guard
+  transfer_guard = _transfer_guard
+
+else:
+  @contextlib.contextmanager
+  def explicit_device_put_scope() -> Iterator[None]:
+    """Indicates that the current context is an explicit device_put*() call."""
+    state = transfer_guard_lib.thread_local_state()
+    prev = state.explicit_device_put
+    state.explicit_device_put = True
+    try:
+      yield
+    finally:
+      state.explicit_device_put = prev
+
+  @contextlib.contextmanager
+  def explicit_device_get_scope() -> Iterator[None]:
+    """Indicates that the current context is an explicit device_get() call."""
+    state = transfer_guard_lib.thread_local_state()
+    prev = state.explicit_device_get
+    state.explicit_device_get = True
+    try:
+      yield
+    finally:
+      state.explicit_device_get = prev
+
+  def _update_transfer_guard(state, key, val):
+    """Applies the transfer guard level within transfer_guard_lib."""
+    if val is None:
+      setattr(state, key, None)
+    elif val == 'allow':
+      setattr(state, key, transfer_guard_lib.TransferGuardLevel.ALLOW)
+    elif val == 'log':
+      setattr(state, key, transfer_guard_lib.TransferGuardLevel.LOG)
+    elif val == 'disallow':
+      setattr(state, key, transfer_guard_lib.TransferGuardLevel.DISALLOW)
+    elif val == 'log_explicit':
+      setattr(state, key, transfer_guard_lib.TransferGuardLevel.LOG_EXPLICIT)
+    elif val == 'disallow_explicit':
+      setattr(state, key,
+              transfer_guard_lib.TransferGuardLevel.DISALLOW_EXPLICIT)
+    else:
+      assert False, f"Invalid transfer guard level {val}"
+
+  transfer_guard_host_to_device = config.define_enum_state(
+      name='jax_transfer_guard_host_to_device',
+      enum_values=[
+          'allow', 'log', 'disallow', 'log_explicit', 'disallow_explicit'
+      ],
+      # The default is applied by transfer_guard_lib. Use None here to avoid
+      # accidentally overriding --jax_transfer_guard.
+      default=None,
+      help=('Select the transfer guard level for host-to-device transfers. '
+            'Default is "allow".'),
+      update_global_hook=lambda val: _update_transfer_guard(
+          transfer_guard_lib.global_state(), 'host_to_device', val),
+      update_thread_local_hook=lambda val: _update_transfer_guard(
+          transfer_guard_lib.thread_local_state(), 'host_to_device', val))
+
+  transfer_guard_device_to_device = config.define_enum_state(
+      name='jax_transfer_guard_device_to_device',
+      enum_values=[
+          'allow', 'log', 'disallow', 'log_explicit', 'disallow_explicit'
+      ],
+      # The default is applied by transfer_guard_lib. Use None here to avoid
+      # accidentally overriding --jax_transfer_guard.
+      default=None,
+      help=('Select the transfer guard level for device-to-device transfers. '
+            'Default is "allow".'),
+      update_global_hook=lambda val: _update_transfer_guard(
+          transfer_guard_lib.global_state(), 'device_to_device', val),
+      update_thread_local_hook=lambda val: _update_transfer_guard(
+          transfer_guard_lib.thread_local_state(), 'device_to_device', val))
+
+  transfer_guard_device_to_host = config.define_enum_state(
+      name='jax_transfer_guard_device_to_host',
+      enum_values=[
+          'allow', 'log', 'disallow', 'log_explicit', 'disallow_explicit'
+      ],
+      # The default is applied by transfer_guard_lib. Use None here to avoid
+      # accidentally overriding --jax_transfer_guard.
+      default=None,
+      help=('Select the transfer guard level for device-to-host transfers. '
+            'Default is "allow".'),
+      update_global_hook=lambda val: _update_transfer_guard(
+          transfer_guard_lib.global_state(), 'device_to_host', val),
+      update_thread_local_hook=lambda val: _update_transfer_guard(
+          transfer_guard_lib.thread_local_state(), 'device_to_host', val))
+
+  def _update_all_transfer_guard_global(val):
+    for name in ('jax_transfer_guard_host_to_device',
+                 'jax_transfer_guard_device_to_device',
+                 'jax_transfer_guard_device_to_host'):
+      config.update(name, val)
+
+  _transfer_guard = config.define_enum_state(
+      name='jax_transfer_guard',
+      enum_values=[
+          'allow', 'log', 'disallow', 'log_explicit', 'disallow_explicit'
+      ],
+      # The default is applied by transfer_guard_lib. Use None here to avoid
+      # accidentally overriding --jax_transfer_guard_*.
+      default=None,
+      help=(
+          'Select the transfer guard level for all transfers. This option is '
+          'set-only; the transfer guard level for a specific direction should '
+          'be read using the per-transfer direction option. '
+          'Default is "allow".'),
+      update_global_hook=_update_all_transfer_guard_global)
+
+  @contextlib.contextmanager
+  def transfer_guard(new_val: str) -> Iterator[None]:
+    """Set up thread-local state and return a contextmanager for managing it."""
+    with contextlib.ExitStack() as stack:
+      stack.enter_context(transfer_guard_host_to_device(new_val))
+      stack.enter_context(transfer_guard_device_to_device(new_val))
+      stack.enter_context(transfer_guard_device_to_host(new_val))
+      stack.enter_context(_transfer_guard(new_val))
+      yield

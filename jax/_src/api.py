@@ -84,11 +84,14 @@ from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp
 from jax.custom_transpose import custom_transpose
 from jax.ad_checkpoint import checkpoint_policies
 
-from jax._src.config import (flags, config, bool_env,
-                             disable_jit as _disable_jit,
-                             debug_nans as config_debug_nans,
-                             debug_infs as config_debug_infs,
-                             _thread_local_state as config_thread_local_state)
+from jax._src.config import (
+    flags, config, bool_env,
+    disable_jit as _disable_jit,
+    debug_nans as config_debug_nans,
+    debug_infs as config_debug_infs,
+    _thread_local_state as config_thread_local_state,
+    explicit_device_put_scope as config_explicit_device_put_scope,
+    explicit_device_get_scope as config_explicit_device_get_scope)
 
 
 traceback_util.register_exclusion(__file__)
@@ -2318,7 +2321,7 @@ def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
     return (tree_unflatten(out_tree, out_primals),
             tree_unflatten(out_tree, out_tangents),
             tree_unflatten(aux_tree, aux()))
-  
+
 def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   """Produces a linear approximation to ``fun`` using :py:func:`jvp` and partial eval.
 
@@ -2755,7 +2758,8 @@ def device_put(x, device: Optional[xc.Device] = None):
   Returns:
     A copy of ``x`` that resides on ``device``.
   """
-  return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
+  with config_explicit_device_put_scope():
+    return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
 
 
 def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
@@ -2824,7 +2828,8 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
                for buf in dispatch.device_put(x, d)]
     return pxla.make_sharded_device_array(stacked_aval, None, buffers)
 
-  return tree_multimap(_device_put_sharded, *shards)
+  with config_explicit_device_put_scope():
+    return tree_multimap(_device_put_sharded, *shards)
 
 
 def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
@@ -2867,7 +2872,9 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
     buf, = dispatch.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
     return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
-  return tree_map(_device_put_replicated, x)
+
+  with config_explicit_device_put_scope():
+    return tree_map(_device_put_replicated, x)
 
 
 # TODO(mattjj): consider revising
@@ -2912,12 +2919,13 @@ def device_get(x: Any):
     - device_put_sharded
     - device_put_replicated
   """
-  for y in tree_leaves(x):
-    try:
-      y.copy_to_host_async()
-    except AttributeError:
-      pass
-  return tree_map(_device_get, x)
+  with config_explicit_device_get_scope():
+    for y in tree_leaves(x):
+      try:
+        y.copy_to_host_async()
+      except AttributeError:
+        pass
+    return tree_map(_device_get, x)
 
 def _check_arg(arg):
   if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
