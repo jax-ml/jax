@@ -214,6 +214,21 @@ class CheckifyTrace(core.Trace):
       return [CheckifyTracer(trace, x) for x in vals]
     return (err, code, *vals), todo
 
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
+    in_vals = [t.val for t in tracers]
+    e = popattr(self.main, 'error')
+    msgs = tuple(e.msgs.items())
+    fun, msgs1 = checkify_subtrace(fun, self.main, msgs)
+    fwd, msgs2 = checkify_custom_vjp_subtrace(fwd, self.main, msgs)
+    out = prim.bind(fun, fwd, bwd, e.err, e.code, *in_vals, out_trees=out_trees)
+    fst, out_msgs = lu.merge_linear_aux(msgs1, msgs2)
+    if fst:
+      err, code, *out = out
+    else:
+      err, code = e.err, e.code  # forward input error values to output
+    setattr(self.main, 'error', Error(err, code, out_msgs))
+    return [CheckifyTracer(self, x) for x in out]
+
 def _reduce_any_error(errs, codes):
   errs_, codes_ = lax.sort_key_val(errs, codes, dimension=0)
   return errs_[-1], codes_[-1]
@@ -264,6 +279,7 @@ def checkify_custom_jvp_subtrace(main, msgs, *args):
   # Semantically, we don't add checks to the JVP rule. To check the result of a
   # JVP rule, one must instead use checkify-of-jvp. Thus this implementation
   # just forwards the input error and code (and trivial tangents) to the output.
+  del main
   n, ragged = divmod(len(args), 2)
   assert not ragged
   (err,), (code,), primals = split_list(args[:n], [1, 1])
@@ -273,6 +289,13 @@ def checkify_custom_jvp_subtrace(main, msgs, *args):
   assert not ragged
   out_primals, out_tangents = outs[:m], outs[m:]
   yield (err, code, *out_primals, err_dot, code_dot, *out_tangents), dict(msgs)
+
+@lu.transformation_with_aux
+def checkify_custom_vjp_subtrace(main, msgs, err, code, *args):
+  # We don't add any checks; just drop input error values.
+  del main, err, code
+  outs = yield args, {}
+  yield outs, dict(msgs)
 
 # TODO take (error_aval, code_aval) instead of error here?
 def checkify_jaxpr(jaxpr, error, enabled_errors):
