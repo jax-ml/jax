@@ -39,8 +39,7 @@ from jax import linear_util as lu
 from jax._src import source_info_util
 from jax._src.abstract_arrays import (make_shaped_array, array_types)
 from jax.core import (ConcreteArray, ShapedArray,
-                      Literal, pp_eqn_compact, JaxprPpContext,
-                      abstract_token)
+                      Literal, str_eqn_compact, abstract_token)
 import jax._src.pretty_printer as pp
 from jax._src import util
 from jax._src.util import (prod, extend_name_stack, wrap_name,
@@ -104,8 +103,7 @@ def make_op_metadata(primitive: core.Primitive,
                      source_info: source_info_util.SourceInfo,
                      name_stack: str = "",
                      ) -> xc.OpMetadata:
-  eqn_str = str(pp.text(name_stack) +
-                pp_eqn_compact(primitive.name, params, JaxprPpContext()))
+  eqn_str = name_stack + str_eqn_compact(primitive.name, params)
   tracebacks[eqn_str] = source_info.traceback
   frame = source_info_util.user_frame(source_info) if source_info else None
   return xc.OpMetadata(

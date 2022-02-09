@@ -39,7 +39,6 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import std
 from jax._src.lib import xla_client as xc
-import jax._src.pretty_printer as pp
 from jax._src import source_info_util
 import jax._src.util as util
 import jax.interpreters.ad as ad
@@ -266,9 +265,7 @@ def _source_info_to_location(
     primitive: core.Primitive, params: Dict,
     source_info: source_info_util.SourceInfo,
     name_stack: str = "") -> ir.Location:
-  eqn_str = str(
-      pp.text(name_stack) +
-      core.pp_eqn_compact(primitive.name, params, core.JaxprPpContext()))
+  eqn_str = name_stack + core.str_eqn_compact(primitive.name, params)
   frame = source_info_util.user_frame(source_info)
   if frame is None:
     loc = ir.Location.unknown()
