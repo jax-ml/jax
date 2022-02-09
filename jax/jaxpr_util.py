@@ -22,7 +22,7 @@ import types
 from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
 
 from jax import core
-from jax._src.lib import xla_client
+from jax._src.lib import xla_client, xla_extension_version
 from jax._src import util
 from jax._src import source_info_util
 
@@ -149,8 +149,13 @@ def _pprof_profile(
     if tb is None:
       frames = []
     else:
-      frames = [loc[(code, lasti)] for code, lasti in tb.raw_frames()
-                if source_info_util.is_user_filename(code.co_filename)]
+      # TODO(phawkins): drop this test when jaxlib 0.3 becomes the minimum.
+      if xla_extension_version >= 57:
+        raw_frames = zip(*tb.raw_frames())
+      else:
+        raw_frames = tb.raw_frames()
+      frames = [loc[(code, lasti)] for code, lasti in raw_frames
+                if source_info_util.is_user_filename(code.co_filename)]  # type: ignore
     samples.append({
        "location_id": frames,
        "value": [count],

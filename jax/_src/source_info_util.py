@@ -17,17 +17,23 @@ import functools
 import itertools
 import os.path
 import threading
+import types
 from typing import Optional, Iterator, NamedTuple
 
 import jax.version
-from jax._src.lib import xla_client
+from jax._src.lib import xla_client, xla_extension_version
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 
 Traceback = xla_client.Traceback
-Frame = xla_client.Frame
+
+class Frame(NamedTuple):
+  file_name: str
+  function_name: str
+  line_num: int
+
 
 _exclude_paths = [os.path.dirname(jax.version.__file__)]
 
@@ -49,8 +55,13 @@ def is_user_filename(filename: str) -> bool:
   return (filename.endswith("_test.py") or
           not any(filename.startswith(p) for p in _exclude_paths))
 
+def _raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
+  return Frame(file_name=code.co_filename,
+               function_name=code.co_name,
+               line_num=xla_client.Traceback.code_addr2line(code, lasti))
+
 def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
-  """Iterator over the user's frames."""
+  """Iterator over the user's frames, filtering jax-internal frames."""
   # Guess the user's frame is the innermost frame not in the jax source tree
   # We don't use traceback_util.path_starts_with because that incurs filesystem
   # access, which may be slow; we call this function when e.g. adding source
@@ -58,8 +69,14 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   # We consider files that end with _test.py as user frames, to allow testing
   # this mechanism from tests.
   traceback = source_info.traceback
-  return (x for x in (traceback.frames if traceback else [])
-          if is_user_filename(x.file_name))
+  # TODO(phawkins): drop this test when jaxlib 0.3 becomes the minimum.
+  if xla_extension_version >= 57:
+    code, lasti = traceback.raw_frames() if traceback else ([], [])
+    return (_raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))  # type: ignore
+            if is_user_filename(code[i].co_filename))
+  else:
+    return (x for x in (traceback.frames if traceback else [])  # type: ignore
+            if is_user_filename(x.file_name))
 
 @functools.lru_cache(maxsize=64)
 def user_frame(source_info: SourceInfo) -> Optional[Frame]:
