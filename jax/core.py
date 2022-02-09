@@ -2306,13 +2306,18 @@ def pp_eqns(eqns, context: JaxprPpContext, *, print_shapes=True,
     [pp_eqn(e, context, print_shapes=print_shapes, source_info=source_info,
             custom_pp_eqn_rules=custom_pp_eqn_rules) for e in eqns])
 
-def pp_eqn_compact(primitive_name: str, params: Dict, context: JaxprPpContext
-                  ) -> pp.Doc:
-  filtered_params = {k: v for k, v in params.items()
-                     if (k != 'branches' and
-                         not isinstance(v, (Jaxpr, ClosedJaxpr)))}
-  return (pp.text(primitive_name) +
-          pp_kv_pairs(sorted(filtered_params.items()), context))
+def _compact_eqn_should_include(k: str, v: Any) -> bool:
+  if k == 'branches': return False
+  if isinstance(v, (Jaxpr, ClosedJaxpr)): return False
+  if (isinstance(v, tuple) and
+      any(isinstance(e, (Jaxpr, ClosedJaxpr)) for e in v)): return False
+  return True
+
+def str_eqn_compact(primitive_name: str, params: Dict) -> str:
+  "Compact equation to string conversion used in HLO metadata."
+  kvs = " ".join(f"{k}={v}" for k, v in params.items()
+                 if _compact_eqn_should_include(k, v))
+  return f"{primitive_name}[{kvs}]" if len(kvs) > 0 else primitive_name
 
 def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext, *,
                       print_shapes=True) -> pp.Doc:
