@@ -236,9 +236,9 @@ def pjit(fun: Callable,
     # TODO(yashkatariya): This is a hack. This should go away when avals have
     # is_global attribute.
     in_positional_semantics = tuple(
-        maps._PositionalSemantics.GLOBAL if isinstance(a, GDA) else maps
-        ._positional_semantics for a in args_flat)
-    out_positional_semantics = maps._positional_semantics
+        maps._PositionalSemantics.GLOBAL if isinstance(a, GDA) else maps._positional_semantics.val
+        for a in args_flat)
+    out_positional_semantics = maps._positional_semantics.val
     jaxpr, in_axis_resources_flat, out_axis_resources_flat = _pjit_jaxpr(
         flat_fun, mesh, local_in_avals, in_tree,
         hashable_pytree(in_axis_resources),
@@ -335,14 +335,14 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   global_in_avals = local_to_global(in_positional_semantics, mesh,
                                     local_in_avals, canonicalized_in_axis_resources_flat)
 
-  prev_positional = maps._positional_semantics
+  prev_positional_val = maps._positional_semantics.val
   try:
-    maps._positional_semantics = maps._PositionalSemantics.GLOBAL
+    maps._positional_semantics.val = maps._PositionalSemantics.GLOBAL
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                                    "for pjit in {elapsed_time} sec"):
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
   finally:
-    maps._positional_semantics = prev_positional
+    maps._positional_semantics.val = prev_positional_val
   jaxpr = core.ClosedJaxpr(jaxpr, consts)
 
   out_axis_resources_flat = flatten_axis_resources(

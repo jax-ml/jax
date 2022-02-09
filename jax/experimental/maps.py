@@ -50,6 +50,12 @@ from jax._src.util import (safe_map, safe_zip, HashableFunction,
                            tuple_insert, moveaxis, split_list, wrap_name)
 from jax import lax
 
+map, unsafe_map = safe_map, map
+zip = safe_zip
+
+xops = xc.ops
+
+
 class _PositionalSemantics(Enum):
   """Indicates whether the positional shapes of inputs should be interpreted as
   global or local with respect to the multi-host mesh.
@@ -63,12 +69,14 @@ class _PositionalSemantics(Enum):
   LOCAL = 0
   GLOBAL = 1
 
-_positional_semantics = _PositionalSemantics.LOCAL
 
-map, unsafe_map = safe_map, map
-zip = safe_zip
+class _PSThreadLocalState(threading.local):
 
-xops = xc.ops
+  def __init__(self):
+    self.val = _PositionalSemantics.LOCAL
+
+_positional_semantics = _PSThreadLocalState()
+
 
 class FrozenDict(abc.Mapping):
   def __init__(self, *args, **kwargs):
@@ -148,33 +156,38 @@ class ResourceEnv(NamedTuple):
     return f"ResourceEnv({self.physical_mesh!r}, {self.loops!r})"
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
-thread_resources = threading.local()
-thread_resources.env = EMPTY_ENV
+
+class _ThreadResourcesLocalState(threading.local):
+
+  def __init__(self):
+    self.env = EMPTY_ENV
+
+thread_resources = _ThreadResourcesLocalState()
 
 
-"""Create an anonymous serial loop resource for use in a single xmap axis.
-
-A use of :py:class:`SerialLoop` in :py:func:`xmap`'s ``axis_resources``
-extends the resource environment with a new serial loop with a unique
-unspecified name, that will only be used to partition the axis that
-used a given instance.
-
-This is unlike :py:func:`serial_loop`, which makes it possible to iterate
-jointly over chunks of multiple axes (with the usual requirement that they
-do not coincide in a named shape of any value in the program).
-
-Example::
-
-    # Processes `x` in a vectorized way, but in 20 micro-batches.
-    xmap(f, in_axes=['i'], out_axes=[i], axis_resources={'i': SerialLoop(20)})(x)
-
-    # Computes the result in a vectorized way, but in 400 micro-batches,
-    # once for each coordinate (0, 0) <= (i, j) < (20, 20). Each `SerialLoop`
-    # creates a fresh anonymous loop.
-    xmap(h, in_axes=(['i'], ['j']), out_axes=['i', 'j'],
-         axis_resources={'i': SerialLoop(20), 'j': SerialLoop(20)})(x, y)
-"""
 class SerialLoop:
+  """Create an anonymous serial loop resource for use in a single xmap axis.
+
+  A use of :py:class:`SerialLoop` in :py:func:`xmap`'s ``axis_resources``
+  extends the resource environment with a new serial loop with a unique
+  unspecified name, that will only be used to partition the axis that
+  used a given instance.
+
+  This is unlike :py:func:`serial_loop`, which makes it possible to iterate
+  jointly over chunks of multiple axes (with the usual requirement that they
+  do not coincide in a named shape of any value in the program).
+
+  Example::
+
+      # Processes `x` in a vectorized way, but in 20 micro-batches.
+      xmap(f, in_axes=['i'], out_axes=[i], axis_resources={'i': SerialLoop(20)})(x)
+
+      # Computes the result in a vectorized way, but in 400 micro-batches,
+      # once for each coordinate (0, 0) <= (i, j) < (20, 20). Each `SerialLoop`
+      # creates a fresh anonymous loop.
+      xmap(h, in_axes=(['i'], ['j']), out_axes=['i', 'j'],
+           axis_resources={'i': SerialLoop(20), 'j': SerialLoop(20)})(x, y)
+  """
   length: int
 
   def __init__(self, length):
@@ -233,6 +246,10 @@ def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
   In particular, all ``axis_names`` become valid resource names inside the
   managed block and can be used e.g. in the ``axis_resources`` argument of
   :py:func:`xmap`.
+
+  If you are compiling in multiple threads, make sure that the
+  ``with mesh`` context manager is inside the function that the threads will
+  execute.
 
   Args:
     devices: A NumPy ndarray object containing JAX device objects (as
@@ -613,7 +630,7 @@ def xmap(fun: Callable,
       closure=(out_axes_entries, out_axes_treedef))
 
     axis_resource_count = _get_axis_resource_count(
-        _positional_semantics, frozen_axis_resources, resource_env)
+        _positional_semantics.val, frozen_axis_resources, resource_env)
     for axis, size in axis_sizes.items():
       resources = axis_resource_count[axis]
       if size % resources.nglobal != 0:
@@ -648,7 +665,7 @@ def xmap(fun: Callable,
       backend=backend,
       spmd_in_axes=None,
       spmd_out_axes_thunk=None,
-      positional_semantics=_positional_semantics)
+      positional_semantics=_positional_semantics.val)
     return fun_flat, args_flat, params, in_tree, out_tree
 
   def verify_outputs(out_flat, out_tree, params):
