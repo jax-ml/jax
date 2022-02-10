@@ -427,6 +427,29 @@ class XMapTest(XMapTestCase):
     self.assertNotDeleted(y)
     self.assertDeleted(x)
 
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
+  @jtu.with_mesh([('x', 2)])
+  @jtu.ignore_warning(category=UserWarning,  # SPMD test generates warning.
+                      message="Some donated buffers were not usable*")
+  def testBufferDonationNamedShape(self):
+    axis_resources = {'i': 'x'}
+    # named in_aval, unnamed out_aval
+    f = xmap(lambda _: jnp.ones((2, 5)),
+             in_axes=['i', ...], out_axes=[...],
+             axis_resources=axis_resources,
+             donate_argnums=0)
+    shard = xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...],
+                 axis_resources=dict(axis_resources))
+    x = shard(jnp.zeros((4, 5)))
+    f(x)
+    if isinstance(self, SPMDTestMixin):
+      # The buffer should be deleted when using SPMD partitioner too, if this
+      # assertion starts failing then congratulations, you've fixed a bug!
+      # TODO(apaszke,tomhennigan): Xmap is possibly introducing an extra axis.
+      self.assertNotDeleted(x)
+    else:
+      self.assertDeleted(x)
+
   def testControlFlow(self):
     x = jnp.arange(5)
     xmap(lambda x: lax.fori_loop(0, 10, lambda _, x: lax.psum(x, 'i'), x),

@@ -286,6 +286,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(d)
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
+  def test_jit_donate_argnums_weak_type(self):
+    # input has weak-type, output does not have weak-type
+    move = self.jit(lambda x: x.astype(int), donate_argnums=0)
+    x = jnp.broadcast_to(2, (3,))
+    move(x)
+    self.assertDeleted(x)
+
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jnp_array_copy(self):
     # https://github.com/google/jax/issues/3412
 
