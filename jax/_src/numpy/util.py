@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections import OrderedDict
 import re
 import textwrap
 from typing import Callable, NamedTuple, Optional, Dict, Sequence
@@ -37,7 +36,7 @@ class ParsedDoc(NamedTuple):
   signature: str = ""
   summary: str = ""
   front_matter: str = ""
-  sections: Dict[str, str] = OrderedDict()
+  sections: Dict[str, str] = {}
 
 
 def _parse_numpydoc(docstr: Optional[str]) -> ParsedDoc:
@@ -79,7 +78,7 @@ def _parse_numpydoc(docstr: Optional[str]) -> ParsedDoc:
   section_list = _section_break.split(body)
   if not _section_break.match(section_list[0]):
     front_matter, *section_list = section_list
-  sections = OrderedDict((section.split('\n', 1)[0], section) for section in section_list)
+  sections = {section.split('\n', 1)[0]: section for section in section_list}
 
   return ParsedDoc(docstr=docstr, signature=signature, summary=summary,
                    front_matter=front_matter, sections=sections)
@@ -91,12 +90,18 @@ def _parse_parameters(body: str) -> Dict[str, str]:
   assert title == 'Parameters'
   assert underline and not underline.strip('-')
   parameters = _parameter_break.split(content)
-  return OrderedDict((p.partition(' : ')[0].partition(', ')[0], p) for p in parameters)
+  return {p.partition(' : ')[0].partition(', ')[0]: p for p in parameters}
+
+
+def _parse_extra_params(extra_params: str) -> Dict[str, str]:
+  """Parse the extra parameters passed to _wraps()"""
+  parameters = _parameter_break.split(extra_params.strip('\n'))
+  return {p.partition(' : ')[0].partition(', ')[0]: p for p in parameters}
 
 
 def _wraps(fun: Optional[Callable], update_doc: bool = True, lax_description: str = "",
            sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
-           skip_params: Sequence[str] = ()):
+           skip_params: Sequence[str] = (), extra_params: Optional[str]=None):
   """Specialized version of functools.wraps for wrapping numpy functions.
 
   This produces a wrapped function with a modified docstring. In particular, if
@@ -116,6 +121,9 @@ def _wraps(fun: Optional[Callable], update_doc: bool = True, lax_description: st
       ["Parameters", "returns", "References"]
     skip_params: a list of strings containing names of parameters accepted by the
       function that should be skipped in the parameter list.
+    extra_params: an optional string containing additional parameter descriptions.
+      When ``update_doc=True``, these will be added to the list of parameter
+      descriptions in the updated doc.
   """
   def wrap(op):
     docstr = getattr(fun, "__doc__", None)
@@ -127,6 +135,8 @@ def _wraps(fun: Optional[Callable], update_doc: bool = True, lax_description: st
           code = getattr(getattr(op, "__wrapped__", op), "__code__", None)
           # Remove unrecognized parameter descriptions.
           parameters = _parse_parameters(parsed.sections['Parameters'])
+          if extra_params:
+            parameters.update(_parse_extra_params(extra_params))
           parsed.sections['Parameters'] = (
             "Parameters\n"
             "----------\n" +
