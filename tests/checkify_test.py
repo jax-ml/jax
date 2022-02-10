@@ -41,7 +41,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return y1 + y2
 
     f = jax.jit(f) if jit else f
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     err, _ = checked_f(3., 4.)
     self.assertIs(err.get(), None)
@@ -61,7 +61,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return w
 
     f = jax.jit(f) if jit else f
-    checked_f = checkify.checkify(f, errors=checkify.index_errors)
+    checked_f = checkify.checkify(f, errors=checkify.index_checks)
 
     err, _ = checked_f(jnp.arange(3), 2)
     self.assertIs(err.get(), None)
@@ -79,7 +79,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return getattr(x.at[i], update_fn)(1.)
 
     f = jax.jit(f)
-    checked_f = checkify.checkify(f, errors=checkify.index_errors)
+    checked_f = checkify.checkify(f, errors=checkify.index_checks)
 
     err, _ = checked_f(jnp.arange(3), 2)
     self.assertIs(err.get(), None)
@@ -96,7 +96,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return x/y
 
     f = jax.jit(f) if jit else f
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     err, _ = checked_f(jnp.ones((3,)), jnp.ones((3,)))
     self.assertIs(err.get(), None)
@@ -120,7 +120,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return z
 
     f = jax.jit(f) if jit else f
-    checked_f = checkify.checkify(f, errors=checkify.automatic_errors)
+    checked_f = checkify.checkify(f, errors=checkify.automatic_checks)
 
     # no error
     err, _ = checked_f(jnp.array([0., jnp.inf, 2.]), 2)
@@ -146,7 +146,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return y * z
 
     f = jax.jit(f) if jit else f
-    checked_f = checkify.checkify(f, errors=checkify.automatic_errors)
+    checked_f = checkify.checkify(f, errors=checkify.automatic_checks)
 
     # both oob and nan error, but oob happens first
     err, _ = checked_f(jnp.array([0., 1., jnp.inf]), 5)
@@ -163,7 +163,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       y1 = jnp.sin(x1)
       y2 = jnp.sin(x2)
       return y1 + y2
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     xs = jnp.array([0., 2.])
     err, _ = checked_f(xs, xs)
@@ -182,7 +182,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
                       lambda: jnp.sin(x),
                       lambda: x)
 
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     err, _ = checked_f(3.)
     self.assertIs(err.get(), None)
@@ -203,7 +203,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     def f(xs):
       return lax.scan(scan_body, None, xs)
 
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     xs = jnp.array([0., 2.])
     err, (_, ch_outs) = checked_f(xs)
@@ -229,7 +229,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     def f(carry, xs):
       return lax.scan(scan_body, carry, xs)
 
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     carry, xs = 3., jnp.ones((2,))
     err, (ch_out_carry, ch_outs) = checked_f(carry, xs)
@@ -271,7 +271,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     def f(init_val):
       return lax.while_loop(while_cond, while_body, (init_val, 0.))
 
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     init_val = 1.
     err, ch_out = checked_f(init_val)
@@ -299,7 +299,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     def f(init_val):
       return lax.while_loop(while_cond, while_body, init_val)
 
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     init_val = 1.
     err, ch_out = checked_f(init_val)
@@ -325,7 +325,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     def f(init_val):
       return lax.while_loop(while_cond, lambda val: val-1, init_val)
 
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     # error on first cond
     init_val = 0.
@@ -355,7 +355,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     def f(cond_val, body_val):
       return lax.while_loop(while_cond, while_body, (0., cond_val, body_val))
 
-    checked_f = checkify.checkify(f, errors=checkify.float_errors)
+    checked_f = checkify.checkify(f, errors=checkify.float_checks)
 
     cond_val = jnp.inf
     body_val = 1.
@@ -384,8 +384,8 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       ("assert", checkify.user_checks, "must be negative!"),
       ("div", {checkify.ErrorCategory.DIV}, "divided by zero"),
       ("nan", {checkify.ErrorCategory.NAN}, "nan generated"),
-      ("oob", checkify.index_errors, "out-of-bounds indexing"),
-      ("automatic_errors", checkify.automatic_errors, "divided by zero"),
+      ("oob", checkify.index_checks, "out-of-bounds indexing"),
+      ("automatic_checks", checkify.automatic_checks, "divided by zero"),
     )
   @jtu.skip_on_devices("tpu")
   def test_enabled_errors(self, error_set, expected_error):
@@ -403,7 +403,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")
   def test_post_process_call(self):
-    @partial(checkify.checkify, errors=checkify.float_errors)
+    @partial(checkify.checkify, errors=checkify.float_checks)
     def g(x):
       @jax.jit
       def f(y):
@@ -415,7 +415,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu")
   def test_post_process_map(self):
-    @partial(checkify.checkify, errors=checkify.float_errors)
+    @partial(checkify.checkify, errors=checkify.float_checks)
     def g(x):
       @jax.pmap
       def f(y):
@@ -436,7 +436,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       (x,), (xdot,) = primals, tangents
       return sin(x), jnp.cos(x) * xdot
 
-    f = checkify.checkify(sin, errors=checkify.float_errors)
+    f = checkify.checkify(sin, errors=checkify.float_checks)
 
     err, y = f(3.)
     self.assertIsNone(err.get())
@@ -459,7 +459,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
 
     # Checkify-of-jvp adds checks (unlike jvp-of-checkify above).
     g = checkify.checkify(lambda x, xdot: jax.jvp(sin, (x,), (xdot,)),
-                          errors=checkify.float_errors)
+                          errors=checkify.float_checks)
     err, (y, ydot) = g(3., 1.)  # doesn't crash
     self.assertIsNone(err.get())  # no error
     self.assertNotEmpty(err.msgs) # but checks were added!
@@ -481,7 +481,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return jnp.cos(x2 / 2.) * g,
     sin.defvjp(sin_fwd, sin_bwd)
 
-    f = checkify.checkify(sin, errors=checkify.float_errors)
+    f = checkify.checkify(sin, errors=checkify.float_checks)
 
     # no differentiation, no error
     err, y = f(3.)
@@ -498,11 +498,11 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertEmpty(err.msgs)    # and no checks were added!
 
     # Checkify-of-vjp adds checks (unlike vjp-of-checkify above).
-    err, y = checkify.checkify(jax.grad(sin), errors=checkify.float_errors)(3.)
+    err, y = checkify.checkify(jax.grad(sin), errors=checkify.float_checks)(3.)
     self.assertIsNone(err.get())   # no error
     self.assertNotEmpty(err.msgs)  # but checks were added!
     err, y = checkify.checkify(jax.grad(sin),
-                               errors=checkify.float_errors)(jnp.inf)
+                               errors=checkify.float_checks)(jnp.inf)
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), 'nan generated by primitive sin')
 
