@@ -557,7 +557,8 @@ def compile_or_get_cached(backend, computation, compile_options):
   from jax.experimental.compilation_cache import compilation_cache as cc
 
   if isinstance(computation, ir.Module):
-    module_name = computation.operation.name
+    sym_name = computation.operation.attributes['sym_name']
+    module_name = ir.StringAttr(sym_name).value
     computation = mlir.module_to_string(computation)
   else:
     module_name = computation.name()
