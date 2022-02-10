@@ -315,7 +315,7 @@ def checkify_fun_to_jaxpr(f, error, enabled_errors, in_avals):
 ## assert primitive
 
 def check(pred: Bool, msg: str) -> None:
-  """Check a condition, add an error with msg if condition is False.
+  """Check a predicate, add an error with msg if predicate is False.
 
   This is an effectful operation, and can't be staged (jitted/scanned/...).
   Before staging a function with checks, ``checkify`` it!
@@ -352,40 +352,42 @@ def is_scalar_pred(pred) -> bool:
           pred.dtype == jnp.dtype('bool'))
 
 def check_error(error: Error) -> None:
-  """Raise an Exception if `error` represents a failure. Functionalized by `checkify`.
+  """Raise an Exception if ``error`` represents a failure. Functionalized by ``checkify``.
 
   The semantics of this function are equivalent to:
 
-    def check_error(err: Error) -> None:
-      err.throw()  # can raise ValueError Exception
+  >>> def check_error(err: Error) -> None:
+  ...   err.throw()  # can raise ValueError
 
-  But unlike that implementation, `check_error` can be functionalized using
-  the `checkify` transformation.
+  But unlike that implementation, ``check_error`` can be functionalized using
+  the ``checkify`` transformation.
 
-  This function is similar to `check` but with a different signature: whereas
-  `check` takes as arguments a boolean predicate and a new error message
-  string, this function takes an `Error` value as argument. Both `check` and
-  this function raise a Python Exception on failure (a side-effect), and thus
-  cannot be staged out by `jit`, `pmap`, `scan`, etc. Both also can be
-  functionalized by using `checkify`.
+  This function is similar to ``check`` but with a different signature: whereas
+  ``check`` takes as arguments a boolean predicate and a new error message
+  string, this function takes an ``Error`` value as argument. Both ``check``
+  and this function raise a Python Exception on failure (a side-effect), and
+  thus cannot be staged out by ``jit``, ``pmap``, ``scan``, etc. Both also can
+  be functionalized by using ``checkify``.
 
-  But unlike `check`, this function is like a direct inverse of `checkify`:
-  whereas `checkify` takes as input a function which can raise a Python
-  Exception and produces a new function without that effect but which
-  produces an `Error` value as output, this `check_error` function can accept
-  an `Error` value as input and can produce the side-effect of raising an
-  Exception. That is, while `checkify` goes from functionalizable Exception
-  effect to error value, this `check_error` goes from error value to
+  But unlike ``check``, this function is like a direct inverse of ``checkify``:
+  whereas ``checkify`` takes as input a function which can raise a Python
+  Exception and produces a new function without that effect but which produces
+  an ``Error`` value as output, this ``check_error`` function can accept an
+  ``Error`` value as input and can produce the side-effect of raising an
+  Exception. That is, while ``checkify`` goes from functionalizable Exception
+  effect to error value, this ``check_error`` goes from error value to
   functionalizable Exception effect.
 
-  `check_error` is useful when you want to turn checks represented by an
-  `Error` value (produced by functionalizing `check`s via `checkify`) back
-  into Python Exceptions.
+  ``check_error`` is useful when you want to turn checks represented by an
+  ``Error`` value (produced by functionalizing ``checks`` via ``checkify``)
+  back into Python Exceptions.
 
   Args:
-    error: Error to check
+    error: Error to check.
 
-  For example:
+  For example, you might want to functionalize part of your program through
+  checkify, stage out your functionalized code through ``jit``, then re-inject
+  your error value outside of the ``jit``:
 
   >>> import jax
   >>> from jax.experimental import checkify
@@ -663,10 +665,13 @@ error_checks[assert_p] = assert_discharge_rule
 
 ErrorCategory = enum.Enum('ErrorCategory', ['NAN', 'OOB', 'DIV', 'USER_CHECK'])
 
-float_errors = frozenset({ErrorCategory.NAN, ErrorCategory.DIV})
-index_errors = frozenset({ErrorCategory.OOB})
-automatic_errors = float_errors | index_errors
 user_checks = frozenset({ErrorCategory.USER_CHECK})
+nan_checks = frozenset({ErrorCategory.NAN})
+index_checks = frozenset({ErrorCategory.OOB})
+div_checks = frozenset({ErrorCategory.DIV})
+float_checks = nan_checks | div_checks
+automatic_checks = float_checks | index_checks
+all_checks = automatic_checks | user_checks
 
 Out = TypeVar('Out')
 
@@ -683,31 +688,35 @@ def checkify(fun: Callable[..., Out],
   The returned function will return an Error object `err` along with the output
   of the original function. ``err.get()`` will either return ``None`` (if no
   error occurred) or a string containing an error message. This error message
-  will correspond to the first error which occurred.
+  will correspond to the first error which occurred. ``err.throw()`` will raise
+  a ValueError with the error message if an error occurred.
 
-  The kinds of errors are:
-    - ErrorCategory.USER_CHECK: a ``checkify.check`` predicate evaluated
-      to False.
-    - ErrorCategory.NAN: a floating-point operation generated a NaN value
+  By default only user-added ``checkify.check`` assertions are enabled. You can
+  enable automatic checks through the ``errors`` argument.
+
+  The automatic check sets which can be enabled, and when an error is generated:
+    - ``user_checks``: a ``checkify.check`` evaluated to False.
+    - ``nan_checks``: a floating-point operation generated a NaN value
       as output.
-    - ErrorCategory.DIV: division by zero
-    - ErrorCategory.OOB: an indexing operation was out-of-bounds
+    - ``div_checks``: a division by zero.
+    - ``index_checks``: an index was out-of-bounds.
 
   Multiple categories can be enabled together by creating a `Set` (eg.
-  ``errors={ErrorCategory.NAN, ErrorCategory.OOB}``).
+  ``errors={ErrorCategory.NAN, ErrorCategory.OOB}``). Multiple sets can be
+  re-combined (eg. ``errors=float_checks|user_checks``)
 
   Args:
     fun: Callable which can contain user checks (see ``check``).
     errors: A set of ErrorCategory values which defines the set of enabled
-      checks. By default only explicit ``check``s are enabled
-      (``{ErrorCategory.USER_CHECK}``). You can also for example enable NAN and
-      DIV errors through passing the ``checkify.float_errors`` set, or for
+      checks. By default only explicit ``checks`` are enabled
+      (``user_checks``). You can also for example enable NAN and
+      DIV errors by passing the ``float_checks`` set, or for
       example combine multiple sets through set operations
-      (``checkify.float_errors|checkify.user_checks``)
+      (``float_checks | user_checks``)
   Returns:
     A function which accepts the same arguments as ``fun`` and returns as output
-    a pair where the first element is an ``Error`` value, representing any
-    failed ``check``s, and the second element is the original output of ``fun``.
+    a pair where the first element is an ``Error`` value, representing the first
+    failed ``check``, and the second element is the original output of ``fun``.
 
   For example:
 
@@ -719,7 +728,7 @@ def checkify(fun: Callable[..., Out],
     ... def f(x):
     ...   y = jnp.sin(x)
     ...   return x+y
-    >>> err, out = checkify.checkify(f, errors=checkify.float_errors)(jnp.inf)
+    >>> err, out = checkify.checkify(f, errors=checkify.float_checks)(jnp.inf)
     >>> err.throw()  # doctest: +IGNORE_EXCEPTION_DETAIL
     Traceback (most recent call last):
       ...
