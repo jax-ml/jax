@@ -14,7 +14,7 @@
 
 from setuptools import setup, find_packages
 
-_current_jaxlib_version = '0.1.76'
+_current_jaxlib_version = '0.3.0'
 # The following should be updated with each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.1.76'
 _available_cuda_versions = ['11']
@@ -54,7 +54,7 @@ setup(
         'cpu': [f'jaxlib=={_current_jaxlib_version}'],
 
         # Used only for CI builds that install JAX from github HEAD.
-        '_ci': [f'jaxlib=={_latest_jaxlib_version_on_pypi}'],
+        'ci': [f'jaxlib=={_latest_jaxlib_version_on_pypi}'],
 
         # Cloud TPU VM jaxlib can be installed via:
         # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_releases.html

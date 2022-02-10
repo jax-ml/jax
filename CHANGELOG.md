@@ -8,21 +8,27 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.29 (Unreleased)
+## jax 0.3.0 (Feb 10, 2022)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.28...main).
 
-## jax 0.2.28 (Feb 1 2022)
+* Changes
+  * jax version has been bumped to 0.3.0. Please see the [design doc](https://jax.readthedocs.io/en/latest/design_notes/jax_versioning.html)
+    for the explanation.
+
+## jaxlib 0.3.0 (Feb 10, 2022)
+* Changes
+  * Bazel 5.0.0 is now required to build jaxlib.
+  * jaxlib version has been bumped to 0.3.0. Please see the [design doc](https://jax.readthedocs.io/en/latest/design_notes/jax_versioning.html)
+    for the explanation.
+
+## jax 0.2.28 (Feb 1, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.27...main).
+  commits](https://github.com/google/jax/compare/jax-v0.2.27...jax-v0.2.28).
   * `jax.jit(f).lower(...).compiler_ir()` now defaults to the MHLO dialect if no
     `dialect=` is passed.
   * The `jax.jit(f).lower(...).compiler_ir(dialect='mhlo')` now returns an MLIR
     `ir.Module` object instead of its string representation.
-
-## jaxlib 0.1.77 (Unreleased)
-* Changes
-  * Bazel 5.0.0 is now required to build jaxlib.
 
 ## jaxlib 0.1.76 (Jan 27, 2022)
 
