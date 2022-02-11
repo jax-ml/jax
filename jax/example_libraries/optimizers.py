@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Optimizers for use with JAX.
+"""Examples of how to write optimizers with JAX.
+
+You likely do not mean to import this module! The optimizers in this library
+are intended as examples only. If you are looking for a fully featured optimizer
+library, we recommend `optax` (https://github.com/deepmind/optax).
 
 This module contains some convenient optimizer definitions, specifically
 initialization and update functions, which can be used with ndarrays or
