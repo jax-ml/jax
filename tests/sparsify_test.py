@@ -30,7 +30,6 @@ from jax.experimental.sparse.transform import (
 config.parse_flags_with_absl()
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class SparsifyTest(jtu.JaxTestCase):
   @classmethod
   def sparsify(cls, f):
