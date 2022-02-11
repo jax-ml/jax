@@ -3852,6 +3852,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = jnp.array(a)
     self.assertEqual(ans, 3.)
 
+  def testJaxArrayOps(self):
+    class arraylike:
+      def __jax_array__(self):
+        return jnp.array(3.)
+    self.assertArraysEqual(arraylike() * jnp.arange(10), jnp.array(3.) * jnp.arange(10))
+
   def testMemoryView(self):
     self.assertAllClose(
         jnp.array(bytearray(b'\x2a')),
