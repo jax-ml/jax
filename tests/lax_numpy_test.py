@@ -492,13 +492,12 @@ def _dtypes_are_compatible_for_bitwise_ops(args):
       or (width(x) == 32 and width(y) == 64 and is_signed(y)))
 
 def _shapes_are_broadcast_compatible(shapes):
-  accumulator = np.zeros([])
-  for shape in shapes:
-    try:
-      accumulator = accumulator + np.zeros(shape)
-    except ValueError:
-      return False
-  return True
+  try:
+    lax.broadcast_shapes(*(() if s in scalar_shapes else s for s in shapes))
+  except ValueError:
+    return False
+  else:
+    return True
 
 def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
