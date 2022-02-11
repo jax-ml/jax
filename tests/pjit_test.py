@@ -74,6 +74,7 @@ def check_1d_2d_mesh(f, set_mesh):
 
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 1)])
@@ -634,6 +635,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(f(1, 'bye'), 5)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class GDAPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
@@ -951,6 +953,7 @@ def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PJitErrorTest(jtu.JaxTestCase):
   @check_1d_2d_mesh(set_mesh=True)
   def testNonDivisibleArgs(self, mesh, resources):
@@ -1178,6 +1181,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       f(x)
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class UtilTest(jtu.JaxTestCase):
 
   def testOpShardingRoundTrip(self):

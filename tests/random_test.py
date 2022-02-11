@@ -56,6 +56,7 @@ PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
               ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PrngTest(jtu.JaxTestCase):
 
   def testThreefry2x32(self):
@@ -314,6 +315,7 @@ class PrngTest(jtu.JaxTestCase):
                            lambda: keys[0, 1, None, 2])
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomTest(jtu.JaxTestCase):
 
   def _CheckCollisions(self, samples, nbits):
@@ -1224,6 +1226,7 @@ double_threefry_prng_impl = prng.PRNGImpl(
 
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomWithCustomPRNGTest(LaxRandomTest):
   def seed_prng(self, seed):
     return prng.seed_with_impl(double_threefry_prng_impl, seed)
@@ -1252,6 +1255,7 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
 
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def seed_prng(self, seed):
     return random.rbg_key(seed)

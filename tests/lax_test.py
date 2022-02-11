@@ -181,6 +181,7 @@ LAX_OPS = [
 ]
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
 
@@ -2668,6 +2669,7 @@ class LaxTest(jtu.JaxTestCase):
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
     # check casting to ndarray works
@@ -2870,6 +2872,7 @@ class LazyConstantTest(jtu.JaxTestCase):
         np.log1p(np.float32(1e-5)), lax.log1p(np.complex64(1e-5)))
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxNamedShapeTest(jtu.JaxTestCase):
 
   def test_abstract_eval(self):

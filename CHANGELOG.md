@@ -29,14 +29,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     `dialect=` is passed.
   * The `jax.jit(f).lower(...).compiler_ir(dialect='mhlo')` now returns an MLIR
     `ir.Module` object instead of its string representation.
-  * `jax.test_util.JaxTestCase` now sets `jax_numpy_rank_promotion='raise'` by
-    default. To recover the previous behavior, use the `jax.test_util.with_config`
-    decorator:
-    ```python
-    @jtu.with_config(jax_numpy_rank_promotion='allow')
-    class MyTest(jtu.JaxTestCase):
-      ...
-    ```
 
 ## jaxlib 0.1.76 (Jan 27, 2022)
 

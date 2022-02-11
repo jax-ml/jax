@@ -39,6 +39,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class ShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -276,6 +277,7 @@ class ShardedJitTest(jtu.JaxTestCase):
 
 
 # TODO(skye): add more error tests
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class ShardedJitErrorsTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -298,6 +300,7 @@ class ShardedJitErrorsTest(jtu.JaxTestCase):
 
 
 # Tests that don't need a TPU to run.
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class ShardedJitTestNoTpu(jtu.JaxTestCase):
 
   def testTranslationRule(self):
@@ -326,7 +329,7 @@ class ShardedJitTestNoTpu(jtu.JaxTestCase):
     # Annotation from sharded_jit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
-
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PmapOfShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
