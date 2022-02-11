@@ -7401,7 +7401,7 @@ class CleanupTest(jtu.JaxTestCase):
     assert core.trace_state_clean()
 
 
-@jtu.with_config(jax_dynamic_shapes=True)
+@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeTest(jtu.JaxTestCase):
   def test_basic_staging(self):
     def f(x, y):
