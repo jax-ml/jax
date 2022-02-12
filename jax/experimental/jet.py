@@ -104,13 +104,13 @@ def jet(fun, primals, series):
   :func:`jet` returns the Taylor coefficients of :math:`f(x(t)) = \sin(t^3)`:
 
   >>> print(y0,  np.sin(x0))
-  0.12 0.12
+  0.12467473 0.12467473
 
   >>> print(y1, np.cos(x0) * x1)
-  0.74 0.74
+  0.7441479 0.74414825
 
   >>> print(y2, -np.sin(x0) * x1 +  x2)
-  2.9099998 2.9099998
+  2.9064622 2.906494
   """
   try:
     order, = set(map(len, series))
