@@ -1373,6 +1373,20 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
       jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=1, atol=tol,
                       rtol=tol)
+  @parameterized.named_parameters(
+        jtu.cases_from_list({
+            "testcase_name":
+            "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+            "shape": shape, "dtype": dtype
+        } for shape in [(4, 4), (15, 15), (50, 50), (100, 100)]
+                            for dtype in float_types + complex_types))
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testSchur(self, shape, dtype):
+      rng = jtu.rand_default(self.rng())
+      args_maker = lambda: [rng(shape, dtype)]
+
+      self._CheckAgainstNumpy(osp.linalg.schur, jsp.linalg.schur, args_maker)
+      self._CompileAndCheck(jsp.linalg.schur, args_maker)
 
 @jtu.with_config(jax_numpy_rank_promotion='raise')
 class LaxLinalgTest(jtu.JaxTestCase):

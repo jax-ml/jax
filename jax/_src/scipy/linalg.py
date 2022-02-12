@@ -103,7 +103,18 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
   del overwrite_a, overwrite_b, turbo, check_finite
   return _eigh(a, b, lower, eigvals_only, eigvals, type)
 
+@partial(jit, static_argnames=('output',))
+def _schur(a, output):
+  if output == "complex":
+    a = a.astype(jnp.result_type(a.dtype, 0j))
+  return lax_linalg.schur(a)
 
+@_wraps(scipy.linalg.schur)
+def schur(a, output='real'):
+  if output not in ('real', 'complex'):
+    raise ValueError(
+      "Expected 'output' to be either 'real' or 'complex', got output={}.".format(output))
+  return _schur(a, output)
 
 @_wraps(scipy.linalg.inv)
 def inv(a, overwrite_a=False, check_finite=True):
