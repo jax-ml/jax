@@ -12,6 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+r"""Jet is an experimental module for higher-order automatic differentiation
+  that does not rely on repeated first-order automatic differentiation.
+
+  How? Through the propagation of truncated Taylor polynomials.
+  Let :math:`x: \mathbb{R} \rightarrow \mathbb{R}^n` be the Taylor polynomial
+
+  .. math:: x(t) := x_0 + x_1 t + \frac{x_2}{2!} t^2 + ... + \frac{1}{d!} x_d t^d.
+
+  For some function :math:`f: \mathbb{R}^n \rightarrow \mathbb{R}^m`,
+  you can use :func:`jet` to compute the
+  Taylor polynomial
+
+  .. math:: y(t) := y_0 + y_1 t + \frac{y_2}{2!} t^2 + ... + \frac{1}{d!} y_d t^d.
+
+  which approximates :math:`f(x(\cdot)):\mathbb{R} \rightarrow \mathbb{R}^m`,
+  and relates to :math:`x(t)` and :math:`f(z)` through
+
+  .. math::
+    y_k = \frac{d^k}{dt^k}f(x(t_0)), \quad k=0,...,d.
+
+  More specifically, :func:`jet` computes
+
+  .. math::
+    y_0, (y_1, . . . , y_d) = \texttt{jet} (f, x_0, (x_1, . . . , x_d))
+
+  and can thus be used for high-order
+  automatic differentiation of :math:`f`.
+  Details are explained in
+  `this paper <https://openreview.net/forum?id=SkxEF3FNPH>`__.
+
+  Note:
+    Help improve :func:`jet` by contributing
+    `outstanding primitive rules <https://github.com/google/jax/issues/2431>`__.
+"""
+
 from typing import Callable
 
 from functools import partial
@@ -32,6 +67,51 @@ from jax.custom_derivatives import custom_jvp_call_jaxpr_p
 from jax import lax
 
 def jet(fun, primals, series):
+  r"""Taylor-mode higher-order automatic differentiation.
+
+  Args:
+    fun: Function to be differentiated. Its arguments should be arrays, scalars,
+      or standard Python containers of arrays or scalars. It should return an
+      array, scalar, or standard Python container of arrays or scalars.
+    primals: The primal values at which the Taylor approximation of ``fun`` should be
+      evaluated. Should be either a tuple or a list of arguments,
+      and its length should be equal to the number of positional parameters of
+      ``fun``.
+    series: Higher order Taylor-series-coefficients.
+      Together, `primals` and `series` make up a truncated Taylor polynomial.
+      Should be either a tuple or a list of tuples or lists,
+      and its length dictates the degree of the truncated Taylor polynomial.
+
+  Returns:
+    A ``(primals_out, series_out)`` pair, where ``primals_out`` is ``fun(*primals)``,
+    and together, ``primals_out`` and ``series_out`` are a
+    truncated Taylor polynomial of :math:`f(x(\cdot))`.
+    The ``primals_out`` value has the same Python tree structure as ``primals``,
+    and the ``series_out`` value the same Python tree structure as ``series``.
+
+  For example:
+
+  >>> import jax
+  >>> import jax.numpy as np
+
+  Consider the function :math:`x(t) = t^3`, :math:`t_0 = 0.5`,
+  and the first few Taylor coefficients
+  :math:`x_0=t_0^3`, :math:`x_1=3t_0^2`, and :math:`x_2=6t_0`.
+
+  >>> x0, x1, x2 = 0.5**3., 3.*0.5**2., 6.*0.5
+  >>> y0, (y1, y2) =  jet(np.sin, (x0,), ((x1, x2),))
+
+  :func:`jet` returns the Taylor coefficients of :math:`f(x(t)) = \sin(t^3)`:
+
+  >>> print(y0,  np.sin(x0))
+  0.12 0.12
+
+  >>> print(y1, np.cos(x0) * x1)
+  0.74 0.74
+
+  >>> print(y2, -np.sin(x0) * x1 +  x2)
+  2.9099998 2.9099998
+  """
   try:
     order, = set(map(len, series))
   except ValueError:

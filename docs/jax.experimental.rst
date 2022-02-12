@@ -19,6 +19,7 @@ Experimental Modules
     jax.experimental.maps
     jax.experimental.pjit
     jax.experimental.sparse
+    jax.experimental.jet
 
 Experimental APIs
 -----------------
