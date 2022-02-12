@@ -606,3 +606,53 @@ def polar(a, side='right', method='qdwh', eps=None, maxiter=50):
    unitary, posdef, _ = lax_polar.polar(a, side=side, method=method, eps=eps,
                                         maxiter=maxiter)
    return unitary, posdef
+
+@jit
+def _sqrtm_triu(T):
+  """
+  Implements Björck, Å., & Hammarling, S. (1983).
+      "A Schur method for the square root of a matrix". Linear algebra and
+      its applications", 52, 127-140.
+  """
+  diag = jnp.sqrt(jnp.diag(T))
+  n = diag.size
+  U = jnp.diag(diag)
+
+  def i_loop(l, data):
+    j, U = data
+    i = j - 1 - l
+    s = lax.fori_loop(i + 1, j, lambda k, val: val + U[i, k] * U[k, j], 0.0)
+    value = jnp.where(T[i, j] == s, 0.0,
+                      (T[i, j] - s) / (diag[i] + diag[j]))
+    return j, U.at[i, j].set(value)
+
+  def j_loop(j, U):
+    _, U = lax.fori_loop(0, j, i_loop, (j, U))
+    return U
+
+  U = lax.fori_loop(0, n, j_loop, U)
+  return U
+
+@jit
+def _sqrtm(A):
+  T, Z = schur(A, output='complex')
+  sqrt_T = _sqrtm_triu(T)
+  return jnp.matmul(jnp.matmul(Z, sqrt_T, precision=lax.Precision.HIGHEST),
+                    jnp.conj(Z.T), precision=lax.Precision.HIGHEST)
+
+@_wraps(scipy.linalg.sqrtm,
+        lax_description="""
+This differs from ``scipy.linalg.sqrtm`` in that the return type of
+``jax.scipy.linalg.sqrtm`` is always ``complex64`` for 32-bit input,
+and ``complex128`` for 64-bit input.
+
+This function implements the complex Schur method described in [A]. It does not use recursive blocking
+to speed up computations as a Sylvester Equation solver is not available yet in JAX.
+
+[A] Björck, Å., & Hammarling, S. (1983).
+    "A Schur method for the square root of a matrix". Linear algebra and its applications, 52, 127-140.
+""")
+def sqrtm(A, blocksize=1):
+  if blocksize > 1:
+      raise NotImplementedError("Blocked version is not implemented yet.")
+  return _sqrtm(A)
