@@ -26,7 +26,7 @@ r"""Jet is an experimental module for higher-order automatic differentiation
 
   .. math:: y(t) := y_0 + y_1 t + \frac{y_2}{2!} t^2 + ... + \frac{1}{d!} y_d t^d.
 
-  which approximates :math:`f(x(\cdot)):\mathbb{R} \rightarrow \mathbb{R}^m`,
+  corresponding to :math:`f(x(\cdot)):\mathbb{R} \rightarrow \mathbb{R}^m`,
   and relates to :math:`x(t)` and :math:`f(z)` through
 
   .. math::
