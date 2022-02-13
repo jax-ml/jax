@@ -36,7 +36,7 @@ where, for example:
 * ``u4`` means :code:`np.uint32`,
 * ``bf`` means :code:`np.bfloat16`,
 * ``f2`` means :code:`np.float16`,
-* ``c8`` means :code:`np.complex128`,
+* ``c8`` means :code:`np.complex64`,
 * ``i*`` means Python :code:`int` or weakly-typed :code:`int`,
 * ``f*`` means Python :code:`float` or weakly-typed :code:`float`, and
 * ``c*`` means Python :code:`complex` or weakly-typed :code:`complex`.
