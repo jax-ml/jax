@@ -16,26 +16,31 @@ r"""Jet is an experimental module for higher-order automatic differentiation
   that does not rely on repeated first-order automatic differentiation.
 
   How? Through the propagation of truncated Taylor polynomials.
-  Let :math:`x: \mathbb{R} \rightarrow \mathbb{R}^n` be the Taylor polynomial
+  Consider a function :math:`f = g \circ h`, some point :math:`x`
+  and some offset :math:`v`.
+  First-order automatic differentiation (such as :func:`jax.jvp`)
+  computes the pair :math:`(f(x), \partial f(x)[v])` from the the pair
+  :math:`(h(x), \partial h(x)[v])`.
 
-  .. math:: x(t) := x_0 + x_1 t + \frac{1}{2!} x_2 t^2 + ... + \frac{1}{d!} x_d t^d.
-
-  For some function :math:`f: \mathbb{R}^n \rightarrow \mathbb{R}^m`,
-  you can use :func:`jet` to compute the
-  Taylor polynomial
-
-  .. math:: y(t) := y_0 + y_1 t + \frac{1}{2!} y_2 t^2 + ... + \frac{1}{d!} y_d t^d.
-
-  corresponding to :math:`f(x(\cdot)):\mathbb{R} \rightarrow \mathbb{R}^m`,
-  and relates to :math:`x(t)` and :math:`f(z)` through
+  :func:`jet` implements the higher-order analogue:
+  Given the tuple
 
   .. math::
-    y_k = \partial^k f(x(t_0)), \quad k=0,...,d.
+    (h_0, ... h_K) :=
+    (h(x), \partial h(x)[v], \partial^2 h(x)[v], ..., \partial^K h(x)[v,...,v]),
+
+  which represents a :math:`K`-th order Taylor approximation
+  of :math:`h` at :math:`x`, :func:`jet` returns a :math:`K`-th order
+  Taylor approximation of :math:`f` at :math:`x`,
+
+  .. math::
+    (f_0, ..., f_K) :=
+    (f(x), \partial f(x)[v], \partial^2 f(x)[v], ..., \partial^K f(x)[v,...,v]).
 
   More specifically, :func:`jet` computes
 
   .. math::
-    y_0, (y_1, . . . , y_d) = \texttt{jet} (f, x_0, (x_1, . . . , x_d))
+    f_0, (f_1, . . . , f_K) = \texttt{jet} (f, h_0, (h_1, . . . , h_K))
 
   and can thus be used for high-order
   automatic differentiation of :math:`f`.
@@ -85,7 +90,7 @@ def jet(fun, primals, series):
   Returns:
     A ``(primals_out, series_out)`` pair, where ``primals_out`` is ``fun(*primals)``,
     and together, ``primals_out`` and ``series_out`` are a
-    truncated Taylor polynomial of :math:`f(x(\cdot))`.
+    truncated Taylor polynomial of :math:`f(h(\cdot))`.
     The ``primals_out`` value has the same Python tree structure as ``primals``,
     and the ``series_out`` value the same Python tree structure as ``series``.
 
@@ -94,22 +99,24 @@ def jet(fun, primals, series):
   >>> import jax
   >>> import jax.numpy as np
 
-  Consider the function :math:`x(t) = t^3`, :math:`t_0 = 0.5`,
+  Consider the function :math:`h(z) = z^3`, :math:`x = 0.5`,
   and the first few Taylor coefficients
-  :math:`x_0=t_0^3`, :math:`x_1=3t_0^2`, and :math:`x_2=6t_0`.
+  :math:`h_0=x^3`, :math:`h_1=3x^2`, and :math:`h_2=6x`.
+  Let :math:`f(y) = \sin(y)`.
 
-  >>> x0, x1, x2 = 0.5**3., 3.*0.5**2., 6.*0.5
-  >>> y0, (y1, y2) =  jet(np.sin, (x0,), ((x1, x2),))
+  >>> h0, h1, h2 = 0.5**3., 3.*0.5**2., 6.*0.5
+  >>> f, df, ddf = np.sin, np.cos, lambda *args: -np.sin(*args)
 
-  :func:`jet` returns the Taylor coefficients of :math:`f(x(t)) = \sin(t^3)`:
+  :func:`jet` returns the Taylor coefficients of :math:`f(h(z)) = \sin(z^3)`:
 
-  >>> print(y0,  np.sin(x0))
+  >>> f0, (f1, f2) =  jet(f, (h0,), ((h1, h2),))
+  >>> print(f0,  f(h0))
   0.12467473 0.12467473
 
-  >>> print(y1, np.cos(x0) * x1)
+  >>> print(f1, df(h0) * h1)
   0.7441479 0.74414825
 
-  >>> print(y2, -np.sin(x0) * x1 +  x2)
+  >>> print(f2, ddf(h0) * h1 + h2)
   2.9064622 2.906494
   """
   try:
