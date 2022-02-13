@@ -27,7 +27,7 @@ r"""Jet is an experimental module for higher-order automatic differentiation
 
   .. math::
     (h_0, ... h_K) :=
-    (h(x), \partial h(x)[v], \partial^2 h(x)[v], ..., \partial^K h(x)[v,...,v]),
+    (h(x), \partial h(x)[v], \partial^2 h(x)[v, v], ..., \partial^K h(x)[v,...,v]),
 
   which represents a :math:`K`-th order Taylor approximation
   of :math:`h` at :math:`x`, :func:`jet` returns a :math:`K`-th order
@@ -35,7 +35,7 @@ r"""Jet is an experimental module for higher-order automatic differentiation
 
   .. math::
     (f_0, ..., f_K) :=
-    (f(x), \partial f(x)[v], \partial^2 f(x)[v], ..., \partial^K f(x)[v,...,v]).
+    (f(x), \partial f(x)[v], \partial^2 f(x)[v, v], ..., \partial^K f(x)[v,...,v]).
 
   More specifically, :func:`jet` computes
 
