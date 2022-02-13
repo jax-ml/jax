@@ -18,19 +18,19 @@ r"""Jet is an experimental module for higher-order automatic differentiation
   How? Through the propagation of truncated Taylor polynomials.
   Let :math:`x: \mathbb{R} \rightarrow \mathbb{R}^n` be the Taylor polynomial
 
-  .. math:: x(t) := x_0 + x_1 t + \frac{x_2}{2!} t^2 + ... + \frac{1}{d!} x_d t^d.
+  .. math:: x(t) := x_0 + x_1 t + \frac{1}{2!} x_2 t^2 + ... + \frac{1}{d!} x_d t^d.
 
   For some function :math:`f: \mathbb{R}^n \rightarrow \mathbb{R}^m`,
   you can use :func:`jet` to compute the
   Taylor polynomial
 
-  .. math:: y(t) := y_0 + y_1 t + \frac{y_2}{2!} t^2 + ... + \frac{1}{d!} y_d t^d.
+  .. math:: y(t) := y_0 + y_1 t + \frac{1}{2!} y_2 t^2 + ... + \frac{1}{d!} y_d t^d.
 
   corresponding to :math:`f(x(\cdot)):\mathbb{R} \rightarrow \mathbb{R}^m`,
   and relates to :math:`x(t)` and :math:`f(z)` through
 
   .. math::
-    y_k = \frac{d^k}{dt^k}f(x(t_0)), \quad k=0,...,d.
+    y_k = \partial^k f(x(t_0)), \quad k=0,...,d.
 
   More specifically, :func:`jet` computes
 
@@ -40,7 +40,7 @@ r"""Jet is an experimental module for higher-order automatic differentiation
   and can thus be used for high-order
   automatic differentiation of :math:`f`.
   Details are explained in
-  `this paper <https://openreview.net/forum?id=SkxEF3FNPH>`__.
+  `these notes <https://github.com/google/jax/files/6717197/jet.pdf>`__.
 
   Note:
     Help improve :func:`jet` by contributing
