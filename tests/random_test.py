@@ -1128,6 +1128,14 @@ class LaxRandomTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       random.choice(key, 5, 2, replace=True)
 
+  def testMoreSamplesThanNonZeroProbabilitiesReplaceFalseError(self):
+    key = self.seed_prng(0)
+    prob = jnp.zeros(5)
+    prob = prob.at[4].set(1)
+    with self.assertRaises(ValueError):
+      random.choice(key, 5, shape=(2,), replace=False, p=prob)
+    self.assertEqual(random.choice(key, 5, shape=(1,), replace=False, p=prob), 4)
+
   def test_eval_shape_big_random_array(self):
     def f(x):
       return random.normal(self.seed_prng(x), (int(1e12),))

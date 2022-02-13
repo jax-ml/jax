@@ -488,6 +488,8 @@ def choice(key: KeyArray,
       r = p_cuml[-1] * (1 - uniform(key, shape))
       ind = jnp.searchsorted(p_cuml, r)
     else:
+      if np.count_nonzero(p) < n_draws:
+        raise ValueError("Fewer non-zero entries in p than size")
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
       g = -gumbel(key, (n_inputs,)) - jnp.log(p)
       ind = jnp.argsort(g)[:n_draws]
