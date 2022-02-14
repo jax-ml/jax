@@ -583,6 +583,13 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "foo"):
       f(False)
 
+  def test_cond_of_named_call(self):
+    def g(x):
+      branch = jax.named_call(lambda x: x)
+      out = jax.lax.cond(True, branch, branch, x)
+      return out
+
+    checkify.checkify(g)(0.)  # does not crash
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
