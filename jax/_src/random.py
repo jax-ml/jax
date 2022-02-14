@@ -435,6 +435,11 @@ def choice(key: KeyArray,
            axis: int = 0) -> jnp.ndarray:
   """Generates a random sample from a given array.
 
+  .. warning::
+    If ``p`` has fewer non-zero elements than the requested number of samples,
+    as specified in ``shape``, and ``replace=False``, the output of this
+    function is ill-defined. Please make sure to use appropriate inputs.
+
   Args:
     key: a PRNG key used as the random key.
     a : array or int. If an ndarray, a random sample is generated from
