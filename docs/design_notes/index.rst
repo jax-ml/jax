@@ -8,3 +8,4 @@ Design Notes
    jax_versioning
    omnistaging
    prng
+   type_promotion
