@@ -30,7 +30,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class EinsumTest(jtu.JaxTestCase):
 
   def _check(self, s, *ops):

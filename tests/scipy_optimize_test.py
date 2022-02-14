@@ -64,7 +64,6 @@ def zakharovFromIndices(x, ii):
   return answer
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class TestBFGS(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -141,7 +140,6 @@ class TestBFGS(jtu.JaxTestCase):
       jax.scipy.optimize.minimize(f, jnp.ones(2), args=45, method='BFGS')
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class TestLBFGS(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(

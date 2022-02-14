@@ -57,7 +57,6 @@ def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
   return result
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NdimageTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
