@@ -979,6 +979,7 @@ tf_not_yet_impl = [
     "reduce_precision",
     "schur",
     "name",
+    "optimization_barrier",
 
     # Not high priority?
     "after_all",
@@ -2325,7 +2326,7 @@ tf_impl_with_avals[lax.scan_p] = _convert_jax_impl(
 tf_impl_with_avals[ad_checkpoint.remat_p] = \
   _convert_jax_impl(partial(lax_control_flow._remat_translation_rule,
                             # TODO: jax2tf cannot discriminate by platform
-                            platform="tpu"),
+                            platform="cpu"),
                     multiple_results=True,
                     extra_name_stack="checkpoint")
 

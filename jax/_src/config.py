@@ -685,3 +685,10 @@ config.define_bool_state(
     default=False,
     help=('Enables experimental features for staging out computations with '
           'dynamic shapes.'))
+
+# This flag is temporary during rollout of the remat barrier.
+# TODO(parkers): Remove if there are no complaints.
+config.define_bool_state(
+    name='jax_remat_opt_barrier',
+    default=True,
+    help=('Enables using optimization-barrier op for lowering remat.'))
