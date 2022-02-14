@@ -42,6 +42,7 @@ import jax.numpy as jnp
 from jax.util import split_list
 import numpy as np
 import scipy.sparse
+
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -915,36 +916,46 @@ class BCOOTest(jtu.JaxTestCase):
     lhs_2d_sparse, lhs_sparse_2d_indicdes = create_unsorted_indices(
         lhs_2d_sparse, lhs_sparse_2d_indicdes)
 
-    dimension_numbers = (([1], [0]), ([], []))
-    expected_2d = lax.dot_general(
-        lhs_2d_dense, rhs, dimension_numbers=dimension_numbers)
-    actual_2d = sparse.bcoo_dot_general(
-        lhs_2d_sparse, lhs_sparse_2d_indicdes, rhs,
-        dimension_numbers=dimension_numbers,
-        lhs_spinfo=BCOOInfo(lhs_2d_dense.shape))
+    dimension_numbers_2d = (([1], [0]), ([], []))
 
+    def args_maker_2d():
+      return lhs_2d_sparse, lhs_sparse_2d_indicdes, lhs_2d_dense, rhs
+
+    def f_dense_2d(data, indices, lhs, rhs):
+      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers_2d)
+
+    def f_sparse_2d(data, indices, lhs, rhs):
+      return sparse.bcoo_dot_general(data, indices, rhs,
+                                     dimension_numbers=dimension_numbers_2d,
+                                     lhs_spinfo=BCOOInfo(lhs.shape))
     with self.subTest(msg="2D"):
-      self.assertAllClose(expected_2d, actual_2d)
+      self._CompileAndCheck(f_sparse_2d, args_maker_2d)
+      self._CheckAgainstNumpy(f_dense_2d, f_sparse_2d, args_maker_2d)
 
-    # It creates out-of-bound indices when nse > nnz.
     lhs_1d_dense = jnp.array([0, 1, 0, 2, 0], dtype=jnp.float32)
     lhs_1d_sparse, lhs_sparse_1d_indicdes = sparse.bcoo_fromdense(
-        lhs_1d_dense, nse=7)
+        lhs_1d_dense, nse=5)
 
     # Random permutate the indices to make them unsorted.
     lhs_1d_sparse, lhs_sparse_1d_indicdes = create_unsorted_indices(
         lhs_1d_sparse, lhs_sparse_1d_indicdes)
 
-    dimension_numbers = (([0], [0]), ([], []))
-    expected_1d = lax.dot_general(
-        lhs_1d_dense, rhs, dimension_numbers=dimension_numbers)
-    actual_1d = sparse.bcoo_dot_general(
-        lhs_1d_sparse, lhs_sparse_1d_indicdes, rhs,
-        dimension_numbers=dimension_numbers,
-        lhs_spinfo=BCOOInfo(lhs_1d_dense.shape))
+    dimension_numbers_1d = (([0], [0]), ([], []))
+
+    def args_maker_1d():
+      return lhs_1d_sparse, lhs_sparse_1d_indicdes, lhs_1d_dense, rhs
+
+    def f_dense_1d(data, indices, lhs, rhs):
+      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers_1d)
+
+    def f_sparse_1d(data, indices, lhs, rhs):
+      return sparse.bcoo_dot_general(data, indices, rhs,
+                                     dimension_numbers=dimension_numbers_1d,
+                                     lhs_spinfo=BCOOInfo(lhs.shape))
 
     with self.subTest(msg="1D"):
-      self.assertAllClose(expected_1d, actual_1d)
+      self._CompileAndCheck(f_sparse_1d, args_maker_1d)
+      self._CheckAgainstNumpy(f_dense_1d, f_sparse_1d, args_maker_1d)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": props.testcase_name(), "props": props}
