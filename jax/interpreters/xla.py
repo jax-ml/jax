@@ -374,6 +374,8 @@ for t in device_array.device_array_types:
   register_constant_handler(t, _device_array_constant_handler)
 
 
+register_constant_handler(core.Token, lambda c, _, __: [xops.CreateToken(c)])
+
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
   typ = type(x)
