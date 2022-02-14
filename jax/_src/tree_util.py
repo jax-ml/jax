@@ -29,7 +29,7 @@ traceback_util.register_exclusion(__file__)
 T = TypeVar("T")
 U = TypeVar("U")
 
-if TYPE_CHECKING:
+if TYPE_CHECKING or pytree.version > 1:
   PyTreeDef = pytree.PyTreeDef
 else:
   PyTreeDef = Any
