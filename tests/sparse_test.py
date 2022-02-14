@@ -116,7 +116,6 @@ def rand_sparse(rng, nse=0.5, post=lambda x: x, rand_method=jtu.rand_default):
   return _rand_sparse
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class cuSparseTest(jtu.JaxTestCase):
   def gpu_dense_conversion_warning_context(self, dtype):
     if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
@@ -555,7 +554,6 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BCOOTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
@@ -1679,7 +1677,6 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertArraysEqual((y_sp @ x_sp).todense(), y_de @ x_de)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class SparseGradTest(jtu.JaxTestCase):
   def test_sparse_grad(self):
     rng_sparse = rand_sparse(self.rng())
@@ -1702,7 +1699,6 @@ class SparseGradTest(jtu.JaxTestCase):
     self.assertArraysEqual(grad_sparse.todense(), grad_sparse_from_dense)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class SparseObjectTest(jtu.JaxTestCase):
   def test_repr(self):
     M = sparse.BCOO.fromdense(jnp.arange(5, dtype='float32'))
@@ -1898,7 +1894,6 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.sum(), Msp.sum())
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class SparseRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_indices_dtype={}_nbatch={}_ndense={}".format(

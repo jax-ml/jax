@@ -109,7 +109,6 @@ ignore_xmap_warning = partial(
   jtu.ignore_warning, message=".*is an experimental.*")
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PythonPmapTest(jtu.JaxTestCase):
 
   @property
@@ -1905,7 +1904,6 @@ class CppPmapTest(PythonPmapTest):
     return src_api._cpp_pmap
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class VmapOfPmapTest(jtu.JaxTestCase):
 
   # TODO(apaszke)
@@ -1948,7 +1946,6 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -2134,7 +2131,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(f(jax.pmap)(x), f(jax.vmap)(x))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
   def testAllDevices(self):
@@ -2387,7 +2383,6 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
                         jax.grad(mk_case(vmap))(x, y))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   def testThreadsafeIndexing(self):
@@ -2493,7 +2488,6 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
       _ = x[0]
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testShardsPerAxis(self):
@@ -2623,7 +2617,6 @@ def _spec_str(spec):
           f"{spec.mesh_mapping},)")
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class ShardArgsTest(jtu.JaxTestCase):
 
   def numpy_array(x):

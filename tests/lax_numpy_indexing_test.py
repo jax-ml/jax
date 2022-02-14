@@ -414,7 +414,6 @@ MIXED_ADVANCED_INDEXING_TESTS = MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS + [
 MODES = ["clip", "drop", "promise_in_bounds"]
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
 
@@ -997,7 +996,6 @@ def _update_tol(op):
   return tol
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class IndexedUpdateTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({

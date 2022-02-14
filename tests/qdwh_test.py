@@ -58,7 +58,6 @@ def _compute_relative_diff(actual, expected):
 _dot = functools.partial(jnp.dot, precision="highest")
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class QdwhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
