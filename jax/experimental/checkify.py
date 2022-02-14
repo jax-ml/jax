@@ -137,8 +137,10 @@ class CheckifyTrace(core.Trace):
     in_vals = [t.val for t in tracers]
     e = popattr(self.main, 'error')
     f, msgs = checkify_subtrace(f, self.main, tuple(e.msgs.items()))
-    params_ = dict(params, donated_invars=(False, False, *params['donated_invars']))
-    err, code, *out_vals = primitive.bind(f, e.err, e.code, *in_vals, **params_)
+    if 'donated_invars' in params:
+      params = dict(params, donated_invars=(False, False,
+                                            *params['donated_invars']))
+    err, code, *out_vals = primitive.bind(f, e.err, e.code, *in_vals, **params)
     setnewattr(self.main, 'error', Error(err, code, msgs()))
     return [CheckifyTracer(self, x) for x in out_vals]
 
