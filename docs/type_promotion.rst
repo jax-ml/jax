@@ -3,9 +3,10 @@
 Type promotion semantics
 ========================
 
-JAX's type promotion rules (i.e., the result of
-:func:`jax.numpy.promote_types` for each pair of types) is determined via
-the following type promotion lattice:
+This document describes JAX's type promotion rules–i.e., the result of :func:`jax.numpy.promote_types` for each pair of types.
+For some background on the considerations that went into the design of what is described below, see `Design of Type Promotion Semantics for JAX <https://jax.readthedocs.io/en/latest/design_notes/type_promotion.html>`_.
+
+JAX's type promotion behavior is determined via the following type promotion lattice:
 
 .. image:: _static/type_lattice.svg
 
@@ -174,8 +175,8 @@ for example with ``np.int16(1) + 1 + jnp.int16(1)``.
 
 Weakly-typed values in JAX
 --------------------------
-*Weakly-typed* values in JAX can in most cases be thought of as equivalent to
-Python scalars, such as the integer scalar ``2`` in the following:
+*Weakly-typed* values in JAX can in most cases be thought of as having promotion behavior
+equivalent to that of Python scalars, such as the integer scalar ``2`` in the following:
 
 .. code-block:: python
 
