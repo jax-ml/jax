@@ -258,6 +258,8 @@ def _device_array_constant_handler(val, canonicalize_types):
 for t in device_array.device_array_types:
   register_constant_handler(t, _device_array_constant_handler)
 
+register_constant_handler(
+  core.Token, lambda _, __: [mhlo.CreateTokenOp(mhlo.TokenType.get())])
 
 # Source locations
 

@@ -2959,6 +2959,11 @@ class APITest(jtu.JaxTestCase):
     x = jax.jit(jax.lax.create_token)(1.0)
     self.assertIsInstance(x, jax.core.Token)
 
+  def test_jit_capturing_token(self):
+    tok = jax.core.token
+    _, y = jax.jit(lambda x: (x + 2, tok))(7)
+    self.assertIsInstance(y, jax.core.Token)
+
   def test_leak_checker_catches_a_jit_leak(self):
     with jax.checking_leaks():
       lst = []
