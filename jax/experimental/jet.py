@@ -107,7 +107,8 @@ def jet(fun, primals, series):
   >>> h0, h1, h2 = 0.5**3., 3.*0.5**2., 6.*0.5
   >>> f, df, ddf = np.sin, np.cos, lambda *args: -np.sin(*args)
 
-  :func:`jet` returns the Taylor coefficients of :math:`f(h(z)) = \sin(z^3)`:
+  :func:`jet` returns the Taylor coefficients of :math:`f(h(z)) = \sin(z^3)`
+  according to Faà di Bruno's formula:
 
   >>> f0, (f1, f2) =  jet(f, (h0,), ((h1, h2),))
   >>> print(f0,  f(h0))
@@ -116,8 +117,8 @@ def jet(fun, primals, series):
   >>> print(f1, df(h0) * h1)
   0.7441479 0.74414825
 
-  >>> print(f2, ddf(h0) * h1 + h2)
-  2.9064622 2.906494
+  >>> print(f2, ddf(h0) * h1 ** 2 + df(h0) * h2)
+  2.9064622 2.9064634
   """
   try:
     order, = set(map(len, series))
