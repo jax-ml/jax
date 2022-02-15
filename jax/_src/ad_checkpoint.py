@@ -335,11 +335,8 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
   return pe._zip_knowns(out_known_tracers, out_jaxpr_tracers, out_unknowns)
 pe.custom_partial_eval_rules[remat_p] = remat_partial_eval
 
-def remat_partial_eval_custom_params_updater(_, __, params_known, params_staged):
-  jaxpr_known = params_known.pop('call_jaxpr')
-  jaxpr_staged = params_staged.pop('call_jaxpr')
-  return (dict(params_known, jaxpr=jaxpr_known),
-          dict(params_staged, jaxpr=jaxpr_staged, differentiated=True))
+def remat_partial_eval_custom_params_updater(_, __, ___, ____, params_known, params_staged):
+  return params_known, dict(params_staged, differentiated=True)
 pe.partial_eval_jaxpr_custom_rules[remat_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr',
             remat_partial_eval_custom_params_updater)

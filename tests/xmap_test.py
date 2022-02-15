@@ -659,10 +659,9 @@ class XMapTest(XMapTestCase):
         "called with:\n.*int32.*",
         lambda: f_exe(x_i32))
 
-  def testNewCheckpointError(self):
+  def testNewCheckpoint(self):
     f = checkpoint(xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...]))
-    with self.assertRaisesRegex(NotImplementedError, 'xmap'):
-      jax.grad(f)(jnp.arange(3.))
+    self.assertAllClose(jax.grad(lambda x: f(x).sum())(jnp.arange(3.)), jnp.ones(3))
 
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):

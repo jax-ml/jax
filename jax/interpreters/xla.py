@@ -859,7 +859,9 @@ ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
 def _xla_call_partial_eval_custom_params_updater(
-    unks_in: List[bool], num_res: int, params_known: dict, params_staged: dict
+    unks_in: Sequence[bool],
+    kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
+    num_res: int, params_known: dict, params_staged: dict
   ) -> Tuple[dict, dict]:
   # pruned inputs to jaxpr_known according to unks_in, so prune donated_invars
   donated_invars_known, _ = partition_list(unks_in, params_known['donated_invars'])

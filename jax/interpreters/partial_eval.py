@@ -1026,7 +1026,8 @@ def partial_eval_jaxpr_custom_rule_not_implemented(
   raise NotImplementedError(msg)
 
 
-ParamsUpdater = Callable[[List[bool], int, dict, dict], Tuple[dict, dict]]
+ParamsUpdater = Callable[[Sequence[bool], Sequence[bool], Sequence[bool],
+                          int, dict, dict], Tuple[dict, dict]]
 
 def call_partial_eval_custom_rule(
     jaxpr_param_name: str, params_updater: ParamsUpdater,
@@ -1040,13 +1041,16 @@ def call_partial_eval_custom_rule(
   # by convention, _partial_eval_jaxpr_custom drops units on known outputs
   known_units_out = [v.aval is core.abstract_unit for v in jaxpr.outvars]
   dropped_outs_known = map(op.or_, unks_out, known_units_out)
+  kept_outs_known = [not d for d in dropped_outs_known]
   out_binders_known, _ = partition_list(dropped_outs_known, eqn.outvars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
+  kept_outs_staged = inst_out
   newvar = core.gensym([jaxpr_known, jaxpr_staged])
   residuals = [newvar(v.aval) for v in jaxpr_staged.invars[:num_res]]
-  params_known = dict(eqn.params, call_jaxpr=jaxpr_known)
-  params_staged = dict(eqn.params, call_jaxpr=jaxpr_staged)
-  params_known, params_staged = params_updater(unks_in, num_res, params_known, params_staged)
+  params_known = {**eqn.params, jaxpr_param_name: jaxpr_known}
+  params_staged = {**eqn.params, jaxpr_param_name: jaxpr_staged}
+  params_known, params_staged = params_updater(
+      unks_in, kept_outs_known, kept_outs_staged, num_res, params_known, params_staged)
   eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                             eqn.primitive, params_known, eqn.source_info)
   eqn_staged = new_jaxpr_eqn([*residuals, *eqn.invars], out_binders_staged,
@@ -1057,13 +1061,13 @@ def call_partial_eval_custom_rule(
   return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
 partial_eval_jaxpr_custom_rules[core.call_p] = \
     partial(call_partial_eval_custom_rule, 'call_jaxpr',
-            lambda _, __, x, y: (x, y))
+            lambda _, __, ___, ____, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[core.named_call_p] = \
     partial(call_partial_eval_custom_rule, 'call_jaxpr',
-            lambda _, __, x, y: (x, y))
+            lambda _, __, ___, ____, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[remat_call_p] = \
     partial(call_partial_eval_custom_rule, 'call_jaxpr',
-            lambda _, __, p1, p2: (p1, dict(p2, differentiated=True)))
+            lambda _, __, ___, ____, p1, p2: (p1, dict(p2, differentiated=True)))
 
 
 # TODO(mattjj): unify with dce code below
