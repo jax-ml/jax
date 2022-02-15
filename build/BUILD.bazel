@@ -52,7 +52,12 @@ py_binary(
         "//jaxlib:_cuda_prng",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
-        "//jaxlib:rocblas_kernels",
+        "//jaxlib:hip_gpu_support",
+        "//jaxlib:_hipblas",
+        "//jaxlib:_hipsolver",
+        "//jaxlib:_hipsparse",
+        "//jaxlib:_hip_linalg",
+        "//jaxlib:_hip_prng",
     ]),
     deps = ["@bazel_tools//tools/python/runfiles"],
 )

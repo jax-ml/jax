@@ -1512,6 +1512,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for full in [False, True]
       for w in [False, True]
       for cov in [False, True, "unscaled"]))
+  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testPolyfit(self, shape, dtype, deg, rcond, full, w, cov):
     rng = jtu.rand_default(self.rng())
     tol_spec = {np.float32: 1e-3, np.float64: 1e-13, np.complex64: 1e-5}

@@ -26,9 +26,18 @@ from jax.interpreters import xla
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _coo_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
-from jax._src.lib import cusparse
 from jax._src.numpy.lax_numpy import _promote_dtypes
 import jax.numpy as jnp
+
+try:
+  from jax._src.lib import cusparse
+except ImportError:
+  cusparse = None
+
+try:
+  from jax._src.lib import hipsparse
+except ImportError:
+  hipsparse = None
 
 @tree_util.register_pytree_node_class
 class COO(JAXSparse):
@@ -116,11 +125,14 @@ def _coo_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
                                       *, shape):
   dtype = avals_in[0].dtype
   if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
-    warnings.warn(f"coo_todense cusparse lowering not available for dtype={dtype}. "
+    warnings.warn(f"coo_todense cusparse/hipsparse lowering not available for dtype={dtype}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_todense_translation_rule(ctx, avals_in, avals_out, data, row, col,
                                          shape=shape)
-  return [cusparse.coo_todense(ctx.builder, data, row, col, shape=shape)]
+  if cusparse is not None:
+    return [cusparse.coo_todense(ctx.builder, data, row, col, shape=shape)]
+  else:
+    return [hipsparse.coo_todense(ctx.builder, data, row, col, shape=shape)]
 
 def _coo_todense_jvp(data_dot, data, row, col, *, shape):
   return coo_todense(data_dot, row, col, shape=shape)
@@ -139,7 +151,7 @@ def _coo_todense_transpose(ct, data, row, col, *, shape):
 ad.defjvp(coo_todense_p, _coo_todense_jvp, None, None)
 ad.primitive_transposes[coo_todense_p] = _coo_todense_transpose
 xla.register_translation(coo_todense_p, _coo_todense_translation_rule)
-if cusparse and cusparse.is_supported:
+if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
   xla.register_translation(coo_todense_p, _coo_todense_gpu_translation_rule,
                            platform='gpu')
 
@@ -192,12 +204,16 @@ def _coo_fromdense_gpu_translation_rule(ctx, avals_in, avals_out, mat, *, nse,
                                         index_dtype):
   dtype = avals_in[0].dtype
   if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
-    warnings.warn(f"coo_fromdense cusparse lowering not available for dtype={dtype}. "
+    warnings.warn(f"coo_fromdense cusparse/hipsparse lowering not available for dtype={dtype}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_fromdense_translation_rule(ctx, avals_in, avals_out, mat,
                                            nse=nse, index_dtype=index_dtype)
-  data, row, col = cusparse.coo_fromdense(
-      ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
+  if cusparse is not None:
+    data, row, col = cusparse.coo_fromdense(
+        ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
+  else:
+    data, row, col = hipsparse.coo_fromdense(
+        ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
   return [data, row, col]
 
 def _coo_fromdense_jvp(primals, tangents, *, nse, index_dtype):
@@ -229,7 +245,7 @@ ad.primitive_jvps[coo_fromdense_p] = _coo_fromdense_jvp
 ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
 
 xla.register_translation(coo_fromdense_p, _coo_fromdense_translation_rule)
-if cusparse and cusparse.is_supported:
+if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
   xla.register_translation(coo_fromdense_p,
                            _coo_fromdense_gpu_translation_rule,
                            platform='gpu')
@@ -285,12 +301,16 @@ def _coo_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
                                      v, *, shape, transpose):
   dtype = avals_in[0].dtype
   if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f"coo_matvec cusparse lowering not available for dtype={dtype}. "
+    warnings.warn(f"coo_matvec cusparse/hipsparse lowering not available for dtype={dtype}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_matvec_translation_rule(ctx, avals_in, avals_out, data, row, col, v,
                                         shape=shape, transpose=transpose)
-  return [cusparse.coo_matvec(ctx.builder, data, row, col, v, shape=shape,
-                              transpose=transpose)]
+  if cusparse is not None:
+    return [cusparse.coo_matvec(ctx.builder, data, row, col, v, shape=shape,
+                                transpose=transpose)]
+  else:
+    return [hipsparse.coo_matvec(ctx.builder, data, row, col, v, shape=shape,
+                                transpose=transpose)]
 
 def _coo_matvec_jvp_mat(data_dot, data, row, col, v, *, shape, transpose):
   return coo_matvec(data_dot, row, col, v, shape=shape, transpose=transpose)
@@ -313,7 +333,7 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, shape, transpose):
 ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
 ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
 xla.register_translation(coo_matvec_p, _coo_matvec_translation_rule)
-if cusparse and cusparse.is_supported:
+if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
   xla.register_translation(coo_matvec_p, _coo_matvec_gpu_translation_rule,
                            platform='gpu')
 
@@ -367,12 +387,16 @@ def _coo_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
                                      B, *, shape, transpose):
   dtype = avals_in[0].dtype
   if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f"coo_matmat cusparse lowering not available for dtype={dtype}. "
+    warnings.warn(f"coo_matmat cusparse/hipsprse lowering not available for dtype={dtype}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_matmat_translation_rule(ctx, avals_in, avals_out, data, row, col, B,
                                         shape=shape, transpose=transpose)
-  return [cusparse.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
-                              transpose=transpose)]
+  if cusparse is not None:
+    return [cusparse.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
+                                transpose=transpose)]
+  else:
+    return [hipsparse.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
+                                transpose=transpose)]
 
 def _coo_matmat_jvp_left(data_dot, data, row, col, B, *, shape, transpose):
   return coo_matmat(data_dot, row, col, B, shape=shape, transpose=transpose)
@@ -392,6 +416,6 @@ def _coo_matmat_transpose(ct, data, row, col, B, *, shape, transpose):
 ad.defjvp(coo_matmat_p, _coo_matmat_jvp_left, None, None, _coo_matmat_jvp_right)
 ad.primitive_transposes[coo_matmat_p] = _coo_matmat_transpose
 xla.register_translation(coo_matmat_p, _coo_matmat_translation_rule)
-if cusparse and cusparse.is_supported:
+if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
   xla.register_translation(coo_matmat_p, _coo_matmat_gpu_translation_rule,
                            platform='gpu')

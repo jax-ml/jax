@@ -383,7 +383,7 @@ def main():
       help="A comma-separated list of CUDA compute capabilities to support.")
   parser.add_argument(
       "--rocm_amdgpu_targets",
-      default="gfx900,gfx906,gfx90",
+      default="gfx900,gfx906,gfx908,gfx90a,gfx1030",
       help="A comma-separated list of ROCm amdgpu targets to support.")
   parser.add_argument(
       "--rocm_path",
@@ -510,7 +510,8 @@ def main():
     config_args += ["--config=tpu"]
   if args.enable_rocm:
     config_args += ["--config=rocm"]
-    config_args += ["--config=nonccl"]
+    if not args.enable_nccl:
+      config_args += ["--config=nonccl"]
 
   command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] + config_args +

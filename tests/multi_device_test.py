@@ -69,6 +69,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assertEqual(data.device_buffer.device(), device)
 
   def test_computation_follows_data(self):
+    if jax.device_count() < 5:
+      self.skipTest("test requires 5 devices")
     devices = self.get_devices()
 
     # By default, computation is placed (uncommitted) on device 0
@@ -197,6 +199,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assert_committed_to_device(z, devices[1])
 
   def test_broadcast(self):
+    if jax.device_count() < 3:
+      self.skipTest("test requires 3 devices")
     devices = self.get_devices()
 
     z = 1 + jnp.ones((2, 3))
@@ -205,6 +209,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assert_committed_to_device(y, devices[2])
 
   def test_transpose(self):
+    if jax.device_count() < 3:
+      self.skipTest("test requires 3 devices")
     devices = self.get_devices()
 
     x = jnp.ones((2, 3))

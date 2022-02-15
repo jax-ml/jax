@@ -33,6 +33,7 @@ from jax._src.lib import cuda_prng
 from jax._src.numpy.lax_numpy import (
     _canonicalize_tuple_index, _eliminate_deprecated_list_indexing,
     _expand_bool_indices, _register_stackable)
+from jax._src.lib import hip_prng
 import jax._src.pretty_printer as pp
 from jax._src.util import canonicalize_axis, prod
 
@@ -384,11 +385,18 @@ def _threefry2x32_gpu_translation_rule(ctx, avals_in, avals_out, k1, k2, x1,
   def _broadcast(x, aval):
     return xla_client.ops.BroadcastInDim(
         x, aval_out.shape, tuple(range(rank - len(aval.shape), rank)))
-  return xla.xla_destructure(
-      ctx.builder,
-      cuda_prng.threefry2x32(
-          ctx.builder, (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-          (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval))))
+  if cuda_prng:
+    return xla.xla_destructure(
+        ctx.builder,
+        cuda_prng.threefry2x32(
+            ctx.builder, (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval))))
+  else:
+    return xla.xla_destructure(
+        ctx.builder,
+        hip_prng.threefry2x32(
+            ctx.builder, (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval))))
 
 
 threefry2x32_p = core.Primitive("threefry2x32")
@@ -405,7 +413,9 @@ xla.register_translation(threefry2x32_p, xla.lower_fun(
 if cuda_prng:
   xla.register_translation(threefry2x32_p, _threefry2x32_gpu_translation_rule,
                            platform='gpu')
-
+if hip_prng:
+  xla.register_translation(threefry2x32_p, _threefry2x32_gpu_translation_rule,
+                           platform='gpu')
 
 @partial(jit, inline=True)
 def threefry_2x32(keypair, count):

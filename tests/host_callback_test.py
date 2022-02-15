@@ -2315,7 +2315,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
 
     expected_res = np.linalg.eigvals(m)
     self.assertAllClose(expected_res, fun(m))
-
+  @jtu.skip_on_devices("gpu")
   def test_call_doc_example_hlo(self):
     """Examples from the documentation: simplest, call a function."""
 
