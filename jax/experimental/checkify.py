@@ -410,7 +410,11 @@ def check_error(error: Error) -> None:
   >>> # can re-checkify
   >>> error, _ = checkify.checkify(with_inner_jit)(-1)
   """
-  return assert_p.bind(~error.err, error.code, msgs=error.msgs)
+  if np.size(error.err) > 1:
+    err, code = _reduce_any_error(error.err, error.code)
+  else:
+    err, code = error.err, error.code
+  return assert_p.bind(~err, code, msgs=error.msgs)
 
 assert_p = core.Primitive('assert') # TODO: rename to check?
 assert_p.multiple_results = True  # zero results

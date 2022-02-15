@@ -560,6 +560,24 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "hi")
 
+  def test_check_error_scanned(self):
+    def body(carry, x):
+      checkify.check(jnp.all(x > 0), "should be negative")
+      return carry, x
+
+    def checked_body(carry, x):
+      err, (carry, x) = checkify.checkify(body)(carry, x)
+      return carry, (x, err)
+
+    def f(x):
+      _, (xs, errs) = jax.lax.scan(checked_body, (None,), x)
+      checkify.check_error(errs)
+      return xs
+
+    err, _ = checkify.checkify(f)(jnp.array([-1, 0, -1]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "should be negative")
+
   def test_discharge_recharge(self):
     def ejit(f):
       f = checkify.checkify(f)
