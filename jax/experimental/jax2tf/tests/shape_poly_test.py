@@ -1681,7 +1681,7 @@ def _add_vmap_primitive_harnesses():
   device = jtu.device_under_test()
 
   for h in all_h:
-    # Drop the the JAX limitations
+    # Drop the JAX limitations
     if not h.filter(device_under_test=device, include_jax_unimpl=False):
       continue
     # And the jax2tf limitations that are known to result in TF error.

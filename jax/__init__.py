@@ -49,7 +49,11 @@ from jax._src.config import (
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
   numpy_rank_promotion as numpy_rank_promotion,
-  jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions
+  jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
+  transfer_guard as transfer_guard,
+  transfer_guard_host_to_device as transfer_guard_host_to_device,
+  transfer_guard_device_to_device as transfer_guard_device_to_device,
+  transfer_guard_device_to_host as transfer_guard_device_to_host,
 )
 from .core import eval_context as ensure_compile_time_eval
 from jax._src.api import (

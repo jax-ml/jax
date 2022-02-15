@@ -915,7 +915,11 @@ def with_config(**kwds):
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
-  _default_config = {'jax_enable_checks': True}
+  _default_config = {
+    'jax_enable_checks': True,
+    'jax_numpy_rank_promotion': 'raise',
+    'jax_traceback_filtering': 'off',
+  }
 
   # TODO(mattjj): this obscures the error messages from failures, figure out how
   # to re-enable it

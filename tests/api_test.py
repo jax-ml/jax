@@ -54,6 +54,7 @@ from jax.interpreters.sharded_jit import PartitionSpec as P
 from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
@@ -70,7 +71,6 @@ python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CPPJitTest(jtu.BufferDonationTestCase):
   """Shared tests between the Python and the C++ jax,jit implementations.
 
@@ -422,7 +422,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
         lambda: self.jit(f)("foo"))
 
-    if jax._src.lib._xla_extension_version >= 47:
+    if xla_extension_version >= 47:
       # Jax type objects aren't valid data arguments.
       self.assertRaisesRegex(
           TypeError,
@@ -462,6 +462,23 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     g()                     # g still runs
     del g                   # no more references to x
     assert x() is None      # x is gone
+
+  @unittest.skipIf(xla_extension_version < 59, "Test requires jaxlib > 0.3.0")
+  def test_jit_of_nonweakreferenceable_function(self):
+    class CallableWithSlots:
+      __slots__ = []
+      def __call__(self, x):
+        return x + 1
+
+    c = CallableWithSlots()
+    with self.assertRaisesRegex(TypeError, "cannot create weak reference.*"):
+      weakref.ref(c)
+    # Building a jit object does not crash.
+    f = self.jit(c)
+    with self.assertRaisesRegex(TypeError, "cannot create weak reference.*"):
+      # Calling the jit object will fail, but not because of the C++ JIT. The
+      # Python-level jit cache requires weak reference support.
+      f(3)
 
   def test_jit_raises_on_first_invocation_on_non_hashable_static_argnum(self):
     if self.jit != api._python_jit:
@@ -510,8 +527,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       # we could.
       jitted_f(1, HashableWithoutEq())
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 50,
-                   "requires jaxlib >= 0.1.76")
+  @unittest.skipIf(xla_extension_version < 50, "requires jaxlib >= 0.1.76")
   def test_cpp_jit_raises_other_exceptions_when_hashing_fails(self):
     class A:
       def __hash__(self):
@@ -828,8 +844,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         "for a particular signature. Detected .*BatchTracer",
         err)
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 45,
-                   "requires jaxlib >= 0.1.75")
+  @unittest.skipIf(xla_extension_version < 45, "requires jaxlib >= 0.1.75")
   def test_jit_enum_as_dict_keys_fails(self):
     class E(enum.Enum):
       A = 0
@@ -843,8 +858,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       f({E.A: 1.0, E.B: 2.0})
 
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 56,
-                   "requires jaxlib >= 0.1.76")
+  @unittest.skipIf(xla_extension_version < 56, "requires jaxlib >= 0.1.76")
   def test_jit_static_argnums_requires_type_equality(self):
     # See: https://github.com/google/jax/pull/9311
     @partial(self.jit, static_argnums=(0,))
@@ -860,7 +874,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       python_should_be_executing = False
       self.assertEqual(x, f(x))
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class PythonJitTest(CPPJitTest):
 
   @property
@@ -868,7 +881,6 @@ class PythonJitTest(CPPJitTest):
     return api._python_jit
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class APITest(jtu.JaxTestCase):
 
   def test_grad_item(self):
@@ -2959,6 +2971,11 @@ class APITest(jtu.JaxTestCase):
     x = jax.jit(jax.lax.create_token)(1.0)
     self.assertIsInstance(x, jax.core.Token)
 
+  def test_jit_capturing_token(self):
+    tok = jax.core.token
+    _, y = jax.jit(lambda x: (x + 2, tok))(7)
+    self.assertIsInstance(y, jax.core.Token)
+
   def test_leak_checker_catches_a_jit_leak(self):
     with jax.checking_leaks():
       lst = []
@@ -3416,7 +3433,6 @@ class APITest(jtu.JaxTestCase):
         FLAGS.jax_numpy_rank_promotion = allow_promotion
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class RematTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -4275,7 +4291,7 @@ class RematTest(jtu.JaxTestCase):
 
     _ = api.linearize(partial(f, core.unit), 3.)
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
+
 class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):
@@ -4419,7 +4435,6 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 0)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomJVPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -5394,7 +5409,6 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertEqual(shape, ())
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomVJPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -6363,7 +6377,6 @@ def transpose_unary(f, x_example):
   return transposed
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomTransposeTest(jtu.JaxTestCase):
 
   def test_linear_call(self):
@@ -6692,7 +6705,6 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_t(x), jax.jit(f_t)(x))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomVmapTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -7119,7 +7131,6 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""
 
@@ -7157,7 +7168,6 @@ class CustomApiTest(jtu.JaxTestCase):
           self.assertIsInstance(getattr(f, method), Callable)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class InvertibleADTest(jtu.JaxTestCase):
 
   @jtu.ignore_warning(message="Values that an @invertible function closes")
@@ -7266,7 +7276,6 @@ class InvertibleADTest(jtu.JaxTestCase):
                         check_dtypes=True)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BufferDonationTest(jtu.BufferDonationTestCase):
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
@@ -7289,7 +7298,6 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
     pmap_fun(a)  # doesn't crash
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NamedCallTest(jtu.JaxTestCase):
 
   def test_default_name(self):
@@ -7370,7 +7378,6 @@ class NamedCallTest(jtu.JaxTestCase):
     self.assertRaises(OverflowError, f, int_min - 1)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class BackendsTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not sys.executable, "test requires sys.executable")
@@ -7393,7 +7400,6 @@ class BackendsTest(jtu.JaxTestCase):
     assert "No GPU/TPU found" not in result.stderr.decode()
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class CleanupTest(jtu.JaxTestCase):
   def test_call_wrapped_second_phase_cleanup(self):
     try:
@@ -7403,7 +7409,7 @@ class CleanupTest(jtu.JaxTestCase):
     assert core.trace_state_clean()
 
 
-@jtu.with_config(jax_dynamic_shapes=True)
+@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeTest(jtu.JaxTestCase):
   def test_basic_staging(self):
     def f(x, y):

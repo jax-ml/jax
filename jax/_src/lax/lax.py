@@ -3202,7 +3202,7 @@ def _select_shape_rule(which, *cases):
     raise TypeError("select must have at least one case")
   if any(case.shape != cases[0].shape for case in cases[1:]):
     msg = "select cases must have the same shapes, got [{}]."
-    raise TypeError(msg.format(",".join(map(str(c.shape) for c in cases))))
+    raise TypeError(msg.format(", ".join([str(c.shape) for c in cases])))
   if which.shape and which.shape != cases[0].shape:
     msg = ("select `which` must be scalar or have the same shape as cases, "
            "got `which` shape {} but case shape {}.")
@@ -3308,7 +3308,7 @@ def _select_xla_translation(ctx, avals_in, avals_out, which, *cases):
         ctx.builder, np.array(offset + mid, dtype=which_aval.dtype))
     return xops.Select(xops.Lt(which, cutoff),
                        _select(offset, cases[:mid]),
-                       _select(mid, cases[mid:]))
+                       _select(offset + mid, cases[mid:]))
 
   return [_select(0, cases)]
 
@@ -3337,7 +3337,7 @@ def _select_mhlo_lowering(ctx, which, *cases):
       bool_shape, which, mlir.full_like_aval(offset + mid, which_aval),
       lt, compare_type)
     return mhlo.SelectOp(pred, _select(offset, cases[:mid]),
-                         _select(mid, cases[mid:])).result
+                         _select(offset + mid, cases[mid:])).result
 
   return [_select(0, cases)]
 

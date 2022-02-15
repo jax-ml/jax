@@ -142,6 +142,9 @@ def _bcoo_sort_indices(data, indices, shape):
     f = broadcasting_vmap(f)
   return f(data, indices)
 
+_bcoo_sort_indices_rule = xla.lower_fun(
+    _bcoo_sort_indices, multiple_results=True, new_style=True)
+
 def _unbatch_bcoo(data, indices, shape):
   n_batch = _validate_bcoo(data, indices, shape).n_batch
   if n_batch == 0:
@@ -736,6 +739,11 @@ def _bcoo_dot_general_gpu_translation_rule(
     ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs, *, dimension_numbers,
     lhs_spinfo: BCOOInfo):
 
+  if not config.jax_bcoo_cusparse_lowering:
+    return _bcoo_dot_general_default_translation_rule(
+      ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
+      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_data_aval, lhs_indices_aval, rhs_aval, = avals_in
   n_batch, n_sparse, n_dense, nse = _validate_bcoo(
@@ -757,10 +765,11 @@ def _bcoo_dot_general_gpu_translation_rule(
       ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
   else:
-    # The lhs indices are row-wise sorted.
-    lhs_indices_row, lhs_indices_col, lhs_data = lax.sort(
-        [lhs_indices[:, 0], lhs_indices[:, 1], lhs_data])
-    lhs_indices = jnp.hstack((lhs_indices_row, lhs_indices_col))
+    # Sorts lhs by row indices.
+    lhs_data, lhs_indices = _bcoo_sort_indices_rule(
+        ctx, avals_in[:2], avals_in[:2], lhs_data, lhs_indices,
+        shape=lhs_spinfo.shape)
+
     return _bcoo_dot_general_cuda_translation_rule(
       ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
@@ -833,7 +842,7 @@ batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 
 xla.register_translation(
     bcoo_dot_general_p, _bcoo_dot_general_default_translation_rule)
-if config.jax_bcoo_cusparse_lowering and cusparse and cusparse.is_supported:
+if cusparse and cusparse.is_supported:
   xla.register_translation(bcoo_dot_general_p,
                            _bcoo_dot_general_gpu_translation_rule,
                            platform='gpu')

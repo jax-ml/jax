@@ -42,7 +42,7 @@ def _get_dctn_test_s(shape, axes):
     s_list.extend(itertools.product(*[[shape[ax]+i for i in range(-shape[ax]+1, shape[ax]+1)] for ax in axes]))
   return s_list
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
+
 class LaxBackedScipyFftTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.fft implementations"""
 

@@ -24,7 +24,7 @@ import itertools
 import re
 import typing
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
-                    Type, Union)
+                    Type, Union, FrozenSet)
 from typing_extensions import Protocol
 import warnings
 
@@ -258,6 +258,8 @@ def _device_array_constant_handler(val, canonicalize_types):
 for t in device_array.device_array_types:
   register_constant_handler(t, _device_array_constant_handler)
 
+register_constant_handler(
+  core.Token, lambda _, __: [mhlo.CreateTokenOp(mhlo.TokenType.get())])
 
 # Source locations
 
@@ -287,6 +289,42 @@ def make_ir_context() -> ir.Context:
   return context
 
 
+Mesh = Any
+MeshAxisName = Any
+
+@dataclasses.dataclass(frozen=True)
+class SPMDAxisContext:
+  """A hardware axis context for parallel computations that use the GSPMD partitioner.
+
+  This includes the mesh that will later by used to execute this computation,
+  as well as a set of mesh axes that are currently (e.g. because the current lowering
+  is invoked inside an xmap) lowered in the MANUAL sharding mode.
+  """
+  mesh: Mesh
+  manual_axes: FrozenSet[MeshAxisName] = frozenset()
+
+  @property
+  def axis_env(self):
+    # TODO: Should we restrict the mesh to manual axes? This depends on the
+    # semantics of ReplicaId in partially manual computations, but I don't
+    # know what they are...
+    return xla.AxisEnv(nreps=1, names=(), sizes=())
+
+  def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> 'SPMDAxisContext':
+    return SPMDAxisContext(self.mesh, self.manual_axes | axes)
+
+
+@dataclasses.dataclass(frozen=True)
+class ReplicaAxisContext:
+  """A hardware axis context for parallel computations that are partitioned by JAX.
+
+  Unlike in the SPMDAxisContext, this means that JAX might need to emit calls to
+  explicit collectives.
+  """
+  axis_env: xla.AxisEnv
+
+AxisContext = Union[SPMDAxisContext, ReplicaAxisContext]
+
 @dataclasses.dataclass
 class ModuleContext:
   """Module-wide context information for MLIR lowering."""
@@ -295,14 +333,18 @@ class ModuleContext:
   ip: ir.InsertionPoint
   symbol_table: ir.SymbolTable
   platform: str
-  axis_env: xla.AxisEnv
+  axis_context: AxisContext
   name_stack: str
 
   # Cached primitive lowerings.
   cached_primitive_lowerings: Dict[Any, builtin.FuncOp]
 
+  @property
+  def axis_env(self) -> xla.AxisEnv:
+    return self.axis_context.axis_env
+
   def __init__(
-      self, platform: str, axis_env: xla.AxisEnv, name_stack: str,
+      self, platform: str, axis_context: AxisContext, name_stack: str,
       context: Optional[ir.Context] = None,
       module: Optional[ir.Module] = None,
       ip: Optional[ir.InsertionPoint] = None,
@@ -314,7 +356,7 @@ class ModuleContext:
     self.ip = ip or ir.InsertionPoint(self.module.operation.opview.body)
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
     self.platform = platform
-    self.axis_env = axis_env
+    self.axis_context = axis_context
     self.name_stack = name_stack
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
                                        else cached_primitive_lowerings)
@@ -369,7 +411,7 @@ _module_name_regex = re.compile(r"[^\w.-]")
 
 def lower_jaxpr_to_module(
     module_name: str, jaxpr: core.ClosedJaxpr, platform: str,
-    axis_env: xla.AxisEnv,
+    axis_context: AxisContext,
     name_stack: str, donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
@@ -393,7 +435,7 @@ def lower_jaxpr_to_module(
       msg = f"Donation is not implemented for {platform}.\n{msg}"
     warnings.warn(f"Some donated buffers were not usable: {', '.join(unused_donations)}.\n{msg}")
 
-  ctx = ModuleContext(platform, axis_env, name_stack)
+  ctx = ModuleContext(platform, axis_context, name_stack)
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.

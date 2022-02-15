@@ -6774,6 +6774,8 @@ _accepted_binop_types = (int, float, complex, np.generic, np.ndarray, ndarray)
 def _defer_to_unrecognized_arg(binary_op):
   # Ensure that other array types have the chance to override arithmetic.
   def deferring_binary_op(self, other):
+    if hasattr(other, '__jax_array__'):
+      other = other.__jax_array__()
     if not isinstance(other, _accepted_binop_types):
       return NotImplemented
     return binary_op(self, other)

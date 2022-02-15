@@ -26,7 +26,7 @@ import numpy as np
 
 config.parse_flags_with_absl()
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
+
 class InfeedTest(jtu.JaxTestCase):
 
   @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.

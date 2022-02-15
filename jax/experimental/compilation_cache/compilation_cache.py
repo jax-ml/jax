@@ -58,8 +58,14 @@ def put_executable(module_name, xla_computation, compile_options,
   serialized_executable = backend.serialize_executable(executable)
   _cache.put(cache_key, serialized_executable)
 
-def _log_cache_key_hash(hash_obj, last_serialized: str):
+def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
   if logging.vlog_is_on(1):
+    # Log the hash of just this entry
+    fresh_hash_obj = hashlib.sha256()
+    hashfn(fresh_hash_obj)
+    logging.vlog(1, "get_cache_key hash of serialized %s: %s", last_serialized,
+                 fresh_hash_obj.digest().hex())
+    # Log the cumulative hash
     logging.vlog(1, "get_cache_key hash after serializing %s: %s",
                  last_serialized, hash_obj.digest().hex())
 
@@ -73,7 +79,24 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
      Typical return value example:
       '14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
   """
+  entries = [
+      ("computation",
+       lambda hash_obj: _hash_computation(hash_obj, xla_computation)),
+      ("compile_options",
+       lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
+      ("jax_lib version",
+       lambda hash_obj: hash_obj.update(bytes(jax._src.lib.version_str.encode('utf-8')))),
+      ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
+      ("XLA flags", _hash_xla_flags),
+  ]
+
   hash_obj = hashlib.sha256()
+  for name, hashfn in entries:
+    hashfn(hash_obj)
+    _log_cache_key_hash(hash_obj, name, hashfn)
+  return hash_obj.digest().hex()
+
+def _hash_computation(hash_obj, xla_computation):
   # The HLO op_name metadata sometimes includes Python function pointers,
   # which cause spurious cache misses. Scrub anything that looks like a
   # function pointer. Example op_name metadata:
@@ -88,21 +111,6 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
     serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
   scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
   hash_obj.update(scrubbed_hlo)
-  _log_cache_key_hash(hash_obj, "computation")
-
-  _hash_compile_options(hash_obj, compile_options)
-  _log_cache_key_hash(hash_obj, "compile_options")
-
-  hash_obj.update(jax._src.lib.version_str.encode('utf-8'))
-  _log_cache_key_hash(hash_obj, "jax_lib version")
-
-  _hash_platform(hash_obj, backend)
-  _log_cache_key_hash(hash_obj, "the backend")
-
-  _hash_xla_flags(hash_obj)
-  _log_cache_key_hash(hash_obj, "XLA flags")
-
-  return hash_obj.digest().hex()
 
 def _hash_compile_options(hash_obj, compile_options_obj):
   assert len(dir(compile_options_obj)) == 31,(f"Unexpected number of CompileOption fields: "

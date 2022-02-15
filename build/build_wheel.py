@@ -96,6 +96,10 @@ _XLA_EXTENSION_STUBS = [
     "pmap_lib.pyi",
     "profiler.pyi",
     "pytree.pyi",
+    "transfer_guard_lib.pyi",
+]
+_OPTIONAL_XLA_EXTENSION_STUBS = [
+    "transfer_guard_lib.pyi",  # Will be required on xla_extension_version >= 58.
 ]
 
 
@@ -107,8 +111,12 @@ def patch_copy_xla_extension_stubs(dst_dir):
   xla_extension_dir = os.path.join(dst_dir, "xla_extension")
   os.makedirs(xla_extension_dir)
   for stub_name in _XLA_EXTENSION_STUBS:
-    with open(r.Rlocation(
-        "org_tensorflow/tensorflow/compiler/xla/python/xla_extension/" + stub_name)) as f:
+    stub_path = r.Rlocation(
+        "org_tensorflow/tensorflow/compiler/xla/python/xla_extension/" + stub_name)
+    stub_path = str(stub_path)  # Make pytype accept os.path.exists(stub_path).
+    if stub_name in _OPTIONAL_XLA_EXTENSION_STUBS and not os.path.exists(stub_path):
+      continue
+    with open(stub_path) as f:
       src = f.read()
     src = src.replace(
         "from tensorflow.compiler.xla.python import xla_extension",

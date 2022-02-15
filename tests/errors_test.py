@@ -70,6 +70,7 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
       test.assertRegex(frame_fmt, full_pat)
 
 
+@jtu.with_config(jax_traceback_filtering='auto')  # JaxTestCase defaults to off.
 @parameterized.named_parameters(
   {"testcase_name": f"_{f}", "filter_mode": f}
   for f in ("tracebackhide", "remove_frames"))
@@ -363,6 +364,7 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'return jit(f)(a)')], filter_mode=filter_mode)
 
 
+@jtu.with_config(jax_traceback_filtering='auto')  # JaxTestCase defaults to off.
 class UserContextTracebackTest(jtu.JaxTestCase):
 
   def test_grad_norm(self):

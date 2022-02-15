@@ -1098,8 +1098,49 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   self.frame.eqns.append(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore
+
+def _xmap_partial_eval_custom_params_updater(
+    unks_in: Sequence[bool],
+    kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
+    num_res: int, params_known: dict, params_staged: dict
+  ) -> Tuple[dict, dict]:
+  assert params_known['spmd_in_axes'] is None and params_known['spmd_out_axes'] is None
+  assert params_staged['spmd_in_axes'] is None and params_staged['spmd_out_axes'] is None
+
+  # pruned inputs to jaxpr_known according to unks_in
+  donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
+  in_axes_known, _ = pe.partition_list(unks_in, params_known['in_axes'])
+  if num_res == 0:
+    residual_axes = []
+  else:
+    residual_axes = [
+      AxisNamePos(zip(sort_named_shape, range(len(sort_named_shape))),
+                  user_repr=f'<internal: {sort_named_shape}>')
+      for named_shape in (v.aval.named_shape for v in params_known['call_jaxpr'].outvars[:-num_res])
+      # We sort here to make the iteration order deterministic
+      for sort_named_shape in [sorted(named_shape, key=str)]
+    ]
+  _, out_axes_known = pe.partition_list(kept_outs_known, params_known['out_axes'])
+  new_params_known = dict(params_known,
+                          in_axes=tuple(in_axes_known),
+                          out_axes=(*out_axes_known, *residual_axes),
+                          donated_invars=tuple(donated_invars_known))
+  assert len(new_params_known['in_axes']) == len(params_known['call_jaxpr'].invars)
+  assert len(new_params_known['out_axes']) == len(params_known['call_jaxpr'].outvars)
+
+  # added num_res new inputs to jaxpr_staged
+  donated_invars_staged = (*(False for _ in range(num_res)), *params_staged['donated_invars'])
+  _, out_axes_staged = pe.partition_list(kept_outs_staged, params_staged['out_axes'])
+  new_params_staged = dict(params_staged,
+                           in_axes=(*residual_axes, *params_staged['in_axes']),
+                           out_axes=tuple(out_axes_staged),
+                           donated_invars=donated_invars_staged)
+  assert len(new_params_staged['in_axes']) == len(params_staged['call_jaxpr'].invars)
+  assert len(new_params_staged['out_axes']) == len(params_staged['call_jaxpr'].outvars)
+  return new_params_known, new_params_staged
 pe.partial_eval_jaxpr_custom_rules[xmap_p] = \
-    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'xmap')
+    partial(pe.call_partial_eval_custom_rule, 'call_jaxpr',
+            _xmap_partial_eval_custom_params_updater)
 
 
 @lu.transformation_with_aux
@@ -1155,13 +1196,17 @@ def _jaxpr_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params
       assert not any(const_units)
       num_consts = len(const_units)
       out_axes_no_units = [a for a, u in zip(out_axes, axes_units) if not u]
-      const_axes = [
-          AxisNamePos(zip(sort_named_shape, range(len(sort_named_shape))),
-                      user_repr=f'<internal: {sort_named_shape}>')
-          for named_shape in out_named_shapes()[-num_consts:]
-          # We sort here to make the iteration order deterministic
-          for sort_named_shape in [sorted(named_shape, key=str)]
-      ]
+      const_axes: Sequence[AxisNamePos]
+      if num_consts == 0:
+        const_axes = ()
+      else:
+        const_axes = [
+            AxisNamePos(zip(sort_named_shape, range(len(sort_named_shape))),
+                        user_repr=f'<internal: {sort_named_shape}>')
+            for named_shape in out_named_shapes()[-num_consts:]
+            # We sort here to make the iteration order deterministic
+            for sort_named_shape in [sorted(named_shape, key=str)]
+        ]
       if not const_axes_s:  # NOTE: This can be called multiple times
         const_axes_s.store(const_axes)
       assert const_axes_s.val == const_axes
@@ -1327,13 +1372,16 @@ pxla.SPMDBatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, True
 
 # -------- nested xmap handling --------
 
-def _xmap_lowering_rule(*args, **kwargs):
-  if config.experimental_xmap_spmd_lowering_manual:
-    return _xmap_lowering_rule_spmd_manual(*args, **kwargs)
-  elif config.experimental_xmap_spmd_lowering:
-    return _xmap_lowering_rule_spmd(*args, **kwargs)
+def _xmap_lowering_rule(ctx, *args, **kwargs):
+  if isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext):
+    if config.experimental_xmap_spmd_lowering_manual:
+      return _xmap_lowering_rule_spmd_manual(ctx, *args, **kwargs)
+    else:
+      return _xmap_lowering_rule_spmd(ctx, *args, **kwargs)
+  elif isinstance(ctx.module_context.axis_context, mlir.ReplicaAxisContext):
+    return _xmap_lowering_rule_replica(ctx, *args, **kwargs)
   else:
-    return _xmap_lowering_rule_replica(*args, **kwargs)
+    raise AssertionError("Unrecognized axis context type!")
 mlir.register_lowering(xmap_p, _xmap_lowering_rule)
 
 def _xmap_lowering_rule_replica(ctx, *in_nodes,
@@ -1502,9 +1550,12 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
+  manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
+  assert isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext)
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       xla.wrap_name(name, 'xmap')))
+                                       xla.wrap_name(name, 'xmap')),
+      axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
   global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
                                         *([n] for n in global_in_nodes))
 

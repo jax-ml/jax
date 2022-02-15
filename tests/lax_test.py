@@ -181,7 +181,6 @@ LAX_OPS = [
 ]
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
 
@@ -1473,6 +1472,7 @@ class LaxTest(jtu.JaxTestCase):
     def args_maker():
       return [rng(pred_shape, np.bool_), rng(arg_shape, arg_dtype),
               rng(arg_shape, arg_dtype)]
+    return self._CheckAgainstNumpy(lax_reference.select, lax.select, args_maker)
     return self._CompileAndCheck(lax.select, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1487,28 +1487,19 @@ class LaxTest(jtu.JaxTestCase):
       for (pred_dtype, num_args) in (
           list(itertools.product([np.dtype(np.bool_), np.dtype(np.int32)],
                                  [1, 2])) +
-          [(np.dtype(np.int32), 3)])))
+          [(np.dtype(np.int32), 6)])))
   def testSelectN(self, pred_dtype, pred_shape, arg_shape, arg_dtype, num_args):
+    if pred_dtype == np.bool_:
+      pred_rng = jtu.rand_default(self.rng())
+    else:
+      pred_rng = jtu.rand_int(self.rng(), low=-1, high=num_args + 1)
     rng = jtu.rand_default(self.rng())
     def args_maker():
-      return [rng(pred_shape, pred_dtype)] + (
-          [rng(arg_shape, arg_dtype)] * num_args)
+      return [pred_rng(pred_shape, pred_dtype)] + (
+          [rng(arg_shape, arg_dtype) for _ in range(num_args)])
+    return self._CheckAgainstNumpy(lambda c, *xs: np.choose(c, xs, mode='clip'),
+                                   lax.select_n, args_maker)
     return self._CompileAndCheck(lax.select_n, args_maker)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_predshape={}_argshapes={}".format(
-          jtu.format_shape_dtype_string(pred_shape, np.bool_),
-          jtu.format_shape_dtype_string(arg_shape, arg_dtype)),
-       "pred_shape": pred_shape, "arg_shape": arg_shape, "arg_dtype": arg_dtype}
-      for arg_shape in [(), (3,), (2, 3)]
-      for pred_shape in ([(), arg_shape] if arg_shape else [()])
-      for arg_dtype in default_dtypes))
-  def testSelectAgainstNumpy(self, pred_shape, arg_shape, arg_dtype):
-    rng = jtu.rand_default(self.rng())
-    def args_maker():
-      return [rng(pred_shape, np.bool_), rng(arg_shape, arg_dtype),
-              rng(arg_shape, arg_dtype)]
-    return self._CheckAgainstNumpy(lax_reference.select, lax.select, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -2669,7 +2660,6 @@ class LaxTest(jtu.JaxTestCase):
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
     # check casting to ndarray works
@@ -2872,7 +2862,6 @@ class LazyConstantTest(jtu.JaxTestCase):
         np.log1p(np.float32(1e-5)), lax.log1p(np.complex64(1e-5)))
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxNamedShapeTest(jtu.JaxTestCase):
 
   def test_abstract_eval(self):

@@ -11,6 +11,14 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.3.1 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.0...main).
+* `jax.test_util.JaxTestCase` now sets `jax_numpy_rank_promotion='raise'` by
+  default. To recover the previous behavior, use the `jax.test_util.with_config`
+  decorator:
+  ```python
+  @jtu.with_config(jax_numpy_rank_promotion='allow')
+  class MyTestCase(jtu.JaxTestCase):
+    ...
+  ```
 
 
 ## jaxlib 0.3.1 (Unreleased)

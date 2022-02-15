@@ -93,7 +93,6 @@ def _zero_for_irfft(z, axes):
   return jnp.concatenate(parts, axis=axis)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="raise")
 class FftTest(jtu.JaxTestCase):
 
   def testNotImplemented(self):

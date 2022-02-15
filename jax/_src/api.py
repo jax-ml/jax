@@ -84,11 +84,14 @@ from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp
 from jax.custom_transpose import custom_transpose
 from jax.ad_checkpoint import checkpoint_policies
 
-from jax._src.config import (flags, config, bool_env,
-                             disable_jit as _disable_jit,
-                             debug_nans as config_debug_nans,
-                             debug_infs as config_debug_infs,
-                             _thread_local_state as config_thread_local_state)
+from jax._src.config import (
+    flags, config, bool_env,
+    disable_jit as _disable_jit,
+    debug_nans as config_debug_nans,
+    debug_infs as config_debug_infs,
+    _thread_local_state as config_thread_local_state,
+    explicit_device_put_scope as config_explicit_device_put_scope,
+    explicit_device_get_scope as config_explicit_device_get_scope)
 
 
 traceback_util.register_exclusion(__file__)
@@ -98,12 +101,7 @@ _dtype = partial(dtypes.dtype, canonicalize=True)
 AxisName = Any
 
 # These TypeVars are used below to express the fact that function types
-# (i.e. call signatures) are invariant under the jit, vmap, and pmap
-# transformations.
-# Note that the function type annotations will generally not strictly hold
-# in JIT internals, as Tracer values are passed through the function.
-# Should this raise any type errors for the tracing code in future, we can disable
-# type checking in parts of the tracing code, or remove these annotations.
+# (i.e. call signatures) are invariant under the vmap transformation.
 F = TypeVar("F", bound=Callable)
 T = TypeVar("T")
 U = TypeVar("U")
@@ -225,7 +223,7 @@ def _infer_argnums_and_argnames(
 
 
 def jit(
-  fun: F,
+  fun: Callable,
   *,
   static_argnums: Union[int, Iterable[int], None] = None,
   static_argnames: Union[str, Iterable[str], None] = None,
@@ -233,7 +231,7 @@ def jit(
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
   inline: bool = False,
-) -> F:
+) -> Any:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -337,7 +335,7 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
 
 
 def _python_jit(
-    fun: F,
+    fun: Callable,
     static_argnums: Union[int, Iterable[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
@@ -389,14 +387,14 @@ class _FastpathData(NamedTuple):
 _cpp_jit_cache = jax_jit.CompiledFunctionCache()
 
 def _cpp_jit(
-    fun: F,
+    fun: Callable,
     static_argnums: Union[int, Iterable[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
-) -> F:
+) -> Any:
   # An implementation of `jit` that tries to do as much as possible in C++.
   # The goal of this function is to speed up the time it takes to process the
   # arguments, find the correct C++ executable, start the transfer of arguments
@@ -1544,7 +1542,7 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
 
   @wraps(fun, docstr=docstr)
   @api_boundary
-  def batched_fun(*args, **kwargs):
+  def vmap_f(*args, **kwargs):
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
@@ -1558,7 +1556,7 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
     ).call_wrapped(*args_flat)
     return tree_unflatten(out_tree(), out_flat)
 
-  return batched_fun
+  return vmap_f
 
 def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
   if not vals:
@@ -1617,7 +1615,7 @@ def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
       raise ValueError(msg.format(f"the tree of axis sizes is:\n{sizes}")) from None
 
 def pmap(
-  fun: F,
+  fun: Callable,
   axis_name: Optional[AxisName] = None,
   *,
   in_axes=0,
@@ -1628,7 +1626,7 @@ def pmap(
   axis_size: Optional[int] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
   global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-) -> F:
+) -> Any:
   """Parallel map with support for collective operations.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data
@@ -1954,7 +1952,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
 
 def _get_f_mapped(
     *,
-    fun: F,
+    fun: Callable,
     axis_name: Optional[AxisName],
     in_axes=0,
     out_axes=0,
@@ -1965,7 +1963,7 @@ def _get_f_mapped(
     donate_tuple: Tuple[int],
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]],
 ):
-  def f_pmapped(*args, **kwargs):
+  def pmap_f(*args, **kwargs):
     p = _prepare_pmap(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
         global_arg_shapes, args, kwargs)
@@ -1978,7 +1976,7 @@ def _get_f_mapped(
         global_arg_shapes=p.global_arg_shapes_flat)
     return p.out_tree, out
 
-  return f_pmapped
+  return pmap_f
 
 
 def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
@@ -2003,7 +2001,7 @@ def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
 
 
 def _python_pmap(
-    fun: F,
+    fun: Callable,
     axis_name: Optional[AxisName] = None,
     *,
     in_axes=0,
@@ -2014,7 +2012,7 @@ def _python_pmap(
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-) -> F:
+) -> Any:
   """The Python only implementation."""
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
@@ -2022,7 +2020,7 @@ def _python_pmap(
 
   @wraps(fun)
   @api_boundary
-  def f_pmapped(*args, **kwargs):
+  def pmap_f(*args, **kwargs):
     f_pmapped_ = _get_f_mapped(
         fun=fun,
         axis_name=axis_name,
@@ -2038,11 +2036,11 @@ def _python_pmap(
     out_tree, out_flat = f_pmapped_(*args, **kwargs)
     return tree_unflatten(out_tree(), out_flat)
 
-  f_pmapped.lower = _pmap_lower(
+  pmap_f.lower = _pmap_lower(
       fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
       backend, axis_size, global_arg_shapes, donate_tuple)
 
-  return f_pmapped
+  return pmap_f
 
 
 class _PmapFastpathData(NamedTuple):
@@ -2062,7 +2060,7 @@ class _PmapFastpathData(NamedTuple):
 
 
 def _cpp_pmap(
-    fun: F,
+    fun: Callable,
     axis_name: Optional[AxisName] = None,
     *,
     in_axes=0,
@@ -2073,7 +2071,7 @@ def _cpp_pmap(
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-) -> F:
+) -> Any:
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
       out_axes)
@@ -2133,13 +2131,13 @@ def _cpp_pmap(
   cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,
                                static_broadcasted_tuple, pxla._shard_arg)
 
-  f_pmapped = wraps(fun)(cpp_mapped_f)
+  pmap_f = wraps(fun)(cpp_mapped_f)
 
-  f_pmapped.lower = _pmap_lower(
+  pmap_f.lower = _pmap_lower(
       fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
       backend, axis_size, global_arg_shapes, donate_tuple)
 
-  return f_pmapped
+  return pmap_f
 
 
 def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
@@ -2318,7 +2316,7 @@ def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
     return (tree_unflatten(out_tree, out_primals),
             tree_unflatten(out_tree, out_tangents),
             tree_unflatten(aux_tree, aux()))
-  
+
 def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   """Produces a linear approximation to ``fun`` using :py:func:`jvp` and partial eval.
 
@@ -2714,7 +2712,7 @@ def make_jaxpr(fun: Callable,
 
   @wraps(fun)
   @api_boundary
-  def jaxpr_maker(*args, **kwargs):
+  def make_jaxpr_f(*args, **kwargs):
     f = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
@@ -2733,8 +2731,8 @@ def make_jaxpr(fun: Callable,
       return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)
     return closed_jaxpr
 
-  jaxpr_maker.__name__ = f"make_jaxpr({jaxpr_maker.__name__})"
-  return jaxpr_maker
+  make_jaxpr_f.__name__ = f"make_jaxpr({make_jaxpr.__name__})"
+  return make_jaxpr_f
 
 
 def device_put(x, device: Optional[xc.Device] = None):
@@ -2755,7 +2753,8 @@ def device_put(x, device: Optional[xc.Device] = None):
   Returns:
     A copy of ``x`` that resides on ``device``.
   """
-  return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
+  with config_explicit_device_put_scope():
+    return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
 
 
 def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
@@ -2824,7 +2823,8 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
                for buf in dispatch.device_put(x, d)]
     return pxla.make_sharded_device_array(stacked_aval, None, buffers)
 
-  return tree_multimap(_device_put_sharded, *shards)
+  with config_explicit_device_put_scope():
+    return tree_multimap(_device_put_sharded, *shards)
 
 
 def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
@@ -2867,7 +2867,9 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
     buf, = dispatch.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
     return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
-  return tree_map(_device_put_replicated, x)
+
+  with config_explicit_device_put_scope():
+    return tree_map(_device_put_replicated, x)
 
 
 # TODO(mattjj): consider revising
@@ -2912,12 +2914,13 @@ def device_get(x: Any):
     - device_put_sharded
     - device_put_replicated
   """
-  for y in tree_leaves(x):
-    try:
-      y.copy_to_host_async()
-    except AttributeError:
-      pass
-  return tree_map(_device_get, x)
+  with config_explicit_device_get_scope():
+    for y in tree_leaves(x):
+      try:
+        y.copy_to_host_async()
+      except AttributeError:
+        pass
+    return tree_map(_device_get, x)
 
 def _check_arg(arg):
   if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
@@ -3149,7 +3152,7 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
   """
   @wraps(fun)
   @api_boundary
-  def fun_remat(*args, **kwargs):
+  def remat_f(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
     out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
@@ -3157,7 +3160,7 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
                              differentiated=False,
                              policy=policy)
     return tree_unflatten(out_tree(), out_flat)
-  return fun_remat
+  return remat_f
 remat = checkpoint  # type: ignore
 
 def named_call(
@@ -3194,13 +3197,13 @@ def named_call(
   _, in_tree = tree_flatten(())
 
   @functools.wraps(fun)
-  def named_f(*args, **kwargs):
+  def named_call_f(*args, **kwargs):
     lu_f = lu.wrap_init(lambda: fun(*args, **kwargs))
     flat_f, out_tree = flatten_fun_nokwargs(lu_f, in_tree)
     out_flat = core.named_call_p.bind(flat_f, name=name)
     return tree_unflatten(out_tree(), out_flat)
 
-  return named_f
+  return named_call_f
 
 def invertible(fun: Callable) -> Callable:
   """Asserts that the decorated function is invertible.
