@@ -5653,6 +5653,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # Test against np.broadcast_shapes once numpy 1.20 is minimum required version
     np.testing.assert_equal(jnp.broadcast_shapes(*shapes), broadcasted_shape)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{shapes}", "shapes": shapes}
+      for shapes in ["this is not a valid shape",
+                     ((2, 3), "this is not a valid shape")])
+  def testBroadcastShapesRaisesTypeError(self, shapes):
+    with self.assertRaises(TypeError):
+      jnp.broadcast_shapes(*shapes)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{shapes}", "shapes": shapes}
+      for shapes in [(2, -1), ((2, 3), (2, -1)), ((2, 3), np.array([2, -1]))])
+  def testBroadcastShapesRaisesValueError(self, shapes):
+    with self.assertRaises(ValueError):
+      jnp.broadcast_shapes(*shapes)
+
   def testBroadcastToIssue1522(self):
     self.assertRaisesRegex(
         ValueError, "Incompatible shapes for broadcasting: .*",

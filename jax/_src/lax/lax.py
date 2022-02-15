@@ -113,6 +113,9 @@ def _broadcast_shapes_cached(*shapes: Tuple[int, ...]) -> Tuple[int, ...]:
   return _broadcast_shapes_uncached(*shapes)
 
 def _broadcast_shapes_uncached(*shapes):
+  shapes = [canonicalize_shape(shape) for shape in shapes]
+  if not all([all(el >= 0 for el in shape) for shape in shapes]):
+    raise ValueError('negative dimensions are not allowed')
   fst, *rst = shapes
   if not rst: return fst
 
