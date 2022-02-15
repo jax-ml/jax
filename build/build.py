@@ -375,6 +375,8 @@ def main():
       "--cudnn_version",
       default=None,
       help="CUDNN version, e.g., 8")
+  # Caution: if changing the default list of CUDA capabilities, you should also
+  # update the list in .bazelrc, which is used for wheel builds.
   parser.add_argument(
       "--cuda_compute_capabilities",
       default="3.5,5.2,6.0,7.0,8.0",
