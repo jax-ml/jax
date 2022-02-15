@@ -2607,7 +2607,8 @@ def _shard_value(mesh: maps.Mesh,
           type=int(sharding_proto.type),
           tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
           tile_assignment_devices=sharding_proto.tile_assignment_devices,
-          replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim))
+          replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
+          last_tile_dims=sharding_proto.last_tile_dims))
   return xla_sharding.Sharding(proto=xla_sharding_proto).apply_to_tensor(
       val, use_sharding_op=True)
 
