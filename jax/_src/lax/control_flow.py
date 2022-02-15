@@ -3084,6 +3084,12 @@ def _remat_translation_using_while(*args,
   carry_res = while_loop(cond, body, carry_init)
   return carry_res[1]
 
+
+def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
+  args = _optimization_barrier(args)
+  return core.eval_jaxpr(jaxpr, (), *args)
+
+
 def _remat_translation_rule(*args,
                             call_jaxpr: Optional[core.Jaxpr] = None,
                             jaxpr: Optional[core.Jaxpr] = None,
@@ -3104,6 +3110,8 @@ def _remat_translation_rule(*args,
   if differentiated and prevent_cse:
     if platform == "gpu":
       translation_rule = _remat_translation_using_while
+    elif platform == "tpu" and config.jax_remat_opt_barrier:
+      translation_rule = _remat_translation_using_opt_barrier
     else:
       translation_rule = _remat_translation_using_cond
   else:
@@ -3122,4 +3130,39 @@ for platform in ("cpu", "gpu", "tpu"):
     mlir.register_lowering(remat_primitive,
                            mlir.lower_fun(partial(_remat_translation_rule,
                                                    platform=platform),
-                                          multiple_results=True))
+                                          multiple_results=True),
+                           platform=platform)
+
+
+def _optimization_barrier_abstract_eval(*args):
+  return args
+
+
+def _optimization_barrier_translation_rule(ctx, avals_in, avals_out, *args):
+  out = xops.OptimizationBarrier(xops.Tuple(ctx.builder, args))
+  return [xops.GetTupleElement(out, i) for i in range(len(args))]
+
+
+def _optimization_barrier_lowering_rule(ctx, *args):
+  barrier_types = _map(mlir.aval_to_ir_types, ctx.avals_in)
+  flat_barrier_types = util.flatten(barrier_types)
+
+  flat_args = mlir.flatten_lowering_ir_args(args)
+  barrier_op = mhlo.OptimizationBarrierOp(flat_barrier_types, flat_args)
+  return util.unflatten(barrier_op.results, _map(len, barrier_types))
+
+
+def _optimization_barrier(arg):
+  flat_args, treedef = tree_flatten(arg)
+  return tree_unflatten(treedef, optimization_barrier_p.bind(*flat_args))
+
+
+optimization_barrier_p = core.Primitive('optimization_barrier')
+optimization_barrier_p.multiple_results = True
+optimization_barrier_p.def_impl(
+    partial(xla.apply_primitive, optimization_barrier_p))
+optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
+xla.register_translation(optimization_barrier_p,
+                         _optimization_barrier_translation_rule)
+mlir.register_lowering(optimization_barrier_p,
+                       _optimization_barrier_lowering_rule)

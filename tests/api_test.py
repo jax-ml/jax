@@ -3910,10 +3910,12 @@ class RematTest(jtu.JaxTestCase):
     c = api.xla_computation(f)(2.)
     self.assertNotIn('while', c.as_hlo_text())
     self.assertNotIn('conditional', c.as_hlo_text())
+    self.assertNotIn('opt-barrier', c.as_hlo_text())
 
     c = api.xla_computation(grad(f))(2.)
     text = c.as_hlo_text()
-    self.assertTrue('while' in text or 'conditional' in text)
+    self.assertTrue('while' in text or 'conditional' in text
+                    or 'opt-barrier' in text)
 
   def test_no_cse_widget_with_prevent_cse_false(self):
     @partial(api.remat, prevent_cse=False)

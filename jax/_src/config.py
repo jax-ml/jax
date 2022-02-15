@@ -688,6 +688,13 @@ config.define_bool_state(
     help=('Enables experimental features for staging out computations with '
           'dynamic shapes.'))
 
+# This flag is temporary during rollout of the remat barrier.
+# TODO(parkers): Remove if there are no complaints.
+config.define_bool_state(
+    name='jax_remat_opt_barrier',
+    default=True,
+    help=('Enables using optimization-barrier op for lowering remat.'))
+
 if lib.xla_extension_version < 58:
   @contextlib.contextmanager
   def explicit_device_put_scope() -> Iterator[None]:
