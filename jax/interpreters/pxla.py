@@ -1967,7 +1967,7 @@ def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh):
   sx = mlir.wrap_with_sharding_op(x, sharding_proto, unspecified_dims=unspecified_dims)
   manual_proto = _manual_proto(aval_in, axes, mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
-  return [mlir.wrap_with_full_to_shard_op(result_type, sx, manual_proto, unspecified_dims=set(range(aval_in.ndim)))]
+  return mlir.wrap_with_full_to_shard_op(result_type, sx, manual_proto, unspecified_dims=unspecified_dims),
 
 shard_to_full_p = core.Primitive('shard_to_full')
 
@@ -1982,10 +1982,10 @@ def _shard_to_full_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh):
   aval_out, = ctx.avals_out
   manual_proto = _manual_proto(aval_in, axes, mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
-  sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=set(range(aval_in.ndim)))
-  sharding_proto = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval_out, axes).sharding_proto()
   unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
-  return [mlir.wrap_with_shard_to_full_op(result_type, sx, sharding_proto, unspecified_dims)]
+  sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=unspecified_dims)
+  sharding_proto = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval_out, axes).sharding_proto()
+  return mlir.wrap_with_shard_to_full_op(result_type, sx, sharding_proto, unspecified_dims),
 
 @lu.transformation
 def vtile_manual(mesh: Mesh,
