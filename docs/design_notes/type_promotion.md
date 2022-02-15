@@ -141,7 +141,7 @@ print(np.dtype(a + (b + c)))
 
 Such a result may come as a surprise to users: we generally expect mathematical expressions to map to mathematical concepts, so, for example, `a + b + c` should be equivalent to `c + b + a`; `x * (y + z)` should be equivalent to `x * y + x * z`. If type promotion is non-associative or non-commutative, these properties no longer apply.
 
-Further, a lattice-based type promotion is simpler to conceptualize and understand when compared to a table-based system. Including scalars, JAX recognizes 18 distinct types: a promotion lattice consisting of 18 nodes and sparse, well-motivated connections between them is far easier to hold in one's mind than a table of 324 entries.
+Further, a lattice-based type promotion system is simpler to conceptualize and understand when compared to a table-based system. For example, JAX recognizes 18 distinct types: a promotion lattice consisting of 18 nodes and sparse, well-motivated connections between them is far easier to hold in one's mind than a table of 324 entries.
 
 For this reason, we opt to use a lattice-based type promotion system for JAX.
 
@@ -552,7 +552,7 @@ nx.draw(graph, with_labels=True, node_size=1500, node_color='lightgray', pos=pos
 
 +++ {"id": "zRfInAL21i_m"}
 
-A disadvantage of this approach still leaves `int64` and `uint64` promotion undefined, because there is no standard floating point type with enough bits of mantissa to represent their full range of values. We could relax the precision constraint and complete the lattice by drawing connections from `i64->f64` and `u64->f64`, but those links would run counter to the motivation for this promotion scheme.
+A disadvantage of this approach is that it still leaves `int64` and `uint64` promotion undefined, because there is no standard floating point type with enough bits of mantissa to represent their full range of values. We could relax the precision constraint and complete the lattice by drawing connections from `i64->f64` and `u64->f64`, but those links would run counter to the motivation for this promotion scheme.
 
 A second disadvantage is that this lattice makes it difficult to find a sensible place to insert `bfloat16` (see below) while maintaining the lattice property.
 
@@ -635,11 +635,12 @@ nx.draw(graph, with_labels=True, node_size=1500, node_color='lightgray', pos=pos
 
 +++ {"id": "xBDCy0AnGsbJ"}
 
-This involves a small sleight of hand: previously we had used `f*` to refer to a scalar type. In this lattice, `f*` might be applied to the array output of a mixed computation. Instead of thinking of `f*` as a scalar, we could think of it as a special kind of `float64`, with promotion rules that differ from those of `f64`.
+This involves a small sleight of hand: previously we had used `f*` to refer to a scalar type. In this lattice, `f*` might be applied to the array output of a mixed computation. Instead of thinking of `f*` as a scalar, we could think of it as a special kind of `float` value with distinct promotion rules: in JAX we refer to this as a *weak float*; see below.
 
 The advantage of this approach is that, outside unsigned ints, it avoids *all* wider-than-necessary promotions: you can never get an f64 output without a 64-bit input, and you can never get an f32 output without a 32-bit input: this results in convenient semantics for working on accelerators while avoiding inadvertent 64-bit values.
 
-This lattice also happens to generate a promotion table that very closely resembles JAX's original type promotion scheme, which was not based on a lattice but loosely followed the PyTorch behavior of giving primacy to floating point types.
+This feature of giving primacy to floating point types resembles the type promotion behavior of PyTorch.
+This lattice also happens to generate a promotion table that very closely resembles JAX's original *ad hoc* type promotion scheme, which was not based on a lattice but had the property of giving primacy to floating point types.
 
 This lattice additionally offers a natural location to insert `bfloat16`, without the need to impose an ordering between `bf16` and `f16`:
 
@@ -848,7 +849,7 @@ display.HTML(table.to_html())
 ### PyTorch Type Promotion
 
 Notice that torch does not include unsigned integer types larger than `uint8`.
-Aside from this and some details about promotion with scalar types, the table is close to that used by `jax.numpy`.
+Aside from this and some details about promotion with scalar/weak types, the table is close to that used by `jax.numpy`.
 
 ```{code-cell}
 :cellView: form
