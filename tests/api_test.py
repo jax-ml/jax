@@ -54,6 +54,7 @@ from jax.interpreters.sharded_jit import PartitionSpec as P
 from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
@@ -421,7 +422,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
         lambda: self.jit(f)("foo"))
 
-    if jax._src.lib._xla_extension_version >= 47:
+    if xla_extension_version >= 47:
       # Jax type objects aren't valid data arguments.
       self.assertRaisesRegex(
           TypeError,
@@ -461,6 +462,23 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     g()                     # g still runs
     del g                   # no more references to x
     assert x() is None      # x is gone
+
+  @unittest.skipIf(xla_extension_version < 59, "Test requires jaxlib > 0.3.0")
+  def test_jit_of_nonweakreferenceable_function(self):
+    class CallableWithSlots:
+      __slots__ = []
+      def __call__(self, x):
+        return x + 1
+
+    c = CallableWithSlots()
+    with self.assertRaisesRegex(TypeError, "cannot create weak reference.*"):
+      weakref.ref(c)
+    # Building a jit object does not crash.
+    f = self.jit(c)
+    with self.assertRaisesRegex(TypeError, "cannot create weak reference.*"):
+      # Calling the jit object will fail, but not because of the C++ JIT. The
+      # Python-level jit cache requires weak reference support.
+      f(3)
 
   def test_jit_raises_on_first_invocation_on_non_hashable_static_argnum(self):
     if self.jit != api._python_jit:
@@ -509,8 +527,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       # we could.
       jitted_f(1, HashableWithoutEq())
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 50,
-                   "requires jaxlib >= 0.1.76")
+  @unittest.skipIf(xla_extension_version < 50, "requires jaxlib >= 0.1.76")
   def test_cpp_jit_raises_other_exceptions_when_hashing_fails(self):
     class A:
       def __hash__(self):
@@ -827,8 +844,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         "for a particular signature. Detected .*BatchTracer",
         err)
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 45,
-                   "requires jaxlib >= 0.1.75")
+  @unittest.skipIf(xla_extension_version < 45, "requires jaxlib >= 0.1.75")
   def test_jit_enum_as_dict_keys_fails(self):
     class E(enum.Enum):
       A = 0
@@ -842,8 +858,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       f({E.A: 1.0, E.B: 2.0})
 
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 56,
-                   "requires jaxlib >= 0.1.76")
+  @unittest.skipIf(xla_extension_version < 56, "requires jaxlib >= 0.1.76")
   def test_jit_static_argnums_requires_type_equality(self):
     # See: https://github.com/google/jax/pull/9311
     @partial(self.jit, static_argnums=(0,))
