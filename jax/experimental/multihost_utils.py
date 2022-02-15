@@ -55,8 +55,9 @@ def broadcast_one_to_all(in_tree: PyTreeDef,
       raise ValueError('GDAs cannot be broadcasted from source host to other '
                        'hosts.')
     if is_source:
+      x = x if x.ndim == 0 else x[None, ...]
       return np.concatenate([
-          x[None, ...],
+          x,
           np.repeat([np.zeros_like(x)],
                     jax.local_device_count() - 1, 0)
       ])
