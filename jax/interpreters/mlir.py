@@ -22,6 +22,7 @@ from functools import partial
 import io
 import itertools
 import re
+import threading
 import typing
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
                     Type, Union, FrozenSet)
@@ -406,7 +407,8 @@ def flatten_lowering_ir_args(
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
-_module_unique_id = itertools.count()
+_module_unique_id = threading.local()
+_module_unique_id.count = itertools.count()
 _module_name_regex = re.compile(r"[^\w.-]")
 
 def lower_jaxpr_to_module(
@@ -443,7 +445,7 @@ def lower_jaxpr_to_module(
     # Some clients expect modules to have unique names, e.g., in trace data.
     # This may or may not be a reasonable assumption.
     ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
-        f"{module_name}.{next(_module_unique_id)}")
+        f"{module_name}.{next(_module_unique_id.count)}")
     # TODO(phawkins): represent units with zero buffers at the runtime level.
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, public=True, replace_units_with_dummy=True,
