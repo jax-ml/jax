@@ -1135,15 +1135,32 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testAxisResourcesMismatch(self):
     x = jnp.ones([])
     p = [None, None, None]
+
     pjit(lambda x: x, (p,), p)([x, x, x])  # OK
+
     error = re.escape(
-        r"pjit in_axis_resources specification must be a tree prefix of the "
-        r"corresponding value, got specification (None, None, None) for value "
-        r"tree PyTreeDef((*, *)). Note that pjit in_axis_resources that are "
-        r"non-trivial pytrees should always be wrapped in a tuple representing "
-        r"the argument list.")
+        "pjit in_axis_resources specification must be a tree prefix of the "
+        "positional arguments tuple passed to the `pjit`-decorated function. "
+        "In particular, pjit in_axis_resources must either be a None, a "
+        "PartitionSpec, or a tuple of length equal to the number of positional "
+        "arguments. But pjit in_axis_resources is the wrong length: got a "
+        "tuple or list of length 3 for an args tuple of length 2.")
     with self.assertRaisesRegex(ValueError, error):
-      pjit(lambda x, y: x, p, p)(x, x)  # Error, but make sure we hint at tupling
+      pjit(lambda x, y: x, p, p)(x, x)
+
+    Foo = namedtuple('Foo', ['x'])
+    error = "in_axis_resources is not a tuple.*might need to be wrapped"
+    with self.assertRaisesRegex(ValueError, error):
+      pjit(lambda x: x, Foo(None), Foo(None))(Foo(x))
+
+    pjit(lambda x: x, (Foo(None),), Foo(None))(Foo(x))  # OK w/ singleton tuple
+
+    # TODO(apaszke,mattjj): Disable implicit list casts and enable this
+    # error = ("it looks like pjit in_axis_resources might need to be wrapped in "
+    #          "a singleton tuple.")
+    # with self.assertRaisesRegex(ValueError, error):
+    #   pjit(lambda x, y: x, p, p)([x, x, x])
+
     # TODO(apaszke): Disable implicit list casts and enable this
     # error = re.escape(
     # r"pjit in_axis_resources specification must be a tree prefix of the "
@@ -1155,10 +1172,16 @@ class PJitErrorTest(jtu.JaxTestCase):
     # r"singleton tuple.")
     # with self.assertRaisesRegex(ValueError, error):
     # pjit(lambda x: x, p, p)([x, x, x])  # Error, but make sure we hint at singleton tuple
+
     error = re.escape(
-        r"pjit out_axis_resources specification must be a tree prefix of the "
-        r"corresponding value, got specification [[None, None, None], None] for "
-        r"value tree PyTreeDef([*, *, *]).")
+        "pytree structure error: different numbers of pytree children at "
+        "key path\n"
+        "    pjit out_axis_resources tree root\n"
+        "At that key path, the prefix pytree pjit out_axis_resources has a "
+        "subtree of type\n"
+        "    <class 'list'>\n"
+        "with 2 children, but at the same key path the full pytree has a "
+        "subtree of the same type but with 3 children.")
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, (p,), [p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
 

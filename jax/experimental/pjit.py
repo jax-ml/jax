@@ -40,7 +40,9 @@ from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.sharded_jit import PartitionSpec
 from jax._src.lib import xla_client as xc
-from jax.tree_util import tree_map, tree_flatten, tree_unflatten
+from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
+                           treedef_is_leaf, tree_structure)
+from jax._src.tree_util import prefix_errors
 from jax._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
                          split_list, cache, tuple_insert)
@@ -293,11 +295,60 @@ def flatten_axis_resources(what, tree, axis_resources, tupled_args):
   try:
     return tuple(flatten_axes(what, tree, axis_resources, tupled_args=tupled_args))
   except ValueError:
-    pass
+    pass  # Raise a tree prefix error below
+
+  # Tree leaves are always valid prefixes, so if there was a prefix error as
+  # assumed here, axis_resources must not be a leaf.
+  assert not treedef_is_leaf(tree_structure(axis_resources))
+
+  # Check the type directly rather than using isinstance because of namedtuples.
+  if tupled_args and (type(axis_resources) is not tuple or
+                      len(axis_resources) != len(tree.children())):
+    # We know axis_resources is meant to be a tuple corresponding to the args
+    # tuple, but while it is a non-leaf pytree, either it wasn't a tuple or it
+    # wasn't the right length.
+    msg = (f"{what} specification must be a tree prefix of the positional "
+           f"arguments tuple passed to the `pjit`-decorated function. In "
+           f"particular, {what} must either be a None, a PartitionSpec, or "
+           f"a tuple of length equal to the number of positional arguments.")
+    # If `tree` represents an args tuple, then `axis_resources` must be a tuple.
+    # TODO(mattjj,apaszke): disable implicit list casts, remove 'or list' below
+    if type(axis_resources) is not tuple:
+      msg += f" But {what} is not a tuple: got {type(axis_resources)} instead."
+    elif len(axis_resources) != len(tree.children()):
+      msg += (f" But {what} is the wrong length: got a tuple or list of length "
+              f"{len(axis_resources)} for an args tuple of length "
+              f"{len(tree.children())}.")
+
+    # As an extra hint, let's check if the user just forgot to wrap
+    # in_axis_resources in a singleton tuple.
+    if len(tree.children()) == 1:
+      try: flatten_axes(what, tree, (axis_resources,))
+      except ValueError: pass  # That's not the issue.
+      else:
+        msg += (f" Given the corresponding argument being "
+                f"passed, it looks like {what} might need to be wrapped in "
+                f"a singleton tuple.")
+
+    raise ValueError(msg)
+
   # Replace axis_resources with unparsed versions to avoid revealing internal details
-  flatten_axes(what, tree, tree_map(lambda parsed: parsed.user_spec, axis_resources),
-               tupled_args=tupled_args)
-  raise AssertionError("Please open a bug request!")  # This should be unreachable
+  axis_tree = tree_map(lambda parsed: parsed.user_spec, axis_resources)
+
+  # Because ecause we only have the `tree` treedef and not the full pytree here,
+  # we construct a dummy tree to compare against. Revise this in callers?
+  dummy_tree = tree_unflatten(tree, [PytreeLeaf()] * tree.num_leaves)
+  errors = prefix_errors(axis_tree, dummy_tree)
+  if errors:
+    e = errors[0]  # Only show information about the first disagreement found.
+    raise e(what)
+
+  # At this point we've failed to find a tree prefix error.
+  assert False, "Please open a bug report!"  # This should be unreachable.
+
+class PytreeLeaf:
+  def __repr__(self): return "pytree leaf"
+
 
 @lu.cache
 def _pjit_jaxpr(fun, mesh, local_in_avals,
@@ -472,8 +523,7 @@ class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
 def _prepare_axis_resources(axis_resources,
                             arg_name,
                             allow_unconstrained_dims=False):
-  # PyTrees don't treat None values as leaves, so we explicitly need
-  # to explicitly declare them as such
+  # PyTrees don't treat None values as leaves, so we use an is_leaf function.
   entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
   entries = [
