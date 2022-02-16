@@ -606,13 +606,6 @@ operations. There is support for `sharded_jit` and `pjit`.
 If you suspect that the SavedModel is larger than it should be, check first
 that you are not including the parameters as constants in the graph (see [above](#usage-saved-model)).
 
-Additionally, the SavedModel obtained from a `jax2tf.convert`-ed function may include source
-location information. This ensures that the debugging experience is similar
-for JAX with XLA vs. `jax2tf.convert` with XLA. However, this debugging information
-increases the size of the SavedModel, even possibly doubling it. You can
-disable the generation of this metadata with the parameter
-`include_xla_op_metadata`.
-
 ### SavedModel supports only first-order gradients
 
 The `jax2tf`-converted function supports higher-order gradients, but when the

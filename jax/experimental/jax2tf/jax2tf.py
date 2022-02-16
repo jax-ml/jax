@@ -163,7 +163,8 @@ class _ThreadLocalState(threading.local):
     self.shape_env: Sequence[Tuple[str, TfVal]] = ()
 
     # Whether to actually include XLA op metadata in the generated TF ops
-    self.include_xla_op_metadata = True
+    # TODO(b/189306134): implement support for XLA metadata
+    self.include_xla_op_metadata = False
 
     # A cache for the tf.convert_to_tensor for constants. We try to preserve
     # sharing for constants, to enable tf.Graph to take advantage of it.
@@ -415,6 +416,7 @@ def convert(fun: Callable,
       _thread_local_state.enable_xla = enable_xla
 
       prev_include_xla_op_metadata = _thread_local_state.include_xla_op_metadata
+      # TODO(b/189306134): implement support for XLA metadata
       _thread_local_state.include_xla_op_metadata = False
 
       _thread_local_state.shape_env = shape_env
