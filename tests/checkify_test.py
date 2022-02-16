@@ -562,7 +562,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
   def test_check_error_scanned(self):
     def body(carry, x):
-      checkify.check(jnp.all(x > 0), "should be negative")
+      checkify.check(jnp.all(x > 0), "should be positive")
       return carry, x
 
     def checked_body(carry, x):
@@ -574,9 +574,13 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
       checkify.check_error(errs)
       return xs
 
-    err, _ = checkify.checkify(f)(jnp.array([-1, 0, -1]))
+    err, _ = checkify.checkify(f)(jnp.array([-1]))
     self.assertIsNotNone(err.get())
-    self.assertStartsWith(err.get(), "should be negative")
+    self.assertStartsWith(err.get(), "should be positive")
+
+    err, _ = checkify.checkify(f)(jnp.array([1, 0, -1]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "should be positive")
 
   def test_discharge_recharge(self):
     def ejit(f):

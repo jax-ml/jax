@@ -410,7 +410,7 @@ def check_error(error: Error) -> None:
   >>> # can re-checkify
   >>> error, _ = checkify.checkify(with_inner_jit)(-1)
   """
-  if np.size(error.err) > 1:
+  if np.shape(error.err):
     err, code = _reduce_any_error(error.err, error.code)
   else:
     err, code = error.err, error.code
