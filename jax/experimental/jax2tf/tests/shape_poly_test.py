@@ -1623,6 +1623,14 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda a, i: jnp.take(a, i, axis=1),
                   [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
                   poly_axes=[0, None], enable_and_diable_xla=True),
+    _make_harness("take_along_axis", "0",
+                  lambda x, y: jnp.take_along_axis(x, y, axis=0),
+                  [RandArg((5, 2), _f32), RandArg((5, 1), _f32)],
+                  poly_axes=[0, 0]),
+    _make_harness("take_along_axis", "1",
+                  lambda x, y: jnp.take_along_axis(x, y, axis=1),
+                  [RandArg((5, 2), _f32), RandArg((5, 1), _f32)],
+                  poly_axes=[0, 0]),
     _make_harness("tile", "0",
                   lambda x: jnp.tile(x, (1, 2)),
                   [RandArg((4, 3), _f32)],
@@ -1788,7 +1796,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="reshape_1_poly_axes=[(0, 1)]"
+      #one_containing="take_along_axis_1_poly_axes=[0, 0]"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())
