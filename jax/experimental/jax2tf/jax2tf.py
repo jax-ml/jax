@@ -1376,7 +1376,7 @@ def handle_boolean_args(f, argnums: Sequence[int], boolean_f=None):
       # All argnums should be boolean
       assert len(argnum_types) == 1, argnum_types
       if boolean_f != None:
-        return boolean_f(*args **kwargs)
+        return boolean_f(*args, **kwargs)
       else:
         args_cast = [(tf.cast(a, tf.int8) if i in argnums else a)
                     for i, a in enumerate(args)]
