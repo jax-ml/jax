@@ -15,26 +15,27 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 
-import unittest
 from typing import Dict, Tuple
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
 from jax import ad_checkpoint
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
+from jax._src import source_info_util
 from jax._src import test_util as jtu
+import jax._src.lib.xla_bridge
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
-from jax._src import source_info_util
-import jax._src.lib.xla_bridge
-
+from lingvo.jax import base_layer as jax_base_layer
+from lingvo.jax.layers.linears import Linear as jax_linear
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf  # type:
+
 
 config.parse_flags_with_absl()
 
@@ -1101,6 +1102,43 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         [],
         include_xla_op_metadata=False
     )
+
+  def test_convert_of_jaxlayer_fprop(self):
+    input_dims = 10
+    output_dims = 5
+    batch_size = 3
+
+    # Assign Jax Layer Paremeter
+    layer_p = jax_linear.Params().Set(
+        name="Test Layer",
+        input_dims=input_dims,
+        output_dims=output_dims)
+    jax_layer = layer_p.Instantiate()
+
+    # Assign jax context
+    prng_key = jax.random.PRNGKey(seed=100)
+    global_step = jnp.array(0, dtype=jnp.uint32)
+    jax_context = jax_base_layer.JaxContext.new_context(
+      prng_key=prng_key,
+      global_step=global_step)
+
+    # Initialize parameter
+    params = jax_layer.instantiate_variables(prng_key)
+
+    # Define input layer
+    test_input = tf.Variable(np.arange(
+        batch_size * input_dims).reshape(batch_size, input_dims),
+        shape=(batch_size, input_dims),
+        dtype='float32')
+
+    # Convert jax_layer.fprop() to TF function
+    with jax_context:
+      jax_context.bind(jax_layer, jax_layer.vars_to_flax_vars(params))
+      tf_layer = jax2tf.convert(jax_layer.fprop)
+    output = tf_layer(test_input)
+
+    self.assertNotEmpty(output)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
