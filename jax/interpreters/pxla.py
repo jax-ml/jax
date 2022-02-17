@@ -2173,6 +2173,7 @@ def lower_mesh_computation(
     out_partitions_t = xla.tuple_sharding_proto(out_partitions)
     partitions_proto = True
     axis_ctx = mlir.SPMDAxisContext(mesh)
+    axis_env = axis_ctx.axis_env
   else:
     replicated_args = [not axis for axis in in_axes]
     in_partitions = None
