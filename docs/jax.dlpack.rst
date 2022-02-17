@@ -1,6 +1,12 @@
 jax.dlpack module
 =================
 
+.. currentmodule:: jax.dlpack
+
 .. automodule:: jax.dlpack
-    :members:
-    :show-inheritance:
+
+.. autosummary::
+    :toctree: _autosummary
+
+    from_dlpack
+    to_dlpack

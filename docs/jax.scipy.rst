@@ -33,6 +33,8 @@ jax.scipy.linalg
    lu_factor
    lu_solve
    qr
+   schur
+   sqrtm
    solve
    solve_triangular
    svd
@@ -72,6 +74,9 @@ jax.scipy.signal
    convolve2d
    correlate
    correlate2d
+   csd
+   stft
+   welch
 
 jax.scipy.sparse.linalg
 -----------------------

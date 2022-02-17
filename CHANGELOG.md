@@ -19,7 +19,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   class MyTestCase(jtu.JaxTestCase):
     ...
   ```
-
+* Added ``jax.scipy.linalg.schur``, ``jax.scipy.linalg.sqrtm``,
+  ``jax.scipy.signal.csd``, ``jax.scipy.signal.stft``,
+  ``jax.scipy.signal.welch``.
 
 ## jaxlib 0.3.1 (Unreleased)
 * Changes
