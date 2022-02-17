@@ -1357,13 +1357,13 @@ def handle_boolean_args(f, argnums: Sequence[int], boolean_f=None):
   Args:
     f: a TF callable to wrap. It will be called with non-boolean arguments.
     argnums: the positional arguments that may be booleans.
-    boolean_f: [Optional] a TF callable compatible with boolean 
+    boolean_f: [Optional] a TF callable compatible with boolean
       arguments.
 
   Returns: a TF callable that can take a mix of boolean positional arguments
     (in the positions specified by `argnums`) and some non-boolean positional
     arguments. If there are no boolean arguments, just calls `f`. Otherwise,
-    it calls `boolean_f` if defined. Otherwise, casts the boolean 
+    it calls `boolean_f` if defined. Otherwise, casts the boolean
     arguments to `int8`, calls `f`, then casts the result to `bool`.
   """
   argnums = tf.nest.flatten(argnums)
@@ -1682,13 +1682,13 @@ axes_to_axis = lambda func: lambda operand, axes: func(operand, axis=axes)
 tf_impl[lax.reduce_sum_p] = axes_to_axis(tf.reduce_sum)
 tf_impl[lax.reduce_prod_p] = axes_to_axis(tf.reduce_prod)
 tf_impl[lax.reduce_max_p] = handle_boolean_args(
-  axes_to_axis(tf.reduce_max), argnums=[0], 
+  axes_to_axis(tf.reduce_max), argnums=[0],
   boolean_f=axes_to_axis(tf.reduce_any))
 
 def bool_reduce_min(x, axes):
   return tf.logical_not(
     axes_to_axis(tf.reduce_any)(
-      tf.logical_not(x), 
+      tf.logical_not(x),
       axes
     )
   )
