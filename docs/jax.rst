@@ -11,18 +11,19 @@ Subpackages
 
     jax.numpy
     jax.scipy
+    jax.config
+    jax.dlpack
+    jax.distributed
     jax.example_libraries
     jax.experimental
+    jax.flatten_util
     jax.image
     jax.lax
     jax.nn
     jax.ops
+    jax.profiler
     jax.random
     jax.tree_util
-    jax.flatten_util
-    jax.dlpack
-    jax.profiler
-    jax.config
 
 .. toctree::
    :hidden:
