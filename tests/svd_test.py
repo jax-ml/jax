@@ -16,12 +16,12 @@
 import functools
 
 import jax
-from jax import test_util as jtu
 from jax.config import config
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as osp_linalg
 from jax._src.lax import svd
+from jax._src import test_util as jtu
 
 from absl.testing import absltest
 from absl.testing import parameterized
