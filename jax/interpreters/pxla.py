@@ -2413,7 +2413,6 @@ def mesh_sharding_specs(axis_sizes, axis_names):
     # NOTE: sorted is stable, which is important when multiple resources
     #       map to the same axis.
     for name, axis in sorted(aval_axes.items(), key=lambda x: x[1]):
-      assert aval_shape[axis] % axis_sizes[name] == 0, (axis_sizes[name], aval.shape[axis])
       aval_shape[axis] //= axis_sizes[name]
       chunked = sharding[axis]
       if isinstance(chunked, NoSharding):

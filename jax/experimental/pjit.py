@@ -378,10 +378,11 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
     # first one is a valid spec for a scalar value, while the second is not!
     _check_shapes_against_resources(
         "pjit arguments", mesh.is_multi_process, mesh.shape, local_in_avals,
-        in_axis_resources_flat)
+        in_axis_resources_flat, allow_uneven_sharding=False)
   else:
     _check_shapes_against_resources("pjit arguments", False, mesh.local_mesh.shape,
-                                    local_in_avals, in_axis_resources_flat)
+                                    local_in_avals, in_axis_resources_flat,
+                                    allow_uneven_sharding=False)
 
   global_in_avals = local_to_global(in_positional_semantics, mesh,
                                     local_in_avals, canonicalized_in_axis_resources_flat)
@@ -400,7 +401,8 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
         "pjit out_axis_resources", out_tree(),
         out_axis_resources_thunk(), tupled_args=False)
   _check_shapes_against_resources("pjit outputs", mesh.is_multi_process, mesh.shape,
-                                  global_out_avals, out_axis_resources_flat)
+                                  global_out_avals, out_axis_resources_flat,
+                                  allow_uneven_sharding=False)
   canonicalized_out_axis_resources_flat = tree_map(_create_cpspec, out_axis_resources_flat)
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
   return _ListWithW([jaxpr, canonicalized_in_axis_resources_flat,
@@ -553,8 +555,9 @@ def _check_unique_resources(axis_resources, arg_name):
                          f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
                          f"has duplicate entries for {pxla.show_axes(multiple_uses)}")
 
-def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape,
-                                    flat_avals, flat_axis_resources):
+def _check_shapes_against_resources(what: str, is_global_shape: bool,
+                                    mesh_shape, flat_avals, flat_axis_resources,
+                                    allow_uneven_sharding: bool):
   global_str = " global" if is_global_shape else ""
   for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
     if _is_from_gda(aval_axis_resources):
@@ -574,7 +577,7 @@ def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape
         raise ValueError(f"One of {what} was given the resource assignment "
                          f"of {aval_axis_resources.user_spec}, but resource axis "
                          f"{e.args[0]} is undefined. Did you forget to declare the mesh?") from None
-      if shape[i] % size != 0:
+      if not allow_uneven_sharding and shape[i] % size != 0:
         raise ValueError(f"One of {what} was given the resource assignment "
                          f"of {aval_axis_resources.user_spec}, which implies that "
                          f"the{global_str} size of its dimension {i} should be "
@@ -930,7 +933,7 @@ def with_sharding_constraint(x, axis_resources):
   _check_shapes_against_resources(
       "with_sharding_constraint arguments",
       mesh.is_multi_process, mesh.shape,
-      x_flat, axis_resources_flat)
+      x_flat, axis_resources_flat, allow_uneven_sharding=True)
   outs = [sharding_constraint_p.bind(y, axis_resources=r, resource_env=resource_env)
           for y, r in safe_zip(x_flat, axis_resources_flat)]
   return tree_unflatten(tree, outs)
