@@ -39,13 +39,14 @@ from jax import lax
 from jax import core
 from jax.core import NamedShape, JaxprTypeError
 from jax.experimental import maps
+from jax.experimental import global_device_array
 from jax.experimental.pjit import pjit, with_sharding_constraint
 from jax.experimental.pjit import PartitionSpec as P
 from jax.experimental.maps import Mesh, mesh, xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.util import curry, unzip2, split_list, prod
+from jax._src.util import curry, unzip2, split_list, prod, safe_zip
 from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.lax.parallel import pgather
 from jax.interpreters import batching, pxla
@@ -856,6 +857,140 @@ class NamedNNTest(XMapTestCase):
                           axis_sizes={'i': shape[0], 'o': shape[1]})
     self.assertAllClose(jnp.var(mapped_sampler()), jnp.var(ref_sampler()),
                         atol=1e-4, rtol=2e-2)
+
+
+class XMapGDATest(XMapTestCase):
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_basic(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return input_data[index]
+
+    gda_obj = global_device_array.GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    with jax._src.config.parallel_functions_output_gda(True):
+      f = maps.xmap(
+            lambda x: x,
+            in_axes=({0: "a", 1: "b"}),
+            out_axes=({0: "a", 1: "b"}),
+            axis_resources={"a": "x", "b": "y"})
+
+      out = f(gda_obj)
+      self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
+      self.assertEqual(out.shape, (8, 2))
+      self.assertEqual(out.local_shards[0].data.shape, (2, 1))
+      self.assertDictEqual(out._global_mesh.shape, {'x': 4, 'y': 2})
+      for s in out.local_shards:
+        self.assertArraysEqual(s.data, input_data[s.index])
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_xmap_gda_mixed_inputs(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x')
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return input_data[index]
+
+    gda_obj = global_device_array.GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    with jax._src.config.parallel_functions_output_gda(True):
+      f = maps.xmap(
+            lambda x, y: (x @ x.T, y @ y.T),
+            in_axes=({0: "a"}, ["c", ...]),
+            out_axes=({0: "a"}, ["c", ...]),
+            axis_resources={"a": "x", "c": "x"})
+
+      expected_matrix_mul = np.diagonal(input_data @ input_data.T)
+      out1, out2 = f(gda_obj, input_data)
+
+      self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
+      self.assertEqual(out1.shape, (8,))
+      self.assertEqual(out1.local_shards[0].data.shape, (2,))
+      self.assertDictEqual(out1._global_mesh.shape, {'x': 4, 'y': 2})
+      for s in out1.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
+      self.assertEqual(out2.shape, (8,))
+      self.assertEqual(out2.local_shards[0].data.shape, (2,))
+      self.assertDictEqual(out2._global_mesh.shape, {'x': 4, 'y': 2})
+      for s in out2.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+      for i, j in safe_zip(out1.local_shards, out2.local_shards):
+        self.assertArraysEqual(i.data, j.data)
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_xmap_gda_double_input(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return input_data[index]
+
+    gda_obj1 = global_device_array.GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, P('x'), cb)
+    gda_obj2 = global_device_array.GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, P('y'), cb)
+
+    with jax._src.config.parallel_functions_output_gda(True):
+      f = maps.xmap(
+            lambda x, y: (x @ x.T, y @ y.T),
+            in_axes=({0: "a"}, ["c", ...]),
+            out_axes=({0: "a"}, ["c", ...]),
+            axis_resources={"a": "x", "c": "y"})
+
+      expected_matrix_mul = np.diagonal(input_data @ input_data.T)
+      out1, out2 = f(gda_obj1, gda_obj2)
+
+      self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
+      self.assertEqual(out1.shape, (8,))
+      self.assertEqual(out1.local_shards[0].data.shape, (2,))
+      self.assertDictEqual(out1._global_mesh.shape, {'x': 4, 'y': 2})
+      for s in out1.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
+      self.assertEqual(out2.shape, (8,))
+      self.assertEqual(out2.local_shards[0].data.shape, (4,))
+      self.assertDictEqual(out2._global_mesh.shape, {'x': 4, 'y': 2})
+      for s in out2.local_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_xmap_gda_sharding_mismatch(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return input_data[index]
+
+    gda_obj = global_device_array.GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    with jax._src.config.parallel_functions_output_gda(True):
+      f = maps.xmap(
+            lambda x: x @ x.T,
+            in_axes=({0: "a"}),
+            out_axes=({0: "a"}),
+            axis_resources={"a": "x"})
+      with self.assertRaisesRegex(
+          ValueError,
+          ('Got an input GDA to xmap with different partitioning than '
+           'specified in xmap. The partitioning must match.')):
+        out1 = f(gda_obj)
 
 
 class NewPrimitiveTest(XMapTestCase):
