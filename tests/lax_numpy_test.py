@@ -3592,6 +3592,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
+  def testExpandDimsRepeatedAxisError(self):
+    x = jnp.ones((2, 3))
+    self.assertRaisesRegex(
+        ValueError, 'repeated axis.*',
+        lambda: jnp.expand_dims(x, [1, 1]))
+    self.assertRaisesRegex(
+        ValueError, 'repeated axis.*',
+        lambda: jnp.expand_dims(x, [3, -1]))
+
+    # ensure this is numpy's behavior too, so that we remain consistent
+    x = np.ones((2, 3))
+    self.assertRaisesRegex(
+        ValueError, 'repeated axis.*',
+        lambda: np.expand_dims(x, [1, 1]))
+    self.assertRaisesRegex(
+        ValueError, 'repeated axis.*',
+        lambda: np.expand_dims(x, [3, -1]))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_axes=({},{})".format(
           jtu.format_shape_dtype_string(arg_shape, dtype), ax1, ax2),

@@ -1188,8 +1188,13 @@ def squeeze(array: Array, dimensions: Sequence[int]) -> Array:
 
 def expand_dims(array: Array, dimensions: Sequence[int]) -> Array:
   """Insert any number of size 1 dimensions into an array."""
-  ndim_out = np.ndim(array) + len(set(dimensions))
-  dims_set = frozenset(canonicalize_axis(i, ndim_out) for i in dimensions)
+  if len(set(dimensions)) != len(dimensions):
+    raise ValueError(f'repeated axis in lax.expand_dims: {dimensions}')
+  ndim_out = np.ndim(array) + len(dimensions)
+  dims = [canonicalize_axis(i, ndim_out) for i in dimensions]
+  if len(set(dims)) != len(dims):  # check again after canonicalizing
+    raise ValueError(f'repeated axis in lax.expand_dims: {dims}')
+  dims_set = frozenset(dims)
   result_shape = list(np.shape(array))
   for i in sorted(dims_set):
     result_shape.insert(i, 1)
