@@ -1865,8 +1865,11 @@ def _squeeze(a, axis):
 
 @_wraps(np.expand_dims)
 def expand_dims(a, axis: Union[int, Sequence[int]]):
-  _check_arraylike("expand_dims", a)
-  return lax.expand_dims(a, _ensure_index_tuple(axis))
+  _stackable(a) or _check_arraylike("expand_dims", a)
+  axis = _ensure_index_tuple(axis)
+  if hasattr(a, "expand_dims"):
+    return a.expand_dims(axis)
+  return lax.expand_dims(a, axis)
 
 
 @_wraps(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
@@ -3393,7 +3396,7 @@ def stack(arrays, axis: int = 0, out=None):
     axis = _canonicalize_axis(axis, arrays.ndim)
     return concatenate(expand_dims(arrays, axis + 1), axis=axis)
   else:
-    _check_arraylike("stack", *arrays)
+    _stackable(*arrays) or _check_arraylike("stack", *arrays)
     shape0 = shape(arrays[0])
     axis = _canonicalize_axis(axis, len(shape0) + 1)
     new_arrays = []

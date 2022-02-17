@@ -1335,12 +1335,19 @@ class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
     key = random.PRNGKey(123)
     keys = random.split(key, 2)
     keys = jnp.concatenate([keys, keys, keys], axis=0)
-    self.assertEqual(keys.shape, (3, 2))
+    self.assertEqual(keys.shape, (6,))
 
   def test_broadcast_to(self):
     key = random.PRNGKey(123)
     keys = jnp.broadcast_to(key, (3,))
     self.assertEqual(keys.shape, (3,))
+
+  def test_expand_dims(self):
+    key = random.PRNGKey(123)
+    keys = random.split(key, 6)
+    keys = jnp.reshape(keys, (2, 3))
+    keys = jnp.expand_dims(keys, 1)
+    self.assertEqual(keys.shape, (2, 1, 3))
 
   def test_broadcast_arrays(self):
     key = random.PRNGKey(123)
@@ -1351,7 +1358,9 @@ class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
   def test_append(self):
     key = random.PRNGKey(123)
     keys = jnp.append(key, key)
-    self.assertEqual(keys.shape, (2, 1))
+    self.assertEqual(keys.shape, (2,))
+    keys = jnp.append(keys, keys)
+    self.assertEqual(keys.shape, (4,))
 
   def test_ravel(self):
     key = random.PRNGKey(123)
@@ -1359,6 +1368,13 @@ class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
     keys = jnp.reshape(keys, (2, 2))
     keys = jnp.ravel(keys)
     self.assertEqual(keys.shape, (4,))
+
+  def test_stack(self):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 2)
+    keys = jnp.stack([keys, keys, keys], axis=0)
+    self.assertEqual(keys.shape, (3, 2))
+
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
