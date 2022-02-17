@@ -11,17 +11,24 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.3.1 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.0...main).
-* `jax.test_util.JaxTestCase` now sets `jax_numpy_rank_promotion='raise'` by
-  default. To recover the previous behavior, use the `jax.test_util.with_config`
-  decorator:
-  ```python
-  @jtu.with_config(jax_numpy_rank_promotion='allow')
-  class MyTestCase(jtu.JaxTestCase):
-    ...
-  ```
-* Added ``jax.scipy.linalg.schur``, ``jax.scipy.linalg.sqrtm``,
-  ``jax.scipy.signal.csd``, ``jax.scipy.signal.stft``,
-  ``jax.scipy.signal.welch``.
+
+* Changes:
+  * `jax.test_util.JaxTestCase` and `jax.test_util.JaxTestLoader` are now deprecated.
+    The suggested replacement is to use `parametrized.TestCase` directly. For tests that
+    rely on custom asserts such as `JaxTestCase.assertAllClose()`, the suggested replacement
+    is to use standard numpy testing utilities such as {func}`numpy.testing.assert_allclose()`,
+    which work directly with JAX arrays ({jax-issue}`#9620`).
+  * `jax.test_util.JaxTestCase` now sets `jax_numpy_rank_promotion='raise'` by default
+    ({jax-issue}`#9562`). To recover the previous behavior, use the new
+    `jax.test_util.with_config` decorator:
+    ```python
+    @jtu.with_config(jax_numpy_rank_promotion='allow')
+    class MyTestCase(jtu.JaxTestCase):
+      ...
+    ```
+  * Added {func}`jax.scipy.linalg.schur`, {func}`jax.scipy.linalg.sqrtm`,
+    {func}`jax.scipy.signal.csd`, {func}`jax.scipy.signal.stft`,
+    {func}`jax.scipy.signal.welch`.
 
 ## jaxlib 0.3.1 (Unreleased)
 * Changes
