@@ -1317,63 +1317,86 @@ class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
   def seed_prng(self, seed):
     return prng.seed_with_impl(prng.unsafe_rbg_prng_impl, seed)
 
+def like(keys):
+  return jnp.ones(keys.shape)
+
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
 class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
   def test_reshape(self):
     key = random.PRNGKey(123)
     keys = random.split(key, 4)
-    keys = jnp.reshape(keys, (2, 2))
-    self.assertEqual(keys.shape, (2, 2))
+    out = jnp.reshape(keys,       (2, 2))
+    ref = jnp.reshape(like(keys), (2, 2))
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (2, 2))
 
   def test_tile(self):
     key = random.PRNGKey(123)
-    keys = jnp.tile(key, 3)
-    self.assertEqual(keys.shape, (3,))
+    out = jnp.tile(key,       3)
+    ref = jnp.tile(like(key), 3)
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (3,))
 
   def test_concatenate(self):
     key = random.PRNGKey(123)
     keys = random.split(key, 2)
-    keys = jnp.concatenate([keys, keys, keys], axis=0)
-    self.assertEqual(keys.shape, (6,))
+    out = jnp.concatenate([keys, keys, keys], axis=0)
+    ref = jnp.concatenate([like(keys)] * 3, axis=0)
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (6,))
 
   def test_broadcast_to(self):
     key = random.PRNGKey(123)
-    keys = jnp.broadcast_to(key, (3,))
-    self.assertEqual(keys.shape, (3,))
+    out = jnp.broadcast_to(key,       (3,))
+    ref = jnp.broadcast_to(like(key), (3,))
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (3,))
 
   def test_expand_dims(self):
     key = random.PRNGKey(123)
     keys = random.split(key, 6)
     keys = jnp.reshape(keys, (2, 3))
-    keys = jnp.expand_dims(keys, 1)
-    self.assertEqual(keys.shape, (2, 1, 3))
+    out = jnp.expand_dims(keys,       1)
+    ref = jnp.expand_dims(like(keys), 1)
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (2, 1, 3))
 
   def test_broadcast_arrays(self):
     key = random.PRNGKey(123)
     keys = jax.random.split(key, 3)
-    key, _ = jnp.broadcast_arrays(key, keys)
-    self.assertEqual(key.shape, (3,))
+    out, _ = jnp.broadcast_arrays(key,       keys)
+    ref, _ = jnp.broadcast_arrays(like(key), like(keys))
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (3,))
 
   def test_append(self):
     key = random.PRNGKey(123)
-    keys = jnp.append(key, key)
-    self.assertEqual(keys.shape, (2,))
-    keys = jnp.append(keys, keys)
-    self.assertEqual(keys.shape, (4,))
+    out = jnp.append(key,       key)
+    ref = jnp.append(like(key), like(key))
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (2,))
+    out_ = jnp.append(out,       out)
+    ref_ = jnp.append(like(out), like(out))
+    self.assertEqual(out_.shape, ref_.shape)
+    self.assertEqual(out_.shape, (4,))
 
   def test_ravel(self):
     key = random.PRNGKey(123)
     keys = jax.random.split(key, 4)
     keys = jnp.reshape(keys, (2, 2))
-    keys = jnp.ravel(keys)
-    self.assertEqual(keys.shape, (4,))
+    out = jnp.ravel(keys)
+    ref = jnp.ravel(like(keys))
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (4,))
 
   def test_stack(self):
     key = random.PRNGKey(123)
     keys = jax.random.split(key, 2)
-    keys = jnp.stack([keys, keys, keys], axis=0)
-    self.assertEqual(keys.shape, (3, 2))
+    out = jnp.stack([keys, keys, keys], axis=0)
+    ref = jnp.stack([like(keys)] * 3, axis=0)
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (3, 2))
 
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
