@@ -105,64 +105,9 @@ class FrozenDict(abc.Mapping):
 AxisName = core.AxisName
 ResourceAxisName = AxisName  # Different name just for documentation purposes
 Mesh = pxla.Mesh
-
-class _Loop(NamedTuple):
-  name: ResourceAxisName
-  length: int
-
-class ResourceEnv(NamedTuple):
-  physical_mesh: Mesh
-  loops: Tuple[_Loop, ...]
-
-  def with_mesh(self, mesh: Mesh):
-    overlap = set(mesh.axis_names) & (self.resource_axes - set(self.physical_mesh.axis_names))
-    if overlap:
-      raise ValueError(f"Cannot update the mesh of the current resource "
-                       f"environment. The new mesh shadows already defined axes "
-                       f"{show_axes(overlap)}")
-    return self._replace(physical_mesh=mesh)
-
-  def with_extra_loop(self, loop: _Loop):
-    if loop.name in self.resource_axes:
-      raise ValueError(f"Cannot extend the resource environment with loop named "
-                       f"`{loop.name}`. An axis of this name is already defined!")
-    return self._replace(loops=self.loops + (loop,))
-
-  @property
-  def physical_resource_axes(self) -> Set[ResourceAxisName]:
-    return set(self.physical_mesh.axis_names)
-
-  @property
-  def loop_resource_axes(self) -> Set[ResourceAxisName]:
-    return set(loop.name for loop in self.loops)
-
-  @property
-  def resource_axes(self) -> Set[ResourceAxisName]:
-    return self.physical_resource_axes | self.loop_resource_axes
-
-  @property
-  def shape(self):
-    shape = self.physical_mesh.shape
-    shape.update(self.loops)
-    return shape
-
-  @property
-  def local_shape(self):
-    shape = self.physical_mesh.local_mesh.shape
-    shape.update(self.loops)
-    return shape
-
-  def __repr__(self):
-    return f"ResourceEnv({self.physical_mesh!r}, {self.loops!r})"
-
-EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
-
-class _ThreadResourcesLocalState(threading.local):
-
-  def __init__(self):
-    self.env = EMPTY_ENV
-
-thread_resources = _ThreadResourcesLocalState()
+ResourceEnv = pxla.ResourceEnv
+EMPTY_ENV = pxla.EMPTY_ENV
+thread_resources = pxla.thread_resources
 
 
 class SerialLoop:
@@ -232,7 +177,7 @@ def serial_loop(name: ResourceAxisName, length: int):
         axis_resources={'i': 'l'})(x)
   """
   old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
-  thread_resources.env = old_env.with_extra_loop(_Loop(name, length))
+  thread_resources.env = old_env.with_extra_loop(pxla._Loop(name, length))
   try:
     yield
   finally:
@@ -268,6 +213,7 @@ def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
         out_axes=['left', 'right', ...],
         axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
   """
+  # TODO(yashkatariya): Deprecate this context manager.
   old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
   thread_resources.env = old_env.with_mesh(Mesh(np.asarray(devices, dtype=object), axis_names))
   try:
@@ -998,8 +944,6 @@ def _typecheck_xmap(
   return out_avals
 core.custom_typechecks[xmap_p] = _typecheck_xmap
 
-def show_axes(axes):
-  return ", ".join(sorted([f"`{a}`" for a in axes]))
 
 def _resource_typing_xmap(avals,
                           params,
@@ -1014,7 +958,7 @@ def _resource_typing_xmap(avals,
     raise JAXTypeError(
         f"Detected disallowed xmap axis name shadowing at "
         f"{source_info_util.summarize(source_info)} "
-        f"(shadowed axes: {show_axes(overlap)})")
+        f"(shadowed axes: {pxla.show_axes(overlap)})")
 
   if resource_env.physical_mesh != params['resource_env'].physical_mesh:
     raise RuntimeError("Changing the physical mesh is not allowed inside xmap.")
@@ -1042,9 +986,9 @@ def _resource_typing_xmap(avals,
         raise JAXTypeError(
             f"One of xmapped function ({params['name']}) outputs is broadcast "
             f"along axis `{baxis}` which is assigned to resources "
-            f"{show_axes(baxis_resources)}, but the output is already "
-            f"partitioned along {show_axes(overlap)}, because its "
-            f"named shape contains {show_axes(partitioning_axes)}")
+            f"{pxla.show_axes(baxis_resources)}, but the output is already "
+            f"partitioned along {pxla.show_axes(overlap)}, because its "
+            f"named shape contains {pxla.show_axes(partitioning_axes)}")
 pxla.custom_resource_typing_rules[xmap_p] = _resource_typing_xmap
 
 

@@ -209,7 +209,7 @@ def pjit(fun: Callable,
                        f"was called with only {len(args)} positional arguments.")
 
     # Putting this outside of wrapped would make resources lexically scoped
-    resource_env = maps.thread_resources.env
+    resource_env = pxla.thread_resources.env
     mesh = resource_env.physical_mesh
     if mesh.empty:
       raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
@@ -551,7 +551,7 @@ def _check_unique_resources(axis_resources, arg_name):
       if multiple_uses:
         raise ValueError(f"A single {arg_name} specification can map every mesh axis "
                          f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
-                         f"has duplicate entries for {maps.show_axes(multiple_uses)}")
+                         f"has duplicate entries for {pxla.show_axes(multiple_uses)}")
 
 def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape,
                                     flat_avals, flat_axis_resources):
@@ -897,7 +897,7 @@ def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_ax
         f"{pos_axis_resources.unsynced_user_spec(SpecSync.DIM_PERMUTE)} "
         f"that uses one or more mesh axes already used by xmap to partition "
         f"a named axis appearing in its named_shape (both use mesh axes "
-        f"{maps.show_axes(overlap)})")
+        f"{pxla.show_axes(overlap)})")
 
 def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_resources):
   jaxpr = params["jaxpr"]
@@ -925,7 +925,7 @@ def with_sharding_constraint(x, axis_resources):
   axis_resources_flat = tuple(
       flatten_axes("with_sharding_constraint axis_resources",
                    tree, parsed_axis_resources))
-  resource_env = maps.thread_resources.env
+  resource_env = pxla.thread_resources.env
   mesh = resource_env.physical_mesh
   _check_shapes_against_resources(
       "with_sharding_constraint arguments",

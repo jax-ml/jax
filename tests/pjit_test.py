@@ -113,6 +113,25 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[0].to_py(), expected,
                         check_dtypes=False)
 
+  def testBasic1DWithMeshContextManager(self):
+    @partial(pjit,
+             in_axis_resources=(P('x'), P('x')),
+             out_axis_resources=None)
+    def f(x, y):
+      return x + y
+
+    shape = (8, 8)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    with jtu.create_global_mesh((2,), ('x')) as mesh:
+      actual = f(x, x + 1)
+    expected = x + (x + 1)
+    self.assertEqual(mesh, jtu.create_global_mesh((2,), ('x')))
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, pxla.ShardedDeviceArray)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertAllClose(actual.device_buffers[0].to_py(), expected,
+                        check_dtypes=False)
+
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testBasic2D(self):
     @partial(pjit,
@@ -126,6 +145,35 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = jnp.arange(np.prod(x_shape)).reshape(x_shape)
     y = jnp.arange(np.prod(y_shape)).reshape(y_shape)
     actual = f(x, y)
+    expected = x @ y
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, pxla.ShardedDeviceArray)
+    self.assertLen(actual.device_buffers, 4)
+
+    split0, split1 = np.split(expected, 2)
+    self.assertAllClose(actual.device_buffers[0].to_py(), split0,
+                        check_dtypes=False)
+    self.assertAllClose(actual.device_buffers[1].to_py(), split0,
+                        check_dtypes=False)
+    self.assertAllClose(actual.device_buffers[2].to_py(), split1,
+                        check_dtypes=False)
+    self.assertAllClose(actual.device_buffers[3].to_py(), split1,
+                        check_dtypes=False)
+
+  def testBasic2DWithMeshContextManager(self):
+    @partial(pjit,
+             in_axis_resources=(P(None, 'x', 'y'), P('y')),
+             out_axis_resources=P('x'))
+    def f(x, y):
+      return x @ y
+
+    x_shape = (8, 6, 4)
+    y_shape = (4, 2)
+    x = jnp.arange(np.prod(x_shape)).reshape(x_shape)
+    y = jnp.arange(np.prod(y_shape)).reshape(y_shape)
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    with mesh:
+      actual = f(x, y)
     expected = x @ y
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertIsInstance(actual, pxla.ShardedDeviceArray)
@@ -670,6 +718,41 @@ class GDAPjitTest(jtu.JaxTestCase):
           ValueError, ('For a non-GDA input, the corresponding resource in '
                        'in_axis_resources cannot be `pjit.FROM_GDA`.')):
         f(input_data)
+
+  def test_pjit_gda_single_output_with_mesh_context_manager(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    def cb(index):
+      return input_data[index]
+
+    gda_obj = global_device_array.GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    with jax._src.config.parallel_functions_output_gda(True):
+      with global_mesh:
+        @partial(pjit, in_axis_resources=FROM_GDA, out_axis_resources=P('x', 'y'))
+        def f(x):
+          return x @ x.T
+        expected_matrix_mul = input_data @ input_data.T
+
+        out = f(gda_obj)
+        self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
+        self.assertEqual(out.shape, (8, 8))
+        self.assertEqual(out.local_shards[0].data.shape, (2, 4))
+        self.assertDictEqual(out._global_mesh.shape, {'x': 4, 'y': 2})
+        for s in out.local_shards:
+          self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+
+        out2 = f(out)
+        self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
+
+        with self.assertRaisesRegex(
+            ValueError, ('For a non-GDA input, the corresponding resource in '
+                         'in_axis_resources cannot be `pjit.FROM_GDA`.')):
+          f(input_data)
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_pjit_gda_multi_input_multi_output(self):

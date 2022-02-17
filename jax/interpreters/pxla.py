@@ -28,6 +28,8 @@
 # This encoding is assumed by various parts of the system, e.g. generating
 # replica groups for collective operations.
 
+from __future__ import annotations
+
 from contextlib import contextmanager
 from collections import defaultdict, OrderedDict
 import dataclasses
@@ -1787,6 +1789,9 @@ mlir.register_lowering(xla_pmap_p, _pmap_lowering)
 # ------------------- xmap -------------------
 
 class Mesh:
+  devices: np.ndarray
+  axis_names: Tuple[MeshAxisName, ...]
+  _old_env: ResourceEnv
 
   def __init__(self, devices: np.ndarray, axis_names: Sequence[MeshAxisName]):
     assert devices.ndim == len(axis_names)
@@ -1813,6 +1818,16 @@ class Mesh:
     if hasattr(self, name):
       raise RuntimeError("Cannot reassign attributes of immutable mesh objects")
     super().__setattr__(name, value)
+
+  def __enter__(self):
+    self._old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
+    thread_resources.env = self._old_env.with_mesh(
+        Mesh(self.devices, self.axis_names))
+    return thread_resources.env.physical_mesh
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    thread_resources.env = self._old_env
+    return False
 
   @property
   def shape(self):
@@ -1883,6 +1898,72 @@ class Mesh:
   def global_to_local(self, axes: ArrayMapping, aval):
     return untile_aval_nd(self.local_mesh.shape, axes,
                           tile_aval_nd(self.shape, axes, aval))
+
+
+ResourceAxisName = core.AxisName
+
+class _Loop(NamedTuple):
+  name: ResourceAxisName
+  length: int
+
+
+def show_axes(axes):
+  return ", ".join(sorted([f"`{a}`" for a in axes]))
+
+
+class ResourceEnv(NamedTuple):
+  physical_mesh: Mesh
+  loops: Tuple[_Loop, ...]
+
+  def with_mesh(self, mesh: Mesh):
+    overlap = set(mesh.axis_names) & (self.resource_axes - set(self.physical_mesh.axis_names))
+    if overlap:
+      raise ValueError(f"Cannot update the mesh of the current resource "
+                       f"environment. The new mesh shadows already defined axes "
+                       f"{show_axes(overlap)}")
+    return self._replace(physical_mesh=mesh)
+
+  def with_extra_loop(self, loop: _Loop):
+    if loop.name in self.resource_axes:
+      raise ValueError(f"Cannot extend the resource environment with loop named "
+                       f"`{loop.name}`. An axis of this name is already defined!")
+    return self._replace(loops=self.loops + (loop,))
+
+  @property
+  def physical_resource_axes(self) -> Set[ResourceAxisName]:
+    return set(self.physical_mesh.axis_names)
+
+  @property
+  def loop_resource_axes(self) -> Set[ResourceAxisName]:
+    return set(loop.name for loop in self.loops)
+
+  @property
+  def resource_axes(self) -> Set[ResourceAxisName]:
+    return self.physical_resource_axes | self.loop_resource_axes
+
+  @property
+  def shape(self):
+    shape = self.physical_mesh.shape
+    shape.update(self.loops)
+    return shape
+
+  @property
+  def local_shape(self):
+    shape = self.physical_mesh.local_mesh.shape
+    shape.update(self.loops)
+    return shape
+
+  def __repr__(self):
+    return f"ResourceEnv({self.physical_mesh!r}, {self.loops!r})"
+
+EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
+
+class _ThreadResourcesLocalState(threading.local):
+
+  def __init__(self):
+    self.env = EMPTY_ENV
+
+thread_resources = _ThreadResourcesLocalState()
 
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
