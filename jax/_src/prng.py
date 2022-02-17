@@ -34,7 +34,7 @@ from jax._src.numpy.lax_numpy import (
     _canonicalize_tuple_index, _eliminate_deprecated_list_indexing,
     _expand_bool_indices, _register_stackable)
 import jax._src.pretty_printer as pp
-from jax._src.util import prod
+from jax._src.util import canonicalize_axis, prod
 
 
 UINT_DTYPES = {
@@ -154,6 +154,10 @@ class PRNGKeyArray:
     base_ndim = len(self.impl.key_shape)
     return self._keys.shape[:-base_ndim]
 
+  @property
+  def ndim(self):
+    return len(self.shape)
+
   def _is_scalar(self):
     base_ndim = len(self.impl.key_shape)
     return self._keys.ndim == base_ndim
@@ -191,13 +195,19 @@ class PRNGKeyArray:
     return PRNGKeyArray(self.impl, reshaped_keys)
 
   def concatenate(self, key_arrs, axis):
-    axis = axis % len(self.shape)
+    axis = canonicalize_axis(axis, self.ndim)
     arrs = [self._keys, *[k._keys for k in key_arrs]]
-    return PRNGKeyArray(self.impl, jnp.stack(arrs, axis))
+    return PRNGKeyArray(self.impl, jnp.concatenate(arrs, axis))
 
   def broadcast_to(self, shape):
-    new_shape = tuple(shape)+(self._keys.shape[-1],)
+    new_shape = (*shape, *self.impl.key_shape)
     return PRNGKeyArray(self.impl, jnp.broadcast_to(self._keys, new_shape))
+
+  def expand_dims(self, dimensions: Sequence[int]):
+    # follows lax.expand_dims, not jnp.expand_dims, so dimensions is a sequence
+    ndim_out = self.ndim + len(set(dimensions))
+    dimensions = [canonicalize_axis(d, ndim_out) for d in dimensions]
+    return PRNGKeyArray(self.impl, lax.expand_dims(self._keys, dimensions))
 
   def __repr__(self):
     arr_shape = self._shape
