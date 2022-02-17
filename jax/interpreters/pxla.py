@@ -1827,6 +1827,7 @@ class Mesh:
 
   def __exit__(self, exc_type, exc_value, traceback):
     thread_resources.env = self._old_env
+    del self._old_env
     return False
 
   @property
