@@ -13,8 +13,12 @@ written in JAX, possibly including JAX transformations, and turn it into
 a function that uses only TensorFlow operations. The converted function
 can be called or traced from TensorFlow and will behave as if it was written in TensorFlow.
 In practice this means that you can take some code written in JAX and execute it using
-TensorFlow eager mode, or stage it out as a TensorFlow graph, even save it
-as a SavedModel for archival, or for use with TensorFlow tools such as serving stack,
+TensorFlow eager mode, or stage it out as a TensorFlow graph, even use it
+with TensorFlow tooling such as: SavedModel for archival ([examples below](#usage-saved-model)),
+TensorFlow Serving ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/serving/README.md)),
+TFX ([examples](https://github.com/tensorflow/tfx/blob/master/tfx/examples/penguin/README.md#instructions-for-using-flax)),
+TensorFlow Lite ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tflite/mnist/README.md)),
+TensorFlow.js ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md)),
 or TensorFlow Hub.
 
 This package also contains the `jax2tf.call_tf` mechanism to call TensorFlow functions

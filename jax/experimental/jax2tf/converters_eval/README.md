@@ -1,4 +1,4 @@
-# Evaluating JAX Converters
+# Evaluating JAX Converters for TFLite and TensorFlow.js
 
 This directory evaluates various JAX converters by attempting to convert a range
 of examples and reporting the errors. It also contains documentation for the
