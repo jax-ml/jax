@@ -113,6 +113,29 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[0].to_py(), expected,
                         check_dtypes=False)
 
+  @jtu.with_mesh([('x', 2)])
+  def testUnevenShardingConstraint(self):
+    @partial(pjit,
+             in_axis_resources=(P('x'), P('x')),
+             out_axis_resources=None)
+    def f(x, y):
+      x = x[:3]
+      y = y[:3]
+      x = with_sharding_constraint(x, P('x'))
+      y = with_sharding_constraint(y, P('x'))
+      out = x + y
+      return jnp.pad(out, [[0, 1]])
+
+    shape = (4,)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    actual = f(x, x + 1)
+    expected = x + (x + 1)
+    self.assertAllClose(actual[:3], expected[:3], check_dtypes=False)
+    self.assertIsInstance(actual, pxla.ShardedDeviceArray)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertAllClose(actual.device_buffers[0].to_py()[:3], expected[:3],
+                        check_dtypes=False)
+
   def testBasic1DWithMeshContextManager(self):
     @partial(pjit,
              in_axis_resources=(P('x'), P('x')),
@@ -1056,19 +1079,6 @@ class PJitErrorTest(jtu.JaxTestCase):
                                 r"implies that the size of its dimension 0 should be "
                                 r"divisible by " + mesh_size + r", but it is equal to 3"):
       pjit(lambda x: x, in_axis_resources=None, out_axis_resources=P(resources, None))(x)
-
-  @check_1d_2d_mesh(set_mesh=True)
-  def testNonDivisibleConstraint(self, mesh, resources):
-    x = jnp.ones((3, 2))
-    spec = P(resources,)
-    mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
-    with self.assertRaisesRegex(ValueError,
-                                r"One of with_sharding_constraint arguments"
-                                r".*" + spec_regex(spec) + r".*implies that the size of "
-                                r"its dimension 0 should be divisible by " + mesh_size +
-                                r", but it is equal to 3"):
-      pjit(lambda x: with_sharding_constraint(x, spec),
-           in_axis_resources=None, out_axis_resources=None)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
   @jtu.with_mesh([('z', 1)])

@@ -2414,7 +2414,7 @@ def resource_typecheck(jaxpr, resource_env, axis_resources, what_jaxpr_thunk):
       _check_aval(v.aval, what_thunk)
 
 
-def mesh_sharding_specs(axis_sizes, axis_names):
+def mesh_sharding_specs(axis_sizes, axis_names, allow_uneven_axes=False):
   mesh_axis_pos = {name: i for i, name in enumerate(axis_names)}
   # NOTE: This takes in the non-sharded avals!
   def mk_sharding_spec(aval, aval_axes):
@@ -2428,7 +2428,8 @@ def mesh_sharding_specs(axis_sizes, axis_names):
     # NOTE: sorted is stable, which is important when multiple resources
     #       map to the same axis.
     for name, axis in sorted(aval_axes.items(), key=lambda x: x[1]):
-      assert aval_shape[axis] % axis_sizes[name] == 0, (axis_sizes[name], aval.shape[axis])
+      if not allow_uneven_axes:
+        assert aval_shape[axis] % axis_sizes[name] == 0, (axis_sizes[name], aval.shape[axis])
       aval_shape[axis] //= axis_sizes[name]
       chunked = sharding[axis]
       if isinstance(chunked, NoSharding):
