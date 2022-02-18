@@ -285,7 +285,7 @@ class GlobalDeviceArray:
     ss = get_shard_shape(self._global_shape, self._global_mesh, self._mesh_axes)
     assert all(db.shape == ss for db in device_buffers), (
         f"Expected shard shape {ss} doesn't match the device buffer "
-        f"shape {device_buffers[0].shape}")
+        f"shape, got: {[db.shape == ss for db in device_buffers]}")
 
     dtype = device_buffers[0].dtype
     assert all(db.dtype == dtype for db in device_buffers), (
