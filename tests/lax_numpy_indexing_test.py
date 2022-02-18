@@ -436,6 +436,27 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list({
+      "testcase_name": f"_{funcname}", "funcname": funcname}
+    for funcname in ["negative", "sin", "cos", "square", "sqrt", "log", "exp"]))
+  def testIndexApply(self, funcname, size=10, dtype='float32'):
+    rng = jtu.rand_default(self.rng())
+    idx_rng = jtu.rand_int(self.rng(), -size, size)
+    np_func = getattr(np, funcname)
+    jnp_func = getattr(jnp, funcname)
+    @jtu.ignore_warning(category=RuntimeWarning)
+    def np_op(x, idx):
+      y = x.copy()
+      np_func.at(y, idx)
+      return y
+    def jnp_op(x, idx):
+      return jnp.asarray(x).at[idx].apply(jnp_func)
+    args_maker = lambda: [rng(size, dtype), idx_rng(size, int)]
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
+
   @parameterized.named_parameters({
       "testcase_name":
           f"{jtu.format_shape_dtype_string(shape, dtype)}_inshape={name}"

@@ -271,6 +271,7 @@ from jax._src.lax.slicing import (
   index_in_dim as index_in_dim,
   index_take as index_take,
   scatter as scatter,
+  scatter_apply as scatter_apply,
   scatter_add as scatter_add,
   scatter_add_p as scatter_add_p,
   scatter_max as scatter_max,
