@@ -1903,6 +1903,13 @@ class CppPmapTest(PythonPmapTest):
   def pmap(self):
     return src_api._cpp_pmap
 
+  def pmap_fast_path_is_enabled(self):
+    num_devices = jax.device_count()
+    f = jax.pmap(lambda x: x+1)
+    size = f._cache_size()
+    f(np.zeros([num_devices], dtype=np.float32))
+    self.assertEqual(f._cache_size(), size+1)
+
 
 class VmapOfPmapTest(jtu.JaxTestCase):
 

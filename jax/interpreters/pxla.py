@@ -1216,8 +1216,7 @@ class PmapExecutable:
           pci.backend, xla_computation, compile_options)
     handle_args = InputsHandler(
         compiled.local_devices(), input_sharding_specs, input_indices)
-    execute_fun = partial(
-        execute_replicated, compiled, pci.backend, handle_args, handle_outs)
+    execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args, handle_outs)
     fingerprint = getattr(compiled, "fingerprint", None)
 
     return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
@@ -1386,6 +1385,12 @@ class InputsHandler:
   def __call__(self, input_buffers):
     return self.handler(input_buffers)
 
+  def __str__(self):
+    return ("InputsHandler(\n"
+            f"local_devices={self.local_devices},\n"
+            f"sharding_specs={self.sharding_specs},\n"
+            f"input_indices={self.input_indices})")
+
 
 class ResultsHandler:
   __slots__ = ("handlers", "out_specs", "out_indices", "unmapped_local_out_avals")
@@ -1540,14 +1545,25 @@ def partitioned_sharding_spec(num_partitions: int,
         mesh_mapping=map(ShardedAxis, range(len(partitions))))
 
 
-@profiler.annotate_function
-def execute_replicated(compiled, backend, in_handler, out_handler, *args):
-  input_bufs = in_handler(args)
-  out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
-  if dispatch.needs_check_special():
-    for bufs in out_bufs:
-      dispatch.check_special("parallel computation", bufs)
-  return out_handler(out_bufs)
+class ExecuteReplicated:
+  """The logic to shard inputs, execute a replicated model, returning outputs."""
+  __slots__ = ['xla_executable', 'backend', 'in_handler', 'out_handler']
+
+  def __init__(self, xla_executable, backend, in_handler: InputsHandler,
+               out_handler: ResultsHandler):
+    self.xla_executable = xla_executable
+    self.backend = backend
+    self.in_handler = in_handler
+    self.out_handler = out_handler
+
+  @profiler.annotate_function
+  def __call__(self, *args):
+    input_bufs = self.in_handler(args)
+    out_bufs = self.xla_executable.execute_sharded_on_local_devices(input_bufs)
+    if dispatch.needs_check_special():
+      for bufs in out_bufs:
+        dispatch.check_special("parallel computation", bufs)
+    return self.out_handler(out_bufs)
 
 
 xla_pmap_p = core.MapPrimitive('xla_pmap')
@@ -2326,10 +2342,9 @@ class MeshExecutable:
     else:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
                                      "in {elapsed_time} sec"):
-        compiled = dispatch.compile_or_get_cached(backend, computation, compile_options)
-      handle_args = InputsHandler(compiled.local_devices(), input_specs, input_indices)
-      unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
-      xla_executable = compiled
+        xla_executable = dispatch.compile_or_get_cached(backend, computation, compile_options)
+      handle_args = InputsHandler(xla_executable.local_devices(), input_specs, input_indices)
+      unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args, handle_outs)
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals)
 

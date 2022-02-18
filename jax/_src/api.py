@@ -2100,18 +2100,19 @@ def _cpp_pmap(
     execute = pxla.parallel_callable.most_recent_entry()
     use_fastpath = (
         execute is not None and
-        # We don't support JAX extension backends. In particular, some
-        # extentions do not return a partial with a `func` attribute.
-        getattr(execute[0], "func", None) is pxla.execute_replicated and
+        # We don't support JAX extension backends.
+        isinstance(execute[0], pxla.ExecuteReplicated) and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(isinstance(x, device_array.DeviceArray) for x in out_flat))
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
-      xla_executable, backend_, in_handler, out_handler = execute[0].args
+      execute_replicated = execute[0]
+      out_handler = execute_replicated.out_handler
+      in_handler = execute_replicated.in_handler
       fastpath_data = _PmapFastpathData(
           version=1,
-          xla_executable=xla_executable,
+          xla_executable=execute_replicated.xla_executable,
           in_handler=in_handler,
           out_handler=out_handler,
           out_pytree_def=out_pytree_def,
