@@ -1686,7 +1686,7 @@ tf_impl[lax.reduce_max_p] = handle_boolean_args(
   boolean_f=axes_to_axis(tf.reduce_any)) # Max is T if any one is T
 tf_impl[lax.reduce_min_p] = handle_boolean_args(
   axes_to_axis(tf.reduce_min), argnums=[0],
-  boolean_f=axes_to_axis(tf.reduce_all)) # Min is only F is all are T
+  boolean_f=axes_to_axis(tf.reduce_all)) # Min is only F if all are T
 tf_impl[lax.reduce_or_p] = axes_to_axis(tf.reduce_any)
 tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
