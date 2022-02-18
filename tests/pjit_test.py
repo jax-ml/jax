@@ -29,6 +29,7 @@ from jax._src import test_util as jtu
 from jax.errors import JAXTypeError
 from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
+from jax.experimental import maps
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap, mesh
 from jax.experimental import global_device_array
@@ -211,6 +212,37 @@ class PJitTest(jtu.BufferDonationTestCase):
                         check_dtypes=False)
     self.assertAllClose(actual.device_buffers[3].to_py(), split1,
                         check_dtypes=False)
+
+  def testDifferentNestedMesh(self):
+    with jtu.create_global_mesh((2, 1), ("x", "y")) as m1:
+      with jtu.create_global_mesh((2, 2), ("a", "b")) as m2:
+        self.assertEqual(pxla.thread_resources.env.physical_mesh, m2)
+      self.assertEqual(pxla.thread_resources.env.physical_mesh, m1)
+    self.assertEqual(pxla.thread_resources.env.physical_mesh,
+                     pxla.EMPTY_ENV.physical_mesh)
+
+  def testSameNestedMesh(self):
+    mesh = jtu.create_global_mesh((2, 1), ("a", "b"))
+    with mesh as m1:
+      with mesh as m2:
+        self.assertEqual(pxla.thread_resources.env.physical_mesh, m2)
+      self.assertEqual(pxla.thread_resources.env.physical_mesh, m1)
+    self.assertEqual(pxla.thread_resources.env.physical_mesh,
+                     pxla.EMPTY_ENV.physical_mesh)
+
+  def testMeshDecorator(self):
+    x = jnp.arange(8)
+    mesh_shape = (2, 2)
+    size = prod(mesh_shape)
+    if len(jax.devices()) < size:
+      raise unittest.SkipTest(f"Test requires {size} global devices.")
+    mesh_devices = np.array(jax.devices()[:size]).reshape(mesh_shape)
+
+    @maps.Mesh(mesh_devices, ('x', 'y'))
+    def dec():
+      return pjit(lambda x: x, in_axis_resources=P('x'), out_axis_resources=None)(x)
+    out = dec()
+    self.assertArraysEqual(out, x)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testTwoMeshAxisSharding(self):

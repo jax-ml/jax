@@ -30,7 +30,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ContextDecorator
 from collections import defaultdict, OrderedDict
 import dataclasses
 from functools import partial
@@ -1804,10 +1804,9 @@ mlir.register_lowering(xla_pmap_p, _pmap_lowering)
 
 # ------------------- xmap -------------------
 
-class Mesh:
+class Mesh(ContextDecorator):
   devices: np.ndarray
   axis_names: Tuple[MeshAxisName, ...]
-  _old_env: ResourceEnv
 
   def __init__(self, devices: np.ndarray, axis_names: Sequence[MeshAxisName]):
     assert devices.ndim == len(axis_names)
@@ -1836,14 +1835,14 @@ class Mesh:
     super().__setattr__(name, value)
 
   def __enter__(self):
-    self._old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
-    thread_resources.env = self._old_env.with_mesh(
-        Mesh(self.devices, self.axis_names))
+    new_env = _old_env.stack[-1].with_mesh(Mesh(self.devices, self.axis_names))
+    _old_env.stack.append(new_env)
+    thread_resources.env = new_env
     return thread_resources.env.physical_mesh
 
   def __exit__(self, exc_type, exc_value, traceback):
-    thread_resources.env = self._old_env
-    del self._old_env
+    _old_env.stack.pop()
+    thread_resources.env = _old_env.stack[-1]
     return False
 
   @property
@@ -1981,6 +1980,15 @@ class _ThreadResourcesLocalState(threading.local):
     self.env = EMPTY_ENV
 
 thread_resources = _ThreadResourcesLocalState()
+
+# TODO(yashkatariya): Merge this into `_ThreadResourcesLocalState` by
+# maintaining a stack there and pointing `self.env` to `self.stack[-1]`.
+# Do this after the old `mesh` context manager is deprecated.
+class _ThreadLocalOldEnv(threading.local):
+  def __init__(self):
+    self.stack = [EMPTY_ENV]
+
+_old_env = _ThreadLocalOldEnv()
 
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
