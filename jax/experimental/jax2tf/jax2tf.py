@@ -1351,7 +1351,7 @@ def _not(x):
 tf_impl[lax.not_p] = _not
 
 
-def bool_to_int8(f, argnums: Sequence[int]):
+def handle_boolean_args(f, argnums: Sequence[int], boolean_f=None):
   """Computes functions with some bool args and bool results using int8.
 
   This is needed because some TF ops do not work for bool args, e.g.,
@@ -1360,12 +1360,14 @@ def bool_to_int8(f, argnums: Sequence[int]):
   Args:
     f: a TF callable to wrap. It will be called with non-boolean arguments.
     argnums: the positional arguments that may be booleans.
+    boolean_f: [Optional] a TF callable compatible with boolean
+      arguments.
 
   Returns: a TF callable that can take a mix of boolean positional arguments
     (in the positions specified by `argnums`) and some non-boolean positional
     arguments. If there are no boolean arguments, just calls `f`. Otherwise,
-    casts the boolean arguments to `int8`, calls `f`, then casts the result to
-    `bool`.
+    it calls `boolean_f` if defined. Otherwise, casts the boolean
+    arguments to `int8`, calls `f`, then casts the result to `bool`.
   """
   argnums = tf.nest.flatten(argnums)
 
@@ -1376,38 +1378,46 @@ def bool_to_int8(f, argnums: Sequence[int]):
     else:
       # All argnums should be boolean
       assert len(argnum_types) == 1, argnum_types
-      args_cast = [(tf.cast(a, tf.int8) if i in argnums else a)
-                   for i, a in enumerate(args)]
-      if "_in_avals" in kwargs:
+      if boolean_f != None:
+        return boolean_f(*args, **kwargs)
+      else:
+        args_cast = [(tf.cast(a, tf.int8) if i in argnums else a)
+                    for i, a in enumerate(args)]
+        if "_in_avals" in kwargs:
 
-        def cast_aval(aval):
-          assert aval.dtype == np.bool_
-          return core.ShapedArray(aval.shape, np.int8)
+          def cast_aval(aval):
+            assert aval.dtype == np.bool_
+            return core.ShapedArray(aval.shape, np.int8)
 
-        _in_avals_cast = [
-            cast_aval(aval) if i in argnums else aval
-            for i, aval in enumerate(kwargs["_in_avals"])
-        ]
-        _out_aval_cast = tf.nest.map_structure(cast_aval, kwargs["_out_aval"])
-        kwargs = dict(
-            kwargs, _in_avals=_in_avals_cast, _out_aval=_out_aval_cast)
-      out = f(*args_cast, **kwargs)
-      return tf.nest.map_structure(lambda o: tf.cast(o, tf.bool), out)
+          _in_avals_cast = [
+              cast_aval(aval) if i in argnums else aval
+              for i, aval in enumerate(kwargs["_in_avals"])
+          ]
+          _out_aval_cast = tf.nest.map_structure(cast_aval, kwargs["_out_aval"])
+          kwargs = dict(
+              kwargs, _in_avals=_in_avals_cast, _out_aval=_out_aval_cast)
+        out = f(*args_cast, **kwargs)
+        return tf.nest.map_structure(lambda o: tf.cast(o, tf.bool), out)
 
   return wrapper
 
 
-tf_impl[lax.or_p] = bool_to_int8(tf.bitwise.bitwise_or, argnums=(0, 1))
-tf_impl[lax.and_p] = bool_to_int8(tf.bitwise.bitwise_and, argnums=(0, 1))
-tf_impl[lax.xor_p] = bool_to_int8(tf.bitwise.bitwise_xor, argnums=(0, 1))
+tf_impl[lax.or_p] = handle_boolean_args(tf.bitwise.bitwise_or, argnums=(0, 1), boolean_f=tf.logical_or)
+tf_impl[lax.and_p] = handle_boolean_args(tf.bitwise.bitwise_and, argnums=(0, 1), boolean_f=tf.logical_and)
+tf_impl[lax.xor_p] = handle_boolean_args(tf.bitwise.bitwise_xor, argnums=(0, 1), boolean_f=tf.math.logical_xor)
 
 tf_impl[lax.eq_p] = tf.math.equal
 tf_impl[lax.ne_p] = tf.math.not_equal
 
-tf_impl[lax.ge_p] = bool_to_int8(tf.math.greater_equal, argnums=(0, 1))
-tf_impl[lax.gt_p] = bool_to_int8(tf.math.greater, argnums=(0, 1))
-tf_impl[lax.le_p] = bool_to_int8(tf.math.less_equal, argnums=(0, 1))
-tf_impl[lax.lt_p] = bool_to_int8(tf.math.less, argnums=(0, 1))
+boolean_greater = lambda x,y: tf.logical_and(x, tf.logical_not(y)) # Only one combo: T,F -> T
+boolean_less = lambda x,y: tf.logical_and(tf.logical_not(x), y) # Only one combo: F,T -> T
+boolean_greater_or_equal = lambda x, y: tf.logical_not(boolean_less(x,y)) # All cases except F,T
+boolean_less_or_equal = lambda x, y: tf.logical_not(boolean_greater(x,y)) # All cases except T,F
+
+tf_impl[lax.gt_p] = handle_boolean_args(tf.math.greater, argnums=(0, 1), boolean_f=boolean_greater)
+tf_impl[lax.lt_p] = handle_boolean_args(tf.math.less, argnums=(0, 1), boolean_f=boolean_less)
+tf_impl[lax.ge_p] = handle_boolean_args(tf.math.greater_equal, argnums=(0, 1), boolean_f=boolean_greater_or_equal)
+tf_impl[lax.le_p] = handle_boolean_args(tf.math.less_equal, argnums=(0, 1), boolean_f=boolean_less_or_equal)
 
 tf_impl[lax.linalg.cholesky_p] = tf.linalg.cholesky
 
@@ -1674,10 +1684,12 @@ axes_to_axis = lambda func: lambda operand, axes: func(operand, axis=axes)
 # reduce_sum and reduce_prod are not supported for bool
 tf_impl[lax.reduce_sum_p] = axes_to_axis(tf.reduce_sum)
 tf_impl[lax.reduce_prod_p] = axes_to_axis(tf.reduce_prod)
-tf_impl[lax.reduce_max_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_max), argnums=[0]))
-tf_impl[lax.reduce_min_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_min), argnums=[0]))
+tf_impl[lax.reduce_max_p] = handle_boolean_args(
+  axes_to_axis(tf.reduce_max), argnums=[0],
+  boolean_f=axes_to_axis(tf.reduce_any)) # Max is T if any one is T
+tf_impl[lax.reduce_min_p] = handle_boolean_args(
+  axes_to_axis(tf.reduce_min), argnums=[0],
+  boolean_f=axes_to_axis(tf.reduce_all)) # Min is F if not all are T
 tf_impl[lax.reduce_or_p] = axes_to_axis(tf.reduce_any)
 tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
@@ -2021,7 +2033,7 @@ def _select_and_scatter(operand, source, init_value, select_jaxpr,
 tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 
 
-@partial(bool_to_int8, argnums=(0, 1))
+@partial(handle_boolean_args, argnums=(0, 1))
 def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
                             window_strides, padding, _in_avals, _out_aval):
   init_value = tf.zeros((), operand.dtype)
@@ -2096,7 +2108,7 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
   return proto
 
 
-@partial(bool_to_int8, argnums=[0])
+@partial(handle_boolean_args, argnums=[0])
 def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shape,
             indices_are_sorted, unique_indices, mode, fill_value,
             _in_avals: Sequence[core.ShapedArray],
