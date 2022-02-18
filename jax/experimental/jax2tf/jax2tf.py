@@ -1683,18 +1683,10 @@ tf_impl[lax.reduce_sum_p] = axes_to_axis(tf.reduce_sum)
 tf_impl[lax.reduce_prod_p] = axes_to_axis(tf.reduce_prod)
 tf_impl[lax.reduce_max_p] = handle_boolean_args(
   axes_to_axis(tf.reduce_max), argnums=[0],
-  boolean_f=axes_to_axis(tf.reduce_any))
-
-def bool_reduce_min(x, axes):
-  return tf.logical_not(
-    axes_to_axis(tf.reduce_any)(
-      tf.logical_not(x),
-      axes
-    )
-  )
+  boolean_f=axes_to_axis(tf.reduce_any)) # Max is T if any one is T
 tf_impl[lax.reduce_min_p] = handle_boolean_args(
   axes_to_axis(tf.reduce_min), argnums=[0],
- boolean_f=bool_reduce_min)
+  boolean_f=axes_to_axis(tf.reduce_all)) # Min is only F is all are T
 tf_impl[lax.reduce_or_p] = axes_to_axis(tf.reduce_any)
 tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
