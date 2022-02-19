@@ -8,9 +8,16 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.1 (Unreleased)
+## jax 0.3.2 (Unreleased)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.0...main).
+  commits](https://github.com/google/jax/compare/jax-v0.3.1...main).
+
+## jaxlib 0.3.1 (Unreleased)
+* Changes
+
+## jax 0.3.1 (Feb 18, 2022)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.3.0...jax-v0.3.1).
 
 * Changes:
   * `jax.test_util.JaxTestCase` and `jax.test_util.JaxTestLoader` are now deprecated.
@@ -29,9 +36,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Added {func}`jax.scipy.linalg.schur`, {func}`jax.scipy.linalg.sqrtm`,
     {func}`jax.scipy.signal.csd`, {func}`jax.scipy.signal.stft`,
     {func}`jax.scipy.signal.welch`.
-
-## jaxlib 0.3.1 (Unreleased)
-* Changes
 
 
 ## jax 0.3.0 (Feb 10, 2022)
