@@ -108,18 +108,26 @@ def run_serialization(gdas, tensorstore_specs):
   asyncio.run(_run_serializer())
 
 
-async def async_deserialize(mesh, mesh_axes, tensorstore_spec):
+async def async_deserialize(mesh, mesh_axes, tensorstore_spec, global_shape=None):
   t = ts.open(ts.Spec(tensorstore_spec), open=True).result()
+  shape = t.shape if global_shape is None else global_shape
+  new_shard_shape = gda.get_shard_shape(shape, mesh, mesh_axes)
 
   async def cb(index):
-    return await t[index].read()
+    out = np.zeros(new_shard_shape, dtype=t.dtype.numpy_dtype)
+    requested_domain = ts.IndexTransform(input_shape=shape)[index].domain
+    restricted_domain = t.domain.intersect(requested_domain)
+    await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][restricted_domain].write(t[restricted_domain])
+    return out
 
-  return await create_async_gda_from_callback(t.shape, mesh, mesh_axes, cb)
+  return await create_async_gda_from_callback(shape, mesh, mesh_axes, cb)
 
 
-def run_deserialization(global_meshes, mesh_axes, tensorstore_specs):
+def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
+                        global_shapes=None):
   async def _run_deserializer():
-    future_gdas = jax.tree_map(async_deserialize, global_meshes, mesh_axes,
-                               tensorstore_specs)
+    future_gdas = jax.tree_map(
+        async_deserialize, global_meshes, mesh_axes, tensorstore_specs,
+        [None] * len(tensorstore_specs) if global_shapes is None else global_shapes)
     return await asyncio.gather(*future_gdas)
   return asyncio.run(_run_deserializer())
