@@ -1748,7 +1748,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         in_axis_resources=(P("d"),),
         out_axis_resources=P("d"))
 
-    with maps.mesh(devices, ["d"]):
+    with maps.Mesh(devices, ["d"]):
       # Print the internal IR
       helper_log_ir(
           f"{self._testMethodName}.pjit",
@@ -2405,7 +2405,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
 
     pjit_fun = pjit.pjit(
         fun, in_axis_resources=(P("d"),), out_axis_resources=P("d"))
-    with maps.mesh(devices, ["d"]):
+    with maps.Mesh(devices, ["d"]):
       # Print the internal IR
       helper_log_ir(
           f"{self._testMethodName}.pjit",

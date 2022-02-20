@@ -67,10 +67,10 @@ _TRANSPOSE_TRICKS: Dict[Tuple[int, ...],
 def _create_device_mesh_for_tpu_v4(
     physical_mesh: np.ndarray, mesh_shape: Sequence[int]
 ) -> Tuple[np.ndarray, Tuple[Tuple[int, ...], ...]]:
-  """Creates a performant device mesh for jax.experimental.maps.mesh.
+  """Creates a performant device mesh for jax.experimental.maps.Mesh.
 
   Creates a device mesh for a given physical mesh and logical mesh that allows
-  for fast XLA collectives for use with jax.experimental.maps.mesh.
+  for fast XLA collectives for use with jax.experimental.maps.Mesh.
 
   Given a logical mesh `mesh_shape` and a physical topology `physical_mesh`, we
   need to map each logical mesh axis to one or more physical axes. We want to
@@ -215,7 +215,7 @@ def _transpose_trick(physical_mesh: np.ndarray,
 
 def create_device_mesh(mesh_shape: Sequence[int],
                        contiguous_submeshes: bool = False) -> np.ndarray:
-  """Creates a performant device mesh for jax.experimental.maps.mesh.
+  """Creates a performant device mesh for jax.experimental.maps.Mesh.
 
   Args:
     mesh_shape: shape of logical mesh, ordered by increasing network-intensity
@@ -231,7 +231,7 @@ def create_device_mesh(mesh_shape: Sequence[int],
 
   Returns:
     A np.ndarray of jax global devices with mesh_shape as its shape that can be
-    fed into jax.experimental.maps.mesh with good collective performance.
+    fed into jax.experimental.maps.Mesh with good collective performance.
 
   """
   process_0_devices = jax.local_devices(process_index=0)

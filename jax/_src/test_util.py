@@ -41,7 +41,7 @@ from jax._src.lib import xla_bridge
 from jax._src import dispatch
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax.experimental.maps import mesh, Mesh
+from jax.experimental.maps import Mesh
 
 
 FLAGS = flags.FLAGS
@@ -1106,7 +1106,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
   mesh_devices = np.array(local_devices[:size]).reshape(shape)
-  with mesh(mesh_devices, axis_names):
+  with Mesh(mesh_devices, axis_names):
     yield
 
 def with_mesh_from_kwargs(f):

@@ -130,7 +130,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
         out_axes=['i'],
         axis_resources={'i': 'x'})
 
-    with jax.experimental.maps.mesh(np.array(jax.local_devices()[:1]), ('x',)):
+    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
       with self.assertRaisesRegex(
           FloatingPointError,
           r"invalid value \(nan\) encountered in parallel computation"):
@@ -138,7 +138,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans.block_until_ready()
 
     if jax.device_count() >= 2:
-      with jax.experimental.maps.mesh(np.array(jax.local_devices()[:2]), ('x',)):
+      with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
         with self.assertRaises(FloatingPointError):
           ans = f(jnp.array([1., 0.]))
           ans.block_until_ready()
@@ -154,7 +154,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
                   in_axis_resources=p,
                   out_axis_resources=p)
 
-    with jax.experimental.maps.mesh(np.array(jax.local_devices()[:2]), ('x',)):
+    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
       with self.assertRaises(FloatingPointError):
         ans = f(jnp.array([0., 1.]))
         ans.block_until_ready()

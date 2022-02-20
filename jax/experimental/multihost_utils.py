@@ -114,7 +114,7 @@ def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
       if inp.ndim == 0 or not titled:
         inp = np.expand_dims(inp, axis=0)
 
-    with maps.mesh(global_mesh.devices, global_mesh.axis_names):
+    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
       out = pjit(lambda x: x, in_axis_resources=in_axis_resources,
                  out_axis_resources=None)(inp)
     return out.local_data(0).to_py()

@@ -214,7 +214,8 @@ def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
         out_axes=['left', 'right', ...],
         axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
   """
-  # TODO(yashkatariya): Deprecate this context manager.
+  warn("`maps.mesh` context manager is deprecated. Please use `maps.Mesh`.",
+       FutureWarning)
   old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
   thread_resources.env = old_env.with_mesh(Mesh(np.asarray(devices, dtype=object), axis_names))
   try:
@@ -2106,7 +2107,7 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
     mesh_devices = np.array(xb.local_devices())
-    with mesh(mesh_devices, ['devices']):
+    with Mesh(mesh_devices, ['devices']):
       return xmap(fun, in_axes=in_axes, out_axes={0: axis_name},
                   axis_resources={axis_name: 'devices'})(*args, **kwargs)
   return f_pmapped
