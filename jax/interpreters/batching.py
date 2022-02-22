@@ -597,8 +597,10 @@ def broadcast_batcher(prim, args, dims, **params):
     out = prim.bind(*args, **params)
     return (out, (d,) * len(out)) if prim.multiple_results else (out, d)
   else:
-    size, = {shape[d] for shape, d in shapes if d is not not_mapped}
-    args = [bdim_at_front(x, d, size) if np.ndim(x) else x
+    # We pass size of 1 here because (1) at least one argument has a real batch
+    # dimension and (2) all unmapped axes can have a singleton axis inserted and
+    # then rely on the primitive's built-in broadcasting.
+    args = [bdim_at_front(x, d, 1) if np.ndim(x) else x
             for x, d in zip(args, dims)]
     ndim = max(np.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
