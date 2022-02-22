@@ -731,10 +731,12 @@ def make_xmap_callable(fun: lu.WrappedFun,
         for ax, av, ips in safe_zip(mesh_in_axes, in_avals, in_positional_semantics)
     ]
     in_is_gda = [ips == _PositionalSemantics.GLOBAL for ips in in_positional_semantics]
+    tiling_method: pxla.TilingMethod
     if config.experimental_xmap_spmd_lowering_manual:
-      tiling_method = pxla.TilingMethod.MANUAL
+      manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
+      tiling_method = pxla.TileManual(manual_mesh_axes)
     else:
-      tiling_method = pxla.TilingMethod.VECTORIZE
+      tiling_method = pxla.TileVectorize()
     return pxla.lower_mesh_computation(
         f, name, mesh,
         mesh_in_axes, mesh_out_axes, donated_invars,
@@ -1519,6 +1521,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   xla.check_backend_matches(backend, ctx.module_context.platform)
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes, in_positional_semantics)
+  manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
 
   resource_call_jaxpr = plan.subst_axes_with_resources(call_jaxpr)
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
@@ -1528,7 +1531,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   # NOTE: Sharding constraints are handled entirely by vtile_manual!
   mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
   mesh = resource_env.physical_mesh
-  f = pxla.vtile_manual(f, mesh, mesh_in_axes, mesh_out_axes)
+  f = pxla.vtile_manual(f, tuple(manual_mesh_axes), mesh, mesh_in_axes, mesh_out_axes)
 
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
@@ -1539,7 +1542,6 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
   assert isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext)
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,

@@ -717,9 +717,24 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     x = jnp.arange(20, dtype=jnp.float32)
     self.assertAllClose(fx(x), f(x))
 
+  @jtu.with_mesh([('x', 2)])
+  def testReplicated(self):
+    # TODO(apaszke): This seems to be failing if I try to have a replicated and a mapped argument?
+    f = lambda x: jnp.sin(jnp.cos(x) + x) * x
+    fx = xmap(f, in_axes=[...], out_axes=[...], axis_sizes={'i': 4}, axis_resources={'i': 'x'})
+    x = jnp.arange(20, dtype=jnp.float32)
+    self.assertAllClose(fx(x), f(x))
+
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testInPJit(self):
     f = xmap(lambda x: jnp.sin(x) + x, in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
+    h = pjit(lambda x: f(x * x) + x, in_axis_resources=P('y'), out_axis_resources=None)
+    x = jnp.arange(20, dtype=jnp.float32)
+    self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
+
+  @jtu.with_mesh([('x', 2), ('y', 1)])
+  def testInPJitReplicated(self):
+    f = xmap(lambda x: jnp.sin(x) + x, in_axes={}, out_axes={}, axis_sizes={'i': 4}, axis_resources={'i': 'x'})
     h = pjit(lambda x: f(x * x) + x, in_axis_resources=P('y'), out_axis_resources=None)
     x = jnp.arange(20, dtype=jnp.float32)
     self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
