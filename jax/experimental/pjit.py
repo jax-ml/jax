@@ -1039,14 +1039,14 @@ def global_to_local(positional_semantics, mesh, avals, axes):
   if isinstance(positional_semantics, maps._PositionalSemantics):
     positional_semantics = [positional_semantics] * len(axes)
   return [
-      aval if ps == maps._PositionalSemantics.GLOBAL or aval_axes.partitions == () else mesh.global_to_local(
+      aval if ps == maps._PositionalSemantics.GLOBAL or aval_axes.partitions == () else mesh._global_to_local(
           get_array_mapping(aval_axes), aval)
       for aval, aval_axes, ps in safe_zip(avals, axes, positional_semantics)
   ]
 
 def local_to_global(positional_semantics, mesh, avals, axes):
   return [
-      aval if ps == maps._PositionalSemantics.GLOBAL or aval_axes.partitions == () else mesh.local_to_global(
+      aval if ps == maps._PositionalSemantics.GLOBAL or aval_axes.partitions == () else mesh._local_to_global(
           get_array_mapping(aval_axes), aval)
       for aval, aval_axes, ps in safe_zip(avals, axes, positional_semantics)
   ]

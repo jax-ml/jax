@@ -727,7 +727,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
     mesh = resource_env.physical_mesh
     global_in_avals = [
-        av if ips == _PositionalSemantics.GLOBAL else mesh.local_to_global(ax, av)
+        av if ips == _PositionalSemantics.GLOBAL else mesh._local_to_global(ax, av)
         for ax, av, ips in safe_zip(mesh_in_axes, in_avals, in_positional_semantics)
     ]
     in_is_gda = [ips == _PositionalSemantics.GLOBAL for ips in in_positional_semantics]

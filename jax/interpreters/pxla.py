@@ -1435,7 +1435,7 @@ def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
     return ResultsHandler(handlers, global_out_specs, out_indices, global_out_avals)
   else:
     local_sharding_spec = mesh_sharding_specs(global_mesh.local_mesh.shape, global_mesh.axis_names)
-    local_out_untiled_avals = [global_mesh.global_to_local(axis, aval)
+    local_out_untiled_avals = [global_mesh._global_to_local(axis, aval)
                                for axis, aval in safe_zip(out_axes, global_out_avals)]
     local_out_specs = [local_sharding_spec(aval, oa)
                        for aval, oa in safe_zip(local_out_untiled_avals, out_axes)]
@@ -1834,10 +1834,10 @@ class Mesh(ContextDecorator):
     super().__setattr__(name, value)
 
   def __enter__(self):
-    new_env = _old_env.stack[-1].with_mesh(Mesh(self.devices, self.axis_names))
+    new_env = _old_env.stack[-1].with_mesh(self)
     _old_env.stack.append(new_env)
     thread_resources.env = new_env
-    return thread_resources.env.physical_mesh
+    return self
 
   def __exit__(self, exc_type, exc_value, traceback):
     _old_env.stack.pop()
@@ -1906,11 +1906,11 @@ class Mesh(ContextDecorator):
     process_index = xb.process_index()
     return [d for d in self.devices.flat if d.process_index == process_index]
 
-  def local_to_global(self, axes: ArrayMapping, aval):
+  def _local_to_global(self, axes: ArrayMapping, aval):
     return untile_aval_nd(self.shape, axes,
                           tile_aval_nd(self.local_mesh.shape, axes, aval))
 
-  def global_to_local(self, axes: ArrayMapping, aval):
+  def _global_to_local(self, axes: ArrayMapping, aval):
     return untile_aval_nd(self.local_mesh.shape, axes,
                           tile_aval_nd(self.shape, axes, aval))
 
@@ -2288,7 +2288,7 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
       aval = gaval
       mesh = global_mesh
     else:
-      aval = global_mesh.global_to_local(axis, gaval)
+      aval = global_mesh._global_to_local(axis, gaval)
       mesh = global_mesh.local_mesh
 
     spec = (mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, axis)
