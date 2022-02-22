@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+import dataclasses
 import difflib
 import functools
 from functools import partial
@@ -152,6 +153,37 @@ def register_pytree_node_class(cls):
   """
   register_pytree_node(cls, op.methodcaller('tree_flatten'), cls.tree_unflatten)
   return cls
+
+
+def register_pytree_node_dataclass(cls):
+  """Extended dataclass decorator, which also registers the class as a pytree.
+
+  The function is equivalent to ``dataclasses.dataclass``, but additionally
+  registers the class as a pytree. It uses all of the dataclass fields as the
+  pytree nodes of the instance:
+
+    @register_pytree_node_dataclass
+    class Special:
+      x: int
+      y: int
+
+    instance = Special(x=2, y=3)
+    assert jax.tree_leaves(instance) == [2, 3]
+    assert jax.tree_unflatten(jax.tree_structure(instance), [2, 3]) == instance
+  """
+  data_cls = dataclasses.dataclass(cls)
+  fields_names = tuple(field.name for field in dataclasses.fields(data_cls))
+
+  def tree_flatten(instance):
+    return tuple(getattr(instance, name) for name in fields_names), None
+
+  def tree_unflatten(_, args):
+    return data_cls(*args)
+
+  register_pytree_node(data_cls, tree_flatten, tree_unflatten)
+
+  return data_cls
+
 
 def tree_map(f: Callable[..., Any], tree: Any, *rest: Any,
              is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
