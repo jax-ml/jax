@@ -24,6 +24,7 @@ from jax.experimental.checkify.checkify_impl import (
     div_checks as div_checks,
     float_checks as float_checks,
     index_checks as index_checks,
+    init_error as init_error,
     nan_checks as nan_checks,
     user_checks as user_checks,
 )

@@ -426,8 +426,12 @@ def assert_impl(pred, code, *, msgs):
 
 @assert_p.def_abstract_eval
 def assert_abstract_eval(pred, code, *, msgs):
-  raise Exception("can't be staged!")
-
+  # TODO(lenamartens) add in-depth explanation to link to in module docs.
+  raise ValueError('Cannot abstractly evaluate a checkify.check which was not'
+                   ' functionalized. This probably means you tried to stage'
+                   ' (jit/scan/pmap/...) a `check` without functionalizing it'
+                   ' through `checkify.checkify`.'
+                   )
 
 ## checkify rules
 
@@ -742,8 +746,9 @@ def checkify(fun: Callable[..., Out],
 
   """
   if not errors:
-    raise ValueError('Checkify needs to be called with at least one enabled'
-                     ' ErrorCategory, was called with an empty errors set.')
+    def checked_fun_trivial(*args, **kwargs):
+      return init_error, fun(*args, **kwargs)
+    return checked_fun_trivial
 
   @traceback_util.api_boundary
   def checked_fun(*args, **kwargs):
