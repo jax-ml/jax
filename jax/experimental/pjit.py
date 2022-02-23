@@ -77,7 +77,7 @@ def pjit(fun: Callable,
   propagation of the input partitioning specified in ``in_axis_resources`` and
   the output partitioning specified in ``out_axis_resources``. The resources
   specified in those two arguments must refer to mesh axes, as defined by
-  the :py:func:`jax.experimental.maps.mesh` context manager. Note that the mesh
+  the :py:func:`jax.experimental.maps.Mesh` context manager. Note that the mesh
   definition at ``pjit`` application time is ignored, and the returned function
   will use the mesh definition available at each call site.
 
@@ -170,13 +170,13 @@ def pjit(fun: Callable,
 
   >>> import jax
   >>> import jax.numpy as jnp
-  >>> from jax.experimental.maps import mesh
+  >>> from jax.experimental.maps import Mesh
   >>> from jax.experimental.pjit import PartitionSpec, pjit
   >>>
   >>> x = jnp.arange(8, dtype=jnp.float32)
   >>> f = pjit(lambda x: jax.numpy.convolve(x, jnp.asarray([0.5, 1.0, 0.5]), 'same'),
   ...         in_axis_resources=None, out_axis_resources=PartitionSpec('devices'))
-  >>> with mesh(jax.devices(), ('devices',)):
+  >>> with Mesh(jax.devices(), ('devices',)):
   ...   print(f(x))  # doctest: +SKIP
   [ 0.5  2.   4.   6.   8.  10.  12.  10. ]
   """

@@ -209,7 +209,7 @@ to return the entire array, which will then be sent in a single infeed to the
 same device that issued the outfeed. This device is then responsible for
 sending the required shards to the other devices::
 
-  with maps.mesh(jax.local_devices()[:2], ["d"]):
+  with maps.Mesh(jax.local_devices()[:2], ["d"]):
     pjit.pjit(power3, in_axis_resources=(P("d"),),
               out_axis_resources=(P("d"),))(np.array([3., 4.]))
 
