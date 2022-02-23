@@ -250,7 +250,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   # pass long arg lists as tuple for TPU
   tuple_args = len(abstract_args) > 100
   axis_env = xla.AxisEnv(nreps, (), ())
-  name_stack = xla.extend_name_stack(xla.wrap_name(name, 'jit'))
+  name_stack = xla.new_name_stack(xla.wrap_name(name, 'jit'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module: Union[str, xc.XlaComputation]
   module_name = f"jit_{fun.__name__}"

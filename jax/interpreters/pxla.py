@@ -54,7 +54,7 @@ from jax._src import device_array
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.util import (unzip3, prod, safe_map, safe_zip,
-                           extend_name_stack, wrap_name, assert_unreachable,
+                           extend_name_stack, new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log)
 from jax.errors import JAXTypeError
 from jax._src import dispatch
@@ -1038,7 +1038,7 @@ def lower_parallel_callable(
 
   axis_env = xla.AxisEnv(
       replicas.num_global_replicas, (axis_name,), (global_axis_size,))
-  name_stack = extend_name_stack(wrap_name(name, 'pmap'))
+  name_stack = new_name_stack(wrap_name(name, 'pmap'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   replicated_args = [axis is None for axis in in_axes]
   module: Union[str, xc.XlaComputation]
@@ -2145,7 +2145,7 @@ def lower_mesh_computation(
     in_is_gda: Sequence[bool]):
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
-  name_stack = extend_name_stack(wrap_name(fun_name, api_name))
+  name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
   global_axis_sizes = mesh.shape
 
@@ -2236,7 +2236,7 @@ def lower_mesh_computation(
           partitions_are_protos=partitions_proto)
 
   return MeshComputation(
-      name_stack, module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,
+      str(name_stack), module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,
       global_out_avals=global_out_avals, in_axes=in_axes, out_axes=out_axes,
       spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_gda=in_is_gda)
 

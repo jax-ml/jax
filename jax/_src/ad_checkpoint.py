@@ -353,7 +353,7 @@ def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr, **params):
     primal_fun = lu.wrap_init(partial(core.eval_jaxpr, jaxpr, ()))
     tangent_jaxpr, _, consts = pe.trace_to_jaxpr(primal_fun, in_pvals, False)
     dummy_args = [ad.UndefinedPrimal(v.aval) for v in tangent_jaxpr.invars]
-    in_cts_ = ad.backward_pass(tangent_jaxpr, reduce_axes, consts, dummy_args,
+    in_cts_ = ad.backward_pass(tangent_jaxpr, reduce_axes, False, consts, dummy_args,
                                out_cts)
     in_cts, cell.treedef = tree_flatten(in_cts_)
     return in_cts

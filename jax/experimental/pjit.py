@@ -846,7 +846,7 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
     return tuple(x for x, mz in zip(xs, maybe_zeros) if not type(mz) is ty)
 
   body = lu.wrap_init(ad.closed_backward_pass)
-  body = lu.hashable_partial(body, jaxpr, reduce_axes)
+  body = lu.hashable_partial(body, jaxpr, reduce_axes, False)
   primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
   body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)
 

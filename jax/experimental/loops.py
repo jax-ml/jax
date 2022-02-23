@@ -117,6 +117,7 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax import tree_util
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import partial_eval as pe
+from jax._src import source_info_util
 from jax._src.util import safe_map
 
 
@@ -291,10 +292,11 @@ class Scope(object):
     """Starts a nested trace, returns the Trace object."""
     # TODO: This follows the __enter__ part of core.new_main.
     level = core.thread_local_state.trace_state.trace_stack.next_level()
-    main = core.MainTrace(level, pe.JaxprTrace)
+    name_stack = source_info_util.current_name_stack()
+    main = core.MainTrace(level, pe.JaxprTrace, name_stack=name_stack)
     core.thread_local_state.trace_state.trace_stack.push(main)
     self._count_subtraces += 1
-    return pe.JaxprTrace(main, core.cur_sublevel())
+    return pe.JaxprTrace(main, core.cur_sublevel(), name_stack=name_stack)
 
   def end_subtrace(self):
     # TODO: This follows the __exit__ part of core.new_main
