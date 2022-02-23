@@ -1392,13 +1392,13 @@ class InputsHandler:
 
 
 class ResultsHandler:
-  __slots__ = ("handlers", "out_specs", "out_indices", "unmapped_local_out_avals")
+  __slots__ = ("handlers", "out_specs", "out_indices", "out_avals")
 
-  def __init__(self, handlers, out_specs, out_indices, unmapped_local_out_avals):
+  def __init__(self, handlers, out_specs, out_indices, out_avals):
+    self.handlers = handlers
     self.out_specs = out_specs
     self.out_indices = out_indices
-    self.handlers = handlers
-    self.unmapped_local_out_avals = unmapped_local_out_avals
+    self.out_avals = out_avals
 
   def __call__(self, out_bufs):
     return [h(bufs) for h, bufs in safe_zip(self.handlers, out_bufs)]
@@ -1424,7 +1424,7 @@ def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
     global_sharding_spec = mesh_sharding_specs(global_mesh.shape, global_mesh.axis_names)
     global_out_specs = [global_sharding_spec(aval, oa)
                         for aval, oa in safe_zip(global_out_avals, out_axes)]
-    out_indices = [spec_to_indices(aval.shape, spec)
+    global_out_indices = [spec_to_indices(aval.shape, spec)
                    if aval is not core.abstract_unit else None
                    for aval, spec in safe_zip(global_out_avals, global_out_specs)]
     out_axis_resources = [array_mapping_to_axis_resources(o) for o in out_axes]
@@ -1432,7 +1432,8 @@ def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
         global_aval_to_result_handler(global_aval, out_axis, global_mesh)
         for global_aval, out_axis in safe_zip(global_out_avals, out_axis_resources)
     ]
-    return ResultsHandler(handlers, global_out_specs, out_indices, global_out_avals)
+    return ResultsHandler(handlers, global_out_specs, global_out_indices,
+                          global_out_avals)
   else:
     local_sharding_spec = mesh_sharding_specs(global_mesh.local_mesh.shape, global_mesh.axis_names)
     local_out_untiled_avals = [global_mesh._global_to_local(axis, aval)

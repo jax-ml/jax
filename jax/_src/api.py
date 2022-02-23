@@ -2121,7 +2121,7 @@ def _cpp_pmap(
           input_indices=in_handler.input_indices,
           out_sharding_specs=out_handler.out_specs,
           out_indices=out_handler.out_indices,
-          out_avals=out_handler.unmapped_local_out_avals,
+          out_avals=out_handler.out_avals,
       )
 
     else:
