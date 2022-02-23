@@ -256,7 +256,7 @@ def pjit(fun: Callable,
         out_axis_resources=out_axis_resources_flat,
         resource_env=resource_env,
         donated_invars=donated_invars,
-        name=flat_fun.__name__,
+        name=getattr(flat_fun, '__name__', '<unnamed function>'),
         in_positional_semantics=in_positional_semantics,
         out_positional_semantics=out_positional_semantics)
     return args_flat, params, in_tree, out_tree(), donate_argnums
@@ -624,7 +624,7 @@ def _pjit_lower(
   in_is_gda = [ips == maps._PositionalSemantics.GLOBAL
                for ips in in_positional_semantics]
   return pxla.lower_mesh_computation(
-      fun, name, resource_env.physical_mesh,
+      fun, 'pjit', name, resource_env.physical_mesh,
       in_axes, out_axes, donated_invars,
       True, jaxpr.in_avals, tiling_method=None, in_is_gda=in_is_gda)
 

@@ -2133,7 +2133,8 @@ TilingMethod = Union[TileVectorize, TileManual]
 @profiler.annotate_function
 def lower_mesh_computation(
     fun: lu.WrappedFun,
-    transformed_name: str,
+    api_name: str,
+    fun_name: str,
     mesh: Mesh,
     in_axes: Sequence[ArrayMapping],
     out_axes: Union[Sequence[ArrayMapping], Callable[[], Sequence[ArrayMapping]]],
@@ -2144,7 +2145,7 @@ def lower_mesh_computation(
     in_is_gda: Sequence[bool]):
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
-  name_stack = extend_name_stack(wrap_name(transformed_name, 'xmap'))
+  name_stack = extend_name_stack(wrap_name(fun_name, api_name))
 
   global_axis_sizes = mesh.shape
 
@@ -2220,7 +2221,7 @@ def lower_mesh_computation(
     axis_ctx = mlir.ReplicaAxisContext(axis_env)
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module: Union[str, xc.XlaComputation]
-  module_name = f"xmap_{fun.__name__}"
+  module_name = f"{api_name}_{fun_name}"
   with core.extend_axis_env_nd(mesh.shape.items()):
     if config.jax_enable_mlir:
       module = mlir.lower_jaxpr_to_module(

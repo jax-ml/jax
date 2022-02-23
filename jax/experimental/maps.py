@@ -738,7 +738,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
     else:
       tiling_method = pxla.TileVectorize()
     return pxla.lower_mesh_computation(
-        f, name, mesh,
+        f, 'xmap', name, mesh,
         mesh_in_axes, mesh_out_axes, donated_invars,
         use_spmd_lowering, global_in_avals,
         tiling_method=tiling_method, in_is_gda=in_is_gda)
