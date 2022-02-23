@@ -165,6 +165,10 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def ndim(self):
     return len(self.aval.shape)
 
+  def device(self):
+    self._check_if_deleted()
+    return self.device_buffer.device()  # pytype: disable=attribute-error
+
   def copy_to_host_async(self):
     """Requests a copy of the buffer to the host."""
     self._check_if_deleted()
