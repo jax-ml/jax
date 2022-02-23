@@ -31,7 +31,7 @@ from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import maps
 from jax.experimental import PartitionSpec as P
-from jax.experimental.maps import xmap, mesh
+from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
@@ -374,13 +374,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     if devices.size < 4:
       raise unittest.SkipTest("Test requires 4 devices")
     devices = devices.reshape((2, 2))
-    with mesh(devices, ('x', 'y')):
+    with maps.Mesh(devices, ('x', 'y')):
       should_be_tracing = True
       pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
       should_be_tracing = False
       pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
     # Re-create the mesh to make sure that has no influence on caching
-    with mesh(devices, ('x', 'y')):
+    with maps.Mesh(devices, ('x', 'y')):
       should_be_tracing = False
       pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
 
@@ -596,7 +596,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       d.transfer_to_infeed((z[3 * didx:3 * didx + 3, :]))
       d.transfer_to_infeed((w[:, 5 * didx:5 * didx + 5],))
 
-    with mesh(devices, ['d']):
+    with maps.Mesh(devices, ['d']):
       logging.info('Making pjit call')
       res = pjit(
           f_for_pjit, in_axis_resources=(P('d'),), out_axis_resources=P('d'))(
@@ -619,7 +619,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
 
     def dispatch():
-      with mesh(devices, ['d']):
+      with maps.Mesh(devices, ['d']):
         logging.info('Making pjit call')
         pjit(f, in_axis_resources=(P('d'),), out_axis_resources=P('d'))(x)
     execution = threading.Thread(target=dispatch)
@@ -1057,7 +1057,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     # pickling in_axis_resources and sending to other processes). Make sure this
     # this doesn't cause an error to avoid user confusion.
     from_gda_dup = pjit_lib._FromGdaSingleton()
-    with mesh(global_mesh.devices, global_mesh.axis_names):
+    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
       pjit(lambda x: x, in_axis_resources=from_gda_dup, out_axis_resources=None)(
           input_gda)
 
@@ -1072,7 +1072,7 @@ class GDAPjitTest(jtu.JaxTestCase):
       def f(x):
         return x
 
-      with mesh(global_mesh.devices, global_mesh.axis_names):
+      with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
         out_gda = f(input_gda)
         self.assertEqual(out_gda._mesh_axes, ())
 
@@ -1314,7 +1314,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testNestedDifferentResources(self):
     @partial(pjit, in_axis_resources=P('x'), out_axis_resources=None)
     def f(x):
-      with mesh(np.array([jax.local_devices()[0]]), ('x')):
+      with maps.Mesh(np.array([jax.local_devices()[0]]), ('x')):
         @partial(pjit, in_axis_resources=P('x'), out_axis_resources=None)
         def h(x):
           return x

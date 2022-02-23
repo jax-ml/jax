@@ -242,7 +242,7 @@ class GlobalDeviceArray:
 
     f = pjit(lambda x: x @ x.T, out_axis_resources = P('y', 'x'))
 
-    with mesh(global_mesh.shape, global_mesh.axis_names):
+    with global_mesh:
       out = f(gda)
 
     print(type(out))  # GlobalDeviceArray
