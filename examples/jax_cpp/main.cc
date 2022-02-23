@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
 
   // Get result.
   std::shared_ptr<xla::Literal> result_literal =
-      results[0][0]->ToLiteral().ValueOrDie();
+      results[0][0]->ToLiteralSync().ValueOrDie();
   LOG(INFO) << "result = " << *result_literal;
   return 0;
 }
