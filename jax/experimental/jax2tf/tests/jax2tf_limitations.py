@@ -1139,9 +1139,18 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled")),
         custom_numeric(
+            tol=1e-4,
             description="custom numeric comparison when compute_uv on CPU/GPU",
             custom_assert=custom_assert,
             devices=("cpu", "gpu"),
+            modes=("eager", "graph", "compiled"),
+            enabled=(compute_uv == True)),
+        custom_numeric(
+            tol=1e-2,
+            description="custom numeric comparison when compute_uv on TPU",
+            dtypes=[np.float32, np.complex64],
+            custom_assert=custom_assert,
+            devices=("tpu"),
             modes=("eager", "graph", "compiled"),
             enabled=(compute_uv == True)),
     ]
