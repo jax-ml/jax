@@ -70,6 +70,7 @@ extensions = [
     'sphinx_autodoc_typehints',
     'myst_nb',
     "sphinx_remove_toctrees",
+    'sphinx_copybutton',
     'jax_extensions',
 ]
 
