@@ -47,6 +47,7 @@ Usage::
   #   qy: f32[num_devices, qy_size, feature_dim]
   #   db: f32[num_devices, per_device_db_size, feature_dim]
   #   db_offset: i32[num_devices]
+  #   db_size = num_devices * per_device_db_size
   #
   # Returns:
   #   (f32[qy_size, num_devices, k], i32[qy_size, num_devices, k])
@@ -93,7 +94,7 @@ def approx_max_k(operand: Array,
                  recall_target: float = 0.95,
                  reduction_input_size_override: int = -1,
                  aggregate_to_topk: bool = True) -> Tuple[Array, Array]:
-  """Returns max ``k`` values and their indices of the ``operand``.
+  """Returns max ``k`` values and their indices of the ``operand`` in an approximate manner.
 
   Args:
     operand : Array to search for max-k.
@@ -105,11 +106,35 @@ def approx_max_k(operand: Array,
       This option is useful when the given operand is only a subset of the
       overall computation in SPMD or distributed pipelines, where the true input
       size cannot be deferred by the operand shape.
-    aggregate_to_topk: When true, aggregates approximate results to top-k. When
-      false, returns the approximate results.
+    aggregate_to_topk : When true, aggregates approximate results to top-k. When
+      false, returns the approximate results. The number of the approximate
+      results is implementation defined and is greater equals to the specified
+      k.
 
   Returns:
-    Tuple[Array, Array] : Max k values and their indices of the inputs.
+    Tuple[Array, Array] : The two arrays are the max k values and the
+      corresponding indices along the reduction_dimension of the input operand.
+      The arrays' dimensions are the same as the input operand except for the
+      reduction_dimension: when aggregate_to_topk is true, the reduction
+      dimension is k; otherwise, it is greater equals to k where the size is
+      implementation-defined.
+
+  We encourage users to wrap the approx_*_k with jit. See the following example
+  for maximal inner production search (MIPS):
+
+  >>> import functools
+  >>> import jax
+  >>> import numpy as np
+  >>> from jax.experimental import ann
+  >>> @functools.partial(jax.jit, static_argnames=["k", "recall_target"])
+  ... def mips(qy, db, k=10, recall_target=0.95):
+  ...   dists = jax.lax.dot(qy, db.transpose())
+  ...   # returns (f32[qy_size, k], i32[qy_size, k])
+  ...   return ann.approx_max_k(dists, k=k, recall_target=recall_target)
+  >>>
+  >>> qy = jax.numpy.array(np.random.rand(50, 64))
+  >>> db = jax.numpy.array(np.random.rand(1024, 64))
+  >>> dot_products, neighbors = mips(qy, db, k=10)
   """
   if xc._version < 45:
     aggregate_to_topk = True
@@ -129,7 +154,7 @@ def approx_min_k(operand: Array,
                  recall_target: float = 0.95,
                  reduction_input_size_override: int = -1,
                  aggregate_to_topk: bool = True) -> Tuple[Array, Array]:
-  """Returns min ``k`` values and their indices of the ``operand``.
+  """Returns min ``k`` values and their indices of the ``operand`` in an approximate manner.
 
   Args:
     operand : Array to search for min-k.
@@ -142,10 +167,38 @@ def approx_min_k(operand: Array,
       overall computation in SPMD or distributed pipelines, where the true input
       size cannot be deferred by the operand shape.
     aggregate_to_topk: When true, aggregates approximate results to top-k. When
-      false, returns the approximate results.
+      false, returns the approximate results. The number of the approximate
+      results is implementation defined and is greater equals to the specified
+      k.
 
   Returns:
-    Tuple[Array, Array] : Least k values and their indices of the inputs.
+    Tuple[Array, Array] : The two arrays are the least k values and the
+      corresponding indices along the reduction_dimension of the input operand.
+      The arrays' dimensions are the same as the input operand except for the
+      reduction_dimension: when aggregate_to_topk is true, the reduction
+      dimension is k; otherwise, it is greater equals to k where the size is
+      implementation-defined.
+
+  We encourage users to wrap the approx_*_k with jit. See the following example
+  for nearest neighbor search over the squared l2 distance:
+
+  >>> import functools
+  >>> import jax
+  >>> import numpy as np
+  >>> from jax.experimental import ann
+  >>> @functools.partial(jax.jit, static_argnames=["k", "recall_target"])
+  ... def l2_ann(qy, db, half_db_norms, k=10, recall_target=0.95):
+  ...   dists = half_db_norms - jax.lax.dot(qy, db.transpose())
+  ...   return ann.approx_min_k(dists, k=k, recall_target=recall_target)
+  >>>
+  >>> qy = jax.numpy.array(np.random.rand(50, 64))
+  >>> db = jax.numpy.array(np.random.rand(1024, 64))
+  >>> half_db_norms = jax.numpy.linalg.norm(db, axis=1) / 2
+  >>> dists, neighbors = l2_ann(qy, db, half_db_norms, k=10)
+
+  We compute ``db_norms/2 - dot(qy, db^T)`` instead of
+  ``qy^2 - 2 dot(qy, db^T) + db^2`` for performance reason. The former uses less
+  arithmetics and produces the same set of neighbors.
   """
   if xc._version < 45:
     aggregate_to_topk = True
