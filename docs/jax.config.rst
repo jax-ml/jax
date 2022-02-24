@@ -17,4 +17,4 @@ JAX configuration
    default_matmul_precision
    default_prng_impl
    numpy_rank_promotion
-   
+   transfer_guard
