@@ -32,6 +32,34 @@ config.parse_flags_with_absl()
 ignore_jit_of_pmap_warning = partial(
     jtu.ignore_warning,message=".*jit-of-pmap.*")
 
+
+def compute_recall(result_neighbors, ground_truth_neighbors) -> float:
+  """Computes the recall of an approximate nearest neighbor search.
+
+  Args:
+    result_neighbors: int32 numpy array of the shape [num_queries,
+      neighbors_per_query] where the values are the indices of the dataset.
+    ground_truth_neighbors: int32 numpy array of with shape [num_queries,
+      ground_truth_neighbors_per_query] where the values are the indices of the
+      dataset.
+
+  Returns:
+    The recall.
+  """
+  assert len(
+      result_neighbors.shape) == 2, "shape = [num_queries, neighbors_per_query]"
+  assert len(ground_truth_neighbors.shape
+            ) == 2, "shape = [num_queries, ground_truth_neighbors_per_query]"
+  assert result_neighbors.shape[0] == ground_truth_neighbors.shape[0]
+  gt_sets = [set(np.asarray(x)) for x in ground_truth_neighbors]
+  hits = sum(
+      len(list(x
+               for x in nn_per_q
+               if x.item() in gt_sets[q]))
+      for q, nn_per_q in enumerate(result_neighbors))
+  return hits / ground_truth_neighbors.size
+
+
 class AnnTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -54,7 +82,7 @@ class AnnTest(jtu.JaxTestCase):
     _, gt_args = lax.top_k(scores, k)
     _, ann_args = ann.approx_max_k(scores, k, recall_target=recall)
     self.assertEqual(k, len(ann_args[0]))
-    ann_recall = ann.ann_recall(np.asarray(ann_args), np.asarray(gt_args))
+    ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
     self.assertGreater(ann_recall, recall)
 
   @parameterized.named_parameters(
@@ -77,7 +105,7 @@ class AnnTest(jtu.JaxTestCase):
     _, gt_args = lax.top_k(-scores, k)
     _, ann_args = ann.approx_min_k(scores, k, recall_target=recall)
     self.assertEqual(k, len(ann_args[0]))
-    ann_recall = ann.ann_recall(np.asarray(ann_args), np.asarray(gt_args))
+    ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
     self.assertGreater(ann_recall, recall)
 
   @parameterized.named_parameters(
@@ -140,7 +168,7 @@ class AnnTest(jtu.JaxTestCase):
     ann_args = lax.collapse(ann_args, 1, 3)
     ann_vals, ann_args = lax.sort_key_val(ann_vals, ann_args, dimension=1)
     ann_args = lax.slice_in_dim(ann_args, start_index=0, limit_index=k, axis=1)
-    ann_recall = ann.ann_recall(np.asarray(ann_args), np.asarray(gt_args))
+    ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
     self.assertGreater(ann_recall, recall)
 
 
