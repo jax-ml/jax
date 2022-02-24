@@ -11,6 +11,20 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.3.2 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.1...main).
+* Changes:
+  * `jax.test_util.JaxTestCase` now sets `jax_numpy_rank_promotion='raise'` by
+    default. To recover the previous behavior, use the `jax.test_util.with_config`
+    decorator:
+    ```python
+    @jtu.with_config(jax_numpy_rank_promotion='allow')
+    class MyTestCase(jtu.JaxTestCase):
+      ...
+    ```
+  * The functions `jax.ops.index_update`, `jax.ops.index_add`, which were
+    deprecated in 0.2.22, have been removed. Please use
+    [the `.at` property on JAX arrays](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html)
+    instead, e.g., `x.at[idx].set(y)`.
+
 
 ## jaxlib 0.3.1 (Unreleased)
 * Changes
