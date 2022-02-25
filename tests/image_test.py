@@ -382,6 +382,13 @@ class ImageTest(jtu.JaxTestCase):
     translate_out = jax.grad(translate_fn)(translation_a)
     self.assertTrue(jnp.all(jnp.isfinite(translate_out)))
 
+  def testScaleAndTranslateNegativeDims(self):
+    data = jnp.full((3, 3), 0.5)
+    actual = jax.image.scale_and_translate(
+      data, (5, 5), (-2, -1), jnp.ones(2), jnp.zeros(2), "linear")
+    expected = jax.image.scale_and_translate(
+      data, (5, 5), (0, 1), jnp.ones(2), jnp.zeros(2), "linear")
+    self.assertAllClose(actual, expected)
 
   def testResizeWithUnusualShapes(self):
     x = jnp.ones((3, 4))
