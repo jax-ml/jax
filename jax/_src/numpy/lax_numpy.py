@@ -648,7 +648,10 @@ def load(*args, **kwargs):
     # numpy does not recognize bfloat16, so arrays are serialized as void16
     if out.dtype == 'V2':
       out = out.view(bfloat16)
-    out = asarray(out)
+    try:
+      out = asarray(out)
+    except TypeError:  # Unsupported dtype
+      pass
   return out
 
 ### implementations of numpy functions in terms of lax

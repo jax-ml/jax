@@ -538,15 +538,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         func()
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": dtype}
-      for dtype in float_dtypes))
-  def testLoad(self, dtype):
+      {"testcase_name": "_{}_allow_picke={}".format(dtype, allow_pickle),
+       "dtype": dtype, "allow_pickle": allow_pickle}
+      for dtype in float_dtypes + [object]
+      for allow_pickle in [True, False]))
+  def testLoad(self, dtype, allow_pickle):
+    if dtype == object and not allow_pickle:
+      self.skipTest("dtype=object requires allow_pickle=True")
     rng = jtu.rand_default(self.rng())
     arr = rng((10), dtype)
     with io.BytesIO() as f:
       jnp.save(f, arr)
       f.seek(0)
-      arr_out = jnp.load(f)
+      arr_out = jnp.load(f, allow_pickle=allow_pickle)
     self.assertArraysEqual(arr, arr_out)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
