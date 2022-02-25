@@ -811,7 +811,7 @@ There are more options for control flow in JAX. Say you want to avoid re-compila
 
  - `lax.cond`  _differentiable_
  - `lax.while_loop` __fwd-mode-differentiable__
- - `lax.fori_loop` __fwd-mode-differentiable__
+ - `lax.fori_loop` __fwd-mode-differentiable__ in general; __fwd and rev-mode differentiable__ if endpoints are static.
  - `lax.scan` _differentiable_
 
 +++ {"id": "Sd9xrLMXeK3A"}
