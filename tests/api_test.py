@@ -844,6 +844,20 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         "for a particular signature. Detected .*BatchTracer",
         err)
 
+  def test_jit_lower_compiler_ir(self):
+    f = self.jit(lambda x: x + 4).lower(1.)
+    self.assertIsNotNone(f.compiler_ir())
+    self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
+    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+
+  def test_jit_lower_compile_compiler_ir(self):
+    f = self.jit(lambda x: x + 4).lower(1.).compile()
+    self.assertIsNotNone(f.compiler_ir())
+
+  def test_jit_lower_compile_executable(self):
+    f = self.jit(lambda x: x + 4).lower(1.).compile()
+    self.assertIsNotNone(f.runtime_executable())
+
   @unittest.skipIf(xla_extension_version < 45, "requires jaxlib >= 0.1.75")
   def test_jit_enum_as_dict_keys_fails(self):
     class E(enum.Enum):

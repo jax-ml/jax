@@ -571,15 +571,15 @@ class Compiled:
     representation of the program after such passes, whenever
     possible.
     """
-    return self._executable.xla_executable().hlo_modules()
+    return self._executable.xla_executable.hlo_modules()
 
   def runtime_executable(self):
-    return self._executable.xla_executable()
+    return self._executable.xla_executable
 
   def _xla_executable(self):
     # TODO(frostig): finalize API. For now, return the underlying
     # executable directly via this method.
-    return self._executable.xla_executable()
+    return self._executable.xla_executable
 
   def __call__(self, *args, **kwargs):
     if self._no_kwargs:

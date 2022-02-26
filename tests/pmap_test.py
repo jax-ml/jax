@@ -218,6 +218,29 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f_exe(x, y)
     self.assertAllClose(ans, expected)
 
+  def testLowerCompilerIR(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x)
+    self.assertIsNotNone(f.compiler_ir())
+    self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
+    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+
+  def testLowerCompileCompilerIR(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    self.assertIsNotNone(f.compiler_ir())
+
+  def testLowerCompileExecutable(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    self.assertIsNotNone(f.runtime_executable())
+
   def testMean(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
 

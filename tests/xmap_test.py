@@ -660,6 +660,26 @@ class XMapTest(XMapTestCase):
         "called with:\n.*int32.*",
         lambda: f_exe(x_i32))
 
+  def testLowerCompilerIR(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f = f.lower(x)
+    self.assertIsNotNone(f.compiler_ir())
+    self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
+    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+
+  def testLowerCompileCompilerIR(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f = f.lower(x).compile()
+    self.assertIsNotNone(f.compiler_ir())
+
+  def testLowerCompileExecutable(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f = f.lower(x).compile()
+    self.assertIsNotNone(f.runtime_executable())
+
   def testNewCheckpoint(self):
     f = checkpoint(xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...]))
     self.assertAllClose(jax.grad(lambda x: f(x).sum())(jnp.arange(3.)), jnp.ones(3))

@@ -622,6 +622,7 @@ class XlaCompiledComputation:
   def is_trivial(self):
     return self._xla_executable == None
 
+  @property
   def xla_executable(self):
     if self.is_trivial():
       raise ValueError("A trivial compiled computation has no XLA executable")

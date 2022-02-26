@@ -726,6 +726,48 @@ class PJitTest(jtu.BufferDonationTestCase):
         "called with:\n.*int32.*",
         lambda: exe(x_i32, x_i32))
 
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompilerIR(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    f = f.lower(x, x + 1)
+    self.assertIsNotNone(f.compiler_ir())
+    self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
+    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompileCompilerIR(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    f = f.lower(x, x + 1).compile()
+    self.assertIsNotNone(f.compiler_ir())
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompileExecutable(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+
+    f = f.lower(x, x + 1).compile()
+    self.assertIsNotNone(f.runtime_executable())
+
   @jtu.with_mesh([('x', 2)])
   def test_static_argnums(self):
     @partial(pjit, in_axis_resources=None, out_axis_resources=None,
