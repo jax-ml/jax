@@ -53,6 +53,9 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 ### utilities
 
+def _isnan(x):
+  return lax.ne(x, x)
+
 def _check_prng_key(key):
   # TODO(frostig): remove once we always enable_custom_prng
   if type(key) is prng.PRNGKeyArray:
@@ -1096,7 +1099,7 @@ def _poisson(key, lam, shape, dtype):
   # https://github.com/numpy/numpy/blob/v1.18.3/numpy/random/src/distributions/distributions.c#L574
   # For lambda < 10, we use the Knuth algorithm; otherwise, we use transformed
   # rejection sampling.
-  use_knuth = lam < 10
+  use_knuth = _isnan(lam) | (lam < 10)
   lam_knuth = lax.select(use_knuth, lam, lax.full_like(lam, 0.0))
   # The acceptance probability for rejection sampling maxes out at 89% as
   # λ -> ∞, so pick some arbitrary large value.
