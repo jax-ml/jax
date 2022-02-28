@@ -165,8 +165,8 @@ class ODETest(jtu.JaxTestCase):
     ans = jax.grad(g)(2.)  # don't crash
     expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
 
-    atol = {jnp.float64: 5e-15}
-    rtol = {jnp.float64: 2e-15}
+    atol = {jnp.float32: 1e-5, jnp.float64: 5e-15}
+    rtol = {jnp.float32: 1e-5, jnp.float64: 2e-15}
     self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
 
   @jtu.skip_on_devices("tpu", "gpu")
