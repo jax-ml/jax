@@ -218,11 +218,7 @@ def pjit(fun: Callable,
       raise RuntimeError("pjit only supports GPU and TPU devices")
 
     f = lu.wrap_init(fun)
-    if static_argnums:
-      f, dyn_args = argnums_partial_except(
-          f, static_argnums, args, allow_invalid=False)
-    else:
-      dyn_args = args
+    f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
     del args
 
     args_flat, in_tree = tree_flatten(dyn_args)
