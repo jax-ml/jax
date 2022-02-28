@@ -344,6 +344,21 @@ class GDATest(jtu.JaxTestCase):
         'The `global_mesh.local_devices` and `device_buffers` device order'):
       GlobalDeviceArray(global_input_shape, global_mesh, mesh_axes, dbs)
 
+  def test_gda_block_until_ready(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = [('x', 'y')]
+    global_input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+
+    def cb(index):
+      return global_input_data[index]
+
+    gda = GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, cb)
+
+    self.assertTrue(gda.block_until_ready() is gda)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

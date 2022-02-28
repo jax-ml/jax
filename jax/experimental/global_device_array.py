@@ -372,6 +372,11 @@ class GlobalDeviceArray:
   def local_data(self, index) -> DeviceArray:
     return self.local_shards[index].data
 
+  def block_until_ready(self):
+    for s in self.local_shards:
+      s.data.block_until_ready()
+    return self
+
   @classmethod
   def from_callback(cls, global_shape: Shape, global_mesh: pxla.Mesh,
                     mesh_axes: MeshAxes, data_callback: Callable[[Index],
