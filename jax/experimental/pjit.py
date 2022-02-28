@@ -864,6 +864,7 @@ def _pjit_partial_eval(trace, *in_tracers,
                           unknown_tracers_out,
                           pjit_p,
                           unknown_params,
+                          unknown_jaxpr.effects,
                           source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
   return pe._zip_knowns(known_tracers_out, unknown_tracers_out, unknown_outs)

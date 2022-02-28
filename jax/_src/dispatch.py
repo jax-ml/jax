@@ -303,7 +303,8 @@ def _prune_unused_inputs(
       (i, v) for i, v in enumerate(jaxpr.constvars) if v in used)
   kept_var_idx, new_invars = util.unzip2(
       (i, v) for i, v in enumerate(jaxpr.invars) if v in used)
-  new_jaxpr = core.Jaxpr(new_constvars, new_invars, jaxpr.outvars, jaxpr.eqns)
+  new_jaxpr = core.Jaxpr(new_constvars, new_invars, jaxpr.outvars, jaxpr.eqns,
+                         jaxpr.effects)
   return new_jaxpr, set(kept_const_idx), set(kept_var_idx)
 
 

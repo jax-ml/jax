@@ -2723,7 +2723,7 @@ def _broadcast_in_dim_staging_rule(
   out_tracer = pe.DynamicJaxprTracer(trace, aval, source_info)
   invars = [trace.getvar(x), *(trace.getvar(d) for d in dyn_shape)]
   eqn = pe.new_jaxpr_eqn(invars, [trace.makevar(out_tracer)],
-                         broadcast_in_dim_p, params, source_info)
+                         broadcast_in_dim_p, params, core.no_effects, source_info)
   trace.frame.eqns.append(eqn)
 
   return out_tracer

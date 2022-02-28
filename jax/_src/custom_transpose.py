@@ -180,7 +180,7 @@ class CustomTransposePrimitive(core.Primitive):
 
 # TODO(frostig,mattjj): reinstate checks
 def custom_transpose_typecheck(*avals, **params):
-  pass
+  return None, core.no_effects
 
 
 def custom_transpose_transpose_rule(
