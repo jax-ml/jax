@@ -863,10 +863,7 @@ def xla_computation(fun: Callable,
                        f"was called with only {len(args)} positional arguments.")
 
     f = lu.wrap_init(fun)
-    if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
-    else:
-      dyn_args = args
+    f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     if donate_argnums:
       donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
