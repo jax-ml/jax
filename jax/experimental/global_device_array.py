@@ -323,6 +323,10 @@ class GlobalDeviceArray:
     return prod(self.shape)
 
   @property
+  def mesh(self):
+    return self._global_mesh
+
+  @property
   def is_fully_replicated(self) -> bool:
     return self.shape == self.local_data(0).shape
 
