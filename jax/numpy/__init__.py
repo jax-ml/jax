@@ -94,6 +94,7 @@ from jax._src.numpy.lax_numpy import (
     conj as conj,
     conjugate as conjugate,
     convolve as convolve,
+    copy as copy,
     copysign as copysign,
     corrcoef as corrcoef,
     correlate as correlate,

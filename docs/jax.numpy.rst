@@ -118,6 +118,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     conj
     conjugate
     convolve
+    copy
     copysign
     corrcoef
     correlate
