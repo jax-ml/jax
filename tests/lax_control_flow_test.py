@@ -2247,6 +2247,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         r'tuple of bool required:\nmulti\nline',
         lambda: core.check_jaxpr(jaxpr))
 
+  def test_cond_transformation_rule_with_consts(self):
+    # https://github.com/google/jax/pull/9731
+
+    @jax.custom_jvp
+    def f(x):
+      return x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      const = np.arange(3, dtype='int32')
+      return x * const, xdot * const
+
+    g = lambda x: jax.lax.cond(True, f, lambda x: x, x)
+    x = np.arange(3, dtype='float32')
+    jax.jvp(g, (x,), (x,))  # doesn't crash
+
   @parameterized.named_parameters(
       {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
       for dtype in jtu.dtypes.all_integer)
