@@ -2680,6 +2680,11 @@ def asarray(a, dtype=None, order=None):
   return array(a, dtype=dtype, copy=False, order=order)
 
 
+@_wraps(np.copy, lax_description=_ARRAY_DOC)
+def copy(a, order=None):
+  return array(a, copy=True, order=order)
+
+
 @_wraps(np.zeros_like)
 def zeros_like(a, dtype=None, shape=None):
   _check_arraylike("zeros_like", a)

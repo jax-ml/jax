@@ -3761,15 +3761,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     _check([0.0, np.float16(1)], np.float16, False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_dtype={np.dtype(dtype)}", "dtype": dtype}
-      for dtype in all_dtypes))
-  def testArrayCopy(self, dtype):
+      {"testcase_name": f"_dtype={np.dtype(dtype)}_func={func}",
+       "dtype": dtype, "func": func}
+      for dtype in all_dtypes
+      for func in ["array", "copy"]))
+  def testArrayCopy(self, dtype, func):
     x = jnp.ones(10, dtype=dtype)
+    copy_func = getattr(jnp, func)
 
     x_view = jnp.asarray(x)
     x_view_jit = jax.jit(jnp.asarray)(x)
-    x_copy = jnp.array(x)
-    x_copy_jit = jax.jit(jnp.array)(x)
+    x_copy = copy_func(x)
+    x_copy_jit = jax.jit(copy_func)(x)
 
     _ptr = lambda x: x.device_buffer.unsafe_buffer_pointer()
 
@@ -6061,6 +6064,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'asarray': ['like'],
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
+      'copy': ['subok'],
       'corrcoef': ['ddof', 'bias', 'dtype'],
       'cov': ['dtype'],
       'empty_like': ['subok', 'order'],
