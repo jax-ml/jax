@@ -265,9 +265,12 @@ Atom = Union[Var, Literal]
 
 class Primitive:
   name: str
-  multiple_results = False  # set for multi-output primitives
-  call_primitive = False    # set for call primitives processed in final style
-  map_primitive = False     # set for map primitives processed in final style
+  # set for multi-output primitives.
+  multiple_results: bool = False
+  # set for call primitives processed in final style.
+  call_primitive: bool = False
+  # set for map primitives processed in final style.
+  map_primitive: bool = False
 
   def __init__(self, name: str):
     self.name = name
