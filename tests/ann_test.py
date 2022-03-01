@@ -21,7 +21,6 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.experimental import ann
 from jax._src import test_util as jtu
 from jax._src.util import prod
 
@@ -80,7 +79,7 @@ class AnnTest(jtu.JaxTestCase):
     db = rng(db_shape, dtype)
     scores = lax.dot(qy, db)
     _, gt_args = lax.top_k(scores, k)
-    _, ann_args = ann.approx_max_k(scores, k, recall_target=recall)
+    _, ann_args = lax.approx_max_k(scores, k, recall_target=recall)
     self.assertEqual(k, len(ann_args[0]))
     ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
     self.assertGreater(ann_recall, recall)
@@ -103,7 +102,7 @@ class AnnTest(jtu.JaxTestCase):
     db = rng(db_shape, dtype)
     scores = lax.dot(qy, db)
     _, gt_args = lax.top_k(-scores, k)
-    _, ann_args = ann.approx_min_k(scores, k, recall_target=recall)
+    _, ann_args = lax.approx_min_k(scores, k, recall_target=recall)
     self.assertEqual(k, len(ann_args[0]))
     ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
     self.assertGreater(ann_recall, recall)
@@ -122,9 +121,9 @@ class AnnTest(jtu.JaxTestCase):
     vals = np.arange(prod(shape), dtype=dtype)
     vals = self.rng().permutation(vals).reshape(shape)
     if is_max_k:
-      fn = lambda vs: ann.approx_max_k(vs, k=k)[0]
+      fn = lambda vs: lax.approx_max_k(vs, k=k)[0]
     else:
-      fn = lambda vs: ann.approx_min_k(vs, k=k)[0]
+      fn = lambda vs: lax.approx_min_k(vs, k=k)[0]
     jtu.check_grads(fn, (vals,), 2, ["fwd", "rev"], eps=1e-2)
 
 
@@ -153,10 +152,13 @@ class AnnTest(jtu.JaxTestCase):
     db_offsets = np.arange(num_devices, dtype=np.int32) * db_per_device
     def parallel_topk(qy, db, db_offset):
       scores = lax.dot_general(qy, db, (([1],[1]),([],[])))
-      ann_vals, ann_args = ann.approx_min_k(scores, k=k, reduction_dimension=1,
-                                            recall_target=recall,
-                                            reduction_input_size_override=db_size,
-                                            aggregate_to_topk=False)
+      ann_vals, ann_args = lax.approx_min_k(
+          scores,
+          k=k,
+          reduction_dimension=1,
+          recall_target=recall,
+          reduction_input_size_override=db_size,
+          aggregate_to_topk=False)
       return (ann_vals, ann_args + db_offset)
     # shape = qy_size, num_devices, approx_dp
     ann_vals, ann_args = jax.pmap(

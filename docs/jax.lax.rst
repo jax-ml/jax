@@ -26,6 +26,8 @@ Operators
     abs
     add
     acos
+    approx_max_k
+    approx_min_k
     argmax
     argmin
     asin

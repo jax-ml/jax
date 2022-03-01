@@ -986,6 +986,7 @@ tf_not_yet_impl = [
     # Not high priority?
     "after_all",
     "all_to_all",
+    "approx_top_k",
     "create_token",
     "custom_transpose_call",
     "custom_vmap_call",

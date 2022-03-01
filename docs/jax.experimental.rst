@@ -6,13 +6,14 @@ jax.experimental package
 ``jax.experimental.optix`` has been moved into its own Python package
 (https://github.com/deepmind/optax).
 
+``jax.experimental.ann`` has been moved into ``jax.lax``.
+
 Experimental Modules
 --------------------
 
 .. toctree::
     :maxdepth: 1
 
-    jax.experimental.ann
     jax.experimental.global_device_array
     jax.experimental.host_callback
     jax.experimental.loops

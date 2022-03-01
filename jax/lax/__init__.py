@@ -369,5 +369,10 @@ from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
   conv_general_dilated_patches as conv_general_dilated_patches
 )
+from jax._src.lax.ann import (
+    approx_max_k as approx_max_k,
+    approx_min_k as approx_min_k,
+    approx_top_k_p as approx_top_k_p
+)
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
 from jax.lax import linalg as linalg

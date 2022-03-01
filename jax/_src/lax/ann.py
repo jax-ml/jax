@@ -21,7 +21,6 @@ Usage::
 
   import functools
   import jax
-  from jax.experimental import ann
 
   # MIPS := maximal inner product search
   # Inputs:
@@ -35,12 +34,7 @@ Usage::
     dists = jax.lax.dot(qy, db.transpose())
     # Computes max_k along the last dimension
     # returns (f32[qy_size, k], i32[qy_size, k])
-    return ann.approx_max_k(dists, k=k, recall_target=recall_target)
-
-  # Obtains the top-10 dot products and its offsets in db.
-  dot_products, neighbors = mips(qy, db, k=10)
-  # Computes the recall against the true neighbors.
-  recall = ann.ann_recall(neighbors, true_neighbors)
+    return jax.lax.approx_max_k(dists, k=k, recall_target=recall_target)
 
   # Multi-core example
   # Inputs:
@@ -58,7 +52,7 @@ Usage::
       out_axes=(1, 1))
   def pmap_mips(qy, db, db_offset, db_size, k, recall_target):
     dists = jax.lax.dot(qy, db.transpose())
-    dists, neighbors = ann.approx_max_k(
+    dists, neighbors = jax.lax.approx_max_k(
         dists, k=k, recall_target=recall_target,
         reduction_input_size_override=db_size)
     return (dists, neighbors + db_offset)
@@ -79,7 +73,8 @@ from functools import partial
 from typing import (Any, Tuple)
 
 import numpy as np
-from jax import lax, core
+from jax import core
+from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src import ad_util, dtypes
 
@@ -125,12 +120,11 @@ def approx_max_k(operand: Array,
   >>> import functools
   >>> import jax
   >>> import numpy as np
-  >>> from jax.experimental import ann
   >>> @functools.partial(jax.jit, static_argnames=["k", "recall_target"])
   ... def mips(qy, db, k=10, recall_target=0.95):
   ...   dists = jax.lax.dot(qy, db.transpose())
   ...   # returns (f32[qy_size, k], i32[qy_size, k])
-  ...   return ann.approx_max_k(dists, k=k, recall_target=recall_target)
+  ...   return jax.lax.approx_max_k(dists, k=k, recall_target=recall_target)
   >>>
   >>> qy = jax.numpy.array(np.random.rand(50, 64))
   >>> db = jax.numpy.array(np.random.rand(1024, 64))
@@ -185,11 +179,10 @@ def approx_min_k(operand: Array,
   >>> import functools
   >>> import jax
   >>> import numpy as np
-  >>> from jax.experimental import ann
   >>> @functools.partial(jax.jit, static_argnames=["k", "recall_target"])
   ... def l2_ann(qy, db, half_db_norms, k=10, recall_target=0.95):
   ...   dists = half_db_norms - jax.lax.dot(qy, db.transpose())
-  ...   return ann.approx_min_k(dists, k=k, recall_target=recall_target)
+  ...   return jax.lax.approx_min_k(dists, k=k, recall_target=recall_target)
   >>>
   >>> qy = jax.numpy.array(np.random.rand(50, 64))
   >>> db = jax.numpy.array(np.random.rand(1024, 64))
