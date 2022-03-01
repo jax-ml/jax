@@ -164,7 +164,10 @@ def ir_constants(val: Any,
   """
   for t in type(val).__mro__:
     handler = _constant_handlers.get(t)
-    if handler: return handler(val, canonicalize_types)
+    if handler:
+      out = handler(val, canonicalize_types)
+      assert all(isinstance(v, ir.Value) for v in out), (type(val), out)
+      return out
   if hasattr(val, '__jax_array__'):
     return ir_constants(val.__jax_array__(), canonicalize_types)
   raise TypeError("No constant handler for type: {}".format(type(val)))
@@ -259,7 +262,7 @@ for t in device_array.device_array_types:
   register_constant_handler(t, _device_array_constant_handler)
 
 register_constant_handler(
-  core.Token, lambda _, __: [mhlo.CreateTokenOp(mhlo.TokenType.get())])
+  core.Token, lambda _, __: [mhlo.CreateTokenOp(mhlo.TokenType.get()).result])
 
 # Source locations
 
@@ -633,27 +636,28 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
 
   Assumes that an MLIR context, location, and insertion point are set.
   """
-  def read(v):
+  def read(v: core.Var) -> Sequence[ir.Value]:
     if type(v) is core.Literal:
       return ir_constants(v.val, canonicalize_types=True)
     else:
       return env[v]
 
-  def aval(v):
+  def aval(v: core.Var) -> core.AbstractValue:
     if type(v) is core.Literal:
       return xla.abstractify(v.val)
     else:
       return v.aval
 
-  def write(v, node):
+  def write(v: core.Var, node: Sequence[ir.Value]):
     assert node is not None
     env[v] = tuple(node)
 
 
-  env: Dict[core.Var, Tuple[ir.Value]] = {}
+  env: Dict[core.Var, Tuple[ir.Value, ...]] = {}
 
   assert len(args) == len(jaxpr.invars), (jaxpr, args)
   assert len(consts) == len(jaxpr.constvars), (jaxpr, consts)
+  assert all(isinstance(v, ir.Value) for vs in consts for v in vs), consts
   write(core.unitvar, ())
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)

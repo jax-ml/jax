@@ -1464,7 +1464,8 @@ else:
       branch = case_op.regions[i].blocks.append()
       with ir.InsertionPoint(branch):
         out_vals = mlir.jaxpr_subcomp(
-            ctx.module_context, jaxpr.jaxpr, jaxpr.consts,
+            ctx.module_context, jaxpr.jaxpr,
+            _map(mlir.ir_constants, jaxpr.consts),
             *_map(mlir.wrap_singleton_ir_values, args))
         mhlo.ReturnOp(util.flatten(out_vals))
 
