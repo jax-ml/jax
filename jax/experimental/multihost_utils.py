@@ -77,7 +77,7 @@ def sync_global_devices(name: str):
   assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
 
 
-def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
+def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
   """Gather data from across processes.
 
   Args:
@@ -93,7 +93,7 @@ def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
     Pytress of arrays where the data is gathered from all hosts.
       * If the input is a GDA, then the data is fully replicated.
       * If the input is non-GDA, then the output shape is dependent on the
-        `titled` argument. If its False, then the output will be stacked else
+        `tiled` argument. If its False, then the output will be stacked else
         concatenated.
       * If the input is non-GDA and scalar, then the output will be stacked.
   """
@@ -111,7 +111,7 @@ def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
                                                 jax.local_device_count())
       global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
       in_axis_resources = P('processes')
-      if inp.ndim == 0 or not titled:
+      if inp.ndim == 0 or not tiled:
         inp = np.expand_dims(inp, axis=0)
 
     with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
