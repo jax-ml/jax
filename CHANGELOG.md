@@ -18,6 +18,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     instead, e.g., `x.at[idx].set(y)`.
   * Moved `jax.experimental.ann.approx_*_k` into `jax.lax`. These functions are
     optimized alternatives to `jax.lax.top_k`.
+  * {func}`jax.numpy.broadcast_arrays` and {func}`jax.numpy.broadcast_to` now require scalar
+    or array-like inputs, and will fail if they are passed lists (part of {jax-issue}`#7737`).
 
 
 ## jaxlib 0.3.1 (Unreleased)
