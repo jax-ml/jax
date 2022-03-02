@@ -920,7 +920,7 @@ class XMapGDATest(XMapTestCase):
       self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
       self.assertEqual(out.shape, (8, 2))
       self.assertEqual(out.local_shards[0].data.shape, (2, 1))
-      self.assertDictEqual(out._global_mesh.shape, {'x': 4, 'y': 2})
+      self.assertDictEqual(out.mesh.shape, {'x': 4, 'y': 2})
       for s in out.local_shards:
         self.assertArraysEqual(s.data, input_data[s.index])
 
@@ -950,14 +950,14 @@ class XMapGDATest(XMapTestCase):
       self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8,))
       self.assertEqual(out1.local_shards[0].data.shape, (2,))
-      self.assertDictEqual(out1._global_mesh.shape, {'x': 4, 'y': 2})
+      self.assertDictEqual(out1.mesh.shape, {'x': 4, 'y': 2})
       for s in out1.local_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
       self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (8,))
       self.assertEqual(out2.local_shards[0].data.shape, (2,))
-      self.assertDictEqual(out2._global_mesh.shape, {'x': 4, 'y': 2})
+      self.assertDictEqual(out2.mesh.shape, {'x': 4, 'y': 2})
       for s in out2.local_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
@@ -991,14 +991,14 @@ class XMapGDATest(XMapTestCase):
       self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8,))
       self.assertEqual(out1.local_shards[0].data.shape, (2,))
-      self.assertDictEqual(out1._global_mesh.shape, {'x': 4, 'y': 2})
+      self.assertDictEqual(out1.mesh.shape, {'x': 4, 'y': 2})
       for s in out1.local_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
       self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (8,))
       self.assertEqual(out2.local_shards[0].data.shape, (4,))
-      self.assertDictEqual(out2._global_mesh.shape, {'x': 4, 'y': 2})
+      self.assertDictEqual(out2.mesh.shape, {'x': 4, 'y': 2})
       for s in out2.local_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 

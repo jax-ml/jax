@@ -2023,10 +2023,10 @@ def _check_gda_xmap_partitioning(axis_resources, resource_env,
       in_positional_semantics).to_mesh_axes(in_axes_flat)
   for arg, xmap_array_mapping in safe_zip(args_flat, mesh_in_axes):
     if isinstance(arg, GlobalDeviceArray):
-      if arg._global_mesh != resource_env.physical_mesh:
+      if arg.mesh != resource_env.physical_mesh:
         raise ValueError("xmap's mesh and GDA's mesh should be equal. Got Xmap "
                          f"mesh: {resource_env.physical_mesh},\n"
-                         f"GDA mesh: {arg._global_mesh}")
+                         f"GDA mesh: {arg.mesh}")
 
       gda_array_mapping = _get_array_mapping(arg._mesh_axes)
       if gda_array_mapping != xmap_array_mapping:

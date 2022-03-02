@@ -102,7 +102,7 @@ def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
     if isinstance(inp, GlobalDeviceArray):
       if inp.is_fully_replicated:
         return inp.local_data(0).to_py()
-      global_mesh = inp._global_mesh
+      global_mesh = inp.mesh
       in_axis_resources = FROM_GDA
     else:
       # DA/SDA/np.array will be sharded based on global_mesh.local_mesh.
