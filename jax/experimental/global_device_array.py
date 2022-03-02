@@ -355,6 +355,9 @@ class GlobalDeviceArray:
 
   @property
   def global_shards(self) -> Sequence[Shard]:
+    if self.mesh.size == len(self._local_devices):
+      return self.local_shards
+
     # Populating global_shards lazily (i.e. when requested) because populating
     # sthem eagerly leads to a performance regression when training on large
     # models.
