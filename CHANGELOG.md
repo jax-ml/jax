@@ -16,6 +16,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     deprecated in 0.2.22, have been removed. Please use
     [the `.at` property on JAX arrays](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html)
     instead, e.g., `x.at[idx].set(y)`.
+  * Moved `jax.experimental.ann.approx_*_k` into `jax.lax`. These functions are
+    optimized alternatives to `jax.lax.top_k`.
 
 
 ## jaxlib 0.3.1 (Unreleased)
