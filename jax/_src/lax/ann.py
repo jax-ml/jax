@@ -97,22 +97,22 @@ def approx_max_k(operand: Array,
     reduction_dimension : Integer dimension along which to search. Default: -1.
     recall_target : Recall target for the approximation.
     reduction_input_size_override : When set to a positive value, it overrides
-      the size determined by operands[reduction_dim] for evaluating the recall.
-      This option is useful when the given operand is only a subset of the
-      overall computation in SPMD or distributed pipelines, where the true input
-      size cannot be deferred by the operand shape.
+      the size determined by ``operands[reduction_dim]`` for evaluating the
+      recall.  This option is useful when the given operand is only a subset of
+      the overall computation in SPMD or distributed pipelines, where the true
+      input size cannot be deferred by the operand shape.
     aggregate_to_topk : When true, aggregates approximate results to top-k. When
       false, returns the approximate results. The number of the approximate
       results is implementation defined and is greater equals to the specified
-      k.
+      ``k``.
 
   Returns:
-    Tuple[Array, Array] : The two arrays are the max k values and the
-      corresponding indices along the reduction_dimension of the input operand.
-      The arrays' dimensions are the same as the input operand except for the
-      reduction_dimension: when aggregate_to_topk is true, the reduction
-      dimension is k; otherwise, it is greater equals to k where the size is
-      implementation-defined.
+    Tuple of two arrays. The arrays are the max ``k`` values and the
+    corresponding indices along the reduction_dimension of the input operand.
+    The arrays' dimensions are the same as the input operand except for the
+    ``reduction_dimension``: when ``aggregate_to_topk`` is true, the reduction
+    dimension is ``k``; otherwise, it is greater equals to k where the size is
+    implementation-defined.
 
   We encourage users to wrap the approx_*_k with jit. See the following example
   for maximal inner production search (MIPS):
@@ -156,22 +156,22 @@ def approx_min_k(operand: Array,
     reduction_dimension: Integer dimension along which to search. Default: -1.
     recall_target: Recall target for the approximation.
     reduction_input_size_override : When set to a positive value, it overrides
-      the size determined by operands[reduction_dim] for evaluating the recall.
-      This option is useful when the given operand is only a subset of the
-      overall computation in SPMD or distributed pipelines, where the true input
-      size cannot be deferred by the operand shape.
+      the size determined by ``operands[reduction_dim]`` for evaluating the
+      recall.  This option is useful when the given operand is only a subset of
+      the overall computation in SPMD or distributed pipelines, where the true
+      input size cannot be deferred by the operand shape.
     aggregate_to_topk: When true, aggregates approximate results to top-k. When
       false, returns the approximate results. The number of the approximate
       results is implementation defined and is greater equals to the specified
-      k.
+      ``k``.
 
   Returns:
-    Tuple[Array, Array] : The two arrays are the least k values and the
-      corresponding indices along the reduction_dimension of the input operand.
-      The arrays' dimensions are the same as the input operand except for the
-      reduction_dimension: when aggregate_to_topk is true, the reduction
-      dimension is k; otherwise, it is greater equals to k where the size is
-      implementation-defined.
+    Tuple of two arrays. The arrays are the least ``k`` values and the
+    corresponding indices along the reduction_dimension of the input operand.
+    The arrays' dimensions are the same as the input operand except for the
+    ``reduction_dimension``: when ``aggregate_to_topk`` is true, the reduction
+    dimension is ``k``; otherwise, it is greater equals to k where the size is
+    implementation-defined.
 
   We encourage users to wrap the approx_*_k with jit. See the following example
   for nearest neighbor search over the squared l2 distance:
