@@ -17,14 +17,14 @@ import scipy.stats as osp_stats
 
 from jax import lax
 from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_args_inexact, _constant_like, where, inf
+from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf
 
 
 @_wraps(osp_stats.chi2.logpdf, update_doc=False)
 def logpdf(x, df, loc=0, scale=1):
     x, df, loc, scale = _promote_args_inexact("chi2.logpdf", x, df, loc, scale)
-    one = _constant_like(x, 1)
-    two = _constant_like(x, 2)
+    one = lax._const(x, 1)
+    two = lax._const(x, 2)
     y = lax.div(lax.sub(x, loc), scale)
     df_on_two = lax.div(df, two)
 

@@ -39,7 +39,7 @@ def logpdf(x, alpha):
       "`x` must have either the same number of entries as `alpha` "
       f"or one entry fewer; got x.shape={x.shape}, alpha.shape={alpha.shape}"
     )
-  one = jnp._constant_like(x, 1)
+  one = lax._const(x, 1)
   if x.shape[0] != alpha.shape[0]:
     x = jnp.concatenate([x, lax.sub(one, x.sum(0, keepdims=True))], axis=0)
   normalize_term = jnp.sum(gammaln(alpha)) - gammaln(jnp.sum(alpha))

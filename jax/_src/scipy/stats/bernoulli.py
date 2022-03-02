@@ -24,8 +24,8 @@ from jax.scipy.special import xlogy, xlog1py
 @_wraps(osp_stats.bernoulli.logpmf, update_doc=False)
 def logpmf(k, p, loc=0):
   k, p, loc = jnp._promote_args_inexact("bernoulli.logpmf", k, p, loc)
-  zero = jnp._constant_like(k, 0)
-  one = jnp._constant_like(k, 1)
+  zero = lax._const(k, 0)
+  one = lax._const(k, 1)
   x = lax.sub(k, loc)
   log_probs = xlogy(x, p) + xlog1py(lax.sub(one, x), -p)
   return jnp.where(jnp.logical_or(lax.lt(x, zero), lax.gt(x, one)),

@@ -27,8 +27,7 @@ from jax._src import prng
 from jax.config import config
 from jax.core import NamedShape
 from jax._src.api import jit, vmap
-from jax._src.numpy.lax_numpy import (_arraylike, _check_arraylike,
-                                      _constant_like, _convert_and_clip_integer)
+from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer
 from jax._src.lib import xla_bridge
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
@@ -790,8 +789,8 @@ def cauchy(key: KeyArray,
 def _cauchy(key, shape, dtype):
   _check_shape("cauchy", shape)
   u = uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)
-  pi = _constant_like(u, np.pi)
-  return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
+  pi = lax._const(u, np.pi)
+  return lax.tan(lax.mul(pi, lax.sub(u, lax._const(u, 0.5))))
 
 
 def dirichlet(key: KeyArray,
@@ -877,12 +876,12 @@ def _gamma_one(key: KeyArray, alpha):
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
   # The algorithm can also be founded in:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
-  zero = _constant_like(alpha, 0)
-  one = _constant_like(alpha, 1)
-  minus_one = _constant_like(alpha, -1)
-  one_over_two = _constant_like(alpha, 0.5)
-  one_over_three = _constant_like(alpha, 1. / 3.)
-  squeeze_const = _constant_like(alpha, 0.0331)
+  zero = lax._const(alpha, 0)
+  one = lax._const(alpha, 1)
+  minus_one = lax._const(alpha, -1)
+  one_over_two = lax._const(alpha, 0.5)
+  one_over_three = lax._const(alpha, 1. / 3.)
+  squeeze_const = lax._const(alpha, 0.0331)
   dtype = lax.dtype(alpha)
 
   key, subkey = _split(key)
@@ -924,7 +923,7 @@ def _gamma_one(key: KeyArray, alpha):
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
-  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _constant_like(alpha, 2)))
+  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, lax._const(alpha, 2)))
   z = lax.mul(lax.mul(d, V), boost)
   return lax.select(lax.eq(z, zero), jnp.finfo(z.dtype).tiny, z)
 
@@ -1354,7 +1353,7 @@ def _t(key, df, shape, dtype):
   df = lax.convert_element_type(df, dtype)
   key_n, key_g = _split(key)
   n = normal(key_n, shape, dtype)
-  two = _constant_like(n, 2)
+  two = lax._const(n, 2)
   half_df = lax.div(df, two)
   g = gamma(key_n, half_df, shape, dtype)
   return n * jnp.sqrt(half_df / g)
