@@ -321,7 +321,7 @@ def cholesky_jvp_rule(primals, tangents):
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
   def phi(X):
     l = jnp.tril(X)
-    return l / lax.expand_dims(jnp._constant_like(X, 1) + jnp.eye(X.shape[-1], dtype=X.dtype),
+    return l / lax.expand_dims(lax._const(X, 1) + jnp.eye(X.shape[-1], dtype=X.dtype),
                                range(l.ndim - 2))
 
   tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
@@ -981,7 +981,7 @@ def _lu_jvp_rule(primals, tangents):
   ndims = len(a_shape)
   l_padding = [(0, 0, 0)] * ndims
   l_padding[-1] = (0, m - k, 0)
-  zero = jnp._constant_like(lu, 0)
+  zero = lax._const(lu, 0)
   l = lax.pad(jnp.tril(lu[..., :, :k], -1), zero, l_padding)
   l = l + lax.expand_dims(jnp.eye(m, m, dtype=dtype), range(l.ndim - 2))
 

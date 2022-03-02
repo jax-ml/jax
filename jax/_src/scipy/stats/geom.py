@@ -22,8 +22,8 @@ from jax.scipy.special import xlog1py
 @_wraps(osp_stats.geom.logpmf, update_doc=False)
 def logpmf(k, p, loc=0):
     k, p, loc = jnp._promote_args_inexact("geom.logpmf", k, p, loc)
-    zero = jnp._constant_like(k, 0)
-    one = jnp._constant_like(k, 1)
+    zero = lax._const(k, 0)
+    one = lax._const(k, 1)
     x = lax.sub(k, loc)
     log_probs = xlog1py(lax.sub(x, one), -p) + lax.log(p)
     return jnp.where(lax.le(x, zero), -jnp.inf, log_probs)
