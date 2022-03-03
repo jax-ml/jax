@@ -184,6 +184,21 @@ pytest tests/pmap_tests.py
 I.e. don't use the `-n auto` option, since that effectively runs each test on a
 single-core worker.
 
+## Doctests
+JAX uses pytest in doctest mode to test the code examples within the documentation.
+You can run this using
+```
+pytest docs
+```
+Additionally, JAX runs pytest in `doctest-modules` mode to ensure code examples in
+function docstrings will run correctly. You can run this locally using, for example:
+```
+pytest --doctest-modules jax/_src/numpy/lax_numpy.py
+```
+Keep in mind that there are several files that are marked to be skipped when the
+doctest command is run on the full package; you can see the details in
+[`ci-build.yaml`](https://github.com/google/jax/blob/main/.github/workflows/ci-build.yaml)
+
 # Type checking
 
 We use `mypy` to check the type hints. To check types locally the same way
