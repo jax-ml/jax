@@ -222,33 +222,27 @@ class GlobalDeviceArray:
     is_fully_replicated : True if the full array value is present on all devices
       of the global mesh.
 
-  Example:
+  Example::
 
     >>> from jax.experimental.maps import Mesh
     >>> from jax.experimental import PartitionSpec as P
     >>> import numpy as np
-
     >>> assert jax.device_count() == 8
     >>> global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
     >>> # Logical mesh is (hosts, devices)
     >>> assert global_mesh.shape == {'x': 4, 'y': 2}
-
     >>> global_input_shape = (8, 2)
     >>> mesh_axes = P('x', 'y')
-
     >>> # Dummy example data; in practice we wouldn't necessarily materialize global data
     >>> # in a single process.
     >>> global_input_data = np.arange(
     ...   np.prod(global_input_shape)).reshape(global_input_shape)
-
     >>> def get_local_data_slice(index):
     ...  # index will be a tuple of slice objects, e.g. (slice(0, 16), slice(0, 4))
     ...  # This method will be called per-local device from the GDA constructor.
     ...  return global_input_data[index]
-
     >>> gda = GlobalDeviceArray.from_callback(
     ...        global_input_shape, global_mesh, mesh_axes, get_local_data_slice)
-
     >>> print(gda.shape)
     (8, 2)
     >>> print(gda.local_shards[0].data)  # Access the data on a single local device
@@ -406,7 +400,7 @@ class GlobalDeviceArray:
 
     ``data_callback`` is used to fetch the data for each local slice of the returned GlobalDeviceArray.
 
-    Example::
+    Example:
 
       >>> from jax.experimental.maps import Mesh
       >>> import numpy as np
@@ -449,7 +443,7 @@ class GlobalDeviceArray:
     Like ``from_callback``, except the callback function is called only once to fetch all data
     local to this process.
 
-    Example::
+    Example:
 
       >>> from jax.experimental.maps import Mesh
       >>> import numpy as np
@@ -492,7 +486,7 @@ class GlobalDeviceArray:
 
     Like ``from_batched_callback``, except the callback function is responsible for returning on-device data (e.g. by calling ``jax.device_put``).
 
-    Example::
+    Example:
 
       >>> from jax.experimental.maps import Mesh
       >>> import numpy as np
