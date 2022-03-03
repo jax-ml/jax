@@ -94,8 +94,8 @@ cc_library(
 
 cc_library(
     name = "rocm_gpu_kernel_helpers",
-    srcs = ["rocm_gpu_kernel_helpers.cc"],
-    hdrs = ["rocm_gpu_kernel_helpers.h"],
+    srcs = if_rocm_is_configured(["rocm_gpu_kernel_helpers.cc"]),
+    hdrs = if_rocm_is_configured(["rocm_gpu_kernel_helpers.h"]),
     copts = [
         "-fexceptions",
     ],
@@ -106,8 +106,9 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@local_config_rocm//rocm:rocm_headers",
-    ],
+    ] + if_rocm_is_configured([
+        "@org_tensorflow//tensorflow/third_party/rocm/google:rocm_headers",
+    ]),
 )
 
 py_library(
@@ -480,7 +481,7 @@ pybind_extension(
 # AMD GPU support (ROCm)
 pybind_extension(
     name = "rocblas_kernels",
-    srcs = ["rocblas.cc"],
+    srcs = if_rocm_is_configured(["rocblas.cc"]),
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
