@@ -227,20 +227,24 @@ class GlobalDeviceArray:
     >>> from jax.experimental.maps import Mesh
     >>> from jax.experimental import PartitionSpec as P
     >>> import numpy as np
+    >>>
     >>> assert jax.device_count() == 8
     >>> global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
     >>> # Logical mesh is (hosts, devices)
     >>> assert global_mesh.shape == {'x': 4, 'y': 2}
     >>> global_input_shape = (8, 2)
     >>> mesh_axes = P('x', 'y')
+    >>>
     >>> # Dummy example data; in practice we wouldn't necessarily materialize global data
     >>> # in a single process.
     >>> global_input_data = np.arange(
     ...   np.prod(global_input_shape)).reshape(global_input_shape)
+    >>>
     >>> def get_local_data_slice(index):
     ...  # index will be a tuple of slice objects, e.g. (slice(0, 16), slice(0, 4))
     ...  # This method will be called per-local device from the GDA constructor.
     ...  return global_input_data[index]
+    >>>
     >>> gda = GlobalDeviceArray.from_callback(
     ...        global_input_shape, global_mesh, mesh_axes, get_local_data_slice)
     >>> print(gda.shape)
