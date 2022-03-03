@@ -159,6 +159,9 @@ class GlobalDeviceArray:
 
   If you’re not already familiar with JAX’s multi-process programming model,
   please read https://jax.readthedocs.io/en/latest/multi_process.html.
+  You can also read about pjit (https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html)
+  to learn about ``Mesh``, ``PartitionSpec`` and how arrays can be
+  partitioned or replicated.
 
   A GlobalDeviceArray (GDA) can be thought of as a view into a single logical
   array sharded across processes. The logical array is the “global” array, and
