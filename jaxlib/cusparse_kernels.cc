@@ -74,7 +74,7 @@ CudaConst CudaOne(cudaDataType type) {
   CudaConst c;
   std::memset(&c, 0, sizeof(c));
   switch (type) {
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
     // TODO(jakevdp): 4I/4U here might break on big endian platforms.
     case CUDA_R_4I:
     case CUDA_C_4I:
@@ -83,7 +83,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_8I:
       c.i8[0] = 1;
       break;
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
     case CUDA_R_4U:
     case CUDA_C_4U:
 #endif
@@ -91,7 +91,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_8U:
       c.u8[0] = 1;
       break;
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
     case CUDA_R_16I:
     case CUDA_C_16I:
       c.i16[0] = 1;
@@ -109,7 +109,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_32U:
       c.u32[0] = 1;
       break;
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
     case CUDA_R_64I:
     case CUDA_C_64I:
       c.i64[0] = 1;
@@ -124,7 +124,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_16F:
       c.u16[0] = 0b11110000000000;  // 1.0 in little-endian float16
       break;
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
     case CUDA_R_16BF:
     case CUDA_C_16BF:
       c.u16[0] = 0b11111110000000;  // 1.0 in little-endian bfloat16
@@ -142,7 +142,7 @@ CudaConst CudaOne(cudaDataType type) {
   return c;
 }
 
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
 // CsrToDense: Convert CSR matrix to dense matrix
 
 static absl::Status CsrToDense_(cudaStream_t stream, void** buffers,
@@ -536,7 +536,7 @@ void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
                                   s.message().length());
   }
 }
-#endif  // if JAX_CUSPARSE_11030
+#endif  // if JAX_CUSPARSE_11300
 
 template <typename T, typename F>
 static absl::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
