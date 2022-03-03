@@ -21,6 +21,7 @@ load(
     "flatbuffer_py_library",
     "if_rocm_is_configured",
     "pybind_extension",
+    "rocm_library",
 )
 
 licenses(["notice"])
@@ -93,15 +94,14 @@ cc_library(
 )
 
 cc_library(
-    name = "rocm_gpu_kernel_helpers",
-    srcs = if_rocm_is_configured(["rocm_gpu_kernel_helpers.cc"]),
-    hdrs = if_rocm_is_configured(["rocm_gpu_kernel_helpers.h"]),
+    name = "hip_gpu_kernel_helpers",
+    srcs = if_rocm_is_configured(["hip_gpu_kernel_helpers.cc"]),
+    hdrs = if_rocm_is_configured(["hip_gpu_kernel_helpers.h"]),
     copts = [
         "-fexceptions",
     ],
     features = ["-use_header_modules"],
     deps = [
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -118,9 +118,7 @@ py_library(
         "lapack.py",
         "pocketfft.py",
         "version.py",
-    ] + if_rocm_is_configured([
-        "rocsolver.py",
-    ]),
+    ],
     deps = [":pocketfft_flatbuffers_py"],
 )
 
@@ -252,6 +250,23 @@ py_library(
     ],
 )
 
+py_library(
+    name = "hip_gpu_support",
+    srcs = [
+        "hip_linalg.py",
+        "hip_prng.py",
+        "hipsolver.py",
+        "hipsparse.py",
+    ],
+    deps = [
+        ":_hip_linalg",
+        ":_hip_prng",
+        ":_hipblas",
+        ":_hipsolver",
+        ":_hipsparse",
+    ],
+)
+
 cc_library(
     name = "cublas_kernels",
     srcs = ["cublas_kernels.cc"],
@@ -275,6 +290,27 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "hipblas_kernels",
+    srcs = ["hipblas_kernels.cc"],
+    hdrs = ["hipblas_kernels.h"],
+    deps = [
+        ":handle_pool",
+        ":hip_gpu_kernel_helpers",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
 pybind_extension(
     name = "_cublas",
     srcs = ["cublas.cc"],
@@ -295,6 +331,26 @@ pybind_extension(
     ],
 )
 
+pybind_extension(
+    name = "_hipblas",
+    srcs = ["hipblas.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_hipblas",
+    deps = [
+        ":hipblas_kernels",
+        ":kernel_pybind11_helpers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@pybind11",
+    ],
+)
+
 cc_library(
     name = "cusolver_kernels",
     srcs = ["cusolver_kernels.cc"],
@@ -309,6 +365,23 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cc_library(
+    name = "hipsolver_kernels",
+    srcs = ["hipsolver_kernels.cc"],
+    hdrs = ["hipsolver_kernels.h"],
+    deps = [
+        ":handle_pool",
+        ":hip_gpu_kernel_helpers",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
 )
 
@@ -334,6 +407,27 @@ pybind_extension(
     ],
 )
 
+pybind_extension(
+    name = "_hipsolver",
+    srcs = ["hipsolver.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_hipsolver",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hipsolver_kernels",
+        ":kernel_pybind11_helpers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@pybind11",
+    ],
+)
+
 cc_library(
     name = "cusparse_kernels",
     srcs = ["cusparse_kernels.cc"],
@@ -349,6 +443,23 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cc_library(
+    name = "hipsparse_kernels",
+    srcs = ["hipsparse_kernels.cc"],
+    hdrs = ["hipsparse_kernels.h"],
+    deps = [
+        ":handle_pool",
+        ":hip_gpu_kernel_helpers",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hipsparse",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
 )
 
@@ -381,6 +492,34 @@ pybind_extension(
     ],
 )
 
+pybind_extension(
+    name = "_hipsparse",
+    srcs = ["hipsparse.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_hipsparse",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hipsparse_kernels",
+        ":kernel_pybind11_helpers",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hipsparse",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@pybind11",
+    ],
+)
+
 cc_library(
     name = "cuda_lu_pivot_kernels",
     srcs = [
@@ -396,6 +535,21 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "hip_lu_pivot_kernels",
+    srcs = [
+        "hip_lu_pivot_kernels.cc",
+    ],
+    hdrs = ["hip_lu_pivot_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_lu_pivot_kernels_impl",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
 cuda_library(
     name = "cuda_lu_pivot_kernels_impl",
     srcs = [
@@ -407,6 +561,20 @@ cuda_library(
         ":kernel_helpers",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
         "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+rocm_library(
+    name = "hip_lu_pivot_kernels_impl",
+    srcs = [
+        "hip_lu_pivot_kernels.hip.cc",
+    ],
+    hdrs = ["hip_lu_pivot_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
 )
 
@@ -430,6 +598,25 @@ pybind_extension(
     ],
 )
 
+pybind_extension(
+    name = "_hip_linalg",
+    srcs = ["hip_linalg.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_hip_linalg",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_lu_pivot_kernels",
+        ":hip_lu_pivot_kernels_impl",
+        ":kernel_pybind11_helpers",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@pybind11",
+    ],
+)
+
 cc_library(
     name = "cuda_prng_kernels",
     srcs = [
@@ -445,6 +632,21 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "hip_prng_kernels",
+    srcs = [
+        "hip_prng_kernels.cc",
+    ],
+    hdrs = ["hip_prng_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_prng_kernels_impl",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
 cuda_library(
     name = "cuda_prng_kernels_impl",
     srcs = [
@@ -456,6 +658,20 @@ cuda_library(
         ":kernel_helpers",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
         "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+rocm_library(
+    name = "hip_prng_kernels_impl",
+    srcs = [
+        "hip_prng_kernels.hip.cc",
+    ],
+    hdrs = ["hip_prng_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@local_config_rocm//rocm:rocm_headers",
     ],
 )
 
@@ -478,37 +694,25 @@ pybind_extension(
     ],
 )
 
-# AMD GPU support (ROCm)
 pybind_extension(
-    name = "rocblas_kernels",
-    srcs = if_rocm_is_configured(["rocblas.cc"]),
+    name = "_hip_prng",
+    srcs = ["hip_prng.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    module_name = "rocblas_kernels",
+    module_name = "_hip_prng",
     deps = [
-        ":handle_pool",
+        ":hip_gpu_kernel_helpers",
+        ":hip_prng_kernels",
         ":kernel_pybind11_helpers",
-        ":rocm_gpu_kernel_helpers",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
-        "@local_config_rocm//rocm:rocblas",
         "@local_config_rocm//rocm:rocm_headers",
-        "@local_config_rocm//rocm:rocsolver",
         "@pybind11",
     ],
 )
 
+# TODO(rocm): do we also need to support this?
 cc_library(
     name = "gpu_kernels",
     srcs = ["gpu_kernels.cc"],

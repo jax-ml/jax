@@ -38,7 +38,9 @@ from jax._src.lib import lapack
 from jax._src.lib import cuda_linalg
 from jax._src.lib import cusolver
 from jax._src.lib import cusparse
-from jax._src.lib import rocsolver
+from jax._src.lib import hip_linalg
+from jax._src.lib import hipsolver
+from jax._src.lib import hipsparse
 
 from jax._src.lib import xla_client
 
@@ -372,10 +374,10 @@ if cusolver is not None:
     partial(_cholesky_cpu_gpu_translation_rule, cusolver.potrf),
     platform='gpu')
 
-if rocsolver is not None:
+if hipsolver is not None:
   xla.register_translation(
     cholesky_p,
-    partial(_cholesky_cpu_gpu_translation_rule, rocsolver.potrf),
+    partial(_cholesky_cpu_gpu_translation_rule, hipsolver.potrf),
     platform='gpu')
 
 # Asymmetric eigendecomposition
@@ -571,9 +573,9 @@ if cusolver is not None:
     eigh_p, partial(_eigh_cpu_gpu_translation_rule, cusolver.syevd),
     platform='gpu')
 
-if rocsolver is not None:
+if hipsolver is not None:
   xla.register_translation(
-    eigh_p, partial(_eigh_cpu_gpu_translation_rule, rocsolver.syevd),
+    eigh_p, partial(_eigh_cpu_gpu_translation_rule, hipsolver.syevd),
     platform='gpu')
 
 
@@ -756,11 +758,11 @@ if cusolver is not None:
       partial(_triangular_solve_gpu_translation_rule, cusolver.trsm),
       platform='gpu')
 
-if rocsolver is not None:
+if hipsolver is not None:
   xla.register_translation(
-    triangular_solve_p,
-    partial(_triangular_solve_gpu_translation_rule, rocsolver.trsm),
-    platform='gpu')
+      triangular_solve_p,
+      partial(_triangular_solve_gpu_translation_rule, hipsolver.trsm),
+      platform='gpu')
 
 # Support operation for LU decomposition: Transformation of the pivots returned
 # by LU decomposition into permutations.
@@ -835,8 +837,12 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
 
 def _lu_pivots_to_permutation_gpu(ctx, avals_in, avals_out, pivots, *,
                                   permutation_size):
-  return [cuda_linalg.lu_pivots_to_permutation(
-      ctx.builder, pivots, permutation_size=permutation_size)]
+  if cuda_linalg:
+    return [cuda_linalg.lu_pivots_to_permutation(
+        ctx.builder, pivots, permutation_size=permutation_size)]
+  if hip_linalg:
+    return [hip_linalg.lu_pivots_to_permutation(
+        ctx.builder, pivots, permutation_size=permutation_size)]
 
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
 lu_pivots_to_permutation_p.multiple_results = False
@@ -856,6 +862,10 @@ if cuda_linalg:
                            _lu_pivots_to_permutation_gpu,
                            platform='gpu')
 
+if hip_linalg:
+  xla.register_translation(lu_pivots_to_permutation_p,
+                           _lu_pivots_to_permutation_gpu,
+                           platform='gpu')
 # LU decomposition
 
 # Computes a pivoted LU decomposition such that
@@ -1047,9 +1057,9 @@ if cusolver is not None:
       lu_p, partial(_lu_cpu_gpu_translation_rule, cusolver.getrf),
       platform='gpu')
 
-if rocsolver is not None:
+if hipsolver is not None:
   xla.register_translation(
-      lu_p, partial(_lu_cpu_gpu_translation_rule, rocsolver.getrf),
+      lu_p, partial(_lu_cpu_gpu_translation_rule, hipsolver.getrf),
       platform='gpu')
 
 xla.register_translation(lu_p, _lu_tpu_translation_rule, platform='tpu')
@@ -1215,12 +1225,11 @@ if cusolver is not None:
       partial(_qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr),
       platform='gpu')
 
-if rocsolver is not None:
+if hipsolver is not None:
   xla.register_translation(
       qr_p,
-      partial(_qr_cpu_gpu_translation_rule, rocsolver.geqrf, rocsolver.orgqr),
+      partial(_qr_cpu_gpu_translation_rule, hipsolver.geqrf, hipsolver.orgqr),
       platform='gpu')
-
 
 # Singular value decomposition
 
@@ -1387,15 +1396,17 @@ if cusolver is not None:
     svd_p, partial(_svd_cpu_gpu_translation_rule, cusolver.gesvd),
     platform='gpu')
 
-if rocsolver is not None:
+if hipsolver is not None:
   xla.register_translation(
-    svd_p, partial(_svd_cpu_gpu_translation_rule, rocsolver.gesvd),
+    svd_p, partial(_svd_cpu_gpu_translation_rule, hipsolver.gesvd),
     platform='gpu')
-
 
 def _tridiagonal_solve_gpu_translation_rule(ctx, avals_in, avals_out, dl, d, du,
                                             b, *, m, n, ldb, t):
-  return [cusparse.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
+  if cusparse:
+    return [cusparse.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
+  if hipsparse:
+    return [hipsparse.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
 
 tridiagonal_solve_p = Primitive('tridiagonal_solve')
 tridiagonal_solve_p.multiple_results = False
@@ -1404,6 +1415,10 @@ tridiagonal_solve_p.def_impl(
 tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
 # TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
 if cusparse is not None and hasattr(cusparse, "gtsv2"):
+  xla.register_translation(tridiagonal_solve_p,
+                           _tridiagonal_solve_gpu_translation_rule,
+                           platform='gpu')
+if hipsparse is not None and hasattr(hipsparse, "gtsv2"):
   xla.register_translation(tridiagonal_solve_p,
                            _tridiagonal_solve_gpu_translation_rule,
                            platform='gpu')

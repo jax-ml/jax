@@ -542,6 +542,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for hermitian in ([False, True] if m == n else [False])))
+  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian):
     if (jnp.issubdtype(dtype, np.complexfloating) and
         jtu.device_under_test() == "tpu"):
@@ -797,6 +798,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2),
                     (2, 0, 0), (3, 0, 2), (1, 0)]
       for dtype in float_types + complex_types))
+  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testPinv(self, shape, dtype):
     if (jnp.issubdtype(dtype, np.complexfloating) and
         jtu.device_under_test() == "tpu"):
@@ -811,6 +813,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       # TODO(phawkins): 1e-1 seems like a very loose tolerance.
       jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
 
+  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testPinvGradIssue2792(self):
     def f(p):
       a = jnp.array([[0., 0.],[-p, 1.]], jnp.float32) * 1 / (1 + p**2)
@@ -849,6 +852,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
       for dtype in float_types + complex_types))
+  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testMatrixRank(self, shape, dtype):
     if (jnp.issubdtype(dtype, np.complexfloating) and
         jtu.device_under_test() == "tpu"):
@@ -899,7 +903,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       ]
       for rcond in [-1, None, 0.5]
       for dtype in float_types + complex_types))
-  @jtu.skip_on_devices("tpu")  # SVD not implemented on TPU.
+  @jtu.skip_on_devices("tpu","rocm")  # SVD not implemented on TPU. will be fixed in ROCm-5.1
   def testLstsq(self, lhs_shape, rhs_shape, dtype, rcond):
     rng = jtu.rand_default(self.rng())
     np_fun = partial(np.linalg.lstsq, rcond=rcond)
@@ -1514,6 +1518,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
   @parameterized.parameters(np.float32, np.float64)
+  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def test_tridiagonal_solve(self, dtype):
     dl = np.array([0.0, 2.0, 3.0], dtype=dtype)
     d = np.ones(3, dtype=dtype)

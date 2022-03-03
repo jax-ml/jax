@@ -66,6 +66,7 @@ class QdwhTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([8, 10, 20], [6, 10, 18])
       for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
+  @jtu.skip_on_devices("rocm")  # will be fixed in rocm-5.1
   def testQdwhUnconvergedAfterMaxNumberIterations(
       self, m, n, log_cond):
     """Tests unconvergence after maximum number of iterations."""
@@ -136,6 +137,7 @@ class QdwhTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([6, 8], [6, 4])
       for log_cond in np.linspace(1, 4, 4)))
+  @jtu.skip_on_devices("rocm")  # will be solved rocm-5.1
   def testQdwhWithRandomMatrix(self, m, n, log_cond):
     """Tests qdwh with random input."""
     rng = jtu.rand_uniform(self.rng(), low=0.3, high=0.9)
