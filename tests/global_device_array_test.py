@@ -35,33 +35,29 @@ config.parse_flags_with_absl()
 class GDATest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-      ("mesh_x_y", ["x", "y"],
+      ("mesh_x_y", P("x", "y"),
        # There are more slices but for convienient purposes, checking for only
        # 2. The indices + shard_shape + replica_id should be unique enough.
        ((slice(0, 2), slice(0, 1)), (slice(0, 2), slice(1, 2))),
        (2, 1),
        [0, 0, 0, 0, 0, 0, 0, 0], False),
-      ("mesh_x_y_pspec", P("x", "y"),
-       ((slice(0, 2), slice(0, 1)), (slice(0, 2), slice(1, 2))),
-       (2, 1),
-       [0, 0, 0, 0, 0, 0, 0, 0], False),
-      ("mesh_x", ["x"],
+      ("mesh_x", P("x"),
        ((slice(0, 2), slice(None)), (slice(0, 2), slice(None))),
        (2, 2),
        [0, 1, 0, 1, 0, 1, 0, 1], False),
-      ("mesh_y", ["y"],
+      ("mesh_y", P("y"),
        ((slice(0, 4), slice(None)), (slice(4, 8), slice(None))),
        (4, 2),
        [0, 0, 1, 1, 2, 2, 3, 3], False),
-      ("mesh_none_y", [None, "y"],
+      ("mesh_none_y", P(None, "y"),
        ((slice(None), slice(0, 1)), (slice(None), slice(1, 2))),
        (8, 1),
        [0, 0, 1, 1, 2, 2, 3, 3], False),
-      ("mesh_xy", [("x", "y")],
+      ("mesh_xy", P(("x", "y")),
        ((slice(0, 1), slice(None)), (slice(1, 2), slice(None))),
        (1, 2),
        [0, 0, 0, 0, 0, 0, 0, 0], False),
-      ("mesh_fully_replicated", [],
+      ("mesh_fully_replicated", P(),
        ((slice(None), slice(None)), (slice(None), slice(None))),
        (8, 2),
        [0, 1, 2, 3, 4, 5, 6, 7], True),
@@ -79,6 +75,7 @@ class GDATest(jtu.JaxTestCase):
                                           mesh_axes, cb)
     self.assertEqual(gda.ndim, 2)
     self.assertEqual(gda.size, 16)
+    self.assertEqual(gda.mesh_axes, mesh_axes)
     self.assertEqual(gda.local_shards[0].index, expected_index[0])
     self.assertArraysEqual(gda.local_data(0),
                            global_input_data[expected_index[0]])
@@ -103,17 +100,17 @@ class GDATest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(
-      ("mesh_x_y_z", ["x", "y", "z"],
+      ("mesh_x_y_z", P("x", "y", "z"),
        # There are more slices but for convienient purposes, checking for only
        # 2. The indices + shard_shape + replica_id should be unique enough.
        ((slice(0, 4), slice(0, 2), slice(0, 1)), (slice(0, 4), slice(0, 2), slice(1, 2))),
        (4, 2, 1),
        [0, 0, 0, 0, 0, 0, 0, 0]),
-      ("mesh_xy_z", [("x", "y"), "z"],
+      ("mesh_xy_z", P(("x", "y"), "z"),
        ((slice(0, 2), slice(0, 2), slice(None)), (slice(0, 2), slice(2, 4), slice(None))),
        (2, 2, 2),
        [0, 0, 0, 0, 0, 0, 0, 0]),
-      ("mesh_z", ["z"],
+      ("mesh_z", P("z"),
        ((slice(0, 4), slice(None), slice(None)), (slice(4, 8), slice(None), slice(None))),
        (4, 4, 2),
        [0, 0, 1, 1, 2, 2, 3, 3]),
@@ -143,13 +140,13 @@ class GDATest(jtu.JaxTestCase):
     self.assertListEqual(replica_ids, expected_replica_ids)
 
   @parameterized.named_parameters(
-      ("mesh_x", ["x"],
+      ("mesh_x", P("x"),
        # There are more slices but for convienient purposes, checking for only
        # 2. The indices + shard_shape + replica_id should be unique enough.
        ((slice(0, 2),), (slice(2, 4),)),
        (2,),
        [0, 0, 0, 0, 0, 0, 0, 0]),
-      ("mesh_none", [],
+      ("mesh_none", P(),
        ((slice(None),), (slice(None),)),
        (16,),
        [0, 1, 2, 3, 4, 5, 6, 7]),
@@ -179,7 +176,7 @@ class GDATest(jtu.JaxTestCase):
   def test_gda_shape_0_1d_mesh(self):
     global_mesh = jtu.create_global_mesh((8,), ('x'))
     global_input_shape = (0,)
-    mesh_axes = [None]
+    mesh_axes = P(None)
     def cb(index):
       return np.array([])
     gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
@@ -197,7 +194,7 @@ class GDATest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(
-      ("mesh_x_y", ["x", "y"],
+      ("mesh_x_y", P("x", "y"),
        # There are more slices but for convienient purposes, checking for only
        # 2. The indices + shard_shape + replica_id should be unique enough.
        ((slice(0, 4), slice(0, 1)), (slice(0, 4), slice(1, 2))),
@@ -233,7 +230,7 @@ class GDATest(jtu.JaxTestCase):
   def test_gda_batched_callback(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = [('x', 'y')]
+    mesh_axes = P(('x', 'y'))
     global_input_data = np.arange(
         prod(global_input_shape)).reshape(global_input_shape)
 
@@ -253,7 +250,7 @@ class GDATest(jtu.JaxTestCase):
   def test_gda_batched_callback_with_devices(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = ['x']
+    mesh_axes = P('x')
     global_input_data = np.arange(
         prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
@@ -279,7 +276,7 @@ class GDATest(jtu.JaxTestCase):
   def test_gda_str_repr(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = [('x', 'y')]
+    mesh_axes = P(('x', 'y'))
     global_input_data = np.arange(
         prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
@@ -289,9 +286,9 @@ class GDATest(jtu.JaxTestCase):
     self.assertEqual(str(gda),
                      'GlobalDeviceArray(shape=(8, 2), dtype=int32)')
     self.assertEqual(
-        repr(gda),
-        ("GlobalDeviceArray(shape=(8, 2), dtype=int32, "
-        "global_mesh_shape={'x': 4, 'y': 2}, mesh_axes=[('x', 'y')])"))
+        repr(gda), ('GlobalDeviceArray(shape=(8, 2), dtype=int32, '
+                    "global_mesh_shape={'x': 4, 'y': 2}, "
+                    "mesh_axes=PartitionSpec(('x', 'y'),))"))
 
   def test_gda_equality_raises_not_implemented(self):
     global_mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
@@ -329,7 +326,7 @@ class GDATest(jtu.JaxTestCase):
                              [devices[7], devices[5]]])
     global_mesh = Mesh(mesh_devices, ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = ['x', 'y']
+    mesh_axes = P('x', 'y')
     global_input_data = np.arange(
         prod(global_input_shape)).reshape(global_input_shape)
     indices = get_shard_indices(global_input_shape, global_mesh, mesh_axes)
@@ -347,7 +344,7 @@ class GDATest(jtu.JaxTestCase):
   def test_gda_block_until_ready(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = [('x', 'y')]
+    mesh_axes = P(('x', 'y'))
     global_input_data = np.arange(
         prod(global_input_shape)).reshape(global_input_shape)
 

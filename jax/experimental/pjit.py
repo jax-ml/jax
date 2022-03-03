@@ -1053,7 +1053,9 @@ def _create_cpspec(x):
 def _maybe_replace_from_gda_with_pspec(
     in_axis_resources_flat: CanonicalizedParsedPartitionSpec, arg) -> CanonicalizedParsedPartitionSpec:
   if isinstance(arg, GDA):
-    gda_cpspec = gda_mesh_axes_to_canonicalized_parsed_pspec(arg._mesh_axes)
+    gda_cpspec = CanonicalizedParsedPartitionSpec(
+        ParsedPartitionSpec.from_user_input(
+            arg.mesh_axes, arg_name="GDA mesh_axes"))
     assert type(gda_cpspec) is CanonicalizedParsedPartitionSpec
     if (not _is_from_gda(in_axis_resources_flat) and
         in_axis_resources_flat != gda_cpspec):
@@ -1066,13 +1068,6 @@ def _maybe_replace_from_gda_with_pspec(
     return gda_cpspec
   return in_axis_resources_flat
 
-def gda_mesh_axes_to_canonicalized_parsed_pspec(mesh_axes) -> CanonicalizedParsedPartitionSpec:
-  if not isinstance(mesh_axes, PartitionSpec):
-    pspec = PartitionSpec(*mesh_axes)
-  else:
-    pspec = mesh_axes
-  return CanonicalizedParsedPartitionSpec(ParsedPartitionSpec.from_user_input(
-      pspec, arg_name='GDA mesh_axes'))
 
 def _maybe_check_pjit_gda_mesh(args, mesh):
   for x in args:

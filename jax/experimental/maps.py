@@ -2028,7 +2028,7 @@ def _check_gda_xmap_partitioning(axis_resources, resource_env,
                          f"mesh: {resource_env.physical_mesh},\n"
                          f"GDA mesh: {arg.mesh}")
 
-      gda_array_mapping = _get_array_mapping(arg._mesh_axes)
+      gda_array_mapping = _get_array_mapping(arg.mesh_axes)
       if gda_array_mapping != xmap_array_mapping:
         raise ValueError(
             "Got an input GDA to xmap with different partitioning than "

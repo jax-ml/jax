@@ -27,7 +27,7 @@ from jax._src.api import device_put
 from jax.interpreters.sharded_jit import PartitionSpec
 
 Shape = Tuple[int, ...]
-MeshAxes = Sequence[Union[str, Tuple[str], None]]
+MeshAxes = PartitionSpec
 DeviceArray = xc.Buffer
 Device = xc.Device
 ArrayLike = Union[np.ndarray, DeviceArray]
@@ -50,11 +50,7 @@ def _get_array_mapping(mesh_axes):
   # Import here to avoid cyclic import error when importing gda in pjit.py.
   from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
 
-  if not isinstance(mesh_axes, PartitionSpec):
-    pspec = PartitionSpec(*mesh_axes)
-  else:
-    pspec = mesh_axes
-  parsed_pspec, _, _ = _prepare_axis_resources(pspec, "mesh_axes")
+  parsed_pspec, _, _ = _prepare_axis_resources(mesh_axes, "GDA mesh_axes")
   return get_array_mapping(parsed_pspec)
 
 
@@ -297,7 +293,7 @@ class GlobalDeviceArray:
 
     self._local_shards = self._create_local_shards()
 
-    ss = get_shard_shape(self._global_shape, self._global_mesh, self._mesh_axes)
+    ss = get_shard_shape(self._global_shape, self._global_mesh, self.mesh_axes)
     assert all(db.shape == ss for db in device_buffers), (
         f"Expected shard shape {ss} doesn't match the device buffer "
         f"shape, got: {[db.shape for db in device_buffers]}")
@@ -322,8 +318,8 @@ class GlobalDeviceArray:
 
   def __repr__(self):
     return (f'GlobalDeviceArray(shape={self.shape}, dtype={self.dtype}, '
-            f'global_mesh_shape={dict(self._global_mesh.shape)}, '
-            f'mesh_axes={self._mesh_axes})')
+            f'global_mesh_shape={dict(self.mesh.shape)}, '
+            f'mesh_axes={self.mesh_axes})')
 
   @property
   def shape(self) -> Shape:
@@ -342,6 +338,10 @@ class GlobalDeviceArray:
     return self._global_mesh
 
   @property
+  def mesh_axes(self) -> MeshAxes:
+    return self._mesh_axes
+
+  @property
   def is_fully_replicated(self) -> bool:
     return self.shape == self.local_data(0).shape
 
@@ -350,7 +350,7 @@ class GlobalDeviceArray:
       global_indices_rid = self._gda_fast_path_args.global_indices_replica_ids
     else:
       global_indices_rid = get_shard_indices_replica_ids(
-        self._global_shape, self._global_mesh, self._mesh_axes)
+        self._global_shape, self._global_mesh, self.mesh_axes)
 
     out = []
     for db in self._device_buffers:
@@ -379,7 +379,7 @@ class GlobalDeviceArray:
     # Also as this a cached property, once calculated, it should be cached. So
     # multiple accesses should be cheap.
     global_indices_rid = get_shard_indices_replica_ids(
-        self._global_shape, self._global_mesh, self._mesh_axes)
+        self._global_shape, self._global_mesh, self.mesh_axes)
     device_to_buffer = dict((db.device(), db) for db in self._device_buffers)
     global_shards = []
     for device, (index, rid) in global_indices_rid.items():
@@ -410,10 +410,11 @@ class GlobalDeviceArray:
     Example:
 
       >>> from jax.experimental.maps import Mesh
+      >>> from jax.experimental import PartitionSpec as P
       >>> import numpy as np
       ...
       >>> global_input_shape = (8, 8)
-      >>> mesh_axes = ['x', 'y']
+      >>> mesh_axes = P('x', 'y')
       >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
       ...
@@ -456,10 +457,11 @@ class GlobalDeviceArray:
     Example:
 
       >>> from jax.experimental.maps import Mesh
+      >>> from jax.experimental import PartitionSpec as P
       >>> import numpy as np
       ...
       >>> global_input_shape = (8, 2)
-      >>> mesh_axes = ['x']
+      >>> mesh_axes = P('x')
       >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
       ...
@@ -502,10 +504,11 @@ class GlobalDeviceArray:
     Example:
 
       >>> from jax.experimental.maps import Mesh
+      >>> from jax.experimental import PartitionSpec as P
       >>> import numpy as np
       ...
       >>> global_input_shape = (8, 2)
-      >>> mesh_axes = [('x', 'y')]
+      >>> mesh_axes = P(('x', 'y'))
       >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
       ...

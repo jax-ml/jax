@@ -991,7 +991,7 @@ class GDAPjitTest(jtu.JaxTestCase):
   def test_pjit_gda_mesh_mismatch(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = ['x', 'y']
+    mesh_axes = P('x', 'y')
     global_input_data = np.arange(
         prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
     def cb(index):
@@ -1012,7 +1012,7 @@ class GDAPjitTest(jtu.JaxTestCase):
   def test_pjit_gda_wrong_resource_for_gda_input(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = ['x']
+    mesh_axes = P('x')
     global_input_data = np.arange(
         prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
     def cb(index):
@@ -1066,7 +1066,7 @@ class GDAPjitTest(jtu.JaxTestCase):
   def test_partition_spec_mismatch_semantically_equivalent(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = [None]
+    mesh_axes = P(None)
     global_input_data = np.arange(
         prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
@@ -1082,15 +1082,15 @@ class GDAPjitTest(jtu.JaxTestCase):
         return x
 
       output_gda = f(gda_obj)
-      # Ensure output_gda._mesh_axes = P() is matched with P(None).
-      self.assertEqual(output_gda._mesh_axes, ())
+      # Ensure output_gda.mesh_axes = P() is matched with P(None).
+      self.assertEqual(output_gda.mesh_axes, ())
       # P(None) is in_axis_resources.
       f(output_gda)
 
   def test_from_gda_duplicates(self):
     global_mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = ['x', 'y']
+    mesh_axes = P('x', 'y')
     input_gda = create_gda(global_input_shape, global_mesh, mesh_axes)
 
     # It's occasionally possible to end up with two FROM_GDA singletons (e.g. if
@@ -1114,7 +1114,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
       with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
         out_gda = f(input_gda)
-        self.assertEqual(out_gda._mesh_axes, ())
+        self.assertEqual(out_gda.mesh_axes, ())
 
         before_cache = pjit_lib._pjit_lower.cache_info()
         f(out_gda)
@@ -1395,10 +1395,10 @@ class UtilTest(jtu.JaxTestCase):
       roundtrip(P(*spec))
 
   @parameterized.named_parameters(
-      ("linear", {'x': 0, 'y': 1, 'z': 2}, (('x',), ('y',), ('z',))),
-      ("combine", {'x': 0, 'y': 0, 'z': 1}, (('x', 'y'), ('z',))),
-      ("skip", {'x': 0, 'y': 0, 'z': 2}, (('x', 'y'), None, ('z',))),
-      ("multi_skip", {'x': 0, 'y': 1, 'z': 3}, (('x',), ('y',), None, ('z',))),
+      ("linear", {'x': 0, 'y': 1, 'z': 2}, P(('x',), ('y',), ('z',))),
+      ("combine", {'x': 0, 'y': 0, 'z': 1}, P(('x', 'y'), ('z',))),
+      ("skip", {'x': 0, 'y': 0, 'z': 2}, P(('x', 'y'), None, ('z',))),
+      ("multi_skip", {'x': 0, 'y': 1, 'z': 3}, P(('x',), ('y',), None, ('z',))),
   )
   def test_array_mapping_to_axis_resources(self, inp, expected_out):
     self.assertEqual(pxla.array_mapping_to_axis_resources(inp), expected_out)

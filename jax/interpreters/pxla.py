@@ -414,20 +414,24 @@ mesh devices ndarray would have to be transposed before flattening and assignmen
 """
 ArrayMapping = OrderedDictType[MeshAxisName, int]
 
-AxisResource = Tuple[Optional[Tuple[Any, ...]], ...]
 
-def array_mapping_to_axis_resources(array_mapping: ArrayMapping) -> AxisResource:
+def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
+  # TODO(yashkatariya): Move PartitionSpec into a place where all files can
+  # import it without cyclic dependency.
+  from jax.interpreters.sharded_jit import PartitionSpec
+
   if not array_mapping:
-    return tuple()
+    return PartitionSpec()
   max_index = -1
   reverse_map = defaultdict(list)
   for axis, index in array_mapping.items():
     reverse_map[index].append(axis)
     if index > max_index:
       max_index = index
-  return tuple(
-      tuple(reverse_map[i]) if reverse_map[i] else None for i in range(max_index + 1)
-  )
+  partitions = tuple(tuple(reverse_map[i]) if reverse_map[i] else None
+                     for i in range(max_index + 1))
+  return PartitionSpec(*partitions)
+
 
 def local_aval_to_result_handler(
     aval: core.AbstractValue,
@@ -465,14 +469,13 @@ local_result_handlers[ConcreteArray] = sda_array_result_handler
 
 
 def global_aval_to_result_handler(
-    aval: core.AbstractValue,
-    out_axis_resources: Optional[AxisResource], global_mesh,
+    aval: core.AbstractValue, out_axis_resources, global_mesh,
 ) -> Callable[[List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
   Args:
     aval: The global output AbstractValue.
-    out_axis_resources: A tuple specifying the sharding of outputs.
+    out_axis_resources: A PartitionSpec specifying the sharding of outputs.
       Used for creating GSDAs.
     global_mesh: The global device mesh that generated this output. Used
       for creating GSDAs.
