@@ -64,7 +64,7 @@ cudaDataType DtypeToCudaDataType(const py::dtype& np_type) {
             {{'c', 16}, CUDA_C_64F}, {{'i', 1}, CUDA_R_8I},
             {{'u', 1}, CUDA_R_8U}, {{'i', 4}, CUDA_R_32I},
             {{'u', 4}, CUDA_R_32U},
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
             {{'V', 2}, CUDA_R_16BF},
 #endif
       });
@@ -98,7 +98,7 @@ DenseVecDescriptor BuildDenseVecDescriptor(const py::dtype& data_dtype,
   return DenseVecDescriptor{value_type, size};
 }
 
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
 // CsrToDense: Convert CSR matrix to dense matrix
 
 // Returns the descriptor for a Sparse matrix.
@@ -513,7 +513,7 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   return {buffer_size, PackDescriptor(CooMatmatDescriptor{A, B, C, op_A})};
 }
 
-#endif  // if JAX_CUSPARSE_11030
+#endif  // if JAX_CUSPARSE_11300
 
 py::bytes BuildGtsv2Descriptor(int m, int n, int ldb) {
   return PackDescriptor(Gtsv2Descriptor{m, n, ldb});
@@ -541,7 +541,7 @@ size_t Gtsv2BufferSizeF64(int m, int n, int ldb) {
 
 py::dict Registrations() {
   py::dict dict;
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
   dict["cusparse_csr_todense"] = EncapsulateFunction(CsrToDense);
   dict["cusparse_csr_fromdense"] = EncapsulateFunction(CsrFromDense);
   dict["cusparse_csr_matvec"] = EncapsulateFunction(CsrMatvec);
@@ -558,9 +558,9 @@ py::dict Registrations() {
 }
 
 PYBIND11_MODULE(_cusparse, m) {
-  m.attr("cusparse_supported") = py::bool_(JAX_CUSPARSE_11030);
+  m.attr("cusparse_supported") = py::bool_(JAX_CUSPARSE_11300);
   m.def("registrations", &Registrations);
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
   m.def("build_csr_todense_descriptor", &BuildCsrToDenseDescriptor);
   m.def("build_csr_fromdense_descriptor", &BuildCsrFromDenseDescriptor);
   m.def("build_csr_matvec_descriptor", &BuildCsrMatvecDescriptor);

@@ -31,7 +31,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 // Some functionality defined here is only available in CUSPARSE 11.3 or newer.
-#define JAX_CUSPARSE_11030 (CUSPARSE_VERSION >= 11300)
+#define JAX_CUSPARSE_11300 (CUSPARSE_VERSION >= 11300)
 
 namespace jax {
 
@@ -73,7 +73,7 @@ struct DenseVecDescriptor {
   int size;
 };
 
-#if JAX_CUSPARSE_11030
+#if JAX_CUSPARSE_11300
 // CsrToDense: Convert CSR matrix to dense matrix
 
 void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
@@ -137,7 +137,7 @@ struct CooMatmatDescriptor {
 
 void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status);
-#endif  // if JAX_CUSPARSE_11030
+#endif  // if JAX_CUSPARSE_11300
 
 struct Gtsv2Descriptor {
   int m, n, ldb;
