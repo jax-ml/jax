@@ -56,10 +56,10 @@ py_library(
 )
 
 symlink_inputs(
-    name = "standard_dialect",
+    name = "func_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:StandardOpsPyFiles",
+        "@llvm-project//mlir/python:FuncPyFiles",
     ]}},
     deps = [
         ":core",

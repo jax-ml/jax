@@ -30,7 +30,7 @@ from jax._src import dispatch
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import std
+from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.api_util import (argnums_partial, flatten_axes, flatten_fun,
                                _ensure_index_tuple)
 import jax._src.util as util
@@ -240,9 +240,9 @@ def _sharded_jit_lowering(ctx, *in_nodes,
 
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
   flat_output_types = util.flatten(output_types)
-  call = std.CallOp(flat_output_types,
-                    ir.FlatSymbolRefAttr.get(fn.name.value),
-                    mlir.flatten_lowering_ir_args(args))
+  call = func_dialect.CallOp(flat_output_types,
+                             ir.FlatSymbolRefAttr.get(fn.name.value),
+                             mlir.flatten_lowering_ir_args(args))
   out_nodes = util.unflatten(call.results, safe_map(len, output_types))
 
   out_parts = out_parts_thunk()
@@ -291,8 +291,8 @@ mlir.register_lowering(sharded_call_p, _sharded_jit_lowering)
 
 class _UnconstrainedPartitionSingleton:
 
-    def __str__ (self):
-      return "UNCONSTRAINED"
+  def __str__(self):
+    return "UNCONSTRAINED"
 
 
 # Unconstrained sentinel value for PartitionSpec, representing a dimension for

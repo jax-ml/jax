@@ -37,7 +37,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
-from jax._src.lib.mlir.dialects import std
+from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
 from jax._src import source_info_util
 import jax._src.util as util
@@ -605,7 +605,7 @@ def lower_jaxpr_to_fun(
         outs.append(ir_constants(np.zeros((), np.bool_)))
       else:
         outs.append(out)
-    std.ReturnOp(util.flatten(outs))
+    func_dialect.ReturnOp(util.flatten(outs))
 
   return func_op
 
@@ -626,7 +626,7 @@ def _emit_lowering_rule_as_fun(lowering_rule,
     unflattened_args = util.unflatten(entry_block.arguments,
                                       map(len, input_types))
     outs = lowering_rule(ctx, *_unwrap_singleton_ir_values(unflattened_args))
-    std.ReturnOp(util.flatten(map(wrap_singleton_ir_values, outs)))
+    func_dialect.ReturnOp(util.flatten(map(wrap_singleton_ir_values, outs)))
   return func_op
 
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
@@ -732,9 +732,9 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
       name_stack=xla.extend_name_stack(ctx.name_stack, stack_name))
   symbol_name = lower_jaxpr_to_fun(sub_ctx, fn_name,
                                    core.ClosedJaxpr(call_jaxpr, ())).name.value
-  call = std.CallOp(flat_output_types,
-                    ir.FlatSymbolRefAttr.get(symbol_name),
-                    flatten_lowering_ir_args(args))
+  call = func_dialect.CallOp(flat_output_types,
+                             ir.FlatSymbolRefAttr.get(symbol_name),
+                             flatten_lowering_ir_args(args))
   return util.unflatten(call.results, map(len, output_types))
 
 def _xla_call_lower(ctx, *args,
@@ -882,9 +882,9 @@ def cache_lowering(f):
 
     output_types = map(aval_to_ir_types, ctx.avals_out)
     flat_output_types = util.flatten(output_types)
-    call = std.CallOp(flat_output_types,
-                      ir.FlatSymbolRefAttr.get(func.name.value),
-                      flatten_lowering_ir_args(args))
+    call = func_dialect.CallOp(flat_output_types,
+                               ir.FlatSymbolRefAttr.get(func.name.value),
+                               flatten_lowering_ir_args(args))
     return util.unflatten(call.results, map(len, output_types))
   return cached_lowering
 
@@ -912,8 +912,9 @@ def xla_fallback_lowering(prim: core.Primitive):
     output_type = (ir.TupleType.get_tuple(flat_output_types)
                    if prim.multiple_results else flat_output_types[0])
 
-    call = std.CallOp([output_type], ir.FlatSymbolRefAttr.get(callee_name),
-                      flatten_lowering_ir_args(args)).result
+    call = func_dialect.CallOp([output_type],
+                               ir.FlatSymbolRefAttr.get(callee_name),
+                               flatten_lowering_ir_args(args)).result
     if not prim.multiple_results:
       return [call]
     flat_results = [mhlo.GetTupleElementOp(typ, call, i32_attr(i)).result

@@ -235,7 +235,9 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/builtin.py"), dst_dir=mlir_dialects_dir)
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/chlo.py"), dst_dir=mlir_dialects_dir)
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/mhlo.py"), dst_dir=mlir_dialects_dir)
-  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/dialects/std.py"), dst_dir=mlir_dialects_dir)
+  copy_to_jaxlib(
+      r.Rlocation("__main__/jaxlib/mlir/dialects/func.py"),
+      dst_dir=mlir_dialects_dir)
 
   if _is_windows():
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mlir/_mlir_libs/_mlir.pyd"), dst_dir=mlir_libs_dir)
