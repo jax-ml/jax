@@ -36,7 +36,7 @@ def _use_qr(u, params):
   """Uses QR decomposition."""
   a, b, c = params
   m, n = u.shape
-  y = jnp.concatenate([jnp.sqrt(c) * u, jnp.eye(n)])
+  y = jnp.concatenate([jnp.sqrt(c) * u, jnp.eye(n, dtype=jnp.dtype(u))])
   q, _ = lax_linalg.qr(y, full_matrices=False)
   q1 = q[:m, :]
   q2 = (q[m:, :]).T.conj()
@@ -49,7 +49,7 @@ def _use_cholesky(u, params):
   """Uses Cholesky decomposition."""
   a, b, c = params
   _, n = u.shape
-  x = c * u.T.conj() @ u + jnp.eye(n)
+  x = c * (u.T.conj() @ u) + jnp.eye(n, dtype=jnp.dtype(u))
 
   # `y` is lower triangular.
   y = lax_linalg.cholesky(x, symmetrize_input=False)
