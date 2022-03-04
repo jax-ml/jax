@@ -53,25 +53,21 @@ You can install the necessary Python dependencies using `pip`:
 pip install numpy six wheel
 ```
 
-To build `jaxlib` with CUDA support, you can run:
+To build `jaxlib` without CUDA GPU or TPU support (CPU only), you can run:
 
 ```
-python build/build.py --enable_cuda
+python build/build.py
 pip install dist/*.whl  # installs jaxlib (includes XLA)
 ```
+
+To build `jaxlib` with CUDA support, use `python build/build.py --enable_cuda`;
+to build with TPU support, use `python build/build.py --enable_tpu`.
 
 See `python build/build.py --help` for configuration options, including ways to
 specify the paths to CUDA and CUDNN, which you must have installed. Here
 `python` should be the name of your Python 3 interpreter; on some systems, you
 may need to use `python3` instead. By default, the wheel is written to the
 `dist/` subdirectory of the current directory.
-
-To build `jaxlib` without CUDA GPU support (CPU only), drop the `--enable_cuda`:
-
-```
-python build/build.py
-pip install dist/*.whl  # installs jaxlib (includes XLA)
-```
 
 ### Additional Notes for Building `jaxlib` from source on Windows
 
