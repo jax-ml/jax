@@ -83,9 +83,23 @@ Shape = core.Shape
 
 T = TypeVar("T")
 
+def _validate_shapes(shapes: Sequence[Shape]):
+  def _check_static_shape(shape: Shape):
+    checked = canonicalize_shape(shape)
+    if not all(idx >= 0 for idx in checked):
+      msg = f"Only non-negative indices are allowed when broadcasting" \
+            f" static shapes, but got shape {shape!r}."
+      raise TypeError(msg)
+
+  assert shapes
+  if config.jax_dynamic_shapes:
+    # pass dynamic shapes through unchecked
+    return
+  else:
+    _ = tuple(map(_check_static_shape, shapes))
+
 def _try_broadcast_shapes(
     shapes: Sequence[Tuple[int, ...]]) -> Optional[Tuple[int, ...]]:
-  assert shapes
   if len(shapes) == 1: return shapes[0]
   rank, *others = {len(shape) for shape in shapes}
   if others: return None  # must have consistent rank
@@ -113,6 +127,7 @@ def _broadcast_shapes_cached(*shapes: Tuple[int, ...]) -> Tuple[int, ...]:
   return _broadcast_shapes_uncached(*shapes)
 
 def _broadcast_shapes_uncached(*shapes):
+  _validate_shapes(shapes)
   fst, *rst = shapes
   if not rst: return fst
 

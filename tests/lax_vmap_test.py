@@ -723,6 +723,15 @@ class LaxVmapTest(jtu.JaxTestCase):
     out_shape = lax.broadcast_shapes(shape1, shape2)
     self.assertTrue(all(type(s) is int for s in out_shape))
 
+  def testBroadcastShapesFaultyInputs(self):
+    err_shape1, err_shape2 = (-1,), "hello"
+    # negative inputs should fail while informing about illegal negative indices...
+    with self.assertRaisesRegex(TypeError, "Only non-negative indices are allowed.*"):
+      lax.broadcast_shapes(err_shape1)
+    # ... while non-integers should error earlier, in the canonicalize_shape machinery.
+    with self.assertRaisesRegex(TypeError, "Shapes must be 1D sequences.*"):
+      lax.broadcast_shapes(err_shape2)  # pytype: disable=wrong-arg-types
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_k={}_bdims={}".format(
           jtu.format_shape_dtype_string(shape, dtype), k, bdims),
