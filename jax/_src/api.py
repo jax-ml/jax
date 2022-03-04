@@ -514,17 +514,23 @@ class Lowered:
                    pxla.PmapComputation]
   _no_kwargs: bool
 
-  def __init__(self, lowering, in_tree, out_tree, donate_argnums,
-               no_kwargs=False):
+  def __init__(self,
+               lowering,
+               in_tree: PyTreeDef,
+               out_tree: PyTreeDef,
+               donate_argnums: Tuple[int],
+               no_kwargs: bool = False):
+    """Initializer.
+
+    Args:
+      in_tree: The `PyTreeDef` of (args, kwargs).
+      out_tree: The `PyTreeDef` of the outputs.
+      no_kwargs: If `True` the transformation, and the `Compiled` returned from
+        this object will not support keyword arguments (an error will be raised
+        if some are provided).
+    """
     self._lowering = lowering
-
-    # If `_no_kwargs is True`, `in_tree` is the PyTreeDef of the positional
-    # arguments only. It will be the PyTreeDef of (args, kwargs) otherwise.
-    if no_kwargs:
-      self.in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
-    else:
-      self.in_tree = in_tree
-
+    self.in_tree = in_tree
     self.out_tree = out_tree
     self.donate_argnums = donate_argnums
     self._no_kwargs = no_kwargs

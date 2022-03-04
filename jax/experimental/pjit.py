@@ -40,7 +40,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters.sharded_jit import PartitionSpec
 from jax._src.lib import xla_client as xc
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
-                           treedef_is_leaf, tree_structure)
+                           treedef_is_leaf, tree_structure, treedef_tuple)
 from jax._src.tree_util import prefix_errors
 from jax._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
@@ -271,7 +271,10 @@ def pjit(fun: Callable,
         params['out_axis_resources'], params['resource_env'],
         params['donated_invars'], params['name'],
         params['in_positional_semantics'], params['out_positional_semantics'])
-    return Lowered(lowering, in_tree, out_tree, donate_argnums, no_kwargs=True)
+
+    args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
+    return Lowered(lowering, args_kwargs_in_tree, out_tree, donate_argnums,
+                   no_kwargs=True)
 
   wrapped.lower = lower
   return wrapped
