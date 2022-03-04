@@ -84,10 +84,12 @@ flags.DEFINE_string(
 EPS = 1e-4
 
 def _dtype(x):
-  return (getattr(x, 'dtype', None) or
-          np.dtype(_dtypes.python_scalar_dtypes.get(type(x), None)) or
-          np.asarray(x).dtype)
-
+  if hasattr(x, 'dtype'):
+    return x.dtype
+  elif type(x) in _dtypes.python_scalar_dtypes:
+    return np.dtype(_dtypes.python_scalar_dtypes[type(x)])
+  else:
+    return np.asarray(x).dtype
 
 def num_float_bits(dtype):
   return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
