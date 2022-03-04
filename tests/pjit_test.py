@@ -39,7 +39,6 @@ from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config
@@ -435,10 +434,6 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2)])
   def testGradOfConstraint(self):
-    # TODO(phawkins): remove the condition after jaxlib 0.1.76 becomes the
-    # minimum.
-    if config.jax_enable_mlir and xla_extension_version < 55:
-      raise unittest.SkipTest("test fails with jax_enable_mlir")
     # Make sure that we can compute grads through sharding constraints
     h = lambda x: jnp.sin(with_sharding_constraint(x, P('x'))).sum()
     f = pjit(lambda x: jax.grad(h)(x),

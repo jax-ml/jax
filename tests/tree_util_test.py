@@ -15,7 +15,6 @@
 import collections
 import functools
 import re
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -231,7 +230,6 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(treedef1.num_leaves, treedef2.num_leaves)
     self.assertEqual(treedef1.num_nodes, treedef2.num_nodes)
 
-  @unittest.skipIf(pytree_version < 1, "Requires jaxlib 0.1.76")
   def testTreedefTupleComparesEqual(self):
     # https://github.com/google/jax/issues/9066
     self.assertEqual(tree_util.tree_structure((3,)),

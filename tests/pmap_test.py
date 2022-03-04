@@ -1912,8 +1912,6 @@ class PythonPmapTest(jtu.JaxTestCase):
       _ = f_bwd(x)
     self.assertEqual(count[0], 0)  # cache hits on fwd and bwd
 
-  @unittest.skipIf(jax._src.lib._xla_extension_version < 44,
-                   "XLA extension too old.")
   def testSizeOverflow(self):
     x = jnp.arange(1)
     x = self.pmap(lambda _: jnp.ones([8, 267736, 1024], dtype=jnp.int8))(x)
