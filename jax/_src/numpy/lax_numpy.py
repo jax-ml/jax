@@ -1963,6 +1963,8 @@ def broadcast_shapes(*shapes):
 @partial(jit, inline=True)
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
+  # Avoid calling _check_arraylike() here to allow passing through objects
+  # like PRNGKeyArray which are specially handled in broadcast_to() below.
   shapes = [shape(arg) for arg in args]
   if not shapes or _all(core.symbolic_equal_shape(shapes[0], s) for s in shapes):
     # TODO(mattjj): remove the array(arg) here
@@ -1978,6 +1980,7 @@ The JAX version does not necessarily return a view of the input.
 def broadcast_to(arr, shape):
   if hasattr(arr, "broadcast_to"):
     return arr.broadcast_to(shape)
+  _check_arraylike("broadcast_to", arr)
   arr = arr if isinstance(arr, ndarray) else array(arr)
   if not isinstance(shape, tuple) and ndim(shape) == 0:
     shape = (shape,)
