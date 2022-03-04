@@ -160,8 +160,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         ],
         expected_opt=[
             # TODO(necula): relax ordering
-            r"f32\[4,5\].*sharding={devices=\[2,1\]",
-            r"f32\[3,4\].*sharding={devices=\[1,2\]",
+            r"f32\[4,5\].*sharding={devices=\[2,1\]|f32\[3,4\].*sharding={devices=\[1,2\]",
+            r"f32\[4,5\].*sharding={devices=\[2,1\]|f32\[3,4\].*sharding={devices=\[1,2\]",
             r"f32\[3,5\].*fusion",
             r"f32\[3,5\].*all-reduce",
         ],
@@ -181,7 +181,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     yshape = (8, 10)
     y = np.arange(np.prod(yshape), dtype=np.float32).reshape(yshape)
     self._check_sharding_annotations(
-        sharded_jax_func, [x, y],
+        sharded_jax_func,
+        [x, y],
         expected=[
             r"f32\[6,8\].*sharding={devices=\[1,2\]",
             r"f32\[8,10\].*sharding={devices=\[2,1\]",
@@ -190,8 +191,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         ],
         expected_opt=[
             # TODO(necula): relax ordering
-            r"f32\[4,10\].*sharding={devices=\[2,1\]",
-            r"f32\[6,4\].*sharding={devices=\[1,2\]",
+            r"f32\[4,10\].*sharding={devices=\[2,1\]|f32\[6,4\].*sharding={devices=\[1,2\]",
+            r"f32\[4,10\].*sharding={devices=\[2,1\]|f32\[6,4\].*sharding={devices=\[1,2\]",
         ],
         num_partitions=2)
 
@@ -205,7 +206,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     yshape = (8, 5)
     y = np.arange(np.prod(yshape), dtype=np.float32).reshape(yshape)
     self._check_sharding_annotations(
-        sharded_jax_func, [x, y],
+        sharded_jax_func,
+        [x, y],
         expected=[
             r"f32\[3,8\].*sharding={devices=\[1,2\]",
             r"f32\[8,5\].*sharding={replicated}",
@@ -213,8 +215,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         ],
         expected_opt=[
             # TODO(necula): relax ordering
-            r"f32\[8,5\].*sharding={replicated}",
-            r"f32\[3,4\].*sharding={devices=\[1,2\]",
+            r"f32\[8,5\].*sharding={replicated}|f32\[3,4\].*sharding={devices=\[1,2\]",
+            r"f32\[8,5\].*sharding={replicated}|f32\[3,4\].*sharding={devices=\[1,2\]",
         ],
         num_partitions=2)
 
@@ -258,7 +260,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     x = jnp.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
     y = jnp.arange(np.prod(y_shape), dtype=np.float32).reshape(y_shape)
     self._check_sharding_annotations(
-        jax_func, [x, y],
+        jax_func,
+        [x, y],
         expected=[
             r"f32\[8,6,4\].*sharding={devices=\[1,2,2\]0,1,2,3",  # x
             r"f32\[4,2\].*sharding={devices=\[2,1,2\]0,2,1,3 last_tile_dim_replicate",  # y
@@ -266,8 +269,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         ],
         expected_opt=[
             # TODO: relax ordering
-            r"f32\[2,2\].*sharding={devices=\[2,1,2\]0,2,1,3 last_tile_dim_replicate",  # y
-            r"f32\[8,3,2\].*sharding={devices=\[1,2,2\]0,1,2,3",  # x
+            r"f32\[2,2\].*sharding={devices=\[2,1,2\]0,2,1,3 last_tile_dim_replicate|f32\[8,3,2\].*sharding={devices=\[1,2,2\]0,1,2,3",
+            r"f32\[2,2\].*sharding={devices=\[2,1,2\]0,2,1,3 last_tile_dim_replicate|f32\[8,3,2\].*sharding={devices=\[1,2,2\]0,1,2,3",
             # TODO: why we cannot see sharding={devices=\[2,1,1,2\]0,1,2,3 last_tile_dim_replicate?
             r"bf16\[4,6,2\]",  # output
         ],
@@ -286,7 +289,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     x = jnp.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
     y = jnp.arange(np.prod(y_shape), dtype=np.float32).reshape(y_shape)
     self._check_sharding_annotations(
-        jax_func, [x, y],
+        jax_func,
+        [x, y],
         expected=[
             r"f32\[24,8\].*sharding={devices=\[4,1\]0,1,2,3",  # x
             r"f32\[8,2\].*sharding={devices=\[4,1\]0,1,2,3",  # y
@@ -294,8 +298,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         ],
         expected_opt=[
             # TODO: relax ordering
-            r"f32\[2,2\].*sharding={devices=\[4,1\]0,1,2,3",  # y
-            r"f32\[6,8\].*sharding={devices=\[4,1\]0,1,2,3",  # x
+            r"f32\[2,2\].*sharding={devices=\[4,1\]0,1,2,3|f32\[6,8\].*sharding={devices=\[4,1\]0,1,2,3",
+            r"f32\[2,2\].*sharding={devices=\[4,1\]0,1,2,3|f32\[6,8\].*sharding={devices=\[4,1\]0,1,2,3",
             # TODO: why we cannot see .*sharding={devices=\[4,1\]0,1,2,3
             r"f32\[1,6,2\]",  # output
         ],
