@@ -379,7 +379,7 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
 // Returns the workspace size and a descriptor for a gesvdj operation.
 std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
                                                 int batch, int m, int n,
-                                                bool compute_uv) {
+                                                bool compute_uv, int econ) {
   CusolverType type = DtypeToCusolverType(dtype);
   auto h = SolverHandlePool::Borrow();
   JAX_THROW_IF_ERROR(h.status());
@@ -395,28 +395,28 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
     switch (type) {
       case CusolverType::F32:
         JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusolverDnSgesvdj_bufferSize(
-            handle.get(), jobz, /*econ=*/0, m, n,
+            handle.get(), jobz, econ, m, n,
             /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
             /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
             /*ldv=*/n, &lwork, params)));
         break;
       case CusolverType::F64:
         JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusolverDnDgesvdj_bufferSize(
-            handle.get(), jobz, /*econ=*/0, m, n,
+            handle.get(), jobz, econ, m, n,
             /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
             /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
             /*ldv=*/n, &lwork, params)));
         break;
       case CusolverType::C64:
         JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusolverDnCgesvdj_bufferSize(
-            handle.get(), jobz, /*econ=*/0, m, n,
+            handle.get(), jobz, econ, m, n,
             /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
             /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
             /*ldv=*/n, &lwork, params)));
         break;
       case CusolverType::C128:
         JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusolverDnZgesvdj_bufferSize(
-            handle.get(), jobz, /*econ=*/0, m, n,
+            handle.get(), jobz, econ, m, n,
             /*A=*/nullptr, /*lda=*/m, /*S=*/nullptr,
             /*U=*/nullptr, /*ldu=*/m, /*V=*/nullptr,
             /*ldv=*/n, &lwork, params)));
@@ -454,8 +454,8 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
         break;
     }
   }
-  return {lwork,
-          PackDescriptor(GesvdjDescriptor{type, batch, m, n, lwork, jobz})};
+  return {lwork, PackDescriptor(
+                     GesvdjDescriptor{type, batch, m, n, lwork, jobz, econ})};
 }
 
 py::dict Registrations() {

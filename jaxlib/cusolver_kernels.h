@@ -124,6 +124,7 @@ struct GesvdjDescriptor {
   int batch, m, n;
   int lwork;
   cusolverEigMode_t jobz;
+  int econ;
 };
 
 void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,

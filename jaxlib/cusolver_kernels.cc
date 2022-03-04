@@ -629,6 +629,7 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
       cudaMemcpyDeviceToDevice, stream)));
   int* info = static_cast<int*>(buffers[5]);
   void* work = buffers[6];
+  int64_t k = d.jobu == 'A' ? d.m : d.n;
   switch (d.type) {
     case CusolverType::F32: {
       float* a = static_cast<float*>(buffers[1]);
@@ -642,7 +643,7 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
             /*rwork=*/nullptr, info)));
         a += d.m * d.n;
         s += std::min(d.m, d.n);
-        u += d.m * d.m;
+        u += d.m * k;
         vt += d.n * d.n;
         ++info;
       }
@@ -660,7 +661,7 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
             /*rwork=*/nullptr, info)));
         a += d.m * d.n;
         s += std::min(d.m, d.n);
-        u += d.m * d.m;
+        u += d.m * k;
         vt += d.n * d.n;
         ++info;
       }
@@ -677,7 +678,7 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
             static_cast<cuComplex*>(work), d.lwork, /*rwork=*/nullptr, info)));
         a += d.m * d.n;
         s += std::min(d.m, d.n);
-        u += d.m * d.m;
+        u += d.m * k;
         vt += d.n * d.n;
         ++info;
       }
@@ -695,7 +696,7 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
             /*rwork=*/nullptr, info)));
         a += d.m * d.n;
         s += std::min(d.m, d.n);
-        u += d.m * d.m;
+        u += d.m * k;
         vt += d.n * d.n;
         ++info;
       }
@@ -743,7 +744,7 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
         float* u = static_cast<float*>(buffers[3]);
         float* v = static_cast<float*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnSgesvdj(
-            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v,
             d.n, static_cast<float*>(work), d.lwork, info, params)));
         break;
       }
@@ -753,7 +754,7 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
         double* u = static_cast<double*>(buffers[3]);
         double* v = static_cast<double*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnDgesvdj(
-            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v,
             d.n, static_cast<double*>(work), d.lwork, info, params)));
         break;
       }
@@ -763,7 +764,7 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
         cuComplex* u = static_cast<cuComplex*>(buffers[3]);
         cuComplex* v = static_cast<cuComplex*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCgesvdj(
-            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v,
             d.n, static_cast<cuComplex*>(work), d.lwork, info, params)));
         break;
       }
@@ -773,7 +774,7 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
         cuDoubleComplex* u = static_cast<cuDoubleComplex*>(buffers[3]);
         cuDoubleComplex* v = static_cast<cuDoubleComplex*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZgesvdj(
-            handle.get(), d.jobz, /*econ=*/0, d.m, d.n, a, d.m, s, u, d.m, v,
+            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v,
             d.n, static_cast<cuDoubleComplex*>(work), d.lwork, info, params)));
         break;
       }

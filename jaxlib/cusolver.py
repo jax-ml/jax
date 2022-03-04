@@ -312,11 +312,14 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
   singular_vals_dtype = np.dtype(_real_type(dtype))
 
   if m < 32 and n < 32:
+    # The batched kernel doesn't support "econ" mode.
+    econ = not full_matrices and b == 1
     lwork, opaque = _cusolver.build_gesvdj_descriptor(
-        np.dtype(dtype), b, m, n, compute_uv)
+        np.dtype(dtype), b, m, n, compute_uv, 1 if econ else 0)
     scalar_layout = tuple(range(num_bd - 1, -1, -1))
     vector_layout = (num_bd,) + scalar_layout
     matrix_layout = (num_bd, num_bd + 1) + scalar_layout
+    k = min(m, n)
     out = _ops.CustomCallWithLayout(
         c, b"cusolver_gesvdj",
         operands=(a,),
@@ -324,8 +327,8 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
             _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
             _Shape.array_shape(singular_vals_dtype, batch_dims + (min(m, n),),
                                vector_layout),
-            _Shape.array_shape(dtype, batch_dims + (m, m), matrix_layout),
-            _Shape.array_shape(dtype, batch_dims + (n, n), matrix_layout),
+            _Shape.array_shape(dtype, batch_dims + (m, k if econ else m), matrix_layout),
+            _Shape.array_shape(dtype, batch_dims + (n, k if econ else n), matrix_layout),
             _Shape.array_shape(np.dtype(np.int32), batch_dims, scalar_layout),
             _Shape.array_shape(dtype, (lwork,), (0,)),
         )),
@@ -342,12 +345,18 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     vt = _ops.Transpose(v, tuple(range(num_bd)) + (num_bd + 1, num_bd))
     if np.issubdtype(dtype, np.complexfloating):
       vt = _ops.Conj(vt)
+    if not full_matrices and not econ:
+      u = _ops.Slice(u, (0,) * len(dims), batch_dims + (m, min(m, n)),
+                     (1,) * len(dims))
+      vt = _ops.Slice(vt, (0,) * len(dims), batch_dims + (min(m, n), n),
+                      (1,) * len(dims))
   elif m < n:
     lwork, opaque = _cusolver.build_gesvd_descriptor(
         np.dtype(dtype), b, n, m, compute_uv, full_matrices)
     scalar_layout = tuple(range(num_bd - 1, -1, -1))
     vector_layout = (num_bd,) + scalar_layout
     matrix_layout = (num_bd + 1, num_bd) + scalar_layout
+    k = n if full_matrices else m
     out = _ops.CustomCallWithLayout(
         c, b"cusolver_gesvd",
         operands=(a,),
@@ -355,7 +364,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
             _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
             _Shape.array_shape(singular_vals_dtype, batch_dims + (min(m, n),),
                                vector_layout),
-            _Shape.array_shape(dtype, batch_dims + (n, n), matrix_layout),
+            _Shape.array_shape(dtype, batch_dims + (k, n), matrix_layout),
             _Shape.array_shape(dtype, batch_dims + (m, m), matrix_layout),
             _Shape.array_shape(np.dtype(np.int32), batch_dims, scalar_layout),
             _Shape.array_shape(dtype, (lwork,), (0,)),
@@ -377,6 +386,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     scalar_layout = tuple(range(num_bd - 1, -1, -1))
     vector_layout = (num_bd,) + scalar_layout
     matrix_layout = (num_bd, num_bd + 1) + scalar_layout
+    k = m if full_matrices else n
     out = _ops.CustomCallWithLayout(
         c, b"cusolver_gesvd",
         operands=(a,),
@@ -384,7 +394,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
             _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
             _Shape.array_shape(singular_vals_dtype, batch_dims + (min(m, n),),
                                vector_layout),
-            _Shape.array_shape(dtype, batch_dims + (m, m), matrix_layout),
+            _Shape.array_shape(dtype, batch_dims + (m, k), matrix_layout),
             _Shape.array_shape(dtype, batch_dims + (n, n), matrix_layout),
             _Shape.array_shape(np.dtype(np.int32), batch_dims, scalar_layout),
             _Shape.array_shape(dtype, (lwork,), (0,)),
@@ -399,9 +409,4 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     u = _ops.GetTupleElement(out, 2)
     vt = _ops.GetTupleElement(out, 3)
     info = _ops.GetTupleElement(out, 4)
-  if not full_matrices:
-    u = _ops.Slice(u, (0,) * len(dims), batch_dims + (m, min(m, n)),
-                   (1,) * len(dims))
-    vt = _ops.Slice(vt, (0,) * len(dims), batch_dims + (min(m, n), n),
-                    (1,) * len(dims))
   return s, u, vt, info
