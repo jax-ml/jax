@@ -222,29 +222,29 @@ class GlobalDeviceArray:
     is_fully_replicated : True if the full array value is present on all devices
       of the global mesh.
 
-  Example::
+  Example:
 
     >>> from jax.experimental.maps import Mesh
     >>> from jax.experimental import PartitionSpec as P
     >>> import numpy as np
-    >>>
+    ...
     >>> assert jax.device_count() == 8
     >>> global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
     >>> # Logical mesh is (hosts, devices)
     >>> assert global_mesh.shape == {'x': 4, 'y': 2}
     >>> global_input_shape = (8, 2)
     >>> mesh_axes = P('x', 'y')
-    >>>
+    ...
     >>> # Dummy example data; in practice we wouldn't necessarily materialize global data
     >>> # in a single process.
     >>> global_input_data = np.arange(
     ...   np.prod(global_input_shape)).reshape(global_input_shape)
-    >>>
+    ...
     >>> def get_local_data_slice(index):
     ...  # index will be a tuple of slice objects, e.g. (slice(0, 16), slice(0, 4))
     ...  # This method will be called per-local device from the GDA constructor.
     ...  return global_input_data[index]
-    >>>
+    ...
     >>> gda = GlobalDeviceArray.from_callback(
     ...        global_input_shape, global_mesh, mesh_axes, get_local_data_slice)
     >>> print(gda.shape)
@@ -258,6 +258,8 @@ class GlobalDeviceArray:
     >>> print(gda.local_shards[0].index)
     (slice(0, 2, None), slice(0, 1, None))
 
+  GDAs can also be given as an input to pjit and you can get GDAs as output from pjit::
+
     # Allow pjit to output GDAs
     jax.config.update('jax_parallel_functions_output_gda', True)
 
@@ -267,6 +269,7 @@ class GlobalDeviceArray:
 
     # `out` can be passed to another pjit call, out.local_shards can be used to
     # export the data to non-jax systems (e.g. for checkpointing or logging), etc.
+
   """
 
   def __init__(self, global_shape: Shape, global_mesh: pxla.Mesh,
