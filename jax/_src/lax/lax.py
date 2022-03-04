@@ -19,7 +19,7 @@ from functools import partial
 import itertools
 import operator
 from typing import (Any, Callable, Optional, Sequence, Tuple, List, TypeVar,
-                    Union)
+                    Union, cast as type_cast)
 import warnings
 
 import numpy as np
@@ -606,7 +606,7 @@ class Precision(xla_client.PrecisionConfig.Precision):  # type: ignore
     return self.name
 
 
-PrecisionType = Any
+PrecisionType = Precision
 PrecisionLike = Union[None, str, PrecisionType, Tuple[str, str],
                       Tuple[PrecisionType, PrecisionType]]
 
@@ -2610,10 +2610,12 @@ xla.register_translation(dot_general_p, _dot_general_cpu_translation_rule,
 
 def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
   if precision is None:
-    precision = (Precision.DEFAULT, Precision.DEFAULT)
+    full_precision = (Precision.DEFAULT, Precision.DEFAULT)
   elif not isinstance(precision, tuple):
-    precision = (precision, precision)
-  return ir.ArrayAttr.get([ir.StringAttr.get(str(p)) for p in precision])
+    full_precision = (precision, precision)
+  else:
+    full_precision = precision
+  return ir.ArrayAttr.get([ir.StringAttr.get(str(p)) for p in full_precision])
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: Optional[np.dtype]):
@@ -4653,25 +4655,29 @@ def canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[Precision
     if config.jax_default_matmul_precision is None:
       return None
     try:
-      precision = Precision(config.jax_default_matmul_precision)
-      return (precision, precision)
+      return type_cast(
+          Tuple[PrecisionType, PrecisionType],
+          (Precision(config.jax_default_matmul_precision),
+           Precision(config.jax_default_matmul_precision)))
     except TypeError:
       raise ValueError(
           "jax_default_matmul_precision flag must be set to None or a value in "
           f"{list(Precision._strings)}, but got {config.jax_default_matmul_precision}"
       ) from None
   elif isinstance(precision, str) and precision in Precision._strings:
-    precision = Precision(precision)
-    return (precision, precision)
+    return type_cast(Tuple[PrecisionType, PrecisionType],
+                     (Precision(precision), Precision(precision)))
   elif isinstance(precision, xla_client.PrecisionConfig.Precision):
-    return (precision, precision)
+    return type_cast(Tuple[PrecisionType, PrecisionType], (precision, precision))
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(p, xla_client.PrecisionConfig.Precision) for p in precision)):
-    return precision  # type: ignore[return-value]
+    return type_cast(Tuple[PrecisionType, PrecisionType], precision)
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(s, str) for s in precision)):
     s1, s2 = precision
-    return (canonicalize_precision(s1)[0], canonicalize_precision(s2)[0])  # type: ignore
+    p1 = type_cast(Tuple[PrecisionType, PrecisionType], canonicalize_precision(s1))[0]
+    p2 = type_cast(Tuple[PrecisionType, PrecisionType], canonicalize_precision(s2))[0]
+    return (p1, p2)
   else:
     raise ValueError(
         f"Precision argument must be None, a string in {list(Precision._strings)}, "
