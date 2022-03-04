@@ -14,7 +14,6 @@
 
 import re
 import traceback
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -350,8 +349,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     self.assertIsInstance(e.__cause__, traceback_util.UnfilteredStackTrace)
     self.assertIsInstance(e.__cause__.__cause__, ValueError)
 
-  @unittest.skipIf(jax._src.lib.xla_extension_version < 54,
-                   'requires jaxlib >= 0.1.76')
   def test_null_traceback(self, filter_mode):
     class TestA: pass
     def f(a): return a + 1

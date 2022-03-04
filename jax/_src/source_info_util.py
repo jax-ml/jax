@@ -22,7 +22,7 @@ import types
 from typing import Optional, Iterator, NamedTuple, Union, Tuple
 
 import jax.version
-from jax._src.lib import xla_client, xla_extension_version
+from jax._src.lib import xla_client
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -121,14 +121,9 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   # We consider files that end with _test.py as user frames, to allow testing
   # this mechanism from tests.
   traceback = source_info.traceback
-  # TODO(phawkins): drop this test when jaxlib 0.3 becomes the minimum.
-  if xla_extension_version >= 57:
-    code, lasti = traceback.raw_frames() if traceback else ([], [])
-    return (_raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))  # type: ignore
-            if is_user_filename(code[i].co_filename))
-  else:
-    return (x for x in (traceback.frames if traceback else [])  # type: ignore
-            if is_user_filename(x.file_name))
+  code, lasti = traceback.raw_frames() if traceback else ([], [])
+  return (_raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))  # type: ignore
+          if is_user_filename(code[i].co_filename))
 
 @functools.lru_cache(maxsize=64)
 def user_frame(source_info: SourceInfo) -> Optional[Frame]:

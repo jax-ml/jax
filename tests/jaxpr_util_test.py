@@ -16,10 +16,8 @@ from absl.testing import absltest
 
 import gzip
 import json
-import unittest
 
 from jax import jaxpr_util, jit, make_jaxpr, numpy as jnp
-import jax._src.lib
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
 from jax.config import config
@@ -91,8 +89,6 @@ class JaxprStatsTest(jtu.JaxTestCase):
     hist = jaxpr_util.primitives_by_source(make_jaxpr(f)(1., 1.).jaxpr)
     jaxpr_util.print_histogram(hist)
 
-  @unittest.skipIf(jax._src.lib.xla_extension_version < 53,
-                   "Test requires jaxlib 0.1.76")
   def test_pprof_equation_profile(self):
     def f(x, y):
       s = jit(jnp.sin)(x)

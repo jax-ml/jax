@@ -14,4 +14,4 @@
 
 __version__ = "0.3.2"
 
-_minimum_jaxlib_version = "0.1.74"
+_minimum_jaxlib_version = "0.3.0"

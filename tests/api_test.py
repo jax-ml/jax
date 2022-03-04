@@ -80,11 +80,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   @property
   def jit(self):
-    # Right now, the CPP tests also test the Python code-path when jaxlib is
-    # too old.
-    # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
-    # This is in the future, because we are making a breaking change to
-    # Tensorflow.
     return api._cpp_jit
 
   def test_jit_repr(self):
@@ -422,12 +417,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
         lambda: self.jit(f)("foo"))
 
-    if xla_extension_version >= 47:
-      # Jax type objects aren't valid data arguments.
-      self.assertRaisesRegex(
-          TypeError,
-          ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type",
-          lambda: self.jit(f)(jnp.int32))
+    # Jax type objects aren't valid data arguments.
+    self.assertRaisesRegex(
+        TypeError,
+        ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type",
+        lambda: self.jit(f)(jnp.int32))
 
   def test_jit_on_all_devices(self):
     # Verifies we can run the same computation on every device present, even
@@ -527,7 +521,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       # we could.
       jitted_f(1, HashableWithoutEq())
 
-  @unittest.skipIf(xla_extension_version < 50, "requires jaxlib >= 0.1.76")
   def test_cpp_jit_raises_other_exceptions_when_hashing_fails(self):
     class A:
       def __hash__(self):
@@ -858,7 +851,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f = self.jit(lambda x: x + 4).lower(1.).compile()
     self.assertIsNotNone(f.runtime_executable())
 
-  @unittest.skipIf(xla_extension_version < 45, "requires jaxlib >= 0.1.75")
   def test_jit_enum_as_dict_keys_fails(self):
     class E(enum.Enum):
       A = 0
@@ -872,7 +864,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       f({E.A: 1.0, E.B: 2.0})
 
 
-  @unittest.skipIf(xla_extension_version < 56, "requires jaxlib >= 0.1.76")
   def test_jit_static_argnums_requires_type_equality(self):
     # See: https://github.com/google/jax/pull/9311
     @partial(self.jit, static_argnums=(0,))

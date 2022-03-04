@@ -3129,16 +3129,9 @@ batching.primitive_batchers[reshape_p] = _reshape_batch_rule
 masking.masking_rules[reshape_p] = _reshape_masking_rule
 
 def _reshape_lower(ctx, x, *, new_sizes, dimensions):
-  aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
   if dimensions is not None:
-    aval = core.ShapedArray(np.take(aval_in.shape, dimensions), aval_in.dtype)
-    if jax._src.lib._xla_extension_version < 49:
-      x = mhlo.TransposeOp(
-          mlir.aval_to_ir_type(aval), x,
-          mlir.dense_int_elements(dimensions)).result
-    else:
-      x = mhlo.TransposeOp(x, mlir.dense_int_elements(dimensions)).result
+    x = mhlo.TransposeOp(x, mlir.dense_int_elements(dimensions)).result
   return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), x).results
 mlir.register_lowering(reshape_p, _reshape_lower)
 
@@ -3196,10 +3189,6 @@ masking.masking_rules[transpose_p] = _transpose_masking_rule
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
-  if jax._src.lib._xla_extension_version < 49:
-    return mhlo.TransposeOp(
-        mlir.aval_to_ir_type(aval_out), x,
-        mlir.dense_int_elements(permutation)).results
   return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 mlir.register_lowering(transpose_p, _transpose_lower)
 
@@ -4163,60 +4152,25 @@ infeed_p.def_abstract_eval(_infeed_abstract_eval)
 xla.register_translation(infeed_p, _infeed_translation_rule)
 
 
-if jax._src.lib.mlir_api_version >= 2:
-
-  def _infeed_lowering(ctx, token, *, shapes, partitions):
-    output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out[:-1])
-    flat_output_types = util.flatten(output_types)
-    # TODO(phawkins): verify `shapes` have a major-to-minor layout.
-    layouts = ir.ArrayAttr.get([
-        ir.ArrayAttr.get(
-            [mlir.i64_attr(i)
-             for i in range(len(aval.shape) - 1, -1, -1)])
-        for aval in shapes
-    ])
-    infeed = mhlo.InfeedOp(flat_output_types + [mhlo.TokenType.get()], token,
-                           ir.StringAttr.get(''), layouts)
-    if partitions is not None:
-      mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
-    token = infeed.results[-1]
-    outs = infeed.results[:-1]
-    return util.unflatten(outs, safe_map(len, output_types)) + [[
-        token,
-    ]]
-else:
-
-  def _infeed_lowering(ctx, token, *, shapes, partitions):
-    output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out[:-1])
-    flat_output_types = util.flatten(output_types)
-    output_tuple_type = ir.TupleType.get_tuple(flat_output_types)
-    # TODO(phawkins): verify `shapes` have a major-to-minor layout.
-    layouts = ir.ArrayAttr.get([
-        ir.ArrayAttr.get([
-            ir.ArrayAttr.get(
-                [mlir.i64_attr(i)
-                 for i in range(len(aval.shape) - 1, -1, -1)])
-            for aval in shapes
-        ]),
-        ir.UnitAttr.get(),
-    ])
-    output_and_token_tuple_type = ir.TupleType.get_tuple(
-        [output_tuple_type, mhlo.TokenType.get()])
-    infeed = mhlo.InfeedOp(output_and_token_tuple_type, token,
-                           ir.StringAttr.get(''), layouts)
-    if partitions is not None:
-      mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
-    outs_tuple = mhlo.GetTupleElementOp(output_tuple_type, infeed.result,
-                                        mlir.i32_attr(0)).result
-    token = mhlo.GetTupleElementOp(mhlo.TokenType.get(), infeed.result,
-                                   mlir.i32_attr(1)).result
-    outs = [
-        mhlo.GetTupleElementOp(typ, outs_tuple, mlir.i32_attr(i)).result
-        for i, typ in enumerate(flat_output_types)
-    ]
-    return util.unflatten(outs, safe_map(len, output_types)) + [[
-        token,
-    ]]
+def _infeed_lowering(ctx, token, *, shapes, partitions):
+  output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out[:-1])
+  flat_output_types = util.flatten(output_types)
+  # TODO(phawkins): verify `shapes` have a major-to-minor layout.
+  layouts = ir.ArrayAttr.get([
+      ir.ArrayAttr.get(
+          [mlir.i64_attr(i)
+           for i in range(len(aval.shape) - 1, -1, -1)])
+      for aval in shapes
+  ])
+  infeed = mhlo.InfeedOp(flat_output_types + [mhlo.TokenType.get()], token,
+                         ir.StringAttr.get(''), layouts)
+  if partitions is not None:
+    mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
+  token = infeed.results[-1]
+  outs = infeed.results[:-1]
+  return util.unflatten(outs, safe_map(len, output_types)) + [[
+      token,
+  ]]
 
 mlir.register_lowering(infeed_p, _infeed_lowering)
 
@@ -4255,31 +4209,14 @@ outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 xla.register_translation(outfeed_p, _outfeed_translation_rule)
 
 
-if jax._src.lib.mlir_api_version >= 2:
-
-  def _outfeed_lowering(ctx, token, *xs, partitions):
-    token_aval = ctx.avals_in[0]
-    outfeed = mhlo.OutfeedOp(
-        mlir.aval_to_ir_type(token_aval), mlir.flatten_lowering_ir_args(xs),
-        token, ir.StringAttr.get(''))
-    if partitions is not None:
-      mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
-    return outfeed.results
-else:
-
-  def _outfeed_lowering(ctx, token, *xs, partitions):
-    token_aval = ctx.avals_in[0]
-    xs_avals = ctx.avals_in[1:]
-    input_types = map(mlir.aval_to_ir_types, xs_avals)
-    flat_input_types = util.flatten(input_types)
-    input_tuple_type = ir.TupleType.get_tuple(flat_input_types)
-    tup = mhlo.TupleOp(input_tuple_type,
-                       mlir.flatten_lowering_ir_args(xs)).result
-    outfeed = mhlo.OutfeedOp(
-        mlir.aval_to_ir_type(token_aval), tup, token, ir.StringAttr.get(''))
-    if partitions is not None:
-      mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
-    return outfeed.results
+def _outfeed_lowering(ctx, token, *xs, partitions):
+  token_aval = ctx.avals_in[0]
+  outfeed = mhlo.OutfeedOp(
+      mlir.aval_to_ir_type(token_aval), mlir.flatten_lowering_ir_args(xs),
+      token, ir.StringAttr.get(''))
+  if partitions is not None:
+    mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
+  return outfeed.results
 
 mlir.register_lowering(outfeed_p, _outfeed_lowering)
 
