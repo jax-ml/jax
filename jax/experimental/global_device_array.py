@@ -411,12 +411,15 @@ class GlobalDeviceArray:
 
       >>> from jax.experimental.maps import Mesh
       >>> import numpy as np
+      ...
       >>> global_input_shape = (8, 8)
       >>> mesh_axes = ['x', 'y']
       >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
+      ...
       >>> def cb(index):
       ...  return global_input_data[index]
+      ...
       >>> gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh, mesh_axes, cb)
       >>> gda.local_data(0).shape
       (4, 2)
@@ -454,13 +457,16 @@ class GlobalDeviceArray:
 
       >>> from jax.experimental.maps import Mesh
       >>> import numpy as np
+      ...
       >>> global_input_shape = (8, 2)
       >>> mesh_axes = ['x']
       >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
+      ...
       >>> def batched_cb(indices):
       ...   assert len(indices) == len(global_mesh.local_devices)
       ...   return [global_input_data[index] for index in indices]
+      ...
       >>> gda = GlobalDeviceArray.from_batched_callback(global_input_shape, global_mesh, mesh_axes, batched_cb)
       >>> gda.local_data(0).shape
       (2, 2)
@@ -497,10 +503,12 @@ class GlobalDeviceArray:
 
       >>> from jax.experimental.maps import Mesh
       >>> import numpy as np
+      ...
       >>> global_input_shape = (8, 2)
       >>> mesh_axes = [('x', 'y')]
       >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
+      ...
       >>> def cb(cb_inp):
       ...  dbs = []
       ...  for inp in cb_inp:
@@ -508,6 +516,7 @@ class GlobalDeviceArray:
       ...    array = global_input_data[index]
       ...    dbs.extend([jax.device_put(array, device) for device in devices])
       ...  return dbs
+      ...
       >>> gda = GlobalDeviceArray.from_batched_callback_with_devices(
       ...   global_input_shape, global_mesh, mesh_axes, cb)
       >>> gda.local_data(0).shape
