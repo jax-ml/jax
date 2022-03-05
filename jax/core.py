@@ -420,6 +420,11 @@ class Trace:
            "to handle custom_jvp primitives")
     raise NotImplementedError(msg)
 
+  def process_custom_transpose(self, prim, call, tracers, **params):
+    msg = (f"{type(self)} must override process_custom_transpose "
+           "to handle custom_transpose_call primitives")
+    raise NotImplementedError(msg)
+
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
     msg = (f"{type(self)} must override process_custom_vjp_call "
            "to handle custom_vjp primitives")
@@ -607,13 +612,18 @@ class EvalTrace(Trace):
     return primitive.impl(f, *tracers, **params)
   process_map = process_call
 
+  def process_custom_transpose(self, primitive, call, tracers, **_):
+    del primitive
+    with new_sublevel():
+      return call.call_wrapped(*tracers)
+
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
     del primitive, jvp  # Unused.
     with new_sublevel():
       return fun.call_wrapped(*tracers)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
-    del primitive, fwd, bwd, out_trees  # Unused.
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, **_):
+    del primitive, fwd, bwd  # Unused.
     with new_sublevel():
       return fun.call_wrapped(*tracers)
 
@@ -1709,7 +1719,7 @@ def call_bind(primitive: CallPrimitive, fun, *args, **params):
   return map(full_lower, apply_todos(env_trace_todo(), outs))
 
 @lu.transformation_with_aux
-def process_env_traces_call(primitive: CallPrimitive, level: int,
+def process_env_traces_call(primitive: CallPrimitive, level: Optional[int],
                             params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
