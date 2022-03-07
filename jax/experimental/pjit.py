@@ -16,7 +16,6 @@ from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
 from typing import Callable, Sequence, Tuple, Union, Optional
-from warnings import warn
 import itertools as it
 from functools import partial
 
@@ -180,7 +179,6 @@ def pjit(fun: Callable,
   ...   print(f(x))  # doctest: +SKIP
   [ 0.5  2.   4.   6.   8.  10.  12.  10. ]
   """
-  warn("pjit is an experimental feature and probably has bugs!")
   _check_callable(fun)
 
   if isinstance(in_axis_resources, list):
