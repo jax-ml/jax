@@ -448,7 +448,6 @@ def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
   return _batch_jaxpr(closed_jaxpr, axis_size, tuple(in_batched), inst,
                       axis_name, main_type)
 
-@cache()
 def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
                  main_type):
   assert (isinstance(instantiate, bool) or
@@ -462,6 +461,12 @@ def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
                           axis_name, main_type)
 
 def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name,
+                     main_type):
+  return _batch_jaxpr_axes(closed_jaxpr, axis_size, tuple(in_axes),
+                           tuple(out_axes_dest), axis_name, main_type)
+
+@cache()
+def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name,
                      main_type):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_batched = _batch_jaxpr_inner(f, axis_size, out_axes_dest)
