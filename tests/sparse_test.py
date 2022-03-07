@@ -28,6 +28,7 @@ import jax.random
 from jax import config
 from jax import dtypes
 from jax.experimental import sparse
+from jax.experimental.sparse import coo as sparse_coo
 from jax.experimental.sparse.bcoo import BCOOInfo
 from jax import lax
 from jax._src.lib import cusparse
@@ -330,7 +331,7 @@ class cuSparseTest(jtu.JaxTestCase):
     M = rng(shape, dtype)
 
     args = (M.data, M.row, M.col)
-    todense = lambda *args: sparse.coo_todense(*args, shape=M.shape)
+    todense = lambda *args: sparse_coo._coo_todense(*args, spinfo=sparse_coo.COOInfo(shape=M.shape))
 
     self.assertArraysEqual(M.toarray(), todense(*args))
     with self.gpu_dense_conversion_warning_context(dtype):
@@ -348,7 +349,7 @@ class cuSparseTest(jtu.JaxTestCase):
 
     nse = M_coo.nnz
     index_dtype = jnp.int32
-    fromdense = lambda M: sparse.coo_fromdense(M, nse=nse, index_dtype=jnp.int32)
+    fromdense = lambda M: sparse_coo._coo_fromdense(M, nse=nse, index_dtype=jnp.int32)
 
     data, row, col = fromdense(M)
     self.assertArraysEqual(data, M_coo.data.astype(dtype))
@@ -376,7 +377,7 @@ class cuSparseTest(jtu.JaxTestCase):
     v = v_rng(op(M).shape[1], dtype)
 
     args = (M.data, M.row, M.col, v)
-    matvec = lambda *args: sparse.coo_matvec(*args, shape=M.shape, transpose=transpose)
+    matvec = lambda *args: sparse_coo._coo_matvec(*args, spinfo=sparse_coo.COOInfo(shape=M.shape), transpose=transpose)
 
     self.assertAllClose(op(M) @ v, matvec(*args), rtol=MATMUL_TOL)
     with self.gpu_matmul_warning_context(dtype):
@@ -398,7 +399,7 @@ class cuSparseTest(jtu.JaxTestCase):
     B = B_rng((op(M).shape[1], 4), dtype)
 
     args = (M.data, M.row, M.col, B)
-    matmat = lambda *args: sparse.coo_matmat(*args, shape=shape, transpose=transpose)
+    matmat = lambda *args: sparse_coo._coo_matmat(*args, spinfo=sparse_coo.COOInfo(shape=shape), transpose=transpose)
 
     self.assertAllClose(op(M) @ B, matmat(*args), rtol=MATMUL_TOL)
     with self.gpu_matmul_warning_context(dtype):
@@ -414,7 +415,7 @@ class cuSparseTest(jtu.JaxTestCase):
     x = jnp.arange(9).reshape(3, 3).astype(d.dtype)
 
     def f(x):
-      return sparse.coo_matmat(d, i, j, x.T, shape=shape)
+      return sparse_coo._coo_matmat(d, i, j, x.T, spinfo=sparse_coo.COOInfo(shape=shape))
 
     result = f(x)
     result_jit = jit(f)(x)
@@ -454,7 +455,10 @@ class cuSparseTest(jtu.JaxTestCase):
     fromdense = getattr(sparse, f"{mat_type}_fromdense")
     todense = getattr(sparse, f"{mat_type}_todense")
     args = fromdense(M, nse=nse, index_dtype=jnp.int32)
-    M_out = todense(*args, shape=M.shape)
+    if mat_type == 'coo':
+      M_out = todense(args)
+    else:
+      M_out = todense(*args, shape=M.shape)
     self.assertArraysEqual(M, M_out)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -465,8 +469,8 @@ class cuSparseTest(jtu.JaxTestCase):
   def test_coo_todense_ad(self, shape, dtype):
     rng = rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
-    data, row, col = sparse.coo_fromdense(M, nse=(M != 0).sum())
-    f = lambda data: sparse.coo_todense(data, row, col, shape=M.shape)
+    data, row, col = sparse_coo._coo_fromdense(M, nse=(M != 0).sum())
+    f = lambda data: sparse_coo._coo_todense(data, row, col, spinfo=sparse_coo.COOInfo(shape=M.shape))
 
     # Forward-mode
     primals, tangents = jax.jvp(f, [data], [jnp.ones_like(data)])
@@ -488,7 +492,7 @@ class cuSparseTest(jtu.JaxTestCase):
     rng = rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
     nse = (M != 0).sum()
-    f = lambda M: sparse.coo_fromdense(M, nse=nse)
+    f = lambda M: sparse_coo._coo_fromdense(M, nse=nse)
 
     # Forward-mode
     primals, tangents = jax.jvp(f, [M], [jnp.ones_like(M)])
@@ -517,20 +521,20 @@ class cuSparseTest(jtu.JaxTestCase):
       for bshape in [shape[-1:] + s for s in [(), (1,), (3,)]]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
   def test_coo_matmul_ad(self, shape, dtype, bshape):
-    coo_matmul = sparse.coo_matvec if len(bshape) == 1 else sparse.coo_matmat
+    coo_matmul = sparse_coo._coo_matvec if len(bshape) == 1 else sparse_coo._coo_matmat
     tol = {np.float32: 1E-5, np.float64: 1E-12, np.complex64: 1E-5, np.complex128: 1E-12}
 
     rng = rand_sparse(self.rng(), post=jnp.array)
     rng_b = jtu.rand_default(self.rng())
 
     M = rng(shape, dtype)
-    data, row, col = sparse.coo_fromdense(M, nse=(M != 0).sum())
+    data, row, col = sparse_coo._coo_fromdense(M, nse=(M != 0).sum())
     x = rng_b(bshape, dtype)
     xdot = rng_b(bshape, dtype)
 
     # Forward-mode with respect to the vector
     f_dense = lambda x: M @ x
-    f_sparse = lambda x: coo_matmul(data, row, col, x, shape=M.shape)
+    f_sparse = lambda x: coo_matmul(data, row, col, x, spinfo=sparse_coo.COOInfo(shape=M.shape))
     v_sparse, t_sparse = jax.jvp(f_sparse, [x], [xdot])
     v_dense, t_dense = jax.jvp(f_dense, [x], [xdot])
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
@@ -545,8 +549,8 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
     # Forward-mode with respect to nonzero elements of the matrix
-    f_sparse = lambda data: coo_matmul(data, row, col, x, shape=M.shape)
-    f_dense = lambda data: sparse.coo_todense(data, row, col, shape=M.shape) @ x
+    f_sparse = lambda data: coo_matmul(data, row, col, x, spinfo=sparse_coo.COOInfo(shape=M.shape))
+    f_dense = lambda data: sparse_coo._coo_todense(data, row, col, spinfo=sparse_coo.COOInfo(shape=M.shape)) @ x
     data = rng((len(data),), data.dtype)
     data_dot = rng((len(data),), data.dtype)
     v_sparse, t_sparse = jax.jvp(f_sparse, [data], [data_dot])

@@ -24,7 +24,7 @@ from jax import core
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.experimental.sparse._base import JAXSparse
-from jax.experimental.sparse.coo import _coo_matmat_impl, _coo_matvec_impl, _coo_todense_impl
+from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
 from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
 from jax._src.numpy.lax_numpy import _promote_dtypes
@@ -169,7 +169,7 @@ def csr_todense(data, indices, indptr, *, shape):
 
 @csr_todense_p.def_impl
 def _csr_todense_impl(data, indices, indptr, *, shape):
-  return _coo_todense_impl(data, *_csr_to_coo(indices, indptr), shape=shape)
+  return _coo_todense(data, *_csr_to_coo(indices, indptr), spinfo=COOInfo(shape=shape))
 
 @csr_todense_p.def_abstract_eval
 def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
@@ -341,7 +341,7 @@ def csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
 
 @csr_matvec_p.def_impl
 def _csr_matvec_impl(data, indices, indptr, v, *, shape, transpose):
-  return _coo_matvec_impl(data, *_csr_to_coo(indices, indptr), v, shape=shape, transpose=transpose)
+  return _coo_matvec(data, *_csr_to_coo(indices, indptr), v, spinfo=COOInfo(shape=shape), transpose=transpose)
 
 @csr_matvec_p.def_abstract_eval
 def _csr_matvec_abstract_eval(data, indices, indptr, v, *, shape, transpose):
@@ -426,7 +426,7 @@ def csr_matmat(data, indices, indptr, B, *, shape, transpose=False):
 
 @csr_matmat_p.def_impl
 def _csr_matmat_impl(data, indices, indptr, B, *, shape, transpose):
-  return _coo_matmat_impl(data, *_csr_to_coo(indices, indptr), B, shape=shape, transpose=transpose)
+  return _coo_matmat(data, *_csr_to_coo(indices, indptr), B, spinfo=COOInfo(shape=shape), transpose=transpose)
 
 @csr_matmat_p.def_abstract_eval
 def _csr_matmat_abstract_eval(data, indices, indptr, B, *, shape, transpose):
