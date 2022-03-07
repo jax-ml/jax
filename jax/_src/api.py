@@ -53,7 +53,7 @@ from jax._src.traceback_util import api_boundary
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
                            tree_multimap, treedef_is_leaf, treedef_children,
-                           Partial, PyTreeDef, all_leaves)
+                           Partial, PyTreeDef, all_leaves, treedef_tuple)
 from jax._src.tree_util import broadcast_prefix
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                            extend_name_stack, new_name_stack, wrap_name, cache, wraps,
@@ -502,6 +502,10 @@ class Lowered:
   __slots__ = ['in_tree', 'out_tree', 'donate_argnums', '_lowering',
                '_no_kwargs']
 
+  # The PyTreeDef of the (positional arguments, keyword arguments).
+  #
+  # To get the individual PyTreeDef for the positional an keyword arguments,
+  # use `in_tree.children() which will return you a sequence of 2 PyTreeDef.
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donate_argnums: Tuple[int]
@@ -513,7 +517,14 @@ class Lowered:
   def __init__(self, lowering, in_tree, out_tree, donate_argnums,
                no_kwargs=False):
     self._lowering = lowering
-    self.in_tree = in_tree
+
+    # If `_no_kwargs is True`, `in_tree` is the PyTreeDef of the positional
+    # arguments only. It will be the PyTreeDef of (args, kwargs) otherwise.
+    if no_kwargs:
+      self.in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
+    else:
+      self.in_tree = in_tree
+
     self.out_tree = out_tree
     self.donate_argnums = donate_argnums
     self._no_kwargs = no_kwargs
@@ -547,6 +558,7 @@ class Compiled:
   __slots__ = ['in_tree', 'out_tree', 'donate_argnums', '_executable',
                '_no_kwargs']
 
+  # The PyTreeDef of the (positional arguments, keyword arguments).
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donate_argnums: Tuple[int]
@@ -582,15 +594,12 @@ class Compiled:
     return self._executable.xla_executable
 
   def __call__(self, *args, **kwargs):
-    if self._no_kwargs:
-      if kwargs:
-        kws = ', '.join(kwargs.keys())
-        raise NotImplementedError(
-            'function was compiled by a transformation that does not support '
-            f'keyword arguments, but called with keyword arguments: {kws}')
-      args_flat, in_tree = tree_flatten(args)
-    else:
-      args_flat, in_tree = tree_flatten((args, kwargs))
+    if self._no_kwargs and kwargs:
+      kws = ', '.join(kwargs.keys())
+      raise NotImplementedError(
+          'function was compiled by a transformation that does not support '
+          f"keyword arguments, but called with keyword arguments: {kws}")
+    args_flat, in_tree = tree_flatten((args, kwargs))
     if in_tree != self.in_tree:
       # TODO(frostig): provide more info about the source function
       # and transformation
@@ -2698,7 +2707,7 @@ def make_jaxpr(fun: Callable,
       env: Dict[Hashable, core.AbstractValue] = {}
       def make_aval(arg, spec):
         if isinstance(spec, tuple):
-            spec = dict(zip(range(len(arg.shape)), spec))
+          spec = dict(zip(range(len(arg.shape)), spec))
         if not spec: return shaped_abstractify(arg)
         assert all(arg.shape[i] == sizes.setdefault(name, arg.shape[i])
                    for i, name in spec.items())
