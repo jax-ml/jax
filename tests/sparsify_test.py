@@ -25,7 +25,7 @@ import jax.numpy as jnp
 import jax._src.test_util as jtu
 from jax.experimental.sparse import BCOO, sparsify, todense, SparseTracer
 from jax.experimental.sparse.transform import (
-  arrays_to_argspecs, argspecs_to_arrays, sparsify_raw, ArgSpec, SparseEnv)
+  arrays_to_spvalues, spvalues_to_arrays, sparsify_raw, SparsifyValue, SparsifyEnv)
 
 config.parse_flags_with_absl()
 
@@ -48,31 +48,31 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(x.data, y.data)
     self.assertArraysEqual(x.indices, y.indices)
 
-  def testArgSpec(self):
+  def testSparsifyValue(self):
     X = jnp.arange(5)
     X_BCOO = BCOO.fromdense(X)
 
     args = (X, X_BCOO, X_BCOO)
 
     # Independent index
-    spenv = SparseEnv()
-    argspecs = arrays_to_argspecs(spenv, args)
-    self.assertEqual(len(argspecs), len(args))
-    self.assertEqual(spenv.size(), 5)
-    self.assertEqual(argspecs,
-        (ArgSpec(X.shape, 0, None), ArgSpec(X.shape, 1, 2), ArgSpec(X.shape, 3, 4)))
+    spenv = SparsifyEnv()
+    spvalues = arrays_to_spvalues(spenv, args)
+    self.assertEqual(len(spvalues), len(args))
+    self.assertLen(spenv._buffers, 5)
+    self.assertEqual(spvalues,
+        (SparsifyValue(X.shape, 0, None), SparsifyValue(X.shape, 1, 2), SparsifyValue(X.shape, 3, 4)))
 
-    args_out = argspecs_to_arrays(spenv, argspecs)
+    args_out = spvalues_to_arrays(spenv, spvalues)
     self.assertEqual(len(args_out), len(args))
     self.assertArraysEqual(args[0], args_out[0])
     self.assertBcooIdentical(args[1], args_out[1])
     self.assertBcooIdentical(args[2], args_out[2])
 
     # Shared index
-    argspecs = (ArgSpec(X.shape, 0, None), ArgSpec(X.shape, 1, 2), ArgSpec(X.shape, 3, 2))
-    spenv = SparseEnv([X, X_BCOO.data, X_BCOO.indices, X_BCOO.data])
+    spvalues = (SparsifyValue(X.shape, 0, None), SparsifyValue(X.shape, 1, 2), SparsifyValue(X.shape, 3, 2))
+    spenv = SparsifyEnv([X, X_BCOO.data, X_BCOO.indices, X_BCOO.data])
 
-    args_out = argspecs_to_arrays(spenv, argspecs)
+    args_out = spvalues_to_arrays(spenv, spvalues)
     self.assertEqual(len(args_out), len(args))
     self.assertArraysEqual(args[0], args_out[0])
     self.assertBcooIdentical(args[1], args_out[1])
@@ -162,15 +162,15 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(out.todense(), 3 * jnp.arange(5))
 
     # Shared indices – requires lower level call
-    argspecs = [
-      ArgSpec(x.shape, 1, 0),
-      ArgSpec(y.shape, 2, 0)
+    spenv = SparsifyEnv([x.indices, x.data, y.data])
+    spvalues = [
+      spenv.sparse(x.shape, data_ref=1, indices_ref=0),
+      spenv.sparse(y.shape, data_ref=2, indices_ref=0)
     ]
-    spenv = SparseEnv([x.indices, x.data, y.data])
 
-    result = sparsify_raw(operator.add)(spenv, *argspecs)
+    result = sparsify_raw(operator.add)(spenv, *spvalues)
     args_out, _ = result
-    out, = argspecs_to_arrays(spenv, args_out)
+    out, = spvalues_to_arrays(spenv, args_out)
 
     self.assertAllClose(out.todense(), x.todense() + y.todense())
 
@@ -183,15 +183,15 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(out.todense(), x.todense() * 2.5)
 
     # Shared indices – requires lower level call
-    argspecs = [
-      ArgSpec(x.shape, 1, 0),
-      ArgSpec(y.shape, 2, 0)
+    spenv = SparsifyEnv([x.indices, x.data, y.data])
+    spvalues = [
+      spenv.sparse(x.shape, data_ref=1, indices_ref=0),
+      spenv.sparse(y.shape, data_ref=2, indices_ref=0)
     ]
-    spenv = SparseEnv([x.indices, x.data, y.data])
 
-    result = sparsify_raw(operator.mul)(spenv, *argspecs)
+    result = sparsify_raw(operator.mul)(spenv, *spvalues)
     args_out, _ = result
-    out, = argspecs_to_arrays(spenv, args_out)
+    out, = spvalues_to_arrays(spenv, args_out)
 
     self.assertAllClose(out.todense(), x.todense() * y.todense())
 
@@ -205,15 +205,15 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(out.todense(), 2 * jnp.arange(5))
 
     # Shared indices – requires lower level call
-    argspecs = [
-      ArgSpec(x.shape, 1, 0),
-      ArgSpec(y.shape, 2, 0)
+    spenv = SparsifyEnv([x.indices, x.data, y.data])
+    spvalues = [
+      spenv.sparse(x.shape, data_ref=1, indices_ref=0),
+      spenv.sparse(y.shape, data_ref=2, indices_ref=0)
     ]
-    spenv = SparseEnv([x.indices, x.data, y.data])
 
-    result = sparsify_raw(operator.sub)(spenv, *argspecs)
+    result = sparsify_raw(operator.sub)(spenv, *spvalues)
     args_out, _ = result
-    out, = argspecs_to_arrays(spenv, args_out)
+    out, = spvalues_to_arrays(spenv, args_out)
 
     self.assertAllClose(out.todense(), x.todense() - y.todense())
 
@@ -235,7 +235,7 @@ class SparsifyTest(jtu.JaxTestCase):
       self.assertArraysAllClose(res_dense, res_sparse)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_dimensions={}_nbatch={}, ndense={}".format(
+      {"testcase_name": "_shape={}_dimensions={}_nbatch={}_ndense={}".format(
           jtu.format_shape_dtype_string(shape, np.float32), dimensions, n_batch, n_dense),
        "shape": shape, "dimensions": dimensions, "n_batch": n_batch, "n_dense": n_dense}
       for shape, dimensions in [
