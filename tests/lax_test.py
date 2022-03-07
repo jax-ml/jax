@@ -26,17 +26,18 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-import jax.numpy as jnp
 from jax import core
-from jax._src import dtypes
 from jax import lax
-from jax._src import test_util as jtu
-from jax import tree_util
-from jax._src import lax_reference
+import jax.numpy as jnp
 from jax.test_util import check_grads
+from jax import tree_util
 import jax.util
-from jax._src.util import prod
 
+from jax._src import dtypes
+from jax._src import test_util as jtu
+from jax._src import lax_reference
+from jax._src.util import prod
+from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import _device_put_raw
 
 
@@ -2626,7 +2627,7 @@ class LaxTest(jtu.JaxTestCase):
     else:
       val = lax._convert_element_type(0, dtype, weak_type=weak_type)
 
-    const = lax._const(val, 0)
+    const = lax_internal._const(val, 0)
     self.assertEqual(dtypes.dtype(val, canonicalize=True),
                      dtypes.dtype(const, canonicalize=True))
 

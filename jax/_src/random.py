@@ -27,8 +27,9 @@ from jax._src import prng
 from jax.config import config
 from jax.core import NamedShape
 from jax._src.api import jit, vmap
-from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer
+from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_bridge
+from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -51,6 +52,8 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 
 ### utilities
+
+_lax_const = lax_internal._const
 
 def _isnan(x):
   return lax.ne(x, x)
@@ -336,14 +339,14 @@ def _randint(key, shape, minval, maxval, dtype):
   # causing remainders below to have no effect, which is the correct semantics.
   span = lax.select(
     maxval_out_of_range & (maxval > minval),
-    lax.add(span, lax._const(span, 1)),
+    lax.add(span, _lax_const(span, 1)),
     span)
 
   # To compute a remainder operation on an integer that might have twice as many
   # bits as we can represent in the native unsigned dtype, we compute a
   # multiplier equal to 2**nbits % span. To avoid overflow, we use the identity:
   #  (a * b) % N = [(a % N) * (b % N)] % N
-  multiplier = lax.rem(lax._const(span, 2 ** (nbits // 2)), span)
+  multiplier = lax.rem(_lax_const(span, 2 ** (nbits // 2)), span)
   multiplier = lax.rem(lax.mul(multiplier, multiplier), span)
 
   random_offset = lax.add(lax.mul(lax.rem(higher_bits, span), multiplier),
@@ -789,8 +792,8 @@ def cauchy(key: KeyArray,
 def _cauchy(key, shape, dtype):
   _check_shape("cauchy", shape)
   u = uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)
-  pi = lax._const(u, np.pi)
-  return lax.tan(lax.mul(pi, lax.sub(u, lax._const(u, 0.5))))
+  pi = _lax_const(u, np.pi)
+  return lax.tan(lax.mul(pi, lax.sub(u, _lax_const(u, 0.5))))
 
 
 def dirichlet(key: KeyArray,
@@ -876,12 +879,12 @@ def _gamma_one(key: KeyArray, alpha):
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
   # The algorithm can also be founded in:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
-  zero = lax._const(alpha, 0)
-  one = lax._const(alpha, 1)
-  minus_one = lax._const(alpha, -1)
-  one_over_two = lax._const(alpha, 0.5)
-  one_over_three = lax._const(alpha, 1. / 3.)
-  squeeze_const = lax._const(alpha, 0.0331)
+  zero = _lax_const(alpha, 0)
+  one = _lax_const(alpha, 1)
+  minus_one = _lax_const(alpha, -1)
+  one_over_two = _lax_const(alpha, 0.5)
+  one_over_three = _lax_const(alpha, 1. / 3.)
+  squeeze_const = _lax_const(alpha, 0.0331)
   dtype = lax.dtype(alpha)
 
   key, subkey = _split(key)
@@ -923,7 +926,7 @@ def _gamma_one(key: KeyArray, alpha):
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
-  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, lax._const(alpha, 2)))
+  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _lax_const(alpha, 2)))
   z = lax.mul(lax.mul(d, V), boost)
   return lax.select(lax.eq(z, zero), jnp.finfo(z.dtype).tiny, z)
 
@@ -1271,7 +1274,7 @@ def logistic(key: KeyArray,
 def _logistic(key, shape, dtype):
   _check_shape("logistic", shape)
   x = uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)
-  return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+  return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
 
 
 def pareto(key: KeyArray,
@@ -1353,7 +1356,7 @@ def _t(key, df, shape, dtype):
   df = lax.convert_element_type(df, dtype)
   key_n, key_g = _split(key)
   n = normal(key_n, shape, dtype)
-  two = lax._const(n, 2)
+  two = _lax_const(n, 2)
   half_df = lax.div(df, two)
   g = gamma(key_n, half_df, shape, dtype)
   return n * jnp.sqrt(half_df / g)

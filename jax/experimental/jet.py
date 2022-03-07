@@ -59,17 +59,20 @@ from functools import partial
 import numpy as np
 
 import jax
-import jax.numpy as jnp
 from jax import core
-from jax._src.util import unzip2
-from jax._src import ad_util
-from jax._src import dispatch
+from jax import lax
+from jax.custom_derivatives import custom_jvp_call_jaxpr_p
+from jax.interpreters import xla
+import jax.linear_util as lu
+import jax.numpy as jnp
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
-import jax.linear_util as lu
-from jax.interpreters import xla
-from jax.custom_derivatives import custom_jvp_call_jaxpr_p
-from jax import lax
+
+from jax._src import ad_util
+from jax._src import dispatch
+from jax._src.lax import lax as lax_internal
+from jax._src.util import unzip2
+
 
 def jet(fun, primals, series):
   r"""Taylor-mode higher-order automatic differentiation.
@@ -371,7 +374,10 @@ def deriv_prop(prim, deriv, primals_in, series_in):
   return primal_out, series_out
 
 
-def_deriv(lax.erf_p, lambda x: lax.mul(lax._const(x, 2. / np.sqrt(np.pi)), lax.exp(lax.neg(lax.square(x)))))
+def_deriv(lax.erf_p,
+          lambda x: lax.mul(
+              lax_internal._const(x, 2. / np.sqrt(np.pi)),
+              lax.exp(lax.neg(lax.square(x)))))
 
 
 def def_comp(prim, comp):

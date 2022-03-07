@@ -51,6 +51,7 @@ from jax.interpreters import pxla
 from jax import lax
 from jax._src import device_array
 from jax._src.lax.lax import _array_copy, _sort_lt_comparator, _sort_le_comparator
+from jax._src.lax import lax as lax_internal
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
@@ -201,6 +202,8 @@ _INT_DTYPES = {
   32: np.int32,
   64: np.int64,
 }
+
+_lax_const = lax_internal._const
 
 def _promote_shapes(fun_name, *args):
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
@@ -356,8 +359,8 @@ def _convert_and_clip_integer(val, dtype):
     # This happens in X32 mode and can either come from a jax value created in another
     # context, or a Python integer converted to int64.
     pass
-  min_val = lax._const(val, _max(iinfo(dtype).min, iinfo(val_dtype).min))
-  max_val = lax._const(val, _min(iinfo(dtype).max, iinfo(val_dtype).max))
+  min_val = _lax_const(val, _max(iinfo(dtype).min, iinfo(val_dtype).min))
+  max_val = _lax_const(val, _min(iinfo(dtype).max, iinfo(val_dtype).max))
   return clip(val, min_val, max_val).astype(dtype)
 
 
@@ -567,7 +570,7 @@ def sign(x):
   if issubdtype(dtype, complexfloating):
     re = lax.real(x)
     return lax.complex(
-      lax.sign(where(re != 0, re, lax.imag(x))), lax._const(re, 0))
+      lax.sign(where(re != 0, re, lax.imag(x))), _lax_const(re, 0))
   return lax.sign(x)
 
 
@@ -604,8 +607,8 @@ def floor_divide(x1, x2):
     x2r = lax.real(x2)
     x2i = lax.imag(x2)
     which = lax.ge(lax.abs(x2r), lax.abs(x2i))
-    rat1 = where(which, lax._const(x2i, 1), lax.div(x2r, x2i))
-    rat2 = where(which, lax.div(x2i, x2r), lax._const(x2i, 1))
+    rat1 = where(which, _lax_const(x2i, 1), lax.div(x2r, x2i))
+    rat2 = where(which, lax.div(x2i, x2r), _lax_const(x2i, 1))
     out = lax.floor(lax.div(lax.add(lax.mul(x1r, rat1), lax.mul(x1i, rat2)),
                             lax.add(lax.mul(x2r, rat1), lax.mul(x2i, rat2))))
     return lax.convert_element_type(out, dtype)
@@ -630,7 +633,7 @@ def _float_divmod(x1, x2):
 
   ind = lax.bitwise_and(mod != 0, lax.sign(x2) != lax.sign(mod))
   mod = lax.select(ind, mod + x2, mod)
-  div = lax.select(ind, div - lax._const(div, 1), div)
+  div = lax.select(ind, div - _lax_const(div, 1), div)
 
   return lax.round(div), mod
 
@@ -646,8 +649,8 @@ def _power(x1, x2):
 
   # TODO(phawkins): add integer pow support to XLA.
   bits = 6  # Anything more would overflow for any x1 > 1
-  zero = lax._const(x2, 0)
-  one = lax._const(x2, 1)
+  zero = _lax_const(x2, 0)
+  one = _lax_const(x2, 1)
   # Initialize acc carefully such that pow(0, x2) is zero for x2 != 0
   acc = where(lax.bitwise_and(lax.eq(x1, zero), lax.ne(x2, zero)), zero, one)
   for _ in range(bits):
@@ -683,15 +686,15 @@ def logaddexp(x1, x2):
                       lax.add(x1, x2),  # NaNs or infinities of the same sign.
                       lax.add(amax, lax.log1p(lax.exp(lax.neg(lax.abs(delta))))))
   else:
-    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, lax._const(amax, 2)))
+    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, _lax_const(amax, 2)))
     out = lax.add(amax, lax.log1p(lax.exp(delta)))
     return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi))
 
 def _wrap_between(x, _a):
   """Wraps `x` between `[-a, a]`."""
-  a = lax._const(x, _a)
-  two_a = lax._const(x, 2 * _a)
-  zero = lax._const(x, 0)
+  a = _lax_const(x, _a)
+  two_a = _lax_const(x, 2 * _a)
+  zero = _lax_const(x, 0)
   rem = lax.rem(lax.add(x, a), two_a)
   rem = lax.select(lax.lt(rem, zero), lax.add(rem, two_a), rem)
   return lax.sub(rem, a)
@@ -721,10 +724,10 @@ def logaddexp2(x1, x2):
     return lax.select(isnan(delta),
                       lax.add(x1, x2),  # NaNs or infinities of the same sign.
                       lax.add(amax, lax.div(lax.log1p(exp2(lax.neg(lax.abs(delta)))),
-                                            lax._const(x1, np.log(2)))))
+                                            _lax_const(x1, np.log(2)))))
   else:
-    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, lax._const(amax, 2)))
-    out = lax.add(amax, lax.div(lax.log1p(exp2(delta)), lax._const(x1, np.log(2))))
+    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, _lax_const(amax, 2)))
+    out = lax.add(amax, lax.div(lax.log1p(exp2(delta)), _lax_const(x1, np.log(2))))
     return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi / np.log(2)))
 
 @logaddexp2.defjvp
@@ -742,21 +745,21 @@ def _logaddexp2_jvp(primals, tangents):
 @partial(jit, inline=True)
 def log2(x):
   x, = _promote_args_inexact("log2", x)
-  return lax.div(lax.log(x), lax.log(lax._const(x, 2)))
+  return lax.div(lax.log(x), lax.log(_lax_const(x, 2)))
 
 
 @_wraps(np.log10)
 @partial(jit, inline=True)
 def log10(x):
   x, = _promote_args_inexact("log10", x)
-  return lax.div(lax.log(x), lax.log(lax._const(x, 10)))
+  return lax.div(lax.log(x), lax.log(_lax_const(x, 10)))
 
 
 @_wraps(np.exp2)
 @partial(jit, inline=True)
 def exp2(x):
   x, = _promote_args_inexact("exp2", x)
-  return lax.exp(lax.mul(lax.log(lax._const(x, 2)), x))
+  return lax.exp(lax.mul(lax.log(_lax_const(x, 2)), x))
 
 @_wraps(np.signbit)
 @jit
@@ -764,7 +767,7 @@ def signbit(x):
   x, = _promote_args("signbit", x)
   dtype = _dtype(x)
   if issubdtype(dtype, integer):
-    return lax.lt(x, lax._const(x, 0))
+    return lax.lt(x, _lax_const(x, 0))
   elif issubdtype(dtype, bool_):
     return full_like(x, False, dtype=bool_)
   elif not issubdtype(dtype, floating):
@@ -803,7 +806,7 @@ def trapz(y, x=None, dx=1.0, axis: int = -1):
 @jit
 def trunc(x):
   _check_arraylike('trunc', x)
-  return where(lax.lt(x, lax._const(x, 0)), ceil(x), floor(x))
+  return where(lax.lt(x, _lax_const(x, 0)), ceil(x), floor(x))
 
 
 @partial(jit, static_argnums=(2, 3, 4))
@@ -856,8 +859,8 @@ def correlate(a, v, mode='valid', *, precision=None):
 def _normalize_float(x):
   info = finfo(_dtype(x))
   cond = lax.abs(x) < info.tiny
-  x1 = where(cond, x * lax._const(x, 1 << info.nmant), x)
-  x2 = where(cond, lax._const(np.int32, -info.nmant), lax._const(np.int32, 0))
+  x1 = where(cond, x * _lax_const(x, 1 << info.nmant), x)
+  x2 = where(cond, _lax_const(np.int32, -info.nmant), _lax_const(np.int32, 0))
   int_type = _INT_DTYPES[info.bits]
   return lax.bitcast_convert_type(x1, int_type), x2
 
@@ -934,7 +937,7 @@ def frexp(x):
 @jit
 def remainder(x1, x2):
   x1, x2 = _promote_args("remainder", x1, x2)
-  zero = lax._const(x1, 0)
+  zero = _lax_const(x1, 0)
   trunc_mod = lax.rem(x1, x2)
   trunc_mod_not_zero = lax.ne(trunc_mod, zero)
   do_plus = lax.bitwise_and(
@@ -963,14 +966,14 @@ def square(x):
 @partial(jit, inline=True)
 def deg2rad(x):
   x, = _promote_args_inexact("deg2rad", x)
-  return lax.mul(x, lax._const(x, pi / 180))
+  return lax.mul(x, _lax_const(x, pi / 180))
 
 
 @_wraps(np.rad2deg)
 @partial(jit, inline=True)
 def rad2deg(x):
   x, = _promote_args_inexact("rad2deg", x)
-  return lax.mul(x, lax._const(x, 180 / pi))
+  return lax.mul(x, _lax_const(x, 180 / pi))
 
 
 degrees = rad2deg
@@ -1087,9 +1090,9 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
 def heaviside(x1, x2):
   _check_arraylike("heaviside", x1, x2)
   x1, x2 = _promote_dtypes_inexact(x1, x2)
-  zero = lax._const(x1, 0)
+  zero = _lax_const(x1, 0)
   return where(lax.lt(x1, zero), zero,
-               where(lax.gt(x1, zero), lax._const(x1, 1), x2))
+               where(lax.gt(x1, zero), _lax_const(x1, 1), x2))
 
 
 @_wraps(np.hypot)
@@ -1116,9 +1119,9 @@ def reciprocal(x):
 def sinc(x):
   _check_arraylike("sinc", x)
   x, = _promote_dtypes_inexact(x)
-  eq_zero = lax.eq(x, lax._const(x, 0))
-  pi_x = lax.mul(lax._const(x, pi), x)
-  safe_pi_x = where(eq_zero, lax._const(x, 1), pi_x)
+  eq_zero = lax.eq(x, _lax_const(x, 0))
+  pi_x = lax.mul(_lax_const(x, pi), x)
+  safe_pi_x = where(eq_zero, _lax_const(x, 1), pi_x)
   return where(eq_zero, _sinc_maclaurin(0, pi_x),
                lax.div(lax.sin(safe_pi_x), safe_pi_x))
 
@@ -1220,13 +1223,13 @@ def real(val):
 @jit
 def iscomplex(x):
   i = imag(x)
-  return lax.ne(i, lax._const(i, 0))
+  return lax.ne(i, _lax_const(i, 0))
 
 @_wraps(np.isreal)
 @jit
 def isreal(x):
   i = imag(x)
-  return lax.eq(i, lax._const(i, 0))
+  return lax.eq(i, _lax_const(i, 0))
 
 @_wraps(np.angle)
 @partial(jit, static_argnames=['deg'])
@@ -2095,7 +2098,7 @@ def round(a, decimals=0, out=None):
     # end due to precision problems. As a workaround for float16, convert to
     # float32,
     x = lax.convert_element_type(x, np.float32) if dtype == np.float16 else x
-    factor = lax._const(x, 10 ** decimals)
+    factor = _lax_const(x, 10 ** decimals)
     out = lax.div(lax.round(lax.mul(x, factor),
                             lax.RoundingMethod.TO_NEAREST_EVEN), factor)
     return lax.convert_element_type(out, dtype) if dtype == np.float16 else out
@@ -2114,7 +2117,7 @@ def fix(x, out=None):
   _check_arraylike("fix", x)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.fix is not supported.")
-  zero = lax._const(x, 0)
+  zero = _lax_const(x, 0)
   return where(lax.ge(x, zero), floor(x), ceil(x))
 
 
@@ -2146,12 +2149,12 @@ def isinf(x):
   _check_arraylike("isinf", x)
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
-    return lax.eq(lax.abs(x), lax._const(x, inf))
+    return lax.eq(lax.abs(x), _lax_const(x, inf))
   elif issubdtype(dtype, complexfloating):
     re = lax.real(x)
     im = lax.imag(x)
-    return lax.bitwise_or(lax.eq(lax.abs(re), lax._const(re, inf)),
-                          lax.eq(lax.abs(im), lax._const(im, inf)))
+    return lax.bitwise_or(lax.eq(lax.abs(re), _lax_const(re, inf)),
+                          lax.eq(lax.abs(im), _lax_const(im, inf)))
   else:
     return full_like(x, False, dtype=bool_)
 
@@ -2160,7 +2163,7 @@ def _isposneginf(infinity, x, out):
     raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
-    return lax.eq(x, lax._const(x, infinity))
+    return lax.eq(x, _lax_const(x, infinity))
   elif issubdtype(dtype, complexfloating):
     raise ValueError("isposinf/isneginf are not well defined for complex types")
   else:
@@ -2580,7 +2583,7 @@ def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
 def count_nonzero(a, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                   keepdims=False):
   _check_arraylike("count_nonzero", a)
-  return sum(lax.ne(a, lax._const(a, 0)), axis=axis,
+  return sum(lax.ne(a, _lax_const(a, 0)), axis=axis,
              dtype=dtypes.canonicalize_dtype(np.int_), keepdims=keepdims)
 
 
@@ -2637,7 +2640,7 @@ def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
                       axis=axis, keepdims=keepdims, **kwargs)
   if nan_if_all_nan:
     return where(all(isnan(a), axis=axis, keepdims=keepdims),
-                  lax._const(a, nan), out)
+                  _lax_const(a, nan), out)
   else:
     return out
 
@@ -2762,7 +2765,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
     axis = _canonicalize_axis(axis, num_dims)
 
     if fill_nan:
-      a = where(isnan(a), lax._const(a, fill_value), a)
+      a = where(isnan(a), _lax_const(a, fill_value), a)
 
     if not dtype and _dtype(a) == bool_:
       dtype = int_
@@ -4973,7 +4976,7 @@ def vander(x, N=None, increasing=False):
 
   iota = lax.iota(x.dtype, N)
   if not increasing:
-    iota = lax.sub(lax._const(iota, N - 1), iota)
+    iota = lax.sub(_lax_const(iota, N - 1), iota)
 
   return power(x[..., None], expand_dims(iota, tuple(range(x.ndim))))
 
@@ -5277,7 +5280,7 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
-    indices = mod(indices, lax._const(indices, a.shape[axis_idx]))
+    indices = mod(indices, _lax_const(indices, a.shape[axis_idx]))
     gather_mode = lax.GatherScatterMode.PROMISE_IN_BOUNDS
   elif mode == "fill":
     # Undocumented non-standard mode corresponding to the fill_or_drop mode on
@@ -5317,12 +5320,12 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
   if core.is_constant_dim(axis_size):
-    axis_size_val = lax._const(index, axis_size)
+    axis_size_val = _lax_const(index, axis_size)
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
                                              _dtype(index))
   return lax.select(
-    lax.lt(index, lax._const(index, 0)),
+    lax.lt(index, _lax_const(index, 0)),
     lax.add(index, axis_size_val),
     index)
 
@@ -5407,7 +5410,7 @@ def _unique_sorted_mask(ar, axis):
     # Work around issue in sorting of complex numbers with Nan only in the
     # imaginary component. This can be removed if sorting in this situation
     # is fixed to match numpy.
-    aux = where(isnan(aux), lax._const(aux, nan), aux)
+    aux = where(isnan(aux), _lax_const(aux, nan), aux)
   size, *out_shape = aux.shape
   if _prod(out_shape) == 0:
     size = 1
@@ -5998,7 +6001,7 @@ def _gcd_cond_fn(xs):
 def _gcd_body_fn(xs):
   x1, x2 = xs
   x1, x2 = (where(x2 != 0, x2, x1),
-            where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
+            where(x2 != 0, lax.rem(x1, x2), _lax_const(x2, 0)))
   return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
 @_wraps(np.gcd)
@@ -6020,7 +6023,7 @@ def lcm(x1, x2):
   _check_arraylike("lcm", x1, x2)
   x1, x2 = _promote_dtypes(x1, x2)
   d = gcd(x1, x2)
-  return where(d == 0, lax._const(d, 0),
+  return where(d == 0, _lax_const(d, 0),
                abs(multiply(x1, floor_divide(x2, d))))
 
 
@@ -6218,14 +6221,14 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     q = lax.expand_dims(
       q, tuple(range(q_ndim, len(shape_after_reduction) + q_ndim)))
     counts = lax.expand_dims(counts, tuple(range(q_ndim)))
-    q = lax.mul(q, lax.sub(counts, lax._const(q, 1)))
+    q = lax.mul(q, lax.sub(counts, _lax_const(q, 1)))
     low = lax.floor(q)
     high = lax.ceil(q)
     high_weight = lax.sub(q, low)
-    low_weight = lax.sub(lax._const(high_weight, 1), high_weight)
+    low_weight = lax.sub(_lax_const(high_weight, 1), high_weight)
 
-    low = lax.max(lax._const(low, 0), lax.min(low, counts - 1))
-    high = lax.max(lax._const(high, 0), lax.min(high, counts - 1))
+    low = lax.max(_lax_const(low, 0), lax.min(low, counts - 1))
+    high = lax.max(_lax_const(high, 0), lax.min(high, counts - 1))
     low = lax.convert_element_type(low, int64)
     high = lax.convert_element_type(high, int64)
     out_shape = q_shape + shape_after_reduction
@@ -6242,14 +6245,14 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     a = where(any(isnan(a), axis=axis, keepdims=True), nan, a)
     a = lax.sort(a, dimension=axis)
     n = a_shape[axis]
-    q = lax.mul(q, lax._const(q, n - 1))
+    q = lax.mul(q, _lax_const(q, n - 1))
     low = lax.floor(q)
     high = lax.ceil(q)
     high_weight = lax.sub(q, low)
-    low_weight = lax.sub(lax._const(high_weight, 1), high_weight)
+    low_weight = lax.sub(_lax_const(high_weight, 1), high_weight)
 
-    low = lax.clamp(lax._const(low, 0), low, lax._const(low, n - 1))
-    high = lax.clamp(lax._const(high, 0), high, lax._const(high, n - 1))
+    low = lax.clamp(_lax_const(low, 0), low, _lax_const(low, n - 1))
+    high = lax.clamp(_lax_const(high, 0), high, _lax_const(high, n - 1))
     low = lax.convert_element_type(low, int64)
     high = lax.convert_element_type(high, int64)
 
@@ -6279,10 +6282,10 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   elif interpolation == "higher":
     result = high_value
   elif interpolation == "nearest":
-    pred = lax.le(high_weight, lax._const(high_weight, 0.5))
+    pred = lax.le(high_weight, _lax_const(high_weight, 0.5))
     result = lax.select(pred, low_value, high_value)
   elif interpolation == "midpoint":
-    result = lax.mul(lax.add(low_value, high_value), lax._const(low_value, 0.5))
+    result = lax.mul(lax.add(low_value, high_value), _lax_const(low_value, 0.5))
   else:
     raise ValueError(f"interpolation={interpolation!r} not recognized")
   if keepdims and keepdim:
