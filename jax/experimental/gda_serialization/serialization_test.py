@@ -21,6 +21,7 @@ import jax
 from jax._src import test_util as jtu
 from jax._src import util
 from jax.config import config
+from jax.experimental import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.gda_serialization import serialization
 from jax.experimental.maps import Mesh
@@ -43,7 +44,7 @@ class CheckpointTest(jtu.JaxTestCase):
   def test_checkpointing(self):
     global_mesh = create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    mesh_axes = ['x', 'y']
+    mesh_axes = P('x', 'y')
     num = util.prod(global_input_shape)
 
     # First GDA
@@ -66,7 +67,7 @@ class CheckpointTest(jtu.JaxTestCase):
     def cb3(index):
       return np.array([])
     global_mesh1d = create_global_mesh((8,), ('x',))
-    gda3 = GlobalDeviceArray.from_callback((0,), global_mesh1d, [None], cb3)
+    gda3 = GlobalDeviceArray.from_callback((0,), global_mesh1d, P(None), cb3)
     ckpt_dir3 = pathlib.Path(self.create_tempdir('third').full_path)
 
     ckpt_paths = [str(ckpt_dir1), str(ckpt_dir2), str(ckpt_dir3)]
@@ -76,7 +77,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     m1, m2, m3 = serialization.run_deserialization(
         [global_mesh, global_mesh, global_mesh1d],
-        [mesh_axes, ['x'], [None]],
+        [mesh_axes, P('x'), P(None)],
         tspecs)
 
     self.assertArraysEqual(m1.local_shards[0].data.to_py(),
@@ -109,7 +110,7 @@ class CheckpointTest(jtu.JaxTestCase):
     def cb1(index):
       return global_input_data1[index]
     gda1 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
-                                           ['x', 'y'], cb1)
+                                           P('x', 'y'), cb1)
     ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
 
     ckpt_paths = [str(ckpt_dir1)]
@@ -119,7 +120,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     m1, = serialization.run_deserialization(
         [create_global_mesh((4, 2), ('x', 'y'))],
-        [['x', 'y']],
+        [P('x', 'y')],
         tspecs,
         [(12, 2)],
     )
