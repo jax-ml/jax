@@ -1597,8 +1597,11 @@ def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
     if kws:
       # if keyword arguments are included in the tree, we make adapt the error
       # message only to be about the positional arguments
-      tree, leaf = treedef_children(tree)
-      assert treedef_is_leaf(leaf)
+      tree, kwargs_treedef = treedef_children(tree)
+      if not treedef_is_leaf(kwargs_treedef):
+        raise ValueError(
+            "Keyword arguments are expected to be a leaf. Try without them.")
+
     # TODO(mattjj,phawkins): add a way to inspect pytree kind more directly
     if tree == tree_flatten((core.unit,) * tree.num_leaves)[1]:
       lines1 = [f"arg {i} has shape {np.shape(x)} and axis {d} is to be mapped"
