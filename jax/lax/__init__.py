@@ -248,7 +248,7 @@ from jax._src.lax.lax import (
   zeros_like_array as zeros_like_array,
 )
 from jax._src.lax.lax import (
-  _tri, _delta, _ones, _zeros, _dilate_shape)
+  _delta, _ones, _zeros, _dilate_shape)
 from jax._src.lax.slicing import (
   GatherDimensionNumbers as GatherDimensionNumbers,
   GatherScatterMode as GatherScatterMode,
