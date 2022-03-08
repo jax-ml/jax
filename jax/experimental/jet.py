@@ -625,7 +625,8 @@ def _gen_reduce_choose_taylor_rule(chooser_fun):
     series_out = [_reduce_chooser_taylor_rule(g) for g in gs]
     return primal_out, series_out
   return chooser_taylor_rule
-jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(lax._reduce_max)
+jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(
+    lax_internal._reduce_max)
 jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(lax._reduce_min)
 
 def _abs_taylor_rule(x, series_in, **params):
