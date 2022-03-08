@@ -118,7 +118,8 @@ def run_serialization(gdas, tensorstore_specs):
   asyncio.run(_run_serializer())
 
 
-async def async_deserialize(mesh, mesh_axes, tensorstore_spec, global_shape=None):
+async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
+                            global_shape=None, dtype=None):
   t = ts.open(ts.Spec(tensorstore_spec), open=True).result()
   shape = t.shape if global_shape is None else global_shape
   requires_padding = prod(shape) > prod(t.shape)
@@ -135,18 +136,24 @@ async def async_deserialize(mesh, mesh_axes, tensorstore_spec, global_shape=None
       requested_domain = ts.IndexTransform(input_shape=shape)[index].domain
       restricted_domain = t.domain.intersect(requested_domain)
       await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][restricted_domain].write(t[restricted_domain])
-      return out
     else:
-      return await t[index].read()
+      out = await t[index].read()
+
+    if dtype is not None:
+      # Cast while reloading on process to avoid 2 copies on device if the
+      # casting is done on device.
+      return out.astype(dtype)
+    return out
 
   return await create_async_gda_from_callback(shape, mesh, mesh_axes, cb)
 
 
 def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
-                        global_shapes=None):
+                        global_shapes=None, dtypes=None):
   async def _run_deserializer():
     future_gdas = jax.tree_map(
         async_deserialize, global_meshes, mesh_axes, tensorstore_specs,
-        [None] * len(tensorstore_specs) if global_shapes is None else global_shapes)
+        [None] * len(tensorstore_specs) if global_shapes is None else global_shapes,
+        [None] * len(tensorstore_specs) if dtypes is None else dtypes)
     return await asyncio.gather(*future_gdas)
   return asyncio.run(_run_deserializer())
