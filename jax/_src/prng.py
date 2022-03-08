@@ -28,6 +28,7 @@ from jax.dtypes import float0
 from jax.interpreters import batching
 from jax.interpreters import xla
 from jax._src.api import jit, vmap
+from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client
 from jax._src.lib import cuda_prng
 from jax._src.numpy.lax_numpy import (
@@ -264,7 +265,8 @@ def threefry_seed(seed: int) -> jnp.ndarray:
     raise TypeError(f"PRNG key seed must be an integer; got {seed!r}")
 
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
-  k1 = convert(lax.shift_right_logical(seed_arr, lax._const(seed_arr, 32)))
+  k1 = convert(
+      lax.shift_right_logical(seed_arr, lax_internal._const(seed_arr, 32)))
   k2 = convert(jnp.bitwise_and(seed_arr, np.uint32(0xFFFFFFFF)))
   return lax.concatenate([k1, k2], 0)
 

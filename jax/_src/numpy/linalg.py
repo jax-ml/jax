@@ -22,6 +22,7 @@ from typing import Tuple, Union, cast
 
 from jax import jit, custom_jvp
 from jax import lax
+from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src import dtypes
 from jax._src.numpy.util import _wraps
@@ -434,7 +435,7 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
       return jnp.sum(jnp.abs(x), axis=axis, keepdims=keepdims)
     else:
       abs_x = jnp.abs(x)
-      ord = lax._const(abs_x, ord)
+      ord = lax_internal._const(abs_x, ord)
       out = jnp.sum(abs_x ** ord, axis=axis, keepdims=keepdims)
       return jnp.power(out, 1. / ord)
 

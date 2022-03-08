@@ -15,6 +15,7 @@
 import scipy.stats as osp_stats
 
 from jax import lax
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf, logical_or
 from jax.scipy.special import betaln, xlogy, xlog1py
@@ -23,7 +24,7 @@ from jax.scipy.special import betaln, xlogy, xlog1py
 @_wraps(osp_stats.beta.logpdf, update_doc=False)
 def logpdf(x, a, b, loc=0, scale=1):
   x, a, b, loc, scale = _promote_args_inexact("beta.logpdf", x, a, b, loc, scale)
-  one = lax._const(x, 1)
+  one = _lax_const(x, 1)
   shape_term = lax.neg(betaln(a, b))
   y = lax.div(lax.sub(x, loc), scale)
   log_linear_term = lax.add(xlogy(lax.sub(a, one), y),
