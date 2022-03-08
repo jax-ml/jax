@@ -29,13 +29,13 @@ if xla_extension_version >= 58:
 
 
 def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False):
-  """Returns a DLPack tensor that encapsulates a DeviceArray `x`.
+  """Returns a DLPack tensor that encapsulates a ``DeviceArray`` `x`.
 
-  Takes ownership of the contents of `x`; leaves `x` in an invalid/deleted
+  Takes ownership of the contents of ``x``; leaves `x` in an invalid/deleted
   state.
 
   Args:
-    x: a `DeviceArray`, on either CPU or GPU.
+    x: a ``DeviceArray``, on either CPU or GPU.
     take_ownership: If ``True``, JAX hands ownership of the buffer to DLPack,
       and the consumer is free to mutate the buffer; the JAX buffer acts as if
       it were deleted. If ``False``, JAX retains ownership of the buffer; it is
@@ -49,9 +49,9 @@ def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False)
       x.device_buffer, take_ownership=take_ownership)
 
 def from_dlpack(dlpack):
-  """Returns a `DeviceArray` representation of a DLPack tensor `dlpack`.
+  """Returns a ``DeviceArray`` representation of a DLPack tensor.
 
-  The returned `DeviceArray` shares memory with `dlpack`.
+  The returned ``DeviceArray`` shares memory with ``dlpack``.
 
   Args:
     dlpack: a DLPack tensor, on either CPU or GPU.

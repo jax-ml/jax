@@ -320,7 +320,7 @@ def normalize(x: Array,
               variance: Optional[Array] = None,
               epsilon: Array = 1e-5,
               where: Optional[Array] = None) -> Array:
-  """Normalizes an array by subtracting mean and dividing by sqrt(var)."""
+  r"""Normalizes an array by subtracting ``mean`` and dividing by :math:`\sqrt{\mathrm{variance}}`."""
   if mean is None:
     mean = jnp.mean(x, axis, keepdims=True, where=where)
   if variance is None:

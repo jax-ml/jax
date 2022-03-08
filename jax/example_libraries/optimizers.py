@@ -16,7 +16,7 @@
 
 You likely do not mean to import this module! The optimizers in this library
 are intended as examples only. If you are looking for a fully featured optimizer
-library, we recommend `optax` (https://github.com/deepmind/optax).
+library, we recommend `Optax`_.
 
 This module contains some convenient optimizer definitions, specifically
 initialization and update functions, which can be used with ndarrays or
@@ -83,6 +83,9 @@ Example Usage:
 
   for i in range(num_steps):
     value, opt_state = step(i, opt_state)
+
+
+.. _Optax: https://github.com/deepmind/optax
 """
 
 from typing import Any, Callable, NamedTuple, Tuple, Union

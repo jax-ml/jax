@@ -27,7 +27,7 @@ zip = safe_zip
 
 
 def ravel_pytree(pytree):
-  """Ravel (i.e. flatten) a pytree of arrays down to a 1D array.
+  """Ravel (flatten) a pytree of arrays down to a 1D array.
 
   Args:
     pytree: a pytree of arrays and scalars to ravel.

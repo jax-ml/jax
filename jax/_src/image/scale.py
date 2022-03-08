@@ -102,11 +102,36 @@ def _scale_and_translate(x, output_shape: core.Shape,
 
 
 class ResizeMethod(enum.Enum):
+  """Image resize method.
+
+  Possible values are:
+
+  NEAREST:
+    Nearest-neighbor interpolation.
+
+  LINEAR:
+    `Linear interpolation`_.
+
+  LANCZOS3:
+    `Lanczos resampling`_, using a kernel of radius 3.
+
+  LANCZOS3:
+    `Lanczos resampling`_, using a kernel of radius 5.
+
+  CUBIC:
+    `Cubic interpolation`_, using the Keys cubic kernel.
+
+  .. _Linear interpolation: https://en.wikipedia.org/wiki/Bilinear_interpolation
+  .. _Cubic interpolation: https://en.wikipedia.org/wiki/Bicubic_interpolation
+  .. _Lanczos resampling: https://en.wikipedia.org/wiki/Lanczos_resampling
+  """
+
   NEAREST = 0
   LINEAR = 1
   LANCZOS3 = 2
   LANCZOS5 = 3
   CUBIC = 4
+
   # Caution: The current resize implementation assumes that the resize kernels
   # are interpolating, i.e. for the identity warp the output equals the input.
   # This is not true for, e.g. a Gaussian kernel, so if such kernels are added
@@ -152,10 +177,10 @@ def scale_and_translate(image, shape: core.Shape,
 
     (x * scale[1] + translation[1], y * scale[0] + translation[0])
 
-  (Note the _inverse_ warp is used to generate the sample locations.)
-  Assumes half-centered pixels, i.e the pixel at integer location row,col has
-  coordinates y, x = row + 0.5, col + 0.5.
-  Similarly for other input image dimensions.
+  (Note the *inverse* warp is used to generate the sample locations.)
+  Assumes half-centered pixels, i.e the pixel at integer location ``row, col``
+  has coordinates ``y, x = row + 0.5, col + 0.5``, and similarly for other input
+  image dimensions.
 
   If an output location(pixel) maps to an input sample location that is outside
   the input boundaries then the value for the output location will be set to
