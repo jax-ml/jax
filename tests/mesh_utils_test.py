@@ -19,6 +19,8 @@ import collections
 import dataclasses
 from typing import Sequence
 
+import numpy as np
+
 from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -30,6 +32,7 @@ from jax._src import test_util
 @dataclasses.dataclass
 class MockTpuDevice:
   """Mock TPU device for testing."""
+  id: int
   platform: str
   device_kind: str
   process_index: int
@@ -46,14 +49,14 @@ def mock_devices(x, y, z, dev_kind, two_cores_per_chip):
       for i in range(0, x, 2):
         # Local 2x2 subgrid of chips, with 2 cores per chip.
         host_devices = [
-            MockTpuDevice('tpu', dev_kind, process_index, (i, j, k), 0),
-            MockTpuDevice('tpu', dev_kind, process_index, (i, j, k), 1),
-            MockTpuDevice('tpu', dev_kind, process_index, (i + 1, j, k), 0),
-            MockTpuDevice('tpu', dev_kind, process_index, (i + 1, j, k), 1),
-            MockTpuDevice('tpu', dev_kind, process_index, (i, j + 1, k), 0),
-            MockTpuDevice('tpu', dev_kind, process_index, (i, j + 1, k), 1),
-            MockTpuDevice('tpu', dev_kind, process_index, (i + 1, j + 1, k), 0),
-            MockTpuDevice('tpu', dev_kind, process_index, (i + 1, j + 1, k), 1),
+            MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i, j, k), 0),
+            MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i, j, k), 1),
+            MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i + 1, j, k), 0),
+            MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i + 1, j, k), 1),
+            MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i, j + 1, k), 0),
+            MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i, j + 1, k), 1),
+            MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i + 1, j + 1, k), 0),
+            MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i + 1, j + 1, k), 1),
         ]
         if two_cores_per_chip:
           # Only include core_on_chip = 0.
@@ -61,6 +64,14 @@ def mock_devices(x, y, z, dev_kind, two_cores_per_chip):
         devices.extend(host_devices)
         # Simulate one process per host (1 host = 2x2x1 slice)
         process_index += 1
+
+  # id grows in (z, y, x) major order
+  for d in devices:
+    i, j, k = d.coords
+    d.id = k*x*y + j*x + i
+    if not two_cores_per_chip:
+      d.id = d.id * 2 + d.core_on_chip
+
   _validate_mocked_process_indices(devices, two_cores_per_chip)
   return devices
 
@@ -86,8 +97,19 @@ def _validate_mocked_process_indices(devices, two_cores_per_chip):
       expected.add((min_coords[0] + x, min_coords[1] + y, min_coords[2]))
     assert set(d.coords for d in local_devices) == expected, local_devices
 
+
+def mock_2x2_devices():
+  """Hard-coded reproduction of jax.devices() output on v3-2x2."""
+  return mock_devices(2, 2, 1, 'TPU v3', False)
+
+
+def mock_4x4_devices():
+  """Hard-coded reproduction of jax.devices() output on v3-4x4."""
+  return mock_devices(4, 4, 1, 'TPU v3', False)
+
+
 def mock_8x8_devices():
-  """Hard-coded reproduction of jax.devices() output on 8x8."""
+  """Hard-coded reproduction of jax.devices() output on v3-8x8."""
   return mock_devices(8, 8, 1, 'TPU v3', False)
 
 
@@ -184,6 +206,28 @@ class PartitioningTest(test_util.JaxTestCase):
     _, assignment = mesh_utils._create_device_mesh_for_tpu_v4(
         physical_mesh, mesh_shape)
     self.assertEqual(assignment, expected_assignment)
+
+  @parameterized.named_parameters(
+      # Physical ring order over tray
+      ('2x2_1d', mock_2x2_devices, [8], [0, 1, 2, 3, 6, 7, 4, 5]),
+      # Reshaped physical ring order over tray
+      ('2x2_2d', mock_2x2_devices, [2, 4], [[0, 1, 2, 3],
+                                            [6, 7, 4, 5]]),
+      # 4 per-tray rings
+      ('4x4_2d', mock_4x4_devices, [4, 8], [[ 0,  1,  2,  3, 10, 11,  8,  9],
+                                            [ 4,  5,  6,  7, 14, 15, 12, 13],
+                                            [16, 17, 18, 19, 26, 27, 24, 25],
+                                            [20, 21, 22, 23, 30, 31, 28, 29]]),
+  )
+  def test_v3_create_device_mesh(self, devices, mesh_shape,
+                                 expected_device_id_mesh):
+    jax_local_devices_from_process_0 = mock_2x2_devices()
+    global_devices = devices()
+    mesh = mesh_utils._create_device_mesh(
+        jax_local_devices_from_process_0, global_devices,
+        global_devices[0].device_kind, mesh_shape, contiguous_submeshes=False)
+    device_id_mesh = np.vectorize(lambda d: d.id)(mesh)
+    self.assertAllClose(np.array(expected_device_id_mesh), device_id_mesh)
 
   def _assert_contiguous_submeshes(self, global_device_mesh):
     global_mesh = Mesh(global_device_mesh, list(range(global_device_mesh.ndim)))
