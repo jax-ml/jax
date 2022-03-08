@@ -248,7 +248,7 @@ from jax._src.lax.lax import (
   zeros_like_array as zeros_like_array,
 )
 from jax._src.lax.lax import (
-  _reduce_sum, _reduce_max, _reduce_min, _reduce_or, _reduce_and,
+  _reduce_max, _reduce_min, _reduce_or, _reduce_and,
   _check_user_dtype_supported,
   _upcast_fp16_for_computation, _broadcasting_shape_rule,
   _eye, _tri, _delta, _ones, _zeros, _dilate_shape)

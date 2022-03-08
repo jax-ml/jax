@@ -28,13 +28,14 @@ from jax import core
 from jax import lax
 from jax import numpy as jnp
 from jax import linear_util as lu
-from jax._src import test_util as jtu
-from jax._src.abstract_arrays import make_shaped_array
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax.interpreters import partial_eval as pe
 
+from jax._src import test_util as jtu
+from jax._src.abstract_arrays import make_shaped_array
+from jax._src.lax import lax as lax_internal
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -610,7 +611,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
     def f(x, y):
       z = lax.mul(x, y)
       w = lax.sin(z)
-      u = lax._reduce_sum(w, [0])
+      u = lax_internal._reduce_sum(w, [0])
       return (u,)
 
     jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],

@@ -617,9 +617,11 @@ def _gen_reduce_choose_taylor_rule(chooser_fun):
     location_indicators = lax.convert_element_type(
         lax_internal._eq_meet(operand, lax.reshape(primal_out, shape)),
         primal_dtype)
-    counts = lax._reduce_sum(location_indicators, axes)
+    counts = lax_internal._reduce_sum(location_indicators, axes)
     def _reduce_chooser_taylor_rule(g):
-      return lax.div(lax._reduce_sum(lax.mul(g, location_indicators), axes), counts)
+      return lax.div(
+          lax_internal._reduce_sum(lax.mul(g, location_indicators), axes),
+          counts)
     series_out = [_reduce_chooser_taylor_rule(g) for g in gs]
     return primal_out, series_out
   return chooser_taylor_rule
