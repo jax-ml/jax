@@ -421,7 +421,7 @@ def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
   DeviceArray([[ 0.79611576,  1.2789248 ,  1.2896855 ],
                [-1.0108745 , -1.0855657 ,  0.17398663]], dtype=float32)
 
-  .. _He uniform initializer: https://arxiv.org/abs/1706.02515
+  .. _He uniform initializer: https://arxiv.org/abs/1502.01852
   """
   return variance_scaling(2.0, "fan_in", "uniform", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
@@ -459,7 +459,7 @@ def he_normal(in_axis: Union[int, Sequence[int]] = -2,
   DeviceArray([[ 0.6604483 ,  1.1900088 ,  1.2047218 ],
                [-0.87225807, -0.95321447,  0.1369438 ]], dtype=float32)
 
-  .. _He normal initializer: https://arxiv.org/abs/1706.02515
+  .. _He normal initializer: https://arxiv.org/abs/1502.01852
   """
   return variance_scaling(2.0, "fan_in", "truncated_normal", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
