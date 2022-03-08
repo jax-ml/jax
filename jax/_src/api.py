@@ -55,6 +55,7 @@ from jax._src.api_util import (
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -1084,7 +1085,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
           f_partial, *dyn_args, has_aux=True, reduce_axes=reduce_axes)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(jax.lax._one(ans))
+    g = vjp_py(lax_internal._one(ans))
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -1370,7 +1371,7 @@ def _possible_downcast(x, example):
     x = x.real
   dtype = None if example is None else _dtype(example)
   weak_type = None if example is None else dtypes.is_weakly_typed(example)
-  return jax._src.lax.lax._convert_element_type(x, dtype, weak_type)
+  return lax_internal._convert_element_type(x, dtype, weak_type)
 
 def _unravel_array_into_pytree(pytree, axis, example, arr):
   """Unravel an array into a PyTree with a given structure.
