@@ -56,24 +56,32 @@ def setnewattr(obj, name, val):
 
 Bool = Union[bool, core.Tracer]
 Int = Union[int, core.Tracer]
+Payload = Union[np.ndarray, jnp.ndarray, core.Tracer]
 
+# For now, the payload needs to be a fixed-size array (int32 scalar).
+# TODO(lenamartens): Relax this fixed-size constraint.
+init_payload = np.ones((), np.int32)
 
 @dataclass(frozen=True)
 class Error:
   err: Bool
   code: Int
   msgs: Dict[int, str]
+  # There might be many msgs with a {payload}, but only one msg will
+  # ever be active for an Error instance, so only one Payload is tracked.
+  payload: Payload = init_payload
 
   def get(self) -> Optional[str]:
     """Returns error message is error happened, None if no error happened."""
     assert np.shape(self.err) == np.shape(self.code)
     if np.size(self.err) == 1:
       if self.err:
-        return self.msgs[int(self.code)]
+        return self.msgs[int(self.code)].format(payload=self.payload)
     else:
-      return '\n'.join(f'at mapped index {", ".join(map(str, idx))}: '  # type: ignore
-                       f'{self.msgs[int(self.code[idx])]}'              # type: ignore
-                       for idx, e in np.ndenumerate(self.err) if e) or None
+      return '\n'.join(
+          f'at mapped index {", ".join(map(str, idx))}: '  # type: ignore
+          f'{self.msgs[int(self.code[idx])].format(payload=self.payload[idx])}'  # type: ignore
+          for idx, e in np.ndenumerate(self.err) if e) or None
     return None
 
   def throw(self):
@@ -82,19 +90,25 @@ class Error:
     if err:
       raise ValueError(err)
 
+
 register_pytree_node(Error,
-                     lambda e: ((e.err, e.code), tuple(sorted(e.msgs.items()))),
-                     lambda msgs, data: Error(*data, dict(msgs)))  # type: ignore
+                     lambda e: ((e.err, e.code, e.payload),
+                                tuple(sorted(e.msgs.items()))),
+                     lambda msgs, data: Error(data[0], data[1],  # type: ignore
+                                              dict(msgs), data[2]))  # type: ignore
 
 init_error = Error(False, 0, {})
 next_code = it.count(1).__next__  # globally unique ids, could be uuid4
 
 
-def assert_func(error: Error, pred: Bool, msg: str) -> Error:
+def assert_func(error: Error, pred: Bool, msg: str,
+                payload: Optional[Payload]) -> Error:
   code = next_code()
+  payload = init_payload if payload is None else payload
   out_err = error.err | jnp.logical_not(pred)
   out_code = lax.select(error.err, error.code, code)
-  return Error(out_err, out_code, {code: msg, **error.msgs})
+  out_payload = lax.select(error.err, error.payload, payload)
+  return Error(out_err, out_code, {code: msg, **error.msgs}, out_payload)
 
 
 ## Checkify transformation for plumbing functional error values.
@@ -138,10 +152,11 @@ class CheckifyTrace(core.Trace):
     e = popattr(self.main, 'error')
     f, msgs = checkify_subtrace(f, self.main, tuple(e.msgs.items()))
     if 'donated_invars' in params:
-      params = dict(params, donated_invars=(False, False,
+      params = dict(params, donated_invars=(False, False, False,
                                             *params['donated_invars']))
-    err, code, *out_vals = primitive.bind(f, e.err, e.code, *in_vals, **params)
-    setnewattr(self.main, 'error', Error(err, code, msgs()))
+    err, code, payload, *out_vals = primitive.bind(f, e.err, e.code, e.payload,
+                                                   *in_vals, **params)
+    setnewattr(self.main, 'error', Error(err, code, msgs(), payload))
     return [CheckifyTracer(self, x) for x in out_vals]
 
   def process_map(self, primitive, f, tracers, params):
@@ -151,42 +166,43 @@ class CheckifyTrace(core.Trace):
 
     @as_hashable_function(closure=params['out_axes_thunk'])
     def new_out_axes_thunk():
-      return (0, 0, *params['out_axes_thunk']())
+      return (0, 0, 0, *params['out_axes_thunk']())
 
-    params_ = dict(params, in_axes=(None, None, *params['in_axes']),
+    params_ = dict(params, in_axes=(None, None, None, *params['in_axes']),
                    out_axes_thunk=new_out_axes_thunk,
-                   donated_invars=(False, False, *params['donated_invars']))
-    errs, codes, *outs = primitive.bind(f, e.err, e.code, *in_vals, **params_)
-    err, code = _reduce_any_error(errs, codes)
-    setnewattr(self.main, 'error', Error(err, code, msgs()))
+                   donated_invars=(False, False, False, *params['donated_invars']))
+    errs, codes, payloads, *outs = primitive.bind(f, e.err, e.code, e.payload,
+                                                  *in_vals, **params_)
+    err, code, payload = _reduce_any_error(errs, codes, payloads)
+    setnewattr(self.main, 'error', Error(err, code, msgs(), payload))
     return [CheckifyTracer(self, x) for x in outs]
 
   def post_process_call(self, primitive, tracers, params):
     vals = [t.val for t in tracers]
     main = self.main
     e = popattr(main, 'error')
-    err, code, main.msgs = e.err, e.code, e.msgs
+    err, code, payload, main.msgs = e.err, e.code, e.payload, e.msgs
     def todo(vals):
-      err, code, *vals = vals
-      setnewattr(main, 'error', Error(err, code, popattr(main, 'msgs')))
+      err, code, payload, *vals = vals
+      setnewattr(main, 'error', Error(err, code, popattr(main, 'msgs'), payload))
       trace = main.with_cur_sublevel()
       return [CheckifyTracer(trace, x) for x in vals]
-    return (err, code, *vals), todo
+    return (err, code, payload, *vals), todo
 
   def post_process_map(self, primitive, tracers, params):
     vals = [t.val for t in tracers]
     main = self.main
     e = popattr(main, 'error')
-    err, code, main.msgs = e.err, e.code, e.msgs
+    err, code, payload, main.msgs = e.err, e.code, e.payload, e.msgs
     def todo(vals):
-      errs, codes, *vals = vals
-      err, code = _reduce_any_error(errs, codes)
-      setnewattr(main, 'error', Error(err, code, popattr(main, 'msgs')))
+      errs, codes, payloads, *vals = vals
+      err, code, payload = _reduce_any_error(errs, codes, payloads)
+      setnewattr(main, 'error', Error(err, code, popattr(main, 'msgs'), payload))
       trace = main.with_cur_sublevel()
       return [CheckifyTracer(trace, x) for x in vals]
     def out_axes_transform(out_axes):
-      return (0, 0, *out_axes)
-    return (err, code, *vals), (todo, out_axes_transform)
+      return (0, 0, 0, *out_axes)
+    return (err, code, payload, *vals), (todo, out_axes_transform)
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
     in_vals = [t.val for t in tracers]
@@ -194,9 +210,10 @@ class CheckifyTrace(core.Trace):
     msgs = tuple(e.msgs.items())
     fun, msgs1 = checkify_subtrace(fun, self.main, msgs)
     jvp, msgs2 = checkify_custom_jvp_subtrace(jvp, self.main, msgs)
-    err, code, *out_vals = prim.bind(fun, jvp, e.err, e.code, *in_vals)
+    err, code, payload, *out_vals = prim.bind(fun, jvp, e.err, e.code,
+                                              e.payload, *in_vals)
     fst, out_msgs = lu.merge_linear_aux(msgs1, msgs2)
-    setattr(self.main, 'error', Error(err, code, out_msgs))
+    setattr(self.main, 'error', Error(err, code, out_msgs, payload))
     return [CheckifyTracer(self, x) for x in out_vals]
 
   def post_process_custom_jvp_call(self, out_tracers, jvp_was_run):
@@ -208,13 +225,13 @@ class CheckifyTrace(core.Trace):
     vals = [t.val for t in out_tracers]
     main = self.main
     e = popattr(main, 'error')
-    err, code, main.msgs = e.err, e.code, e.msgs
+    err, code, payload, main.msgs = e.err, e.code, e.payload, e.msgs
     def todo(vals):
-      err, code, *vals = vals
-      setnewattr(main, 'error', Error(err, code, popattr(main, 'msgs')))
+      err, code, payload, *vals = vals
+      setnewattr(main, 'error', Error(err, code, popattr(main, 'msgs'), payload))
       trace = main.with_cur_sublevel()
       return [CheckifyTracer(trace, x) for x in vals]
-    return (err, code, *vals), todo
+    return (err, code, payload, *vals), todo
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
     in_vals = [t.val for t in tracers]
@@ -222,18 +239,20 @@ class CheckifyTrace(core.Trace):
     msgs = tuple(e.msgs.items())
     fun, msgs1 = checkify_subtrace(fun, self.main, msgs)
     fwd, msgs2 = checkify_custom_vjp_subtrace(fwd, self.main, msgs)
-    out = prim.bind(fun, fwd, bwd, e.err, e.code, *in_vals, out_trees=out_trees)
+    out = prim.bind(fun, fwd, bwd, e.err, e.code, e.payload,
+                    *in_vals, out_trees=out_trees)
     fst, out_msgs = lu.merge_linear_aux(msgs1, msgs2)
     if fst:
-      err, code, *out = out
+      err, code, payload, *out = out
     else:
-      err, code = e.err, e.code  # forward input error values to output
-    setattr(self.main, 'error', Error(err, code, out_msgs))
+      err, code, payload = e.err, e.code, e.payload  # forward input error values to output
+    setattr(self.main, 'error', Error(err, code, out_msgs, payload))
     return [CheckifyTracer(self, x) for x in out]
 
-def _reduce_any_error(errs, codes):
+def _reduce_any_error(errs, codes, payloads):
   errs_, codes_ = lax.sort_key_val(errs, codes, dimension=0)
-  return errs_[-1], codes_[-1]
+  errs_, payload_ = lax.sort_key_val(errs, payloads, dimension=0)
+  return errs_[-1], codes_[-1], payload_[-1]
 
 ErrorCheckRule = Callable  # (Error, FrozenSet[ErrorCategory], *in_vals, **params) -> (Any, Error)
 error_checks: Dict[core.Primitive, ErrorCheckRule] = {}
@@ -242,27 +261,29 @@ def checkify_flat(fun: lu.WrappedFun, enabled_errors: FrozenSet['ErrorCategory']
                   *args):
   fun, msgs = checkify_subtrace(fun)
   fun = checkify_traceable(fun, tuple(init_error.msgs.items()), enabled_errors)
-  err, code, *outvals = fun.call_wrapped(init_error.err, init_error.code, *args)
-  return (err, code, outvals), msgs()
+  err, code, payload, *outvals = fun.call_wrapped(init_error.err,
+                                                  init_error.code,
+                                                  init_error.payload, *args)
+  return (err, code, payload, outvals), msgs()
 
 @lu.transformation
-def checkify_traceable(msgs, enabled_errors, err, code, *args):
+def checkify_traceable(msgs, enabled_errors, err, code, payload, *args):
   with core.new_main(CheckifyTrace, enabled_errors=enabled_errors) as main:
-    outs = yield (main, msgs, err, code, *args), {}
+    outs = yield (main, msgs, err, code, payload, *args), {}
     del main
   yield outs
 
 @lu.transformation_with_aux
-def checkify_subtrace(main, msgs, err, code, *args):
-  setnewattr(main, 'error', Error(err, code, dict(msgs)))
+def checkify_subtrace(main, msgs, err, code, payload, *args):
+  setnewattr(main, 'error', Error(err, code, dict(msgs), payload))
   trace = main.with_cur_sublevel()
   in_tracers = [CheckifyTracer(trace, x) for x in args]
   out = yield in_tracers, {}
   out_tracers = map(trace.full_raise, out)
   out_vals = [t.val for t in out_tracers]
-  err, code, msgs = main.error.err, main.error.code, main.error.msgs
+  err, code, payload, msgs = main.error.err, main.error.code, main.error.payload, main.error.msgs
   del main.error
-  yield (err, code, *out_vals), msgs
+  yield (err, code, payload, *out_vals), msgs
 
 @lu.transformation_with_aux
 def checkify_custom_jvp_subtrace(main, msgs, *args):
@@ -284,18 +305,19 @@ def checkify_custom_jvp_subtrace(main, msgs, *args):
   del main
   n, ragged = divmod(len(args), 2)
   assert not ragged
-  (err,), (code,), primals = split_list(args[:n], [1, 1])
-  (err_dot,), (code_dot,), tangents = split_list(args[n:], [1, 1])
+  (err,), (code,), (payload,), primals = split_list(args[:n], [1, 1, 1])
+  (err_dot,), (code_dot,), (pl_dot,), tangents = split_list(args[n:], [1, 1, 1])
   outs = yield (*primals, *tangents), {}
   m, ragged = divmod(len(outs), 2)
   assert not ragged
   out_primals, out_tangents = outs[:m], outs[m:]
-  yield (err, code, *out_primals, err_dot, code_dot, *out_tangents), dict(msgs)
+  yield (err, code, payload, *out_primals,
+         err_dot, code_dot, pl_dot, *out_tangents), dict(msgs)
 
 @lu.transformation_with_aux
-def checkify_custom_vjp_subtrace(main, msgs, err, code, *args):
+def checkify_custom_vjp_subtrace(main, msgs, err, code, payload, *args):
   # We don't add any checks; just drop input error values.
-  del main, err, code
+  del main, err, code, payload
   outs = yield args, {}
   yield outs, dict(msgs)
 
@@ -309,7 +331,8 @@ def checkify_fun_to_jaxpr(f, error, enabled_errors, in_avals):
   f = checkify_traceable(f, tuple(error.msgs.items()), enabled_errors)
   err_aval = core.raise_to_shaped(core.get_aval(error.err))
   code_aval = core.raise_to_shaped(core.get_aval(error.code))
-  avals_in = [err_aval, code_aval, *in_avals]
+  payload_aval = core.raise_to_shaped(core.get_aval(error.payload))
+  avals_in = [err_aval, code_aval, payload_aval, *in_avals]
   jaxpr_out, _, literals_out = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, literals_out), msgs()
 
@@ -411,21 +434,21 @@ def check_error(error: Error) -> None:
   >>> error, _ = checkify.checkify(with_inner_jit)(-1)
   """
   if np.shape(error.err):
-    err, code = _reduce_any_error(error.err, error.code)
+    err, code, payload = _reduce_any_error(error.err, error.code, error.payload)
   else:
-    err, code = error.err, error.code
-  return assert_p.bind(~err, code, msgs=error.msgs)
+    err, code, payload = error.err, error.code, error.payload
+  return assert_p.bind(~err, code, payload, msgs=error.msgs)
 
 assert_p = core.Primitive('assert') # TODO: rename to check?
 assert_p.multiple_results = True  # zero results
 
 @assert_p.def_impl
-def assert_impl(pred, code, *, msgs):
-  Error(~pred, code, msgs).throw()
+def assert_impl(pred, code, payload, *, msgs):
+  Error(~pred, code, msgs, payload).throw()
   return []
 
 @assert_p.def_abstract_eval
-def assert_abstract_eval(pred, code, *, msgs):
+def assert_abstract_eval(pred, code, payload, *, msgs):
   # TODO(lenamartens) add in-depth explanation to link to in module docs.
   raise ValueError('Cannot abstractly evaluate a checkify.check which was not'
                    ' functionalized. This probably means you tried to stage'
@@ -444,7 +467,7 @@ def nan_error_check(prim, error, enabled_errors, *in_vals, **params):
     return out, error
   no_nans = jnp.logical_not(jnp.any(jnp.isnan(out)))
   msg = f"nan generated by primitive {prim.name} at {summary()}"
-  return out, assert_func(error, no_nans, msg)
+  return out, assert_func(error, no_nans, msg, None)
 
 def gather_error_check(error, enabled_errors, operand, start_indices, *,
                        dimension_numbers, slice_sizes, unique_indices,
@@ -460,13 +483,21 @@ def gather_error_check(error, enabled_errors, operand, start_indices, *,
   # compare to OOB masking logic in lax._gather_translation_rule
   dnums = dimension_numbers
   operand_dims = np.array(operand.shape)
+  num_batch_dims = len(start_indices.shape) - 1
 
   upper_bound = operand_dims[np.array(dnums.start_index_map)]
   upper_bound -= np.array(slice_sizes)[np.array(dnums.start_index_map)]
-  all_inbounds = jnp.all((start_indices >= 0) & (start_indices <= upper_bound))
+  upper_bound = jnp.expand_dims(upper_bound, axis=tuple(range(num_batch_dims)))
+  in_bounds = (start_indices >= 0) & (start_indices <= upper_bound)
 
-  msg = f"out-of-bounds indexing at {summary()}"
-  return out, assert_func(error, all_inbounds, msg)
+  msg = f'out-of-bounds indexing at {summary()}: '
+  msg += 'index {payload} is out of bounds for '
+  msg += f'array of shape {operand.shape}.'
+  start_indices, in_bounds = jnp.ravel(start_indices), jnp.ravel(in_bounds)
+  # Report first index which is out-of-bounds (in row-major order).
+  payload = start_indices[jnp.argsort(in_bounds, axis=0)[0]]
+
+  return out, assert_func(error, jnp.all(in_bounds), msg, payload)
 error_checks[lax.gather_p] = gather_error_check
 
 def div_error_check(error, enabled_errors, x, y):
@@ -474,7 +505,7 @@ def div_error_check(error, enabled_errors, x, y):
   if ErrorCategory.DIV in enabled_errors:
     all_nonzero = jnp.logical_not(jnp.any(jnp.equal(y, 0)))
     msg = f'divided by zero at {summary()}'
-    error = assert_func(error, all_nonzero, msg)
+    error = assert_func(error, all_nonzero, msg, None)
   return nan_error_check(lax.div_p, error, enabled_errors, x, y)
 error_checks[lax.div_p] = div_error_check
 
@@ -515,11 +546,11 @@ def scatter_error_check(prim, error, enabled_errors, operand, indices, updates,
 
   in_bounds = scatter_in_bounds(operand, indices, updates, dimension_numbers)
   oob_msg = f'out-of-bounds indexing while updating at {summary()}'
-  oob_error = assert_func(error, in_bounds, oob_msg)
+  oob_error = assert_func(error, in_bounds, oob_msg, None)
 
   no_nans = jnp.logical_not(jnp.any(jnp.isnan(out)))
   nan_msg = f'nan generated by primitive {prim.name} at {summary()}'
-  return out, assert_func(oob_error, no_nans, nan_msg)
+  return out, assert_func(oob_error, no_nans, nan_msg, None)
 error_checks[lax.scatter_p] = partial(scatter_error_check, lax.scatter_p)
 error_checks[lax.scatter_add_p] = partial(scatter_error_check, lax.scatter_add_p)
 error_checks[lax.scatter_mul_p] = partial(scatter_error_check, lax.scatter_mul_p)
@@ -529,28 +560,28 @@ error_checks[lax.scatter_max_p] = partial(scatter_error_check, lax.scatter_max_p
 def cond_error_check(error, enabled_errors, index, *ops, branches, linear):
   new_branches, msgs_ = unzip2(checkify_jaxpr(jxpr, error, enabled_errors)
                                for jxpr in branches)
-  new_linear = (False, False, *linear)
-  err, code, *outs = lax.cond_p.bind(
-      index, error.err, error.code, *ops,
+  new_linear = (False, False, False, *linear)
+  err, code, payload, *outs = lax.cond_p.bind(
+      index, error.err, error.code, error.payload, *ops,
       branches=tuple(new_branches), linear=new_linear)
   new_msgs = {k:v for d in it.chain([error.msgs], msgs_) for k, v in d.items()}
-  return outs, Error(err, code, new_msgs)
+  return outs, Error(err, code, new_msgs, payload)
 error_checks[lax.cond_p] = cond_error_check
 
 def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
                      num_consts, num_carry, linear, unroll):
   consts, carry, xs = split_list(in_flat, [num_consts, num_carry])
   checked_jaxpr_, msgs_ = checkify_jaxpr(jaxpr, error, enabled_errors)
-  tomove = [False] * 2 + [True] * len(consts) + [False] * (len(carry) + len(xs))
+  tomove = [False] * 3 + [True] * len(consts) + [False] * (len(carry) + len(xs))
   checked_jaxpr = pe.move_binders_to_front(checked_jaxpr_, tomove)
-  new_linear = (False, False, *linear)
-  new_in_flat = [*consts, error.err, error.code, *carry, *xs]
-  err, code, *outs = lax.scan_p.bind(
+  new_linear = (False, False, False, *linear)
+  new_in_flat = [*consts, error.err, error.code, error.payload, *carry, *xs]
+  err, code, payload, *outs = lax.scan_p.bind(
       *new_in_flat, reverse=reverse, length=length, jaxpr=checked_jaxpr,
-      num_consts=len(consts), num_carry=len(carry)+2,
+      num_consts=len(consts), num_carry=len(carry)+3,
       linear=new_linear, unroll=unroll)
   new_msgs = {**error.msgs, **msgs_}
-  return outs, Error(err, code, new_msgs)
+  return outs, Error(err, code, new_msgs, payload)
 error_checks[lax.scan_p] = scan_error_check
 
 def checkify_while_body_jaxpr(cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts):
@@ -568,10 +599,12 @@ def ignore_errors_jaxpr(jaxpr, error):
   """Constructs a jaxpr which takes two extra args but ignores them."""
   err_aval = core.raise_to_shaped(core.get_aval(error.err))
   code_aval = core.raise_to_shaped(core.get_aval(error.code))
+  payload_aval = core.raise_to_shaped(core.get_aval(error.payload))
   consts = jaxpr.consts
   jaxpr = jaxpr.jaxpr
   new_vars = core.gensym([jaxpr])
-  new_invars = (new_vars(err_aval), new_vars(code_aval), *jaxpr.invars)
+  new_invars = (new_vars(err_aval), new_vars(code_aval),
+                new_vars(payload_aval), *jaxpr.invars)
   new_jaxpr = core.Jaxpr(jaxpr.constvars, new_invars,
                          jaxpr.outvars, jaxpr.eqns)
   return core.ClosedJaxpr(new_jaxpr, consts)
@@ -582,23 +615,25 @@ def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,
 
   # Check if the first cond application will error.
   cond_jaxpr_, msgs_cond = checkify_jaxpr(cond_jaxpr, error, enabled_errors)
-  cond_err, cond_code, _ = core.jaxpr_as_fun(cond_jaxpr_)(error.err, error.code,
-                                                          *c_consts, *carry)
+  cond_err, cond_code, cond_payload, _ = core.jaxpr_as_fun(cond_jaxpr_)(
+      error.err, error.code, error.payload, *c_consts, *carry)
   del cond_jaxpr_
 
   checked_body_jaxpr_, msgs_body = checkify_while_body_jaxpr(
     cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts)
-  to_move = [False] * 2 + [True] * body_nconsts + [False] * len(carry)
+  to_move = [False] * 3 + [True] * body_nconsts + [False] * len(carry)
   checked_body_jaxpr = pe.move_binders_to_front(checked_body_jaxpr_, to_move)
+
   compat_cond_jaxpr_ = ignore_errors_jaxpr(cond_jaxpr, error)
-  to_move = [False] * 2 + [True] * cond_nconsts + [False] * len(carry)
+  to_move = [False] * 3 + [True] * cond_nconsts + [False] * len(carry)
   compat_cond_jaxpr = pe.move_binders_to_front(compat_cond_jaxpr_, to_move)
-  new_in_flat = [*c_consts, *b_consts, cond_err, cond_code, *carry]
-  err, code, *out = lax.while_p.bind(
+  new_in_flat = [*c_consts, *b_consts, cond_err, cond_code, cond_payload, *carry]
+
+  err, code, payload, *out = lax.while_p.bind(
       *new_in_flat, cond_nconsts=cond_nconsts, cond_jaxpr=compat_cond_jaxpr,
       body_nconsts=body_nconsts, body_jaxpr=checked_body_jaxpr)
   new_msgs = {**error.msgs, **msgs_body, **msgs_cond}
-  return out, Error(err, code, new_msgs)
+  return out, Error(err, code, new_msgs, payload)
 error_checks[lax.while_p] = while_loop_error_check
 
 def add_nan_check(prim):
@@ -666,13 +701,13 @@ add_nan_check(lax.max_p)
 add_nan_check(lax.min_p)
 
 
-def assert_discharge_rule(error, enabled_errors, pred, code, *, msgs):
+def assert_discharge_rule(error, enabled_errors, pred, code, payload, *, msgs):
   if ErrorCategory.USER_CHECK not in enabled_errors:
     return [], error
 
   out_err = error.err | jnp.logical_not(pred)
   out_code = lax.select(error.err, error.code, code)
-  return [], Error(out_err, out_code, {**error.msgs, **msgs})
+  return [], Error(out_err, out_code, {**error.msgs, **msgs}, payload)
 error_checks[assert_p] = assert_discharge_rule
 
 
@@ -754,7 +789,7 @@ def checkify(fun: Callable[..., Out],
   def checked_fun(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     f, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    (err, code, out_flat), msgs = checkify_flat(f, errors, *args_flat)
+    (err, code, payload, out_flat), msgs = checkify_flat(f, errors, *args_flat)
     out = tree_unflatten(out_tree(), out_flat)
-    return Error(err, code, msgs), out
+    return Error(err, code, msgs, payload), out
   return checked_fun
