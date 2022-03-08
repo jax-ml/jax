@@ -138,7 +138,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
     Returns the buffer object (`self`).
     """
     self._check_if_deleted()
-    self.device_buffer.block_host_until_ready()  # pytype: disable=attribute-error
+    self.device_buffer.block_until_ready()
     return self
 
   @property

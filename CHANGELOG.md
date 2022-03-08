@@ -24,6 +24,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jaxlib 0.3.1 (Unreleased)
 * Changes
+* Deprecations:
+  * The ``.block_host_until_ready()`` method on JAX arrays has been deprecated.
+    Use ``.block_until_ready()`` instead.
 
 ## jax 0.3.1 (Feb 18, 2022)
 * [GitHub

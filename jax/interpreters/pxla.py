@@ -653,7 +653,7 @@ def _sda_check_if_deleted(self):
 def _sda_block_until_ready(self):
   self._check_if_deleted()
   for buf in self.device_buffers:
-    buf.block_host_until_ready()
+    buf.block_until_ready()
   return self
 
 
