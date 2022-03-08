@@ -248,7 +248,6 @@ from jax._src.lax.lax import (
   zeros_like_array as zeros_like_array,
 )
 from jax._src.lax.lax import (
-  _check_user_dtype_supported,
   _upcast_fp16_for_computation, _broadcasting_shape_rule,
   _eye, _tri, _delta, _ones, _zeros, _dilate_shape)
 from jax._src.lax.slicing import (
