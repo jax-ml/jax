@@ -4780,7 +4780,7 @@ def _einsum(operands: Sequence,
     for name, count in counts.items():
       if count > 1:
         axes = [i for i, n in enumerate(names) if n == name]
-        eye = lax._delta(operand.dtype, operand.shape, axes)
+        eye = lax_internal._delta(operand.dtype, operand.shape, axes)
         if name not in keep_names:
           operand = sum(operand * eye, axes)
           names = names.replace(name, '')
