@@ -22,6 +22,7 @@ from absl import logging
 import jax
 import numpy as np
 
+_TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
 
@@ -62,6 +63,9 @@ _TRANSPOSE_TRICKS: Dict[Tuple[int, ...],
         (8, 256): (0, 2, 1),
     },
 }
+
+# Physical ordering of core IDs in a tray that creates a ring
+_TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
 
 
 def _create_device_mesh_for_tpu_v4(
@@ -245,13 +249,24 @@ def _create_device_mesh(process_0_devices, global_devices, device_kind,
                         mesh_shape: Sequence[int],
                         contiguous_submeshes: bool = False) -> np.ndarray:
   # TODO(zhangqiaorjc): Handle TPU versions other than v4 more generally.
-  if device_kind == _TPU_V3:
-    device_mesh = np.asarray(global_devices).reshape(mesh_shape)
-    if mesh_shape[-1] == 8:
-      logging.info('Re-order TPUv3 device mesh for better performance.')
-      perm = np.array([0, 1, 2, 3, 6, 7, 4, 5])
-      device_mesh = device_mesh[:, :, perm]
-    return device_mesh
+  if device_kind in (_TPU_V2, _TPU_V3):
+    if len(global_devices) == 8:
+      logging.info('Reordering mesh to physical ring order on single-tray TPU v2/v3.')
+      device_mesh = np.asarray(global_devices)
+      device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
+      device_mesh = device_mesh.reshape(mesh_shape)
+      return device_mesh
+    elif mesh_shape[-1] == 8:
+      device_mesh = np.asarray(global_devices).reshape(mesh_shape)
+      logging.info('Reordering mesh to physical ring order on each TPU v2/v3 tray.')
+      perm = np.array(_TRAY_RING_ORDER)
+      device_mesh = device_mesh[..., perm]
+      return device_mesh
+    else:
+      # TODO(skye): implement 2D mesh_shape logic here:
+      # https://github.com/tensorflow/lingvo/blob/0df40cf604dfcd14e28f7087d73687a0bd2fe5c6/lingvo/core/gshard_utils.py#L187
+      # (possibly replaces above mesh_shape[-1] == 8 case)
+      return np.asarray(global_devices).reshape(mesh_shape)
   elif device_kind == _TPU_V4:
     physical_mesh = _jax_devices_order_normalized(
         process_0_devices, global_devices)
