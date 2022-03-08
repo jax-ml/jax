@@ -21,6 +21,7 @@ import warnings
 import numpy as np
 
 from jax import core
+from jax import lax
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.experimental.sparse._base import JAXSparse
@@ -45,6 +46,7 @@ Shape = Tuple[int, ...]
 
 class COOInfo(NamedTuple):
   shape: Shape
+  rows_sorted: bool = False
 
 
 @tree_util.register_pytree_node_class
@@ -56,16 +58,29 @@ class COO(JAXSparse):
   shape: Tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
-  _info = property(lambda self: COOInfo(self.shape))
+  _info = property(lambda self: COOInfo(self.shape, self._rows_sorted))
   _bufs = property(lambda self: (self.data, self.row, self.col))
+  _rows_sorted: bool
 
-  def __init__(self, args, *, shape):
+  def __init__(self, args, *, shape, rows_sorted=False):
     self.data, self.row, self.col = _safe_asarray(args)
+    self._rows_sorted = rows_sorted
     super().__init__(args, shape=shape)
 
   @classmethod
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32):
     return coo_fromdense(mat, nse=nse, index_dtype=index_dtype)
+
+  def _sort_rows(self):
+    """Return a copy of the COO matrix with sorted rows.
+
+    If self._rows_sorted is True, this returns ``self`` without a copy.
+    """
+    # TODO(jakevdp): would be benefit from lowering this to cusparse sort_rows utility?
+    if self._rows_sorted:
+      return self
+    row, col, data = lax.sort((self.row, self.col, self.data), num_keys=1)
+    return self.__class__((data, row, col), shape=self.shape, rows_sorted=True)
 
   @classmethod
   def _empty(cls, shape, *, dtype=None, index_dtype='int32'):
@@ -83,7 +98,7 @@ class COO(JAXSparse):
   def transpose(self, axes=None):
     if axes is not None:
       raise NotImplementedError("axes argument to transpose()")
-    return COO((self.data, self.col, self.row), shape=self.shape[::-1])
+    return COO((self.data, self.col, self.row), shape=self.shape[::-1], rows_sorted=False)
 
   def tree_flatten(self):
     return (self.data, self.row, self.col), self._info._asdict()
@@ -149,6 +164,13 @@ def _coo_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_todense_translation_rule(ctx, avals_in, avals_out, data, row, col,
                                          spinfo=spinfo)
+  if not spinfo.rows_sorted:
+    warnings.warn("coo_todense GPU lowering requires matrices with sorted rows. To sort the rows "
+                  "in your matrix, use e.g. mat = mat._sort_rows(). Falling back to the default "
+                  "implementation.", CuSparseEfficiencyWarning)
+    return _coo_todense_translation_rule(ctx, avals_in, avals_out, data, row, col,
+                                         spinfo=spinfo)
+
   if cusparse is not None:
     return [cusparse.coo_todense(ctx.builder, data, row, col, shape=spinfo.shape)]
   else:
@@ -196,7 +218,7 @@ def coo_fromdense(mat, *, nse=None, index_dtype=jnp.int32):
   if nse is None:
     nse = (mat != 0).sum()
   nse = core.concrete_or_error(operator.index, nse, "coo_fromdense nse argument")
-  return COO(_coo_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape)
+  return COO(_coo_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape, rows_sorted=True)
 
 def _coo_fromdense(mat, *, nse, index_dtype=jnp.int32):
   """Create COO-format sparse matrix from a dense matrix.
@@ -358,6 +380,13 @@ def _coo_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_matvec_translation_rule(ctx, avals_in, avals_out, data, row, col, v,
                                         spinfo=spinfo, transpose=transpose)
+  if not spinfo.rows_sorted:
+    warnings.warn("coo_matvec GPU lowering requires matrices with sorted rows. To sort the rows "
+                  "in your matrix, use e.g. mat = mat._sort_rows(). Falling back to the default "
+                  "implementation.", CuSparseEfficiencyWarning)
+    return _coo_matvec_translation_rule(ctx, avals_in, avals_out, data, row, col, v,
+                                        spinfo=spinfo, transpose=transpose)
+
   if cusparse is not None:
     return [cusparse.coo_matvec(ctx.builder, data, row, col, v, shape=spinfo.shape,
                                 transpose=transpose)]
@@ -460,6 +489,13 @@ def _coo_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_matmat_translation_rule(ctx, avals_in, avals_out, data, row, col, B,
                                         spinfo=spinfo, transpose=transpose)
+  if not spinfo.rows_sorted:
+    warnings.warn("coo_matmat GPU lowering requires matrices with sorted rows. To sort the rows "
+                  "in your matrix, use e.g. mat = mat._sort_rows(). Falling back to the default "
+                  "implementation.", CuSparseEfficiencyWarning)
+    return _coo_matmat_translation_rule(ctx, avals_in, avals_out, data, row, col, B,
+                                        spinfo=spinfo, transpose=transpose)
+
   if cusparse is not None:
     return [cusparse.coo_matmat(ctx.builder, data, row, col, B, shape=spinfo.shape,
                                 transpose=transpose)]
