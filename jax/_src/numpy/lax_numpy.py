@@ -3528,7 +3528,7 @@ def eye(N, M=None, k=0, dtype=None):
   if N < 0 or M < 0:
     raise ValueError(f"negative dimensions are not allowed, got {N} and {M}")
   k = operator.index(k)
-  return lax._eye(_jnp_dtype(dtype), (N, M), k)
+  return lax_internal._eye(_jnp_dtype(dtype), (N, M), k)
 
 
 @_wraps(np.identity)
