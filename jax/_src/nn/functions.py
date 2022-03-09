@@ -14,11 +14,12 @@
 
 """Shared neural network activations and other functions."""
 
-
+from functools import partial
 import operator
 import numpy as np
 from typing import Any, Optional, Tuple, Union
 
+import jax
 from jax import custom_jvp
 from jax._src import dtypes
 from jax import lax
@@ -34,6 +35,7 @@ Array = Any
 # activations
 
 @custom_jvp
+@jax.jit
 def relu(x: Array) -> Array:
   r"""Rectified linear unit activation function.
 
@@ -48,6 +50,7 @@ def relu(x: Array) -> Array:
   return jnp.maximum(x, 0)
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
 
+@jax.jit
 def softplus(x: Array) -> Array:
   r"""Softplus activation function.
 
@@ -61,6 +64,7 @@ def softplus(x: Array) -> Array:
   """
   return jnp.logaddexp(x, 0)
 
+@jax.jit
 def soft_sign(x: Array) -> Array:
   r"""Soft-sign activation function.
 
@@ -74,6 +78,7 @@ def soft_sign(x: Array) -> Array:
   """
   return x / (jnp.abs(x) + 1)
 
+@jax.jit
 def sigmoid(x: Array) -> Array:
   r"""Sigmoid activation function.
 
@@ -87,6 +92,7 @@ def sigmoid(x: Array) -> Array:
   """
   return expit(x)
 
+@jax.jit
 def silu(x: Array) -> Array:
   r"""SiLU activation function.
 
@@ -102,6 +108,7 @@ def silu(x: Array) -> Array:
 
 swish = silu
 
+@jax.jit
 def log_sigmoid(x: Array) -> Array:
   r"""Log-sigmoid activation function.
 
@@ -115,6 +122,7 @@ def log_sigmoid(x: Array) -> Array:
   """
   return -softplus(-x)
 
+@jax.jit
 def elu(x: Array, alpha: Array = 1.0) -> Array:
   r"""Exponential linear unit activation function.
 
@@ -133,6 +141,7 @@ def elu(x: Array, alpha: Array = 1.0) -> Array:
   safe_x = jnp.where(x > 0, 0., x)
   return jnp.where(x > 0, x, alpha * jnp.expm1(safe_x))
 
+@jax.jit
 def leaky_relu(x: Array, negative_slope: Array = 1e-2) -> Array:
   r"""Leaky rectified linear unit activation function.
 
@@ -152,6 +161,7 @@ def leaky_relu(x: Array, negative_slope: Array = 1e-2) -> Array:
   """
   return jnp.where(x >= 0, x, negative_slope * x)
 
+@jax.jit
 def hard_tanh(x: Array) -> Array:
   r"""Hard :math:`\mathrm{tanh}` activation function.
 
@@ -169,6 +179,7 @@ def hard_tanh(x: Array) -> Array:
   """
   return jnp.where(x > 1, 1, jnp.where(x < -1, -1, x))
 
+@jax.jit
 def celu(x: Array, alpha: Array = 1.0) -> Array:
   r"""Continuously-differentiable exponential linear unit activation.
 
@@ -190,6 +201,7 @@ def celu(x: Array, alpha: Array = 1.0) -> Array:
   """
   return jnp.where(x > 0, x, alpha * jnp.expm1(x / alpha))
 
+@jax.jit
 def selu(x: Array) -> Array:
   r"""Scaled exponential linear unit activation.
 
@@ -215,6 +227,7 @@ def selu(x: Array) -> Array:
   scale = 1.0507009873554804934193349852946
   return scale * elu(x, alpha)
 
+@partial(jax.jit, static_argnames=("approximate",))
 def gelu(x: Array, approximate: bool = True) -> Array:
   r"""Gaussian error linear unit activation function.
 
@@ -244,6 +257,7 @@ def gelu(x: Array, approximate: bool = True) -> Array:
   else:
     return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
 
+@partial(jax.jit, static_argnames=("glu",))
 def glu(x: Array, axis: int = -1) -> Array:
   """Gated linear unit activation function.
 
@@ -261,6 +275,7 @@ def glu(x: Array, axis: int = -1) -> Array:
 logsumexp = _logsumexp
 
 
+@partial(jax.jit, static_argnames=("axis",))
 def log_softmax(x: Array,
                 axis: Optional[Union[int, Tuple[int, ...]]] = -1,
                 where: Optional[Array] = None,
@@ -289,6 +304,7 @@ def log_softmax(x: Array,
   return shifted - shifted_logsumexp
 
 
+@partial(jax.jit, static_argnames=("axis",))
 def softmax(x: Array,
             axis: Optional[Union[int, Tuple[int, ...]]] = -1,
             where: Optional[Array] = None,
@@ -314,6 +330,7 @@ def softmax(x: Array,
   unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
 
+@partial(jax.jit, static_argnames=("axis",))
 def normalize(x: Array,
               axis: Optional[Union[int, Tuple[int, ...]]] = -1,
               mean: Optional[Array] = None,
@@ -331,6 +348,32 @@ def normalize(x: Array,
     variance = jnp.mean(
         jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
   return (x - mean) * lax.rsqrt(variance + epsilon)
+
+
+@partial(jax.jit, static_argnames=("num_classes", "dtype", "axis"))
+def _one_hot(x: Array, num_classes: int, *,
+             dtype: Any, axis: Union[int, AxisName]) -> Array:
+  num_classes = core.concrete_or_error(
+      int, num_classes,
+      "The error arose in jax.nn.one_hot argument `num_classes`.")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  x = jnp.asarray(x)
+  try:
+    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)
+  except TypeError:
+    axis_size = lax.psum(1, axis)
+    if num_classes != axis_size:
+      raise ValueError(f"Expected num_classes to match the size of axis {axis}, "
+                       f"but {num_classes} != {axis_size}") from None
+    axis_idx = lax.axis_index(axis)
+    return jnp.asarray(x == axis_idx, dtype=dtype)
+  axis = operator.index(axis)
+  lhs = lax.expand_dims(x, (axis,))
+  rhs_shape = [1] * x.ndim
+  rhs_shape.insert(output_pos_axis, num_classes)
+  rhs = lax.broadcast_in_dim(jnp.arange(num_classes, dtype=x.dtype),
+                             rhs_shape, (output_pos_axis,))
+  return jnp.asarray(lhs == rhs, dtype=dtype)
 
 def one_hot(x: Array, num_classes: int, *,
             dtype: Any = jnp.float_, axis: Union[int, AxisName] = -1) -> Array:
@@ -360,25 +403,10 @@ def one_hot(x: Array, num_classes: int, *,
   num_classes = core.concrete_or_error(
       int, num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
-  dtype = dtypes.canonicalize_dtype(dtype)
-  x = jnp.asarray(x)
-  try:
-    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)
-  except TypeError:
-    axis_size = lax.psum(1, axis)
-    if num_classes != axis_size:
-      raise ValueError(f"Expected num_classes to match the size of axis {axis}, "
-                       f"but {num_classes} != {axis_size}") from None
-    axis_idx = lax.axis_index(axis)
-    return jnp.asarray(x == axis_idx, dtype=dtype)
-  axis = operator.index(axis)
-  lhs = lax.expand_dims(x, (axis,))
-  rhs_shape = [1] * x.ndim
-  rhs_shape.insert(output_pos_axis, num_classes)
-  rhs = lax.broadcast_in_dim(jnp.arange(num_classes, dtype=x.dtype),
-                             rhs_shape, (output_pos_axis,))
-  return jnp.asarray(lhs == rhs, dtype=dtype)
+  return _one_hot(x, num_classes, dtype=dtype, axis=axis)
 
+
+@jax.jit
 def relu6(x: Array) -> Array:
   r"""Rectified Linear Unit 6 activation function.
 
@@ -392,6 +420,7 @@ def relu6(x: Array) -> Array:
   """
   return jnp.minimum(jnp.maximum(x, 0), 6.)
 
+@jax.jit
 def hard_sigmoid(x: Array) -> Array:
   r"""Hard Sigmoid activation function.
 
@@ -405,6 +434,7 @@ def hard_sigmoid(x: Array) -> Array:
   """
   return relu6(x + 3.) / 6.
 
+@jax.jit
 def hard_silu(x: Array) -> Array:
   r"""Hard SiLU activation function
 
