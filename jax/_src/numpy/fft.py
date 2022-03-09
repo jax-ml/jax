@@ -86,7 +86,8 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
         s += [max(0, 2 * (a.shape[axes[-1]] - 1))]
     else:
       s = [a.shape[axis] for axis in axes]
-  transformed = lax.fft(a, fft_type, tuple(s)) * _fft_norm(jnp.array(s), func_name, norm)
+  transformed = lax.fft(a, fft_type, tuple(s))
+  transformed *= _fft_norm(jnp.array(s, dtype=transformed.real.dtype), func_name, norm)
 
   if orig_axes is not None:
     transformed = jnp.moveaxis(transformed, axes, orig_axes)
