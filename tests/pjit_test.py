@@ -679,8 +679,14 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = jnp.arange(np.prod(shape)).reshape(shape)
     expected = x @ (x + 1)
 
-    exe = f.lower(x, x + 1).compile()
-    actual = exe(x, x + 1)
+    lowered = f.lower(x, x + 1)
+    compiled = lowered.compile()
+    actual = compiled(x, x + 1)
+
+    self.assertEqual(lowered.in_avals, compiled.in_avals)
+    self.assertEqual(
+        lowered.in_avals,
+        ((jax.ShapedArray(x.shape, x.dtype, weak_type=False),) * 2, {}))
 
     splits = np.split(expected, 4)
     self.assertAllClose(actual.device_buffers[0].to_py(), splits[0],
@@ -692,8 +698,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[3].to_py(), splits[3],
                         check_dtypes=False)
 
-    self.assertTrue(exe._no_kwargs, True)
-    self.assertEqual(exe.in_tree, jax.tree_flatten(((0, 0), {}))[1])
+    for obj in [lowered, compiled]:
+      self.assertTrue(obj._no_kwargs, True)
+      self.assertEqual(obj.in_tree, jax.tree_flatten(((0, 0), {}))[1])
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileWithKwargs(self):

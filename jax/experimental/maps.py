@@ -659,9 +659,12 @@ def xmap(fun: Callable,
         params['resource_env'], params['backend'], params['spmd_in_axes'],
         params['spmd_out_axes_thunk'], params['in_positional_semantics'],
         params['out_positional_semantics'], *avals_flat)
+
+    in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
+    in_avals = in_tree.unflatten(avals_flat)
     return Lowered(
-        computation, treedef_tuple([in_tree, tree_flatten({})[1]]),
-        out_tree(), donate_argnums, no_kwargs=True)
+        computation, in_tree, in_avals, out_tree(), donate_argnums,
+        no_kwargs=True)
 
   fun_mapped = wraps(fun)(decorate_serial(fun_mapped))
   fun_mapped.lower = decorate_serial(lower)
