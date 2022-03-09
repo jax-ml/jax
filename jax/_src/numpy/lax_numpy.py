@@ -2214,7 +2214,7 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
   _check_arraylike(name, a)
-  lax._check_user_dtype_supported(dtype, name)
+  lax_internal._check_user_dtype_supported(dtype, name)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
   if initial is None and not has_identity:
@@ -2405,7 +2405,7 @@ def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 def _mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
          out=None, keepdims=False, *, where=None):
   _check_arraylike("mean", a)
-  lax._check_user_dtype_supported(dtype, "mean")
+  lax_internal._check_user_dtype_supported(dtype, "mean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.mean is not supported.")
 
@@ -2493,7 +2493,7 @@ def var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 def _var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
         out=None, ddof=0, keepdims=False, *, where=None):
   _check_arraylike("var", a)
-  lax._check_user_dtype_supported(dtype, "var")
+  lax_internal._check_user_dtype_supported(dtype, "var")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
@@ -2549,7 +2549,7 @@ def std(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 def _std(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
         out=None, ddof=0, keepdims=False, *, where=None):
   _check_arraylike("std", a)
-  lax._check_user_dtype_supported(dtype, "std")
+  lax_internal._check_user_dtype_supported(dtype, "std")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
   return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
@@ -2664,7 +2664,7 @@ def nanmax(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, keepdims=None, initial=None, where=None):
-  lax._check_user_dtype_supported(dtype, "nanprod")
+  lax_internal._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
@@ -2676,7 +2676,7 @@ nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
 @partial(jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanprod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
             out=None, keepdims=None, initial=None, where=None):
-  lax._check_user_dtype_supported(dtype, "nanprod")
+  lax_internal._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
@@ -2686,7 +2686,7 @@ def nanprod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 def nanmean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
             out=None, keepdims=False, where=None):
   _check_arraylike("nanmean", a)
-  lax._check_user_dtype_supported(dtype, "nanmean")
+  lax_internal._check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
   if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
@@ -2705,7 +2705,7 @@ def nanmean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, ddof=0, keepdims=False, where=None):
   _check_arraylike("nanvar", a)
-  lax._check_user_dtype_supported(dtype, "nanvar")
+  lax_internal._check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
@@ -2733,7 +2733,7 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 def nanstd(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, ddof=0, keepdims=False, where=None):
   _check_arraylike("nanstd", a)
-  lax._check_user_dtype_supported(dtype, "nanstd")
+  lax_internal._check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
   return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
@@ -2754,7 +2754,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
     if out is not None:
       raise NotImplementedError(f"The 'out' argument to jnp.{np_reduction.__name__} "
                                 f"is not supported.")
-    lax._check_user_dtype_supported(dtype, np_reduction.__name__)
+    lax_internal._check_user_dtype_supported(dtype, np_reduction.__name__)
 
     if axis is None or isscalar(a):
       a = ravel(a)
@@ -3338,7 +3338,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     raise NotImplementedError("Only implemented for order='K'")
 
   # check if the given dtype is compatible with JAX
-  lax._check_user_dtype_supported(dtype, "array")
+  lax_internal._check_user_dtype_supported(dtype, "array")
 
   # Here we make a judgment call: we only return a weakly-typed array when the
   # input object itself is weakly typed. That ensures asarray(x) is a no-op whenever
@@ -3417,7 +3417,7 @@ def _convert_to_array_if_dtype_fails(x):
 
 @_wraps(np.asarray, lax_description=_ARRAY_DOC)
 def asarray(a, dtype=None, order=None):
-  lax._check_user_dtype_supported(dtype, "asarray")
+  lax_internal._check_user_dtype_supported(dtype, "asarray")
   dtype = dtypes.canonicalize_dtype(dtype) if dtype is not None else dtype
   return array(a, dtype=dtype, copy=False, order=order)
 
@@ -3430,7 +3430,7 @@ def copy(a, order=None):
 @_wraps(np.zeros_like)
 def zeros_like(a, dtype=None, shape=None):
   _check_arraylike("zeros_like", a)
-  lax._check_user_dtype_supported(dtype, "zeros_like")
+  lax_internal._check_user_dtype_supported(dtype, "zeros_like")
   if np.isscalar(shape):
     shape = (shape,)
   return lax.full_like(a, 0, dtype, shape)
@@ -3439,7 +3439,7 @@ def zeros_like(a, dtype=None, shape=None):
 @_wraps(np.ones_like)
 def ones_like(a, dtype=None, shape=None):
   _check_arraylike("ones_like", a)
-  lax._check_user_dtype_supported(dtype, "ones_like")
+  lax_internal._check_user_dtype_supported(dtype, "ones_like")
   if np.isscalar(shape):
     shape = (shape,)
   return lax.full_like(a, 1, dtype, shape)
@@ -3447,7 +3447,7 @@ def ones_like(a, dtype=None, shape=None):
 
 @_wraps(np.full)
 def full(shape, fill_value, dtype=None):
-  lax._check_user_dtype_supported(dtype, "full")
+  lax_internal._check_user_dtype_supported(dtype, "full")
   _check_arraylike("full", fill_value)
   if ndim(fill_value) == 0:
     shape = (shape,) if ndim(shape) == 0 else shape
@@ -3458,7 +3458,7 @@ def full(shape, fill_value, dtype=None):
 
 @_wraps(np.full_like)
 def full_like(a, fill_value, dtype=None, shape=None):
-  lax._check_user_dtype_supported(dtype, "full_like")
+  lax_internal._check_user_dtype_supported(dtype, "full_like")
   _check_arraylike("full_like", a, fill_value)
   if shape is not None:
     shape = (shape,) if ndim(shape) == 0 else shape
@@ -3474,7 +3474,7 @@ def full_like(a, fill_value, dtype=None, shape=None):
 def zeros(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
-  lax._check_user_dtype_supported(dtype, "zeros")
+  lax_internal._check_user_dtype_supported(dtype, "zeros")
   shape = canonicalize_shape((shape,) if ndim(shape) == 0 else shape)
   return lax.full(shape, 0, _jnp_dtype(dtype))
 
@@ -3482,7 +3482,7 @@ def zeros(shape, dtype=None):
 def ones(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
-  lax._check_user_dtype_supported(dtype, "ones")
+  lax_internal._check_user_dtype_supported(dtype, "ones")
   shape = canonicalize_shape((shape,) if ndim(shape) == 0 else shape)
   return lax.full(shape, 1, _jnp_dtype(dtype))
 
@@ -3522,25 +3522,25 @@ empty = zeros
 
 @_wraps(np.eye)
 def eye(N, M=None, k=0, dtype=None):
-  lax._check_user_dtype_supported(dtype, "eye")
+  lax_internal._check_user_dtype_supported(dtype, "eye")
   N = core.canonicalize_dim(N, "'N' argument of jnp.eye()")
   M = N if M is None else core.canonicalize_dim(M, "'M' argument of jnp.eye()")
   if N < 0 or M < 0:
     raise ValueError(f"negative dimensions are not allowed, got {N} and {M}")
   k = operator.index(k)
-  return lax._eye(_jnp_dtype(dtype), (N, M), k)
+  return lax_internal._eye(_jnp_dtype(dtype), (N, M), k)
 
 
 @_wraps(np.identity)
 def identity(n, dtype=None):
-  lax._check_user_dtype_supported(dtype, "identity")
+  lax_internal._check_user_dtype_supported(dtype, "identity")
   return eye(n, dtype=dtype)
 
 
 @_wraps(np.arange)
 def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
            step: Optional[core.DimSize]=None, dtype=None):
-  lax._check_user_dtype_supported(dtype, "arange")
+  lax_internal._check_user_dtype_supported(dtype, "arange")
   require = partial(core.concrete_or_error, None)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
   if _any(core.is_special_dim_size(d) for d in (start, stop, step)):
@@ -3590,7 +3590,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
 def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
               axis: int = 0):
   """Implementation of linspace differentiable in start and stop args."""
-  lax._check_user_dtype_supported(dtype, "linspace")
+  lax_internal._check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError(f"Number of samples, {num}, must be non-negative.")
   _check_arraylike("linspace", start, stop)
@@ -3653,7 +3653,7 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
 def _logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
              axis: int = 0):
   """Implementation of logspace differentiable in start and stop args."""
-  lax._check_user_dtype_supported(dtype, "logspace")
+  lax_internal._check_user_dtype_supported(dtype, "logspace")
   if dtype is None:
     dtype = result_type(start, stop, dtypes.canonicalize_dtype(float_))
   dtype = _jnp_dtype(dtype)
@@ -3676,7 +3676,7 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
 @partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
 def _geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   """Implementation of geomspace differentiable in start and stop args."""
-  lax._check_user_dtype_supported(dtype, "geomspace")
+  lax_internal._check_user_dtype_supported(dtype, "geomspace")
   if dtype is None:
     dtype = result_type(start, stop, dtypes.canonicalize_dtype(float_))
   dtype = _jnp_dtype(dtype)
@@ -4140,10 +4140,10 @@ def repeat(a, repeats, axis: Optional[int] = None, *, total_repeat_length=None):
 
 @_wraps(np.tri)
 def tri(N, M=None, k=0, dtype=None):
-  lax._check_user_dtype_supported(dtype, "tri")
+  lax_internal._check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
   dtype = dtype or float32
-  return lax._tri(dtype, (N, M), k)
+  return lax_internal._tri(dtype, (N, M), k)
 
 
 @_wraps(np.tril)
@@ -4174,7 +4174,7 @@ def trace(a, offset=0, axis1: int = 0, axis2: int = 1, dtype=None, out=None):
   _check_arraylike("trace", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
-  lax._check_user_dtype_supported(dtype, "trace")
+  lax_internal._check_user_dtype_supported(dtype, "trace")
 
   axis1 = _canonicalize_axis(axis1, ndim(a))
   axis2 = _canonicalize_axis(axis2, ndim(a))
@@ -4780,7 +4780,7 @@ def _einsum(operands: Sequence,
     for name, count in counts.items():
       if count > 1:
         axes = [i for i, n in enumerate(names) if n == name]
-        eye = lax._delta(operand.dtype, operand.shape, axes)
+        eye = lax_internal._delta(operand.dtype, operand.shape, axes)
         if name not in keep_names:
           operand = sum(operand * eye, axes)
           names = names.replace(name, '')
@@ -6422,7 +6422,7 @@ def nanmedian(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 def _astype(arr, dtype):
   if dtype is None:
     dtype = dtypes.canonicalize_dtype(float_)
-  lax._check_user_dtype_supported(dtype, "astype")
+  lax_internal._check_user_dtype_supported(dtype, "astype")
   return lax.convert_element_type(arr, dtype)
 
 
@@ -6445,7 +6445,7 @@ def _clip(number, min=None, max=None, out=None, *, a_min=None, a_max=None):
 
 
 def _view(arr, dtype=None, type=None):
-  lax._check_user_dtype_supported(dtype, "view")
+  lax_internal._check_user_dtype_supported(dtype, "view")
   if type is not None:
     raise NotImplementedError("`type` argument of array.view()")
   if dtype is None:
@@ -6808,7 +6808,8 @@ class _IndexUpdateRef:
     """
     def _scatter_apply(x, indices, _, dims, **kwargs):
       return lax.scatter_apply(x, indices, func, dims, **kwargs)
-    return scatter._scatter_update(self.array, self.index, lax._zero(self.array.dtype),
+    return scatter._scatter_update(self.array, self.index,
+                                   lax_internal._zero(self.array.dtype),
                                    _scatter_apply,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)

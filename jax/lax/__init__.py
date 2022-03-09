@@ -247,12 +247,6 @@ from jax._src.lax.lax import (
   xor_p as xor_p,
   zeros_like_array as zeros_like_array,
 )
-from jax._src.lax.lax import (
-  _reduce_sum, _reduce_max, _reduce_min, _reduce_or, _reduce_and,
-  _float, _input_dtype, _broadcasting_select,
-  _check_user_dtype_supported, _one, _zero,
-  _upcast_fp16_for_computation, _broadcasting_shape_rule,
-  _eye, _tri, _delta, _ones, _zeros, _dilate_shape)
 from jax._src.lax.slicing import (
   GatherDimensionNumbers as GatherDimensionNumbers,
   GatherScatterMode as GatherScatterMode,

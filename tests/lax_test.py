@@ -2731,7 +2731,7 @@ class LazyConstantTest(jtu.JaxTestCase):
           [(1001, 1001), (0, 1)],
       ]))
   def testDeltaConstant(self, dtype, shape, axes):
-    make_const = lambda: lax._delta(dtype, shape, axes)
+    make_const = lambda: lax_internal._delta(dtype, shape, axes)
     # don't check the asarray case, just assume it's right
     expected = np.asarray(make_const())
     self._Check(make_const, expected)

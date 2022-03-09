@@ -30,6 +30,7 @@ from jax import lax
 from jax import linear_util as lu
 import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src import util
 import numpy as np
@@ -1252,7 +1253,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[0]),
     _make_harness("delta", "0",
-                  lambda x: lax._delta(_f32, x.shape, axes=(0, 1)),
+                  lambda x: lax_internal._delta(_f32, x.shape, axes=(0, 1)),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
     _make_harness("dot_general", "",
