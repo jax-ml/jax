@@ -888,7 +888,8 @@ pe.partial_eval_jaxpr_custom_rules[xla_call_p] = \
 pe.dce_rules[xla_call_p] = pe.dce_jaxpr_call_rule
 
 
-def _pp_xla_call(eqn: core.JaxprEqn, context: core.JaxprPpContext
+def _pp_xla_call(eqn: core.JaxprEqn, context: core.JaxprPpContext,
+                 settings: core.JaxprPpSettings,
                  ) -> List[pp.Doc]:
   printed_params = {k:v for k, v in eqn.params.items() if
                     k == 'call_jaxpr' or k == 'name' or
@@ -896,7 +897,7 @@ def _pp_xla_call(eqn: core.JaxprEqn, context: core.JaxprPpContext
                     k == 'device' and v is not None or
                     k == 'donated_invars' and any(v)}
   return [pp.text(eqn.primitive.name),
-          core.pp_kv_pairs(sorted(printed_params.items()), context),
+          core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
           pp.text(" ") + core.pp_vars(eqn.invars, context)]
 core.pp_eqn_rules[xla_call_p] = _pp_xla_call
 
