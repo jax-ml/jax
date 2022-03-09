@@ -87,6 +87,7 @@ def get_compile_options(
     num_partitions: int,
     device_assignment=None,
     use_spmd_partitioning: bool = True,
+    use_auto_spmd_partitioning: bool = False,
 ) -> xla_client.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
@@ -99,12 +100,15 @@ def get_compile_options(
       `num_partitions`.
     use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
       partitioning in XLA.
+    use_auto_spmd_partitioning: boolean indicating whether to automatically
+      generate XLA shardings for SPMD partitioner.
   """
   compile_options = xla_client.CompileOptions()
   compile_options.num_replicas = num_replicas
   compile_options.num_partitions = num_partitions
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
+  build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
   if device_assignment is not None:
     logging.vlog(
         2,

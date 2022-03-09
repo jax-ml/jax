@@ -129,7 +129,7 @@ def _hash_compile_options(hash_obj, compile_options_obj):
     hash_obj.update(compile_options_obj.device_assignment.serialize())
 
 def _hash_executable_build_options(hash_obj, executable_obj):
-  expected_options = 31
+  expected_options = 32
   assert len(dir(executable_obj)) == expected_options, (
         f"Unexpected number of executable_build_options fields: "
         f"{len(dir(executable_obj))}. This likely means that an extra "
