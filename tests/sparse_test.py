@@ -19,6 +19,7 @@ import operator
 import random
 import unittest
 from typing import NamedTuple, Tuple
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -131,6 +132,12 @@ class cuSparseTest(jtu.JaxTestCase):
     if jtu.device_under_test() == "gpu" and dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
       return self.assertWarns(sparse.CuSparseEfficiencyWarning)
     return contextlib.nullcontext()
+
+  @contextlib.contextmanager
+  def assertNoWarnings(self):
+    with warnings.catch_warnings(record=True) as caught_warnings:
+      yield
+    self.assertEmpty(caught_warnings)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -435,36 +442,66 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(mat.todense(), mat_resorted.todense())
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse")
-  def test_coo_sorted_indices_gpu_warnings(self):
+  def test_coo_sorted_indices_gpu_lowerings(self):
     dtype = jnp.float32
 
-    mat_sorted = sparse.COO.fromdense(jnp.arange(9, dtype=dtype).reshape(3, 3))
-    self.assertTrue(mat_sorted._rows_sorted)
+    mat = jnp.arange(12, dtype=dtype).reshape(4, 3)
 
-    mat_unsorted = mat_sorted.T
+    mat_rows_sorted = sparse.COO.fromdense(mat)
+    self.assertTrue(mat_rows_sorted._rows_sorted)
+    self.assertFalse(mat_rows_sorted._cols_sorted)
+
+    mat_cols_sorted = sparse.COO.fromdense(mat.T).T
+    self.assertFalse(mat_cols_sorted._rows_sorted)
+    self.assertTrue(mat_cols_sorted._cols_sorted)
+
+    mat_unsorted = sparse.COO(mat_rows_sorted._bufs, shape=mat_rows_sorted.shape)
     self.assertFalse(mat_unsorted._rows_sorted)
+    self.assertFalse(mat_unsorted._cols_sorted)
 
-    self.assertArraysEqual(mat_sorted.todense().T, mat_unsorted._sort_rows().todense())
+    self.assertArraysEqual(mat, mat_rows_sorted._sort_rows().todense())
+    self.assertArraysEqual(mat, mat_cols_sorted._sort_rows().todense())
+    self.assertArraysEqual(mat, mat_unsorted._sort_rows().todense())
 
     todense = jit(sparse.coo_todense)
-    todense(mat_sorted)
-    todense(mat_unsorted._sort_rows())
+    with self.assertNoWarnings():
+      dense_rows_sorted = todense(mat_rows_sorted)
+      dense_cols_sorted = todense(mat_cols_sorted)
+      dense_unsorted = todense(mat_unsorted._sort_rows())
     with self.assertWarnsRegex(sparse.CuSparseEfficiencyWarning, "coo_todense GPU lowering requires matrices with sorted rows.*"):
-      todense(mat_unsorted)
+      dense_unsorted_fallback = todense(mat_unsorted)
+    self.assertArraysEqual(mat, dense_rows_sorted)
+    self.assertArraysEqual(mat, dense_cols_sorted)
+    self.assertArraysEqual(mat, dense_unsorted)
+    self.assertArraysEqual(mat, dense_unsorted_fallback)
 
-    lhs_vec = jnp.arange(3, dtype=dtype)
+    rhs_vec = jnp.arange(3, dtype=dtype)
     matvec = jit(sparse.coo_matvec)
-    matvec(mat_sorted, lhs_vec)
-    matvec(mat_unsorted._sort_rows(), lhs_vec)
+    matvec_expected = mat @ rhs_vec
+    with self.assertNoWarnings():
+      matvec_rows_sorted = matvec(mat_rows_sorted, rhs_vec)
+      matvec_cols_sorted = matvec(mat_cols_sorted, rhs_vec)
+      matvec_unsorted = matvec(mat_unsorted._sort_rows(), rhs_vec)
     with self.assertWarnsRegex(sparse.CuSparseEfficiencyWarning, "coo_matvec GPU lowering requires matrices with sorted rows.*"):
-      matvec(mat_unsorted, lhs_vec)
+      matvec_unsorted_fallback = matvec(mat_unsorted, rhs_vec)
+    self.assertArraysEqual(matvec_expected, matvec_rows_sorted)
+    self.assertArraysEqual(matvec_expected, matvec_cols_sorted)
+    self.assertArraysEqual(matvec_expected, matvec_unsorted)
+    self.assertArraysEqual(matvec_expected, matvec_unsorted_fallback)
 
-    lhs_mat = jnp.arange(6, dtype=dtype).reshape(3, 2)
+    rhs_mat = jnp.arange(6, dtype=dtype).reshape(3, 2)
     matmat = jit(sparse.coo_matmat)
-    matmat(mat_sorted, lhs_mat)
-    matmat(mat_unsorted._sort_rows(), lhs_mat)
+    matmat_expected = mat @ rhs_mat
+    with self.assertNoWarnings():
+      matmat_rows_sorted = matmat(mat_rows_sorted, rhs_mat)
+      matmat_cols_sorted = matmat(mat_cols_sorted, rhs_mat)
+      matmat_unsorted = matmat(mat_unsorted._sort_rows(), rhs_mat)
     with self.assertWarnsRegex(sparse.CuSparseEfficiencyWarning, "coo_matmat GPU lowering requires matrices with sorted rows.*"):
-      matmat(mat_unsorted, lhs_mat)
+      matmat_unsorted_fallback = matmat(mat_unsorted, rhs_mat)
+    self.assertArraysEqual(matmat_expected, matmat_rows_sorted)
+    self.assertArraysEqual(matmat_expected, matmat_cols_sorted)
+    self.assertArraysEqual(matmat_expected, matmat_unsorted)
+    self.assertArraysEqual(matmat_expected, matmat_unsorted_fallback)
 
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   def test_gpu_translation_rule(self):
