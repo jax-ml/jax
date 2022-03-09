@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import re
 from functools import partial
 import logging
@@ -38,19 +39,39 @@ from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    SpecSync, FROM_GDA)
 from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax._src.lib import xla_client
+from jax._src.lib import xla_client, xla_extension_version, xla_bridge
 from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config
 config.parse_flags_with_absl()
 
+if xla_extension_version >= 60:
+  prev_xla_flags = None
 
 def setUpModule():
-  if jax.default_backend() not in {'gpu', 'tpu'}:
-    raise unittest.SkipTest("pjit only supports GPU and TPU backends")
+  if xla_extension_version >= 60:
+    global prev_xla_flags
+    prev_xla_flags = os.getenv("XLA_FLAGS")
+    flags_str = prev_xla_flags or ""
+    # Don't override user-specified device count, or other XLA flags.
+    if "xla_force_host_platform_device_count" not in flags_str:
+      os.environ["XLA_FLAGS"] = (flags_str +
+                                 " --xla_force_host_platform_device_count=8")
+    # Clear any cached backends so new CPU backend will pick up the env var.
+    xla_bridge.get_backend.cache_clear()
+  else:
+    if jax.default_backend() not in {'gpu', 'tpu'}:
+      raise unittest.SkipTest("pjit only supports GPU and TPU backends")
   jtu.set_spmd_lowering_flag(True)
 
 def tearDownModule():
+  if xla_extension_version >= 60:
+    if prev_xla_flags is None:
+      del os.environ["XLA_FLAGS"]
+    else:
+      os.environ["XLA_FLAGS"] = prev_xla_flags
+    xla_bridge.get_backend.cache_clear()
+
   jtu.restore_spmd_lowering_flag()
 
 
@@ -271,6 +292,9 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2)])
   def testBufferDonation(self):
+    if jax.default_backend() not in {'gpu', 'tpu'}:
+      raise unittest.SkipTest('Buffer donation only supported on GPU and TPU')
+
     @partial(pjit,
              in_axis_resources=P('x'),
              out_axis_resources=P('x'),

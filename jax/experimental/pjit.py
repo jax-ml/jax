@@ -26,6 +26,7 @@ from jax import linear_util as lu
 from jax._src.api import _check_callable, _check_arg, Lowered
 from jax._src import dispatch
 from jax._src import source_info_util
+from jax._src.lib import xla_extension_version
 from jax._src.api_util import (argnums_partial_except, flatten_axes,
                                flatten_fun_nokwargs, _ensure_index_tuple,
                                donation_vector, rebase_donate_argnums,
@@ -212,8 +213,10 @@ def pjit(fun: Callable,
     if mesh.empty:
       raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
                          "it's defined at the call site?")
-    if any(d.platform not in {'gpu', 'tpu'} for d in mesh.devices.flat):
-      raise RuntimeError("pjit only supports GPU and TPU devices")
+
+    if xla_extension_version < 60:
+      if any(d.platform not in {'gpu', 'tpu'} for d in mesh.devices.flat):
+        raise RuntimeError("pjit only supports GPU and TPU devices")
 
     f = lu.wrap_init(fun)
     f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
