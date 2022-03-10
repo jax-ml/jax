@@ -227,7 +227,8 @@ def selu(x: Array) -> Array:
   scale = 1.0507009873554804934193349852946
   return scale * elu(x, alpha)
 
-@partial(jax.jit, static_argnames=("approximate",))
+# TODO(phawkins): this jit was found to change numerics in a test. Debug this.
+# @partial(jax.jit, static_argnames=("approximate",))
 def gelu(x: Array, approximate: bool = True) -> Array:
   r"""Gaussian error linear unit activation function.
 
@@ -304,7 +305,8 @@ def log_softmax(x: Array,
   return shifted - shifted_logsumexp
 
 
-@partial(jax.jit, static_argnames=("axis",))
+# TODO(phawkins): this jit was found to change numerics in a test. Debug this.
+#@partial(jax.jit, static_argnames=("axis",))
 def softmax(x: Array,
             axis: Optional[Union[int, Tuple[int, ...]]] = -1,
             where: Optional[Array] = None,
