@@ -2298,13 +2298,13 @@ def _convert_elt_type_fwd_rule(eqn):
   else:
     return [None], eqn
 
-def _convert_elt_type_pp_rule(eqn, context):
+def _convert_elt_type_pp_rule(eqn, context, settings):
   # don't print new_dtype because the output binder shows it
   printed_params = {}
   if eqn.params['weak_type']:
     printed_params['weak_type'] = True
   return [pp.text(eqn.primitive.name),
-          core.pp_kv_pairs(sorted(printed_params.items()), context),
+          core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
           pp.text(" ") + core.pp_vars(eqn.invars, context)]
 
 

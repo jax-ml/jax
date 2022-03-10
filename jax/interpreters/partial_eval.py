@@ -1257,7 +1257,7 @@ class DynamicJaxprTracer(core.Tracer):
                 f"of {dbg.arg_info(invar_pos)}.")
     elif progenitor_eqns:
       msts = ["  operation "
-              f"{core.pp_eqn(eqn, core.JaxprPpContext(), print_shapes=True)}\n"
+              f"{core.pp_eqn(eqn, core.JaxprPpContext(), core.JaxprPpSettings(print_shapes=True))}\n"
               f"    from line {source_info_util.summarize(eqn.source_info)}"
               for eqn in progenitor_eqns[:5]]  # show at most 5
       origin = (f"While tracing the function {dbg.func_src_info} "
