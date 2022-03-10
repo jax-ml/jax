@@ -82,7 +82,6 @@ from jax._src.lax.lax import (
   conj as conj,
   conj_p as conj_p,
   convert_element_type as convert_element_type,
-  _convert_element_type as _convert_element_type,
   convert_element_type_p as convert_element_type_p,
   cos as cos,
   cos_p as cos_p,

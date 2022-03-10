@@ -37,25 +37,26 @@ import numpy as np
 import opt_einsum
 
 import jax
-from jax import jit, custom_jvp
-from jax._src.numpy.ndarray import ndarray
-from jax._src.numpy.util import _wraps
-from jax._src.numpy.vectorize import vectorize
+from jax import custom_jvp, jit
 from jax import core
-from jax._src import dtypes
-from jax._src.api_util import _ensure_index_tuple
 from jax import errors
+from jax import lax
 from jax.core import ShapedArray, DShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import config
 from jax.interpreters import pxla
-from jax import lax
+from jax.tree_util import tree_leaves, tree_flatten, tree_map
+
 from jax._src import device_array
+from jax._src import dtypes
+from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import _array_copy, _sort_lt_comparator, _sort_le_comparator
 from jax._src.lax import lax as lax_internal
+from jax._src.numpy.ndarray import ndarray
+from jax._src.numpy.util import _wraps
+from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
-from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
 newaxis = None
 
@@ -252,7 +253,8 @@ def _promote_dtypes(*args):
   else:
     to_dtype, weak_type = dtypes._lattice_result_type(*args)
     to_dtype = dtypes.canonicalize_dtype(to_dtype)
-    return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
+    return [lax_internal._convert_element_type(x, to_dtype, weak_type)
+            for x in args]
 
 def _promote_dtypes_inexact(*args):
   """Convenience function to apply Numpy argument dtype promotion.
@@ -262,7 +264,8 @@ def _promote_dtypes_inexact(*args):
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
   to_dtype_inexact = _to_inexact_dtype(to_dtype)
   weak_type = (weak_type and to_dtype == to_dtype_inexact)
-  return [lax._convert_element_type(x, to_dtype_inexact, weak_type) for x in args]
+  return [lax_internal._convert_element_type(x, to_dtype_inexact, weak_type)
+          for x in args]
 
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
@@ -2815,7 +2818,8 @@ def _check_no_padding(axis_padding, mode):
 def _pad_constant(array, pad_width, constant_values):
   nd = ndim(array)
   constant_values = broadcast_to(asarray(constant_values), (nd, 2))
-  constant_values = lax._convert_element_type(constant_values, array.dtype, dtypes.is_weakly_typed(array))
+  constant_values = lax_internal._convert_element_type(
+      constant_values, array.dtype, dtypes.is_weakly_typed(array))
   for i in range(nd):
     widths = [(0, 0, 0)] * nd
     widths[i] = (pad_width[i, 0], 0, 0)
@@ -2926,7 +2930,8 @@ def _pad_linear_ramp(array, pad_width, end_values):
         dtype=array.dtype,
         axis=axis
     )
-    ramp_before = lax._convert_element_type(ramp_before, weak_type=dtypes.is_weakly_typed(array))
+    ramp_before = lax_internal._convert_element_type(
+        ramp_before, weak_type=dtypes.is_weakly_typed(array))
     ramp_after = linspace(
         start=end_values[axis][1],
         stop=edge_after.squeeze(axis), # Dimension is replaced by linspace
@@ -2935,7 +2940,8 @@ def _pad_linear_ramp(array, pad_width, end_values):
         dtype=array.dtype,
         axis=axis
     )
-    ramp_after = lax._convert_element_type(ramp_after, weak_type=dtypes.is_weakly_typed(array))
+    ramp_after = lax_internal._convert_element_type(
+        ramp_after, weak_type=dtypes.is_weakly_typed(array))
 
     # Reverse linear space in appropriate dimension
     ramp_after = flip(ramp_after, axis)
@@ -2969,8 +2975,10 @@ def _pad_stats(array, pad_width, stat_length, stat_func):
       stat_before = round(stat_before)
       stat_after = round(stat_after)
 
-    stat_before = lax._convert_element_type(stat_before, array.dtype, dtypes.is_weakly_typed(array))
-    stat_after = lax._convert_element_type(stat_after, array.dtype, dtypes.is_weakly_typed(array))
+    stat_before = lax_internal._convert_element_type(
+        stat_before, array.dtype, dtypes.is_weakly_typed(array))
+    stat_after = lax_internal._convert_element_type(
+        stat_after, array.dtype, dtypes.is_weakly_typed(array))
 
     npad_before, npad_after = pad_width[i]
     pad_before = repeat(stat_before, npad_before, axis=i)
@@ -3400,7 +3408,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
-  out = lax._convert_element_type(out, dtype, weak_type=weak_type)
+  out = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
   if ndmin > ndim(out):
     out = lax.expand_dims(out, range(ndmin - ndim(out)))
   return out

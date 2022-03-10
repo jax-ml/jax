@@ -24,9 +24,10 @@ import numpy as np
 
 import jax
 from jax._src import dtypes
-from jax import lax
 from jax import numpy as jnp
+
 from jax._src import test_util as jtu
+from jax._src.lax import lax as lax_internal
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -376,7 +377,7 @@ class TestPromotionTables(jtu.JaxTestCase):
   )
   def testUnaryPromotion(self, dtype, weak_type):
     # Regression test for https://github.com/google/jax/issues/6051
-    x = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     if weak_type:
       expected = dtypes.canonicalize_dtype(
         dtypes._default_types['f' if x.dtype == 'bfloat16' else x.dtype.kind])
@@ -392,7 +393,7 @@ class TestPromotionTables(jtu.JaxTestCase):
   )
   def testBinaryNonPromotion(self, dtype, weak_type):
     # Regression test for https://github.com/google/jax/issues/6051
-    x = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     y = (x + x)
     assert x.dtype == y.dtype
     assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
@@ -404,7 +405,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     for weak_type in [True, False]
   )
   def testDeviceArrayRepr(self, dtype, weak_type):
-    val = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     rep = repr(val)
     self.assertStartsWith(rep, 'DeviceArray(')
     if weak_type:
