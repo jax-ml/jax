@@ -311,4 +311,4 @@ deleted_buffer = DeletedBuffer()
 device_array_types: List[type] = [xc.Buffer, _DeviceArray]
 for _device_array in device_array_types:
   core.literalable_types.add(_device_array)
-  core.pytype_aval_mappings[device_array] = abstract_arrays.canonical_concrete_aval
+  core.pytype_aval_mappings[_device_array] = abstract_arrays.canonical_concrete_aval
