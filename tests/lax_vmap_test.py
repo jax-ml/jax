@@ -26,7 +26,9 @@ import numpy as np
 import jax
 from jax import dtypes
 from jax import lax
+
 from jax._src import test_util as jtu
+from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 from jax._src.util import safe_map, safe_zip
 
@@ -610,8 +612,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     def fun(operand, tangents):
       pads = lax.padtype_to_pads(operand.shape, dims, strides, padding)
       ones = (1,) * len(operand.shape)
-      return lax._select_and_gather_add(operand, tangents, lax.ge_p, dims,
-                                        strides, pads, ones, ones)
+      return lax_windowed_reductions._select_and_gather_add(
+          operand, tangents, lax.ge_p, dims, strides, pads, ones, ones)
 
     for shape, dims, strides in all_configs:
       for bdims in all_bdims(shape, shape):
@@ -633,12 +635,12 @@ class LaxVmapTest(jtu.JaxTestCase):
     pads = lax.padtype_to_pads(shape, dims, strides, padding)
 
     def fun(operand, cotangents):
-      return lax._select_and_scatter_add(operand, cotangents, lax.ge_p, dims,
-                                         strides, pads)
+      return lax_windowed_reductions._select_and_scatter_add(
+          operand, cotangents, lax.ge_p, dims, strides, pads)
     ones = (1,) * len(shape)
     cotangent_shape = jax.eval_shape(
-      lambda x: lax._select_and_gather_add(x, x, lax.ge_p, dims, strides,
-                                           pads, ones, ones),
+      lambda x: lax_windowed_reductions._select_and_gather_add(
+          x, x, lax.ge_p, dims, strides, pads, ones, ones),
       np.ones(shape, dtype)).shape
 
     for bdims in all_bdims(cotangent_shape, shape):
