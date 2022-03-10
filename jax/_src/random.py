@@ -940,15 +940,14 @@ def _gamma_grad(sample, a):
     grads = vmap(lax.random_gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
-def _gamma_impl(key, a, use_vmap=False):
+def _gamma_impl(raw_key, a, *, prng_impl, use_vmap=False):
   a_shape = jnp.shape(a)
   # split key to match the shape of a
-  key_ndim = jnp.ndim(key) - 1
-  split_impl = prng.threefry_prng_impl.split
-  key = jnp.reshape(key, (-1, 2))
-  key = vmap(split_impl, in_axes=(0, None))(key, prod(a_shape[key_ndim:]))
-  keys = jnp.reshape(key, (-1, 2))
-  keys = prng.PRNGKeyArray(prng.threefry_prng_impl, keys)
+  key_ndim = len(raw_key.shape) - len(prng_impl.key_shape)
+  key = raw_key.reshape((-1,) + prng_impl.key_shape)
+  key = vmap(prng_impl.split, in_axes=(0, None))(key, prod(a_shape[key_ndim:]))
+  keys = key.reshape((-1,) + prng_impl.key_shape)
+  keys = prng.PRNGKeyArray(prng_impl, keys)
   alphas = jnp.reshape(a, -1)
   if use_vmap:
     samples = vmap(_gamma_one)(keys, alphas)
@@ -957,18 +956,18 @@ def _gamma_impl(key, a, use_vmap=False):
 
   return jnp.reshape(samples, a_shape)
 
-def _gamma_batching_rule(batched_args, batch_dims):
+def _gamma_batching_rule(batched_args, batch_dims, *, prng_impl):
     k, a = batched_args
     bk, ba = batch_dims
     size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
     k = batching.bdim_at_front(k, bk, size)
     a = batching.bdim_at_front(a, ba, size)
-    return random_gamma_p.bind(k, a), 0
+    return random_gamma_p.bind(k, a, prng_impl=prng_impl), 0
 
 random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a: core.raise_to_shaped(a))
-ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
+random_gamma_p.def_abstract_eval(lambda key, a, **_: core.raise_to_shaped(a))
+ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a, **_: tangent * _gamma_grad(ans, a))
 xla.register_translation(random_gamma_p, xla.lower_fun(
     partial(_gamma_impl, use_vmap=True),
     multiple_results=False, new_style=True))
@@ -998,15 +997,6 @@ def gamma(key: KeyArray,
     ``shape`` is not None, or else by ``a.shape``.
   """
   key, _ = _check_prng_key(key)
-  if key.impl is not prng.threefry_prng_impl:
-    raise NotImplementedError(
-        f'`gamma` is only implemented for the threefry2x32 RNG, not {key.impl}')
-  return gamma_threefry2x32(key.unsafe_raw_array(), a, shape, dtype)
-
-def gamma_threefry2x32(key: jnp.ndarray,  # raw ndarray form of a 2x32 key
-                       a: RealArray,
-                       shape: Optional[Sequence[int]] = None,
-                       dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gamma` must be a float "
                      f"dtype, got {dtype}")
@@ -1025,7 +1015,7 @@ def _gamma(key, a, shape, dtype):
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
-  return random_gamma_p.bind(key, a)
+  return random_gamma_p.bind(key.unsafe_raw_array(), a, prng_impl=key.impl)
 
 
 @partial(jit, static_argnums=(2, 3, 4), inline=True)

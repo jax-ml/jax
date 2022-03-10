@@ -699,12 +699,14 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.expon().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_a={}_dtype={}".format(a, np.dtype(dtype).name),
-       "a": a, "dtype": dtype}
+      {"testcase_name": "_a={}_dtype={}_prng={}".format(a, np.dtype(dtype).name,
+                                                        prng_name),
+       "a": a, "dtype": dtype, "prng_impl": prng_impl}
+      for prng_name, prng_impl in PRNG_IMPLS
       for a in [0.1, 1., 10.]
       for dtype in jtu.dtypes.floating))
-  def testGamma(self, a, dtype):
-    key = self.seed_prng(0)
+  def testGamma(self, prng_impl, a, dtype):
+    key = prng.seed_with_impl(prng_impl, 0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -720,10 +722,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_a={}".format(alpha), "alpha": alpha}
+      {"testcase_name": "_a={}_prng={}".format(alpha, prng_name),
+       "alpha": alpha, "prng_impl": prng_impl}
+      for prng_name, prng_impl in PRNG_IMPLS
       for alpha in [1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4]))
-  def testGammaGrad(self, alpha):
-    rng = self.seed_prng(0)
+  def testGammaGrad(self, prng_impl, alpha):
+    rng = prng.seed_with_impl(prng_impl, 0)
     alphas = np.full((100,), alpha)
     z = random.gamma(rng, alphas)
     actual_grad = jax.grad(lambda x: random.gamma(rng, x).sum())(alphas)
@@ -735,8 +739,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
+    rtol = 2e-2 if jtu.device_under_test() == "tpu" else 7e-4
     self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
-                        rtol=2e-2 if jtu.device_under_test() == "tpu" else 7e-4)
+                        rtol=rtol)
 
   def testGammaGradType(self):
     # Regression test for https://github.com/google/jax/issues/2130
