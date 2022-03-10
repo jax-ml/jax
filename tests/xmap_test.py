@@ -442,13 +442,7 @@ class XMapTest(XMapTestCase):
                  axis_resources=dict(axis_resources))
     x = shard(jnp.zeros((4, 5)))
     f(x)
-    if isinstance(self, SPMDTestMixin):
-      # The buffer should be deleted when using SPMD partitioner too, if this
-      # assertion starts failing then congratulations, you've fixed a bug!
-      # TODO(apaszke,tomhennigan): Xmap is possibly introducing an extra axis.
-      self.assertNotDeleted(x)
-    else:
-      self.assertDeleted(x)
+    self.assertDeleted(x)
 
   def testControlFlow(self):
     x = jnp.arange(5)
