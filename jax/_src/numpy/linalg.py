@@ -22,11 +22,12 @@ from typing import Tuple, Union, cast
 
 from jax import jit, custom_jvp
 from jax import lax
+
+from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
-from jax._src import dtypes
-from jax._src.numpy.util import _wraps
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.util import _wraps
 from jax._src.util import canonicalize_axis
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
@@ -39,7 +40,8 @@ def _promote_arg_dtypes(*args):
   if not jnp.issubdtype(dtype, jnp.inexact):
     dtype, weak_type = jnp.float_, False
   dtype = dtypes.canonicalize_dtype(dtype)
-  args = [lax._convert_element_type(arg, dtype, weak_type) for arg in args]
+  args = [lax_internal._convert_element_type(arg, dtype, weak_type)
+          for arg in args]
   if len(args) == 1:
     return args[0]
   else:

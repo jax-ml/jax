@@ -21,9 +21,11 @@ import numpy as np
 
 from jax import core
 from jax import lax
+
 from jax._src import dtypes
-from jax._src.numpy import lax_numpy as jnp
 from jax._src import util
+from jax._src.lax import lax as lax_internal
+from jax._src.numpy import lax_numpy as jnp
 
 
 Array = Any
@@ -109,7 +111,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
     unique_indices=indexer.unique_indices or unique_indices,
     mode=mode)
-  return lax._convert_element_type(out, dtype, weak_type)
+  return lax_internal._convert_element_type(out, dtype, weak_type)
 
 
 

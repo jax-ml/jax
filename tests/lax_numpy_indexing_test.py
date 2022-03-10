@@ -27,12 +27,13 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import lax
 from jax import numpy as jnp
 from jax import ops
+
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.lax import lax as lax_internal
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -933,7 +934,7 @@ class IndexingTest(jtu.JaxTestCase):
       jnp.array([7, 7, 1, 2, 1, 4, 5, 7, 7, 7], jnp.int32))
 
   def testIndexingWeakTypes(self):
-    x = lax._convert_element_type(jnp.arange(5), int, weak_type=True)
+    x = lax_internal._convert_element_type(jnp.arange(5), int, weak_type=True)
 
     a = x.at[0].set(1.0)
     self.assertEqual(a.dtype, x.dtype)

@@ -38,14 +38,16 @@ import jax
 import jax.ops
 from jax import lax
 from jax import numpy as jnp
-from jax._src import test_util as jtu
-from jax._src import device_array
-from jax._src import dtypes
 from jax import tree_util
 from jax.test_util import check_grads
-from jax._src.util import prod, safe_zip
-from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
+
+from jax._src import device_array
+from jax._src import dtypes
+from jax._src import test_util as jtu
+from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
+from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
+from jax._src.util import prod, safe_zip
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -3284,7 +3286,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if numpy_version < (1, 19) and out_shape == ():
       raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
     rng = jtu.rand_default(self.rng())
-    x = lax._convert_element_type(rng(shape, in_dtype), weak_type=weak_type)
+    x = lax_internal._convert_element_type(rng(shape, in_dtype),
+                                           weak_type=weak_type)
     fun = lambda x: getattr(jnp, func)(x, *args, dtype=out_dtype, shape=out_shape)
     expected_weak_type = weak_type and (out_dtype is None)
     self.assertEqual(dtypes.is_weakly_typed(fun(x)), expected_weak_type)
@@ -3316,7 +3319,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for slc in [slice(None), slice(0), slice(3), 0, ...]))
   def testSliceWeakTypes(self, shape, dtype, weak_type, slc):
     rng = jtu.rand_default(self.rng())
-    x = lax._convert_element_type(rng(shape, dtype), weak_type=weak_type)
+    x = lax_internal._convert_element_type(rng(shape, dtype),
+                                           weak_type=weak_type)
     op = lambda x: x[slc]
     self.assertEqual(op(x).aval.weak_type, weak_type)
     self.assertEqual(jax.jit(op)(x).aval.weak_type, weak_type)

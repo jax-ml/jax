@@ -39,24 +39,26 @@ to fail. A Limitation is specific to a harness.
 
 import operator
 import os
-from typing import Any, Callable, Dict, Iterable, List, Optional, NamedTuple, Sequence, Tuple, Union
-
 from functools import partial
+from typing import (Any, Callable, Dict, Iterable, List, Optional,
+                    NamedTuple, Sequence, Tuple, Union)
 
 from absl import testing
+import numpy as np
+
 import jax
 from jax import config
 from jax import dtypes
-from jax._src import ad_util
-from jax._src import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
-from jax._src.lax import control_flow as lax_control_flow
-from jax._src import dispatch
 
+from jax._src import ad_util
+from jax._src import dispatch
+from jax._src import test_util as jtu
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 
-import numpy as np
 
 FLAGS = config.FLAGS
 
@@ -2157,13 +2159,14 @@ def _make_select_and_scatter_add_harness(name,
                                          nb_inactive_dims=0):
   ones = (1,) * len(shape)
   cotangent_shape = jax.eval_shape(
-      lambda x: lax._select_and_gather_add(x, x, lax.ge_p, window_dimensions,
-                                           window_strides, padding, ones, ones),
+      lambda x: lax_windowed_reductions._select_and_gather_add(
+          x, x, lax.ge_p, window_dimensions, window_strides, padding,
+          ones, ones),
       np.ones(shape, dtype)).shape
   define(
       lax.select_and_scatter_add_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}",
-      lax._select_and_scatter_add, [
+      lax_windowed_reductions._select_and_scatter_add, [
           RandArg(cotangent_shape, dtype),
           RandArg(shape, dtype),
           StaticArg(select_prim),
@@ -2237,7 +2240,7 @@ def _make_select_and_gather_add_harness(name,
   define(
       lax.select_and_gather_add_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}",
-      lax._select_and_gather_add, [
+      lax_windowed_reductions._select_and_gather_add, [
           RandArg(shape, dtype),
           RandArg(shape, dtype),
           StaticArg(select_prim),
