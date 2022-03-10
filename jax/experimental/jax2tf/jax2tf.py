@@ -21,25 +21,11 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 import jax
 from jax import lax
-from jax._src import ad_util
-from jax._src import api_util
 from jax import config
 from jax import core, custom_derivatives
 from jax import linear_util as lu
 from jax import random, tree_util
 from jax import numpy as jnp
-from jax._src import ad_checkpoint
-from jax._src import api
-from jax._src import dispatch
-from jax._src import dtypes
-from jax._src.lax import control_flow as lax_control_flow
-from jax._src.lax import lax as lax_internal
-from jax._src.lax import linalg as lax_linalg
-from jax._src.lax import slicing as lax_slicing
-from jax._src import source_info_util
-from jax._src import util
-import jax._src.prng
-import jax._src.random
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import ad
@@ -47,6 +33,22 @@ from jax.interpreters import partial_eval
 from jax.interpreters import pxla
 from jax.interpreters import sharded_jit
 from jax.interpreters import xla
+
+import jax._src.prng
+import jax._src.random
+from jax._src import ad_checkpoint
+from jax._src import ad_util
+from jax._src import api
+from jax._src import api_util
+from jax._src import dispatch
+from jax._src import dtypes
+from jax._src import source_info_util
+from jax._src import util
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import lax as lax_internal
+from jax._src.lax import linalg as lax_linalg
+from jax._src.lax import slicing as lax_slicing
+from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 
 from jax.experimental.jax2tf import shape_poly
@@ -2011,18 +2013,22 @@ def _cumred(lax_reduce_fn: Callable,
                              extra_name_stack=extra_name_stack)
 
 
-tf_impl_with_avals[lax.cummax_p] = _cumred(lax_reduce_window_fn=lax._reduce_window_max,
-                                           lax_reduce_fn=lax.max,
-                                           extra_name_stack="cummax")
-tf_impl_with_avals[lax.cummin_p] = _cumred(lax_reduce_window_fn=lax._reduce_window_min,
-                                           lax_reduce_fn=lax.min,
-                                           extra_name_stack="cummin")
-tf_impl_with_avals[lax.cumsum_p] = _cumred(lax_reduce_window_fn=lax._reduce_window_sum,
-                                           lax_reduce_fn=lax.add,
-                                           extra_name_stack="cumsum")
-tf_impl_with_avals[lax.cumprod_p] = _cumred(lax_reduce_window_fn=lax._reduce_window_prod,
-                                            lax_reduce_fn=lax.mul,
-                                            extra_name_stack="cumprod")
+tf_impl_with_avals[lax.cummax_p] = _cumred(
+    lax_reduce_window_fn=lax_windowed_reductions._reduce_window_max,
+    lax_reduce_fn=lax.max,
+    extra_name_stack="cummax")
+tf_impl_with_avals[lax.cummin_p] = _cumred(
+    lax_reduce_window_fn=lax_windowed_reductions._reduce_window_min,
+    lax_reduce_fn=lax.min,
+    extra_name_stack="cummin")
+tf_impl_with_avals[lax.cumsum_p] = _cumred(
+    lax_reduce_window_fn=lax_windowed_reductions._reduce_window_sum,
+    lax_reduce_fn=lax.add,
+    extra_name_stack="cumsum")
+tf_impl_with_avals[lax.cumprod_p] = _cumred(
+    lax_reduce_window_fn=lax_windowed_reductions._reduce_window_prod,
+    lax_reduce_fn=lax.mul,
+    extra_name_stack="cumprod")
 
 
 def _select_and_scatter(operand, source, init_value, select_jaxpr,

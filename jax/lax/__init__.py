@@ -292,10 +292,6 @@ from jax._src.lax.convolution import (
   conv_with_general_padding as conv_with_general_padding,
 )
 from jax._src.lax.windowed_reductions import (
-  _reduce_window_sum,
-  _reduce_window_max,
-  _reduce_window_min,
-  _reduce_window_prod,
   _select_and_gather_add,
   _select_and_scatter_add,
   reduce_window as reduce_window,
