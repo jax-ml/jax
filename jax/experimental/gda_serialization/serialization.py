@@ -18,6 +18,7 @@ import re
 from typing import Callable
 
 import jax
+from jax._src.util import prod
 from jax.experimental import global_device_array as gda
 from jax.experimental.maps import Mesh
 import jax.numpy as jnp
@@ -111,14 +112,23 @@ def run_serialization(gdas, tensorstore_specs):
 async def async_deserialize(mesh, mesh_axes, tensorstore_spec, global_shape=None):
   t = ts.open(ts.Spec(tensorstore_spec), open=True).result()
   shape = t.shape if global_shape is None else global_shape
-  new_shard_shape = gda.get_shard_shape(shape, mesh, mesh_axes)
+  requires_padding = prod(shape) > prod(t.shape)
+
+  if requires_padding:
+    new_shard_shape = gda.get_shard_shape(shape, mesh, mesh_axes)
 
   async def cb(index):
-    out = np.zeros(new_shard_shape, dtype=t.dtype.numpy_dtype)
-    requested_domain = ts.IndexTransform(input_shape=shape)[index].domain
-    restricted_domain = t.domain.intersect(requested_domain)
-    await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][restricted_domain].write(t[restricted_domain])
-    return out
+    if requires_padding:
+      # This is needed because the shape the array was saved with is smaller
+      # than the requested shape of the array in which it will be reloaded. So
+      # the extra values will be filled with 0s.
+      out = np.zeros(new_shard_shape, dtype=t.dtype.numpy_dtype)
+      requested_domain = ts.IndexTransform(input_shape=shape)[index].domain
+      restricted_domain = t.domain.intersect(requested_domain)
+      await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][restricted_domain].write(t[restricted_domain])
+      return out
+    else:
+      return await t[index].read()
 
   return await create_async_gda_from_callback(shape, mesh, mesh_axes, cb)
 
