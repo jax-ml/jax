@@ -382,12 +382,11 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       x = x/0         # DIV
       x = jnp.sin(x)  # NAN
       x = x[500]      # OOB
-      # TODO(lenamartens): this error should also be disabled.
-      # checkify.check(x < 0, "must be negative!")  # ASSERT
+      checkify.check(x < 0, "must be negative!")  # ASSERT
       return x
 
     x = jnp.ones((2,))
-    err, _ = checkify.checkify(multi_errors, errors={})(x)
+    err, _ = checkify.checkify(multi_errors, errors=set())(x)
     self.assertIsNone(err.get())
 
   @parameterized.named_parameters(
@@ -400,10 +399,10 @@ class CheckifyTransformTests(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_enabled_errors(self, error_set, expected_error):
     def multi_errors(x):
+      checkify.check(jnp.all(x < 0), "must be negative!")  # ASSERT
       x = x/0         # DIV
       x = jnp.sin(x)  # NAN
       x = x[500]      # OOB
-      checkify.check(x < 0, "must be negative!")  # ASSERT
       return x
 
     x = jnp.ones((2,))
