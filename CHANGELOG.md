@@ -24,6 +24,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jaxlib 0.3.1 (Unreleased)
 * Changes
+  * ``XlaComputation.as_hlo_text()`` now supports printing large constants by
+    passing boolean flag ``print_large_constants=True``.
 * Deprecations:
   * The ``.block_host_until_ready()`` method on JAX arrays has been deprecated.
     Use ``.block_until_ready()`` instead.
