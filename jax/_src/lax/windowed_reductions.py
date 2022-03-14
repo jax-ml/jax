@@ -278,8 +278,6 @@ def _generic_reduce_window_batch_rule(
   operands, init_values = util.split_list(batched_args, [num_operands])
   operand_bdims, init_value_bdims = util.split_list(batch_dims, [num_operands])
 
-  operand, init = batched_args
-  bdim, init_bdim = batch_dims
   if any(init_bdim is not None for init_bdim in init_value_bdims):
     raise NotImplementedError("reduce_window batching is not implemented for "
                               "initial values")

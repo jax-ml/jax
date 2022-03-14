@@ -24,6 +24,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from jax import dtypes
 from jax import lax
 
@@ -789,6 +790,37 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO DynamicUpdateSlice
   # TODO Collapse
   # TODO Scatter
+
+  # TODO(b/183233858): variadic reduce-window is not implemented on XLA:GPU
+  @jtu.skip_on_devices("gpu")
+  def test_variadic_reduce_window(self):
+    # https://github.com/google/jax/discussions/9818 and
+    # https://github.com/google/jax/issues/9837
+    def normpool(x):
+      norms = jnp.linalg.norm(x, axis=-1)
+      idxs = jnp.arange(x.shape[0])
+
+      def g(a, b):
+        an, ai = a
+        bn, bi = b
+        which = an >= bn
+        return (jnp.where(which, an, bn), jnp.where(which, ai, bi))
+
+      _, idxs = lax.reduce_window((norms, idxs), (-np.inf, -1), g,
+                        window_dimensions=(2,), window_strides=(2,),
+                        padding=((0, 0),))
+      return x[idxs]
+
+
+    inpt = jnp.array([
+      [1.0, 0.0, 1.0],
+      [2.0, 2.0, 0.0],
+      [3.0, 0.0, 1.0],
+      [0.0, 1.0, 1.0],
+    ])
+    output = jax.vmap(normpool)(inpt[None, ...])  # doesn't crash
+    expected = jnp.array([[[2.0, 2.0, 0.0], [3.0, 0.0, 1.0]]])
+    self.assertAllClose(output, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':
