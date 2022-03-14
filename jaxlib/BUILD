@@ -107,7 +107,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ] + if_rocm_is_configured([
-        "@org_tensorflow//tensorflow/third_party/rocm/google:rocm_headers",
+        "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
 
