@@ -159,7 +159,8 @@ def leaky_relu(x: Array, negative_slope: Array = 1e-2) -> Array:
     x : input array
     negative_slope : array or scalar specifying the negative slope (default: 0.01)
   """
-  return jnp.where(x >= 0, x, negative_slope * x)
+  safe_x = jnp.where(x > 0, 0., x)
+  return jnp.where(x >= 0, x, negative_slope * safe_x)
 
 @jax.jit
 def hard_tanh(x: Array) -> Array:
@@ -199,7 +200,8 @@ def celu(x: Array, alpha: Array = 1.0) -> Array:
     x : input array
     alpha : array or scalar (default: 1.0)
   """
-  return jnp.where(x > 0, x, alpha * jnp.expm1(x / alpha))
+  safe_x = jnp.where(x > 0, 0., x)
+  return jnp.where(x > 0, x, alpha * jnp.expm1(safe_x / alpha))
 
 @jax.jit
 def selu(x: Array) -> Array:
