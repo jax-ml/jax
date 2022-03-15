@@ -238,19 +238,21 @@ def pjit(fun: Callable,
         maps._PositionalSemantics.GLOBAL if isinstance(a, GDA) else maps._positional_semantics.val
         for a in args_flat)
     out_positional_semantics = maps._positional_semantics.val
-    jaxpr, in_axis_resources_flat, out_axis_resources_flat = _pjit_jaxpr(
-        flat_fun, mesh, local_in_avals, in_tree,
-        hashable_pytree(in_axis_resources),
-        HashableFunction(out_tree, closure=()),
-        hashable_pytree(out_axis_resources),
-        in_positional_semantics, out_positional_semantics,
-        tuple(isinstance(a, GDA) for a in args_flat))
-    in_axis_resources_flat = tree_map(_maybe_replace_from_gda_with_pspec,
-                                      in_axis_resources_flat, tuple(args_flat))
+
+    global_in_avals, canonicalized_in_axis_resources_flat = _process_in_axis_resources(
+        mesh, local_in_avals, hashable_pytree(in_axis_resources), in_tree,
+        in_positional_semantics, tuple(isinstance(a, GDA) for a in args_flat))
+    jaxpr, canonicalized_out_axis_resources_flat = _pjit_jaxpr(
+        flat_fun, mesh, global_in_avals, HashableFunction(out_tree, closure=()),
+        hashable_pytree(out_axis_resources))
+    canonicalized_in_axis_resources_flat = tree_map(
+        _maybe_replace_from_gda_with_pspec,
+        canonicalized_in_axis_resources_flat, tuple(args_flat))
+
     params = dict(
         jaxpr=jaxpr,
-        in_axis_resources=in_axis_resources_flat,
-        out_axis_resources=out_axis_resources_flat,
+        in_axis_resources=canonicalized_in_axis_resources_flat,
+        out_axis_resources=canonicalized_out_axis_resources_flat,
         resource_env=resource_env,
         donated_invars=donated_invars,
         name=getattr(flat_fun, '__name__', '<unnamed function>'),
@@ -270,11 +272,13 @@ def pjit(fun: Callable,
   def lower(*args, **kwargs):
     (args_flat, flat_local_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params(*args, **kwargs)
+    in_is_global = _calc_is_global_sequence(
+        params['in_positional_semantics'], params['in_axis_resources'])
     lowering = _pjit_lower(
         params['jaxpr'], params['in_axis_resources'],
         params['out_axis_resources'], params['resource_env'],
         params['donated_invars'], params['name'],
-        params['in_positional_semantics'], params['out_positional_semantics'])
+        in_is_global)
 
     args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
@@ -352,12 +356,9 @@ class PytreeLeaf:
   def __repr__(self): return "pytree leaf"
 
 
-@lu.cache
-def _pjit_jaxpr(fun, mesh, local_in_avals,
-                in_tree, in_axis_resources_thunk,
-                out_tree, out_axis_resources_thunk,
-                in_positional_semantics, out_positional_semantics, is_gda):
-  # TODO(yashkatariya): Make this work with FROM_GDA special value.
+@cache()
+def _process_in_axis_resources(mesh, local_in_avals, in_axis_resources_thunk,
+                               in_tree, in_positional_semantics, is_gda):
   in_axis_resources_flat = flatten_axis_resources(
         "pjit in_axis_resources", in_tree,
         in_axis_resources_thunk(), tupled_args=True)
@@ -388,7 +389,11 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
 
   global_in_avals = local_to_global(in_positional_semantics, mesh,
                                     local_in_avals, canonicalized_in_axis_resources_flat)
+  return tuple(global_in_avals), canonicalized_in_axis_resources_flat
 
+
+@lu.cache
+def _pjit_jaxpr(fun, mesh, global_in_avals, out_tree, out_axis_resources_thunk):
   prev_positional_val = maps._positional_semantics.val
   try:
     maps._positional_semantics.val = maps._PositionalSemantics.GLOBAL
@@ -407,8 +412,7 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
                                   allow_uneven_sharding=False)
   canonicalized_out_axis_resources_flat = tree_map(_create_cpspec, out_axis_resources_flat)
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
-  return _ListWithW([jaxpr, canonicalized_in_axis_resources_flat,
-                     canonicalized_out_axis_resources_flat])
+  return _ListWithW([jaxpr, canonicalized_out_axis_resources_flat])
 
 
 class SpecSync(IntEnum):
@@ -492,9 +496,6 @@ class ParsedPartitionSpec:
             f"unsafe_user_spec={self.unsafe_user_spec}, "
             f"sync={self.sync})")
 
-REPLICATED = ParsedPartitionSpec(None, ())
-
-
 class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
   """ParsedPartitionSpecs that are canonicalized.
 
@@ -522,6 +523,9 @@ class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
     return (f"CanonicalizedParsedPartitionSpec(partitions={self.partitions}, "
             f"unsafe_user_spec={self.unsafe_user_spec}, "
             f"sync={self.sync})")
+
+
+REPLICATED = CanonicalizedParsedPartitionSpec(ParsedPartitionSpec(None, ()))
 
 
 def _prepare_axis_resources(axis_resources,
@@ -595,10 +599,10 @@ def _pjit_call_impl(*args, jaxpr,
                     in_axis_resources, out_axis_resources,
                     resource_env, donated_invars, name,
                     in_positional_semantics, out_positional_semantics):
+  in_is_global = _calc_is_global_sequence(in_positional_semantics, in_axis_resources)
   compiled = _pjit_lower(
       jaxpr, in_axis_resources, out_axis_resources,
-      resource_env, donated_invars, name, in_positional_semantics,
-      out_positional_semantics).compile()
+      resource_env, donated_invars, name, in_is_global).compile()
   distributed_debug_log(("Running pjit'd function", name),
                         ("mesh", resource_env.physical_mesh))
   return compiled.unsafe_call(*args)
@@ -612,7 +616,7 @@ def _pjit_lower(
     resource_env,
     donated_invars,
     name: str,
-    in_positional_semantics, out_positional_semantics):
+    in_is_global: Sequence[bool]):
   # in_axis_resources and out_axis_resources are canonicalized to avoid
   # recompilation (since pjit_lower is cached) if its compiled with `None` but
   # in the next call `P(None)` is passed. Those are the same thing so should be
@@ -623,12 +627,10 @@ def _pjit_lower(
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
   fun = lu.wrap_init(f)
-  in_is_gda = [ips == maps._PositionalSemantics.GLOBAL
-               for ips in in_positional_semantics]
   return pxla.lower_mesh_computation(
       fun, 'pjit', name, resource_env.physical_mesh,
       in_axes, out_axes, donated_invars,
-      True, jaxpr.in_avals, tiling_method=None, in_is_gda=in_is_gda)
+      True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env,
@@ -782,8 +784,14 @@ def _pjit_partial_eval(trace, *in_tracers,
       out_positional_semantics=out_positional_semantics)
 
   if num_residuals:
-    executable = _pjit_lower(**known_params).compile(
-        _allow_propagation_to_outputs=True, _allow_compile_replicated=False)
+    in_is_global = _calc_is_global_sequence(
+        known_params['in_positional_semantics'], known_params['in_axis_resources'])
+    executable = _pjit_lower(
+        known_params["jaxpr"], known_params["in_axis_resources"],
+        known_params["out_axis_resources"], known_params["resource_env"],
+        known_params["donated_invars"], known_params["name"],
+        in_is_global).compile(_allow_propagation_to_outputs=True,
+                              _allow_compile_replicated=False)
     output_op_sharding = \
         executable.xla_executable.hlo_modules()[0].spmd_output_sharding
     output_sharding_specs = parse_op_sharding(output_op_sharding, mesh)
@@ -1052,6 +1060,13 @@ def local_to_global(positional_semantics, mesh, avals, axes):
           get_array_mapping(aval_axes), aval)
       for aval, aval_axes, ps in safe_zip(avals, axes, positional_semantics)
   ]
+
+
+def _calc_is_global_sequence(in_positional_semantics, in_axis_resources):
+  return tuple(
+      ips == maps._PositionalSemantics.GLOBAL or p.partitions == ()
+      for ips, p in safe_zip(in_positional_semantics, in_axis_resources))
+
 
 def _create_cpspec(x):
   return x if _is_from_gda(x) else CanonicalizedParsedPartitionSpec(x)

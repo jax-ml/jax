@@ -1078,20 +1078,32 @@ class GDAPjitTest(jtu.JaxTestCase):
     gda_obj = global_device_array.GlobalDeviceArray.from_callback(
         input_shape, global_mesh, mesh_axes, cb)
 
-    trace_counter = [0]
     @partial(pjit, in_axis_resources=mesh_axes, out_axis_resources=P('x', 'y'))
     def f(x, y):
-      trace_counter[0] += 1
       return x @ y.T
 
+    before_lower_cache = pjit_lib._pjit_lower.cache_info()
+
     f(gda_obj, gda_obj)
-    self.assertListEqual(trace_counter, [1])
+    after_lower_cache1 = pjit_lib._pjit_lower.cache_info()
+    self.assertEqual(before_lower_cache.hits, after_lower_cache1.hits)
+    self.assertEqual(before_lower_cache.misses + 1, after_lower_cache1.misses)
+
     f(gda_obj, gda_obj)
-    self.assertListEqual(trace_counter, [1])
+    after_lower_cache2 = pjit_lib._pjit_lower.cache_info()
+    self.assertEqual(after_lower_cache1.hits + 1, after_lower_cache2.hits)
+    self.assertEqual(after_lower_cache1.misses, after_lower_cache2.misses)
+
     f(input_data, input_data)
-    self.assertListEqual(trace_counter, [2])
+    after_lower_cache3 = pjit_lib._pjit_lower.cache_info()
+    self.assertEqual(after_lower_cache2.hits, after_lower_cache3.hits)
+    self.assertEqual(after_lower_cache2.misses + 1, after_lower_cache3.misses)
+
     f(gda_obj, input_data)
-    self.assertListEqual(trace_counter, [3])
+    after_lower_cache4 = pjit_lib._pjit_lower.cache_info()
+    self.assertEqual(after_lower_cache3.hits, after_lower_cache4.hits)
+    self.assertEqual(after_lower_cache3.misses + 1, after_lower_cache4.misses)
+
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_partition_spec_mismatch_semantically_equivalent(self):
@@ -1143,7 +1155,7 @@ class GDAPjitTest(jtu.JaxTestCase):
       def f(x):
         return x
 
-      with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
+      with global_mesh:
         out_gda = f(input_gda)
         self.assertEqual(out_gda.mesh_axes, ())
 
@@ -1151,7 +1163,28 @@ class GDAPjitTest(jtu.JaxTestCase):
         f(out_gda)
         after_cache = pjit_lib._pjit_lower.cache_info()
 
-        self.assertNotEqual(id(before_cache), id(after_cache))
+        self.assertEqual(before_cache.hits + 1, after_cache.hits)
+        self.assertEqual(before_cache.misses, after_cache.misses)
+
+  def test_no_recompilation_due_to_fully_replicated_and_gda_inputs(self):
+    global_mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P(None)
+    global_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+
+    with jax._src.config.parallel_functions_output_gda(True):
+      f = pjit(lambda x: x, in_axis_resources=mesh_axes,
+               out_axis_resources=mesh_axes)
+
+      with global_mesh:
+        out_gda = f(global_data)
+        self.assertEqual(out_gda.mesh_axes, ())
+
+        before_cache = pjit_lib._pjit_lower.cache_info()
+        f(out_gda)
+        after_cache = pjit_lib._pjit_lower.cache_info()
+
         self.assertEqual(before_cache.hits + 1, after_cache.hits)
         self.assertEqual(before_cache.misses, after_cache.misses)
 

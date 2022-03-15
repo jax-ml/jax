@@ -2140,7 +2140,7 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: Optional[TilingMethod],
-    in_is_gda: Sequence[bool]):
+    in_is_global: Sequence[bool]):
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
@@ -2236,7 +2236,7 @@ def lower_mesh_computation(
   return MeshComputation(
       str(name_stack), module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,
       global_out_avals=global_out_avals, in_axes=in_axes, out_axes=out_axes,
-      spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_gda=in_is_gda)
+      spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_global=in_is_global)
 
 
 class MeshComputation:
@@ -2277,13 +2277,13 @@ class MeshComputation:
     return self._executable
 
 
-def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
+def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_global):
   input_specs, input_indices, input_avals = [], [], []
   num_local_devices = len(global_mesh.local_devices)
-  for gaval, axis, is_gda in safe_zip(global_in_avals, in_axes, in_is_gda):
+  for gaval, axis, is_global in safe_zip(global_in_avals, in_axes, in_is_global):
     # TODO(yashkatariya): Don't calculate input_indices and input_specs for GDA
     # as GDA doesn't need it.
-    if is_gda or not axis:
+    if is_global:
       aval = gaval
       mesh = global_mesh
     else:
@@ -2292,9 +2292,11 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_gda):
 
     spec = (mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, axis)
             if aval is not core.abstract_unit else None)
-    # We special case this logic to support fully replicated non-GDA values
-    # with non-contiguous submeshes
-    if not axis and not is_gda:
+    # We special case this logic to support fully replicated values because
+    # the mesh is global mesh and the indices returned by `spec_to_indices` will
+    # represent index for each device in the global mesh. But here we want
+    # indices for the local devices of the global mesh.
+    if not axis:
       index = tuple((slice(None),) * aval.ndim for _ in range(num_local_devices))
     else:
       index = spec_to_indices(aval.shape, spec) if spec is not None else None
@@ -2323,7 +2325,7 @@ class MeshExecutable:
                in_axes: Sequence[ArrayMapping],
                out_axes: Sequence[ArrayMapping],
                spmd_lowering: bool, tuple_args: bool,
-               in_is_gda: Sequence[bool],
+               in_is_global: Sequence[bool],
                _allow_propagation_to_outputs: bool,
                _allow_compile_replicated: bool) -> 'MeshExecutable':
     assert not mesh.empty
@@ -2345,7 +2347,7 @@ class MeshExecutable:
         _allow_propagation_to_outputs
 
     input_specs, input_indices, input_avals = _get_input_metadata(
-        global_in_avals, mesh, in_axes, in_is_gda)
+        global_in_avals, mesh, in_axes, in_is_global)
     # Calculate local information here instead of calculating it in
     # `avals_to_results_handler` because pmap also uses this function.
     handle_outs = global_avals_to_results_handler(global_out_avals, out_axes, mesh)

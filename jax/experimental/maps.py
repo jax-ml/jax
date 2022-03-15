@@ -735,7 +735,8 @@ def make_xmap_callable(fun: lu.WrappedFun,
         av if ips == _PositionalSemantics.GLOBAL else mesh._local_to_global(ax, av)
         for ax, av, ips in safe_zip(mesh_in_axes, in_avals, in_positional_semantics)
     ]
-    in_is_gda = [ips == _PositionalSemantics.GLOBAL for ips in in_positional_semantics]
+    in_is_global = [ips == _PositionalSemantics.GLOBAL or not ia
+                    for ips, ia in safe_zip(in_positional_semantics, mesh_in_axes)]
     tiling_method: pxla.TilingMethod
     if config.experimental_xmap_spmd_lowering_manual:
       manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
@@ -746,7 +747,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, 'xmap', name, mesh,
         mesh_in_axes, mesh_out_axes, donated_invars,
         use_spmd_lowering, global_in_avals,
-        tiling_method=tiling_method, in_is_gda=in_is_gda)
+        tiling_method=tiling_method, in_is_global=in_is_global)
   else:
     return dispatch.lower_xla_callable(
         f, None, backend, name, donated_invars, *((a, None) for a in in_avals))
