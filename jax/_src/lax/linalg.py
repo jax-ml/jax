@@ -1461,7 +1461,7 @@ xla.register_translation(tridiagonal_solve_p, xla.lower_fun(
 def tridiagonal_solve(dl, d, du, b):
   r"""Computes the solution of a tridiagonal linear system.
 
-  This function computes the solution of a tridiagonal linear system::
+  This function computes the solution of a tridiagonal linear system:
 
   .. math::
     A . X = B
