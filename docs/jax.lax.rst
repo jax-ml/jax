@@ -207,8 +207,10 @@ Linear algebra operators (jax.lax.linalg)
     lu
     qdwh
     qr
+    schur
     svd
     triangular_solve
+    tridiagonal_solve
 
 Argument classes
 ----------------
