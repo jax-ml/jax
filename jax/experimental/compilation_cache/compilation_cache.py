@@ -129,7 +129,10 @@ def _hash_compile_options(hash_obj, compile_options_obj):
     hash_obj.update(compile_options_obj.device_assignment.serialize())
 
 def _hash_executable_build_options(hash_obj, executable_obj):
-  expected_options = 31
+  if jax._src.lib.xla_extension_version >= 61:
+    expected_options = 32
+  else:
+    expected_options = 31
   assert len(dir(executable_obj)) == expected_options, (
         f"Unexpected number of executable_build_options fields: "
         f"{len(dir(executable_obj))}. This likely means that an extra "
@@ -142,6 +145,8 @@ def _hash_executable_build_options(hash_obj, executable_obj):
   if executable_obj.device_assignment is not None:
     hash_obj.update(executable_obj.device_assignment.serialize())
   _hash_bool(hash_obj, executable_obj.use_spmd_partitioning)
+  if jax._src.lib.xla_extension_version >= 61:
+    _hash_bool(hash_obj, executable_obj.use_auto_spmd_partitioning)
   _hash_bool(hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output)
 
 def _hash_debug_options(hash_obj, debug_obj):
