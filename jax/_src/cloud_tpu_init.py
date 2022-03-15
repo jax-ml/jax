@@ -88,6 +88,16 @@ def cloud_tpu_init():
       'v3-512': '8,8,1',
       'v3-1024': '8,16,1',
       'v3-2048': '16,16,1',
+      'v4-8': '1,1,1',
+      'v4-16': '1,1,2',
+      'v4-32': '1,1,4',
+      'v4-64': '1,2,4',
+      'v4-128': '2,2,4',
+      'v4-256': '2,2,8',
+      'v4-512': '2,4,8',
+      'v4-1024': '4,4,8',
+      'v4-2048': '4,4,16',
+      'v4-4096': '4,8,16',
   }
 
   os.environ['CLOUD_TPU_TASK_ID'] = worker_id
@@ -97,3 +107,8 @@ def cloud_tpu_init():
   os.environ['TPU_MESH_CONTROLLER_ADDRESS'] = worker_network_endpoints.split(
       ',')[0].split(':')[2] + ':8476'
   os.environ['TPU_MESH_CONTROLLER_PORT'] = '8476'
+
+  if (not os.environ.get('TPU_TOPOLOGY_WRAP', None)
+      and 'v4' in accelerator_type
+      and accelerator_type not in ['v4-8', 'v4-16', 'v4-32', 'v4-64']):
+    os.environ['TPU_TOPOLOGY_WRAP'] = 'true,true,true'
