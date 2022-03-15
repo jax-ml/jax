@@ -138,6 +138,11 @@ class FftTest(jtu.JaxTestCase):
       tol = 0.15
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
+    # check dtypes
+    dtype = jnp_fn(rng(shape, dtype)).dtype
+    expected_dtype = jnp.promote_types(float if inverse and real else complex, dtype)
+    self.assertEqual(dtype, expected_dtype)
+
   def testIrfftTranspose(self):
     # regression test for https://github.com/google/jax/issues/6223
     def build_matrix(linear_func, size):
