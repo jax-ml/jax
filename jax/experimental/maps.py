@@ -328,7 +328,7 @@ def xmap(fun: Callable,
          axis_sizes: Dict[AxisName, int] = {},
          axis_resources: Dict[AxisName, ResourceSet] = {},
          donate_argnums: Union[int, Sequence[int]] = (),
-         backend: Optional[str] = None):
+         backend: Optional[str] = None) -> stages.Wrapped:
   """Assign a positional signature to a program that uses named array axes.
 
   .. warning::
@@ -644,17 +644,20 @@ def xmap(fun: Callable,
                            f"but the output has rank {out.ndim} (and shape {out.shape})")
     return tree_unflatten(out_tree(), out_flat)
 
+  def decorate_serial(f):
+    for loop_params in reversed(anon_serial_loops):
+      f = serial_loop(*loop_params)(f)
+    return f
+
+  @wraps(fun)
+  @decorate_serial
   def fun_mapped(*args):
     tree_map(_check_arg, args)
     fun_flat, args_flat, params, _, out_tree = infer_params(*args)
     out_flat = xmap_p.bind(fun_flat, *args_flat, **params)
     return verify_outputs(out_flat, out_tree, params)
 
-  def decorate_serial(f):
-    for loop_params in reversed(anon_serial_loops):
-      f = serial_loop(*loop_params)(f)
-    return f
-
+  @decorate_serial
   def lower(*args):
     fun_flat, args_flat, params, in_tree, out_tree = infer_params(*args)
     avals_flat = [shaped_abstractify(arg) for arg in args_flat]
@@ -671,10 +674,7 @@ def xmap(fun: Callable,
         computation, in_tree, in_avals, out_tree(), donate_argnums,
         no_kwargs=True)
 
-  fun_mapped = wraps(fun)(
-      traceback_util.api_boundary(decorate_serial(fun_mapped)))
-  fun_mapped.lower = decorate_serial(lower)
-
+  fun_mapped.lower = lower
   return fun_mapped
 
 def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_invars,

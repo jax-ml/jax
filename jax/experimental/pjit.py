@@ -65,7 +65,7 @@ def pjit(fun: Callable,
          in_axis_resources,
          out_axis_resources,
          static_argnums: Union[int, Sequence[int]] = (),
-         donate_argnums: Union[int, Sequence[int]] = ()):
+         donate_argnums: Union[int, Sequence[int]] = ()) -> stages.Wrapped:
   """Makes ``fun`` compiled and automatically partitioned across multiple devices.
 
   The returned function has semantics equivalent to those of ``fun``, but is

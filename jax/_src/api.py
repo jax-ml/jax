@@ -41,6 +41,7 @@ from contextlib import contextmanager, ExitStack
 import jax
 from jax import core
 from jax import linear_util as lu
+from jax import stages
 from jax.core import eval_jaxpr
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
@@ -51,7 +52,6 @@ from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import source_info_util
-from jax._src import stages
 from jax._src import traceback_util
 from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
@@ -74,7 +74,12 @@ from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                                      local_devices, process_index,
                                      process_count, host_id, host_ids,
                                      host_count, default_backend)
+from jax.ad_checkpoint import checkpoint_policies
 from jax.core import ShapedArray, raise_to_shaped
+from jax.custom_batching import custom_vmap
+from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
+                                    custom_vjp, linear_call)
+from jax.custom_transpose import custom_transpose
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import pxla
@@ -83,11 +88,6 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.interpreters import invertible_ad as iad
 from jax.interpreters.invertible_ad import custom_ivjp
-from jax.custom_batching import custom_vmap
-from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
-                                    custom_vjp, linear_call)
-from jax.custom_transpose import custom_transpose
-from jax.ad_checkpoint import checkpoint_policies
 
 from jax._src.config import (
     flags, config, bool_env,
@@ -236,7 +236,7 @@ def jit(
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
   inline: bool = False,
-) -> Any:
+) -> stages.Wrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -347,7 +347,7 @@ def _python_jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
-) -> F:
+) -> stages.Wrapped:
   # The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit.
   _check_callable(fun)
   static_argnums, static_argnames = _infer_argnums_and_argnames(
@@ -399,7 +399,7 @@ def _cpp_jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
-) -> Any:
+) -> stages.Wrapped:
   # An implementation of `jit` that tries to do as much as possible in C++.
   # The goal of this function is to speed up the time it takes to process the
   # arguments, find the correct C++ executable, start the transfer of arguments
@@ -1897,7 +1897,7 @@ def _python_pmap(
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-) -> Any:
+) -> stages.Wrapped:
   """The Python only implementation."""
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,

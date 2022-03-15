@@ -16,4 +16,5 @@
 from jax._src.stages import (
   Compiled as Compiled,
   Lowered as Lowered,
+  Wrapped as Wrapped,
 )
