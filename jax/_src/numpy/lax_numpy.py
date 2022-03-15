@@ -4690,7 +4690,7 @@ def _unique(ar, axis, return_index=False, return_inverse=False, return_counts=Fa
         idx = idx.at[1:].set(where(idx[1:], idx[1:], mask.size))
       ret += (diff(idx),)
     elif ar.shape[axis]:
-      ret += (array([ar.shape[axis]], dtype=int_),)
+      ret += (array([ar.shape[axis]], dtype=dtypes.canonicalize_dtype(int_)),)
     else:
       ret += (empty(0, dtype=int),)
   if return_true_size:
