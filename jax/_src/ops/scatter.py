@@ -115,7 +115,6 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
 
 
 
-
 def _get_identity(op, dtype):
   """Get an appropriate identity for a given operation in a given dtype."""
   if op is lax.scatter_add:
@@ -123,11 +122,15 @@ def _get_identity(op, dtype):
   elif op is lax.scatter_mul:
     return 1
   elif op is lax.scatter_min:
-    if jnp.issubdtype(dtype, jnp.integer):
+    if dtype == dtypes.bool_:
+      return True
+    elif jnp.issubdtype(dtype, jnp.integer):
       return jnp.iinfo(dtype).max
     return float('inf')
   elif op is lax.scatter_max:
-    if jnp.issubdtype(dtype, jnp.integer):
+    if dtype == dtypes.bool_:
+      return False
+    elif jnp.issubdtype(dtype, jnp.integer):
       return jnp.iinfo(dtype).min
     return -float('inf')
   else:
