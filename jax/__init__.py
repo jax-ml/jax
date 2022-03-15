@@ -62,7 +62,6 @@ from jax._src.api import (
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
   closure_convert as closure_convert,
-  Compiled as Compiled,
   curry,  # TODO(phawkins): update users to avoid this.
   custom_ivjp as custom_ivjp,
   custom_gradient as custom_gradient,
@@ -92,7 +91,6 @@ from jax._src.api import (
   jvp as jvp,
   local_device_count as local_device_count,
   local_devices as local_devices,
-  Lowered as Lowered,
   linearize as linearize,
   linear_transpose as linear_transpose,
   make_jaxpr as make_jaxpr,
@@ -139,6 +137,7 @@ from jax import numpy as numpy
 from jax import ops as ops
 from jax import profiler as profiler
 from jax import random as random
+from jax import stages as stages
 from jax import tree_util as tree_util
 from jax import util as util
 

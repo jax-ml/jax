@@ -26,7 +26,8 @@ from enum import Enum
 from jax import numpy as jnp
 from jax import core
 from jax import linear_util as lu
-from jax._src.api import Lowered, _check_callable, _check_arg
+from jax import stages
+from jax._src.api import _check_callable, _check_arg
 from jax._src import dispatch
 from jax.tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
                            tree_leaves, treedef_tuple)
@@ -662,7 +663,7 @@ def xmap(fun: Callable,
 
     in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     in_avals = in_tree.unflatten(avals_flat)
-    return Lowered(
+    return stages.Lowered(
         computation, in_tree, in_avals, out_tree(), donate_argnums,
         no_kwargs=True)
 
