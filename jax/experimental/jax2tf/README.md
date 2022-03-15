@@ -446,6 +446,19 @@ as `False` and produce a converted function that returns `1` just because the di
 are not identical: there are some concrete input shapes for which the function
 should return `0`.
 
+Note that JAX will give an error when trying to use a dimension polynomial
+as a JAX value, e.g., in the following code:
+
+```
+jax2tf.convert(lambda x: jnp.prod(jnp.array(x.shape)),
+               polymorphic_shapes=["(b, ...)"])(np.ones((3, 4))
+```
+
+Note that the above code would work if we replace `jnp.array` and `jnp.prod`
+with `np.array`and `np.prod`, because dimension polynomials overload multiplication.
+See the next section if you do need to convert a dimension polynomials to
+a JAX value.
+
 ### Dimension variables appearing in the numeric computation
 
 There are some situations when dimension variables arise in the staged computation itself.
