@@ -23,7 +23,8 @@ from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax import core
 from jax import linear_util as lu
-from jax._src.api import _check_callable, _check_arg, Lowered
+from jax import stages
+from jax._src.api import _check_callable, _check_arg
 from jax._src import dispatch
 from jax._src import source_info_util
 from jax._src.lib import xla_extension_version
@@ -282,8 +283,8 @@ def pjit(fun: Callable,
 
     args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
-    return Lowered(lowering, args_kwargs_in_tree, local_in_avals, out_tree,
-                   donate_argnums, no_kwargs=True)
+    return stages.Lowered(lowering, args_kwargs_in_tree, local_in_avals,
+                          out_tree, donate_argnums, no_kwargs=True)
 
   wrapped.lower = lower
   return wrapped
