@@ -8,9 +8,15 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.2 (Unreleased)
+## jax 0.3.3 (Unreleased)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.1...main).
+  commits](https://github.com/google/jax/compare/jax-v0.3.2...main).
+
+## jaxlib 0.3.3 (Unreleased)
+
+## jax 0.3.2 (March 16, 2022)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.3.1...jax-v0.3.2).
 * Changes:
   * The functions `jax.ops.index_update`, `jax.ops.index_add`, which were
     deprecated in 0.2.22, have been removed. Please use
@@ -20,9 +26,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     optimized alternatives to `jax.lax.top_k`.
   * {func}`jax.numpy.broadcast_arrays` and {func}`jax.numpy.broadcast_to` now require scalar
     or array-like inputs, and will fail if they are passed lists (part of {jax-issue}`#7737`).
+  * The standard jax[tpu] install can now be used with Cloud TPU v4 VMs.
 
 
-## jaxlib 0.3.1 (Unreleased)
+## jaxlib 0.3.2 (March 16, 2022)
 * Changes
   * ``XlaComputation.as_hlo_text()`` now supports printing large constants by
     passing boolean flag ``print_large_constants=True``.
