@@ -27,6 +27,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.numpy.broadcast_arrays` and {func}`jax.numpy.broadcast_to` now require scalar
     or array-like inputs, and will fail if they are passed lists (part of {jax-issue}`#7737`).
   * The standard jax[tpu] install can now be used with Cloud TPU v4 VMs.
+  * `pjit` now works on CPU (in addition to previous TPU and GPU support).
 
 
 ## jaxlib 0.3.2 (March 16, 2022)
