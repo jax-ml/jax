@@ -22,6 +22,7 @@ import numpy as np
 from jax import core
 from jax._src import ad_util
 from jax._src import dtypes
+from jax._src import device_array
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import masking
@@ -55,9 +56,17 @@ def slice(operand: Array, start_indices: Sequence[int],
   <https://www.tensorflow.org/xla/operation_semantics#slice>`_
   operator.
   """
-  return slice_p.bind(operand, start_indices=tuple(start_indices),
-                      limit_indices=tuple(limit_indices),
-                      strides=None if strides is None else tuple(strides))
+  start_indices = tuple(start_indices)
+  limit_indices = tuple(limit_indices)
+  strides = strides if strides is None else tuple(strides)
+  if (start_indices == (0,) * np.ndim(operand) and
+      limit_indices == np.shape(operand) and
+      (strides is None or strides == (1,) * np.ndim(operand)) and
+      isinstance(operand, (device_array.DeviceArray, core.Tracer))):
+    return operand
+  return slice_p.bind(operand, start_indices=start_indices,
+                      limit_indices=limit_indices,
+                      strides=None if strides is None else strides)
 
 def dynamic_slice(operand: Array, start_indices: Sequence[Array],
                   slice_sizes: Shape) -> Array:
