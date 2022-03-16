@@ -227,7 +227,7 @@ def _infer_argnums_and_argnames(
 
 
 def jit(
-  fun: Callable,
+  fun: F,
   *,
   static_argnums: Union[int, Iterable[int], None] = None,
   static_argnames: Union[str, Iterable[str], None] = None,
@@ -235,7 +235,7 @@ def jit(
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
   inline: bool = False,
-) -> Any:
+) -> Union[F, Any]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
