@@ -32,8 +32,7 @@ from jax.experimental import sparse
 from jax.experimental.sparse import coo as sparse_coo
 from jax.experimental.sparse.bcoo import BCOOInfo
 from jax import lax
-from jax._src.lib import cusparse
-from jax._src.lib import hipsparse
+from jax._src.lib import sparse_apis
 from jax._src.lib import xla_bridge
 from jax import jit
 from jax import tree_util
@@ -56,7 +55,7 @@ MATMUL_TOL = {
   np.complex128: 1E-10,
 }
 
-GPU_LOWERING_ENABLED = (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported)
+GPU_LOWERING_ENABLED = (sparse_apis and sparse_apis.is_supported)
 
 class BcooDotGeneralProperties(NamedTuple):
   lhs_shape: Tuple[int]
@@ -441,7 +440,8 @@ class cuSparseTest(jtu.JaxTestCase):
     mat_resorted = mat_unsorted._sort_rows()
     self.assertArraysEqual(mat.todense(), mat_resorted.todense())
 
-  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse")
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  @jtu.skip_on_devices("rocm")  # TODO(rocm): see SWDEV-328107
   def test_coo_sorted_indices_gpu_lowerings(self):
     dtype = jnp.float32
 
@@ -510,15 +510,15 @@ class cuSparseTest(jtu.JaxTestCase):
       cuda_version = None if version == "<unknown>" else int(
           version.split()[-1])
       if cuda_version is None or cuda_version < 11000:
-        self.assertFalse(cusparse and cusparse.is_supported)
+        self.assertFalse(sparse_apis and sparse_apis.is_supported)
         self.assertNotIn(sparse.csr_todense_p,
                          xla._backend_specific_translations["gpu"])
       else:
-        self.assertTrue(cusparse and cusparse.is_supported)
+        self.assertTrue(sparse_apis and sparse_apis.is_supported)
         self.assertIn(sparse.csr_todense_p,
                       xla._backend_specific_translations["gpu"])
     else:
-      self.assertTrue(hipsparse and hipsparse.is_supported)
+      self.assertTrue(sparse_apis and sparse_apis.is_supported)
       self.assertIn(sparse.csr_todense_p,
                     xla._backend_specific_translations["gpu"])
 
