@@ -544,7 +544,12 @@ def disable_jit():
   """Context manager that disables :py:func:`jit` behavior under its dynamic context.
 
   For debugging it is useful to have a mechanism that disables :py:func:`jit`
-  everywhere in a dynamic context.
+  everywhere in a dynamic context. Note that this not only disables explicit uses
+  of `jit` by the user, but will also remove any implicit JIT compilation used by the
+  JAX library: this includes implicit JIT computation of `body` and `cond`
+  functions passed to higher-level primitives like :func:`scan` and :func:`while_loop`,
+  JIT used in implementations of :mod:`jax.numpy` functions, and any other case where
+  `jit` is used within an API's implementation.
 
   Values that have a data dependence on the arguments to a jitted function are
   traced and abstracted. For example, an abstract value may be a
