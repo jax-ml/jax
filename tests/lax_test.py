@@ -2104,7 +2104,7 @@ class LaxTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), k),
        "shape": shape, "dtype": dtype, "k": k}
       for dtype in [np.float32, np.int32, np.uint32]
-      for shape in [(3,), (5, 3)]
+      for shape in [(3,), (5, 3), (7, 5, 3)]
       for k in [1, 3]))
   def testTopK(self, shape, dtype, k):
     def args_maker():
