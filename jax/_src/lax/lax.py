@@ -4043,14 +4043,7 @@ def _top_k_batch_rule(batched_args, batch_dims, *, k):
     return top_k(operand, k=k), (bdim, bdim)
 
 def _top_k_translation_rule(ctx, avals_in, avals_out, x, *, k):
-  x_shape = ctx.builder.get_shape(x).dimensions()
-  batchdims = x_shape[:-1]
-  if batchdims:
-    # TODO(b/224554623): XLA does not support top-k beyond 2D, collapse the
-    # batch dimensions here to get better performance (otherwise XLA uses sort).
-    x = xops.Reshape(x, (prod(batchdims), x_shape[-1]))
-  ks, idxs = xla.xla_destructure(ctx.builder, xops.TopK(x, k))
-  return xops.Reshape(ks, batchdims+(k,)), xops.Reshape(idxs, batchdims+(k,))
+  return xla.xla_destructure(ctx.builder, xops.TopK(x, k))
 
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
