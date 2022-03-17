@@ -369,7 +369,7 @@ class _DimPolynomial(dict):
     if self.is_constant:
       return op.index(next(iter(self.values())))
     else:
-      raise InconclusiveDimensionOperation(f"Dimension polynomial '{self}' is not constant")
+      raise InconclusiveDimensionOperation(f"Dimension polynomial '{self}' used in a context that requires a constant")
 
   def bounds(self) -> Tuple[Optional[int], Optional[int]]:
     """Returns the lower and upper bounds, if defined."""

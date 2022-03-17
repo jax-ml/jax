@@ -1074,6 +1074,27 @@ class DimAsValueTest(tf_test_util.JaxToTfTestCase):
         "Shapes must be 1D sequences of concrete values of integer type"):
       core.dimension_as_value(np.float32(1))
 
+  def test_error_jax_value(self):
+
+    x = np.ones([3, 5], dtype=np.float32)
+
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        "Dimension polynomial 'b' used in a context that requires a constant"):
+      self.CheckShapePolymorphism(
+          # Cannot use dimension variable as a JAX value
+          lambda x: jnp.array(x.shape[0]),
+          input_signature=[tf.TensorSpec([None, 5], dtype=x.dtype)],
+          polymorphic_shapes=[("b, _")],
+          expected_output_signature=tf.TensorSpec([]))
+
+    self.CheckShapePolymorphism(
+        # We can convert a dimension variable to a JAX value
+        lambda x: jnp.array(core.dimension_as_value(x.shape[0])),
+        input_signature=[tf.TensorSpec([None, 5], dtype=x.dtype)],
+        polymorphic_shapes=[("b, _")],
+        expected_output_signature=tf.TensorSpec([]))
+
 ###
 ### We define primitive harnesses for which we will test shape-polymorphic
 ### conversion.
