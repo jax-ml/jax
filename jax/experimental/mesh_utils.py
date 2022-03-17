@@ -116,7 +116,7 @@ def _create_device_mesh_for_tpu_v4(
   for logical_axis_index, logical_axis_size in reversed(
       list(enumerate(mesh_shape))):
     # Preferentially map to 2D subplane first for higher bandwidth.
-    for num_axes in range(2, 0, -1):
+    for num_axes in range(3, 0, -1):
       # Try assign to any subset of size num_axes. Generate all candidates.
       axes = itertools.combinations(assignable_physical_mesh, num_axes)
       indices = itertools.combinations(

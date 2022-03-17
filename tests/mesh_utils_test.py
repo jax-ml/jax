@@ -187,7 +187,7 @@ class PartitioningTest(test_util.JaxTestCase):
           self.assertEqual(normalized[i, j, k].coords, (i, j, k))
 
   @parameterized.named_parameters(
-      ('2x2x1', mock_2x2x1_devices, [1, 1, 4], ((), (2,), (0, 1))),
+      ('2x2x1', mock_2x2x1_devices, [1, 1, 4], ((), (), (0, 1, 2))),
       ('2x2x4', mock_2x2x4_devices, [1, 4, 4], ((), (2,), (0, 1))),
       ('4x4x4', mock_4x4x4_devices, [1, 16, 4], ((), (1, 2), (0,))),
       ('4x4x8a', mock_4x4x8_devices, [1, 16, 8], ((), (0, 1), (2,))),
