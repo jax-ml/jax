@@ -868,7 +868,8 @@ def ensure_compile_time_eval():
       with jax.ensure_compile_time_eval():
         y = jnp.sin(3.0)
         z = jnp.sin(y)
-      if z > 0:  # the value of z is availble and can be used in control flow
+        z_positive = z > 0
+      if z_positive:  # z_positive is usable in Python control flow
         return jnp.sin(x)
       else:
         return jnp.cos(x)
