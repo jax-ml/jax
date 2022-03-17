@@ -30,8 +30,9 @@ from jax._src import dtypes
 from jax import linear_util as lu
 from jax._src import profiler
 from jax._src.ad_util import Zero
-from jax._src.api_util import flattened_fun_in_tree
-from jax._src.tree_util import PyTreeDef, tree_unflatten, tree_leaves
+from jax._src.api_util import flattened_fun_in_tree, flatten_fun_nokwargs
+from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
+                                tree_leaves)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, cache, OrderedSet,
                            as_hashable_function)
@@ -1609,6 +1610,41 @@ class DynamicJaxprTrace(core.Trace):
 
   def post_process_custom_vjp_call(self, out_tracers, _):
     assert False  # unreachable
+
+  def process_custom_transpose(self, prim, call, tracers,
+                               transpose, out_types,
+                               lin_tree, res_tree, out_tree):
+    tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
+
+    in_avals_p = [t.aval for t in tracers]
+    in_avals_t = [*[t.aval for t in tracers_res], *out_types]
+
+    with core.new_sublevel():
+      call_jaxpr, out_avals, call_consts = trace_to_subjaxpr_dynamic(
+          call, self.main, in_avals_p)
+    closed_call_jaxpr = core.ClosedJaxpr(
+        convert_constvars_jaxpr(call_jaxpr), ())
+
+    transpose_flat, in_tree2 = flatten_fun_nokwargs(
+        lu.wrap_init(transpose), treedef_tuple((res_tree, out_tree)))
+    transpose_jaxpr, in_avals2, transpose_consts = trace_to_subjaxpr_dynamic(
+        transpose_flat, self.main, in_avals_t)
+    closed_transpose_jaxpr = core.ClosedJaxpr(
+        convert_constvars_jaxpr(transpose_jaxpr), ())
+
+    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    invars = map(self.getvar, tracers)
+    constvars = map(self.getvar, map(self.instantiate_const, call_consts))
+    outvars = map(self.makevar, out_tracers)
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
+                        dict(call_jaxpr=closed_call_jaxpr,
+                             transpose_jaxpr=(closed_transpose_jaxpr,
+                                              transpose_consts),
+                             num_consts=len(call_consts)),
+                        source_info_util.current())
+    self.frame.eqns.append(eqn)
+    return out_tracers
+
 
 custom_staging_rules: Dict[Primitive, Callable] = {}
 

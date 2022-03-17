@@ -18,6 +18,8 @@ from typing import Any, Callable, Optional, Tuple
 from jax import core
 from jax import linear_util as lu
 from jax.interpreters import ad
+from jax.interpreters import mlir
+from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_leaves, tree_map,
                            tree_structure, treedef_tuple, tree_unflatten)
 from jax._src import ad_util
@@ -187,6 +189,18 @@ def custom_transpose_transpose_rule(
   return [None] * len(tree_leaves(res_arg)) + ct_lin_flat
 
 
+def custom_transpose_lowering(*args, call_jaxpr, **params):
+  return core.jaxpr_as_fun(call_jaxpr)(*args)
+
+
 custom_transpose_p = CustomTransposePrimitive('custom_transpose_call')
 core.custom_typechecks[custom_transpose_p] = custom_transpose_typecheck
 ad.primitive_transposes[custom_transpose_p] = custom_transpose_transpose_rule
+mlir.register_lowering(
+    custom_transpose_p,
+    mlir.lower_fun(custom_transpose_lowering, multiple_results=True))
+xla.register_translation(
+    custom_transpose_p,
+    xla.lower_fun(
+        custom_transpose_lowering, new_style=True, multiple_results=True),
+    initial_style=True)

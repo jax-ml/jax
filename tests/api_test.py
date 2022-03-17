@@ -6778,14 +6778,32 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(api.jvp(f,     [x, y], [tx, ty]),
                         api.jvp(f_ref, [x, y], [tx, ty]))
 
-  def test_jit(self):
-    raise unittest.SkipTest('unimplemented')  # TODO(frostig,mattjj)
-
+  def test_make_jaxpr(self):
     def f(x, y):
       @custom_transpose(jnp.ones(2))
       def fn(r, x): return x / r
       @fn.def_transpose
-      def tp(r, t): return t / r
+      def tp(r, t): return 2 * t / r
+
+      return x + fn(y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    f_ = lambda x: f(x, y)
+    f_t = transpose_unary(f_, x)
+
+    jaxpr = api.make_jaxpr(f_)(x)
+    self.assertIn('custom_transpose_call', str(jaxpr))
+
+    jaxpr_t = api.make_jaxpr(f_t)(x)
+    self.assertNotIn('custom_transpose_call', str(jaxpr_t))
+
+  def test_jit(self):
+    def f(x, y):
+      @custom_transpose(jnp.ones(2))
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return 2 * t / r
 
       return x + fn(y, x)
 
@@ -6795,8 +6813,35 @@ class CustomTransposeTest(jtu.JaxTestCase):
 
     f_ = lambda x: f(x, y)
     f_t = transpose_unary(f_, x)
+    g_ = jax.jit(f_)
+    g_t = transpose_unary(g_, x)
     self.assertAllClose(f_(x), jax.jit(f_)(x))
     self.assertAllClose(f_t(x), jax.jit(f_t)(x))
+    self.assertAllClose(f_(x), g_(x))
+    self.assertAllClose(f_t(x), g_t(x))
+
+  def test_jit_recursive(self):
+    raise unittest.SkipTest('unimplemented')  # TODO(frostig,mattjj)
+    def f(x, y):
+      @custom_transpose(jnp.ones(2))
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return 2 * fn(r, t)
+
+      return x + fn(y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), jax.jit(f)(x, y))
+
+    f_ = lambda x: f(x, y)
+    f_t = transpose_unary(f_, x)
+    g_ = jax.jit(f_)
+    g_t = transpose_unary(g_, x)
+    self.assertAllClose(f_(x), jax.jit(f_)(x))
+    self.assertAllClose(f_t(x), jax.jit(f_t)(x))
+    self.assertAllClose(f_(x), g_(x))
+    self.assertAllClose(f_t(x), g_t(x))
 
 
 class CustomVmapTest(jtu.JaxTestCase):
