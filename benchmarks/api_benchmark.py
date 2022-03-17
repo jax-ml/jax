@@ -118,6 +118,30 @@ def jit_simple(state):
     f(a, b).block_until_ready()
 
 
+@google_benchmark.register
+def jit_small_matmul(state):
+  x = np.random.uniform(size=(2, 2)).astype(np.float32)
+  x = jax.device_put(x)
+
+  f = jax.jit(lambda x: jnp.dot(x, x))
+  f(x).block_until_ready()
+
+  while state:
+    f(x).block_until_ready()
+
+
+@google_benchmark.register
+def jit_big_matmul(state):
+  x = np.random.uniform(size=(100, 100)).astype(np.float32)
+  x = jax.device_put(x)
+
+  f = jax.jit(lambda x: jnp.dot(x, x))
+  f(x).block_until_ready()
+
+  while state:
+    f(x).block_until_ready()
+
+
 def jit_simple_many_args_dispatch(n, state):
   args = [jax.device_put(i) for i in range(n)]
   f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
