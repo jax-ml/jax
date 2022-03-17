@@ -211,14 +211,6 @@ from jax._src.numpy.lax_numpy import (
     percentile as percentile,
     pi as pi,
     piecewise as piecewise,
-    poly as poly,
-    polyadd as polyadd,
-    polyder as polyder,
-    polyfit as polyfit,
-    polyint as polyint,
-    polymul as polymul,
-    polysub as polysub,
-    polyval as polyval,
     printoptions as printoptions,
     prod as prod,
     product as product,
@@ -302,6 +294,18 @@ from jax._src.numpy.index_tricks import (
   ogrid as ogrid,
   r_ as r_,
   s_ as s_,
+)
+
+from jax._src.numpy.polynomial import (
+    poly as poly,
+    polyadd as polyadd,
+    polyder as polyder,
+    polyfit as polyfit,
+    polyint as polyint,
+    polymul as polymul,
+    polysub as polysub,
+    polyval as polyval,
+    roots as roots,
 )
 
 from jax._src.numpy.ufuncs import (
@@ -395,7 +399,6 @@ from jax._src.numpy.ufuncs import (
     true_divide as true_divide,
 )
 
-from jax._src.numpy.polynomial import roots as roots
 from jax._src.numpy.vectorize import vectorize as vectorize
 
 # TODO(phawkins): remove this import after fixing users.
