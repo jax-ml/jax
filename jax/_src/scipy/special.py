@@ -22,8 +22,8 @@ from jax._src import api
 from jax import jit
 from jax import lax, core
 from jax.interpreters import ad
+import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.lax_numpy import asarray, _reduction_dims, _promote_args_inexact
 from jax._src.numpy.util import _wraps
 

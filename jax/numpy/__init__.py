@@ -76,7 +76,6 @@ from jax._src.numpy.lax_numpy import (
     broadcast_arrays as broadcast_arrays,
     broadcast_shapes as broadcast_shapes,
     broadcast_to as broadcast_to,
-    c_ as c_,
     can_cast as can_cast,
     cbrt as cbrt,
     cdouble as cdouble,
@@ -181,7 +180,6 @@ from jax._src.numpy.lax_numpy import (
     identity as identity,
     iinfo as iinfo,
     imag as imag,
-    index_exp as index_exp,
     indices as indices,
     inexact as inexact,
     in1d as in1d,
@@ -241,7 +239,6 @@ from jax._src.numpy.lax_numpy import (
     mean as mean,
     median as median,
     meshgrid as meshgrid,
-    mgrid as mgrid,
     min as min,
     minimum as minimum,
     mod as mod,
@@ -274,7 +271,6 @@ from jax._src.numpy.lax_numpy import (
     not_equal as not_equal,
     number as number,
     object_ as object_,
-    ogrid as ogrid,
     ones as ones,
     ones_like as ones_like,
     outer as outer,
@@ -299,7 +295,6 @@ from jax._src.numpy.lax_numpy import (
     promote_types as promote_types,
     ptp as ptp,
     quantile as quantile,
-    r_ as r_,
     rad2deg as rad2deg,
     radians as radians,
     ravel as ravel,
@@ -329,7 +324,6 @@ from jax._src.numpy.lax_numpy import (
     shape as shape,
     sign as sign,
     signbit as signbit,
-    s_ as s_,
     signedinteger as signedinteger,
     sin as sin,
     sinc as sinc,
@@ -387,6 +381,15 @@ from jax._src.numpy.lax_numpy import (
     zeros as zeros,
     zeros_like as zeros_like,
     _NOT_IMPLEMENTED,
+)
+
+from jax._src.numpy.index_tricks import (
+  c_ as c_,
+  index_exp as index_exp,
+  mgrid as mgrid,
+  ogrid as ogrid,
+  r_ as r_,
+  s_ as s_,
 )
 
 from jax._src.numpy.polynomial import roots as roots
