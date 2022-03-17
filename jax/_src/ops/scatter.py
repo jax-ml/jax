@@ -174,8 +174,8 @@ def _segment_update(name: str,
   out = jnp.full((num_buckets, num_segments) + data.shape[1:],
                  _get_identity(scatter_op, dtype), dtype=dtype)
   out = _scatter_update(
-    out, jnp.index_exp[lax.div(jnp.arange(segment_ids.shape[0]), bucket_size),
-                       segment_ids[None, :]],
+    out, np.index_exp[lax.div(jnp.arange(segment_ids.shape[0]), bucket_size),
+                      segment_ids[None, :]],
     data, scatter_op, indices_are_sorted,
     unique_indices, normalize_indices=False, mode=mode)
   return reducer(out, axis=0).astype(dtype)
