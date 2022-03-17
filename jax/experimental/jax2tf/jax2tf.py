@@ -407,9 +407,7 @@ def convert(fun: Callable,
             fun_vjp_jax,
             with_gradient=False,
             polymorphic_shapes=vjp_polymorphic_shapes)(args_flat, out_cts_flat)
-        in_cts, kwin_cts = tree_util.tree_unflatten(in_tree, in_cts_flat)
-        assert not kwin_cts
-      return in_cts
+      return in_cts_flat
 
     try:
       assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"

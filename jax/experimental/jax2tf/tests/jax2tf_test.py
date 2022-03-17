@@ -21,6 +21,8 @@ from typing import Dict, Tuple
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from collections import OrderedDict
+
 import jax
 from jax import ad_checkpoint
 from jax import dtypes
@@ -285,6 +287,33 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(0., tape.gradient(uv["one"], y))
     self.assertAllClose(5., tape.gradient(uv["two"], x))
     self.assertAllClose(4., tape.gradient(uv["two"], y))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"function={with_function}",
+         with_function=with_function)
+    for with_function in [False, True]))
+  def test_gradients_with_ordered_dict_input(self, with_function=True):
+    def f(inputs):
+      out = 0.0
+      for v in inputs.values():
+        out += jnp.sum(v)
+      return out
+
+    f_tf = jax2tf.convert(f, with_gradient=True)
+    if with_function:
+      f_tf = tf.function(f_tf, autograph=False)
+    default_float_type = jax2tf.dtype_of_val(4.)
+    inputs = OrderedDict()
+    x = tf.Variable([4.], dtype=default_float_type)
+    y = tf.Variable([4., 5.], dtype=default_float_type)
+    inputs = OrderedDict()
+    inputs['r'] = x
+    inputs['d'] = y
+    with tf.GradientTape(persistent=True) as tape:
+      u = f_tf(inputs)
+
+    self.assertAllClose(np.array([1.]), tape.gradient(u, x).numpy())
+    self.assertAllClose(np.array([1., 1.]), tape.gradient(u, y).numpy())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       dict(testcase_name=f"function={with_function}",
