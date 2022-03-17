@@ -258,7 +258,7 @@ def gelu(x: Array, approximate: bool = True) -> Array:
   else:
     return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
 
-@partial(jax.jit, static_argnames=("glu",))
+@partial(jax.jit, static_argnames=("axis",))
 def glu(x: Array, axis: int = -1) -> Array:
   """Gated linear unit activation function.
 
