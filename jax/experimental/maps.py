@@ -36,6 +36,7 @@ from jax._src.api_util import (flatten_fun_nokwargs, flatten_axes,
                                _ensure_index_tuple, donation_vector,
                                shaped_abstractify)
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src.config import config
 from jax.errors import JAXTypeError
 from jax.experimental.global_device_array import GlobalDeviceArray, _get_array_mapping
@@ -51,6 +52,9 @@ from jax._src.util import (safe_map, safe_zip, HashableFunction,
                            as_hashable_function, unzip2, distributed_debug_log,
                            tuple_insert, moveaxis, split_list, wrap_name)
 from jax import lax
+
+source_info_util.register_exclusion(__file__)
+traceback_util.register_exclusion(__file__)
 
 map, unsafe_map = safe_map, map
 zip = safe_zip
@@ -667,7 +671,8 @@ def xmap(fun: Callable,
         computation, in_tree, in_avals, out_tree(), donate_argnums,
         no_kwargs=True)
 
-  fun_mapped = wraps(fun)(decorate_serial(fun_mapped))
+  fun_mapped = wraps(fun)(
+      traceback_util.api_boundary(decorate_serial(fun_mapped)))
   fun_mapped.lower = decorate_serial(lower)
 
   return fun_mapped
