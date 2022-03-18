@@ -14,9 +14,14 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jaxlib 0.3.3 (Unreleased)
 
 
+## jax 0.3.4 (March 18, 2022)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.3.2...jax-v0.3.4).
+
+
 ## jax 0.3.3 (March 17, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.2...main).
+  commits](https://github.com/google/jax/compare/jax-v0.3.2...jax-v0.3.3).
 
 
 ## jax 0.3.2 (March 16, 2022)
