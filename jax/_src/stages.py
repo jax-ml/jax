@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import Any, Optional, Tuple, Union
+from typing_extensions import Protocol
 
 from jax import core
 from jax.interpreters import pxla
@@ -30,6 +31,91 @@ traceback_util.register_exclusion(__file__)
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+
+class Compiled:
+  """Compiled representation of a function specialized to types/values.
+
+  A compiled computation is associated with an executable and the
+  remaining information needed to execute it. It also provides a
+  common API for querying properties of compiled computations across
+  JAX's various compilation paths and backends.
+  """
+  __slots__ = [
+      "in_tree", "in_avals", "out_tree", "donate_argnums", "_executable",
+      "_no_kwargs"
+  ]
+
+  # The PyTreeDef of the (positional arguments, keyword arguments).
+  in_tree: PyTreeDef
+  # The nested input tree of `ShapedArray` abstract values of (args, kwargs).
+  in_avals: Any
+  out_tree: PyTreeDef
+  donate_argnums: Tuple[int]
+  _executable: Union[dispatch.XlaCompiledComputation,
+                     pxla.MeshExecutable,
+                     pxla.PmapExecutable]
+  _no_kwargs: bool
+
+  def __init__(self, executable, in_tree, in_avals, out_tree, donate_argnums,
+               no_kwargs=False):
+    self._executable = executable
+    self.in_tree = in_tree
+    self.in_avals = in_avals
+    self.out_tree = out_tree
+    self.donate_argnums = donate_argnums
+    self._no_kwargs = no_kwargs
+
+  def compiler_ir(self):
+    """Post-compilation IR.
+
+    Compilation typically involves code transformation and
+    optimization. This method exists to reflect the compiler's
+    representation of the program after such passes, whenever
+    possible.
+    """
+    return self._executable.xla_executable.hlo_modules()
+
+  def runtime_executable(self):
+    return self._executable.xla_executable
+
+  def _xla_executable(self):
+    # TODO(frostig): finalize API. For now, return the underlying
+    # executable directly via this method.
+    return self._executable.xla_executable
+
+  def __call__(self, *args, **kwargs):
+    if self._no_kwargs and kwargs:
+      kws = ', '.join(kwargs.keys())
+      raise NotImplementedError(
+          "function was compiled by a transformation that does not support "
+          f"keyword arguments, but called with keyword arguments: {kws}")
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    if in_tree != self.in_tree:
+      # TODO(frostig): provide more info about the source function
+      # and transformation
+      raise TypeError(
+          f"function compiled for {self.in_tree}, called with {in_tree}")
+    try:
+      out_flat = self._executable.call(*args_flat)
+    except TypeError:
+      # We can't transform ahead-of-time compiled calls, since we've
+      # lowered and compiled for a fixed function signature, and JAX
+      # transformations change signatures. We interpret a Tracer
+      # argument as an indication of a transformation attempt. We
+      # could check this before the executable call, but we'd rather
+      # avoid isinstance checks on the call path. Seeing a TypeError
+      # might mean that arguments have JAX-invalid types, which in
+      # turn might mean some are Tracers.
+      for arg in args_flat:
+        if isinstance(arg, core.Tracer):
+          raise TypeError(
+              "Cannot apply JAX transformations to a function lowered and "
+              "compiled for a particular signature. Detected argument of "
+              f"Tracer type {type(arg)}.")
+      else:
+        raise
+    return tree_unflatten(self.out_tree, out_flat)
 
 
 class Lowered:
@@ -83,7 +169,7 @@ class Lowered:
     self.donate_argnums = donate_argnums
     self._no_kwargs = no_kwargs
 
-  def compile(self) -> 'Compiled':
+  def compile(self) -> Compiled:
     return Compiled(
         self._lowering.compile(), self.in_tree, self.in_avals,
         self.out_tree, self.donate_argnums, self._no_kwargs)
@@ -101,87 +187,17 @@ class Lowered:
     return self._lowering.hlo()
 
 
-class Compiled:
-  """Compiled representation of a function specialized to types/values.
-
-  A compiled computation is associated with an executable and the
-  remaining information needed to execute it. It also provides a
-  common API for querying properties of compiled computations across
-  JAX's various compilation paths and backends.
-  """
-  __slots__ = [
-      "in_tree", "in_avals", "out_tree", "donate_argnums", "_executable",
-      "_no_kwargs"
-  ]
-
-
-  # The PyTreeDef of the (positional arguments, keyword arguments).
-  in_tree: PyTreeDef
-  # The nested input tree of `ShapedArray` abstract values of (args, kwargs).
-  in_avals: Any
-  out_tree: PyTreeDef
-  donate_argnums: Tuple[int]
-  _executable: Union[dispatch.XlaCompiledComputation,
-                     pxla.MeshExecutable,
-                     pxla.PmapExecutable]
-  _no_kwargs: bool
-
-  def __init__(self, executable, in_tree, in_avals, out_tree, donate_argnums,
-               no_kwargs=False):
-    self._executable = executable
-    self.in_tree = in_tree
-    self.in_avals = in_avals
-    self.out_tree = out_tree
-    self.donate_argnums = donate_argnums
-    self._no_kwargs = no_kwargs
-
-  def compiler_ir(self):
-    """Post-compilation IR.
-
-    Compilation typically involves code transformation and
-    optimization. This method exists to reflect the compiler's
-    representation of the program after such passes, whenever
-    possible.
-    """
-    return self._executable.xla_executable.hlo_modules()
-
-  def runtime_executable(self):
-    return self._executable.xla_executable
-
-  def _xla_executable(self):
-    # TODO(frostig): finalize API. For now, return the underlying
-    # executable directly via this method.
-    return self._executable.xla_executable
-
+class Wrapped(Protocol):
   def __call__(self, *args, **kwargs):
-    if self._no_kwargs and kwargs:
-      kws = ', '.join(kwargs.keys())
-      raise NotImplementedError(
-          'function was compiled by a transformation that does not support '
-          f"keyword arguments, but called with keyword arguments: {kws}")
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    if in_tree != self.in_tree:
-      # TODO(frostig): provide more info about the source function
-      # and transformation
-      raise TypeError(
-          f'function compiled for {self.in_tree}, called with {in_tree}')
-    try:
-      out_flat = self._executable.call(*args_flat)
-    except TypeError:
-      # We can't transform ahead-of-time compiled calls, since we've
-      # lowered and compiled for a fixed function signature, and JAX
-      # transformations change signatures. We interpret a Tracer
-      # argument as an indication of a transformation attempt. We
-      # could check this before the executable call, but we'd rather
-      # avoid isinstance checks on the call path. Seeing a TypeError
-      # might mean that arguments have JAX-invalid types, which in
-      # turn might mean some are Tracers.
-      for arg in args_flat:
-        if isinstance(arg, core.Tracer):
-          raise TypeError(
-              'Cannot apply JAX transformations to a function lowered and '
-              'compiled for a particular signature. Detected argument of '
-              f'Tracer type {type(arg)}.')
-      else:
-        raise
-    return tree_unflatten(self.out_tree, out_flat)
+    """Executes the wrapped function, lowering and compiling as needed."""
+
+  def lower(self, *args, **kwargs) -> Lowered:
+    """Lower this function for the given arguments.
+
+    A lowered function is staged out of Python and translated to a
+    compiler's input language, possibly in a backend-dependent
+    manner. It is ready for compilation but not yet compiled.
+
+    Returns:
+      A ``Lowered`` instance representing the lowering.
+    """
