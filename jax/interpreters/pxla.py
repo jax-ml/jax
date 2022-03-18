@@ -44,6 +44,7 @@ import sys
 from absl import logging
 import numpy as np
 
+import jax
 from jax._src.config import config
 from jax import core
 from jax import linear_util as lu
@@ -1753,10 +1754,16 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
       float_zero = mlir.full_like_aval(0, padded_aval)
-      out = mhlo.CompareOp(
-          mlir.aval_to_ir_type(padded_aval.update(dtype=np.dtype(np.bool_))),
-          out, float_zero, ir.StringAttr.get("NE"),
-          ir.StringAttr.get("FLOAT")).result
+      if jax._src.lib.mlir_api_version >= 3:
+        out = mhlo.CompareOp(
+            mlir.aval_to_ir_type(padded_aval.update(dtype=np.dtype(np.bool_))),
+            out, float_zero, mhlo.ComparisonDirectionAttr.get("NE"),
+            mhlo.ComparisonTypeAttr.get("FLOAT")).result
+      else:
+        out = mhlo.CompareOp(
+            mlir.aval_to_ir_type(padded_aval.update(dtype=np.dtype(np.bool_))),
+            out, float_zero, ir.StringAttr.get("NE"),
+            ir.StringAttr.get("FLOAT")).result
     return out
   else:
     raise TypeError(aval)
