@@ -5159,6 +5159,10 @@ def _nbytes(arr):
   return size(arr) * _dtype(arr).itemsize
 
 
+def _itemsize(arr):
+    return _dtype(arr).itemsize
+
+
 def _clip(number, min=None, max=None, out=None, *, a_min=None, a_max=None):
   # ndarray.clip has a slightly different API from clip (min -> a_min, max -> a_max)
   # TODO: remove after deprecation window
@@ -5655,6 +5659,7 @@ def _set_shaped_array_attributes(shaped_array):
   setattr(shaped_array, "astype", core.aval_method(_astype))
   setattr(shaped_array, "view", core.aval_method(_view))
   setattr(shaped_array, "nbytes", core.aval_property(_nbytes))
+  setattr(shaped_array, "itemsize", core.aval_property(_itemsize))
   setattr(shaped_array, "clip", core.aval_method(_clip))
 
   setattr(shaped_array, "_array_module", staticmethod(__array_module__))
@@ -5685,6 +5690,7 @@ def _set_device_array_base_attributes(device_array):
   setattr(device_array, "astype", _astype)
   setattr(device_array, "view", _view)
   setattr(device_array, "nbytes", property(_nbytes))
+  setattr(device_array, "itemsize", property(_itemsize))
   setattr(device_array, "clip", _clip)
 
 _set_device_array_base_attributes(device_array.DeviceArray)
