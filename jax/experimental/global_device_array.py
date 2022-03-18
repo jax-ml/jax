@@ -54,13 +54,17 @@ def _get_array_mapping(mesh_axes):
   return get_array_mapping(parsed_pspec)
 
 
-def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
-                 mesh_axes: MeshAxes) -> Tuple[Index, ...]:
+def _get_sharding_spec(global_shape, global_mesh, mesh_axes):
   array_mapping = _get_array_mapping(mesh_axes)
   # The dtype doesn't matter for creating sharding specs.
   aval = core.ShapedArray(global_shape, np.float32)
-  sharding_spec = pxla.mesh_sharding_specs(
-      global_mesh.shape, global_mesh.axis_names)(aval, array_mapping)
+  return pxla.mesh_sharding_specs(global_mesh.shape,
+                                  global_mesh.axis_names)(aval, array_mapping)
+
+
+def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
+                 mesh_axes: MeshAxes) -> Tuple[Index, ...]:
+  sharding_spec = _get_sharding_spec(global_shape, global_mesh, mesh_axes)
   indices = pxla.spec_to_indices(global_shape, sharding_spec)
   return indices  # type: ignore
 
