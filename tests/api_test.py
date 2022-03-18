@@ -5420,21 +5420,6 @@ class CustomJVPTest(jtu.JaxTestCase):
     shape = grad(lambda x: jnp.sum(f(x)))(jnp.array(1.)).shape
     self.assertEqual(shape, ())
 
-  def test_maybe_perturbed_internal_helper_function(self):
-    # This is a unit test for an internal API. We include it so as not to
-    # regress https://github.com/google/jax/issues/9567. For an explanation of
-    # this helper function, see https://github.com/google/jax/issues/6415.
-    from jax._src.custom_derivatives import _maybe_perturbed
-    def f(x):
-      def g(y, _):
-          z = y * x
-          self.assertTrue(_maybe_perturbed(z))
-          return y, None
-      g(1, None)
-      return lax.scan(g, 1, xs=None, length=1)[0]
-
-    jax.jvp(f, (1.0,), (1.0,))  # assertions inside f
-
 
 class CustomVJPTest(jtu.JaxTestCase):
 
