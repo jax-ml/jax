@@ -5435,6 +5435,17 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     jax.jvp(f, (1.0,), (1.0,))  # assertions inside f
 
+  def test_maybe_perturbed_int_regression(self):
+    # see https://github.com/google/jax/discussions/9951
+    from jax._src.custom_derivatives import closure_convert
+
+    @jax.jit
+    def f():
+      x = jnp.array(1)
+      _, aux_args = closure_convert(lambda: x)
+      self.assertEmpty(aux_args)
+    f()
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
