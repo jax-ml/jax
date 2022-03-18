@@ -797,6 +797,14 @@ class PJitTest(jtu.BufferDonationTestCase):
     f = f.lower(x, x + 1).compile()
     self.assertIsNotNone(f.runtime_executable())
 
+    stats = f.runtime_executable().get_compiled_memory_stats()
+    self.assertIsNotNone(stats)
+    self.assertGreaterEqual(stats.generated_code_size_in_bytes, 0)
+    self.assertGreaterEqual(stats.argument_size_in_bytes, 0)
+    self.assertGreaterEqual(stats.output_size_in_bytes, 0)
+    self.assertGreaterEqual(stats.alias_size_in_bytes, 0)
+    self.assertGreaterEqual(stats.temp_size_in_bytes, 0)
+
   @jtu.with_mesh([('x', 2)])
   def test_static_argnums(self):
     @partial(pjit, in_axis_resources=None, out_axis_resources=None,
