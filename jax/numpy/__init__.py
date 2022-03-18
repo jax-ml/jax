@@ -308,6 +308,38 @@ from jax._src.numpy.polynomial import (
     roots as roots,
 )
 
+from jax._src.numpy.reductions import (
+    alltrue as alltrue,
+    amin as amin,
+    amax as amax,
+    any as any,
+    all as all,
+    average as average,
+    count_nonzero as count_nonzero,
+    cumsum as cumsum,
+    cumprod as cumprod,
+    cumproduct as cumproduct,
+    max as max,
+    mean as mean,
+    min as min,
+    nancumsum as nancumsum,
+    nancumprod as nancumprod,
+    nanmax as nanmax,
+    nanmean as nanmean,
+    nanmin as nanmin,
+    nanprod as nanprod,
+    nanstd as nanstd,
+    nansum as nansum,
+    nanvar as nanvar,
+    prod as prod, 
+    product as product,
+    ptp as ptp, 
+    sometrue as sometrue, 
+    std as std, 
+    sum as sum, 
+    var as var,
+)
+
 from jax._src.numpy.ufuncs import (
     abs as abs,
     absolute as absolute,
