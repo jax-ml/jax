@@ -2625,9 +2625,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp_op, mode=mode, precision=precision)
     tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-14,
            np.complex128: 1e-14}
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testConvolutionIntPrecision(self):
+    # This is covered by the above test but we added an extra check just in case
+    np_arr = np.array([29, 3013, 17502, 19404, 77, 1578, 86, 4794, 670, 7, 934,
+                       18854, 3, 888, 3, 379, 239, 3866, 14, 58, 10607, 8498,
+                       25, 5, 229, 319, 13, 32, 5569, 58, 670, 4, 2])
+    jnp_arr = jnp.asarray(np_arr)
+    np_conv  =  np.convolve( np.array([1, -2, 4, -8]),  np_arr, mode='valid')
+    jnp_conv = jnp.convolve(jnp.array([1, -2, 4, -8]), jnp_arr, mode='valid')
+    self.assertAllClose(np_conv, jnp_conv, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(

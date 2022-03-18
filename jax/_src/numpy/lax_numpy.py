@@ -335,7 +335,7 @@ def trunc(x):
 def _conv(x, y, mode, op, precision):
   if ndim(x) != 1 or ndim(y) != 1:
     raise ValueError(f"{op}() only support 1-dimensional inputs.")
-  x, y = _promote_dtypes_inexact(x, y)
+  x, y = _promote_dtypes(x, y)
   if len(x) == 0 or len(y) == 0:
     raise ValueError(f"{op}: inputs cannot be empty, got shapes {x.shape} and {y.shape}.")
 
