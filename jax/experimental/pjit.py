@@ -46,7 +46,7 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
 from jax._src.tree_util import prefix_errors
 from jax._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
-                         split_list, cache, tuple_insert)
+                         split_list, cache, tuple_insert, weakref_lru_cache)
 xops = xc._xla.ops
 
 class _FromGdaSingleton:
@@ -609,7 +609,7 @@ def _pjit_call_impl(*args, jaxpr,
   return compiled.unsafe_call(*args)
 pjit_p.def_impl(_pjit_call_impl)
 
-@cache()
+@weakref_lru_cache
 def _pjit_lower(
     jaxpr: core.ClosedJaxpr,
     in_axis_resources: Tuple[CanonicalizedParsedPartitionSpec, ...],

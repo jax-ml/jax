@@ -16,10 +16,13 @@
 import functools
 from functools import partial
 import itertools as it
+from collections import namedtuple
 import operator
 import types
-from typing import (Any, Callable, Iterable, List, Tuple, Generic, TypeVar, Set,
-                    Iterator, Sequence)
+import threading
+from typing import (Any, Callable, Dict, Iterable, List, Tuple, Generic,
+                    TypeVar, Set, Iterator, Sequence)
+import weakref
 
 from absl import logging
 import numpy as np
@@ -215,6 +218,55 @@ def cache(max_size=4096):
   return wrap
 
 memoize = cache(max_size=None)
+
+_CacheInfo = namedtuple("_CacheInfo", ["hits", "misses", "maxsize", "currsize"])
+
+def weakref_lru_cache(call: Callable, maxsize=2048):
+  cache: Dict[Any, Any] = {}
+  hits = misses = 0
+  lock = threading.Lock()
+
+  def remove_key(tctx, args, kwargs, weak_arg):
+    del cache[(weak_arg, tctx, args, kwargs)]
+
+  def wrapped(weak_arg, *args, **kwargs):
+    nonlocal hits, misses
+    if config.jax_check_tracer_leaks:
+      return call(weak_arg, *args, **kwargs)
+    kwargs_key = tuple(kwargs.items())
+    tctx = config._trace_context()
+    k = (weakref.ref(weak_arg,
+         functools.partial(remove_key, tctx, args, kwargs_key)),
+         tctx, args, kwargs_key)
+    with lock:
+      if k in cache:
+        hits += 1
+        result = cache[k]
+        # del and reinsert to bump key in the insertion order.
+        del cache[k]
+        cache[k] = result
+        return result
+      misses += 1
+    result = call(weak_arg, *args, **kwargs)
+    with lock:
+      cache[k] = result
+      while len(cache) > maxsize:
+        del cache[next(iter(cache))]
+      return result
+
+  def cache_info():
+    with lock:
+      return _CacheInfo(hits, misses, maxsize, len(cache))
+
+  def cache_clear():
+    nonlocal hits, misses
+    with lock:
+      hits = misses = 0
+      cache.clear()
+
+  wrapped.cache_info = cache_info
+  wrapped.cache_clear = cache_clear
+  return wrapped
 
 def prod(xs):
   out = 1
