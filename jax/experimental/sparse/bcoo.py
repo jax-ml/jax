@@ -1209,13 +1209,14 @@ def bcoo_multiply_sparse(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_sp
     # Similar requirement as lax.mul:
     raise TypeError("bcoo_multiply_sparse: arrays must have same number of dimensions, "
                     f"got {lhs_shape}, {rhs_shape}")
-  if (lhs.n_batch, lhs.n_sparse, lhs.n_dense) != (rhs.n_batch, rhs.n_sparse, rhs.n_dense):
+  if lhs.n_dense != rhs.n_dense:
     raise NotImplementedError("bcoo_multiply_sparse: arrays with differing numbers of "
-                              f"batch & dense dimensions: {lhs}, {rhs}")
+                              f"dense dimensions: {lhs}, {rhs}")
+  n_batch = min(lhs.n_batch, rhs.n_batch)
   _mul = functools.partial(_bcoo_multiply_sparse_unbatched,
-                           lhs_shape=lhs_shape[lhs.n_batch:],
-                           rhs_shape=rhs_shape[rhs.n_batch:])
-  for _ in range(lhs.n_batch):
+                           lhs_shape=lhs_shape[n_batch:],
+                           rhs_shape=rhs_shape[n_batch:])
+  for _ in range(n_batch):
     _mul = broadcasting_vmap(_mul)
   data, indices = _mul(lhs_data, lhs_indices, rhs_data, rhs_indices)
   return data, indices, jnp.broadcast_shapes(lhs_shape, rhs_shape)
@@ -1223,7 +1224,15 @@ def bcoo_multiply_sparse(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_sp
 def _bcoo_multiply_sparse_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_shape):
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
-  assert lhs.n_batch == rhs.n_batch == 0
+  assert (lhs.n_batch == 0) or (rhs.n_batch == 0)  # Ensured at call site above
+
+  # TODO(jakevdp): this can be made more efficient by utilizing batch structure.
+  if lhs.n_batch:
+    lhs_data, lhs_indices = _unbatch_bcoo(lhs_data, lhs_indices, lhs_shape)
+    lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
+  elif rhs.n_batch:
+    rhs_data, rhs_indices = _unbatch_bcoo(rhs_data, rhs_indices, rhs_shape)
+    rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
   dims = jnp.array([i for i, (s1, s2) in enumerate(safe_zip(lhs_shape[:lhs.n_sparse], rhs_shape[:rhs.n_sparse]))
                     if s1 != 1 and s2 != 1], dtype=int)
 
