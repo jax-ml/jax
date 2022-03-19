@@ -283,8 +283,9 @@ def pjit(fun: Callable,
 
     args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
-    return stages.Lowered(lowering, args_kwargs_in_tree, local_in_avals,
-                          out_tree, donate_argnums, no_kwargs=True)
+    return stages.Lowered.from_flat_info(
+        lowering, args_kwargs_in_tree, local_in_avals, donate_argnums, out_tree,
+        no_kwargs=True)
 
   wrapped.lower = lower
   return wrapped

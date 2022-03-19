@@ -670,8 +670,8 @@ def xmap(fun: Callable,
 
     in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     in_avals = in_tree.unflatten(avals_flat)
-    return stages.Lowered(
-        computation, in_tree, in_avals, out_tree(), donate_argnums,
+    return stages.Lowered.from_flat_info(
+        computation, in_tree, in_avals, donate_argnums, out_tree(),
         no_kwargs=True)
 
   fun_mapped.lower = lower
