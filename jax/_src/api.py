@@ -1158,7 +1158,7 @@ _check_output_dtype_jacrev = partial(_check_output_dtype_revderiv, "jacrev")
 
 
 def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-            holomorphic: bool = False) -> Callable:
+            has_aux: bool = False, holomorphic: bool = False) -> Callable:
   """Hessian of ``fun`` as a dense array.
 
   Args:
@@ -1168,6 +1168,9 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
       containers thereof.
     argnums: Optional, integer or sequence of integers. Specifies which
       positional argument(s) to differentiate with respect to (default ``0``).
+    has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
+      first element is considered the output of the mathematical function to be
+      differentiated and the second element is auxiliary data. Default False.
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
 
@@ -1218,7 +1221,8 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   ``(out1, out2, ..., in1, in2, ..., in1, in2, ...)``. To flatten pytrees into
   1D vectors, consider using :py:func:`jax.flatten_util.flatten_pytree`.
   """
-  return jacfwd(jacrev(fun, argnums, holomorphic), argnums, holomorphic)
+  return jacfwd(jacrev(fun, argnums, has_aux=has_aux, holomorphic=holomorphic),
+                argnums, has_aux=has_aux, holomorphic=holomorphic)
 
 def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
