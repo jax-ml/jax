@@ -1217,6 +1217,26 @@ class APITest(jtu.JaxTestCase):
     f = lambda x: jnp.dot(x, jnp.dot(A, x))
     assert np.allclose(hessian(f)(x), A + A.T)
 
+  @jtu.skip_on_devices("tpu")
+  def test_hessian_holomorphic(self):
+    R = self.rng().randn
+    A = R(4, 4)
+    x = R(4) * (1 + 2j)
+
+    f = lambda x: jnp.dot(x, jnp.dot(A, x))
+    assert np.allclose(hessian(f, holomorphic=True)(x), A + A.T)
+
+  @jtu.skip_on_devices("tpu")
+  def test_hessian_aux(self):
+    R = self.rng().randn
+    A = R(4, 4)
+    x = R(4)
+
+    f = lambda x: (jnp.dot(x, jnp.dot(A, x)), x)
+    h, aux = hessian(f, has_aux=True)(x)
+    assert np.allclose(h, A + A.T)
+    assert np.allclose(aux, x)
+
   def test_std_basis(self):
     basis = api._std_basis(jnp.zeros(3))
     assert getattr(basis, "shape", None) == (3, 3)
