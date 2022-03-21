@@ -40,7 +40,7 @@ from jax._src.lax.lax import (
   DotDimensionNumbers)
 from jax._src.lib import cusparse
 from jax._src.lib import xla_client as xc
-from jax._src.numpy.lax_numpy import _unique
+from jax._src.numpy.setops import _unique
 
 xops = xc._xla.ops
 
