@@ -142,7 +142,6 @@ from jax._src.numpy.lax_numpy import (
     iinfo as iinfo,
     indices as indices,
     inexact as inexact,
-    in1d as in1d,
     inf as inf,
     inner as inner,
     insert as insert,
@@ -153,11 +152,9 @@ from jax._src.numpy.lax_numpy import (
     int_ as int_,
     integer as integer,
     interp as interp,
-    intersect1d as intersect1d,
     isclose as isclose,
     iscomplex as iscomplex,
     iscomplexobj as iscomplexobj,
-    isin as isin,
     isreal as isreal,
     isrealobj as isrealobj,
     isscalar as isscalar,
@@ -234,8 +231,6 @@ from jax._src.numpy.lax_numpy import (
     searchsorted as searchsorted,
     select as select,
     set_printoptions as set_printoptions,
-    setdiff1d as setdiff1d,
-    setxor1d as setxor1d,
     shape as shape,
     signedinteger as signedinteger,
     single as single,
@@ -270,8 +265,6 @@ from jax._src.numpy.lax_numpy import (
     uint32 as uint32,
     uint64 as uint64,
     uint8 as uint8,
-    unique as unique,
-    union1d as union1d,
     unpackbits as unpackbits,
     unravel_index as unravel_index,
     unsignedinteger as unsignedinteger,
@@ -338,6 +331,16 @@ from jax._src.numpy.reductions import (
     std as std, 
     sum as sum, 
     var as var,
+)
+
+from jax._src.numpy.setops import (
+  in1d as in1d,
+  intersect1d as intersect1d,
+  isin as isin,
+  setdiff1d as setdiff1d,
+  setxor1d as setxor1d,
+  union1d as union1d,
+  unique as unique,
 )
 
 from jax._src.numpy.ufuncs import (
