@@ -533,8 +533,8 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
     computation = dispatch.lower_xla_callable(flat_fun, device, backend, name,
                                               donated_invars,
                                               *arg_specs_and_device)
-    return stages.Lowered(computation, in_tree, in_tree.unflatten(arg_specs),
-                          out_tree(), donate_argnums)
+    return stages.Lowered.from_flat_info(
+        computation, in_tree, arg_specs, donate_argnums, out_tree())
 
   return lower
 
@@ -2063,9 +2063,8 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
         donated_invars=p.donated_invars,
         global_arg_shapes=p.global_arg_shapes_flat,
         avals=abstract_args)
-    return stages.Lowered(
-        computation, p.in_tree, p.in_tree.unflatten(abstract_args),
-        p.out_tree(), donate_tuple)
+    return stages.Lowered.from_flat_info(
+        computation, p.in_tree, abstract_args, donate_tuple, p.out_tree())
 
   return lower
 
