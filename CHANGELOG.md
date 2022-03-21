@@ -8,7 +8,12 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.4 (Unreleased)
+## jax 0.3.5 (Unreleased)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.3.4...main).
+* Changes:
+  * added {func}`jax.random.loggamma` & improved behavior of {func}`jax.random.beta`
+    and {func}`jax.random.dirichlet` for small parameter values `({jax-issue}`9906`).
 
 
 ## jaxlib 0.3.3 (Unreleased)
@@ -16,7 +21,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.4 (March 18, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.2...jax-v0.3.4).
+  commits](https://github.com/google/jax/compare/jax-v0.3.3...jax-v0.3.4).
 
 
 ## jax 0.3.3 (March 17, 2022)
