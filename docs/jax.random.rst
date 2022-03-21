@@ -28,6 +28,7 @@ List of Available Functions
     gamma
     gumbel
     laplace
+    loggamma
     logistic
     maxwell
     multivariate_normal

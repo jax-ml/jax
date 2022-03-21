@@ -98,6 +98,7 @@ from jax._src.random import (
   gumbel as gumbel,
   laplace as laplace,
   logistic as logistic,
+  loggamma as loggamma,
   maxwell as maxwell,
   multivariate_normal as multivariate_normal,
   normal as normal,

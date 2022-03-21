@@ -648,6 +648,19 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
 
+  def testBetaSmallParameters(self, dtype=np.float32):
+    # Regression test for beta version of https://github.com/google/jax/issues/9896
+    key = self.seed_prng(0)
+    a, b = 0.0001, 0.0002
+    samples = random.beta(key, a, b, shape=(100,), dtype=dtype)
+
+    # With such small parameters, all samples should be exactly zero or one.
+    zeros = samples[samples < 0.5]
+    self.assertAllClose(zeros, jnp.zeros_like(zeros))
+
+    ones = samples[samples >= 0.5]
+    self.assertAllClose(ones, jnp.ones_like(ones))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
@@ -684,6 +697,21 @@ class LaxRandomTest(jtu.JaxTestCase):
       for i, a in enumerate(alpha):
         self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
 
+  def testDirichletSmallAlpha(self, dtype=np.float32):
+    # Regression test for https://github.com/google/jax/issues/9896
+    key = self.seed_prng(0)
+    alpha = 0.0001 * jnp.ones(3)
+    samples = random.dirichlet(key, alpha, shape=(100,), dtype=dtype)
+
+    # Check that results lie on the simplex.
+    self.assertAllClose(samples.sum(1), jnp.ones(samples.shape[0]),
+                        check_dtypes=False, rtol=1E-5)
+
+    # Check that results contain 1 in one of the dimensions:
+    # this is highly likely to be true when alpha is small.
+    self.assertAllClose(samples.max(1), jnp.ones(samples.shape[0]),
+                        check_dtypes=False, rtol=1E-5)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
@@ -697,6 +725,22 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.expon().cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_a={}_dtype={}_prng={}".format(a, np.dtype(dtype).name,
+                                                        prng_name),
+       "a": a, "dtype": dtype, "prng_impl": prng_impl}
+      for prng_name, prng_impl in PRNG_IMPLS
+      for a in [0.1, 1., 10.]
+      for dtype in jtu.dtypes.floating))
+  def testGammaVsLogGamma(self, prng_impl, a, dtype):
+    key = prng.seed_with_impl(prng_impl, 0)
+    rand_gamma = lambda key, a: random.gamma(key, a, (10000,), dtype)
+    rand_loggamma = lambda key, a: random.loggamma(key, a, (10000,), dtype)
+    crand_loggamma = jax.jit(rand_loggamma)
+
+    self.assertAllClose(rand_gamma(key, a), jnp.exp(rand_loggamma(key, a)))
+    self.assertAllClose(rand_gamma(key, a), jnp.exp(crand_loggamma(key, a)))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_a={}_dtype={}_prng={}".format(a, np.dtype(dtype).name,
@@ -722,15 +766,22 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_a={}_prng={}".format(alpha, prng_name),
-       "alpha": alpha, "prng_impl": prng_impl}
+      {"testcase_name": "_a={}_prng={}_logspace={}".format(alpha, prng_name, log_space),
+       "alpha": alpha, "log_space": log_space, "prng_impl": prng_impl}
       for prng_name, prng_impl in PRNG_IMPLS
+      for log_space in [True, False]
       for alpha in [1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4]))
-  def testGammaGrad(self, prng_impl, alpha):
+  def testGammaGrad(self, log_space, prng_impl, alpha):
     rng = prng.seed_with_impl(prng_impl, 0)
     alphas = np.full((100,), alpha)
     z = random.gamma(rng, alphas)
-    actual_grad = jax.grad(lambda x: random.gamma(rng, x).sum())(alphas)
+    if log_space:
+      actual_grad = jax.grad(lambda x: lax.exp(random.loggamma(rng, x)).sum())(alphas)
+      # TODO(jakevdp): this NaN correction is required because we generate negative infinities
+      # in the log-space computation; see related TODO in the source of random._gamma_one().
+      actual_grad = jnp.where(jnp.isnan(actual_grad), 0.0, actual_grad)
+    else:
+      actual_grad = jax.grad(lambda x: random.gamma(rng, x).sum())(alphas)
 
     eps = 0.01 * alpha / (1.0 + np.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
