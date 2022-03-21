@@ -128,7 +128,7 @@ Let's go over these, one-by-one. We'll also end up composing these in interestin
 
 +++ {"id": "YrqE32mvE3b7"}
 
-JAX runs transparently on the GPU (or CPU, if you don't have one, and TPU coming soon!). However, in the above example, JAX is dispatching kernels to the GPU one operation at a time. If we have a sequence of operations, we can use the `@jit` decorator to compile multiple operations together using [XLA](https://www.tensorflow.org/xla). Let's try that.
+JAX runs transparently on the GPU or TPU (falling back to CPU if you don't have one). However, in the above example, JAX is dispatching kernels to the GPU one operation at a time. If we have a sequence of operations, we can use the `@jit` decorator to compile multiple operations together using [XLA](https://www.tensorflow.org/xla). Let's try that.
 
 ```{code-cell} ipython3
 :id: qLGdCtFKFLOR
