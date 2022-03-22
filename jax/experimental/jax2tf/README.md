@@ -1131,3 +1131,10 @@ two assertions (in `tests/jax_primitives_coverage_test.py` and in
 `tests/tf_test_util.py`) and running all the tests. With these assertions enabled
 the tests will fail and point out unnecessary limitations. We remove limitations
 until the tests pass. Then we re-generate the documentation.
+
+# User Support
+
+##Google-internal only
+For jax2tf related questions, post on on g/jax2tf-users. \
+For bug reports, the Buganizer component is
+"Machine Learning > Google Brain > Research > JAX > jax2tf".
