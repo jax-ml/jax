@@ -689,7 +689,7 @@ config.define_bool_state(
 
 config.define_bool_state(
     name='jax_experimental_name_stack',
-    default=False,
+    default=True,
     help='Enable using the context manager-based name stack.')
 
 # This flag is temporary during rollout of the remat barrier.

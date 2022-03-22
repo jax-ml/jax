@@ -67,6 +67,7 @@ from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
 # pylint: enable=g-direct-tensorflow-import
 
 PolyShape = shape_poly.PolyShape
+NameStack = source_info_util.NameStack
 
 # A temporary internal flag, to enable the wrapping of jax.jit functions
 # with tf.function(jit_compile=True). See #7389. This change has triggered a
@@ -150,7 +151,7 @@ _has_registered_tf_source_path = False
 
 class _ThreadLocalState(threading.local):
   def __init__(self):
-    self.name_stack = ""
+    self.name_stack = util.new_name_stack()
     # XLA is not linked in all environments; when converting a primitive, if this
     # variable is disabled, we try harder to use only standard TF ops if they are
     # applicable to the concrete use case; if the resulting conversion path ends up
@@ -177,7 +178,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def _get_current_name_stack():
+def _get_current_name_stack() -> Optional[Union[str, NameStack]]:
   return _thread_local_state.name_stack
 
 @contextlib.contextmanager
@@ -480,7 +481,7 @@ def _extended_name_stack(extra_name_stack: Optional[str]):
   prev_name_stack = _thread_local_state.name_stack
   if extra_name_stack:
     if not prev_name_stack:
-      _thread_local_state.name_stack = extra_name_stack
+      _thread_local_state.name_stack = util.new_name_stack(extra_name_stack)
     else:
       _thread_local_state.name_stack = util.extend_name_stack(
           _thread_local_state.name_stack, extra_name_stack)
