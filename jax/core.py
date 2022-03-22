@@ -199,6 +199,8 @@ class Var:
     return _encode_digits_alphabetic(self.count) + self.suffix
 
 def _encode_digits_alphabetic(n):
+  if n == -1:
+    return '*'
   s = ''
   while len(s) == 0 or n:
     n, i = n // 26, n % 26
@@ -2271,7 +2273,8 @@ class JaxprPpContext:
   var_ids: DefaultDict[Var, int]
 
   def __init__(self):
-    self.var_ids = collections.defaultdict(it.count().__next__)
+    self.var_ids = collections.defaultdict(
+        it.count().__next__, {unitvar: -1})
 
 
 def pp_var(v: Var, context: JaxprPpContext) -> str:

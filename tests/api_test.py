@@ -4466,6 +4466,12 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(lambda: cet(3.))()
     self.assertLen(jaxpr.eqns, 0)
 
+  def test_pretty_print_unitvar(self):
+    jaxpr = api.make_jaxpr(lambda: None)()
+    jaxpr.jaxpr.outvars = [core.unitvar]
+    self.assertIn('in (*,)', str(jaxpr))
+    self.assertNotIn('in (a,)', str(jaxpr))
+
 
 class CustomJVPTest(jtu.JaxTestCase):
 
