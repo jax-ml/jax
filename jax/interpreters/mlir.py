@@ -46,6 +46,15 @@ import jax.interpreters.partial_eval as pe
 import jax.interpreters.xla as xla
 import numpy as np
 
+# TODO(jakevdp): remove this when minimum_jaxlib_version >= 0.3.3
+if jax._src.lib.mlir_api_version >= 4:
+  FuncOp = func_dialect.FuncOp  # pytype: disable=module-attr
+else:
+  from jax._src.lib.mlir.dialects import builtin  # pylint: disable=import-not-at-top
+  FuncOp = builtin.FuncOp  # pytype: disable=module-attr
+# mypy gets confused by conditional imports, so alias to Any for now.
+FuncOpType = Any
+
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -341,7 +350,7 @@ class ModuleContext:
   name_stack: NameStack
 
   # Cached primitive lowerings.
-  cached_primitive_lowerings: Dict[Any, func_dialect.FuncOp]
+  cached_primitive_lowerings: Dict[Any, FuncOpType]
 
   @property
   def axis_env(self) -> xla.AxisEnv:
@@ -356,8 +365,7 @@ class ModuleContext:
       module: Optional[ir.Module] = None,
       ip: Optional[ir.InsertionPoint] = None,
       symbol_table: Optional[ir.SymbolTable] = None,
-      cached_primitive_lowerings: Optional[Dict[Any,
-                                                func_dialect.FuncOp]] = None):
+      cached_primitive_lowerings: Optional[Dict[Any, FuncOpType]] = None):
     assert platform is not None
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -539,7 +547,7 @@ def lower_jaxpr_to_fun(
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     input_output_aliases: Optional[Sequence[Optional[int]]] = None
-) -> func_dialect.FuncOp:
+) -> FuncOpType:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -573,7 +581,7 @@ def lower_jaxpr_to_fun(
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
-  func_op = func_dialect.FuncOp(name, ftype, ip=ctx.ip)
+  func_op = FuncOp(name, ftype, ip=ctx.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
       "public" if public else "private")
   ctx.symbol_table.insert(func_op)
@@ -655,7 +663,7 @@ def lower_jaxpr_to_fun(
   return func_op
 
 def _emit_lowering_rule_as_fun(lowering_rule,
-                               ctx: LoweringRuleContext) -> func_dialect.FuncOp:
+                               ctx: LoweringRuleContext) -> FuncOpType:
   """Emits the contents of a lowering rule as a private function."""
   input_types = map(aval_to_ir_types, ctx.avals_in)
   output_types = map(aval_to_ir_types, ctx.avals_out)
@@ -663,8 +671,7 @@ def _emit_lowering_rule_as_fun(lowering_rule,
   flat_output_types = util.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
   assert ctx.primitive is not None
-  func_op = func_dialect.FuncOp(
-      ctx.primitive.name, ftype, ip=ctx.module_context.ip)
+  func_op = FuncOp(ctx.primitive.name, ftype, ip=ctx.module_context.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get("private")
   ctx.module_context.symbol_table.insert(func_op)
   entry_block = func_op.add_entry_block()
