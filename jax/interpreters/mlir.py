@@ -35,7 +35,6 @@ from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -342,19 +341,23 @@ class ModuleContext:
   name_stack: NameStack
 
   # Cached primitive lowerings.
-  cached_primitive_lowerings: Dict[Any, builtin.FuncOp]
+  cached_primitive_lowerings: Dict[Any, func_dialect.FuncOp]
 
   @property
   def axis_env(self) -> xla.AxisEnv:
     return self.axis_context.axis_env
 
   def __init__(
-      self, platform: str, axis_context: AxisContext, name_stack: NameStack,
+      self,
+      platform: str,
+      axis_context: AxisContext,
+      name_stack: NameStack,
       context: Optional[ir.Context] = None,
       module: Optional[ir.Module] = None,
       ip: Optional[ir.InsertionPoint] = None,
       symbol_table: Optional[ir.SymbolTable] = None,
-      cached_primitive_lowerings: Optional[Dict[Any, builtin.FuncOp]] = None):
+      cached_primitive_lowerings: Optional[Dict[Any,
+                                                func_dialect.FuncOp]] = None):
     assert platform is not None
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -525,14 +528,18 @@ def _set_up_aliases(avals_in, avals_out, donated_args):
   return input_output_aliases, out_donated_args
 
 def lower_jaxpr_to_fun(
-    ctx: ModuleContext, name: str, jaxpr: core.ClosedJaxpr, *,
-    public: bool = False, replace_units_with_dummy: bool = False,
+    ctx: ModuleContext,
+    name: str,
+    jaxpr: core.ClosedJaxpr,
+    *,
+    public: bool = False,
+    replace_units_with_dummy: bool = False,
     replace_tokens_with_dummy: bool = False,
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     input_output_aliases: Optional[Sequence[Optional[int]]] = None
-  ) -> builtin.FuncOp:
+) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -566,7 +573,7 @@ def lower_jaxpr_to_fun(
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
-  func_op = builtin.FuncOp(name, ftype, ip=ctx.ip)
+  func_op = func_dialect.FuncOp(name, ftype, ip=ctx.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
       "public" if public else "private")
   ctx.symbol_table.insert(func_op)
@@ -648,7 +655,7 @@ def lower_jaxpr_to_fun(
   return func_op
 
 def _emit_lowering_rule_as_fun(lowering_rule,
-                               ctx: LoweringRuleContext) -> builtin.FuncOp:
+                               ctx: LoweringRuleContext) -> func_dialect.FuncOp:
   """Emits the contents of a lowering rule as a private function."""
   input_types = map(aval_to_ir_types, ctx.avals_in)
   output_types = map(aval_to_ir_types, ctx.avals_out)
@@ -656,7 +663,8 @@ def _emit_lowering_rule_as_fun(lowering_rule,
   flat_output_types = util.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
   assert ctx.primitive is not None
-  func_op = builtin.FuncOp(ctx.primitive.name, ftype, ip=ctx.module_context.ip)
+  func_op = func_dialect.FuncOp(
+      ctx.primitive.name, ftype, ip=ctx.module_context.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get("private")
   ctx.module_context.symbol_table.insert(func_op)
   entry_block = func_op.add_entry_block()
