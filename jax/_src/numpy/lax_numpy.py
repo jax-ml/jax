@@ -90,6 +90,9 @@ default precision for the backend, a :class:`~jax.lax.Precision` enum value
 of two :class:`~jax.lax.Precision` enums indicating separate precision for each argument.
 """
 
+# Some objects below rewrite their __module__ attribute to this name.
+_PUBLIC_MODULE_NAME = "jax.numpy"
+
 # We replace some builtin names to follow Numpy's API, so we capture here.
 _abs = builtins.abs
 _all = builtins.all
@@ -146,8 +149,10 @@ class _ScalarMeta(type):
     return isinstance(instance, self.dtype.type)
 
 def _make_scalar_type(np_scalar_type):
-  return _ScalarMeta(np_scalar_type.__name__, (object,),
+  meta = _ScalarMeta(np_scalar_type.__name__, (object,),
                      {"dtype": np.dtype(np_scalar_type)})
+  meta.__module__ = _PUBLIC_MODULE_NAME
+  return meta
 
 bool_ = _make_scalar_type(np.bool_)
 uint8 = _make_scalar_type(np.uint8)
