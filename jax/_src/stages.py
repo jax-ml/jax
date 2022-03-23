@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-
 from typing import Any, Optional, Sequence, Tuple, TypeVar
 from typing_extensions import Protocol, ParamSpec
 
@@ -33,9 +32,8 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
-T = TypeVar("T")
-P = ParamSpec("P")
-
+T_co = TypeVar("T_co", covariant=True)
+P_contra = ParamSpec("P_contra", contravariant=True)
 
 @dataclass
 class ArgInfo:
@@ -244,12 +242,12 @@ class Lowered(Stage):
     return self._lowering.hlo()
 
 
-class Wrapped(Protocol[P, T]):
-  def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
+class Wrapped(Protocol[P_contra, T_co]):
+  def __call__(self, *args: P_contra.args, **kwargs: P_contra.kwargs) -> T_co:
     """Executes the wrapped function, lowering and compiling as needed."""
     raise NotImplementedError
 
-  def lower(self, *args: P.args, **kwargs: P.kwargs) -> Lowered:
+  def lower(self, *args: P_contra.args, **kwargs: P_contra.kwargs) -> Lowered:
     """Lower this function for the given arguments.
 
     A lowered function is staged out of Python and translated to a
