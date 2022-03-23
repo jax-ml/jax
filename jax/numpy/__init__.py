@@ -324,12 +324,12 @@ from jax._src.numpy.reductions import (
     nanstd as nanstd,
     nansum as nansum,
     nanvar as nanvar,
-    prod as prod, 
+    prod as prod,
     product as product,
-    ptp as ptp, 
-    sometrue as sometrue, 
-    std as std, 
-    sum as sum, 
+    ptp as ptp,
+    sometrue as sometrue,
+    std as std,
+    sum as sum,
     var as var,
 )
 
@@ -435,9 +435,6 @@ from jax._src.numpy.ufuncs import (
 )
 
 from jax._src.numpy.vectorize import vectorize as vectorize
-
-# TODO(phawkins): remove this import after fixing users.
-from jax._src.numpy import lax_numpy
 
 # Module initialization is encapsulated in a function to avoid accidental
 # namespace pollution.
