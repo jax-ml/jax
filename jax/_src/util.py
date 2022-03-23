@@ -219,7 +219,7 @@ def cache(max_size=4096):
 
 memoize = cache(max_size=None)
 
-_CacheInfo = namedtuple("_CacheInfo", ["hits", "misses", "maxsize", "currsize"])
+CacheInfo = namedtuple("CacheInfo", ["hits", "misses", "maxsize", "currsize"])
 
 def weakref_lru_cache(call: Callable, maxsize=2048):
   cache: Dict[Any, Any] = {}
@@ -256,7 +256,7 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
 
   def cache_info():
     with lock:
-      return _CacheInfo(hits, misses, maxsize, len(cache))
+      return CacheInfo(hits, misses, maxsize, len(cache))
 
   def cache_clear():
     nonlocal hits, misses
