@@ -34,8 +34,8 @@ from jax._src.api_util import flattened_fun_in_tree, flatten_fun_nokwargs
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
                                 tree_leaves)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
-                           merge_lists, partition_list, cache, OrderedSet,
-                           as_hashable_function)
+                           merge_lists, partition_list, OrderedSet,
+                           as_hashable_function, weakref_lru_cache)
 from jax.core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                       unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
                       ConcreteArray, raise_to_shaped, Var, Atom, JaxprEqn,
@@ -743,7 +743,7 @@ def tracers_to_jaxpr(
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
 
-@cache()
+@weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
@@ -806,7 +806,7 @@ def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
   instantiate = tuple(instantiate) if isinstance(instantiate, list) else instantiate
   return _partial_eval_jaxpr(jaxpr, tuple(unknowns), instantiate)
 
-@cache()
+@weakref_lru_cache
 def _partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
@@ -1172,7 +1172,7 @@ def _dce_jaxpr(closed_jaxpr: ClosedJaxpr, outputs: Sequence[bool], drop_outputs=
   new_jaxpr = _dce_open_jaxpr(closed_jaxpr.jaxpr, tuple(outputs), drop_outputs)
   return core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
 
-@cache()
+@weakref_lru_cache
 def _dce_open_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False) -> Jaxpr:
   # This dead-code elimination is pretty rudimentary, and in particular doesn't
   # nontrivially DCE through scan, call, or other higher-order primitives.
@@ -1192,7 +1192,7 @@ def _dce_open_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False)
   new_eqns = new_eqns[::-1]
   return Jaxpr(jaxpr.constvars, jaxpr.invars, new_outvars, new_eqns)
 
-@cache()
+@weakref_lru_cache
 def _drop_vars(jaxpr: Jaxpr, drop_ins: Tuple[bool, ...], drop_outs: Tuple[bool, ...]):
   return Jaxpr(jaxpr.constvars,
                [v for v, d in zip(jaxpr.invars, drop_ins) if not d],
