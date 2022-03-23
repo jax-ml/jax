@@ -405,7 +405,7 @@ development on a laptop, you can run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade "jax[cpu]"
+pip install --upgrade "jax[cpu]<0.4.0"
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
@@ -451,7 +451,7 @@ Next, run
 ```bash
 pip install --upgrade pip
 # Installs the wheel compatible with CUDA 11 and cuDNN 8.2 or newer.
-pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_releases.html  # Note: wheels only available on linux.
+pip install --upgrade "jax[cuda]<0.4.0" -f https://storage.googleapis.com/jax-releases/jax_releases.html  # Note: wheels only available on linux.
 ```
 
 
@@ -463,10 +463,10 @@ version for jaxlib explicitly:
 pip install --upgrade pip
 
 # Installs the wheel compatible with Cuda >= 11.4 and cudnn >= 8.2
-pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install "jax[cuda11_cudnn82]<0.4.0" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
 # Installs the wheel compatible with Cuda >= 11.1 and cudnn >= 8.0.5
-pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install "jax[cuda11_cudnn805]<0.4.0" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 You can find your CUDA version with the command:
@@ -494,7 +494,7 @@ To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can
 the following in your cloud TPU VM:
 ```bash
 pip install --upgrade pip
-pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install "jax[tpu]>=0.2.16,<0.4.0" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 ### pip installation: Colab TPU
