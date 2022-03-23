@@ -32,6 +32,7 @@ from jax._src.nn.functions import (
   log_softmax as log_softmax,
   logsumexp as logsumexp,
   normalize as normalize,
+  standardize as standardize,
   one_hot as one_hot,
   relu as relu,
   relu6 as relu6,
