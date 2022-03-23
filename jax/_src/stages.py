@@ -13,14 +13,13 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple, Union, TypeVar
+
+from typing import Any, Optional, Sequence, Tuple, TypeVar
 from typing_extensions import Protocol, ParamSpec
 
 from jax import core
 from jax import tree_util
-from jax.interpreters import pxla
 
-from jax._src import dispatch
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -34,16 +33,9 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
-Computation = Union[dispatch.XlaComputation,
-                    pxla.MeshComputation,
-                    pxla.PmapComputation]
-
-Executable = Union[dispatch.XlaCompiledComputation,
-                   pxla.MeshExecutable,
-                   pxla.PmapExecutable]
-
 T = TypeVar("T")
 P = ParamSpec("P")
+
 
 @dataclass
 class ArgInfo:
@@ -80,6 +72,38 @@ def make_args_info(in_tree, in_avals, donate_argnums):
       for i, aval in enumerate(flat_avals)])
 
 
+class Executable(Protocol):
+  """Protocol for compiled executable, which a ``Compiled`` encapsulates."""
+
+  def call(*args_flat) -> Sequence[Any]:
+    """Invoke this on the flat list of arguments, returning flat outputs."""
+    raise NotImplementedError
+
+  def hlo_modules(self) -> Sequence[Any]:
+    """Return a sequence of HLO modules representing this computation."""
+    raise NotImplementedError
+
+  def runtime_executable(self) -> Any:
+    """Return an opaque reference to the executable known to the runtime."""
+    raise NotImplementedError
+
+
+class Computation(Protocol):
+  """Protocol for lowered computation, which a ``Lowered`` encapsulates."""
+
+  def compile(self) -> Executable:
+    """Compile and return a corresponding ``Exectuable``."""
+    raise NotImplementedError
+
+  def hlo(self) -> Any:
+    """Return an HLO representation of this computation."""
+    raise NotImplementedError
+
+  def mhlo(self) -> Any:
+    """Return an MHLO representation of this computation."""
+    raise NotImplementedError
+
+
 class Compiled(Stage):
   """Compiled representation of a function specialized to types/values.
 
@@ -109,10 +133,10 @@ class Compiled(Stage):
     representation of the program after such passes, whenever
     possible.
     """
-    return self._executable.xla_executable.hlo_modules()
+    return self._executable.hlo_modules()
 
   def runtime_executable(self):
-    return self._executable.xla_executable
+    return self._executable.runtime_executable()
 
   def _xla_executable(self):
     # TODO(frostig): finalize API. For now, return the underlying
@@ -223,6 +247,7 @@ class Lowered(Stage):
 class Wrapped(Protocol[P, T]):
   def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
     """Executes the wrapped function, lowering and compiling as needed."""
+    raise NotImplementedError
 
   def lower(self, *args: P.args, **kwargs: P.kwargs) -> Lowered:
     """Lower this function for the given arguments.
@@ -234,3 +259,4 @@ class Wrapped(Protocol[P, T]):
     Returns:
       A ``Lowered`` instance representing the lowering.
     """
+    raise NotImplementedError

@@ -45,32 +45,35 @@ from absl import logging
 import numpy as np
 
 import jax
-from jax._src.config import config
 from jax import core
 from jax import linear_util as lu
-from jax._src import abstract_arrays
-from jax._src.abstract_arrays import array_types
 from jax.core import ConcreteArray, ShapedArray
+from jax.errors import JAXTypeError
+from jax.interpreters import ad
+from jax.interpreters import batching
+from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
+from jax.tree_util import tree_flatten, tree_map
+
+from jax._src import abstract_arrays
 from jax._src import device_array
 from jax._src import source_info_util
 from jax._src import util
-from jax._src.util import (unzip3, prod, safe_map, safe_zip,
-                           extend_name_stack, new_name_stack, wrap_name, assert_unreachable,
-                           tuple_insert, tuple_delete, distributed_debug_log)
-from jax.errors import JAXTypeError
 from jax._src import dispatch
 from jax._src import profiler
+from jax._src import stages
+from jax._src.abstract_arrays import array_types
+from jax._src.config import config
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
-from jax.tree_util import tree_flatten, tree_map
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
-from jax.interpreters import ad
+from jax._src.util import (unzip3, prod, safe_map, safe_zip,
+                           extend_name_stack, new_name_stack, wrap_name, assert_unreachable,
+                           tuple_insert, tuple_delete, distributed_debug_log)
+
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
@@ -1063,8 +1066,10 @@ def lower_parallel_callable(
                          shards=shards, tuple_args=tuple_args)
 
 
-class PmapComputation:
+class PmapComputation(stages.Computation):
   _hlo: Union[ir.Module, xc.XlaComputation]
+  _executable: Optional['PmapExecutable']
+
   def __init__(self, hlo: Union[ir.Module, xc.XlaComputation], **compile_args):
     self._executable = None
     self._hlo = hlo
@@ -1087,13 +1092,13 @@ class PmapComputation:
     return self._hlo
 
   @profiler.annotate_function
-  def compile(self):
+  def compile(self) -> 'PmapExecutable':
     if self._executable is None:
       self._executable = PmapExecutable.from_hlo(self._hlo, **self.compile_args)
     return self._executable
 
 
-class PmapExecutable:
+class PmapExecutable(stages.Executable):
   __slots__ = ['xla_executable', 'unsafe_call', 'fingerprint', 'in_avals']
 
   def __init__(self, xla_executable, unsafe_call, fingerprint, in_avals):
@@ -1222,6 +1227,14 @@ class PmapExecutable:
     fingerprint = getattr(compiled, "fingerprint", None)
 
     return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
+
+  # -- stages.Executable protocol
+
+  def runtime_executable(self):
+    return self.xla_executable
+
+  def hlo_modules(self):
+    return self.xla_executable.hlo_modules()
 
   @profiler.annotate_function
   def call(self, *args):
@@ -2246,7 +2259,7 @@ def lower_mesh_computation(
       spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_global=in_is_global)
 
 
-class MeshComputation:
+class MeshComputation(stages.Computation):
   _hlo: Union[ir.Module, xc.XlaComputation]
   _executable: Optional['MeshExecutable']
 
@@ -2313,7 +2326,7 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_global):
   return input_specs, input_indices, input_avals
 
 
-class MeshExecutable:
+class MeshExecutable(stages.Executable):
   __slots__ = ['xla_executable', 'unsafe_call', '_input_avals']
 
   def __init__(self, xla_executable, unsafe_call, input_avals):
@@ -2373,6 +2386,14 @@ class MeshExecutable:
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args, handle_outs)
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals)
+
+  # -- stages.Executable protocol
+
+  def runtime_executable(self):
+    return self.xla_executable
+
+  def hlo_modules(self):
+    return self.xla_executable.hlo_modules()
 
   def call(self, *args):
     # TODO(yashkatariya): Add a AOT lowering test where GDA is an input.
