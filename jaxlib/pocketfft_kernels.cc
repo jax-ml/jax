@@ -18,10 +18,11 @@ limitations under the License.
 #include "flatbuffers/flatbuffers.h"
 #include "pocketfft/pocketfft_hdronly.h"
 #include "jaxlib/pocketfft_generated.h"
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 
-void PocketFft(void* out, void** in) {
+void PocketFft(void* out, void** in, XlaCustomCallStatus*) {
   const PocketFftDescriptor* descriptor = GetPocketFftDescriptor(in[0]);
   pocketfft::shape_t shape(descriptor->shape()->begin(),
                            descriptor->shape()->end());

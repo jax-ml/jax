@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <complex>
 #include <cstdint>
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 // Underlying function pointers (e.g., Trsm<double>::Fn) are initialized either
 // by the pybind wrapper that links them to an existing SciPy lapack instance,
@@ -35,7 +36,7 @@ struct Trsm {
                       lapack_int* lda, T* b, lapack_int* ldb);
 
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 template <typename T>
@@ -44,7 +45,7 @@ struct Getrf {
                       lapack_int* ipiv, lapack_int* info);
 
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 template <typename T>
@@ -53,7 +54,7 @@ struct Geqrf {
                       T* tau, T* work, lapack_int* lwork, lapack_int* info);
 
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 
   static int64_t Workspace(lapack_int m, lapack_int n);
 };
@@ -64,7 +65,7 @@ struct Orgqr {
                       lapack_int* lda, T* tau, T* work, lapack_int* lwork,
                       lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
   static int64_t Workspace(lapack_int m, lapack_int n, lapack_int k);
 };
 
@@ -73,7 +74,7 @@ struct Potrf {
   using FnType = void(char* uplo, lapack_int* n, T* a, lapack_int* lda,
                       lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 lapack_int GesddIworkSize(int64_t m, int64_t n);
@@ -85,7 +86,7 @@ struct RealGesdd {
                       lapack_int* ldvt, T* work, lapack_int* lwork,
                       lapack_int* iwork, lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 
   static int64_t Workspace(lapack_int m, lapack_int n,
                            bool job_opt_compute_uv, bool job_opt_full_matrices);
@@ -101,7 +102,7 @@ struct ComplexGesdd {
                       lapack_int* lwork, typename T::value_type* rwork,
                       lapack_int* iwork, lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 
   static int64_t Workspace(lapack_int m, lapack_int n,
                            bool job_opt_compute_uv, bool job_opt_full_matrices);
@@ -117,7 +118,7 @@ struct RealSyevd {
                       lapack_int* lda, T* w, T* work, lapack_int* lwork,
                       lapack_int* iwork, lapack_int* liwork, lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 lapack_int HeevdWorkSize(int64_t n);
@@ -131,7 +132,7 @@ struct ComplexHeevd {
                       lapack_int* lrwork, lapack_int* iwork, lapack_int* liwork,
                       lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 template <typename T>
@@ -141,7 +142,7 @@ struct RealGeev {
                       T* vr, lapack_int* ldvr, T* work, lapack_int* lwork,
                       lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 template <typename T>
@@ -151,7 +152,7 @@ struct ComplexGeev {
                       lapack_int* ldvr, T* work, lapack_int* lwork,
                       typename T::value_type* rwork, lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 template <typename T>
@@ -161,7 +162,7 @@ struct RealGees {
                       T* wr, T* wi, T* vs, lapack_int* ldvs, T* work,
                       lapack_int* lwork, bool* bwork, lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 template <typename T>
@@ -172,7 +173,7 @@ struct ComplexGees {
                       typename T::value_type* rwork, bool* bwork,
                       lapack_int* info);
   static FnType* fn;
-  static void Kernel(void* out, void** data);
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
 }  // namespace jax

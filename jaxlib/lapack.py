@@ -94,7 +94,9 @@ def trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
         Shape.array_shape(dtype, (), ()),
         Shape.array_shape(dtype, a_shape.dimensions(), layout),
         Shape.array_shape(dtype, b_shape.dimensions(), layout),
-    ))
+    ),
+    api_version=xla_client.ops.CustomCallApiVersion
+    .API_VERSION_STATUS_RETURNING)
 jax_trsm = trsm
 
 # # ?getrf: LU decomposition
@@ -149,7 +151,9 @@ def getrf(c, a):
           dtype,
           batch_dims + (m, n),
           (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-    ))
+    ),
+    api_version=xla_client.ops.CustomCallApiVersion
+    .API_VERSION_STATUS_RETURNING)
   return tuple(_ops.GetTupleElement(out, i) for i in range(3))
 
 # # ?geqrf: QR decomposition
@@ -212,7 +216,9 @@ def geqrf(c, a):
           dtype,
           batch_dims + (m, n),
           (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-    ))
+    ),
+    api_version=xla_client.ops.CustomCallApiVersion
+    .API_VERSION_STATUS_RETURNING)
   return tuple(_ops.GetTupleElement(out, i) for i in range(3))
 
 # # ?orgqr: product of elementary Householder reflectors:
@@ -282,7 +288,9 @@ def orgqr(c, a, tau):
           dtype,
           batch_dims + (k,),
           tuple(range(num_bd, -1, -1))),
-    ))
+    ),
+    api_version=xla_client.ops.CustomCallApiVersion
+    .API_VERSION_STATUS_RETURNING)
   return tuple(_ops.GetTupleElement(out, i) for i in range(2))
 
 
@@ -326,7 +334,9 @@ def potrf(c, a, lower=False):
         Shape.array_shape(np.dtype(np.int32), (), ()),
         Shape.array_shape(np.dtype(np.int32), (), ()),
         Shape.array_shape(dtype, dims, layout),
-    ))
+    ),
+    api_version=xla_client.ops.CustomCallApiVersion
+    .API_VERSION_STATUS_RETURNING)
   return tuple(_ops.GetTupleElement(out, i) for i in range(2))
 
 
@@ -420,7 +430,9 @@ def gesdd(c, a, full_matrices=True, compute_uv=True):
         Shape.array_shape(np.dtype(np.int32), (), ()),
         Shape.array_shape(np.dtype(np.int32), (), ()),
         Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
-    ))
+    ),
+    api_version=xla_client.ops.CustomCallApiVersion
+    .API_VERSION_STATUS_RETURNING)
   return (_ops.GetTupleElement(out, 1), _ops.GetTupleElement(out, 2),
           _ops.GetTupleElement(out, 3), _ops.GetTupleElement(out, 4))
 
@@ -491,7 +503,9 @@ def syevd(c, a, lower=False):
         Shape.array_shape(np.dtype(np.int32), (), ()),
         Shape.array_shape(np.dtype(np.int32), (), ()),
         Shape.array_shape(dtype, dims, layout),
-    ))
+    ),
+    api_version=xla_client.ops.CustomCallApiVersion
+    .API_VERSION_STATUS_RETURNING)
   return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1),
           _ops.GetTupleElement(out, 2))
 
@@ -575,7 +589,9 @@ def geev(c, a, jobvl=True, jobvr=True):
         Shape.array_shape(np.dtype(np.uint8), (), ()),
         Shape.array_shape(np.dtype(np.uint8), (), ()),
         Shape.array_shape(dtype, dims, layout),
-    ))
+    ),
+    api_version=xla_client.ops.CustomCallApiVersion
+    .API_VERSION_STATUS_RETURNING)
   if real:
     return (_ops.Complex(_ops.GetTupleElement(out, 3),
                          _ops.GetTupleElement(out, 4)),
@@ -653,7 +669,9 @@ def gees(c, a, jobvs=True, sort=False, select=None):
           Shape.array_shape(np.dtype(np.uint8), (), ()),
           Shape.array_shape(np.dtype(np.uint8), (), ()),
           Shape.array_shape(dtype, dims, layout),
-      ))
+      ),
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   if sort == ord('S'):
     return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 3),
             _ops.GetTupleElement(out, 4), _ops.GetTupleElement(out, 5))
