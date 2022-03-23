@@ -971,10 +971,15 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
     # for the select we broadcast the input operands for simplicity and leave
     # optimizations to XLA.
     # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
-    index, *ops = [batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims)]
+    index, *ops = [
+        batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims)]
+
+    in_batched  = [a is not core.abstract_unit for a in branches[0].in_avals]
+    out_batched = [a is not core.abstract_unit for a in branches[0].out_avals]
 
     branches_batched = [
-        batching.batch_jaxpr(jaxpr, axis_size, [True] * len(ops), True, axis_name, main_type)[0]
+        batching.batch_jaxpr(
+            jaxpr, axis_size, in_batched, out_batched, axis_name, main_type)[0]
         for jaxpr in branches]
 
     branch_outs = []
@@ -987,7 +992,7 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
       branch_outs.append(core.jaxpr_as_fun(jaxpr)(*ops_))
     out = [_bcast_select_n(index, *outs) if outs[0] is not core.unit else outs[0]
            for outs in zip(*branch_outs)]
-    return out, [0] * len(branch_outs[0])
+    return out, [0 if b else None for b in out_batched]
   else:
     ops_bat = [d is not batching.not_mapped for d in op_dims]
     ops = [batching.moveaxis(x, d, 0) if b else x

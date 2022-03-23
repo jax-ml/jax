@@ -118,6 +118,7 @@ class BatchTracer(Tracer):
       if type(batch_dim) is int:
         aval = raise_to_shaped(core.get_aval(val))
         assert aval is core.abstract_unit or 0 <= batch_dim < len(aval.shape)  # type: ignore
+        assert aval is not core.abstract_unit or batch_dim is not_mapped
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
