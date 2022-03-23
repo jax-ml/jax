@@ -260,7 +260,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Other Parameters
   ----------------
-  x0 : array
+  x0 : array or tree of arrays
       Starting guess for the solution. Must have the same structure as ``b``.
   tol, atol : float, optional
       Tolerances for convergence, ``norm(residual) <= max(tol*norm(b), atol)``.
@@ -610,7 +610,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
 
   Other Parameters
   ----------------
-  x0 : array, optional
+  x0 : array or tree of arrays, optional
       Starting guess for the solution. Must have the same structure as ``b``.
       If this is unspecified, zeroes are used.
   tol, atol : float, optional
@@ -709,11 +709,11 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Parameters
   ----------
-  A : function
-      Function that calculates the matrix-vector product ``Ax`` when called
-      like ``A(x)``. ``A`` can represent any general (nonsymmetric) linear
-      operator, and must return array(s) with the same structure and shape as its
-      argument.
+  A: ndarray or function
+      2D array or function that calculates the linear map (matrix-vector
+      product) ``Ax`` when called like ``A(x)``. ``A`` can represent any general
+      (nonsymmetric) linear operator, and function must return array(s) with the
+      same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
       stored as an array or Python container of array(s) with any shape.
@@ -728,7 +728,7 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Other Parameters
   ----------------
-  x0 : array
+  x0 : array or tree of arrays
       Starting guess for the solution. Must have the same structure as ``b``.
   tol, atol : float, optional
       Tolerances for convergence, ``norm(residual) <= max(tol*norm(b), atol)``.
@@ -737,7 +737,7 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   maxiter : integer
       Maximum number of iterations.  Iteration will stop after maxiter
       steps even if the specified tolerance has not been achieved.
-  M : function
+  M : ndarray or function
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
