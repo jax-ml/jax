@@ -517,6 +517,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     self.assertFalse(core.typecompat(aval1, aval3))
 
 
+@jtu.with_config(jax_dynamic_shapes=True)
 class DynamicShapesTest(jtu.JaxTestCase):
 
   def test_staging_basic(self):
