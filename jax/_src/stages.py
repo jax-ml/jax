@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple, Union
-from typing_extensions import Protocol
+from typing import Any, Optional, Tuple, Union, TypeVar
+from typing_extensions import Protocol, ParamSpec
 
 from jax import core
 from jax import tree_util
@@ -42,6 +42,8 @@ Executable = Union[dispatch.XlaCompiledComputation,
                    pxla.MeshExecutable,
                    pxla.PmapExecutable]
 
+T = TypeVar("T")
+P = ParamSpec("P")
 
 @dataclass
 class ArgInfo:
@@ -218,11 +220,11 @@ class Lowered(Stage):
     return self._lowering.hlo()
 
 
-class Wrapped(Protocol):
-  def __call__(self, *args, **kwargs):
+class Wrapped(Protocol[P, T]):
+  def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
     """Executes the wrapped function, lowering and compiling as needed."""
 
-  def lower(self, *args, **kwargs) -> Lowered:
+  def lower(self, *args: P.args, **kwargs: P.kwargs) -> Lowered:
     """Lower this function for the given arguments.
 
     A lowered function is staged out of Python and translated to a

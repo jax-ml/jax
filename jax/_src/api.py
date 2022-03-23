@@ -33,6 +33,7 @@ import weakref
 import types
 from typing import (Any, Callable, Iterable, NamedTuple, Mapping, Optional,
                     Sequence, Tuple, TypeVar, Union, overload, Dict, Hashable)
+from typing_extensions import ParamSpec
 from warnings import warn
 
 import numpy as np
@@ -110,6 +111,7 @@ AxisName = Any
 F = TypeVar("F", bound=Callable)
 T = TypeVar("T")
 U = TypeVar("U")
+P = ParamSpec("P")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -228,7 +230,7 @@ def _infer_argnums_and_argnames(
 
 
 def jit(
-  fun: Callable,
+  fun: Callable[P, T],
   *,
   static_argnums: Union[int, Iterable[int], None] = None,
   static_argnames: Union[str, Iterable[str], None] = None,
@@ -236,7 +238,7 @@ def jit(
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
   inline: bool = False,
-) -> stages.Wrapped:
+) -> stages.Wrapped[P, T]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -340,14 +342,14 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
 
 
 def _python_jit(
-    fun: Callable,
+    fun: Callable[P, T],
     static_argnums: Union[int, Iterable[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
-) -> stages.Wrapped:
+) -> stages.Wrapped[P, T]:
   # The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit.
   _check_callable(fun)
   static_argnums, static_argnames = _infer_argnums_and_argnames(
@@ -392,14 +394,14 @@ class _FastpathData(NamedTuple):
 _cpp_jit_cache = jax_jit.CompiledFunctionCache()
 
 def _cpp_jit(
-    fun: Callable,
+    fun: Callable[P, T],
     static_argnums: Union[int, Iterable[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
-) -> stages.Wrapped:
+) -> stages.Wrapped[P, T]:
   # An implementation of `jit` that tries to do as much as possible in C++.
   # The goal of this function is to speed up the time it takes to process the
   # arguments, find the correct C++ executable, start the transfer of arguments
@@ -1890,7 +1892,7 @@ def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
 
 
 def _python_pmap(
-    fun: Callable,
+    fun: Callable[P, T],
     axis_name: Optional[AxisName] = None,
     *,
     in_axes=0,
@@ -1901,7 +1903,7 @@ def _python_pmap(
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-) -> stages.Wrapped:
+) -> stages.Wrapped[P, T]:
   """The Python only implementation."""
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
