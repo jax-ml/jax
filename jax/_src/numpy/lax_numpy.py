@@ -217,12 +217,6 @@ _DEFAULT_TYPEMAP = {
   np.complex_: complex_
 }
 
-_INT_DTYPES = {
-  16: np.int16,
-  32: np.int32,
-  64: np.int64,
-}
-
 _lax_const = lax_internal._const
 
 
