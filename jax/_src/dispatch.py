@@ -30,23 +30,24 @@ import numpy as np
 
 from jax import core
 from jax import linear_util as lu
+from jax.errors import UnexpectedTracerError
 import jax.interpreters.ad as ad
 import jax.interpreters.batching as batching
 import jax.interpreters.masking as masking
 import jax.interpreters.mlir as mlir
 import jax.interpreters.xla as xla
 import jax.interpreters.partial_eval as pe
-from jax.errors import UnexpectedTracerError
-from jax._src.abstract_arrays import array_types
-from jax._src.config import config, flags
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import profiler
+from jax._src import stages
+from jax._src import traceback_util
+from jax._src.abstract_arrays import array_types
+from jax._src.config import config, flags
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
-from jax._src import traceback_util
 
 FLAGS = flags.FLAGS
 
@@ -482,7 +483,7 @@ def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
           else h(*device_put(x, device)) for h, x in zip(handlers, outs)]
 
 
-class XlaComputation:
+class XlaComputation(stages.Computation):
   name: str
   _is_trivial: bool
   _executable: Optional['XlaCompiledComputation']
@@ -583,7 +584,7 @@ def compile_or_get_cached(backend, computation, compile_options):
   return backend_compile(backend, computation, compile_options)
 
 
-class XlaCompiledComputation:
+class XlaCompiledComputation(stages.Executable):
   def __init__(self, xla_executable, in_avals, kept_var_idx, unsafe_call):
     self._xla_executable = xla_executable
     self.in_avals = in_avals
@@ -624,6 +625,7 @@ class XlaCompiledComputation:
 
   @property
   def xla_executable(self):
+    # TODO(frostig): remove in favor of runtime_executable?
     if self.is_trivial():
       raise ValueError("A trivial compiled computation has no XLA executable")
     return self._xla_executable
@@ -635,6 +637,14 @@ class XlaCompiledComputation:
     unsafe_call = partial(_execute_trivial, jaxpr, device, consts,
                           out_avals, result_handlers, kept_var_idx)
     return XlaCompiledComputation(None, in_avals, kept_var_idx, unsafe_call)
+
+  # -- stages.Executable protocol
+
+  def runtime_executable(self):
+    return self.xla_executable
+
+  def hlo_modules(self):
+    return self.xla_executable.hlo_modules()
 
   def call(self, *args):
     arg_specs = unsafe_map(arg_spec, args)
