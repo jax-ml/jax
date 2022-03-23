@@ -188,6 +188,16 @@ class Lowered(Stage):
   _lowering: Computation
   _no_kwargs: bool
 
+  def __init__(self,
+               lowering: Computation,
+               args_info,       # PyTreee of ArgInfo
+               out_tree: tree_util.PyTreeDef,
+               no_kwargs: bool = False):
+    self._lowering = lowering
+    self._no_kwargs = no_kwargs
+    self.args_info = args_info
+    self.out_tree = out_tree
+
   @staticmethod
   def from_flat_info(lowering: Computation,
                      in_tree: tree_util.PyTreeDef,
@@ -206,21 +216,6 @@ class Lowered(Stage):
     """
     return Lowered(lowering, make_args_info(in_tree, in_avals, donate_argnums),
                    out_tree, no_kwargs=no_kwargs)
-    donate_argnums = frozenset(donate_argnums)
-    flat_avals, _ = tree_util.tree_flatten(in_avals)  # todo: remove
-    return in_tree.unflatten([
-        ArgInfo(aval, i in donate_argnums)
-        for i, aval in enumerate(flat_avals)])
-
-  def __init__(self,
-               lowering: Computation,
-               args_info,       # PyTreee of ArgInfo
-               out_tree: tree_util.PyTreeDef,
-               no_kwargs: bool = False):
-    self._lowering = lowering
-    self._no_kwargs = no_kwargs
-    self.args_info = args_info
-    self.out_tree = out_tree
 
   def compile(self) -> Compiled:
     return Compiled(self._lowering.compile(), self.args_info,
