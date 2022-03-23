@@ -2393,5 +2393,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.while_loop(cond, body, (i, jnp.ones(3)))[1]
     jax.vmap(f, in_axes=(0, 1))(jnp.arange(4), jnp.ones((3, 4)))
 
+  def test_cond_ad_batched_unit(self):
+    # see issue #9985
+    def cond_id(x):
+      return lax.cond(x < 0., lambda x: x, lambda x: x, x)
+    jax.vmap(jax.jacrev(lambda x: cond_id(cond_id(x))))(jnp.ones(1))
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
