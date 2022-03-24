@@ -1776,6 +1776,10 @@ def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
     out_tracers = map(trace.full_raise, ans)
     jaxpr, consts = frame.to_jaxpr(out_tracers)
     del fun, main, trace, frame, in_tracers, out_tracers, ans
+  if not config.jax_dynamic_shapes:
+    # TODO(frostig,mattjj): check_jaxpr is incomplete under dynamic
+    # shapes; remove this guard when it is
+    config.jax_enable_checks and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts
 
 @contextlib.contextmanager
