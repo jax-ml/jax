@@ -94,7 +94,6 @@ class PartialVal(tuple):
     """Either the stored known value, or the given 'val'."""
     known = self.get_known()
     return known if known is not None else val
-    breakpoint()
 
 
 class JaxprTrace(Trace):
