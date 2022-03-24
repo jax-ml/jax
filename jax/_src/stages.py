@@ -36,7 +36,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 import itertools as it
-from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
+from typing import Any, Generic, NamedTuple, Protocol, TypeVar, Union, runtime_checkable
+
+from typing_extensions import ParamSpec
 
 from jax._src import core
 from jax._src import config
@@ -870,8 +872,12 @@ def _apply_himut(final_qdds, hi_args, out_mut):
   assert next(out_mut_, None) is None
 
 
+V_co = TypeVar("V_co", covariant=True)
+P = ParamSpec("P")
+
+
 @runtime_checkable
-class Wrapped(Protocol):
+class Wrapped(Protocol, Generic[P, V_co]):
   """A function ready to be traced, lowered, and compiled.
 
   This protocol reflects the output of functions such as
@@ -880,7 +886,7 @@ class Wrapped(Protocol):
   to compilation, and the result compiled prior to execution.
   """
 
-  def __call__(self, *args, **kwargs):
+  def __call__(self, *args: P.args, **kwargs: P.kwargs) -> V_co:
     """Executes the wrapped function, lowering and compiling as needed."""
     raise NotImplementedError
 

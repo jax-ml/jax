@@ -35,6 +35,7 @@ import weakref
 
 import numpy as np
 from contextlib import contextmanager
+from typing_extensions import ParamSpec
 
 from jax._src import api_util
 from jax._src import linear_util as lu
@@ -98,6 +99,9 @@ Device = xc.Device
 F = TypeVar("F", bound=Callable)
 T = TypeVar("T")
 U = TypeVar("U")
+V_co = TypeVar("V_co", covariant=True)
+P = ParamSpec("P")
+
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -156,7 +160,7 @@ float0 = dtypes.float0
 
 
 def jit(
-  fun: Callable, /, *,
+  fun: Callable[P, V_co], /, *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -169,7 +173,7 @@ def jit(
   inline: bool = False,
   abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped:
+) -> pjit.JitWrapped[P, V_co]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -1743,7 +1747,7 @@ def _cpp_pmap(
     ### Decide whether we can support the C++ fast path
     use_fastpath = False
     if execute is not None and isinstance(execute, pxla.ExecuteReplicated):
-      execute_replicated = typing.cast(pxla.ExecuteReplicated, execute)
+      execute_replicated = cast(pxla.ExecuteReplicated, execute)
       use_fastpath = (
         # TODO(sharadmv): Enable effects in replicated computation
         not execute_replicated.has_unordered_effects
@@ -1754,7 +1758,7 @@ def _cpp_pmap(
 
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
-      execute_replicated = typing.cast(pxla.ExecuteReplicated, execute)
+      execute_replicated = cast(pxla.ExecuteReplicated, execute)
       out_handler = execute_replicated.out_handler
       in_handler = execute_replicated.in_handler
 
