@@ -34,7 +34,7 @@ from jax import random
 import jax.numpy as jnp
 
 from jax.nn import (relu, log_softmax, softmax, softplus, sigmoid, elu,
-                    leaky_relu, selu, gelu, normalize)
+                    leaky_relu, selu, gelu, standardize)
 from jax.nn.initializers import glorot_normal, normal, ones, zeros
 
 # aliases for backwards compatibility
@@ -137,7 +137,7 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     # TODO(phawkins): jnp.expand_dims should accept an axis tuple.
     # (https://github.com/numpy/numpy/issues/12290)
     ed = tuple(None if i in axis else slice(None) for i in range(jnp.ndim(x)))
-    z = normalize(x, axis, epsilon=epsilon)
+    z = standardize(x, axis, epsilon=epsilon)
     if center and scale: return gamma[ed] * z + beta[ed]
     if center: return z + beta[ed]
     if scale: return gamma[ed] * z

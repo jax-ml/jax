@@ -16,6 +16,7 @@
 
 from functools import partial
 import operator
+import warnings
 import numpy as np
 from typing import Any, Optional, Tuple, Union
 
@@ -333,7 +334,7 @@ def softmax(x: Array,
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
 
 @partial(jax.jit, static_argnames=("axis",))
-def normalize(x: Array,
+def standardize(x: Array,
               axis: Optional[Union[int, Tuple[int, ...]]] = -1,
               mean: Optional[Array] = None,
               variance: Optional[Array] = None,
@@ -351,6 +352,15 @@ def normalize(x: Array,
         jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
+def normalize(x: Array,
+              axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+              mean: Optional[Array] = None,
+              variance: Optional[Array] = None,
+              epsilon: Array = 1e-5,
+              where: Optional[Array] = None) -> Array:
+  r"""Normalizes an array by subtracting ``mean`` and dividing by :math:`\sqrt{\mathrm{variance}}`."""
+  warnings.warn("jax.nn.normalize will be deprecated. Use jax.nn.standardize instead.", DeprecationWarning)
+  return standardize(x, axis, mean, variance, epsilon, where)
 
 @partial(jax.jit, static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,

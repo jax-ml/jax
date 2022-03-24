@@ -13,8 +13,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   commits](https://github.com/google/jax/compare/jax-v0.3.4...main).
 * Changes:
   * added {func}`jax.random.loggamma` & improved behavior of {func}`jax.random.beta`
-    and {func}`jax.random.dirichlet` for small parameter values `({jax-issue}`9906`).
-
+    and {func}`jax.random.dirichlet` for small parameter values ({jax-issue}`#9906`).
+* Deprecations:
+  * {func}`jax.nn.normalize` is being deprecated. Use {func}`jax.nn.standardize` instead ({jax-issue}`#9899`).
 
 ## jaxlib 0.3.3 (Unreleased)
 

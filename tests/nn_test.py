@@ -126,13 +126,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_masked, out_filtered)
 
-  def testNormalizeWhereMask(self):
+  def testStandardizeWhereMask(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     m = jnp.array([True, False, True, True])
     x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
 
-    out_masked = jnp.take(nn.normalize(x, where=m), jnp.array([0, 2, 3]))
-    out_filtered = nn.normalize(x_filtered)
+    out_masked = jnp.take(nn.standardize(x, where=m), jnp.array([0, 2, 3]))
+    out_filtered = nn.standardize(x_filtered)
 
     self.assertAllClose(out_masked, out_filtered)
 
