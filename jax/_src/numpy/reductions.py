@@ -26,7 +26,6 @@ from jax._src import api
 from jax._src import dtypes
 from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.util import _broadcast_to, _check_arraylike, _complex_elem_type, _where, _wraps
-from jax._src.numpy.ufuncs import isnan, logical_not
 from jax._src.lax import lax as lax_internal
 from jax._src.util import canonicalize_axis as _canonicalize_axis, maybe_named_axis
 
@@ -438,10 +437,10 @@ def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
   if not dtypes.issubdtype(dtypes.dtype(a), np.inexact):
     return jnp_reduction(a, axis=axis, keepdims=keepdims, **kwargs)
 
-  out = jnp_reduction(_where(isnan(a), _reduction_init_val(a, init_val), a),
+  out = jnp_reduction(_where(lax_internal._isnan(a), _reduction_init_val(a, init_val), a),
                       axis=axis, keepdims=keepdims, **kwargs)
   if nan_if_all_nan:
-    return _where(all(isnan(a), axis=axis, keepdims=keepdims),
+    return _where(all(lax_internal._isnan(a), axis=axis, keepdims=keepdims),
                   _lax_const(a, np.nan), out)
   else:
     return out
@@ -495,7 +494,7 @@ def nanmean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
     return mean(a, axis, dtype, out, keepdims, where=where)
   if dtype is None:
     dtype = dtypes.dtype(a)
-  nan_mask = logical_not(isnan(a))
+  nan_mask = lax_internal.bitwise_not(lax_internal._isnan(a))
   normalizer = sum(nan_mask, axis=axis, dtype=np.int32, keepdims=keepdims, where=where)
   normalizer = lax.convert_element_type(normalizer, dtype)
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims, where=where), normalizer)
@@ -514,13 +513,14 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   a_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
   a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True, where=where)
 
-  centered = _where(isnan(a), 0, a - a_mean)  # double-where trick for gradients.
+  centered = _where(lax_internal._isnan(a), 0, a - a_mean)  # double-where trick for gradients.
   if dtypes.issubdtype(centered.dtype, np.complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
   else:
     centered = lax.square(centered)
 
-  normalizer = sum(logical_not(isnan(a)), axis=axis, keepdims=keepdims, where=where)
+  normalizer = sum(lax_internal.bitwise_not(lax_internal._isnan(a)),
+                   axis=axis, keepdims=keepdims, where=where)
   normalizer = normalizer - ddof
   normalizer_mask = lax.le(normalizer, 0)
   result = sum(centered, axis, keepdims=keepdims, where=where)
@@ -567,7 +567,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
     axis = _canonicalize_axis(axis, num_dims)
 
     if fill_nan:
-      a = _where(isnan(a), _lax_const(a, fill_value), a)
+      a = _where(lax_internal._isnan(a), _lax_const(a, fill_value), a)
 
     if not dtype and dtypes.dtype(a) == np.bool_:
       dtype = dtypes.canonicalize_dtype(dtypes.int_)
