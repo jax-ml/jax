@@ -27,6 +27,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax import stages
 from jax.errors import JAXTypeError
 from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
@@ -806,6 +807,21 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     self.assertEqual(f(1, 'hi' ), 4)
     self.assertEqual(f(1, 'bye'), 5)
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def testLowerCompileWithAvals(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    aval = jax.ShapedArray(shape, jnp.int64)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    exe = f.lower(aval, x, _global_avals=True).compile()
+    self.assertIsInstance(exe, stages.Compiled)
+    self.assertArraysEqual(exe(x, x), x @ x)
 
 
 class GDAPjitTest(jtu.JaxTestCase):
