@@ -38,9 +38,10 @@ from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
-from jax._src.lib import cusparse
 from jax._src.lib import xla_client as xc
 from jax._src.numpy.setops import _unique
+
+from jax._src.lib import sparse_apis
 
 xops = xc._xla.ops
 
@@ -687,11 +688,12 @@ def _bcoo_dot_general_cuda_translation_rule(
   assert lhs_data_aval.dtype in [np.float32, np.float64, np.complex64, np.complex128]
   assert lhs_data_aval.dtype == rhs_aval.dtype
   assert lhs_indices_aval.dtype == np.int32
+  assert sparse_apis is not None
 
   if rhs_ndim == 1:
-    bcoo_dot_general_fn = cusparse.coo_matvec
+    bcoo_dot_general_fn = sparse_apis.coo_matvec
   elif rhs_ndim == 2:
-    bcoo_dot_general_fn = cusparse.coo_matmat
+    bcoo_dot_general_fn = sparse_apis.coo_matmat
     if rhs_contract[0] == 1:
       rhs = xops.Transpose(rhs, permutation=[1, 0])
   else:
@@ -751,7 +753,7 @@ def _bcoo_dot_general_gpu_translation_rule(
 
   dtype = lhs_data_aval.dtype
   if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f'bcoo_dot_general cusparse lowering not available for '
+    warnings.warn(f'bcoo_dot_general cusparse/hipsparse lowering not available for '
                   f'dtype={dtype}. Falling back to default implementation.',
                   CuSparseEfficiencyWarning)
     return _bcoo_dot_general_default_translation_rule(
@@ -842,7 +844,7 @@ batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 
 xla.register_translation(
     bcoo_dot_general_p, _bcoo_dot_general_default_translation_rule)
-if cusparse and cusparse.is_supported:
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(bcoo_dot_general_p,
                            _bcoo_dot_general_gpu_translation_rule,
                            platform='gpu')

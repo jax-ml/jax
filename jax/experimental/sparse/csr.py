@@ -27,18 +27,10 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
 from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
+from jax._src.lib import sparse_apis
 from jax._src.numpy.lax_numpy import _promote_dtypes
 import jax.numpy as jnp
 
-try:
-  from jax._src.lib import cusparse
-except ImportError:
-  cusparse = None
-
-try:
-  from jax._src.lib import hipsparse
-except ImportError:
-  hipsparse = None
 
 @tree_util.register_pytree_node_class
 class CSR(JAXSparse):
@@ -190,10 +182,7 @@ def _csr_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _csr_todense_translation_rule(ctx, avals_in, avals_out, data, indices,
                                          indptr, shape=shape)
-  if cusparse:
-    return [cusparse.csr_todense(ctx.builder, data, indices, indptr, shape=shape)]
-  else:
-    return [hipsparse.csr_todense(ctx.builder, data, indices, indptr, shape=shape)]
+  return [sparse_apis.csr_todense(ctx.builder, data, indices, indptr, shape=shape)]
 
 def _csr_todense_jvp(data_dot, data, indices, indptr, *, shape):
   return csr_todense(data_dot, indices, indptr, shape=shape)
@@ -212,7 +201,7 @@ def _csr_todense_transpose(ct, data, indices, indptr, *, shape):
 ad.defjvp(csr_todense_p, _csr_todense_jvp, None, None)
 ad.primitive_transposes[csr_todense_p] = _csr_todense_transpose
 xla.register_translation(csr_todense_p, _csr_todense_translation_rule)
-if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(csr_todense_p, _csr_todense_gpu_translation_rule,
                            platform='gpu')
 
@@ -274,12 +263,8 @@ def _csr_fromdense_gpu_translation_rule(ctx, avals_in, avals_out, mat, *, nse,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _csr_fromdense_translation_rule(ctx, avals_in, avals_out, mat,
                                            nse=nse, index_dtype=index_dtype)
-  if cusparse:
-    data, indices, indptr = cusparse.csr_fromdense(
-        ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
-  else:
-    data, indices, indptr = hipsparse.csr_fromdense(
-        ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
+  data, indices, indptr = sparse_apis.csr_fromdense(
+      ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
   return [data, indices, indptr]
 
 def _csr_fromdense_jvp(primals, tangents, *, nse, index_dtype):
@@ -310,7 +295,7 @@ def _csr_fromdense_transpose(ct, M, *, nse, index_dtype):
 ad.primitive_jvps[csr_fromdense_p] = _csr_fromdense_jvp
 ad.primitive_transposes[csr_fromdense_p] = _csr_fromdense_transpose
 xla.register_translation(csr_fromdense_p, _csr_fromdense_translation_rule)
-if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(csr_fromdense_p,
                            _csr_fromdense_gpu_translation_rule,
                            platform='gpu')
@@ -366,12 +351,8 @@ def _csr_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _csr_matvec_translation_rule(ctx, avals_in, avals_out, data, indices, indptr, v,
                                         shape=shape, transpose=transpose)
-  if cusparse:
-    return [cusparse.csr_matvec(ctx.builder, data, indices, indptr, v,
-                              shape=shape, transpose=transpose)]
-  else:
-    return [hipsparse.csr_matvec(ctx.builder, data, indices, indptr, v,
-                              shape=shape, transpose=transpose)]
+  return [sparse_apis.csr_matvec(ctx.builder, data, indices, indptr, v,
+                                 shape=shape, transpose=transpose)]
 
 def _csr_matvec_jvp_mat(data_dot, data, indices, indptr, v, *, shape, transpose):
   return csr_matvec(data_dot, indices, indptr, v, shape=shape, transpose=transpose)
@@ -395,7 +376,7 @@ def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
 ad.defjvp(csr_matvec_p, _csr_matvec_jvp_mat, None, None, _csr_matvec_jvp_vec)
 ad.primitive_transposes[csr_matvec_p] = _csr_matvec_transpose
 xla.register_translation(csr_matvec_p, _csr_matvec_translation_rule)
-if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(csr_matvec_p, _csr_matvec_gpu_translation_rule,
                            platform='gpu')
 
@@ -452,12 +433,8 @@ def _csr_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _csr_matmat_translation_rule(ctx, avals_in, avals_out, data, indices, indptr, B,
                                         shape=shape, transpose=transpose)
-  if cusparse is not None:
-    return [cusparse.csr_matmat(ctx.builder, data, indices, indptr, B,
-                              shape=shape, transpose=transpose)]
-  else:
-    return [hipsparse.csr_matmat(ctx.builder, data, indices, indptr, B,
-                              shape=shape, transpose=transpose)]
+  return [sparse_apis.csr_matmat(ctx.builder, data, indices, indptr, B,
+                                 shape=shape, transpose=transpose)]
 
 def _csr_matmat_jvp_left(data_dot, data, indices, indptr, B, *, shape, transpose):
   return csr_matmat(data_dot, indices, indptr, B, shape=shape, transpose=transpose)
@@ -479,6 +456,6 @@ def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
 ad.defjvp(csr_matmat_p, _csr_matmat_jvp_left, None, None, _csr_matmat_jvp_right)
 ad.primitive_transposes[csr_matmat_p] = _csr_matmat_transpose
 xla.register_translation(csr_matmat_p, _csr_matmat_translation_rule)
-if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(csr_matmat_p, _csr_matmat_gpu_translation_rule,
                            platform='gpu')

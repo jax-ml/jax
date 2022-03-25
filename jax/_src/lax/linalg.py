@@ -37,10 +37,9 @@ from jax._src.lib import lapack
 
 from jax._src.lib import cuda_linalg
 from jax._src.lib import cusolver
-from jax._src.lib import cusparse
 from jax._src.lib import hip_linalg
 from jax._src.lib import hipsolver
-from jax._src.lib import hipsparse
+from jax._src.lib import sparse_apis
 
 from jax._src.lib import xla_client
 
@@ -1406,10 +1405,7 @@ if hipsolver is not None:
 
 def _tridiagonal_solve_gpu_translation_rule(ctx, avals_in, avals_out, dl, d, du,
                                             b, *, m, n, ldb, t):
-  if cusparse:
-    return [cusparse.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
-  if hipsparse:
-    return [hipsparse.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
+  return [sparse_apis.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
 
 tridiagonal_solve_p = Primitive('tridiagonal_solve')
 tridiagonal_solve_p.multiple_results = False
@@ -1417,11 +1413,7 @@ tridiagonal_solve_p.def_impl(
     functools.partial(xla.apply_primitive, tridiagonal_solve_p))
 tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
 # TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
-if cusparse is not None and hasattr(cusparse, "gtsv2"):
-  xla.register_translation(tridiagonal_solve_p,
-                           _tridiagonal_solve_gpu_translation_rule,
-                           platform='gpu')
-if hipsparse is not None and hasattr(hipsparse, "gtsv2"):
+if sparse_apis and hasattr(sparse_apis, "gtsv2"):
   xla.register_translation(tridiagonal_solve_p,
                            _tridiagonal_solve_gpu_translation_rule,
                            platform='gpu')

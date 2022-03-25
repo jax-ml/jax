@@ -126,6 +126,8 @@ try:
 except ImportError:
   hipsparse = None
 
+sparse_apis = cusparse or hipsparse or None
+
 try:
   import jaxlib.cuda_prng as cuda_prng  # pytype: disable=import-error
 except ImportError:

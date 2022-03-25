@@ -27,19 +27,11 @@ from jax.interpreters import xla
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _coo_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
+from jax._src.lib import sparse_apis
 from jax._src.numpy.lax_numpy import _promote_dtypes
 from jax._src.lib import xla_client
 import jax.numpy as jnp
 
-try:
-  from jax._src.lib import cusparse
-except ImportError:
-  cusparse = None
-
-try:
-  from jax._src.lib import hipsparse
-except ImportError:
-  hipsparse = None
 
 xops = xla_client.ops
 
@@ -186,10 +178,8 @@ def _coo_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
     return _coo_todense_translation_rule(ctx, avals_in, avals_out, data, row, col,
                                          spinfo=spinfo)
 
-  if cusparse is not None:
-    result = cusparse.coo_todense(ctx.builder, data, row, col, shape=shape)
-  else:
-    result = hipsparse.coo_todense(ctx.builder, data, row, col, shape=spinfo.shape)
+  result = sparse_apis.coo_todense(ctx.builder, data, row, col, shape=shape)
+
 
   return [xops.Transpose(result, (1, 0))] if transpose else [result]
 
@@ -210,7 +200,7 @@ def _coo_todense_transpose(ct, data, row, col, *, spinfo):
 ad.defjvp(coo_todense_p, _coo_todense_jvp, None, None)
 ad.primitive_transposes[coo_todense_p] = _coo_todense_transpose
 xla.register_translation(coo_todense_p, _coo_todense_translation_rule)
-if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(coo_todense_p, _coo_todense_gpu_translation_rule,
                            platform='gpu')
 
@@ -284,12 +274,8 @@ def _coo_fromdense_gpu_translation_rule(ctx, avals_in, avals_out, mat, *, nse,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_fromdense_translation_rule(ctx, avals_in, avals_out, mat,
                                            nse=nse, index_dtype=index_dtype)
-  if cusparse is not None:
-    data, row, col = cusparse.coo_fromdense(
-        ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
-  else:
-    data, row, col = hipsparse.coo_fromdense(
-        ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
+  data, row, col = sparse_apis.coo_fromdense(
+      ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
   return [data, row, col]
 
 def _coo_fromdense_jvp(primals, tangents, *, nse, index_dtype):
@@ -321,7 +307,7 @@ ad.primitive_jvps[coo_fromdense_p] = _coo_fromdense_jvp
 ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
 
 xla.register_translation(coo_fromdense_p, _coo_fromdense_translation_rule)
-if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(coo_fromdense_p,
                            _coo_fromdense_gpu_translation_rule,
                            platform='gpu')
@@ -411,11 +397,7 @@ def _coo_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
     return _coo_matvec_translation_rule(ctx, avals_in, avals_out, data, row, col, v,
                                         spinfo=spinfo, transpose=transpose)
 
-  if cusparse is not None:
-    return [cusparse.coo_matvec(ctx.builder, data, row, col, v, shape=shape,
-                                transpose=transpose)]
-  else:
-    return [hipsparse.coo_matvec(ctx.builder, data, row, col, v, shape=shape,
+  return [sparse_apis.coo_matvec(ctx.builder, data, row, col, v, shape=shape,
                                  transpose=transpose)]
 
 def _coo_matvec_jvp_mat(data_dot, data, row, col, v, *, spinfo, transpose):
@@ -439,7 +421,7 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, spinfo, transpose):
 ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
 ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
 xla.register_translation(coo_matvec_p, _coo_matvec_translation_rule)
-if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(coo_matvec_p, _coo_matvec_gpu_translation_rule,
                            platform='gpu')
 
@@ -526,11 +508,7 @@ def _coo_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
     return _coo_matmat_translation_rule(ctx, avals_in, avals_out, data, row, col, B,
                                         spinfo=spinfo, transpose=transpose)
 
-  if cusparse is not None:
-    return [cusparse.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
-                                transpose=transpose)]
-  else:
-    return [hipsparse.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
+  return [sparse_apis.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
                                  transpose=transpose)]
 
 def _coo_matmat_jvp_left(data_dot, data, row, col, B, *, spinfo, transpose):
@@ -551,6 +529,6 @@ def _coo_matmat_transpose(ct, data, row, col, B, *, spinfo, transpose):
 ad.defjvp(coo_matmat_p, _coo_matmat_jvp_left, None, None, _coo_matmat_jvp_right)
 ad.primitive_transposes[coo_matmat_p] = _coo_matmat_transpose
 xla.register_translation(coo_matmat_p, _coo_matmat_translation_rule)
-if (cusparse and cusparse.is_supported) or (hipsparse and hipsparse.is_supported):
+if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(coo_matmat_p, _coo_matmat_gpu_translation_rule,
                            platform='gpu')
