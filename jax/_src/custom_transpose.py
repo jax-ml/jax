@@ -19,6 +19,7 @@ from jax import core
 from jax import linear_util as lu
 from jax.interpreters import ad
 from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_leaves, tree_map,
                            tree_structure, treedef_tuple, tree_unflatten)
@@ -133,6 +134,16 @@ def check_transpose_rule_trees(rule, lin_tree, rule_out_tree):
           f'Transpose rule output: {rule_out_tree}\n'
           f'Linear primal inputs: {lin_tree}')
 
+def make_transpose_from_thunk(thunk, lin_tree):
+  transpose_jaxpr, transpose_consts = thunk()
+  transpose_jaxpr = core.ClosedJaxpr(
+      pe.convert_constvars_jaxpr(transpose_jaxpr), ())
+  def transpose(res_arg, ct_out):
+    args_flat = tree_leaves((res_arg, ct_out))
+    ct_ins = core.jaxpr_as_fun(transpose_jaxpr)(*transpose_consts, *args_flat)
+    return tree_unflatten(lin_tree, ct_ins)
+  return transpose
+
 
 ### custom_transpose primitive and rules
 
@@ -157,8 +168,14 @@ class CustomTransposePrimitive(core.Primitive):
   # TODO(frostig,mattjj): consider keeping `call` as a named parameter
   # instead of following this "call primitive" convention.
   def get_bind_params(self, params):
+    assert 'call_jaxpr' in params
+    assert 'transpose_jaxpr_thunk' in params
     new_params = dict(params)
-    return [new_params.pop('call')], new_params
+    new_params['transpose'] = make_transpose_from_thunk(
+        new_params.pop('transpose_jaxpr_thunk'),
+        new_params['lin_tree'])
+    call = lu.wrap_init(core.jaxpr_as_fun(new_params.pop('call_jaxpr')))
+    return [call], new_params
 
 
 # TODO(frostig,mattjj): reinstate checks
@@ -167,7 +184,16 @@ def custom_transpose_typecheck(*avals, **params):
 
 
 def custom_transpose_transpose_rule(
-    cts, *args, call, transpose, out_types, res_tree, lin_tree, out_tree):
+    cts, *args, out_types, res_tree, lin_tree, out_tree, **params):
+
+  if 'transpose_jaxpr_thunk' in params:
+    assert 'call_jaxpr' in params
+    transpose = make_transpose_from_thunk(
+        params['transpose_jaxpr_thunk'], lin_tree)
+  else:
+    assert 'call' in params
+    transpose = params['transpose']
+
   call_in_tree = treedef_tuple((res_tree, lin_tree))
 
   # TODO(frostig,mattjj): `lin_arg` indicates the inputs with respect

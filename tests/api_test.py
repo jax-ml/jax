@@ -6882,7 +6882,6 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_t(x), g_t(x))
 
   def test_jit_recursive(self):
-    raise unittest.SkipTest('unimplemented')  # TODO(frostig,mattjj)
     def f(x, y):
       @custom_transpose(jnp.ones(2))
       def fn(r, x): return x / r
@@ -6901,6 +6900,56 @@ class CustomTransposeTest(jtu.JaxTestCase):
     g_t = transpose_unary(g_, x)
     self.assertAllClose(f_(x), jax.jit(f_)(x))
     self.assertAllClose(f_t(x), jax.jit(f_t)(x))
+    self.assertAllClose(f_(x), g_(x))
+    self.assertAllClose(f_t(x), g_t(x))
+
+  def test_cond(self):
+    def f(x, y):
+      @custom_transpose(jnp.ones(2))
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return 2 * t / r
+
+      return x + fn(y, x)
+
+    def cond_wrap(f):
+      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x,
+                                   linear=(True,))
+
+    i = 7.
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+
+    f_ = lambda x: f(x, y)
+    f_t = transpose_unary(f_, x)
+    g_ = partial(cond_wrap(f_), i)
+    g_t = transpose_unary(g_, x)
+
+    self.assertAllClose(f_(x), g_(x))
+    self.assertAllClose(f_t(x), g_t(x))
+
+  def test_cond_recursive(self):
+    def f(x, y):
+      @custom_transpose(jnp.ones(2))
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return 2 * fn(r, t)
+
+      return x + fn(y, x)
+
+    def cond_wrap(f):
+      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x,
+                                   linear=(True,))
+
+    i = 7.
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+
+    f_ = lambda x: f(x, y)
+    f_t = transpose_unary(f_, x)
+    g_ = partial(cond_wrap(f_), i)
+    g_t = transpose_unary(g_, x)
+
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
 
