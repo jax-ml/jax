@@ -17,7 +17,7 @@ import collections
 from collections import namedtuple
 from contextlib import contextmanager
 import functools
-from functools import partial, partialmethod, total_ordering
+from functools import partialmethod, total_ordering
 import gc
 import itertools as it
 import operator
@@ -1712,7 +1712,8 @@ class CallPrimitive(Primitive):
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    subfun = lu.wrap_init(partial(eval_jaxpr, new_params.pop('call_jaxpr'), ()))
+    jaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
     return [subfun], new_params
 
 def call_bind(primitive: CallPrimitive, fun, *args, **params):
@@ -1806,7 +1807,8 @@ class MapPrimitive(Primitive):
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    subfun = lu.wrap_init(partial(eval_jaxpr, new_params.pop('call_jaxpr'), ()))
+    jaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
     axes = new_params.pop('out_axes')
     new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
     return [subfun], new_params

@@ -4323,6 +4323,15 @@ class RematTest(jtu.JaxTestCase):
 
     _ = api.linearize(partial(f, core.unit), 3.)
 
+  def test_linearize_caching(self):
+    # https://github.com/google/jax/issues/9661
+    identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
+    _, f_lin = jax.linearize(identity, 1.)
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      for _ in range(10):
+        f_lin(1.).block_until_ready()
+    self.assertEqual(count[0], 1)  # cached after first execution
+
 
 class JaxprTest(jtu.JaxTestCase):
 
