@@ -28,7 +28,7 @@ from jax.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_aval, zeros_like_p, Zero)
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
-                           as_hashable_function, cache)
+                           as_hashable_function, weakref_lru_cache)
 from jax.tree_util import register_pytree_node
 from jax import linear_util as lu
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
@@ -680,7 +680,7 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
   return _jvp_jaxpr(jaxpr, tuple(nonzeros), inst)
 
-@cache()
+@weakref_lru_cache
 def _jvp_jaxpr(jaxpr, nonzeros, instantiate):
   assert len(jaxpr.in_avals) == len(nonzeros)
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
