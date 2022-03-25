@@ -884,7 +884,8 @@ class XMapPrimitive(core.MapPrimitive):
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    subfun = lu.wrap_init(partial(core.eval_jaxpr, new_params.pop('call_jaxpr'), ()))
+    jaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.hashable_partial(lu.wrap_init(core.eval_jaxpr), jaxpr, ())
     axes = new_params.pop('out_axes')
     new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
     spmd_axes = new_params.pop('spmd_out_axes')
