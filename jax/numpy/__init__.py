@@ -436,9 +436,6 @@ from jax._src.numpy.ufuncs import (
 
 from jax._src.numpy.vectorize import vectorize as vectorize
 
-# TODO(phawkins): remove this import after fixing users.
-from jax._src.numpy import lax_numpy
-
 # Module initialization is encapsulated in a function to avoid accidental
 # namespace pollution.
 def _init():
