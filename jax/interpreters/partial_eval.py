@@ -1626,10 +1626,12 @@ class DynamicJaxprTrace(core.Trace):
 
     transpose_flat, in_tree2 = flatten_fun_nokwargs(
         lu.wrap_init(transpose), treedef_tuple((res_tree, out_tree)))
-    transpose_jaxpr, in_avals2, transpose_consts = trace_to_subjaxpr_dynamic(
-        transpose_flat, self.main, in_avals_t)
-    closed_transpose_jaxpr = core.ClosedJaxpr(
-        convert_constvars_jaxpr(transpose_jaxpr), ())
+
+    main_ = ref(self.main)
+    # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
+    transpose_jaxpr_thunk = _memoize(
+        lambda: trace_to_subjaxpr_dynamic(
+            transpose_flat, main_(), in_avals_t)[::2])
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
@@ -1637,9 +1639,9 @@ class DynamicJaxprTrace(core.Trace):
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_call_jaxpr,
-                             transpose_jaxpr=(closed_transpose_jaxpr,
-                                              transpose_consts),
-                             num_consts=len(call_consts)),
+                             transpose_jaxpr_thunk=transpose_jaxpr_thunk,
+                             out_types=out_types, res_tree=res_tree,
+                             lin_tree=lin_tree, out_tree=out_tree),
                         source_info_util.current())
     self.frame.eqns.append(eqn)
     return out_tracers

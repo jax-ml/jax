@@ -805,7 +805,7 @@ def switch(index, branches: Sequence[Callable], *operands,
 
 
 def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
-          operand=_no_operand_sentinel):
+          operand=_no_operand_sentinel, linear=None):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   ``cond()`` has equivalent semantics to this Python implementation::
@@ -865,6 +865,12 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       return false_fun(*operands)
 
   ops, ops_tree = tree_flatten(operands)
+  if linear is None:
+    linear_ops = [False] * len(ops)
+  else:
+    linear_ops, ops_tree2 = tree_flatten(linear)
+    if ops_tree != ops_tree2:
+      raise TypeError('linear tree and operand tree mismatch')
   ops_avals = tuple(_map(_abstractify, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
@@ -878,10 +884,10 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
 
   index = lax.convert_element_type(pred, np.int32)
 
-  linear = (False,) * (len(consts) + len(ops))
+  linear = [False] * len(consts) + linear_ops
   out = cond_p.bind(
       index, *consts, *ops,
-      branches=(false_jaxpr, true_jaxpr), linear=linear)
+      branches=(false_jaxpr, true_jaxpr), linear=tuple(linear))
   return tree_unflatten(out_tree, out)
 
 @api_boundary
