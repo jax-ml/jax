@@ -21,6 +21,7 @@ from typing import (Callable, Generic, Optional, Sequence, Tuple, List, TypeVar,
 
 from jax import core
 from jax import linear_util as lu
+from jax.custom_transpose import custom_transpose
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                         tree_multimap, treedef_is_leaf, treedef_tuple,
                         register_pytree_node_class)
@@ -536,29 +537,35 @@ class custom_vjp(Generic[ReturnValue]):
       msg = "No VJP defined for custom_vjp function {} using defvjp."
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
-    if self.nondiff_argnums:
-      for i in self.nondiff_argnums: _check_for_tracers(args[i])
-      nondiff_argnums = set(self.nondiff_argnums)
-      dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
-      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args,
-                                     require_static_args_hashable=False)
-      static_args = [args[i] for i in self.nondiff_argnums]
-      fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args,
-                               require_static_args_hashable=False)
-      bwd = _add_args(lu.wrap_init(self.bwd), static_args)
+    if config.jax_enable_custom_vjp_by_custom_transpose:
+      if self.nondiff_argnums:
+        raise NotImplementedError(
+            'nondiff_argnums not implemented for new custom_vjp')
+      return custom_vjp_by_custom_transpose(self.fun, self.fwd, self.bwd)(*args)
     else:
-      f_, dyn_args = lu.wrap_init(self.fun), args
-      fwd, bwd = lu.wrap_init(self.fwd), lu.wrap_init(self.bwd)
-    args_flat, in_tree = tree_flatten(dyn_args)
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
-    flat_fun, out_tree = flatten_fun_nokwargs(f_, in_tree)
-    flat_fwd, out_trees = _flatten_fwd(fwd, in_tree)
-    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
-    out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd, *args_flat,
-                                      out_trees=out_trees)
-    fst, aux = lu.merge_linear_aux(out_tree, out_trees)
-    out_tree = aux if fst else aux[0]
-    return tree_unflatten(out_tree, out_flat)
+      if self.nondiff_argnums:
+        for i in self.nondiff_argnums: _check_for_tracers(args[i])
+        nondiff_argnums = set(self.nondiff_argnums)
+        dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
+        f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums,
+                                       args, require_static_args_hashable=False)
+        static_args = [args[i] for i in self.nondiff_argnums]
+        fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args,
+                                 require_static_args_hashable=False)
+        bwd = _add_args(lu.wrap_init(self.bwd), static_args)
+      else:
+        f_, dyn_args = lu.wrap_init(self.fun), args
+        fwd, bwd = lu.wrap_init(self.fwd), lu.wrap_init(self.bwd)
+      args_flat, in_tree = tree_flatten(dyn_args)
+      in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+      flat_fun, out_tree = flatten_fun_nokwargs(f_, in_tree)
+      flat_fwd, out_trees = _flatten_fwd(fwd, in_tree)
+      flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
+      out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
+                                        *args_flat, out_trees=out_trees)
+      fst, aux = lu.merge_linear_aux(out_tree, out_trees)
+      out_tree = aux if fst else aux[0]
+      return tree_unflatten(out_tree, out_flat)
 
 @partial(partial, tree_map)
 def _check_for_tracers(x):
@@ -1160,3 +1167,22 @@ xla.register_translation(linear_call_p,
                          initial_style=True)
 mlir.register_lowering(linear_call_p, mlir.lower_fun(
     _linear_call_impl, multiple_results=True))
+
+
+def disallow_jvp(*_):
+  raise TypeError(
+      "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
+
+
+def custom_vjp_by_custom_transpose(fun, fwd, bwd):
+  tan_fn = custom_transpose(disallow_jvp)
+  tan_fn.def_transpose(bwd)
+  fun = custom_jvp(fun)
+
+  @fun.defjvp
+  def jvp(primals, tangents):
+    outs, residuals = fwd(*primals)
+    tan_out_types = tree_map(lambda o: core.get_aval(o).at_least_vspace(), outs)
+    return outs, tan_fn(tan_out_types, residuals, tangents)
+
+  return fun
