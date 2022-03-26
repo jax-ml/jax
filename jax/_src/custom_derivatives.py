@@ -1169,20 +1169,71 @@ mlir.register_lowering(linear_call_p, mlir.lower_fun(
     _linear_call_impl, multiple_results=True))
 
 
-def disallow_jvp(*_):
-  raise TypeError(
-      "can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
+# A stageable primitive that fails when evaluated
+unreachable_p: core.Primitive = core.Primitive('unreachable')
+unreachable_p.multiple_results = True
+
+def unreachable_impl(*_, out_avals, exc_type, message):
+  del out_avals
+  raise exc_type(message)
+
+# Evaluation raises an exception
+unreachable_p.def_impl(unreachable_impl)
+
+# Translation raises an exception
+# TODO(frostig,mattjj): We have no good way to translate a function
+# that errs. Since translation over-approximates concrete evaluation,
+# we err on translation for the time being.
+xla.register_translation(unreachable_p, unreachable_impl)
+
+# Abstract evaluation proceeds without issue, to allow for staging
+unreachable_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
+
+def unreachable(*args, out_avals=None, exc_type=TypeError,
+                message='unreachable'):
+  """Fail when evaluated concretely (but allow for staging).
+
+  This function allows one to assert an impossibility of
+  evaluation. It can be used to guarantee that evaluation does not
+  "reach" a certain point in the sense that it does not execute, but
+  it can nonetheless be staged out by JAX without error.
+
+  Args:
+    *args: The arbitrary pytree of arguments to the function.
+    out_avals: Optional specification of the output types of this
+     function invocation from the point of view of staging. If
+     ``None``, these are chosen as equal to types of input arguments.
+    exc_type: Optional constructor for the Python exception raised if
+      evaluated.
+    message: Optional string message for the Python exception raised
+      if evaluated.
+
+  """
+  if out_avals is None:
+    out_avals = tree_map(core.get_aval, args)
+
+  args_flat, in_tree = tree_flatten(args)
+  out_avals_flat, out_tree = tree_flatten(out_avals)
+  out = unreachable_p.bind(*args_flat, out_avals=out_avals_flat,
+                           exc_type=exc_type, message=message)
+  return tree_unflatten(out_tree, out)
+
+
+disallow_jvp = partial(
+    unreachable,
+    exc_type=TypeError,
+    message="can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
 
 
 def custom_vjp_by_custom_transpose(fun, fwd, bwd):
-  tan_fn = custom_transpose(disallow_jvp)
-  tan_fn.def_transpose(bwd)
   fun = custom_jvp(fun)
 
   @fun.defjvp
   def jvp(primals, tangents):
     outs, residuals = fwd(*primals)
     tan_out_types = tree_map(lambda o: core.get_aval(o).at_least_vspace(), outs)
+    tan_fn = custom_transpose(partial(disallow_jvp, out_avals=tan_out_types))
+    tan_fn.def_transpose(bwd)
     return outs, tan_fn(tan_out_types, residuals, tangents)
 
   return fun
