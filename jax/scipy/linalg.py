@@ -30,6 +30,7 @@ from jax._src.scipy.linalg import (
   lu_solve as lu_solve,
   polar as polar,
   qr as qr,
+  rsf2csf as rsf2csf,
   schur as schur,
   sqrtm as sqrtm,
   solve as solve,

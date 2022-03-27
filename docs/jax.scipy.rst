@@ -36,6 +36,7 @@ jax.scipy.linalg
    polar
    polar_unitary
    qr
+   rsf2csf
    schur
    sqrtm
    solve

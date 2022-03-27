@@ -656,3 +656,70 @@ def sqrtm(A, blocksize=1):
   if blocksize > 1:
       raise NotImplementedError("Blocked version is not implemented yet.")
   return _sqrtm(A)
+
+_no_asarray_chkfinite_doc = textwrap.dedent("""
+Does not currently support the Scipy argument ``jax.numpy.asarray_chkfinite``,
+because `jax.numpy.asarray_chkfinite` does not exist at the moment.
+""")
+
+@_wraps(scipy.linalg.rsf2csf, lax_description=_no_asarray_chkfinite_doc)
+@partial(jit, static_argnames=('check_finite',))
+def rsf2csf(T, Z, check_finite=True):
+  T = jnp.asarray(T)
+  Z = jnp.asarray(Z)
+
+  for ind, X in enumerate([Z, T]):
+    if X.ndim != 2 or X.shape[0] != X.shape[1]:
+      arg = 'ZT'[ind]
+      raise ValueError(f"Input '{arg}' must be square.")
+  if T.shape[0] != Z.shape[0]:
+    raise ValueError(f"Input array shapes must match: Z: {Z.shape} vs. T: {T.shape}")
+
+  common_dtype = jnp.result_type(T, Z, jnp.complex64)
+  eps = jnp.finfo(common_dtype).eps
+
+  T = jnp.asarray(T, dtype=common_dtype)
+  Z = jnp.asarray(Z, dtype=common_dtype)
+  N = T.shape[0]
+
+  if N == 1:
+    return T, Z
+
+  def _update_T_Z(m, T, Z):
+    mu = np_linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
+    r = np_linalg.norm([mu[0], T[m, m-1]])
+    c = mu[0] / r
+    s = T[m, m-1] / r
+    G = jnp.array([[c.conj(), s], [-s, c]], dtype=common_dtype)
+
+    # T[m-1:m+1, m-1:] = G @ T[m-1:m+1, m-1:]
+    T_rows = lax.dynamic_slice_in_dim(T, m-1, 2, axis=0)
+    col_mask = jnp.arange(N) >= m-1
+    G_dot_T_zeroed_cols = G @ jnp.where(col_mask, T_rows, 0)
+    T_rows_new = jnp.where(~col_mask, T_rows, G_dot_T_zeroed_cols)
+    T = lax.dynamic_update_slice_in_dim(T, T_rows_new, m-1, axis=0)
+
+    # T[:m+1, m-1:m+1] = T[:m+1, m-1:m+1] @ G.conj().T
+    T_cols = lax.dynamic_slice_in_dim(T, m-1, 2, axis=1)
+    row_mask = jnp.arange(N)[:, jnp.newaxis] < m+1
+    T_zeroed_rows_dot_GH = jnp.where(row_mask, T_cols, 0) @ G.conj().T
+    T_cols_new = jnp.where(~row_mask, T_cols, T_zeroed_rows_dot_GH)
+    T = lax.dynamic_update_slice_in_dim(T, T_cols_new, m-1, axis=1)
+
+    # Z[:, m-1:m+1] = Z[:, m-1:m+1] @ G.conj().T
+    Z_cols = lax.dynamic_slice_in_dim(Z, m-1, 2, axis=1)
+    Z = lax.dynamic_update_slice_in_dim(Z, Z_cols @ G.conj().T, m-1, axis=1)
+    return T, Z
+
+  def _rsf2scf_iter(i, TZ):
+    m = N-i
+    T, Z = TZ
+    T, Z = lax.cond(
+      jnp.abs(T[m, m-1]) > eps*(jnp.abs(T[m-1, m-1]) + jnp.abs(T[m, m])),
+      _update_T_Z,
+      lambda m, T, Z: (T, Z),
+      m, T, Z)
+    T = T.at[m, m-1].set(0.0)
+    return T, Z
+
+  return lax.fori_loop(1, N, _rsf2scf_iter, (T, Z))
