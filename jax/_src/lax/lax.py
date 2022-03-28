@@ -3620,7 +3620,8 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   return op.results
 
 mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, mhlo.AddOp,
-                                         lambda dtype: np.array(0, dtype)))
+                                          lambda dtype: np.array(0, dtype),
+                                          explicit_type=True)))
 mlir.register_lowering(reduce_prod_p, partial(_unary_reduce_lower, mhlo.MulOp,
                                           lambda dtype: np.array(1, dtype)))
 mlir.register_lowering(reduce_or_p, partial(_unary_reduce_lower, mhlo.OrOp,
