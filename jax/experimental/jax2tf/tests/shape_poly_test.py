@@ -1564,6 +1564,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x: jnp.reshape(x, [2, -1]),
                   [RandArg((3, 4, 5, 6, 7), _f32)],
                   poly_axes=[(0, 2)]),
+    _make_harness("reshape", "_issue_9975",
+                  # The newshape is a scalar
+                  lambda x: jnp.reshape(x, x.shape[0] * x.shape[1]),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
     _make_harness("reshape", "error",
                   lambda x: x.reshape([x.shape[0], -1, 3]),
                   [RandArg((3, 2, 4), _f32)],
