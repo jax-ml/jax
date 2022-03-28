@@ -15,6 +15,7 @@
 
 from functools import partial
 import unittest
+import warnings
 
 from absl.testing import absltest, parameterized
 
@@ -47,6 +48,12 @@ csd_test_shapes = [
     ((3, 17, 2), (3, 12, 2), 9, 3, 1),
 ]
 welch_test_shapes = stft_test_shapes
+istft_test_shapes = [
+    # (input_shape, nperseg, noverlap, timeaxis, freqaxis)
+    ((3, 2, 64, 31), 100, 75, -1, -2),
+    ((17, 8, 5), 13, 7, 0, 1),
+    ((65, 24), 24, 7, -2, -1),
+]
 
 
 default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
@@ -376,6 +383,63 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+          f"_shape={jtu.format_shape_dtype_string(shape, dtype)}"
+          f"_fs={fs}_window={window}_boundary={boundary}"
+          f"_nperseg={nperseg}_noverlap={noverlap}_onesided={onesided}"
+          f"_timeaxis={timeaxis}_freqaxis{freqaxis}_nfft={nfft}",
+       "shape": shape, "dtype": dtype, "fs": fs, "window": window,
+       "nperseg": nperseg, "noverlap": noverlap, "nfft": nfft,
+       "onesided": onesided, "boundary": boundary,
+       "timeaxis": timeaxis, "freqaxis": freqaxis}
+      for shape, nperseg, noverlap, timeaxis, freqaxis in istft_test_shapes
+      for dtype in default_dtypes
+      for fs in [1.0, 16000.0]
+      for window in ['boxcar', 'triang', 'blackman', 'hamming', 'hann']
+      for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
+      for onesided in [False, True]
+      for boundary in [False, True]))
+  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm 5.1
+  def testIstftAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
+                            noverlap, nfft, onesided, boundary,
+                            timeaxis, freqaxis):
+    if not onesided:
+      new_freq_len = (shape[freqaxis] - 1) * 2
+      shape = shape[:freqaxis] + (new_freq_len ,) + shape[freqaxis + 1:]
+
+    def osp_fun(x, fs):
+      # Ignore UserWarning in osp so we can also test over ill-posed cases.
+      with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = osp_signal.istft(
+            x,
+            fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
+            nfft=nfft, input_onesided=onesided, boundary=boundary,
+            time_axis=timeaxis, freq_axis=freqaxis)
+      return result
+
+    jsp_fun = partial(jsp_signal.istft,
+        window=window, nperseg=nperseg, noverlap=noverlap, nfft=nfft,
+        input_onesided=onesided, boundary=boundary,
+        time_axis=timeaxis, freq_axis=freqaxis)
+
+    tol = {
+        np.float32: 1e-4, np.float64: 1e-6,
+        np.complex64: 1e-4, np.complex128: 1e-6
+    }
+    if jtu.device_under_test() == 'tpu':
+      tol = _TPU_FFT_TOL
+
+    rng = jtu.rand_default(self.rng())
+    rng_fs = jtu.rand_uniform(self.rng(), 1.0, 16000.0)
+    args_maker = lambda: [rng(shape, dtype), rng_fs((), np.float)]
+
+    # Here, dtype of output signal is different depending on osp versions,
+    # and so depending on the test environment.  Thus, dtype check is disabled.
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

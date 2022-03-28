@@ -79,6 +79,7 @@ jax.scipy.signal
    correlate
    correlate2d
    csd
+   istft
    stft
    welch
 

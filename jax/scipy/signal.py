@@ -21,6 +21,7 @@ from jax._src.scipy.signal import (
   correlate2d as correlate2d,
   detrend as detrend,
   csd as csd,
+  istft as istft,
   stft as stft,
   welch as welch,
 )
