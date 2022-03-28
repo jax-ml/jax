@@ -328,8 +328,7 @@ class JVPTrace(Trace):
                     out_axes_thunk=new_out_axes_thunk)
     f_jvp, out_tree_def = traceable(f_jvp, len(primals), tangent_tree_def)
     update_params = call_param_updaters.get(call_primitive)
-    new_params = (update_params(params, nz_tangents, nz_tangents_out)
-                  if update_params else params)
+    new_params = update_params(params, nz_tangents) if update_params else params
     result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
     primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
