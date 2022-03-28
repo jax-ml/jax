@@ -36,7 +36,7 @@ import itertools
 import functools
 import operator as op
 import re
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import jax
 from jax._src.numpy import lax_numpy
@@ -148,7 +148,7 @@ class _DimMon(dict):
     return prod([pow_opt(env[id], deg) for id, deg in self.items()])
 
 
-class _DimPolynomial(dict):
+class _DimPolynomial():
   """Polynomial with integer coefficients for polymorphic shapes.
 
   The dimension variables are assumed to range over integers >= 1.
@@ -167,8 +167,10 @@ class _DimPolynomial(dict):
     # Makes sure Polynomials are always in canonical form
     coeffs = {mon: op.index(coeff)
               for mon, coeff in coeffs.items() if coeff != 0}
-    coeffs = coeffs or {_DimMon(): 0}
-    super().__init__(coeffs)
+    self._coeffs = coeffs or {_DimMon(): 0}
+
+  def monomials(self) -> Iterable[Tuple[_DimMon, int]]:
+    return self._coeffs.items()
 
   @classmethod
   def from_coeffs(cls, coeffs: Dict[_DimMon, int]) -> DimSize:
@@ -193,8 +195,8 @@ class _DimPolynomial(dict):
 
   def to_var(self) -> Optional[str]:
     """Extract the variable name "x", from a polynomial "x" """
-    items = self.items()
-    if len(items) != 1:
+    items = self.monomials()
+    if len(items) != 1:  # type: ignore
       return None
     (mon, mon_count), = items
     if mon_count != 1:
@@ -204,12 +206,12 @@ class _DimPolynomial(dict):
   def get_vars(self) -> Set[str]:
     """The variables that appear in a polynomial."""
     acc = set()
-    for mon, _ in self.items():
+    for mon, _ in self.monomials():
       acc.update(mon.get_vars())
     return acc
 
   def __hash__(self):
-    return hash(tuple(sorted(self.items())))
+    return hash(tuple(sorted(self.monomials())))
 
   def __str__(self):
     def _one_monomial(mon, c):
@@ -219,15 +221,15 @@ class _DimPolynomial(dict):
         return str(mon)
       return f"{c}*{mon}"
     return " + ".join(_one_monomial(mon, c)
-                      for mon, c in sorted(self.items(), reverse=True))
+                      for mon, c in sorted(self.monomials(), reverse=True))
 
   def __repr__(self):
     return str(self)
 
   # We overload , -, *, because they are fully defined for _DimPolynomial.
   def __add__(self, other: DimSize) -> DimSize:
-    coeffs = self.copy()
-    for mon, coeff in _ensure_poly(other).items():
+    coeffs = self._coeffs.copy()
+    for mon, coeff in _ensure_poly(other).monomials():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
     return _DimPolynomial.from_coeffs(coeffs)
 
@@ -235,12 +237,12 @@ class _DimPolynomial(dict):
     return self + -other
 
   def __neg__(self) -> '_DimPolynomial':
-    return _DimPolynomial({mon: -coeff for mon, coeff in self.items()})
+    return _DimPolynomial({mon: -coeff for mon, coeff in self.monomials()})
 
   def __mul__(self, other: DimSize) -> DimSize:
     other = _ensure_poly(other)
     coeffs: Dict[_DimMon, int] = {}
-    for (mon1, coeff1), (mon2, coeff2) in itertools.product(self.items(), other.items()):
+    for (mon1, coeff1), (mon2, coeff2) in itertools.product(self.monomials(), other.monomials()):
       mon = mon1.mul(mon2)
       coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
     return _DimPolynomial.from_coeffs(coeffs)
@@ -367,34 +369,34 @@ class _DimPolynomial(dict):
 
   def __int__(self):
     if self.is_constant:
-      return op.index(next(iter(self.values())))
+      return op.index(next(iter(self._coeffs.values())))
     else:
       raise InconclusiveDimensionOperation(f"Dimension polynomial '{self}' used in a context that requires a constant")
 
   def bounds(self) -> Tuple[Optional[int], Optional[int]]:
     """Returns the lower and upper bounds, if defined."""
-    lb = ub = self.get(_DimMon(), 0)  # The free coefficient
-    for mon, coeff in self.items():
+    lb = ub = self._coeffs.get(_DimMon(), 0)  # The free coefficient
+    for mon, coeff in self.monomials():
       if mon.degree == 0: continue
       if coeff > 0:
-        ub = None
+        ub = None  # type: ignore
         lb = None if lb is None else lb + coeff
       else:
-        lb = None
+        lb = None  # type: ignore
         ub = None if ub is None else ub + coeff
     return lb, ub
 
   @property
   def is_constant(self):
-    return len(self) == 1 and next(iter(self)).degree == 0
+    return len(self._coeffs) == 1 and next(iter(self._coeffs)).degree == 0
 
   @property
   def leading_term(self) -> Tuple[_DimMon, int]:
     """Returns the highest degree term that comes first lexicographically."""
-    return max(self.items())
+    return max(self.monomials())
 
   def evaluate(self, env: ShapeEnv):
-    terms = [_multiply(mon.evaluate(env), np.int32(coeff)) for mon, coeff in self.items()]
+    terms = [_multiply(mon.evaluate(env), np.int32(coeff)) for mon, coeff in self.monomials()]
     return functools.reduce(_add, terms) if len(terms) > 1 else terms[0]
 
 def _ensure_poly(p: DimSize) -> _DimPolynomial:
@@ -787,7 +789,7 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
     var, factor_var = None, None
     dim_expr = eqn.dim_expr
 
-    for mon, factor in eqn.poly.items():
+    for mon, factor in eqn.poly.monomials():
       # Perhaps we can already evaluate this monomial (all vars solved)
       try:
         mon_value = mon.evaluate(shapeenv)
