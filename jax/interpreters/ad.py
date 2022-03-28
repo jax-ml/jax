@@ -164,8 +164,10 @@ def recast_to_float0(primal, tangent):
   else:
     return tangent
 
-# NOTE: The FIXMEs below are caused by primal/tangent mixups (type errors if you will)
-def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack, consts, primals_in, cotangents_in):
+# NOTE: The FIXMEs below are caused by primal/tangent mixups (type
+# errors if you will)
+def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
+                  consts, primals_in, cotangents_in):
   if all(type(ct) is Zero for ct in cotangents_in):
     return map(lambda v: Zero(v.aval), jaxpr.invars)
 
