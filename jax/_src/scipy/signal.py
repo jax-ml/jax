@@ -160,12 +160,12 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
   if x.dtype.kind == 'i':
     x = x.astype(win.dtype)
 
+  *batch_shape, signal_length = x.shape
   # Created strided array of data segments
   if nperseg == 1 and noverlap == 0:
     result = x[..., np.newaxis]
   else:
     step = nperseg - noverlap
-    *batch_shape, signal_length = x.shape
     batch_shape = tuple(batch_shape)
     x = x.reshape((int(np.prod(batch_shape)), signal_length))[..., np.newaxis]
     result = jax.lax.conv_general_dilated_patches(

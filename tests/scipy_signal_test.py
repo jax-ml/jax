@@ -38,6 +38,7 @@ stft_test_shapes = [
     ((3, 17, 2), 9, 3, 1),
     ((2, 3, 389, 5), 17, 13, 2),
     ((2, 1, 133, 3), 17, 13, -2),
+    ((3, 7), 1, 0, 1),
 ]
 csd_test_shapes = [
     # (x_input_shape, y_input_shape, nperseg, noverlap, axis)
