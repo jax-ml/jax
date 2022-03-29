@@ -2769,11 +2769,11 @@ def _device_get(x):
   if isinstance(x, core.Tracer):
     return x
   try:
-    copy = x.copy
+    toarray = x.__array__
   except AttributeError:
     return x
   else:
-    return copy()
+    return toarray()
 
 def device_get(x: Any):
   """Transfer ``x`` to host.
