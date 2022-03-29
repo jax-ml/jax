@@ -77,6 +77,9 @@ If you need to build with CUDA enabled, follow the
 [CUDA Installation Guide](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
 to set up a CUDA environment.
 
+JAX builds use symbolic links, which require that you activate
+[Developer Mode](https://docs.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
+
 You can either install Python using its
 [Windows installer](https://www.python.org/downloads/), or if you prefer, you
 can use [Anaconda](https://docs.anaconda.com/anaconda/install/windows/)
