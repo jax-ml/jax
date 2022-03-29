@@ -5922,6 +5922,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(jnp.float_, np.float32 if precision == '32' else np.float64)
     self.assertEqual(jnp.complex_, np.complex64 if precision == '32' else np.complex128)
 
+  def testFromBuffer(self):
+    buf = b'\x01\x02\x03'
+    expected = np.frombuffer(buf, dtype='uint8')
+    actual = jnp.frombuffer(buf, dtype='uint8')
+    self.assertArraysEqual(expected, actual)
+
+  def testFromFunction(self):
+    def f(x, y, z):
+      return x + 2 * y + 3 * z
+    shape = (3, 4, 5)
+    expected = np.fromfunction(f, shape=shape)
+    actual = jnp.fromfunction(f, shape=shape)
+    self.assertArraysEqual(expected, actual)
+
+  def testFromString(self):
+    s = "1,2,3"
+    expected = np.fromstring(s, sep=',', dtype=int)
+    actual = jnp.fromstring(s, sep=',', dtype=int)
+    self.assertArraysEqual(expected, actual)
+
+
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 
@@ -6093,6 +6114,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'identity': ['like'],
       'full': ['order', 'like'],
       'full_like': ['subok', 'order'],
+      'fromfunction': ['like'],
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
