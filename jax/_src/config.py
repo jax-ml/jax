@@ -57,7 +57,8 @@ def int_env(varname: str, default: int) -> int:
 UPGRADE_BOOL_HELP = (
     " This will be enabled by default in future versions of JAX, at which "
     "point all uses of the flag will be considered deprecated (following "
-    "https://jax.readthedocs.io/en/latest/api_compatibility.html).")
+    "the `API compatibility policy "
+    "<https://jax.readthedocs.io/en/latest/api_compatibility.html>`_).")
 
 UPGRADE_BOOL_EXTRA_DESC = " (transient)"
 
@@ -568,6 +569,7 @@ distributed_debug = config.define_bool_state(
 enable_custom_prng = config.define_bool_state(
     name='jax_enable_custom_prng',
     default=False,
+    upgrade=True,
     help=('Enables an internal upgrade that allows one to define custom '
           'pseudo-random number generator implementations.'))
 
@@ -581,6 +583,7 @@ default_prng_impl = config.define_enum_state(
 enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     name='jax_enable_custom_vjp_by_custom_transpose',
     default=False,
+    upgrade=True,
     help=('Enables an internal upgrade that implements `jax.custom_vjp` by '
           'reduction to `jax.custom_jvp` and `jax.custom_transpose`.'))
 

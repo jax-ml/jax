@@ -43,6 +43,7 @@ from jax._src.config import (
   check_tracer_leaks as check_tracer_leaks,
   checking_leaks as checking_leaks,
   enable_custom_prng as enable_custom_prng,
+  enable_custom_vjp_by_custom_transpose as enable_custom_vjp_by_custom_transpose,
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
