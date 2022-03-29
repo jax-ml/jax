@@ -982,6 +982,7 @@ tf_not_yet_impl = [
     "schur",
     "name",
     "optimization_barrier",
+    "unreachable",
 
     # Not high priority?
     "after_all",

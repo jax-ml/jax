@@ -21,6 +21,7 @@ from typing import (Callable, Generic, Optional, Sequence, Tuple, List, TypeVar,
 
 from jax import core
 from jax import linear_util as lu
+from jax.custom_transpose import custom_transpose
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                         tree_multimap, treedef_is_leaf, treedef_tuple,
                         register_pytree_node_class)
@@ -536,29 +537,35 @@ class custom_vjp(Generic[ReturnValue]):
       msg = "No VJP defined for custom_vjp function {} using defvjp."
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
-    if self.nondiff_argnums:
-      for i in self.nondiff_argnums: _check_for_tracers(args[i])
-      nondiff_argnums = set(self.nondiff_argnums)
-      dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
-      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args,
-                                     require_static_args_hashable=False)
-      static_args = [args[i] for i in self.nondiff_argnums]
-      fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args,
-                               require_static_args_hashable=False)
-      bwd = _add_args(lu.wrap_init(self.bwd), static_args)
+    if config.jax_enable_custom_vjp_by_custom_transpose:
+      if self.nondiff_argnums:
+        raise NotImplementedError(
+            'nondiff_argnums not implemented for new custom_vjp')
+      return custom_vjp_by_custom_transpose(self.fun, self.fwd, self.bwd)(*args)
     else:
-      f_, dyn_args = lu.wrap_init(self.fun), args
-      fwd, bwd = lu.wrap_init(self.fwd), lu.wrap_init(self.bwd)
-    args_flat, in_tree = tree_flatten(dyn_args)
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
-    flat_fun, out_tree = flatten_fun_nokwargs(f_, in_tree)
-    flat_fwd, out_trees = _flatten_fwd(fwd, in_tree)
-    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
-    out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd, *args_flat,
-                                      out_trees=out_trees)
-    fst, aux = lu.merge_linear_aux(out_tree, out_trees)
-    out_tree = aux if fst else aux[0]
-    return tree_unflatten(out_tree, out_flat)
+      if self.nondiff_argnums:
+        for i in self.nondiff_argnums: _check_for_tracers(args[i])
+        nondiff_argnums = set(self.nondiff_argnums)
+        dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
+        f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums,
+                                       args, require_static_args_hashable=False)
+        static_args = [args[i] for i in self.nondiff_argnums]
+        fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args,
+                                 require_static_args_hashable=False)
+        bwd = _add_args(lu.wrap_init(self.bwd), static_args)
+      else:
+        f_, dyn_args = lu.wrap_init(self.fun), args
+        fwd, bwd = lu.wrap_init(self.fwd), lu.wrap_init(self.bwd)
+      args_flat, in_tree = tree_flatten(dyn_args)
+      in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+      flat_fun, out_tree = flatten_fun_nokwargs(f_, in_tree)
+      flat_fwd, out_trees = _flatten_fwd(fwd, in_tree)
+      flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
+      out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
+                                        *args_flat, out_trees=out_trees)
+      fst, aux = lu.merge_linear_aux(out_tree, out_trees)
+      out_tree = aux if fst else aux[0]
+      return tree_unflatten(out_tree, out_flat)
 
 @partial(partial, tree_map)
 def _check_for_tracers(x):
@@ -1160,3 +1167,73 @@ xla.register_translation(linear_call_p,
                          initial_style=True)
 mlir.register_lowering(linear_call_p, mlir.lower_fun(
     _linear_call_impl, multiple_results=True))
+
+
+# A stageable primitive that fails when evaluated
+unreachable_p: core.Primitive = core.Primitive('unreachable')
+unreachable_p.multiple_results = True
+
+def unreachable_impl(*_, out_avals, exc_type, message):
+  del out_avals
+  raise exc_type(message)
+
+# Evaluation raises an exception
+unreachable_p.def_impl(unreachable_impl)
+
+# Translation raises an exception
+# TODO(frostig,mattjj): We have no good way to translate a function
+# that errs. Since translation over-approximates concrete evaluation,
+# we err on translation for the time being.
+xla.register_translation(unreachable_p, unreachable_impl)
+
+# Abstract evaluation proceeds without issue, to allow for staging
+unreachable_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
+
+def unreachable(*args, out_avals=None, exc_type=TypeError,
+                message='unreachable'):
+  """Fail when evaluated concretely (but allow for staging).
+
+  This function allows one to assert an impossibility of
+  evaluation. It can be used to guarantee that evaluation does not
+  "reach" a certain point in the sense that it does not execute, but
+  it can nonetheless be staged out by JAX without error.
+
+  Args:
+    *args: The arbitrary pytree of arguments to the function.
+    out_avals: Optional specification of the output types of this
+     function invocation from the point of view of staging. If
+     ``None``, these are chosen as equal to types of input arguments.
+    exc_type: Optional constructor for the Python exception raised if
+      evaluated.
+    message: Optional string message for the Python exception raised
+      if evaluated.
+
+  """
+  if out_avals is None:
+    out_avals = tree_map(core.get_aval, args)
+
+  args_flat, in_tree = tree_flatten(args)
+  out_avals_flat, out_tree = tree_flatten(out_avals)
+  out = unreachable_p.bind(*args_flat, out_avals=out_avals_flat,
+                           exc_type=exc_type, message=message)
+  return tree_unflatten(out_tree, out)
+
+
+disallow_jvp = partial(
+    unreachable,
+    exc_type=TypeError,
+    message="can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
+
+
+def custom_vjp_by_custom_transpose(fun, fwd, bwd):
+  fun = custom_jvp(fun)
+
+  @fun.defjvp
+  def jvp(primals, tangents):
+    outs, residuals = fwd(*primals)
+    tan_out_types = tree_map(lambda o: core.get_aval(o).at_least_vspace(), outs)
+    tan_fn = custom_transpose(partial(disallow_jvp, out_avals=tan_out_types))
+    tan_fn.def_transpose(bwd)
+    return outs, tan_fn(tan_out_types, residuals, tangents)
+
+  return fun
