@@ -138,6 +138,10 @@ def _wraps(fun: Optional[Callable], update_doc: bool = True, lax_description: st
   """
   def wrap(op):
     docstr = getattr(fun, "__doc__", None)
+    try:
+      name = f"{fun.__module__}.{fun.__name__}"
+    except AttributeError:
+      name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
     if docstr:
       try:
         parsed = _parse_numpydoc(docstr)
@@ -156,7 +160,6 @@ def _wraps(fun: Optional[Callable], update_doc: bool = True, lax_description: st
           )
 
         docstr = parsed.summary.strip() + "\n" if parsed.summary else ""
-        name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
         docstr += f"\nLAX-backend implementation of :func:`{name}`.\n"
         if lax_description:
           docstr += "\n" + lax_description.strip() + "\n"
