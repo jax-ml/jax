@@ -297,20 +297,35 @@ def jit(
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation.
 
-  In the following example, ``selu`` can be compiled into a single fused kernel
-  by XLA:
+  Examples:
+    In the following example, ``selu`` can be compiled into a single fused kernel
+    by XLA:
 
-  >>> import jax
-  >>>
-  >>> @jax.jit
-  ... def selu(x, alpha=1.67, lmbda=1.05):
-  ...   return lmbda * jax.numpy.where(x > 0, x, alpha * jax.numpy.exp(x) - alpha)
-  >>>
-  >>> key = jax.random.PRNGKey(0)
-  >>> x = jax.random.normal(key, (10,))
-  >>> print(selu(x))  # doctest: +SKIP
-  [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
-   -0.85743 -0.78232  0.76827  0.59566 ]
+    >>> import jax
+    >>>
+    >>> @jax.jit
+    ... def selu(x, alpha=1.67, lmbda=1.05):
+    ...   return lmbda * jax.numpy.where(x > 0, x, alpha * jax.numpy.exp(x) - alpha)
+    >>>
+    >>> key = jax.random.PRNGKey(0)
+    >>> x = jax.random.normal(key, (10,))
+    >>> print(selu(x))  # doctest: +SKIP
+    [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
+    -0.85743 -0.78232  0.76827  0.59566 ]
+
+    To pass arguments such as ``static_argnames`` when decorating a function, a common
+    pattern is to use :func:`functools.partial`:
+
+    >>> from functools import partial
+    >>>
+    >>> @partial(jax.jit, static_argnames=['n'])
+    ... def g(x, n):
+    ...   for i in range(n):
+    ...     x = x ** 2
+    ...   return x
+    >>>
+    >>> g(jnp.arange(4), 3)
+    DeviceArray([   0,    1,  256, 6561], dtype=int32)
   """
   if FLAGS.experimental_cpp_jit:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,

@@ -223,7 +223,7 @@ g_inner_jitted(10, 20)
 
 +++ {"id": "5XUT2acoHBz-"}
 
-If we really need to JIT a function that has a condition on the value of an input, we can tell JAX to help itself to a less abstract tracer for a particular input by specifying `static_argnums`. The cost of this is that the resulting jaxpr is less flexible, so JAX will have to re-compile the function for every new value of the specified input. It is only a good strategy if the function is guaranteed to get limited different values.
+If we really need to JIT a function that has a condition on the value of an input, we can tell JAX to help itself to a less abstract tracer for a particular input by specifying `static_argnums` or `static_argnames`. The cost of this is that the resulting jaxpr is less flexible, so JAX will have to re-compile the function for every new value of the specified static input. It is only a good strategy if the function is guaranteed to get limited different values.
 
 ```{code-cell}
 :id: 2yQmQTDNAenY
@@ -237,8 +237,26 @@ print(f_jit_correct(10))
 :id: R4SXUEu-M-u1
 :outputId: 9e712e14-4e81-4744-dcf2-a10f470d9121
 
-g_jit_correct = jax.jit(g, static_argnums=1)
+g_jit_correct = jax.jit(g, static_argnames=['n'])
 print(g_jit_correct(10, 20))
+```
+
+To specify such arguments when using `jit` as a decorator, a common pattern is to use python's `functools.partial`:
+
+```{code-cell}
+:id: 2X5rR4jkIO
+:outputId: 81-4744-dc2e4-4e10f470f2-a19e71d9121
+
+from functools import partial
+
+@partial(jax.jit, static_argnames=['n'])
+def g_jit_decorated(x, n):
+  i = 0
+  while i < n:
+    i += 1
+  return x + i
+
+print(g_jit_decorated(10, 20))
 ```
 
 +++ {"id": "LczjIBt2X2Ms"}
