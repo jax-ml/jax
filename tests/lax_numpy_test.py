@@ -6245,7 +6245,7 @@ class NumpyDocTests(jtu.JaxTestCase):
     # Test that docstring wrapping & transformation didn't fail.
 
     # Functions that have their own docstrings & don't wrap numpy.
-    known_exceptions = {'broadcast_arrays', 'vectorize'}
+    known_exceptions = {'broadcast_arrays', 'fromfile', 'fromiter', 'vectorize'}
 
     for name in dir(jnp):
       if name in known_exceptions or name.startswith('_'):

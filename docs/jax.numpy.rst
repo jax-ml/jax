@@ -176,7 +176,9 @@ namespace; they are listed below.
     fmod
     frexp
     frombuffer
+    fromfile
     fromfunction
+    fromiter
     fromstring
     full
     full_like
