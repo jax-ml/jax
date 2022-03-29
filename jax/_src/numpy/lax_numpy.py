@@ -1973,6 +1973,42 @@ def frombuffer(buffer, dtype=float, count=-1, offset=0):
   return asarray(np.frombuffer(buffer=buffer, dtype=dtype, count=count, offset=offset))
 
 
+def fromfile(*args, **kwargs):
+  """Unimplemented JAX wrapper for jnp.fromfile.
+
+  This function is left deliberately unimplemented because it may be non-pure and thus
+  unsafe for use with JIT and other JAX transformations. Consider using
+  ``jnp.asarray(np.fromfile(...))`` instead, although care should be taken if ``np.fromfile``
+  is used within jax transformations because of its potential side-effect of consuming the
+  file object; for more information see `Common Gotchas: Pure Functions
+  <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_.
+  """
+  raise NotImplementedError(
+    "jnp.fromfile() is not implemented because it may be non-pure and thus unsafe for use "
+    "with JIT and other JAX transformations. Consider using jnp.asarray(np.fromfile(...)) "
+    "instead, although care should be taken if np.fromfile is used within a jax transformations "
+    "because of its potential side-effect of consuming the file object; for more information see "
+    "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
+
+
+def fromiter(*args, **kwargs):
+  """Unimplemented JAX wrapper for jnp.fromiter.
+
+  This function is left deliberately unimplemented because it may be non-pure and thus
+  unsafe for use with JIT and other JAX transformations. Consider using
+  ``jnp.asarray(np.fromiter(...))`` instead, although care should be taken if ``np.fromiter``
+  is used within jax transformations because of its potential side-effect of consuming the
+  iterable object; for more information see `Common Gotchas: Pure Functions
+  <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_.
+  """
+  raise NotImplementedError(
+    "jnp.fromiter() is not implemented because it may be non-pure and thus unsafe for use "
+    "with JIT and other JAX transformations. Consider using jnp.asarray(np.fromiter(...)) "
+    "instead, although care should be taken if np.fromiter is used within a jax transformations "
+    "because of its potential side-effect of consuming the iterable object; for more information see "
+    "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
+
+
 @_wraps(np.fromfunction)
 def fromfunction(function, shape, *, dtype=float, **kwargs):
   shape = core.canonicalize_shape(shape, context="shape argument of jnp.fromfunction()")
