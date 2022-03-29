@@ -87,6 +87,26 @@ def indices_replica_id_calc_cached(mesh_shape, mesh_axes, state):
     gda.get_shard_indices_replica_ids(global_input_shape, global_mesh, mesh_axes)
 
 
+def gda_local_shards(mesh_shape, mesh_axes, state):
+  # `device_put` time is not measured in this benchmark. All the devices here
+  # are local.
+  global_mesh = jtu.create_global_mesh(mesh_shape, ("x", "y"))
+  global_input_shape = (2048, 2048)
+  global_input_data = np.arange(
+      prod(global_input_shape)).reshape(global_input_shape)
+  global_indices = gda.get_shard_indices(global_input_shape, global_mesh,
+                                         mesh_axes)
+  dbs = [
+      jax.device_put(global_input_data[global_indices[device]], device)
+      for device in global_mesh.local_devices
+  ]
+  gda_inp = gda.GlobalDeviceArray(global_input_shape, global_mesh, mesh_axes,
+                                  dbs)
+
+  while state:
+    gda_inp._create_local_shards()
+
+
 benchmarks = []
 for mesh_shape, axes in mesh_shapes_axes:
   benchmarks.extend([
@@ -102,6 +122,9 @@ for mesh_shape, axes in mesh_shapes_axes:
       google_benchmark.register(
           partial(indices_replica_id_calc_cached, mesh_shape, axes),
           name=f"indices_replica_id_calc_cached_{mesh_shape}_{axes}"),
+      google_benchmark.register(
+          partial(gda_local_shards, mesh_shape, axes),
+          name=f"gda_local_shards_{mesh_shape}_{axes}"),
   ])
 
 
