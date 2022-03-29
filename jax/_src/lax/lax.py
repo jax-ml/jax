@@ -591,7 +591,7 @@ class Precision(xla_client.PrecisionConfig.Precision):  # type: ignore
     Aliases: ``'default'``, ``'fastest'``, ``'bfloat16'``.
   HIGH:
     Slower but more accurate. Performs float32 computations in 3 bfloat16
-    passes, or using tensorfloat32 where available. Aliases: ``'high'`,
+    passes, or using tensorfloat32 where available. Aliases: ``'high'``,
     ``'bfloat16_3x'``, ``'tensorfloat32'``.
   HIGHEST:
     Slowest but most accurate. Performs computations in float32 or float64
