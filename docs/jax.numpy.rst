@@ -175,6 +175,9 @@ namespace; they are listed below.
     fmin
     fmod
     frexp
+    frombuffer
+    fromfunction
+    fromstring
     full
     full_like
     gcd
