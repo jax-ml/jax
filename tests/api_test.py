@@ -6971,15 +6971,32 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
-      self.assertEqual(in_batched, [True])
+      xs_batched, = in_batched
+      self.assertEqual(xs_batched, True)
       self.assertEqual(axis_size, xs.shape[0])
-      return [jnp.cos(xs)], in_batched
+      return jnp.cos(xs), xs_batched
 
     x, xs = jnp.array(1.), jnp.arange(3)
     y = f(x)
     self.assertAllClose(y, jnp.sin(x))
     ys = api.vmap(f)(xs)
     self.assertAllClose(ys, jnp.cos(xs))
+
+  def test_rule_multi_output(self):
+    @api.custom_vmap
+    def f(x): return jnp.sin(x), jnp.cos(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      return (jnp.cos(xs), jnp.sin(xs)), tuple(in_batched * 2)
+
+    x, xs = jnp.array(1.), jnp.arange(3)
+    y1, y2 = f(x)
+    self.assertAllClose(y1, jnp.sin(x))
+    self.assertAllClose(y2, jnp.cos(x))
+    ys1, ys2 = api.vmap(f)(xs)
+    self.assertAllClose(ys1, jnp.cos(xs))
+    self.assertAllClose(ys2, jnp.sin(xs))
 
   def test_nary(self):
     @api.custom_vmap
@@ -6991,7 +7008,7 @@ class CustomVmapTest(jtu.JaxTestCase):
       self.assertEqual(axis_size, 3)
       self.assertEqual(axis_size, xs.shape[0])
       self.assertEqual(axis_size, ys.shape[0])
-      return [jnp.cos(xs) + ys ** 2.], [True]
+      return jnp.cos(xs) + ys ** 2., True
 
     xs, ys = jnp.arange(3), jnp.arange(3)
     zs = api.vmap(f)(xs, ys)
@@ -7029,7 +7046,7 @@ class CustomVmapTest(jtu.JaxTestCase):
         out = jnp.sum(u * v, axis=1)
       else:
         out = u @ v if u_batched else v @ u
-      return [out], [u_batched or v_batched]
+      return out, u_batched or v_batched
 
     f = vector_dot
     v = lambda *shape: jnp.ones(shape)
@@ -7056,30 +7073,16 @@ class CustomVmapTest(jtu.JaxTestCase):
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
       rule_args.append((axis_size, in_batched))
-      return [jnp.cos(xs)], in_batched
+      return jnp.cos(xs), in_batched[0]
 
     xs = jnp.arange(3)
     _ = api.vmap(f)(xs)
     (axis_size, in_batched), = rule_args
     self.assertIs(type(axis_size), int)
     self.assertIs(type(in_batched), list)
+    self.assertEqual(len(in_batched), 1)
 
-  def test_rule_output_signature_any_sequence(self):
-    @api.custom_vmap
-    def f(x): return jnp.sin(x)
-
-    Box = collections.namedtuple('Box', 'value')
-
-    @f.def_vmap
-    def rule(axis_size, in_batched, xs):
-      # custom vmap machinery should handle any sequence type for either output
-      return Box(jnp.cos(xs)), tuple(in_batched)
-
-    xs = jnp.arange(3)
-    ys = api.vmap(f)(xs)
-    self.assertAllClose(ys, jnp.cos(xs))
-
-  def test_rule_output_mismatch(self):
+  def test_rule_output_vs_batching_output_mismatch(self):
     @api.custom_vmap
     def f(x): return jnp.sin(x)
 
@@ -7090,23 +7093,23 @@ class CustomVmapTest(jtu.JaxTestCase):
     xs = jnp.arange(3)
     self.assertRaisesRegex(
         ValueError,
-        'structure of output values and output batching specification '
+        'structure of output value and output batching specification '
         r'returned by custom vmap rule \(test_rule_abc\) do not match.*',
         lambda: api.vmap(f)(xs))
 
-  def test_rule_output_array(self):
+  def test_rule_vs_call_output_mismatch(self):
     @api.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
-    def rule(axis_size, in_batched, xs):
-      # common to overlook the need to box up single output value in a list
-      return jnp.cos(xs), in_batched
+    def test_rule_abc2(axis_size, in_batched, xs):
+      return [jnp.sin(xs)], in_batched
 
     xs = jnp.arange(3)
     self.assertRaisesRegex(
-        TypeError,
-        'custom vmap rule output values must be a sequence.*',
+        ValueError,
+        r'structure of output returned by custom vmap rule \(test_rule_abc2\) '
+        r'does not match that of original custom-vmapped function.*',
         lambda: api.vmap(f)(xs))
 
   def test_jvp_basic(self):
@@ -7117,7 +7120,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     def rule(axis_size, in_batched, xs):
       self.assertEqual(axis_size, 3)
       self.assertEqual(in_batched, [True])
-      return [jnp.cos(xs)], in_batched
+      return jnp.cos(xs), in_batched[0]
 
     f_jvp = lambda x, tx: api.jvp(f, [x], [tx])
 
@@ -7144,7 +7147,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     def rule(axis_size, in_batched, xs, ys):
       self.assertEqual(axis_size, 3)
       self.assertEqual(in_batched, [True, True])
-      return [jnp.cos(xs) + ys], [True]
+      return jnp.cos(xs) + ys, True
 
     f_jvp = lambda x, y, tx, ty: api.jvp(f, [x, y], [tx, ty])
 
@@ -7167,7 +7170,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     def rule(axis_size, in_batched, xs):
       self.assertEqual(axis_size, 3)
       self.assertEqual(in_batched, [False])
-      return [jnp.cos(xs)], in_batched
+      return jnp.cos(xs), in_batched[0]
 
     f_jvp = lambda x, tx: api.jvp(f, [x], [tx])
 
@@ -7186,7 +7189,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     def rule(axis_size, in_batched, xs):
       self.assertEqual(axis_size, 3)
       self.assertEqual(in_batched, [False])
-      return [jnp.cos(xs)], in_batched
+      return jnp.cos(xs), in_batched[0]
 
     x = jnp.arange(3.) + .72
     j = api.jacfwd(f)(x)
@@ -7200,7 +7203,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     def rule(axis_size, in_batched, xs):
       self.assertEqual(axis_size, 3)
       self.assertEqual(in_batched, [False])
-      return [jnp.cos(xs)], in_batched
+      return jnp.cos(xs), in_batched[0]
 
     f_jvp = lambda x, tx: api.jvp(f, [x], [tx])
 
@@ -7223,14 +7226,14 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     @f_linear.def_vmap
     def linear_rule(axis_size, in_batched, xs):
-      return [11. * xs], in_batched
+      return 11. * xs, in_batched[0]
 
     @api.custom_vmap
     def f_nonlinear(x): return jnp.sin(x)
 
     @f_nonlinear.def_vmap
     def nonlinear_rule(axis_size, in_batched, xs):
-      return [jnp.cos(xs)], in_batched
+      return jnp.cos(xs), in_batched[0]
 
     f_lin_jvp = lambda x, tx: api.jvp(f_linear, [x], [tx])
     f_non_jvp = lambda x, tx: api.jvp(f_nonlinear, [x], [tx])
@@ -7267,7 +7270,7 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
-      return [cos_with_invalid_dataflow_jvp(xs)], in_batched
+      return cos_with_invalid_dataflow_jvp(xs), in_batched[0]
 
     f_jvp = lambda x, tx: api.jvp(f, [x], [tx])
     x, txs = jnp.array(1.), 2. + jnp.arange(3.)
@@ -7300,7 +7303,7 @@ class CustomVmapTest(jtu.JaxTestCase):
       self.assertEqual(in_batched, [in_batched_ref])
       sz, = set([z.shape[0] for z in tree_util.tree_leaves(xs)])
       self.assertEqual(axis_size, sz)
-      return [tree_cos(xs)], in_batched
+      return tree_cos(xs), in_batched[0]
 
     y = f(x)
     self.assertAllClose(y, tree_sin(x))
@@ -7324,7 +7327,7 @@ class CustomVmapTest(jtu.JaxTestCase):
       self.assertEqual(in_batched, [in_batched_ref])
       sz, = set([z.shape[0] for z in tree_util.tree_leaves(xs)])
       self.assertEqual(axis_size, sz)
-      return [tree_cos(xs)], in_batched
+      return tree_cos(xs), in_batched[0]
 
     y = f(x)
     self.assertAllClose(y, tree_sin(x))
@@ -7339,7 +7342,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     def rule(axis_size, in_batched, xs):
       self.assertEqual(in_batched, [True])
       self.assertEqual(axis_size, xs.shape[0])
-      return [jnp.cos(xs)], in_batched
+      return jnp.cos(xs), in_batched[0]
 
     x, xs = jnp.array(1.), jnp.arange(3)
     self.assertAllClose(f(x), jit(f)(x))
