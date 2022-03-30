@@ -828,13 +828,12 @@ register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
 
 
-def _compare_mhlo(x, y, direction, type):
+def compare_mhlo(x, y, direction, type):
   """Creates mhlo.CompareOp."""
   if jax._src.lib.mlir_api_version >= 5:
     return mhlo.CompareOp(x, y, mhlo.ComparisonDirectionAttr.get(direction),
                           mhlo.ComparisonTypeAttr.get(type))
-  tensor_type = ir.RankedTensorType(x.type)
-  dims = [tensor_type.get_dim_size(i) for i in range(tensor_type.rank)]
+  dims = ir.RankedTensorType(x.type).shape
   bool_shape = ir.RankedTensorType.get(dims, ir.IntegerType.get_signless(1))
   if jax._src.lib.mlir_api_version >= 3:
     return mhlo.CompareOp(bool_shape, x, y,
@@ -849,9 +848,9 @@ def _minmax_mhlo(op, cmp, x, y):
   if ir.ComplexType.isinstance(tensor_type.element_type):
     rx = mhlo.RealOp(x).result
     ry = mhlo.RealOp(y).result
-    real_eq = _compare_mhlo(rx, ry, "EQ", "FLOAT")
-    real_cmp = _compare_mhlo(rx, ry, cmp, "FLOAT")
-    imag_cmp = _compare_mhlo(
+    real_eq = compare_mhlo(rx, ry, "EQ", "FLOAT")
+    real_cmp = compare_mhlo(rx, ry, cmp, "FLOAT")
+    imag_cmp = compare_mhlo(
         mhlo.ImagOp(x).result,
         mhlo.ImagOp(y).result, cmp, "FLOAT")
     which = mhlo.SelectOp(real_eq, imag_cmp, real_cmp).result
@@ -875,7 +874,7 @@ def convert_mhlo(x, aval_in, aval_out):
       compare_type = "SIGNED"
     else:
       compare_type = "UNSIGNED"
-    return _compare_mhlo(x, full_like_aval(0, aval_in), "NE",
+    return compare_mhlo(x, full_like_aval(0, aval_in), "NE",
                          compare_type).result
   return mhlo.ConvertOp(aval_to_ir_type(aval_out), x).result
 
