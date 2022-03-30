@@ -1679,7 +1679,7 @@ class NamedShape:
       return (self.__positional, self.__named) == (other.__positional, other.__named)
     if isinstance(other, tuple):
       return not self.__named and self.__positional == other
-    raise TypeError(f"NamedShape doesn't support comparisons with {type(other)}")
+    return False
 
   def __hash__(self):
     named = frozenset(self.__named.items())
