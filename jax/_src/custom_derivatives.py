@@ -535,14 +535,13 @@ class custom_vjp(Generic[ReturnValue]):
       msg = "No VJP defined for custom_vjp function {} using defvjp."
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
+    if self.nondiff_argnums:
+      for i in self.nondiff_argnums: _check_for_tracers(args[i])
     if config.jax_enable_custom_vjp_by_custom_transpose:
-      if self.nondiff_argnums:
-        raise NotImplementedError(
-            'nondiff_argnums not implemented for new custom_vjp')
-      return custom_vjp_by_custom_transpose(self.fun, self.fwd, self.bwd)(*args)
+      return custom_vjp_by_custom_transpose(
+          self.fun, self.fwd, self.bwd, self.nondiff_argnums)(*args)
     else:
       if self.nondiff_argnums:
-        for i in self.nondiff_argnums: _check_for_tracers(args[i])
         nondiff_argnums = set(self.nondiff_argnums)
         dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
         f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums,
@@ -1163,9 +1162,11 @@ mlir.register_lowering(linear_call_p, mlir.lower_fun(
 unreachable_p: core.Primitive = core.Primitive('unreachable')
 unreachable_p.multiple_results = True
 
-def unreachable_impl(*_, out_avals, exc_type, message):
-  del out_avals
+def unreachable_impl(*_, exc_type, message):
   raise exc_type(message)
+
+def unreachable_batch_rule(batched_args, batch_dims, **params):
+  return unreachable_p.bind(*batched_args, **params), batch_dims
 
 # Evaluation raises an exception
 unreachable_p.def_impl(unreachable_impl)
@@ -1177,53 +1178,55 @@ unreachable_p.def_impl(unreachable_impl)
 mlir.register_lowering(unreachable_p, unreachable_impl)
 
 # Abstract evaluation proceeds without issue, to allow for staging
-unreachable_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
+unreachable_p.def_abstract_eval(lambda *args, **_: args)
 
-def unreachable(*args, out_avals=None, exc_type=TypeError,
-                message='unreachable'):
+batching.primitive_batchers[unreachable_p] = unreachable_batch_rule
+
+
+def unreachable(*args, exc_type=TypeError, message='unreachable'):
   """Fail when evaluated concretely (but allow for staging).
 
   This function allows one to assert an impossibility of
   evaluation. It can be used to guarantee that evaluation does not
   "reach" a certain point in the sense that it does not execute, but
-  it can nonetheless be staged out by JAX without error.
+  it can nonetheless be staged out by JAX without error. Its type
+  signature is that of the identity, as though it returns its
+  arguments as a tuple.
 
   Args:
     *args: The arbitrary pytree of arguments to the function.
-    out_avals: Optional specification of the output types of this
-     function invocation from the point of view of staging. If
-     ``None``, these are chosen as equal to types of input arguments.
     exc_type: Optional constructor for the Python exception raised if
       evaluated.
     message: Optional string message for the Python exception raised
       if evaluated.
 
   """
-  if out_avals is None:
-    out_avals = tree_map(core.get_aval, args)
-
-  args_flat, in_tree = tree_flatten(args)
-  out_avals_flat, out_tree = tree_flatten(out_avals)
-  out = unreachable_p.bind(*args_flat, out_avals=out_avals_flat,
-                           exc_type=exc_type, message=message)
-  return tree_unflatten(out_tree, out)
+  args_flat, tree = tree_flatten(args)
+  out = unreachable_p.bind(*args_flat, exc_type=exc_type, message=message)
+  return tree_unflatten(tree, out)
 
 
-disallow_jvp = partial(
-    unreachable,
-    exc_type=TypeError,
-    message="can't apply forward-mode autodiff (jvp) to a custom_vjp function.")
+def disallow_jvp(*args):
+  msg = "can't apply forward-mode autodiff (jvp) to a custom_vjp function."
+  (_, outs), _ = unreachable(*args, exc_type=TypeError, message=msg)
+  return outs
 
 
-def custom_vjp_by_custom_transpose(fun, fwd, bwd):
-  fun = custom_jvp(fun)
+def custom_vjp_by_custom_transpose(fun, fwd, bwd, nondiff_argnums):
+  fun = custom_jvp(fun, nondiff_argnums=nondiff_argnums)
 
   @fun.defjvp
-  def jvp(primals, tangents):
-    outs, residuals = fwd(*primals)
-    tan_out_types = tree_map(lambda o: core.get_aval(o).at_least_vspace(), outs)
-    tan_fn = custom_transpose(partial(disallow_jvp, out_avals=tan_out_types))
-    tan_fn.def_transpose(bwd)
-    return outs, tan_fn(tan_out_types, residuals, tangents)
+  def jvp(*args):
+    *nondiff_args, primals, tangents = args
+
+    outs, residuals = fwd(*nondiff_args, *primals)
+    tan_fn = custom_transpose(disallow_jvp)
+
+    @tan_fn.def_transpose
+    def bwd_with_outs(res_and_outs, g):
+      res, _ = res_and_outs
+      return bwd(*nondiff_args, res, g)
+
+    return outs, tan_fn((residuals, outs), tangents)
 
   return fun

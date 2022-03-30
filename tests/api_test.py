@@ -7309,6 +7309,34 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
 
+  def test_batching_basic(self):
+    def f(x, y):
+      @custom_transpose(jnp.ones(2))
+      def fn(r, x): return x / r
+      @fn.def_transpose
+      def tp(r, t): return t / r
+
+      return x + fn(y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+    f1     = lambda x: f(x, y)
+    f1_ref = lambda x: f_ref(x, y)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    xs = jnp.ones((3, 2)) * 6.
+    ys = jnp.ones((3, 2)) * 3.
+
+    self.assertAllClose(
+        api.vmap(f)(xs, ys),
+        api.vmap(f_ref)(xs, ys))
+    self.assertAllClose(
+        transpose_unary(api.vmap(f1),     xs)(xs),
+        transpose_unary(api.vmap(f1_ref), xs)(xs))
+    self.assertAllClose(
+        api.vmap(transpose_unary(f1,     x))(xs),
+        api.vmap(transpose_unary(f1_ref, x))(xs))
 
 class CustomVmapTest(jtu.JaxTestCase):
 

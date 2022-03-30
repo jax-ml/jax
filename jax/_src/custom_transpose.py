@@ -17,12 +17,14 @@ from typing import Any, Callable, Optional, Tuple
 
 from jax import core
 from jax import linear_util as lu
+from jax import tree_util
 from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_leaves, tree_map,
-                           tree_structure, treedef_tuple, tree_unflatten)
+                           tree_structure, treedef_children,
+                           treedef_tuple, tree_unflatten)
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import custom_api_util
@@ -78,20 +80,22 @@ class custom_transpose:
     return transpose
 
   @traceback_util.api_boundary
-  def __call__(self, out_types, res_arg, lin_arg):
-    _, res_tree = tree_flatten(res_arg)
-    _, lin_tree = tree_flatten(lin_arg)
+  def __call__(self, res_arg, lin_arg):
+    res_args_flat, res_tree = tree_flatten(res_arg)
+    lin_args_flat, lin_tree = tree_flatten(lin_arg)
     args_flat, in_tree = tree_flatten((res_arg, lin_arg))
+    _, out_tree = treedef_children(res_tree)
 
-    # TODO(frostig,mattjj): check that out_trees match
-    # TODO(frostig,mattjj): could, and should, we avoid flattening
-    # self.fun at this point?
+    # TODO(frostig,mattjj): check that out_tree{,2} match
+    flat_fun, out_tree2 = flatten_fun_nokwargs(
+        lu.wrap_init(self.fun), in_tree)
 
-    flat_fun, out_tree2 = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
-    out_types_flat, out_tree = tree_flatten(out_types)
+    lin_avals = [core.raise_to_shaped(core.get_aval(x)) for x in lin_args_flat]
+    flat_transpose = flatten_transpose(
+        lu.wrap_init(self.transpose), res_tree, lin_tree, out_tree, lin_avals)
+
     out_flat = custom_transpose_p.bind(flat_fun, *args_flat,
-                                       transpose=self.transpose,
-                                       out_types=out_types_flat,
+                                       transpose=flat_transpose,
                                        lin_tree=lin_tree,
                                        res_tree=res_tree,
                                        out_tree=out_tree)
@@ -124,25 +128,86 @@ def rule_name(rule):
 
 def check_transpose_rule_trees(rule, lin_tree, rule_out_tree):
   if not is_treedef_prefix(lin_tree, rule_out_tree):
-    if hasattr(rule, '_transpose_type_error'):
-      raise rule._transpose_type_error(lin_tree, rule_out_tree)
-    else:
-      raise TypeError(
-          'structure of custom transpose rule\'s output does not prefix-match '
-          'structure of primal function\'s linear inputs under '
-          f'custom transpose rule ({rule_name(rule)}).\n'
-          f'Transpose rule output: {rule_out_tree}\n'
-          f'Linear primal inputs: {lin_tree}')
+    raise TypeError(
+        'structure of custom transpose rule\'s output does not prefix-match '
+        'structure of primal function\'s linear inputs under '
+        f'custom transpose rule ({rule_name(rule)}).\n'
+        f'Transpose rule output: {rule_out_tree}\n'
+        f'Linear primal inputs: {lin_tree}')
 
 def make_transpose_from_thunk(thunk, lin_tree):
   transpose_jaxpr, transpose_consts = thunk()
   transpose_jaxpr = core.ClosedJaxpr(
       pe.convert_constvars_jaxpr(transpose_jaxpr), ())
-  def transpose(res_arg, ct_out):
-    args_flat = tree_leaves((res_arg, ct_out))
-    ct_ins = core.jaxpr_as_fun(transpose_jaxpr)(*transpose_consts, *args_flat)
-    return tree_unflatten(lin_tree, ct_ins)
-  return transpose
+  return lu.wrap_init(core.jaxpr_as_fun(transpose_jaxpr))
+
+def tree_mismatch_err_msg(ref_treedef, prefix_tree):
+  # TODO(frostig,mattjj): error message should not be specific to VJPs
+  prefix_treedef = tree_structure(prefix_tree)
+  err_msg = (
+      'Custom VJP rule must produce an output with the same container '
+      '(pytree) structure as the args tuple of the primal function, '
+      'and in particular must produce a tuple of length equal to the '
+      'number of arguments to the primal function, but got VJP output '
+      f'structure {prefix_treedef} for primal input structure {ref_treedef}.')
+  return err_msg
+
+def replace_nones(treedef, prefix_with_nones, sentinel):
+  # TODO(frostig,mattjj): check if prefix_with_nones is even a tuple?
+  num_leaves = lambda x: tree_structure(x).num_leaves
+  out = []
+  ref_fill_val = object()
+
+  def replace_none(x, ref) -> None:
+    if x is None and ref is None:
+      pass  # matching tree structure Nones
+    elif x is None and ref is not None:
+      out.extend([sentinel] * num_leaves(ref)) # None to be replaced by sentinel
+    elif x is not None and ref is not None:
+      # x must be a non-None leaf, so ref better match it
+      assert tree_util.treedef_is_leaf(tree_structure(x))
+      if ref is not ref_fill_val:
+        raise _InternalException(f'tree mismatch: {x} vs {ref}')
+      out.append(x)
+    elif x is not None and ref is None:
+      raise _InternalException(
+          f'value {x} where the primal function had a None input.')
+    return x
+
+  dummy_tree = tree_fill(ref_fill_val, treedef)
+  try:
+    tree_map(replace_none, prefix_with_nones, dummy_tree,
+             is_leaf=lambda x: x is None)
+  except _InternalException:
+    raise TypeError(tree_mismatch_err_msg(treedef, prefix_with_nones)) from None
+  except ValueError:
+    raise TypeError(tree_mismatch_err_msg(treedef, prefix_with_nones)) from None
+  return out
+
+class _InternalException(ValueError): pass
+
+
+def check_aval_and_make_zero(zero, x, aval):
+  if x is zero:
+    return ad_util.Zero(aval)
+  if not core.typecheck(aval, x):
+    raise TypeError(f'custom VJP/transpose rule returned {x}, '
+                    f'incompatible with corresponding input type {aval}')
+  return x
+
+@lu.transformation
+def flatten_transpose(res_tree, lin_tree, out_tree, lin_avals_flat, *args_flat):
+  assert len(args_flat) == res_tree.num_leaves + out_tree.num_leaves
+  res_args_flat, out_args_flat = util.split_list(
+      args_flat, [res_tree.num_leaves])
+  res_args = tree_unflatten(res_tree, res_args_flat)
+  out_args = tree_unflatten(out_tree, out_args_flat)
+  lin_outs = yield (res_args, out_args), {}
+  zero = object()   # TODO(frostig, mattjj): revisit, maybe keep symbolic
+  lin_outs_flat = replace_nones(lin_tree, lin_outs, zero)
+  lin_outs_flat = [check_aval_and_make_zero(zero, x, aval)
+                   for x, aval in zip(lin_outs_flat, lin_avals_flat)]
+  yield lin_outs_flat
 
 
 ### custom_transpose primitive and rules
@@ -184,7 +249,7 @@ def custom_transpose_typecheck(*avals, **params):
 
 
 def custom_transpose_transpose_rule(
-    cts, *args, out_types, res_tree, lin_tree, out_tree, **params):
+    cts, *args, res_tree, lin_tree, out_tree, **params):
 
   if 'transpose_jaxpr_thunk' in params:
     assert 'call_jaxpr' in params
@@ -194,25 +259,18 @@ def custom_transpose_transpose_rule(
     assert 'call' in params
     transpose = params['transpose']
 
-  call_in_tree = treedef_tuple((res_tree, lin_tree))
-
   # TODO(frostig,mattjj): `lin_arg` indicates the inputs with respect
   # to which we are transposing (via `ad.is_undefined_primal`).
   # Consider passing this information to the custom transpose rule?
+  res_args, lin_args = util.split_list(args, [res_tree.num_leaves])
+  del lin_args
+  assert all(not ad.is_undefined_primal(x) for x in res_args)
 
-  res_arg, lin_arg = tree_unflatten(call_in_tree, args)
-  del lin_arg
-  assert all(not ad.is_undefined_primal(x) for x in tree_leaves(res_arg))
-
-  cts = [ad_util.zeros_like_aval(ct.aval) if type(ct) is ad_util.Zero else ct
-         for ct in cts]
-  ct_out = tree_unflatten(out_tree, cts)
-  ct_lin = transpose(res_arg, ct_out)
-  check_transpose_rule_trees(transpose, lin_tree, tree_structure(ct_lin))
-  ct_lin_flat, _ = tree_flatten(
-      tree_broadcast(lin_tree, ct_lin, is_leaf=lambda x: x is None),
-      is_leaf=lambda x: x is None)
-  return [None] * len(tree_leaves(res_arg)) + ct_lin_flat
+  cts_out = [
+      ad_util.zeros_like_aval(ct.aval) if type(ct) is ad_util.Zero else ct
+      for ct in cts]
+  cts_lin = transpose.call_wrapped(*res_args, *cts_out)
+  return [None] * len(res_args) + cts_lin
 
 
 def custom_transpose_lowering(*args, call_jaxpr, **params):

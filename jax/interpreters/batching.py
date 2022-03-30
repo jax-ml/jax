@@ -23,7 +23,7 @@ from jax.config import config
 from jax import core
 from jax.core import raise_to_shaped, Trace, Tracer
 from jax._src import source_info_util
-from jax._src.tree_util import tree_unflatten, tree_flatten
+from jax._src.tree_util import tree_unflatten, tree_flatten, treedef_children
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero)
 from jax import linear_util as lu
@@ -293,6 +293,23 @@ class BatchTrace(Trace):
                      for out_axis, d in zip(out_axes, dims))
       todo = (todo, out_axes_transform)
     return vals, todo
+
+  def process_custom_transpose(self, prim, call, tracers, transpose, **params):
+    in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims)
+                  if d is not not_mapped}
+    call_bat, _ = batch_subtrace(call, self.main, in_dims)
+    res_tree = params['res_tree']
+    in_res_tree, _ = treedef_children(res_tree)
+    res_dims, lin_dims = split_list(in_dims, [res_tree.num_leaves])
+    _, out_dims = split_list(res_dims, [in_res_tree.num_leaves])
+    transpose_bat = batch_custom_transpose_rule(
+        transpose, self.axis_name, axis_size,
+        res_dims + out_dims, lin_dims, self.main.trace_type)
+    out_vals = prim.bind(
+        call_bat, *in_vals, transpose=transpose_bat, **params)
+    src = source_info_util.current()
+    return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
@@ -580,6 +597,11 @@ def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False)
       raise ValueError((axis_name, x, src, dst))
   else:
     return matchaxis(axis_name, sz, src, dst, x, sum_match=sum_match)
+
+
+### helpers for handling custom_transpose
+
+batch_custom_transpose_rule = batch_custom_vjp_bwd
 
 
 ### utilities for defining primitives' batching rules
