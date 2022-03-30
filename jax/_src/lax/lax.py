@@ -1576,27 +1576,13 @@ def _sign_translation_rule(ctx, avals_in, avals_out, x):
 sign_p = standard_unop(_num, 'sign', translation_rule=_sign_translation_rule)
 ad.defjvp_zero(sign_p)
 
-def _compare_mhlo(x, y, direction, type):
-  """Creates mhlo.CompareOp."""
-  if jax._src.lib.mlir_api_version >= 5:
-    return mhlo.CompareOp(x, y, mhlo.ComparisonDirectionAttr.get(direction),
-                          mhlo.ComparisonTypeAttr.get(type))
-  tensor_type = ir.RankedTensorType(x.type)
-  dims = [tensor_type.get_dim_size(i) for i in range(tensor_type.rank)]
-  bool_shape = ir.RankedTensorType.get(dims, ir.IntegerType.get_signless(1))
-  if jax._src.lib.mlir_api_version >= 3:
-    return mhlo.CompareOp(bool_shape, x, y,
-                          mhlo.ComparisonDirectionAttr.get(direction),
-                          mhlo.ComparisonTypeAttr.get(type))
-  return mhlo.CompareOp(bool_shape, x, y, ir.StringAttr.get(direction),
-                        ir.StringAttr.get(type))
-
 def _sign_lower_mhlo(ctx, x):
   x_aval, = ctx.avals_in
   if dtypes.issubdtype(x_aval.dtype, np.unsignedinteger):
     return mhlo.SelectOp(
-        _compare_mhlo(x, mlir.full_like_aval(0, x_aval), 'EQ',
-                      'UNSIGNED').result, mlir.full_like_aval(0, x_aval),
+        mlir.compare_mhlo(x, mlir.full_like_aval(0, x_aval), 'EQ',
+                          'UNSIGNED').result,
+        mlir.full_like_aval(0, x_aval),
         mlir.full_like_aval(1, x_aval)).results
   return mhlo.SignOp(x).results
 
@@ -2228,7 +2214,7 @@ def _compare_lower_mhlo(direction: str, ctx, x, y):
     compare_type = "SIGNED"
   else:
     compare_type = "UNSIGNED"
-  return _compare_mhlo(x, y, direction, compare_type).results
+  return mlir.compare_mhlo(x, y, direction, compare_type).results
 
 eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq')
 ad.defjvp_zero(eq_p)
@@ -3359,8 +3345,9 @@ def _select_mhlo_lowering(ctx, which, *cases):
     if len(cases) == 1:
       return cases[0]
     mid = len(cases) // 2
-    pred = _compare_mhlo(which, mlir.full_like_aval(offset + mid, which_aval),
-                         lt, compare_type)
+    pred = mlir.compare_mhlo(which,
+                             mlir.full_like_aval(offset + mid, which_aval),
+                             lt, compare_type)
     return mhlo.SelectOp(pred, _select(offset, cases[:mid]),
                          _select(offset + mid, cases[mid:])).result
 
