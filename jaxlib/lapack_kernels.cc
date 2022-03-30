@@ -30,7 +30,7 @@ template <typename T>
 typename Trsm<T>::FnType* Trsm<T>::fn = nullptr;
 
 template <typename T>
-void Trsm<T>::Kernel(void* out, void** data) {
+void Trsm<T>::Kernel(void* out, void** data, XlaCustomCallStatus*) {
   int32_t left_side = *reinterpret_cast<int32_t*>(data[0]);
   int32_t lower = *reinterpret_cast<int32_t*>(data[1]);
   int32_t trans_a = *reinterpret_cast<int32_t*>(data[2]);
@@ -82,7 +82,7 @@ template <typename T>
 typename Getrf<T>::FnType* Getrf<T>::fn = nullptr;
 
 template <typename T>
-void Getrf<T>::Kernel(void* out_tuple, void** data) {
+void Getrf<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int b = *(reinterpret_cast<int32_t*>(data[0]));
   int m = *(reinterpret_cast<int32_t*>(data[1]));
   int n = *(reinterpret_cast<int32_t*>(data[2]));
@@ -116,7 +116,7 @@ template <typename T>
 typename Geqrf<T>::FnType* Geqrf<T>::fn = nullptr;
 
 template <typename T>
-void Geqrf<T>::Kernel(void* out_tuple, void** data) {
+void Geqrf<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int b = *(reinterpret_cast<int32_t*>(data[0]));
   int m = *(reinterpret_cast<int32_t*>(data[1]));
   int n = *(reinterpret_cast<int32_t*>(data[2]));
@@ -163,7 +163,7 @@ template <typename T>
 typename Orgqr<T>::FnType* Orgqr<T>::fn = nullptr;
 
 template <typename T>
-void Orgqr<T>::Kernel(void* out_tuple, void** data) {
+void Orgqr<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int b = *(reinterpret_cast<int32_t*>(data[0]));
   int m = *(reinterpret_cast<int32_t*>(data[1]));
   int n = *(reinterpret_cast<int32_t*>(data[2]));
@@ -211,7 +211,7 @@ template <typename T>
 typename Potrf<T>::FnType* Potrf<T>::fn = nullptr;
 
 template <typename T>
-void Potrf<T>::Kernel(void* out_tuple, void** data) {
+void Potrf<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int32_t lower = *(reinterpret_cast<int32_t*>(data[0]));
   int b = *(reinterpret_cast<int32_t*>(data[1]));
   int n = *(reinterpret_cast<int32_t*>(data[2]));
@@ -260,7 +260,7 @@ template <typename T>
 typename RealGesdd<T>::FnType* RealGesdd<T>::fn = nullptr;
 
 template <typename T>
-void RealGesdd<T>::Kernel(void* out_tuple, void** data) {
+void RealGesdd<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int32_t job_opt_full_matrices = *(reinterpret_cast<int32_t*>(data[0]));
   int32_t job_opt_compute_uv = *(reinterpret_cast<int32_t*>(data[1]));
   int b = *(reinterpret_cast<int32_t*>(data[2]));
@@ -332,7 +332,8 @@ template <typename T>
 typename ComplexGesdd<T>::FnType* ComplexGesdd<T>::fn = nullptr;
 
 template <typename T>
-void ComplexGesdd<T>::Kernel(void* out_tuple, void** data) {
+void ComplexGesdd<T>::Kernel(void* out_tuple, void** data,
+                             XlaCustomCallStatus*) {
   int32_t job_opt_full_matrices = *(reinterpret_cast<int32_t*>(data[0]));
   int32_t job_opt_compute_uv = *(reinterpret_cast<int32_t*>(data[1]));
   int b = *(reinterpret_cast<int32_t*>(data[2]));
@@ -411,7 +412,7 @@ template <typename T>
 typename RealSyevd<T>::FnType* RealSyevd<T>::fn = nullptr;
 
 template <typename T>
-void RealSyevd<T>::Kernel(void* out_tuple, void** data) {
+void RealSyevd<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int32_t lower = *(reinterpret_cast<int32_t*>(data[0]));
   int b = *(reinterpret_cast<int32_t*>(data[1]));
   int n = *(reinterpret_cast<int32_t*>(data[2]));
@@ -459,7 +460,8 @@ template <typename T>
 typename ComplexHeevd<T>::FnType* ComplexHeevd<T>::fn = nullptr;
 
 template <typename T>
-void ComplexHeevd<T>::Kernel(void* out_tuple, void** data) {
+void ComplexHeevd<T>::Kernel(void* out_tuple, void** data,
+                             XlaCustomCallStatus*) {
   int32_t lower = *(reinterpret_cast<int32_t*>(data[0]));
   int b = *(reinterpret_cast<int32_t*>(data[1]));
   int n = *(reinterpret_cast<int32_t*>(data[2]));
@@ -531,7 +533,7 @@ template <typename T>
 typename RealGeev<T>::FnType* RealGeev<T>::fn = nullptr;
 
 template <typename T>
-void RealGeev<T>::Kernel(void* out_tuple, void** data) {
+void RealGeev<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int b = *(reinterpret_cast<int32_t*>(data[0]));
   int n_int = *(reinterpret_cast<int32_t*>(data[1]));
   int64_t n = n_int;
@@ -590,7 +592,8 @@ template <typename T>
 typename ComplexGeev<T>::FnType* ComplexGeev<T>::fn = nullptr;
 
 template <typename T>
-void ComplexGeev<T>::Kernel(void* out_tuple, void** data) {
+void ComplexGeev<T>::Kernel(void* out_tuple, void** data,
+                            XlaCustomCallStatus*) {
   int b = *(reinterpret_cast<int32_t*>(data[0]));
   int n_int = *(reinterpret_cast<int32_t*>(data[1]));
   int64_t n = n_int;
@@ -648,7 +651,7 @@ template <typename T>
 typename RealGees<T>::FnType* RealGees<T>::fn = nullptr;
 
 template <typename T>
-void RealGees<T>::Kernel(void* out_tuple, void** data) {
+void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int b = *(reinterpret_cast<int32_t*>(data[0]));
   int n_int = *(reinterpret_cast<int32_t*>(data[1]));
   int64_t n = n_int;
@@ -708,7 +711,8 @@ template <typename T>
 typename ComplexGees<T>::FnType* ComplexGees<T>::fn = nullptr;
 
 template <typename T>
-void ComplexGees<T>::Kernel(void* out_tuple, void** data) {
+void ComplexGees<T>::Kernel(void* out_tuple, void** data,
+                            XlaCustomCallStatus*) {
   int b = *(reinterpret_cast<int32_t*>(data[0]));
   int n_int = *(reinterpret_cast<int32_t*>(data[1]));
   int64_t n = n_int;

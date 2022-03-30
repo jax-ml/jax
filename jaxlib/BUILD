@@ -145,6 +145,7 @@ cc_library(
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
     deps = [
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
         "@com_google_absl//absl/base:dynamic_annotations",
     ],
 )
@@ -198,6 +199,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":pocketfft_flatbuffers_cc",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
         "@flatbuffers//:runtime_cc",
         "@pocketfft",
     ],

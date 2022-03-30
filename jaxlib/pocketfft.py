@@ -20,7 +20,6 @@ from . import _pocketfft
 from . import pocketfft_flatbuffers_py_generated as pd
 import numpy as np
 
-
 import flatbuffers
 from jaxlib import xla_client
 
@@ -53,8 +52,9 @@ def pocketfft(c, a, *, fft_type: FftType, fft_lengths: List[int]):
         pd.PocketFftDtype.COMPLEX64
         if dtype == np.float32 else pd.PocketFftDtype.COMPLEX128)
 
-    assert list(shape.dimensions())[-len(fft_lengths):] == fft_lengths, (
-        shape, fft_lengths)
+    assert list(
+        shape.dimensions())[-len(fft_lengths):] == fft_lengths, (shape,
+                                                                 fft_lengths)
     out_shape = list(shape.dimensions())
     out_shape[-1] = out_shape[-1] // 2 + 1
 
@@ -80,8 +80,9 @@ def pocketfft(c, a, *, fft_type: FftType, fft_lengths: List[int]):
         pd.PocketFftDtype.COMPLEX64
         if dtype == np.complex64 else pd.PocketFftDtype.COMPLEX128)
 
-    assert list(shape.dimensions())[-len(fft_lengths):] == fft_lengths, (
-        shape, fft_lengths)
+    assert list(
+        shape.dimensions())[-len(fft_lengths):] == fft_lengths, (shape,
+                                                                 fft_lengths)
     out_shape = shape.dimensions()
 
   # PocketFft does not allow size 0 dimensions.
@@ -156,4 +157,6 @@ def pocketfft(c, a, *, fft_type: FftType, fft_lengths: List[int]):
               np.dtype(np.uint8), (len(descriptor_bytes),), (0,)),
           xla_client.Shape.array_shape(dtype, shape.dimensions(),
                                        tuple(range(n - 1, -1, -1))),
-      ))
+      ),
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
