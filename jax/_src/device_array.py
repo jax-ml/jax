@@ -199,12 +199,6 @@ class _DeviceArray(DeviceArray):  # type: ignore
 # pylint: disable=protected-access
 for device_array in [DeviceArray]:
 
-
-  def copy(self):
-    """Returns an ndarray (backed by host memory, not device memory)."""
-    return np.asarray(self)
-  setattr(device_array, "copy", copy)
-
   def __repr__(self):
     line_width = np.get_printoptions()["linewidth"]
     prefix = '{}('.format(self.__class__.__name__.lstrip('_'))

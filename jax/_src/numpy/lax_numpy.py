@@ -4571,7 +4571,7 @@ _operators = {
 # These numpy.ndarray methods are just refs to an equivalent numpy function
 _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
                     "nonzero", "searchsorted", "round"]
-_diff_methods = ["choose", "conj", "conjugate", "cumprod", "cumsum",
+_diff_methods = ["choose", "conj", "conjugate", "copy", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "tile", "trace", "var"]
