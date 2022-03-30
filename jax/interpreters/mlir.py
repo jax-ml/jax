@@ -483,7 +483,7 @@ def lower_jaxpr_to_module(
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args)
                         if d]
-    msg = "See an explanation at https://jax.readthedocs.io/en/latest/notebooks/faq.html#buffer-donation."
+    msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
     if platform not in platforms_with_donation:
       msg = f"Donation is not implemented for {platform}.\n{msg}"
     warnings.warn(f"Some donated buffers were not usable: {', '.join(unused_donations)}.\n{msg}")
