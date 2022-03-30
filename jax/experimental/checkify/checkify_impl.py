@@ -58,9 +58,18 @@ Bool = Union[bool, core.Tracer]
 Int = Union[int, core.Tracer]
 Payload = Union[np.ndarray, jnp.ndarray, core.Tracer]
 
-# For now, the payload needs to be a fixed-size array (int32 scalar).
+# For now, the payload needs to be a fixed-size array: 3 int32s, used for the
+# OOB message.
 # TODO(lenamartens): Relax this fixed-size constraint.
-init_payload = np.ones((), np.int32)
+init_payload = np.ones((3,), np.int32)
+
+
+def _format_msg(msg, payloads):
+  payload_mapping = {}
+  for i, pl in enumerate(payloads):
+    payload_mapping[f'payload{i}'] = pl
+  return msg.format(**payload_mapping)
+
 
 @dataclass(frozen=True)
 class Error:
@@ -76,11 +85,11 @@ class Error:
     assert np.shape(self.err) == np.shape(self.code)
     if np.size(self.err) == 1:
       if self.err:
-        return self.msgs[int(self.code)].format(payload=self.payload)
+        return _format_msg(self.msgs[int(self.code)], self.payload)
     else:
       return '\n'.join(
           f'at mapped index {", ".join(map(str, idx))}: '  # type: ignore
-          f'{self.msgs[int(self.code[idx])].format(payload=self.payload[idx])}'  # type: ignore
+          f'{_format_msg(self.msgs[int(self.code[idx])], self.payload[idx])}'  # type: ignore
           for idx, e in np.ndenumerate(self.err) if e) or None
     return None
 
@@ -250,9 +259,8 @@ class CheckifyTrace(core.Trace):
     return [CheckifyTracer(self, x) for x in out]
 
 def _reduce_any_error(errs, codes, payloads):
-  errs_, codes_ = lax.sort_key_val(errs, codes, dimension=0)
-  errs_, payload_ = lax.sort_key_val(errs, payloads, dimension=0)
-  return errs_[-1], codes_[-1], payload_[-1]
+  reduced_idx = jnp.argsort(errs)[-1]
+  return errs[reduced_idx], codes[reduced_idx], payloads[reduced_idx]
 
 ErrorCheckRule = Callable  # (Error, FrozenSet[ErrorCategory], *in_vals, **params) -> (Any, Error)
 error_checks: Dict[core.Primitive, ErrorCheckRule] = {}
@@ -490,12 +498,18 @@ def gather_error_check(error, enabled_errors, operand, start_indices, *,
   upper_bound = jnp.expand_dims(upper_bound, axis=tuple(range(num_batch_dims)))
   in_bounds = (start_indices >= 0) & (start_indices <= upper_bound)
 
-  msg = f'out-of-bounds indexing at {summary()}: '
-  msg += 'index {payload} is out of bounds for '
-  msg += f'array of shape {operand.shape}.'
-  start_indices, in_bounds = jnp.ravel(start_indices), jnp.ravel(in_bounds)
-  # Report first index which is out-of-bounds (in row-major order).
-  payload = start_indices[jnp.argsort(in_bounds, axis=0)[0]]
+  # Get first OOB index, axis and axis size so it can be added to the error msg.
+  flat_idx = jnp.argmin(in_bounds)
+  multi_idx = jnp.unravel_index(flat_idx, start_indices.shape)
+  oob_axis = jnp.array(dnums.start_index_map)[multi_idx[-1]]
+  oob_axis_size = jnp.array(operand.shape)[oob_axis]
+  oob_index = jnp.ravel(start_indices)[flat_idx]
+  payload = jnp.array([oob_index, oob_axis, oob_axis_size], dtype=jnp.int32)
+
+  msg = (f'out-of-bounds indexing at {summary()} for array of '
+         f'shape {operand.shape}: '
+         'index {payload0} is out of bounds for axis {payload1} '
+         'with size {payload2}.')
 
   return out, assert_func(error, jnp.all(in_bounds), msg, payload)
 error_checks[lax.gather_p] = gather_error_check
