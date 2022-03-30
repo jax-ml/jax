@@ -17,6 +17,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * the private `lax_numpy` submodule is no longer exposed in the `jax.numpy` namespace ({jax-issue}`#10029`).
   * added array creation routines {func}`jax.numpy.frombuffer`, {func}`jax.numpy.fromfunction`,
     and {func}`jax.numpy.fromstring` ({jax-issue}`#10049`).
+  * `DeviceArray.copy()` now returns a `DeviceArray` rather than a `np.ndarray` ({jax-issue}`#10069`)
 * Deprecations:
   * {func}`jax.nn.normalize` is being deprecated. Use {func}`jax.nn.standardize` instead ({jax-issue}`#9899`).
 
