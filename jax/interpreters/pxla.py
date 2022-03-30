@@ -1408,6 +1408,9 @@ class InputsHandler:
 
 
 class ResultsHandler:
+  # `out_avals` is the `GlobalDeviceArray` global avals when using pjit or xmap
+  # with `config.parallel_functions_output_gda=True`. It is the local one
+  # otherwise, and also when using `pmap`.
   __slots__ = ("handlers", "out_specs", "out_indices", "out_avals")
 
   def __init__(self, handlers, out_specs, out_indices, out_avals):
