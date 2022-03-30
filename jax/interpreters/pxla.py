@@ -1729,6 +1729,22 @@ def _mhlo_shard(aval, axis_env, xs, in_axis):
   else:
     raise TypeError(aval)
 
+
+def _compare_mhlo(x, y, direction, type):
+  """Creates mhlo.CompareOp."""
+  if jax._src.lib.mlir_api_version >= 5:
+    return mhlo.CompareOp(x, y, mhlo.ComparisonDirectionAttr.get(direction),
+                          mhlo.ComparisonTypeAttr.get(type))
+  tensor_type = ir.RankedTensorType(x.type)
+  dims = [tensor_type.get_dim_size(i) for i in range(tensor_type.rank)]
+  bool_shape = ir.RankedTensorType.get(dims, ir.IntegerType.get_signless(1))
+  if jax._src.lib.mlir_api_version >= 3:
+    return mhlo.CompareOp(bool_shape, x, y,
+                          mhlo.ComparisonDirectionAttr.get(direction),
+                          mhlo.ComparisonTypeAttr.get(type))
+  return mhlo.CompareOp(bool_shape, x, y, ir.StringAttr.get(direction),
+                        ir.StringAttr.get(type))
+
 # TODO(b/110096942): more efficient gather
 def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
   if aval is core.abstract_unit:
@@ -1770,16 +1786,7 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
       float_zero = mlir.full_like_aval(0, padded_aval)
-      if jax._src.lib.mlir_api_version >= 3:
-        out = mhlo.CompareOp(
-            mlir.aval_to_ir_type(padded_aval.update(dtype=np.dtype(np.bool_))),
-            out, float_zero, mhlo.ComparisonDirectionAttr.get("NE"),
-            mhlo.ComparisonTypeAttr.get("FLOAT")).result
-      else:
-        out = mhlo.CompareOp(
-            mlir.aval_to_ir_type(padded_aval.update(dtype=np.dtype(np.bool_))),
-            out, float_zero, ir.StringAttr.get("NE"),
-            ir.StringAttr.get("FLOAT")).result
+      out = _compare_mhlo(out, float_zero, "NE", "FLOAT").result
     return out
   else:
     raise TypeError(aval)
