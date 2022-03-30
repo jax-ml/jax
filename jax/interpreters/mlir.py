@@ -115,7 +115,7 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
         f"No dtype_to_ir_type handler for dtype: {dtype}") from err
   return ir_type_factory()
 
-def _array_ir_types(aval: core.ShapedArray) -> ir.Type:
+def _array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
 
 ir_type_handlers: Dict[Type[core.AbstractValue],
