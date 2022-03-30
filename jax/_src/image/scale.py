@@ -20,6 +20,7 @@ from jax import core
 from jax import jit
 from jax import lax
 from jax import numpy as jnp
+from jax._src.util import canonicalize_axis
 import numpy as np
 
 
@@ -90,6 +91,7 @@ def _scale_and_translate(x, output_shape: core.Shape,
   in_indices = list(range(len(output_shape)))
   out_indices = list(range(len(output_shape)))
   for i, d in enumerate(spatial_dims):
+    d = canonicalize_axis(d, x.ndim)
     m = input_shape[d]
     n = output_shape[d]
     w = compute_weight_mat(m, n, scale[i], translation[i],
