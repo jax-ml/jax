@@ -621,7 +621,7 @@ def _handle_scalar_broadcasting(nd, x, d):
   if d is not_mapped or nd == np.ndim(x):
     return x
   else:
-    return x.reshape(x.shape + (1,) * (nd - np.ndim(x)))
+    return jax.lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
 
 def defreducer(prim):
   primitive_batchers[prim] = partial(reducer_batcher, prim)

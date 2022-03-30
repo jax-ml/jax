@@ -1487,7 +1487,7 @@ def _pgather_impl(src, idx, *, axes):
   non_axes_shape = src_axes_front.shape[len(axes):]
   src_one_axis_front = src_axes_front.reshape((-1,) + non_axes_shape)
   slice_sizes = (1,) + non_axes_shape
-  idx = lax.reshape(idx, idx.shape + (1,))
+  idx = lax.expand_dims(idx, (-1,))
   offset_dims = tuple(range(idx.ndim - 1, idx.ndim + src_one_axis_front.ndim - 2))
   dnums = slicing.GatherDimensionNumbers(
       offset_dims=offset_dims,
