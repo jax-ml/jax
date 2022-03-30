@@ -2289,7 +2289,7 @@ class MeshComputation(stages.Computation):
         mlir.module_to_string(self._hlo),
         use_tuple_args=self.compile_args["tuple_args"])
 
-  def mhlo(self) -> str:
+  def mhlo(self) -> ir.Module:
     if isinstance(self._hlo, xc.XlaComputation):
       module_str = xe.mlir.xla_computation_to_mlir_module(self._hlo)
       with mlir.make_ir_context():

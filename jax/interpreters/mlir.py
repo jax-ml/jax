@@ -369,7 +369,7 @@ class ModuleContext:
     assert platform is not None
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
-    self.ip = ip or ir.InsertionPoint(self.module.operation.opview.body)
+    self.ip = ip or ir.InsertionPoint(self.module.body)
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
     self.platform = platform
     self.axis_context = axis_context
@@ -959,6 +959,7 @@ def xla_fallback_lowering(prim: core.Primitive):
     submodule = ir.Module.parse(submodule_str)
     callee_name = None
     for op in submodule.body.operations:
+      op = typing.cast(FuncOpType, op)
       module_ctx.module.body.append(op)
       if op.name.value == "main":
         op.attributes["sym_name"] = ir.StringAttr.get(f"xla_fallback_{prim.name}")
