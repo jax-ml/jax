@@ -972,26 +972,145 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     # TODO: slow test
     compute_uv = harness.params["compute_uv"]
 
+    # Both `r_jax` and `r_tf` are 3-Tuples containing the SVD results:
+    # `S` (singular values), `U` (left singular vectors), and `Vh` (the
+    # adjoint of the right singular vectors). Note that the TF results are
+    # obtained through `_svd` in jax/experimental/jax2tf/jax2tf.py.
     def custom_assert(tst, r_jax, r_tf, *, args, tol, err_msg):
 
-      def _reconstruct_operand(result, is_tf: bool):
+      def reconstruct_operand(result):
         # Reconstructing operand as documented in numpy.linalg.svd (see
         # https://numpy.org/doc/stable/reference/generated/numpy.linalg.svd.html)
         s, u, v = result
         U = u[..., :s.shape[-1]]
         V = v[..., :s.shape[-1], :]
         S = s[..., None, :]
-        return jnp.matmul(U * S, V), s.shape, u.shape, v.shape
+        return jnp.matmul(U * S, V, precision=lax.Precision.HIGHEST)
+
+      # Compares the shapes.
+      def compare_shapes(r_jax, r_tf):
+        shapes_jax = [result.shape for result in r_jax]
+        shapes_tf = [result.shape for result in r_tf]
+        tst.assertEqual(shapes_jax, shapes_tf)
+
+      # Compares reconstructed operand.
+      # Computes backward error https://www.netlib.org/lapack/lug/node97.html
+      # and uses the maximum backward error if there are batch dimensions.
+      # The backward error is bounded by some constant multiplying the machine
+      # precision.
+      # TODO: Compares the operand instead of the reconstructed operand.
+      def compare_reconstructed_operand(r_jax, r_tf, tol):
+        operand_jax = reconstruct_operand(r_jax)
+        operand_tf = reconstruct_operand(r_tf)
+        error_norm = jnp.linalg.norm(operand_jax - operand_tf,
+                                              axis=(-2, -1))
+        backward_error = (error_norm /
+                          jnp.linalg.norm(operand_jax, axis=(-2, -1)))
+        max_backward_error = jnp.amax(backward_error)
+        tst.assertLess(max_backward_error, tol)
+
+      # Computes the absolute gap between singular value `\sigma_i` and the
+      # nearest other singular value and for all singular values. The absolute
+      # gap is used to approximate the upper bound of angular difference
+      # between the computed and the true singular vectors. If the matrix is
+      # rectangular `m != n`, the gap for the smallest nonzero singular value
+      # should also consider the gap between it and zero. Note that this code
+      # relies on the singular values being in descending order.
+      def compute_absolute_gap(s, m, n):
+        forward_appendant = np.Inf if m == n else 0
+        forward_diff = jnp.diff(s, axis=-1, append=forward_appendant)
+        backward_diff = jnp.diff(
+            s[..., ::-1], axis=-1, append=np.Inf)[..., ::-1]
+        absolute_gap = jnp.minimum(jnp.abs(forward_diff),
+                                   jnp.abs(backward_diff))
+        return absolute_gap
+
+      # See `CompareSingularVectors` in
+      # tensorflow/python/kernel_tests/linalg/svd_op_test.py
+      def compare_singular_vectors(x, y, *, error_bound):
+        # Singular vectors are only unique up to sign (complex phase factor for
+        # complex matrices), so we normalize the sign first.
+        sum_of_ratios = jnp.sum(jnp.divide(y, x), -2, keepdims=True)
+        phases = jnp.divide(sum_of_ratios, jnp.abs(sum_of_ratios))
+        x *= phases
+
+        # Note that in general `sqrt(sum(squares))` is not a stable way to
+        # compute l2 vector norms, but it should be OK for normalization
+        # factors of vectors with norm ~= 1 as here.
+        def dot_column_wise(a, b):
+          output = jnp.sum(jnp.einsum('...ij,...ij->...ij', a.conj(), b,
+                                      precision=lax.Precision.HIGHEST),
+                           axis=-2)
+          return jnp.real(output)
+
+        cos_angular_diff = (
+            dot_column_wise(x, y) /
+            jnp.sqrt(dot_column_wise(x, x) * dot_column_wise(y, y)))
+
+        # Values of `\cos(angular_diff)` outside the interval [0, 1] are clipped
+        # to the interval edges. For example, `\cos(angular_diff)` could contain
+        # values like 1.0000001 on float32, which are clipped to 1.0. It is
+        # possible that anything other than `cos_angular_diff` can be outside
+        # the interval [0, 1] due to roundoff.
+        cos_angular_diff = jnp.clip(cos_angular_diff, a_min=0.0, a_max=1.0)
+
+        angular_diff = jnp.arccos(cos_angular_diff)
+
+        # TODO: removes the slack factor on the angular difference.
+        # It is possible that the singular vectors are not accurate to much more
+        # than O(\sqrt(eps)), which is likely a property of the SVD algorithms
+        # in question; revisit with better understanding of the SVD algorithms.
+        if x.dtype in [np.float32, np.complex64]:
+          slack_factor = 1E4
+        elif x.dtype in [np.float64, np.complex128]:
+          slack_factor = 1E9
+
+        np.testing.assert_array_less(angular_diff,
+                                     slack_factor * error_bound)
 
       if compute_uv:
-        r_jax_reconstructed = _reconstruct_operand(r_jax, False)
-        r_tf_reconstructed = _reconstruct_operand(r_tf, True)
-        tst.assertAllClose(
-            r_jax_reconstructed,
-            r_tf_reconstructed,
-            atol=tol,
-            rtol=tol,
-            err_msg=err_msg)
+        # Compares the shapes.
+        compare_shapes(r_jax, r_tf)
+
+        # Compares the singular values. Each computed singular value `\sigma_i`
+        # differs from the true `\sigma_i`* by at most
+        # `|\sigma_i - \sigma_i*| <= \epsilon \sigma_1`, where `\sigma_1` is the
+        # largest singular value and `\epsilon` denotes the machine precision.
+        s_jax, s_tf = r_jax[0], r_tf[0]
+        tst.assertAllClose(s_jax, s_tf, atol=tol, rtol=tol, err_msg=err_msg)
+
+        # Compares the reconstructed operand.
+        compare_reconstructed_operand(r_jax, r_tf, tol)
+
+        # Compares the singular vectors.
+        # We only compare the first `rank` singular vectors since the remainder
+        # forms an arbitrary orthonormal basis for the (row- or column-) null
+        # space, whose exact value depends on implementation details.
+        # TODO: A better estimation on the rank?
+        rank = r_jax[0].shape[-1]
+
+        # Computes the upper bound for angular difference of singular vectors.
+        # The upper bound has the shape of `[..., k]`, where `...` denotes the
+        # batch dimensions and `k` is the number of nonzero singular values.
+        m = r_jax[1].shape[-2]
+        n = r_jax[2].shape[-2]
+        absolute_gap = compute_absolute_gap(r_jax[0], m, n)
+        epsilon = jnp.finfo(r_jax[0].dtype).eps
+        sigma_largest = (r_jax[0][..., 0])[..., None]
+        upperbound_singular_vectors = epsilon * sigma_largest / absolute_gap
+        upperbound_singular_vectors = upperbound_singular_vectors[..., :rank]
+
+        # Left singular vectors.
+        u_jax = r_jax[1][..., :rank]
+        u_tf = r_tf[1][..., :rank]
+        compare_singular_vectors(u_jax, u_tf,
+                                 error_bound=upperbound_singular_vectors)
+
+        # Right singular vectors.
+        v_jax = jnp.swapaxes(r_jax[2][..., :rank, :], -2, -1).conj()
+        v_tf = jnp.swapaxes(r_tf[2][..., :rank, :], -2, -1).conj()
+        compare_singular_vectors(v_jax, v_tf,
+                                 error_bound=upperbound_singular_vectors)
       else:
         tst.assertAllClose(r_jax, r_tf, atol=tol, rtol=tol, err_msg=err_msg)
 
@@ -1020,11 +1139,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled")),
         custom_numeric(
-            description="custom numeric comparison when compute_uv",
+            description="custom numeric comparison when compute_uv on CPU/GPU",
             custom_assert=custom_assert,
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled"),
-            enabled=(compute_uv == True))
+            enabled=(compute_uv == True)),
     ]
 
   @classmethod
