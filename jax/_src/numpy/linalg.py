@@ -480,10 +480,7 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
         reducer = jnp.sum
       y = reducer(svd(x, compute_uv=False), axis=-1)
       if keepdims:
-        result_shape = list(x_shape)
-        result_shape[axis[0]] = 1
-        result_shape[axis[1]] = 1
-        y = jnp.reshape(y, result_shape)
+        y = jnp.expand_dims(y, axis)
       return y
     else:
       raise ValueError("Invalid order '{}' for matrix norm.".format(ord))
