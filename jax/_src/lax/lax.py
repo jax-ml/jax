@@ -1970,6 +1970,7 @@ integer_pow_p = standard_primitive(
 batching.defvectorized(integer_pow_p)
 masking.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
+pe.padding_rules[integer_pow_p] = lambda _, __, x, y: [integer_pow_p.bind(x, y=y)]
 
 def _integer_pow(x, *, y):
   # This should be kept in sync with the jax2tf translation rule.
@@ -2061,6 +2062,7 @@ add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_mhlo, mhlo.AddOp))
+pe.padding_rules[add_p] = lambda _, __, x, y: [add(x, y)]
 
 def _sub_jvp(primals, tangents):
   x, y = primals
@@ -2090,6 +2092,7 @@ sub_p = standard_naryop([_num, _num], 'sub')
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubOp))
+pe.padding_rules[sub_p] = lambda _, __, x, y: [sub(x, y)]
 
 
 def _mul_transpose(ct, x, y):
@@ -2116,6 +2119,7 @@ ad.defjvp(mul_p,
           lambda ydot, x, y: mul(x, ydot))
 ad.primitive_transposes[mul_p] = _mul_transpose
 mlir.register_lowering(mul_p, partial(_nary_lower_mhlo, mhlo.MulOp))
+pe.padding_rules[mul_p] = lambda _, __, x, y: [mul(x, y)]
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
@@ -2166,6 +2170,7 @@ ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
 mlir.register_lowering(max_p, partial(_nary_lower_mhlo, mlir.max_mhlo))
+pe.padding_rules[max_p] = lambda _, __, x, y: [max(x, y)]
 
 min_p: core.Primitive = standard_naryop(
   [_any, _any], 'min', translation_rule=partial(
@@ -2281,7 +2286,8 @@ def _convert_elt_type_fwd_rule(eqn):
     return [None], eqn
 
 def _convert_elt_type_pp_rule(eqn, context, settings):
-  # don't print new_dtype because the output binder shows it
+  # don't print new_dtype because the output binder shows it, don't print
+  # weak_type when false
   printed_params = {}
   if eqn.params['weak_type']:
     printed_params['weak_type'] = True
@@ -2595,6 +2601,27 @@ def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
                      rhs, dimension_numbers, precision=precision,
                      preferred_element_type=preferred_element_type)
 
+def _dot_general_padding_rule(in_avals, out_avals, lhs, rhs, *,
+                              dimension_numbers, **params):
+  lhs_aval, _ = in_avals
+  (lhs_contract, _), _ = dimension_numbers
+  padded_axes = [(i, lhs_aval.shape[i].val) for i in lhs_contract
+                 if isinstance(lhs_aval.shape[i], pe.BoundedAxisSize)]
+  lhs_ = _replace_masked_values(lhs, 0, padded_axes)
+  return [dot_general(lhs_, rhs, dimension_numbers=dimension_numbers, **params)]
+
+def _dot_general_pp_rule(eqn, context, settings):
+  # suppress printing precision or preferred_element_type when None.
+  # print dimension_numbers as list-of-lists to be shorter.
+  printed_params = {k: v for k, v in eqn.params.items() if v is not None}
+  (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = eqn.params['dimension_numbers']
+  printed_params['dimension_numbers'] = (
+      (list(lhs_cont), list(rhs_cont)), (list(lhs_batch), list(rhs_batch)))
+  return [pp.text(eqn.primitive.name),
+          core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
+          pp.text(" ") + core.pp_vars(eqn.invars, context)]
+
+
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general',
                                    _dot_general_translation_rule)
@@ -2604,6 +2631,9 @@ batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
 xla.register_translation(dot_general_p, _dot_general_cpu_translation_rule,
                          platform="cpu")
+pe.padding_rules[dot_general_p] = _dot_general_padding_rule
+# TODO(mattjj): un-comment the next line
+# core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
 
 def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
   if precision is None:
@@ -2728,12 +2758,31 @@ def _broadcast_in_dim_staging_rule(
 
   return out_tracer
 
+def _broadcast_in_dim_padding_rule(in_avals, out_avals, x, *dyn_shape,
+                                   shape, broadcast_dimensions):
+  del in_avals, dyn_shape
+  out_aval, = out_avals
+  new_shape = []
+  new_dyn_shape = []
+  for d in out_aval.shape:
+    if type(d) is pe.BoundedAxisSize:
+      new_shape.append(d.bound)
+    elif type(d) is int:
+      new_shape.append(d)
+    else:
+      assert isinstance(d, core.Tracer)
+      new_shape.append(None)
+      new_dyn_shape.append(d)
+  return [broadcast_in_dim_p.bind(x, *new_dyn_shape, shape=new_shape,
+                                  broadcast_dimensions=broadcast_dimensions)]
+
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 ad.deflinear2(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
+pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
 
 def _broadcast_in_dim_lower(ctx, x, *, shape, broadcast_dimensions):
   del shape
@@ -2809,6 +2858,7 @@ ad.defjvp(clamp_p,
 batching.primitive_batchers[clamp_p] = _clamp_batch_rule
 mlir.register_lowering(
     clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp, explicit_type=True))
+pe.padding_rules[clamp_p] = lambda _, __, a, x, b: [clamp(a, x, b)]
 
 def _concatenate_shape_rule(*operands, **kwargs):
   dimension = kwargs.pop('dimension')
@@ -3559,6 +3609,21 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert result.shape == input_shape
   return [result]
 
+def _reduce_sum_padding_rule(in_avals, out_avals, operand, *, axes):
+  del out_avals
+  aval, = in_avals
+  padded_axes = [(i, d.val) for i, d in enumerate(aval.shape)
+                 if isinstance(d, pe.BoundedAxisSize)]
+  masked_operand = _replace_masked_values(operand, 0, padded_axes)
+  return [_reduce_sum(masked_operand, axes)]
+
+def _replace_masked_values(x, val, padded_axes):
+  if not padded_axes: return x
+  masks = [broadcasted_iota(np.dtype('int32'), x.shape, i) < d
+           for i, d in padded_axes]
+  return select(_reduce(operator.and_, masks), x, full_like(x, val))
+
+
 reduce_sum_p = standard_primitive(
   _reduce_sum_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
   'reduce_sum', _reduce_sum_translation_rule)
@@ -3566,6 +3631,7 @@ ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
 _masking_defreducer(reduce_sum_p,
                     lambda shape, dtype: np.broadcast_to(np.array(0, dtype), shape))
+pe.padding_rules[reduce_sum_p] = _reduce_sum_padding_rule
 
 
 def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
@@ -4407,6 +4473,18 @@ def _iota_lower(ctx, *, dtype, shape, dimension):
   return mhlo.IotaOp(mlir.aval_to_ir_type(aval_out),
                      mlir.i64_attr(dimension)).results
 mlir.register_lowering(iota_p, _iota_lower)
+
+
+def make_bint(i, bd: int):
+  return bint_p.bind(i, bd=bd)
+
+bint_p = core.Primitive('bint')
+
+@bint_p.def_abstract_eval
+def bint_abstract_eval(_, *, bd: int):
+  return core.AbstractBInt(bound=bd)
+
+pe.padding_rules[bint_p] = lambda _, __, i, bd: [i]
 
 
 ### util

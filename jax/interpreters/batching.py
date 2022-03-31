@@ -14,7 +14,7 @@
 
 from functools import partial
 from typing import (Any, Callable, Dict, Set, Optional, Tuple, Union, Iterable,
-                    Type)
+                    Type, Sequence)
 
 import numpy as np
 
@@ -33,6 +33,17 @@ from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, wrap_name,
 from jax.interpreters import partial_eval as pe
 
 map = safe_map
+
+def _update_annotation(
+    f: lu.WrappedFun,
+    orig_type: Optional[Tuple[Tuple[core.AbstractValue, bool], ...]],
+    axis_size: int, axis_name: core.AxisName, in_dims: Sequence[Optional[int]]
+  ) -> lu.WrappedFun:
+  if orig_type is None:
+    return f
+  batched_in_type = [(core.unmapped_aval(axis_size, axis_name, dim, aval), keep)
+                     for dim, (aval, keep) in zip(in_dims, orig_type)]
+  return lu.annotate(f, tuple(batched_in_type))
 
 ### vmappable typeclass
 
@@ -175,11 +186,9 @@ class BatchTrace(Trace):
 
   def get_frame(self, vals, dims) -> core.AxisEnvFrame:
     if self.axis_name is core.no_axis_name:
-      # If axis name is `no_axis_name` we can't find it via `core.axis_name` so we
-      # reconstruct it from the information we have available
-      axis_sizes = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
-      assert len(axis_sizes) == 1
-      axis_size, = axis_sizes
+      # If axis name is `no_axis_name` we can't find it via `core.axis_name` so
+      # we reconstruct it from the information we have available
+      axis_size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
       return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
     return core.axis_frame(self.axis_name)
 
@@ -204,7 +213,7 @@ class BatchTrace(Trace):
     else:
       return BatchTracer(self, val_out, dim_out, src)
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+  def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
     if config.jax_experimental_name_stack:
       params = dict(params, name=params.get('name', f.__name__))
@@ -214,8 +223,10 @@ class BatchTrace(Trace):
     if all(bdim is not_mapped for bdim in dims):
       return call_primitive.bind(f, *vals, **params)
     else:
-      f, dims_out = batch_subtrace(f, self.main, dims)
-      vals_out = call_primitive.bind(f, *vals, **params)
+      f_, dims_out = batch_subtrace(f, self.main, dims)
+      ax_size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
+      f_ = _update_annotation(f_, f.in_type, ax_size, self.axis_name, dims)
+      vals_out = call_primitive.bind(f_, *vals, **params)
       src = source_info_util.current()
       return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
 

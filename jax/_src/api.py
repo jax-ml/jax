@@ -32,7 +32,8 @@ import threading
 import weakref
 import types
 from typing import (Any, Callable, Iterable, NamedTuple, Mapping, Optional,
-                    Sequence, Tuple, TypeVar, Union, overload, Dict, Hashable)
+                    Sequence, Tuple, TypeVar, Union, overload, Dict, Hashable,
+                    List)
 from warnings import warn
 
 import numpy as np
@@ -43,9 +44,9 @@ from jax import core
 from jax import linear_util as lu
 from jax import stages
 from jax.core import eval_jaxpr
-from jax.tree_util import (tree_map, tree_multimap, tree_flatten, tree_unflatten,
+from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
-                           tree_map, treedef_is_leaf, treedef_children,
+                           tree_multimap, treedef_is_leaf, treedef_children,
                            Partial, PyTreeDef, all_leaves, treedef_tuple)
 
 from jax._src import device_array
@@ -191,7 +192,7 @@ def _infer_argnums_and_argnames(
     fun: Callable,
     argnums: Union[int, Iterable[int], None],
     argnames: Union[str, Iterable[str], None],
-) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
+  ) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
   """Infer missing argnums and argnames for a function with inspect."""
   if argnums is None and argnames is None:
     argnums = ()
@@ -226,15 +227,16 @@ def _infer_argnums_and_argnames(
 
 
 def jit(
-  fun: Callable,
-  *,
-  static_argnums: Union[int, Iterable[int], None] = None,
-  static_argnames: Union[str, Iterable[str], None] = None,
-  device: Optional[xc.Device] = None,
-  backend: Optional[str] = None,
-  donate_argnums: Union[int, Iterable[int]] = (),
-  inline: bool = False,
-) -> stages.Wrapped:
+    fun: Callable,
+    *,
+    static_argnums: Union[int, Iterable[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
+    device: Optional[xc.Device] = None,
+    backend: Optional[str] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
+    inline: bool = False,
+    abstracted_axes: Optional[Any] = None,
+  ) -> stages.Wrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -325,12 +327,12 @@ def jit(
     >>> g(jnp.arange(4), 3)
     DeviceArray([   0,    1,  256, 6561], dtype=int32)
   """
-  if FLAGS.experimental_cpp_jit:
+  if FLAGS.experimental_cpp_jit and not config.jax_dynamic_shapes:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
                     donate_argnums, inline)
   else:
     return _python_jit(fun, static_argnums, static_argnames, device, backend,
-                       donate_argnums, inline)
+                       donate_argnums, inline, abstracted_axes)
 
 
 def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
@@ -352,6 +354,8 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
   return f, in_tree, args_flat, donated_invars
 
 
+PytreeOfAbstractedAxesSpec = Any
+
 def _python_jit(
     fun: Callable,
     static_argnums: Union[int, Iterable[int], None] = None,
@@ -360,8 +364,8 @@ def _python_jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
-) -> stages.Wrapped:
-  # The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit.
+    abstracted_axes: Optional[PytreeOfAbstractedAxesSpec] = None,
+  ) -> stages.Wrapped:
   _check_callable(fun)
   static_argnums, static_argnames = _infer_argnums_and_argnames(
       fun, static_argnums, static_argnames)
@@ -376,9 +380,14 @@ def _python_jit(
       return fun(*args, **kwargs)
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     for arg in args_flat:
       _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
+    if config.jax_dynamic_shapes:
+      axes_specs = (None if abstracted_axes is None else
+                    _flat_axes_specs(abstracted_axes, *args, **kwargs))
+      in_type = pe.infer_lambda_input_type(axes_specs, args_flat)
+      flat_fun = lu.annotate(flat_fun, in_type)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
@@ -388,6 +397,14 @@ def _python_jit(
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
                               backend, donate_argnums, inline)
   return f_jitted
+
+def _flat_axes_specs(abstracted_axes, *args, **kwargs
+                     ) -> List[pe.AbstractedAxesSpec]:
+  if kwargs: raise NotImplementedError
+  def ax_leaf(l):
+    return (isinstance(l, dict) and all_leaves(l.values()) or
+            isinstance(l, tuple) and all_leaves(l, lambda x: x is None))
+  return broadcast_prefix(abstracted_axes, args, ax_leaf)
 
 
 class _BackendAndDeviceInfo(NamedTuple):
@@ -412,7 +429,7 @@ def _cpp_jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
-) -> stages.Wrapped:
+  ) -> stages.Wrapped:
   # An implementation of `jit` that tries to do as much as possible in C++.
   # The goal of this function is to speed up the time it takes to process the
   # arguments, find the correct C++ executable, start the transfer of arguments
@@ -442,6 +459,9 @@ def _cpp_jit(
     for arg in args_flat:
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
+    if jax.config.jax_dynamic_shapes:
+      in_type = pe.infer_lambda_input_type(None, args_flat)
+      flat_fun = lu.annotate(flat_fun, in_type)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
@@ -462,10 +482,12 @@ def _cpp_jit(
         execute is not None and
         execute.func is dispatch._execute_compiled and  # not trivial, not pmap
         # Not supported: ShardedDeviceArray
-        all(device_array.type_is_device_array(x) for x in out_flat))
+        all(device_array.type_is_device_array(x) for x in out_flat) and
+        # Not supported: dynamic shapes
+        not jax.config.jax_dynamic_shapes)
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
-      _, xla_executable, _, result_handlers, kept_var_idx = execute.args
+      _, xla_executable, _, _, result_handlers, kept_var_idx = execute.args
       sticky_device = None
       avals = []
       lazy_exprs = [None] * len(result_handlers)
@@ -900,7 +922,7 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
                    allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
-) -> Callable[..., Tuple[Any, Any]]:
+  ) -> Callable[..., Tuple[Any, Any]]:
   """Create a function that evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
@@ -1517,18 +1539,18 @@ def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
       raise ValueError(msg.format(f"the tree of axis sizes is:\n{sizes}")) from None
 
 def pmap(
-  fun: Callable,
-  axis_name: Optional[AxisName] = None,
-  *,
-  in_axes=0,
-  out_axes=0,
-  static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-  devices: Optional[Sequence[xc.Device]] = None,
-  backend: Optional[str] = None,
-  axis_size: Optional[int] = None,
-  donate_argnums: Union[int, Iterable[int]] = (),
-  global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-) -> Any:
+    fun: Callable,
+    axis_name: Optional[AxisName] = None,
+    *,
+    in_axes=0,
+    out_axes=0,
+    static_broadcasted_argnums: Union[int, Iterable[int]] = (),
+    devices: Optional[Sequence[xc.Device]] = None,
+    backend: Optional[str] = None,
+    axis_size: Optional[int] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
+    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
+  ) -> Any:
   """Parallel map with support for collective operations.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data
@@ -1864,7 +1886,7 @@ def _get_f_mapped(
     axis_size: Optional[int],
     donate_tuple: Tuple[int],
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]],
-):
+  ):
   def pmap_f(*args, **kwargs):
     p = _prepare_pmap(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
@@ -1914,7 +1936,7 @@ def _python_pmap(
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-) -> stages.Wrapped:
+  ) -> stages.Wrapped:
   """The Python only implementation."""
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
@@ -1973,7 +1995,7 @@ def _cpp_pmap(
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-) -> Any:
+  ) -> Any:
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
       out_axes)
@@ -2140,7 +2162,7 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
 
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
-) -> Tuple[Any, ...]:
+  ) -> Tuple[Any, ...]:
   """Computes a (forward-mode) Jacobian-vector product of ``fun``.
 
   Args:
@@ -2364,7 +2386,7 @@ else:
 
 def vjp(  # type: ignore
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
-) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
+  ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
   :py:func:`grad` is implemented as a special case of :py:func:`vjp`.
@@ -2596,24 +2618,10 @@ def make_jaxpr(fun: Callable,
     if abstracted_axes is None:
       return map(shaped_abstractify, flat_args), in_tree, [True] * len(flat_args)
     else:
-      if kwargs: raise NotImplementedError
-      ax_leaf = lambda l: (isinstance(l, dict) and all_leaves(l.values()) or
-                           isinstance(l, tuple) and all_leaves(l))
-      axes_specs = broadcast_prefix(abstracted_axes, args, ax_leaf)
-      sizes: Dict[Hashable, int] = {}
-      env: Dict[Hashable, core.AbstractValue] = {}
-      def make_aval(arg, spec):
-        if isinstance(spec, tuple):
-          spec = dict(zip(range(len(arg.shape)), spec))
-        if not spec: return shaped_abstractify(arg)
-        assert all(arg.shape[i] == sizes.setdefault(name, arg.shape[i])
-                   for i, name in spec.items())
-        shape = [env.setdefault(spec[i], ShapedArray((), dtypes.dtype('int32')))
-                 if i in spec else d for i, d in enumerate(arg.shape)]
-        return core.DShapedArray(tuple(shape), arg.dtype, False)
-      in_avals = map(make_aval, flat_args, axes_specs)
-      keep_inputs = [False] * len(env) + [True] * len(flat_args)
-      return [*env.values(), *in_avals], in_tree, keep_inputs
+      axes_specs = _flat_axes_specs(abstracted_axes, *args, **kwargs)
+      in_type = pe.infer_lambda_input_type(axes_specs, flat_args)
+      in_avals, keep_inputs = unzip2(in_type)
+      return in_avals, in_tree, keep_inputs
 
   @wraps(fun)
   @api_boundary
@@ -3078,7 +3086,7 @@ def named_call(
     fun: Callable[..., Any],
     *,
     name: Optional[str] = None,
-) -> Callable[..., Any]:
+  ) -> Callable[..., Any]:
   """Adds a user specified name to a function when staging out JAX computations.
 
   When staging out computations for just-in-time compilation to XLA (or other

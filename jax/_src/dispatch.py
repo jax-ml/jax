@@ -20,7 +20,7 @@ from functools import partial
 import itertools
 import time
 from typing import (
-    Any, Callable, Dict, Optional, Sequence, Set, Tuple, Type, Union)
+    Any, Callable, Dict, Optional, Sequence, Set, Tuple, List, Type, Union)
 from typing_extensions import Protocol
 import os
 import re
@@ -29,6 +29,7 @@ import warnings
 from absl import logging
 import numpy as np
 
+import jax
 from jax import core
 from jax import linear_util as lu
 from jax.errors import UnexpectedTracerError
@@ -142,8 +143,11 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
 def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
                    donated_invars, inline):
   del inline  # Only used at tracing time
+  arg_specs = unsafe_map(arg_spec, args)
+  if fun.in_type is not None:
+    arg_specs = [(None, *xs) for _, *xs in arg_specs]
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
-                               *unsafe_map(arg_spec, args))
+                               *arg_specs)
   try:
     out = compiled_fun(*args)
   except FloatingPointError:
@@ -159,7 +163,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
     # intentional here, to avoid "Store occupied" errors we clone the WrappedFun
     # with empty stores.
     stores = [lu.Store() for _ in fun.stores]
-    clone = lu.WrappedFun(fun.f, fun.transforms, stores, fun.params)
+    clone = lu.WrappedFun(fun.f, fun.transforms, stores, fun.params, fun.in_type)
     with core.new_sublevel():
       _ = clone.call_wrapped(*args)  # probably won't return
   return out
@@ -193,21 +197,27 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
-
   abstract_args, arg_devices = util.unzip2(arg_specs)
+  if fun.in_type is not None:
+    abstract_args, which_explicit = util.unzip2(fun.in_type)
+  else:
+    which_explicit = None
   with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                         "for jit in {elapsed_time} sec"):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(
-        fun, abstract_args, pe.debug_info_final(fun, "jit"))
+        fun, abstract_args, pe.debug_info_final(fun, "jit"), which_explicit)
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
-  jaxpr, kept_const_idx, kept_var_idx = _prune_unused_inputs(jaxpr)
-  consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
-  pruned_arg_specs = (a for i, a in enumerate(arg_specs) if i in kept_var_idx)
-  abstract_args, arg_devices = util.unzip2(pruned_arg_specs)
-  donated_invars = [
-      x for i, x in enumerate(donated_invars) if i in kept_var_idx
-  ]
+  # TODO(mattjj): handle argument pruning w/ dynamic shapes
+  if fun.in_type is None:
+    jaxpr, kept_const_idx, kept_var_idx = _prune_unused_inputs(jaxpr)
+    consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
+    abstract_args, arg_devices = util.unzip2(
+        [a for i, a in enumerate(arg_specs) if i in kept_var_idx])
+    donated_invars = [x for i, x in enumerate(donated_invars) if i in kept_var_idx]
+    del kept_const_idx
+  else:
+    kept_var_idx = set(range(len(abstract_args)))
   map(prefetch, itertools.chain(consts, jaxpr_literals(jaxpr)))
   jaxpr = apply_outfeed_rewriter(jaxpr)
 
@@ -215,12 +225,16 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   device = _xla_callable_device(nreps, backend, device, arg_devices)
   backend = xb.get_device_backend(device) if device else xb.get_backend(backend)
 
+  if (config.jax_dynamic_shapes and jaxpr_has_bints(jaxpr) and
+      backend.platform != 'iree'):
+    jaxpr, consts = pe.pad_jaxpr(jaxpr, consts)
+
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
     return XlaComputation(
-        name, None, True, None, jaxpr=jaxpr, consts=consts, device=device,
+        name, None, True, None, None, jaxpr=jaxpr, consts=consts, device=device,
         in_avals=abstract_args, out_avals=out_avals, kept_var_idx=kept_var_idx)
 
   if not _on_exit:
@@ -260,9 +274,9 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
       module_name, closed_jaxpr, backend.platform,
       mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
   return XlaComputation(
-      name, module, False, donated_invars, nreps=nreps, device=device,
-      backend=backend, tuple_args=tuple_args, in_avals=abstract_args,
-      out_avals=out_avals, kept_var_idx=kept_var_idx)
+      name, module, False, donated_invars, which_explicit, nreps=nreps,
+      device=device, backend=backend, tuple_args=tuple_args,
+      in_avals=abstract_args, out_avals=out_avals, kept_var_idx=kept_var_idx)
 
 
 def prefetch(x):
@@ -290,6 +304,14 @@ def jaxpr_has_pmap(jaxpr):
     if jaxpr_has_pmap(subjaxpr):
       return True
   return False
+
+def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:
+  return (any(type(d) is core.Var for v in jaxpr.invars
+              if type(v.aval) is core.DShapedArray for d in v.aval.shape) or
+          any(type(d) is core.Var
+              for j in itertools.chain([jaxpr], core.subjaxprs(jaxpr))
+              for e in j.eqns for v in itertools.chain(e.invars, e.outvars)
+              if type(v.aval) is core.DShapedArray for d in v.aval.shape))
 
 def _prune_unused_inputs(
     jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, Set[int], Set[int]]:
@@ -384,6 +406,59 @@ num_buffers_handlers[core.ShapedArray] = lambda _: 1
 num_buffers_handlers[core.ConcreteArray] = lambda _: 1
 
 
+def _input_handler(which_explicit: Optional[Sequence[bool]],
+                   in_avals: Sequence[core.AbstractValue]
+                   ) -> Optional[Callable]:
+  # Extract implicit inputs, and pad bounded-size inputs to their max size.
+  needs_implicit = which_explicit and not all(which_explicit)
+  needs_padding = any(type(in_avals[d.val]) is core.AbstractBInt  # type: ignore
+                      for a in in_avals if type(a) is core.DShapedArray
+                      for d in a.shape if type(d) is pe.DBIdx)
+
+  if not needs_implicit and not needs_padding:
+    return None
+  assert config.jax_dynamic_shapes
+
+  # Precompute how to grab implicit inputs from explicit inputs' axis sizes.
+  which_explicit = which_explicit or [True] * len(in_avals)
+  implicit_idxs = {i for i, ex in enumerate(which_explicit) if not ex}
+  implicit_args_from_axes: List[Tuple[int, int, int]] = []
+  for arg_idx, aval in enumerate(in_avals):
+    if isinstance(aval, core.DShapedArray):
+      for axis_idx, d in enumerate(aval.shape):
+        if isinstance(d, pe.DBIdx) and d.val in implicit_idxs:
+          implicit_args_from_axes.append((d.val, arg_idx, axis_idx))
+  assert {i for i, _, _ in implicit_args_from_axes} == implicit_idxs
+
+  # Precompute how to pad bounded-size inputs to their max size.
+  def needs_pad(a: core.AbstractValue) -> bool:
+    return (type(a) is core.DShapedArray and
+            any(type(d) is pe.DBIdx for d in aval.shape))
+
+  def padshape(a: core.DShapedArray) -> List[int]:
+    return [in_avals[d.val].bound if type(d) is pe.DBIdx and  # type: ignore
+            type(in_avals[d.val]) is core.AbstractBInt else d for d in a.shape]  # type: ignore
+
+  padders = [partial(jax.jit(_pad_arg, static_argnums=0), tuple(padshape(aval)))  # type: ignore
+             if needs_pad(aval) else None for aval in in_avals]
+
+  def elaborate_and_pad(explicit_args):
+    explicit_args_ = iter(explicit_args)
+    args = [next(explicit_args_) if ex else None for ex in which_explicit]
+    assert next(explicit_args_, None) is None
+    for i, j, k in implicit_args_from_axes:
+      if args[i] is None:
+        args[i] = args[j].shape[k]  # type: ignore
+      else:
+        if args[i] != args[j].shape[k]:
+          raise Exception("inconsistent argument axis sizes for type")
+    return tuple([pad(x) if pad else x for x, pad in zip(args, padders)])
+  return elaborate_and_pad
+
+def _pad_arg(shape, x):
+  zeros = jax.lax.full(shape, 0, x.dtype)
+  return jax.lax.dynamic_update_slice(zeros, x, (0,) * len(shape))
+
 if MYPY:
   ResultHandler = Any
 else:
@@ -405,6 +480,13 @@ def array_result_handler(sticky_device: Optional[Device],
   return partial(device_array.make_device_array, core.raise_to_shaped(aval),
                  sticky_device)
 
+def dynamic_array_result_handler(sticky_device: Optional[Device],
+                                 aval: core.DShapedArray):
+  if aval.dtype is dtypes.float0:
+    return lambda _: np.zeros(aval.shape, dtypes.float0)  # type: ignore
+  else:
+    raise NotImplementedError
+
 
 result_handlers: Dict[
     Type[core.AbstractValue],
@@ -412,6 +494,7 @@ result_handlers: Dict[
 result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
 result_handlers[core.AbstractToken] = lambda _, __: lambda _: core.token
 result_handlers[core.ShapedArray] = array_result_handler
+result_handlers[core.DShapedArray] = dynamic_array_result_handler
 result_handlers[core.ConcreteArray] = array_result_handler
 
 
@@ -433,9 +516,11 @@ def _check_special(name, xla_shape, buf):
 
 
 def _execute_compiled(name: str, compiled: XlaExecutable,
+                      input_handler: Optional[Callable],
                       output_buffer_counts: Optional[Sequence[int]],
                       result_handlers, kept_var_idx, *args):
   device, = compiled.local_devices()
+  args = input_handler(args) if input_handler else args
   input_bufs_flat = flatten(device_put(x, device) for i, x in enumerate(args)
                             if i in kept_var_idx)
   out_bufs_flat = compiled.execute(input_bufs_flat)
@@ -447,8 +532,10 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
 
 
 def _execute_replicated(name: str, compiled: XlaExecutable,
+                        input_handler: Optional[Callable],
                         output_buffer_counts: Optional[Sequence[int]],
                         result_handlers, kept_var_idx, *args):
+  if input_handler: raise NotImplementedError  # TODO(mattjj, dougalm)
   input_bufs = [flatten(device_put(x, device) for i, x in enumerate(args)
                         if i in kept_var_idx)
                 for device in compiled.local_devices()]
@@ -477,16 +564,18 @@ def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
 class XlaComputation(stages.Computation):
   name: str
   _is_trivial: bool
-  _executable: Optional['XlaCompiledComputation']
+  _executable: Optional[XlaCompiledComputation]
   _donated_invars: Optional[Sequence[bool]]
 
   def __init__(self, name: str, hlo, is_trivial: bool,
                donated_invars: Optional[Sequence[bool]],
+               explicit_args: Optional[Sequence[bool]],
                **compile_args):
     self.name = name
     self._hlo = hlo
     self._is_trivial = is_trivial
     self._donated_invars = donated_invars
+    self._explicit_args = explicit_args
     self._executable = None
     self.compile_args = compile_args
 
@@ -511,14 +600,14 @@ class XlaComputation(stages.Computation):
         return ir.Module.parse(module_str)
     return self._hlo
 
-  def compile(self) -> 'XlaCompiledComputation':
+  def compile(self) -> XlaCompiledComputation:
     if self._executable is None:
       if self.is_trivial():
         self._executable = XlaCompiledComputation.from_trivial_jaxpr(
             **self.compile_args)
       else:
         self._executable = XlaCompiledComputation.from_xla_computation(
-            self.name, self._hlo, **self.compile_args)
+            self.name, self._hlo, self._explicit_args, **self.compile_args)
 
     return self._executable
 
@@ -586,6 +675,7 @@ class XlaCompiledComputation(stages.Executable):
   def from_xla_computation(
       name: str,
       xla_computation: Optional[ir.Module],
+      explicit_args: Optional[Sequence[bool]],
       nreps: int,
       device: Optional[Device],
       backend: Backend,
@@ -594,6 +684,7 @@ class XlaCompiledComputation(stages.Executable):
       out_avals: Sequence[core.AbstractValue],
       kept_var_idx: Set[int]) -> XlaCompiledComputation:
     sticky_device = device
+    input_handler = _input_handler(explicit_args, in_avals)
     result_handlers = map(partial(aval_to_result_handler, sticky_device),
                           out_avals)
     options = xb.get_compile_options(
@@ -603,10 +694,10 @@ class XlaCompiledComputation(stages.Executable):
     with log_elapsed_time(f"Finished XLA compilation of {name} "
                           "in {elapsed_time} sec"):
       compiled = compile_or_get_cached(backend, xla_computation, options)
-    buffer_counts = (None if len(out_avals) == 1 else
-                     [aval_to_num_buffers(aval) for aval in out_avals])
+    buffer_counts = (None if len(out_avals) == 1 and not config.jax_dynamic_shapes
+                     else [aval_to_num_buffers(aval) for aval in out_avals])
     execute = _execute_compiled if nreps == 1 else _execute_replicated
-    unsafe_call = partial(execute, name, compiled, buffer_counts,
+    unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,
                           result_handlers, kept_var_idx)
     return XlaCompiledComputation(compiled, in_avals, kept_var_idx, unsafe_call)
 
@@ -622,7 +713,7 @@ class XlaCompiledComputation(stages.Executable):
 
   @staticmethod
   def from_trivial_jaxpr(jaxpr, consts, device, in_avals, out_avals,
-                         kept_var_idx) -> 'XlaCompiledComputation':
+                         kept_var_idx) -> XlaCompiledComputation:
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
     unsafe_call = partial(_execute_trivial, jaxpr, device, consts,
                           out_avals, result_handlers, kept_var_idx)

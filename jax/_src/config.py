@@ -350,7 +350,7 @@ class Config:
     Values included in this set should also most likely be included in
     the C++ JIT state, which is handled separately."""
     return (self.x64_enabled, self.jax_numpy_rank_promotion,
-            self.jax_default_matmul_precision)
+            self.jax_default_matmul_precision, self.jax_dynamic_shapes)
 
 class _StateContextManager:
   def __init__(self, name, help, update_thread_local_hook,
@@ -424,6 +424,7 @@ already_configured_with_absl = False
 class GlobalJitState(NamedTuple):
   numpy_rank_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
+  dynamic_shapes: bool = False
 
 
 def update_global_jit_state(**kw):
@@ -436,6 +437,7 @@ class ThreadLocalJitState(NamedTuple):
   dynamic_trace_state: Optional[Any] = None
   numpy_rank_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
+  dynamic_shapes: bool = False
 
 
 def update_thread_local_jit_state(**kw):
@@ -700,7 +702,11 @@ config.define_bool_state(
     name='jax_dynamic_shapes',
     default=False,
     help=('Enables experimental features for staging out computations with '
-          'dynamic shapes.'))
+          'dynamic shapes.'),
+    update_global_hook=lambda val: \
+      update_global_jit_state(dynamic_shapes=val),
+    update_thread_local_hook=lambda val: \
+      update_thread_local_jit_state(dynamic_shapes=val))
 
 config.define_bool_state(
     name='jax_experimental_name_stack',

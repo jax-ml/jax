@@ -61,10 +61,11 @@ compare as equal only if they compute the same function. The static and the
 dynamic positional arguments for the generators, and also the auxiliary output
 data must be immutable, because it will be stored in function memoization tables.
 """
+from __future__ import annotations
 
 import threading
 from functools import partial
-from typing import Any, Tuple, Callable
+from typing import Any, Tuple, Callable, Optional
 import weakref
 
 from jax import core
@@ -81,10 +82,10 @@ traceback_util.register_exclusion(__file__)
 class StoreException(Exception): pass
 
 
-class EmptyStoreValue(object): pass
+class EmptyStoreValue: pass
 _EMPTY_STORE_VALUE = EmptyStoreValue()
 
-class Store(object):
+class Store:
   """Storage for a value, with checks for overwriting or reading empty store."""
   __slots__ = ("_val",)
 
@@ -112,27 +113,28 @@ class Store(object):
   __bool__ = __nonzero__
 
 
-class WrappedFun(object):
+class WrappedFun:
   """Represents a function `f` to which `transforms` are to be applied.
 
   Args:
     f: the function to be transformed.
     transforms: a list of `(gen, gen_static_args)` tuples representing
-      transformations to apply to `f.` Here `gen` is a generator function
-      and `gen_static_args` is a tuple of static arguments for the generator. See
+      transformations to apply to `f.` Here `gen` is a generator function and
+      `gen_static_args` is a tuple of static arguments for the generator. See
       description at the start of this module for the expected behavior of the
       generator.
     stores: a list of out_store for the auxiliary output of the `transforms`.
     params: extra parameters to pass as keyword arguments to `f`, along with the
       transformed keyword arguments.
   """
-  __slots__ = ("f", "transforms", "stores", "params")
+  __slots__ = ("f", "transforms", "stores", "params", "in_type")
 
-  def __init__(self, f, transforms, stores, params):
+  def __init__(self, f, transforms, stores, params, in_type):
     self.f = f
     self.transforms = transforms
     self.stores = stores
     self.params = params
+    self.in_type = in_type
 
   @property
   def __name__(self):
@@ -141,7 +143,7 @@ class WrappedFun(object):
   def wrap(self, gen, gen_static_args, out_store) -> 'WrappedFun':
     """Add another transform and its store."""
     return WrappedFun(self.f, ((gen, gen_static_args),) + self.transforms,
-                      (out_store,) + self.stores, self.params)
+                      (out_store,) + self.stores, self.params, None)
 
   def populate_stores(self, stores):
     """Copy the values from the `stores` into `self.stores`."""
@@ -200,11 +202,11 @@ class WrappedFun(object):
     return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(self.f) + '\n'
 
   def __hash__(self):
-    return hash((self.f, self.transforms, self.params))
+    return hash((self.f, self.transforms, self.params, self.in_type))
 
   def __eq__(self, other):
     return (self.f == other.f and self.transforms == other.transforms and
-            self.params == other.params)
+            self.params == other.params and self.in_type == other.in_type)
 
 @curry
 def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
@@ -231,8 +233,19 @@ def fun_name(f):
 
 def wrap_init(f, params=None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
-  return WrappedFun(f, (), (),
-                    () if params is None else tuple(sorted(params.items())))
+  params = () if params is None else tuple(sorted(params.items()))
+  return WrappedFun(f, (), (), params, None)
+
+def annotate(f: WrappedFun,
+             in_type: Optional[Tuple[Tuple[core.AbstractValue, bool], ...]]
+             ) -> WrappedFun:
+  assert f.in_type is None
+  if in_type is None:
+    return f
+  assert (type(in_type) is tuple and all(type(e) is tuple for e in in_type) and
+          all(isinstance(a, core.AbstractValue) and type(b) is bool
+              for a, b in in_type))
+  return WrappedFun(f.f, f.transforms, f.stores, f.params, in_type)
 
 
 class _CacheLocalContext(threading.local):
@@ -259,11 +272,11 @@ def cache(call: Callable):
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
     if config.jax_check_tracer_leaks:
-      key = (_copy_main_traces(fun.transforms), fun.params, args,
+      key = (_copy_main_traces(fun.transforms), fun.params, fun.in_type, args,
              config.x64_enabled, config._trace_context())
     else:
-      key = (fun.transforms, fun.params, args, config.x64_enabled,
-             config._trace_context())
+      key = (fun.transforms, fun.params, fun.in_type, args,
+             config.x64_enabled, config._trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result

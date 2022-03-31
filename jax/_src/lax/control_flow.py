@@ -1719,12 +1719,7 @@ def _combine_leading(sz0, sz1, aval, x):
     return lax.collapse(x, 0, 2)
 
 def _prepend_dim_to_aval(sz, aval):
-  if aval is core.abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    return aval.update(shape=(sz, *aval.shape), weak_type=False)
-  else:
-    raise TypeError(f'Prepending dim {sz} to aval {aval}')
+  return core.unmapped_aval(sz, core.no_axis_name, 0, aval)
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll):
@@ -2063,6 +2058,10 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   return _make_closed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
+def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
+  padded_jaxpr = core.ClosedJaxpr(*pe.pad_jaxpr(jaxpr.jaxpr, jaxpr.consts))
+  return scan_p.bind(*args, jaxpr=padded_jaxpr, **params)
+
 def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
                     jaxpr, linear, unroll):
   tc = partial(_typecheck_param, 'scan')
@@ -2133,6 +2132,7 @@ masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = \
     partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'scan')
+pe.padding_rules[scan_p] = _scan_padding_rule
 
 
 

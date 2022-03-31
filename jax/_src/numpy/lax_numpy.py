@@ -48,8 +48,10 @@ from jax.tree_util import tree_leaves, tree_flatten, tree_map
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
-from jax._src.lax.lax import _array_copy, _sort_lt_comparator, _sort_le_comparator
+from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
+                              _sort_le_comparator)
 from jax._src.lax import lax as lax_internal
+from jax._src.lax.slicing import _getslice
 from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.reductions import (  # noqa: F401
   _ensure_optional_axes, _reduction_dims,
@@ -3479,6 +3481,15 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
   arr = asarray(arr)
+
+  # TODO(mattjj,dougalm): expand dynamic shape indexing support
+  if (jax.config.jax_dynamic_shapes and type(idx) is slice and idx.step is None
+      and (isinstance(idx.start, core.Tracer) or isinstance(idx.stop, core.Tracer))
+      and arr.shape):
+    start = 0 if idx.start is None else idx.start
+    stop = arr.shape[0] if idx.stop is None else idx.stop
+    return _getslice(arr, start, stop)
+
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx, arr.shape)
   return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
                  unique_indices, mode, fill_value)
