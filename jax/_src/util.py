@@ -222,12 +222,28 @@ memoize = cache(max_size=None)
 CacheInfo = namedtuple("CacheInfo", ["hits", "misses", "maxsize", "currsize"])
 
 def weakref_lru_cache(call: Callable, maxsize=2048):
+  """
+  Least recently used cache decorator with weakref support.
+
+  The cache will take a weakref to the first argument of the wrapped function
+  and strong refs to all subsequent operations. In all other respects it should
+  behave similar to `functools.lru_cache`.
+  """
   cache: Dict[Any, Any] = {}
   hits = misses = 0
   lock = threading.Lock()
 
   def remove_key(tctx, args, kwargs, weak_arg):
-    del cache[(weak_arg, tctx, args, kwargs)]
+    k = (weak_arg, tctx, args, kwargs)
+    try:
+      # This has a chance to race with the iteration in next(iter(cache)),
+      # but we cannot lock because GC can get triggered synchronously inside
+      # a critical section and will not relinquish control until the callback
+      # has finished. This would lead to a deadlock between this weakref
+      # cleanup function and any function below which locks.
+      del cache[k]
+    except KeyError:
+      pass
 
   def wrapped(weak_arg, *args, **kwargs):
     nonlocal hits, misses
@@ -250,8 +266,22 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
     result = call(weak_arg, *args, **kwargs)
     with lock:
       cache[k] = result
+      num_errors = 0
       while len(cache) > maxsize:
-        del cache[next(iter(cache))]
+        try:
+          del_k = next(iter(cache))
+          # This happens if a weakref callback happens between iter and
+          # next. Just ignore the error. WeakKeyDictionary handles this
+          # by deferring the deletes, but that has a chance at leaking,
+          # and this solution is easier.
+        except RuntimeError:
+          num_errors += 1
+          if num_errors > len(cache):
+            # This must be some other problem.
+            raise
+          else:
+            continue
+        del cache[del_k]
       return result
 
   def cache_info():

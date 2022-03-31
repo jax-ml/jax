@@ -18,6 +18,7 @@ from jax import linear_util as lu
 from jax._src import test_util as jtu
 
 from jax.config import config
+from jax._src.util import weakref_lru_cache
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -62,6 +63,21 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual((2, 4), scaled_positional)
     self.assertEqual(dict(three=6, four=8), scaled_kwargs)
     self.assertEqual(2, out_thunk())
+
+  def test_weakref_lru_cache(self):
+    @weakref_lru_cache
+    def example_cached_fn(key):
+      return object()
+
+    class Key:
+      def __init__(self):
+        # Make a GC loop.
+        self.ref_loop = [self]
+
+    stable_keys = [Key() for _ in range(2049)]
+    for i in range(10000):
+      example_cached_fn(stable_keys[i % len(stable_keys)])
+      example_cached_fn(Key())
 
 
 if __name__ == "__main__":
