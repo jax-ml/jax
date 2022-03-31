@@ -415,7 +415,15 @@ xla.register_translation(bcoo_fromdense_p, xla.lower_fun(
 bcoo_extract_p = core.Primitive('bcoo_extract')
 
 def bcoo_extract(indices, mat):
-  """Extract BCOO values from dense matrix `mat` at given BCOO indices."""
+  """Extract BCOO data values from a dense matrix at given BCOO indices.
+
+  Args:
+    indices: An ndarray; see BCOO indices.
+    mat: A dense matrix.
+
+  Returns:
+    An ndarray; see BCOO data.
+  """
   return bcoo_extract_p.bind(indices, mat)
 
 @bcoo_extract_p.def_impl
@@ -488,6 +496,20 @@ bcoo_transpose_p = core.Primitive('bcoo_transpose')
 bcoo_transpose_p.multiple_results = True
 
 def bcoo_transpose(mat, *, permutation: Sequence[int]):
+  """Transpose a BCOO-format array.
+
+  Args:
+    mat: A BCOO-format array.
+    permutation:  A tuple or list or ndarray which contains a permutation of
+      [0,1,..,N-1] where N is the number of axes of ``mat`` in the order of
+      batch, sparse, and dense dimensions. The i’th axis of the returned array
+      corresponds to the axis numbered permutation[i] of ``mat``. Transpose
+      permutation currently does not support permuting batch axes with non-batch
+      axes nor permutating dense axes with non-dense axes.
+
+  Returns:
+    A BCOO-format array.
+  """
   return BCOO(_bcoo_transpose(mat.data, mat.indices, permutation=permutation, spinfo=mat._info),
               shape=mat._info.shape)
 
@@ -597,6 +619,18 @@ def _dot_general_validated_shape(lhs_shape: Shape, rhs_shape: Shape, dimension_n
     precision=None, preferred_element_type=None)
 
 def bcoo_dot_general(lhs, rhs, *, dimension_numbers):
+  """A general contraction operation.
+
+  Args:
+    lhs: A BCOO-format array.
+    rhs: An ndarray.
+    dimension_numbers: a tuple of tuples of the form
+      `((lhs_contracting_dims, rhs_contracting_dims),
+      (lhs_batch_dims, rhs_batch_dims))`.
+
+  Returns:
+    An ndarray containing the result.
+  """
   return _bcoo_dot_general(*lhs._bufs, rhs, dimension_numbers=dimension_numbers,
                            lhs_spinfo=lhs._info)
 
@@ -611,6 +645,18 @@ def _bcoo_dot_general(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spin
                                  lhs_spinfo=lhs_spinfo)
 
 def bcoo_rdot_general(lhs, rhs, *, dimension_numbers: DotDimensionNumbers):
+  """A general contraction operation.
+
+  Args:
+    lhs: An ndarray.
+    rhs: A BCOO-format array.
+    dimension_numbers: a tuple of tuples of the form
+      `((lhs_contracting_dims, rhs_contracting_dims),
+      (lhs_batch_dims, rhs_batch_dims))`.
+
+  Returns:
+    An ndarray containing the result.
+  """
   return _bcoo_rdot_general(lhs, rhs.data, rhs.indices,
                             dimension_numbers=dimension_numbers,
                             rhs_spinfo=rhs._info)
@@ -900,6 +946,19 @@ if sparse_apis and sparse_apis.is_supported:
 bcoo_dot_general_sampled_p = core.Primitive("bcoo_dot_general_sampled")
 
 def bcoo_dot_general_sampled(A, B, indices, *, dimension_numbers):
+  """A contraction operation with output computed at given sparse indices.
+
+  Args:
+    lhs: An ndarray.
+    rhs: An ndarray.
+    indices: BCOO indices.
+    dimension_numbers: a tuple of tuples of the form
+      `((lhs_contracting_dims, rhs_contracting_dims),
+      (lhs_batch_dims, rhs_batch_dims))`.
+
+  Returns:
+    BCOO data, an ndarray containing the result.
+  """
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
@@ -959,6 +1018,18 @@ bcoo_spdot_general_p = core.Primitive('bcoo_spdot_general')
 bcoo_spdot_general_p.multiple_results = True
 
 def bcoo_spdot_general(lhs, rhs, *, dimension_numbers: DotDimensionNumbers):
+  """A general contraction operation.
+
+  Args:
+    lhs: A BCOO-format array.
+    rhs: A BCOO-format array.
+    dimension_numbers: a tuple of tuples of the form
+      `((lhs_contracting_dims, rhs_contracting_dims),
+      (lhs_batch_dims, rhs_batch_dims))`.
+
+  Returns:
+    An ndarray containing the result.
+  """
   return _bcoo_spdot_general(lhs.data, lhs.indices, rhs.data, rhs.indices,
                              lhs_spinfo=lhs._info, rhs_spinfo=rhs._info,
                              dimension_numbers=dimension_numbers)
@@ -1158,6 +1229,19 @@ xla.register_translation(bcoo_spdot_general_p, xla.lower_fun(
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
 def bcoo_broadcast_in_dim(mat, *, shape, broadcast_dimensions):
+  """Expand the size and rank of a BCOO array by duplicating the data.
+
+  A BCOO equivalence to jax.lax.broadcast_in_dim.
+
+  Args:
+    mat: A BCOO-format array.
+    shape: The shape of the target array.
+    broadcast_dimensions: The dimension in the shape of the target array which
+      each dimension of the operand (``mat``) shape corresponds to.
+
+  Returns:
+    A BCOO-format array containing the target array.
+  """
   return BCOO(_bcoo_broadcast_in_dim(mat.data, mat.indices, spinfo=mat._info,
                                      shape=shape,
                                      broadcast_dimensions=broadcast_dimensions),
@@ -1201,6 +1285,17 @@ def _tuple_replace(tup, ind, val):
   return tuple(val if i == ind else t for i, t in enumerate(tup))
 
 def bcoo_reduce_sum(mat, *, axes):
+  """Sum array element over given axes.
+
+  Args:
+    mat: A BCOO-format array.
+    shape: The shape of the target array.
+    axes:  A tuple or list or ndarray which contains axes of ``mat`` over which
+      sum is perfomed.
+
+  Returns:
+    A BCOO-format array containing the result.
+  """
   out_data, out_indices, out_shape = _bcoo_reduce_sum(
       mat.data, mat.indices, spinfo=mat._info, axes=axes)
   return BCOO((out_data, out_indices), shape=out_shape)
@@ -1260,6 +1355,15 @@ def _bcoo_reduce_sum(data, indices, *, spinfo, axes):
   return data, indices, out_shape
 
 def bcoo_multiply_sparse(lhs, rhs):
+  """An element-wise multiplication of two sparse arrays.
+
+  Args:
+    lhs: A BCOO-format array.
+    rhs: A BCOO-format array.
+
+  Returns:
+    An BCOO-format array containing the result.
+  """
   out_data, out_indices, out_shape = _bcoo_multiply_sparse(
       lhs.data, lhs.indices, rhs.data, rhs.indices, lhs_spinfo=lhs._info,
       rhs_spinfo=rhs._info)
@@ -1318,6 +1422,15 @@ def _bcoo_multiply_sparse_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices
   return data, indices
 
 def bcoo_multiply_dense(sp_mat, v):
+  """An element-wise multiplication between a sparse and a dense array.
+
+  Args:
+    lhs: A BCOO-format array.
+    rhs: An ndarray.
+
+  Returns:
+    An ndarray containing the result.
+  """
   return _bcoo_multiply_dense(*sp_mat._bufs, v, spinfo=sp_mat._info)
 
 def _bcoo_multiply_dense(data, indices, v, *, spinfo):
