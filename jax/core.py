@@ -1880,7 +1880,7 @@ def _map_shaped_array(size: int, axis: Optional[int], aval: ShapedArray
   # TODO: Extend the named shape
   if axis is None: return aval
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
-                     named_shape=aval.named_shape)
+                     named_shape=aval.named_shape, weak_type=aval.weak_type)
 
 def _unmap_shaped_array(size: int, axis_name, axis: Optional[int],
                         aval: ShapedArray) -> ShapedArray:
@@ -1889,7 +1889,7 @@ def _unmap_shaped_array(size: int, axis_name, axis: Optional[int],
   named_shape.pop(axis_name, None)
   if axis is None: return aval.replace(named_shape=named_shape)
   return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                     named_shape=named_shape)
+                     named_shape=named_shape, weak_type=aval.weak_type)
 
 AvalMapHandlerPair = Tuple[Callable, Callable]
 aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {

@@ -24,6 +24,7 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
@@ -1279,6 +1280,17 @@ class BatchingTest(jtu.JaxTestCase):
     vector = jax.numpy.array([1., 2.])
     ans = vmapped_gradients_fn(vector)  # doesn't crash
     self.assertAllClose(ans, jnp.ones(2), check_dtypes=False)
+
+  def testBatchingPreservesWeakType(self):
+    # Regression test for https://github.com/google/jax/issues/10025
+    x = jnp.ravel(1)
+    self.assertTrue(dtypes.is_weakly_typed(x))
+    @vmap
+    def f(x):
+      self.assertTrue(dtypes.is_weakly_typed(x), f"{x} is not weakly-typed")
+      return x
+    y = f(x)
+    self.assertTrue(dtypes.is_weakly_typed(y))
 
 
 Array = Any
