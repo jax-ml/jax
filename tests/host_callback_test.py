@@ -167,8 +167,8 @@ def helper_set_hlo_dump():
 
 
 def helper_print_optimized_hlo(fun, *args):
-  backend = xla_bridge.get_backend()
-  c = jax.xla_computation(fun, backend='cpu')(*args)
+  backend = xla_bridge.get_backend(platform=jtu.device_under_test())
+  c = jax.xla_computation(fun, backend=backend.platform)(*args)
   print(re.sub(r", metadata.*", "",
                backend.compile(c).hlo_modules()[0].to_string()))
 
@@ -179,7 +179,7 @@ def helper_log_ir(name,
                   num_partitions=None,
                   strip_metadata=False):
   print(f"Jaxpr[{name}]: {jax.make_jaxpr(f_jax)(*args)}")
-  jax_comp = jax.xla_computation(f_jax, backend='cpu')(*args)
+  jax_comp = jax.xla_computation(f_jax, backend=jtu.device_under_test())(*args)
   print(f"HLO[{name}]: {jax_comp.as_hlo_text()}")
 
   backend = xla_bridge.get_backend()
@@ -422,7 +422,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     logging.info("%s: %s", self._testMethodName,
                  jax.make_jaxpr(func)(1))
     logging.info("%s: %s", self._testMethodName,
-                 jax.xla_computation(func, backend='cpu')(1).as_hlo_text())
+                 jax.xla_computation(func, backend=jtu.device_under_test())(1).as_hlo_text())
     self.assertEqual(2, jax.jit(func)(1))
     hcb.barrier_wait()
 
