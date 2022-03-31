@@ -1,5 +1,8 @@
 # JAX and TensorFlow interoperation (jax2tf/call_tf)
 
+<!-- Next line must match the copybara config. -->
+<!-- Link to internal documentation. -->
+
 This package provides experimental support for interoperation between JAX and TensorFlow.
 There are two interoperation directions:
 
@@ -1093,6 +1096,9 @@ JAX cannot keep track of shapes through a `call_tf` call, and it
 cannot be sure that the shape-polymorphic conversion is safe.
 
 # Misc notes
+
+<!-- Next line must match the copybara config. -->
+<!-- Link to internal documentation. -->
 
 ## TensorFlow versions supported
 
