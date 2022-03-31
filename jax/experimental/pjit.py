@@ -25,6 +25,7 @@ from jax import core
 from jax import linear_util as lu
 from jax import stages
 from jax._src.api import _check_callable, _check_arg
+from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
 from jax._src.lib import xla_extension_version
@@ -237,7 +238,9 @@ def pjit(fun: Callable,
     # is_global attribute.
     in_positional_semantics = tuple(tree_map(
         partial(_get_in_positional_semantics, _global_avals), args_flat))
-    out_positional_semantics = maps._positional_semantics.val
+    out_positional_semantics = (
+        maps._PositionalSemantics.GLOBAL
+        if config.jax_parallel_functions_output_gda else maps._positional_semantics.val)
 
     global_in_avals, canonicalized_in_axis_resources_flat = _process_in_axis_resources(
         mesh, local_in_avals, hashable_pytree(in_axis_resources), in_tree,
