@@ -9,8 +9,10 @@
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 
 import builtins
 import enum
@@ -2865,11 +2867,15 @@ def _concatenate_transpose_rule(t, *operands, dimension):
     return [ad_util.Zero(o.aval) if ad.is_undefined_primal(o) else None
             for o in operands]
   else:
-    limit_points = np.cumsum([shape[dimension] for shape in operand_shapes])
-    starts = np.zeros((len(operands), t.ndim), dtype=int)
-    starts[1:, dimension] = limit_points[:-1]
-    limits = np.tile(t.shape, (len(operands), 1))
-    limits[:, dimension] = limit_points
+    limit_points = np.cumsum(
+        [shape[dimension] for shape in operand_shapes]).tolist()
+    starts = np.zeros((len(operands), t.ndim), dtype=int).tolist()
+    limits = np.tile(t.shape, (len(operands), 1)).tolist()
+
+    for i, s in enumerate(starts[1:]):
+      s[dimension] = limit_points[:-1][i]
+    for i, l in enumerate(limits):
+      l[dimension] = limit_points[i]
 
     return [slicing.slice(t, start, limit) if ad.is_undefined_primal(o)
             else None for o, start, limit in zip(operands, starts, limits)]
