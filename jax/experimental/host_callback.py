@@ -690,6 +690,37 @@ def call(callback_func: Callable, arg, *,
                call_with_device=call_with_device, identity=False)
 
 
+# We need the wrapper function to have hash and equality defined since it is
+# used as a primitive keyword argument, and we want a compilation cache hit if
+# the user uses the same function twice.
+class _CallbackWrapper:
+  def __init__(self, callback_func, identity, call_with_device):
+    self.callback_func = callback_func
+    self.identity = identity
+    self.call_with_device = call_with_device
+
+  def __hash__(self):
+    return hash((self.callback_func, self.identity, self.call_with_device))
+
+  def __eq__(self, other):
+    return (self.callback_func == other.callback_func and
+            self.identity == other.identity and
+            self.call_with_device == other.call_with_device)
+
+  def __call__(self, arg, device, transforms):
+    if self.identity:
+      # For id_tap, we pass the transforms, for backwards compatibility
+      if self.call_with_device:
+        return self.callback_func(arg, transforms, device=device)
+      else:
+        return self.callback_func(arg, transforms)
+    else:
+      if self.call_with_device:
+        return self.callback_func(arg, device=device)
+      else:
+        return self.callback_func(arg)
+
+
 # Helper function to implement both `call` and `id_tap`. The two cases are
 # differentiated by the `identity` flag.
 def _call(callback_func: Callable, arg, *,
@@ -706,18 +737,8 @@ def _call(callback_func: Callable, arg, *,
   # See definition of outside_call_p for what parameters it takes
   params: Dict[str, Any] = {}
   # TODO: wrap function
-  if identity:
-    # For id_tap, we pass the transforms, for backwards compatibility
-    if call_with_device:
-      callback = lambda arg, device, transforms: callback_func(arg, transforms, device=device)
-    else:
-      callback = lambda arg, device, transforms: callback_func(arg, transforms)
-  else:
-    if call_with_device:
-      callback = lambda arg, device, transforms: callback_func(arg, device=device)
-    else:
-      callback = lambda arg, device, transforms: callback_func(arg)
-  params["callback"] = callback
+  params["callback"] = _CallbackWrapper(callback_func, identity,
+                                        call_with_device)
   params["identity"] = identity
   params["arg_treedef"] = arg_treedef
 

@@ -132,7 +132,7 @@ def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase,
     x = np.around(float(matched), decimals=2)
     return f"{x:.2f}"
 
-  what = re.sub(r"\-?\d*\.[\-\def]*", repl_floats, what)
+  what = re.sub(r"\-?\d+\.[\-\def]*", repl_floats, what)
   what = re.sub(r"output_stream=[^\]\n,]*,?", "", what)
   what = re.sub(r"threshold=[^\]\n,]*,?", "", what)
   what = re.sub(r"bwd=[^\]\n]*", "", what)
@@ -2152,6 +2152,20 @@ class HostCallbackCallTest(jtu.JaxTestCase):
 
     arg = np.arange(24, dtype=np.int32).reshape((2, 3, 4))
     self.assertAllClose(3 * (1 + 2 * (arg + 1)), fun(arg))
+
+  def test_primitive_compilation(self):
+
+    def f_outside(x):
+      return 2 * x
+
+    def fun(x):
+      return hcb.call(f_outside, x, result_shape=x)
+
+    arg = np.arange(24, dtype=np.int32).reshape((2, 3, 4))
+    with jtu.count_primitive_compiles() as count:
+      for _ in range(3):
+        self.assertAllClose(2 * arg, fun(arg))
+    self.assertEqual(count[0], 1)
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
