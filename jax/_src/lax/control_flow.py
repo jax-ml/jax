@@ -54,7 +54,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip,
                            split_list, cache, extend_name_stack, wrap_name)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children, treedef_tuple, tree_multimap,
+                           treedef_children, treedef_tuple, tree_map,
                            tree_leaves, tree_structure)
 from jax._src import ad_util
 from jax.config import config
@@ -1477,7 +1477,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
       ys.append(y)
     stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
                             else jax.numpy.stack((y, *ys)))
-    stacked_y = tree_multimap(stack, *maybe_reversed(ys))
+    stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
@@ -2196,8 +2196,8 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
     raise TypeError(
         f"{what} must have same type structure, got {tree1} and {tree2}.")
   if not all(_map(core.typematch, avals1, avals2)):
-    diff = tree_multimap(_show_diff, tree_unflatten(tree1, avals1),
-                         tree_unflatten(tree2, avals2))
+    diff = tree_map(_show_diff, tree_unflatten(tree1, avals1),
+                    tree_unflatten(tree2, avals2))
     raise TypeError(f"{what} must have identical types, got\n{diff}.")
 
 

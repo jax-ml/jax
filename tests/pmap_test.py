@@ -354,7 +354,7 @@ class PythonPmapTest(jtu.JaxTestCase):
          'b': np.arange(2 * n * n, 3 * n * n).reshape([n, n]),
          'c': np.arange(4 * n * n, 5 * n * n).reshape([n, n])}
 
-    assert_allclose = partial(tree_util.tree_multimap,
+    assert_allclose = partial(tree_util.tree_map,
                               partial(self.assertAllClose, check_dtypes=False))
     assert_allclose(jax_f(lax.pmax)(x), np_f(np.max)(x))
     assert_allclose(jax_f(lax.pmin)(x), np_f(np.min)(x))
@@ -372,7 +372,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     tree_f = lambda f: partial(tree_util.tree_map, f)
     jax_f = lambda p: self.pmap(lambda x: p(x, 'i'), 'i')
     np_f = lambda p: tree_f(lambda x: np.broadcast_to(p(x, 0), x.shape))
-    assert_allclose = partial(tree_util.tree_multimap,
+    assert_allclose = partial(tree_util.tree_map,
                               partial(self.assertAllClose, check_dtypes=False))
     assert_allclose(jax_f(lax.pmax)(x), np_f(np.max)(x))
     assert_allclose(jax_f(lax.pmin)(x), np_f(np.min)(x))
@@ -2381,7 +2381,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       return {'a': x}
     device_count = jax.device_count()
     x = jnp.arange(device_count)
-    tree_util.tree_multimap(self.assertAllClose, f(x), {'a': x})
+    tree_util.tree_map(self.assertAllClose, f(x), {'a': x})
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{in_axes}_{out_axes}",

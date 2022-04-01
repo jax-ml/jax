@@ -30,7 +30,7 @@ from jax import numpy as jnp
 from jax import linear_util as lu
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
-from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
+from jax.tree_util import tree_flatten, tree_unflatten, tree_map, tree_reduce, tree_leaves
 from jax.interpreters import partial_eval as pe
 
 from jax._src import test_util as jtu
@@ -147,16 +147,16 @@ def fwd_deriv(f):
 
 class CoreTest(jtu.JaxTestCase):
 
-  def test_tree_multimap(self):
+  def test_tree_map(self):
     xs = ({'a': 1}, [2, 3])
     ys = ({'a': 10}, [20, 30])
     ys_bad = ({'a': 10, 'b': 10}, [20, 30])
     zs = ({'a': 11}, [22, 33])
 
     f = lambda x, y: x + y
-    assert tree_multimap(f, xs, ys) == zs
+    assert tree_map(f, xs, ys) == zs
     try:
-      tree_multimap(f, xs, ys_bad)
+      tree_map(f, xs, ys_bad)
       assert False
     except (TypeError, ValueError):
       pass
@@ -170,7 +170,7 @@ class CoreTest(jtu.JaxTestCase):
     flat, treedef = tree_flatten(tree)
     assert flat == [1, 2, 3, 4, 5]
     tree2 = tree_unflatten(treedef, flat)
-    nodes_equal = tree_multimap(operator.eq, tree, tree2)
+    nodes_equal = tree_map(operator.eq, tree, tree2)
     assert tree_reduce(operator.and_, nodes_equal)
 
   @parameterized.named_parameters(

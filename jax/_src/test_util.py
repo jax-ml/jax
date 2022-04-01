@@ -37,7 +37,7 @@ from jax._src import dtypes as _dtypes
 from jax import lax
 from jax._src.config import flags, bool_env, config
 from jax._src.util import prod, unzip2
-from jax.tree_util import tree_multimap, tree_all, tree_map, tree_reduce
+from jax.tree_util import tree_map, tree_all, tree_reduce
 from jax._src.lib import xla_bridge
 from jax._src import dispatch
 from jax.interpreters import mlir
@@ -222,12 +222,12 @@ def _assert_numpy_close(a, b, atol=None, rtol=None, err_msg=''):
 
 def check_eq(xs, ys, err_msg=''):
   assert_close = partial(_assert_numpy_allclose, err_msg=err_msg)
-  tree_all(tree_multimap(assert_close, xs, ys))
+  tree_all(tree_map(assert_close, xs, ys))
 
 def check_close(xs, ys, atol=None, rtol=None, err_msg=''):
   assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol,
                          err_msg=err_msg)
-  tree_all(tree_multimap(assert_close, xs, ys))
+  tree_all(tree_map(assert_close, xs, ys))
 
 def _check_dtypes_match(xs, ys):
   def _assert_dtypes_match(x, y):
@@ -236,13 +236,13 @@ def _check_dtypes_match(xs, ys):
     else:
       assert (_dtypes.canonicalize_dtype(_dtype(x)) ==
               _dtypes.canonicalize_dtype(_dtype(y)))
-  tree_all(tree_multimap(_assert_dtypes_match, xs, ys))
+  tree_all(tree_map(_assert_dtypes_match, xs, ys))
 
 
 def inner_prod(xs, ys):
   def contract(x, y):
     return np.real(np.dot(np.conj(x).reshape(-1), y.reshape(-1)))
-  return tree_reduce(np.add, tree_multimap(contract, xs, ys))
+  return tree_reduce(np.add, tree_map(contract, xs, ys))
 
 
 def _safe_subtract(x, y, *, dtype):
@@ -251,9 +251,9 @@ def _safe_subtract(x, y, *, dtype):
     return np.where(np.equal(x, y), np.array(0, dtype),
                     np.subtract(x, y, dtype=dtype))
 
-add = partial(tree_multimap, lambda x, y: np.add(x, y, dtype=_dtype(x)))
-sub = partial(tree_multimap, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
-safe_sub = partial(tree_multimap,
+add = partial(tree_map, lambda x, y: np.add(x, y, dtype=_dtype(x)))
+sub = partial(tree_map, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
+safe_sub = partial(tree_map,
                    lambda x, y: _safe_subtract(x, y, dtype=_dtype(x)))
 conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
 

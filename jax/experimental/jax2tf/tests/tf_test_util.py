@@ -421,7 +421,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
               for dim_spec in in_spec),
           dtype=tf.float32)
 
-    return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)
+    return tree_util.tree_map(polymorphic_shape_to_tensorspec, polymorphic_shapes)
 
   def CountLargeTfConstants(self, tf_fun: Callable, *args,
                             at_least=256):

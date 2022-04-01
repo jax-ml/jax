@@ -21,7 +21,7 @@ import numpy as np
 from jax import core
 from jax._src import dtypes
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, tree_multimap, tree_structure,
+    PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,
     treedef_children, treedef_is_leaf)
 from jax._src.tree_util import _replace_nones
 from jax import linear_util as lu
@@ -286,7 +286,7 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   axes = []
   add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
   try:
-    tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
+    tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
   except ValueError:
     if kws:
       # if keyword arguments are included in the tree, we make adapt the error

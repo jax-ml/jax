@@ -242,18 +242,18 @@ class TreeTest(jtu.JaxTestCase):
     }, (3, 4)), None, ATuple(foo=(11, 9), bar=None)])
     self.assertEqual(out, [{"foo": 7}, (3, 4), (11, 9), None])
 
-  def testTreeMultimap(self):
+  def testTreeMap(self):
     x = ((1, 2), (3, 4, 5))
     y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
-    out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y)
+    out = tree_util.tree_map(lambda *xs: tuple(xs), x, y)
     self.assertEqual(out, (((1, [3]), (2, None)),
                            ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
-  def testTreeMultimapWithIsLeafArgument(self):
+  def testTreeMapWithIsLeafArgument(self):
     x = ((1, 2), [3, 4, 5])
     y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
-    out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y,
-                                  is_leaf=lambda n: isinstance(n, list))
+    out = tree_util.tree_map(lambda *xs: tuple(xs), x, y,
+                             is_leaf=lambda n: isinstance(n, list))
     self.assertEqual(out, (((1, [3]), (2, None)),
                            (([3, 4, 5], ({"foo": "bar"}, 7, [5, 6])))))
 
