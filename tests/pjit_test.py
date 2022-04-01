@@ -1529,10 +1529,11 @@ class UtilTest(jtu.JaxTestCase):
       roundtrip(P(*spec))
 
   @parameterized.named_parameters(
-      ("linear", {'x': 0, 'y': 1, 'z': 2}, P(('x',), ('y',), ('z',))),
-      ("combine", {'x': 0, 'y': 0, 'z': 1}, P(('x', 'y'), ('z',))),
-      ("skip", {'x': 0, 'y': 0, 'z': 2}, P(('x', 'y'), None, ('z',))),
-      ("multi_skip", {'x': 0, 'y': 1, 'z': 3}, P(('x',), ('y',), None, ('z',))),
+      ("linear", {'x': 0, 'y': 1, 'z': 2}, P('x', 'y', 'z')),
+      ("all_combine", {'x': 0, 'y': 0, 'z': 0}, P(('x', 'y', 'z'))),
+      ("combine", {'x': 0, 'y': 0, 'z': 1}, P(('x', 'y'), 'z')),
+      ("skip", {'x': 0, 'y': 0, 'z': 2}, P(('x', 'y'), None, 'z')),
+      ("multi_skip", {'x': 0, 'y': 1, 'z': 3}, P('x', 'y', None, 'z')),
   )
   def test_array_mapping_to_axis_resources(self, inp, expected_out):
     self.assertEqual(pxla.array_mapping_to_axis_resources(inp), expected_out)

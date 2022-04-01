@@ -442,8 +442,15 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
     reverse_map[index].append(axis)
     if index > max_index:
       max_index = index
-  partitions = tuple(tuple(reverse_map[i]) if reverse_map[i] else None
-                     for i in range(max_index + 1))
+  partitions: List[Union[Tuple[MeshAxisName, ...], MeshAxisName, None]] = []
+  for i in range(max_index + 1):
+    val = reverse_map.get(i, None)
+    if val is None:
+      partitions.append(val)
+    elif len(val) == 1:
+      partitions.append(val[0])
+    else:
+      partitions.append(tuple(val))
   return PartitionSpec(*partitions)
 
 
