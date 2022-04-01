@@ -14,6 +14,8 @@ build --spawn_strategy=standalone
 
 build --enable_platform_specific_config
 
+build --experimental_cc_shared_library
+
 # Disable enabled-by-default TensorFlow features that we don't care about.
 build --define=no_aws_support=true
 build --define=no_gcp_support=true
