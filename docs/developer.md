@@ -213,7 +213,7 @@ on all staged files in your git repository, automatically using the same mypy ve
 in the GitHub CI:
 
 ```
-$ pre-commit run mypy
+pre-commit run mypy
 ```
 
 # Linting
@@ -231,7 +231,7 @@ on all staged files in your git repository, automatically using the same flake8 
 the GitHub tests:
 
 ```
-$ pre-commit run flake8
+pre-commit run flake8
 ```
 
 # Update documentation
@@ -282,7 +282,7 @@ After editing either the ipynb or md versions of the notebooks, you can sync the
 using [jupytext](https://jupytext.readthedocs.io/) by running:
 
 ```
-$ jupytext --sync docs/notebooks/*
+jupytext --sync docs/notebooks/*
 ```
 
 Be sure to use the version of jupytext specified in
@@ -292,7 +292,7 @@ Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework t
 on all staged files in your git repository, automatically using the correct jupytext version:
 
 ```
-$ pre-commit run jupytext
+pre-commit run jupytext
 ```
 
 See the pre-commit framework documentation for information on how to set your local git
@@ -304,7 +304,7 @@ If you are adding a new notebook to the documentation and would like to use the 
 command discussed here, you can set up your notebook for jupytext by using the following command:
 
 ```
-$ jupytext --set-formats ipynb,md:myst path/to/the/notebook.ipynb
+jupytext --set-formats ipynb,md:myst path/to/the/notebook.ipynb
 ```
 
 This works by adding a `"jupytext"` metadata field to the notebook file which specifies the
