@@ -129,7 +129,9 @@ def _hash_compile_options(hash_obj, compile_options_obj):
     hash_obj.update(compile_options_obj.device_assignment.serialize())
 
 def _hash_executable_build_options(hash_obj, executable_obj):
-  if jax._src.lib.xla_extension_version >= 61:
+  if jax._src.lib.xla_extension_version >= 62:
+    expected_options = 34
+  elif jax._src.lib.xla_extension_version >= 61:
     expected_options = 32
   else:
     expected_options = 31
@@ -147,6 +149,13 @@ def _hash_executable_build_options(hash_obj, executable_obj):
   _hash_bool(hash_obj, executable_obj.use_spmd_partitioning)
   if jax._src.lib.xla_extension_version >= 61:
     _hash_bool(hash_obj, executable_obj.use_auto_spmd_partitioning)
+  if jax._src.lib.xla_extension_version >= 62 and executable_obj.use_auto_spmd_partitioning:
+    if executable_obj.auto_spmd_partitioning_mesh_shape is not None:
+      hash_obj.update(
+          executable_obj.auto_spmd_partitioning_mesh_shape.serialize())
+    if executable_obj.auto_spmd_partitioning_mesh_ids is not None:
+      hash_obj.update(
+          executable_obj.auto_spmd_partitioning_mesh_ids.serialize())
   _hash_bool(hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output)
 
 def _hash_debug_options(hash_obj, debug_obj):

@@ -88,7 +88,8 @@ def get_compile_options(
     device_assignment=None,
     use_spmd_partitioning: bool = True,
     use_auto_spmd_partitioning: bool = False,
-) -> xla_client.CompileOptions:
+    auto_spmd_partitioning_mesh_shape=[],
+    auto_spmd_partitioning_mesh_ids=[]) -> xla_client.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
   Args:
@@ -102,6 +103,10 @@ def get_compile_options(
       partitioning in XLA.
     use_auto_spmd_partitioning: boolean indicating whether to automatically
       generate XLA shardings for SPMD partitioner.
+    auto_spmd_partitioning_mesh_shape: device mesh shape used to create
+      auto_spmd_partitioning search space.
+    auto_spmd_partitioning_mesh_ids: device ids used to create
+      auto_spmd_partitioning search space.
   """
   compile_options = xla_client.CompileOptions()
   compile_options.num_replicas = num_replicas
@@ -110,6 +115,9 @@ def get_compile_options(
   build_options.use_spmd_partitioning = use_spmd_partitioning
   if jax._src.lib.xla_extension_version >= 61:
     build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
+  if use_auto_spmd_partitioning and jax._src.lib.xla_extension_version >= 62:
+    build_options.auto_spmd_partitioning_mesh_shape = auto_spmd_partitioning_mesh_shape
+    build_options.auto_spmd_partitioning_mesh_ids = auto_spmd_partitioning_mesh_ids
   if device_assignment is not None:
     logging.vlog(
         2,
