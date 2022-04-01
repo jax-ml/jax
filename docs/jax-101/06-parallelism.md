@@ -272,7 +272,7 @@ def update(params: Params, xs: jnp.ndarray, ys: jnp.ndarray) -> Tuple[Params, jn
 
   # Each device performs its own update, but since we start with the same params
   # and synchronise gradients, the params stay in sync.
-  new_params = jax.tree_multimap(
+  new_params = jax.tree_map(
       lambda param, g: param - g * LEARNING_RATE, params, grads)
 
   return new_params, loss
