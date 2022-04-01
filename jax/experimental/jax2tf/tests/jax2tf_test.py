@@ -786,19 +786,24 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
 
   def test_name_scope(self):
-    log = []
+    @tf.function(autograph=False)
+    def run():
+      @jax.named_call
+      def my_test_function(x):
+        return x * x
 
-    @jax.named_call
-    def my_test_function(x):
-      y = tf.Variable(1., name="foo")
-      log.append(y.name)
-      return x * x
+      def caller(x):
+        return my_test_function(jnp.sin(x))
 
-    def caller(x):
-      return my_test_function(jnp.sin(x))
-
-    jax2tf.convert(caller)(2.)
-    self.assertIn("my_test_function/foo", log[0])
+      out = jax2tf.convert(caller, with_gradient=False)(2.)
+      # When we use `with_gradient=False` the raw output of `caller` is passed
+      # through a `tf.raw_ops.PreventGradient` and a `tf.identity`, clobbering
+      # the name scope of the `mul` op. We need to get the grandparent of the
+      # `out` tensor to see the name scope of the result of the `mul`.
+      grandparent_op = out.op.inputs[0].op.inputs[0]
+      self.assertIn("my_test_function", grandparent_op.name)
+      return out
+    run()
 
   def test_bfloat16_constant(self):
     # Re: https://github.com/google/jax/issues/3942
