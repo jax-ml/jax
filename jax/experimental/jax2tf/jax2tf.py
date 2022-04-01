@@ -1514,7 +1514,8 @@ def _conv_general_dilated(lhs, rhs, *,
   precision_config_proto = _precision_config_proto(precision)
 
   def gen_conv(lhs, rhs, preferred_element_type: Optional[DType]):
-    if tf.__version__ >= "2.8.0":
+    tf_version = tuple(int(v) for v in tf.__version__.split(".")[:2])
+    if tf_version >= (2, 8):
       # TODO(necula): remove when 2.8.0 is the stable TF version (and supports
       # batch_group_count.
       out = tfxla.conv(
