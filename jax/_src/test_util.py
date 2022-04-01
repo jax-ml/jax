@@ -19,7 +19,7 @@ from functools import partial
 import re
 import os
 import textwrap
-from typing import Dict, List, Generator, Sequence, Tuple, Union
+from typing import Dict, List, Generator, Sequence, Tuple, Union, NamedTuple
 import unittest
 import warnings
 import zlib
@@ -30,6 +30,7 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
+from jax import stages
 from jax._src import api
 from jax import core
 from jax._src import dtypes as _dtypes
@@ -42,6 +43,8 @@ from jax._src import dispatch
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.experimental.maps import Mesh
+from jax.interpreters.sharded_jit import PartitionSpec
+from jax.experimental import pjit
 
 
 FLAGS = flags.FLAGS
@@ -1163,6 +1166,22 @@ class _cached_property:
     if self._value is self.null:
       self._value = self._method(obj)
     return self._value
+
+
+class _XLAShardingInfo(NamedTuple):
+  in_pspec: Tuple[PartitionSpec]
+  out_pspec: Tuple[PartitionSpec]
+  compiled: stages.Compiled
+
+
+def compile_and_get_sharding(pjitted_fn, mesh, global_inputs):
+  # TODO(yashkatariya): Check if the pjitted_fn comes from pjit.
+  inputs = [core.ShapedArray(i.shape, i.dtype) for i in global_inputs]
+  compiled = pjitted_fn.lower(*inputs, _global_avals=True).compile()
+  in_sharding, out_sharding = pjit._get_sharding_from_executable(
+      compiled.runtime_executable(), mesh)
+  return _XLAShardingInfo(in_pspec=in_sharding, out_pspec=out_sharding,
+                          compiled=compiled)
 
 
 class _LazyDtypes:
