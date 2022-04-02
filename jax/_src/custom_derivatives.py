@@ -22,9 +22,8 @@ from typing import (Callable, Generic, Optional, Sequence, Tuple, List, TypeVar,
 from jax import core
 from jax import linear_util as lu
 from jax.custom_transpose import custom_transpose
-from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
-                        tree_multimap, treedef_is_leaf, treedef_tuple,
-                        register_pytree_node_class)
+from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, treedef_is_leaf,
+                           treedef_tuple, register_pytree_node_class)
 from jax._src import custom_api_util
 from jax._src import dtypes
 from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
@@ -198,7 +197,7 @@ class custom_jvp(Generic[ReturnValue]):
       zeros = _zeros_like_pytree(primal_out)
       all_tangents_out = [jvp(t, primal_out, *primals) if jvp else zeros
                           for t, jvp in zip(tangents, jvps)]
-      tangent_out = tree_multimap(_sum_tangents, primal_out, *all_tangents_out)
+      tangent_out = tree_map(_sum_tangents, primal_out, *all_tangents_out)
       return primal_out, tangent_out
 
     self.defjvp(jvp)
@@ -617,8 +616,8 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
   try:
     if not isinstance(py_cts_in, tuple):
       raise ValueError
-    tree_multimap(append_cts,
-                  tuple(zero if ct is None else ct for ct in py_cts_in), dummy)
+    tree_map(append_cts,
+             tuple(zero if ct is None else ct for ct in py_cts_in), dummy)
   except ValueError:
     _, in_tree2 = tree_flatten(py_cts_in)
     msg = ("Custom VJP rule must produce an output with the same container "

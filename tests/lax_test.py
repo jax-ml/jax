@@ -2570,7 +2570,7 @@ class LaxTest(jtu.JaxTestCase):
     operands = {'x': [np.ones(5), np.arange(5)]}
     init_values = {'x': [0., 0]}
     result = lax.reduce(operands, init_values,
-                        lambda x, y: tree_util.tree_multimap(lax.add, x, y),
+                        lambda x, y: tree_util.tree_map(lax.add, x, y),
                         [0])
     self.assertDictEqual(result, {'x': [5., 10.]})
 

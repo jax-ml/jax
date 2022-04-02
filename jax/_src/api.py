@@ -43,9 +43,9 @@ from jax import core
 from jax import linear_util as lu
 from jax import stages
 from jax.core import eval_jaxpr
-from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
+from jax.tree_util import (tree_map, tree_multimap, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
-                           tree_multimap, treedef_is_leaf, treedef_children,
+                           tree_map, treedef_is_leaf, treedef_children,
                            Partial, PyTreeDef, all_leaves, treedef_tuple)
 
 from jax._src import device_array
@@ -2731,7 +2731,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     return pxla.make_sharded_device_array(stacked_aval, None, buffers)
 
   with config_explicit_device_put_scope():
-    return tree_multimap(_device_put_sharded, *shards)
+    return tree_map(_device_put_sharded, *shards)
 
 
 def device_put_replicated(x: Any, devices: Sequence[xc.Device]):

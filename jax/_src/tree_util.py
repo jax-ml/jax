@@ -20,6 +20,7 @@ import operator as op
 from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, List,
                     Dict, Type, TypeVar, overload, TYPE_CHECKING, NamedTuple)
 import textwrap
+import warnings
 
 from jax._src.lib import pytree
 
@@ -179,7 +180,11 @@ def tree_map(f: Callable[..., Any], tree: Any, *rest: Any,
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
-tree_multimap = tree_map
+def tree_multimap(*args, **kwargs):
+  """Deprecated alias of :func:`jax.tree_util.tree_map`"""
+  warnings.warn('jax.tree_util.tree_multimap() is deprecated. Please use jax.tree_util.tree_map() '
+                'instead as a drop-in replacement.', FutureWarning)
+  return tree_map(*args, **kwargs)
 
 # TODO(mattjj,phawkins): consider removing this function
 def _process_pytree(process_node, tree):

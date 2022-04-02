@@ -21,7 +21,7 @@ import jax.numpy as jnp
 from jax import device_put
 from jax import lax
 from jax import scipy as jsp
-from jax.tree_util import (tree_leaves, tree_map, tree_multimap, tree_structure,
+from jax.tree_util import (tree_leaves, tree_map, tree_structure,
                            tree_reduce, Partial)
 
 from jax._src import dtypes
@@ -52,11 +52,11 @@ def _vdot_real_part(x, y):
 
 
 def _vdot_real_tree(x, y):
-  return sum(tree_leaves(tree_multimap(_vdot_real_part, x, y)))
+  return sum(tree_leaves(tree_map(_vdot_real_part, x, y)))
 
 
 def _vdot_tree(x, y):
-  return sum(tree_leaves(tree_multimap(partial(
+  return sum(tree_leaves(tree_map(partial(
     jnp.vdot, precision=lax.Precision.HIGHEST), x, y)))
 
 
@@ -73,9 +73,9 @@ def _div(tree, scalar):
   return tree_map(partial(lambda v: v / scalar), tree)
 
 
-_add = partial(tree_multimap, operator.add)
-_sub = partial(tree_multimap, operator.sub)
-_dot_tree = partial(tree_multimap, _dot)
+_add = partial(tree_map, operator.add)
+_sub = partial(tree_map, operator.sub)
+_dot_tree = partial(tree_map, _dot)
 
 
 @Partial
@@ -162,12 +162,12 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
     shat = M(s)
     t = A(shat)
     omega_ = _vdot_tree(t, s) / _vdot_tree(t, t)  # make cases?
-    x_ = tree_multimap(partial(jnp.where, exit_early),
-                       _add(x, _mul(alpha_, phat)),
-                       _add(x, _add(_mul(alpha_, phat), _mul(omega_, shat)))
-                       )
-    r_ = tree_multimap(partial(jnp.where, exit_early),
-                       s, _sub(s, _mul(omega_, t)))
+    x_ = tree_map(partial(jnp.where, exit_early),
+                  _add(x, _mul(alpha_, phat)),
+                  _add(x, _add(_mul(alpha_, phat), _mul(omega_, shat)))
+                  )
+    r_ = tree_map(partial(jnp.where, exit_early),
+                  s, _sub(s, _mul(omega_, t)))
     k_ = jnp.where((omega_ == 0) | (alpha_ == 0), -11, k + 1)
     k_ = jnp.where((rho_ == 0), -10, k_)
     return x_, r_, rhat, alpha_, omega_, rho_, p_, q_, k_
@@ -308,7 +308,7 @@ def _project_on_columns(A, v):
   """
   Returns A.T.conj() @ v.
   """
-  v_proj = tree_multimap(
+  v_proj = tree_map(
       lambda X, y: _einsum("...n,...->n", X.conj(), y), A, v,
   )
   return tree_reduce(operator.add, v_proj)
@@ -400,7 +400,7 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
 
   tol = eps * v_norm_0
   unit_v, v_norm_1 = _safe_normalize(v, thresh=tol)
-  V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
+  V = tree_map(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
 
   h = h.at[k + 1].set(v_norm_1)
   H = H.at[k, :].set(h)
