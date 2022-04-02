@@ -373,6 +373,17 @@ def _lattice_result_type(*args):
     result_type = _least_upper_bound(*{_jax_type(d, w) for d, w in zip(dtypes, weak_types)})
     return dtype(result_type), any(result_type is t for t in _weak_types)
 
+# TODO(mattjj,jakevdp): reduce redundancy with _lattice_result_type
+def _dtype_lattice_join(pair1, pair2):
+  dt1, w1 = pair1
+  dt2, w2 = pair2
+  if w1 and w2:
+    result_type = _least_upper_bound(_jax_type(dt1, False), _jax_type(dt2, False))
+    return dtype(result_type), True
+  else:
+    result_type = _least_upper_bound(_jax_type(*pair1), _jax_type(*pair2))
+    return dtype(result_type), w1 and w2
+
 def result_type(*args):
   """Convenience function to apply JAX argument dtype promotion."""
   if len(args) == 0:
