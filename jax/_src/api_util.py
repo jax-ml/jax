@@ -291,8 +291,10 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
     if kws:
       # if keyword arguments are included in the tree, we make adapt the error
       # message only to be about the positional arguments
-      treedef, leaf = treedef_children(treedef)
-      assert treedef_is_leaf(leaf)
+      treedef, kwargs_treedef = treedef_children(treedef)
+      if not treedef_is_leaf(kwargs_treedef):
+        raise ValueError(
+            "Keyword arguments are expected to be a leaf. Try without them.")
       axis_tree, _ = axis_tree
     hint = ""
     if tupled_args:
