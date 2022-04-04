@@ -1171,6 +1171,18 @@ class GDAPjitTest(jtu.JaxTestCase):
         self.assertEqual(before_cache.hits + 1, after_cache.hits)
         self.assertEqual(before_cache.misses, after_cache.misses)
 
+  def test_pjit_gda_aot_sharding_mismatch(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    input_gda = create_gda(global_input_shape, global_mesh, P('x', 'y'))
+
+    with global_mesh:
+      f = pjit(lambda x: x, in_axis_resources=P('x'), out_axis_resources=P('x'))
+      compiled = f.lower(jax.ShapedArray(global_input_shape, jnp.float32)).compile()
+      with self.assertRaisesRegex(
+          ValueError, "GDA sharding does not match the input sharding."):
+        compiled(input_gda)
+
 
 class AutoShardingPjitTest(jtu.JaxTestCase):
 
@@ -1253,9 +1265,11 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         gda = create_gda(global_input_shape, global_mesh, different_pspec,
                          global_input_data)
         with self.assertRaisesRegex(
-            ValueError,
-            "GDA sharding does not match the sharding returned by auto spmd "
-            "partitioner"):
+            ValueError, "GDA sharding does not match the input sharding."):
+          sharding_info.compiled(gda)
+
+        with self.assertRaisesRegex(
+            ValueError, "GDA sharding does not match the input sharding."):
           f(gda)
 
 

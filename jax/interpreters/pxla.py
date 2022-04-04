@@ -2361,15 +2361,17 @@ def _get_array_mapping_from_executable(
 
 class MeshExecutable(stages.Executable):
   __slots__ = ['xla_executable', 'unsafe_call', '_input_avals',
-               '_auto_spmd_lowering']
+               '_in_axes', '_out_axes', '_auto_spmd_lowering']
 
   def __init__(self, xla_executable, unsafe_call, input_avals,
-               auto_spmd_lowering):
+               in_axes, out_axes, auto_spmd_lowering):
     self.xla_executable = xla_executable
     self.unsafe_call = unsafe_call
     # input_avals is a list of global and local avals. Aval is global if input
     # is a GDA else local.
     self._input_avals = input_avals
+    self._in_axes = in_axes
+    self._out_axes = out_axes
     self._auto_spmd_lowering = auto_spmd_lowering
 
   @staticmethod
@@ -2429,7 +2431,8 @@ class MeshExecutable(stages.Executable):
       handle_args = InputsHandler(xla_executable.local_devices(), input_specs, input_indices)
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args, handle_outs)
 
-    return MeshExecutable(xla_executable, unsafe_call, input_avals, auto_spmd_lowering)
+    return MeshExecutable(xla_executable, unsafe_call, input_avals,
+                          in_axes, out_axes, auto_spmd_lowering)
 
   # -- stages.Executable protocol
 
@@ -2440,11 +2443,26 @@ class MeshExecutable(stages.Executable):
     return self.xla_executable.hlo_modules()
 
   def call(self, *args):
-    # TODO(yashkatariya): Add a AOT lowering test where GDA is an input.
     arg_avals = map(xla.abstractify, args)
     ref_avals = self._input_avals
     dispatch.check_arg_avals_for_call(ref_avals, arg_avals)
+    # Check the GDA sharding and the input sharding.
+    _check_gda_xla_sharding_match(args, self._in_axes)
     return self.unsafe_call(*args)
+
+
+def _check_gda_xla_sharding_match(args, in_array_mappings):
+  from jax.experimental.global_device_array import GlobalDeviceArray, _get_array_mapping
+
+  for arg, inp_array_mapping in safe_zip(args, in_array_mappings):
+    if not isinstance(arg, GlobalDeviceArray):
+      continue
+    gda_array_mapping = _get_array_mapping(arg.mesh_axes)
+    if inp_array_mapping != gda_array_mapping:
+      raise ValueError(
+          "GDA sharding does not match the input sharding. "
+          f"Got GDA spec: {array_mapping_to_axis_resources(gda_array_mapping)} and "
+          f"auto sharding spec: {array_mapping_to_axis_resources(inp_array_mapping)} for GDA: {arg}")
 
 
 _forbidden_primitives = {

@@ -51,7 +51,7 @@ def _get_array_mapping(mesh_axes):
   # Import here to avoid cyclic import error when importing gda in pjit.py.
   from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
 
-  parsed_pspec, _, _ = _prepare_axis_resources(mesh_axes, "GDA mesh_axes")
+  parsed_pspec, _, _, _ = _prepare_axis_resources(mesh_axes, "GDA mesh_axes")
   return get_array_mapping(parsed_pspec)
 
 

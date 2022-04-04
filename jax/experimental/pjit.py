@@ -196,9 +196,9 @@ def pjit(fun: Callable,
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axis_resources = tuple(in_axis_resources)
 
-  in_axis_resources, _, _ = _prepare_axis_resources(
+  in_axis_resources, _, _, in_all_auto = _prepare_axis_resources(
       in_axis_resources, "in_axis_resources")
-  out_axis_resources, _, _ = _prepare_axis_resources(
+  out_axis_resources, _, _, _ = _prepare_axis_resources(
       out_axis_resources, "out_axis_resources")
 
   static_argnums = _ensure_index_tuple(static_argnums)
@@ -236,6 +236,12 @@ def pjit(fun: Callable,
       donated_invars = (False,) * len(args_flat)
 
     _maybe_check_pjit_gda_mesh(args_flat, mesh)
+
+    # TODO(yashkatariya): Make sure you are not checking explicitly for `ShapedArray`.
+    # One possibility, is to only allow GDA and fully replicated inputs for AUTO.
+    if in_all_auto:
+      assert all(isinstance(a, GDA) or (isinstance(a, core.ShapedArray) and _global_avals)
+                 for a in args_flat), args_flat
 
     local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
     # TODO(yashkatariya): This is a hack. This should go away when avals have
@@ -555,7 +561,7 @@ def _prepare_axis_resources(axis_resources,
       for entry in entries
     ]
     _check_unique_resources(entries, arg_name)
-  return tree_unflatten(treedef, entries), entries, treedef
+  return tree_unflatten(treedef, entries), entries, treedef, all_auto
 
 
 def _check_resources_mismatch(in_axis_resources_flat, is_gda):
@@ -621,12 +627,8 @@ def _pjit_call_impl(*args, jaxpr,
   compiled = _pjit_lower(
       jaxpr, in_axis_resources, out_axis_resources,
       resource_env, donated_invars, name, in_is_global).compile()
-  # Check the GDA sharding and the sharding returned by the auto spmd partitoner
-  # only if auto_spmd_lowering is enabled.
-  # TODO(yashkatariya): Move this check to `def call()` method of MeshExecutable.
   if compiled._auto_spmd_lowering:
-    in_pspec, _ = _get_sharding_from_executable(compiled.xla_executable, resource_env.physical_mesh)
-    _check_gda_xla_sharding_match(args, in_pspec)
+    pxla._check_gda_xla_sharding_match(args, compiled._in_axes)
   distributed_debug_log(("Running pjit'd function", name),
                         ("mesh", resource_env.physical_mesh))
   return compiled.unsafe_call(*args)
@@ -955,7 +957,7 @@ pxla.custom_resource_typing_rules[pjit_p] = _resource_typing_pjit
 
 def with_sharding_constraint(x, axis_resources):
   x_flat, tree = tree_flatten(x)
-  parsed_axis_resources, entries, _ = _prepare_axis_resources(
+  parsed_axis_resources, entries, _, _ = _prepare_axis_resources(
       axis_resources, "axis_resources", allow_unconstrained_dims=True)
   axis_resources_flat = tuple(
       flatten_axes("with_sharding_constraint axis_resources",
@@ -1092,25 +1094,6 @@ def _calc_is_global_sequence(in_positional_semantics, in_axis_resources):
   return tuple(
       ips == maps._PositionalSemantics.GLOBAL or p.partitions == ()
       for ips, p in safe_zip(in_positional_semantics, in_axis_resources))
-
-def _check_gda_xla_sharding_match(args, in_pspec):
-  for arg, ip in safe_zip(args, in_pspec):
-    if not isinstance(arg, GDA):
-      continue
-
-    gda_cpspec = CanonicalizedParsedPartitionSpec(
-      ParsedPartitionSpec.from_user_input(
-          arg.mesh_axes, arg_name="GDA mesh_axes"))
-    in_cpspec = CanonicalizedParsedPartitionSpec(
-        ParsedPartitionSpec.from_user_input(ip, arg_name="auto sharding pspec"))
-    if in_cpspec != gda_cpspec:
-      raise ValueError(
-          "GDA sharding does not match the sharding returned by auto spmd "
-          "partitioner. Did you create the GDA with the input sharding "
-          "returned by XLA? If yes, please file a bug. "
-          f"Got GDA spec: {gda_cpspec.user_spec} and "
-          f"auto sharding spec: {in_cpspec.user_spec} for GDA: {arg}")
-
 
 def _get_in_positional_semantics(global_avals: bool, arg) -> maps._PositionalSemantics:
   if isinstance(arg, GDA):
