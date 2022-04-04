@@ -139,5 +139,48 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m1.local_shards:
       self.assertArraysEqual(l.data.to_py(), expected_data[l.device.id])
 
+  def test_spec_has_metadata(self):
+    spec = {
+        'a': {
+            'b': 1,
+            'c': 2,
+        },
+        'd': 3,
+        'e': {
+            'a': 2,
+            'metadata': 3
+        },
+        'f': 4
+    }
+    self.assertTrue(serialization._spec_has_metadata(spec))
+    self.assertTrue(
+        serialization._spec_has_metadata({
+            'driver': 'zarr',
+            'kvstore': 'gfile',
+            'metadata': {
+                'chunks': 4,
+                'shape': (32, 64)
+            },
+            'one_more': 'thing'
+        }))
+
+  def test_spec_has_no_metadata(self):
+    spec = {
+        'a': {
+            'b': 1,
+            'c': 2,
+        },
+        'd': 3,
+        'e': {
+            'a': 2,
+        },
+        'f': 4
+    }
+    self.assertFalse(serialization._spec_has_metadata(spec))
+
+  def test_empty_spec_has_no_metadata(self):
+    spec = {}
+    self.assertFalse(serialization._spec_has_metadata(spec))
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
