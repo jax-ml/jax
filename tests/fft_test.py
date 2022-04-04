@@ -14,6 +14,7 @@
 
 
 import itertools
+import unittest
 
 import numpy as np
 
@@ -107,6 +108,14 @@ class FftTest(jtu.JaxTestCase):
     self.assertAllClose(np.fft.fft(x).astype(np.complex64),
                         lax.fft(x, "FFT", fft_lengths=(10,)))
 
+  @parameterized.parameters((np.float32,), (np.float64,))
+  @unittest.skipIf(jax._src.lib.xla_extension_version < 63,
+                   "Test fails for jaxlib <= 0.3.2")
+  def testLaxIrfftDoesNotMutateInputs(self, dtype):
+    x = jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=dtype) * (1+1j)
+    y = np.asarray(jnp.fft.irfft2(x))
+    z = np.asarray(jnp.fft.irfft2(x))
+    self.assertAllClose(y, z)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}_shape={}_axes={}_s={}_norm={}".format(

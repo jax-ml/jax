@@ -23,7 +23,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.tree_util.tree_multimap` is deprecated. Use {func}`jax.tree_util.tree_map` instead ({jax-issue}`#5746`).
 
 ## jaxlib 0.3.3 (Unreleased)
-
+* Bug fixes
+  * Fixed a bug where double-precision complex-to-real IRFFTs would mutate their
+    input buffers on GPU ({jax-issue}`#9946`).
 
 ## jax 0.3.4 (March 18, 2022)
 * [GitHub
