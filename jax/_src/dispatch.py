@@ -255,15 +255,9 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module: Union[str, xc.XlaComputation]
   module_name = f"jit_{fun.__name__}"
-  if config.jax_enable_mlir:
-    module = mlir.lower_jaxpr_to_module(
-        module_name, closed_jaxpr, backend.platform,
-        mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
-  else:
-    module = xla.lower_jaxpr_to_xla_module(
-        module_name, closed_jaxpr, backend.platform, axis_env,
-        name_stack, tuple_args, donated_invars, replicated_args=None,
-        arg_partitions=None, out_partitions=None)
+  module = mlir.lower_jaxpr_to_module(
+      module_name, closed_jaxpr, backend.platform,
+      mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
   return XlaComputation(
       name, module, False, donated_invars, nreps=nreps, device=device,
       backend=backend, tuple_args=tuple_args, in_avals=abstract_args,

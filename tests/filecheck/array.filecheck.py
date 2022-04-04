@@ -27,7 +27,6 @@ from jax._src.lax import lax as lax_internal
 
 from jax.tests.filecheck.jax_filecheck_helpers import print_ir
 
-jax.config.update("jax_enable_mlir", True)
 jax.config.update("jax_enable_x64", True)
 
 

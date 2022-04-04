@@ -1061,17 +1061,11 @@ def lower_parallel_callable(
   tuple_args = should_tuple_args(shards)
   module_name = f"pmap_{fun.__name__}"
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    if config.jax_enable_mlir:
-      module = mlir.lower_jaxpr_to_module(
-          module_name, closed_jaxpr, backend.platform, mlir.ReplicaAxisContext(axis_env),
-          name_stack, donated_invars, replicated_args=replicated_args,
-          arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
-          result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
-    else:
-      module = xla.lower_jaxpr_to_xla_module(
-          module_name, closed_jaxpr, backend.platform, axis_env,
-          name_stack, tuple_args, donated_invars, replicated_args,
-          parts.arg_parts, parts.out_parts)
+    module = mlir.lower_jaxpr_to_module(
+        module_name, closed_jaxpr, backend.platform, mlir.ReplicaAxisContext(axis_env),
+        name_stack, donated_invars, replicated_args=replicated_args,
+        arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
+        result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
   return PmapComputation(module, pci=pci, replicas=replicas, parts=parts,
                          shards=shards, tuple_args=tuple_args)
 
@@ -2255,7 +2249,6 @@ def lower_mesh_computation(
     if auto_spmd_lowering:
       in_partitions = None
       out_partitions = None
-      out_partitions_t = None
     else:
       global_sharding_spec = mesh_sharding_specs(global_axis_sizes, mesh.axis_names)
       in_partitions = [global_sharding_spec(aval, aval_in_axes).sharding_proto()
@@ -2263,17 +2256,13 @@ def lower_mesh_computation(
                        for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)]
       out_partitions = [global_sharding_spec(aval, aval_out_axes).sharding_proto()
                         for aval, aval_out_axes in safe_zip(global_out_avals, out_axes)]
-      out_partitions_t = xla.tuple_sharding_proto(out_partitions)
     replicated_args = [False] * len(in_jaxpr_avals)
-    partitions_proto = True
     axis_ctx = mlir.SPMDAxisContext(mesh)
     axis_env = axis_ctx.axis_env
   else:
     replicated_args = [not axis for axis in in_axes]
     in_partitions = None
     out_partitions = None
-    out_partitions_t = None
-    partitions_proto = False
     axis_env = xla.AxisEnv(nreps=mesh.size,
                            names=tuple(global_axis_sizes.keys()),
                            sizes=tuple(global_axis_sizes.values()))
@@ -2282,17 +2271,10 @@ def lower_mesh_computation(
   module: Union[str, xc.XlaComputation]
   module_name = f"{api_name}_{fun_name}"
   with core.extend_axis_env_nd(mesh.shape.items()):
-    if config.jax_enable_mlir:
-      module = mlir.lower_jaxpr_to_module(
-          module_name, closed_jaxpr, backend.platform, axis_ctx, name_stack,
-          donated_invars, replicated_args=replicated_args,
-          arg_shardings=in_partitions, result_shardings=out_partitions)
-    else:
-      module = xla.lower_jaxpr_to_xla_module(
-          module_name, closed_jaxpr, backend.platform, axis_env,
-          name_stack, tuple_args, donated_invars, replicated_args,
-          in_partitions, out_partitions_t,
-          partitions_are_protos=partitions_proto)
+    module = mlir.lower_jaxpr_to_module(
+        module_name, closed_jaxpr, backend.platform, axis_ctx, name_stack,
+        donated_invars, replicated_args=replicated_args,
+        arg_shardings=in_partitions, result_shardings=out_partitions)
 
   return MeshComputation(
       str(name_stack), module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,

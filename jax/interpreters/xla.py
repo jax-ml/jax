@@ -25,7 +25,6 @@ import re
 from typing import (Any, Callable, Deque, Dict, List, NamedTuple, Optional,
                     Sequence, Set, Type, Tuple, Union)
 from typing_extensions import Protocol
-import warnings
 
 import numpy as np
 
@@ -34,7 +33,6 @@ from jax import core
 from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
-from jax._src import profiler
 from jax import linear_util as lu
 from jax._src import source_info_util
 from jax._src.abstract_arrays import (make_shaped_array, array_types)
@@ -762,58 +760,6 @@ def set_up_aliases(c, xla_args, out_shape: XlaShape, donated_args, tuple_args):
       c.setup_alias(output_index, param_number, param_index)
 
   return tuple(out_donated_args)
-
-
-@profiler.annotate_function
-def lower_jaxpr_to_xla_module(
-    fn_name: str, jaxpr: core.ClosedJaxpr, platform: str, axis_env: AxisEnv,
-    name_stack: Union[source_info_util.NameStack, str], tuple_args: bool,
-    donated_invars: Sequence[bool], replicated_args: Optional[Sequence[bool]],
-    arg_partitions: Optional[Any],
-    out_partitions: Optional[Any],
-    partitions_are_protos: bool = False
-    ) -> xc.XlaComputation:
-  """Lowers a closed jaxpr to a top-level XLA module."""
-  c = xc.XlaBuilder(fn_name)
-  xla_consts = _xla_consts(c, jaxpr.consts)
-  xla_args, donated_invars = _xla_callable_args(
-      c, jaxpr.in_avals, tuple_args, donated_invars=donated_invars,
-      replicated=replicated_args, partitions=arg_partitions,
-      partitions_proto=partitions_are_protos)
-  ctx = TranslationContext(c, platform, axis_env, name_stack)
-  out_nodes = jaxpr_subcomp(ctx, jaxpr.jaxpr, xla_consts, *xla_args)
-  # Replace tokens with a dummy array value, because the runtime cannot
-  # handle token arguments.
-  out_aval_lens = [len(aval_to_xla_shapes(a)) for a in jaxpr.out_avals]
-  out_nodes = util.flatten(
-      [[_make_token_return_value(c)] if a is core.abstract_token
-       else v for a, v in zip(jaxpr.out_avals,
-                              util.unflatten(out_nodes, out_aval_lens))])
-
-  # There is a non-zero cost to building an output tuple, particularly on TPU.
-  # Avoid it if the output arity is 1.
-  if out_partitions is None:
-    output = out_nodes[0] if len(out_nodes) == 1 else xc.ops.Tuple(c, out_nodes)
-  else:
-    build_out_tuple = partial(xops.Tuple, c, out_nodes)
-    if partitions_are_protos:
-      output = with_sharding_proto(c, out_partitions, build_out_tuple)
-    else:
-      output = with_sharding(c, out_partitions, build_out_tuple)
-
-  platforms_with_donation = ("gpu", "tpu")
-  if platform in platforms_with_donation:
-    donated_invars = set_up_aliases(
-        c, xla_args, c.GetShape(output), donated_invars, tuple_args)
-  if any(donated_invars):
-    # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-    unused_donations = [str(c.GetShape(a))
-                        for a, d in zip(xla_args, donated_invars) if d]
-    msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
-    if platform not in platforms_with_donation:
-      msg = f"Donation is not implemented for {platform}.\n{msg}"
-    warnings.warn(f"Some donated buffers were not usable: {', '.join(unused_donations)}.\n{msg}")
-  return c.build(output)
 
 
 xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
