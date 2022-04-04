@@ -2657,6 +2657,8 @@ def device_put(x, device: Optional[xc.Device] = None):
   For more details on data placement see the
   :ref:`FAQ on data placement <faq-data-placement>`.
 
+  This function is always asynchronous, i.e. returns immediately.
+
   Returns:
     A copy of ``x`` that resides on ``device``.
   """
@@ -2673,6 +2675,8 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
       the output. The length of ``shards`` must equal the length of ``devices``.
     devices: A sequence of :py:class:`Device` instances representing the devices
       to which corresponding shards in ``shards`` will be transferred.
+
+  This function is always asynchronous, i.e. returns immediately.
 
   Returns:
     A ShardedDeviceArray or (nested) Python container thereof representing the
@@ -2742,6 +2746,8 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
       representing the array to be replicated to form the output.
     devices: A sequence of :py:class:`Device` instances representing the devices
       to which ``x`` will be transferred.
+
+  This function is always asynchronous, i.e. returns immediately.
 
   Returns:
     A ShardedDeviceArray or (nested) Python container thereof representing the
