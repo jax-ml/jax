@@ -17,7 +17,7 @@ Parallelization primitives.
 
 from functools import partial
 import string
-from typing import Union
+from typing import Union, TypeVar
 import warnings
 
 import numpy as np
@@ -40,10 +40,11 @@ xops = xc.ops
 
 unsafe_map, map = map, safe_map  # type: ignore
 
+A = TypeVar('A')
 
 ### parallel traceables
 
-def psum(x, axis_name, *, axis_index_groups=None):
+def psum(x: A, axis_name, *, axis_index_groups=None) -> A:
   """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -88,7 +89,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
       *leaves, axes=tuple(axis_name), axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
 
-def pmean(x, axis_name, *, axis_index_groups=None):
+def pmean(x: A, axis_name, *, axis_index_groups=None) -> A:
   """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -121,7 +122,7 @@ def pmean(x, axis_name, *, axis_index_groups=None):
   n = psum(1, axis_name=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(lambda v: v / n, x)
 
-def pmax(x, axis_name, *, axis_index_groups=None):
+def pmax(x: A, axis_name, *, axis_index_groups=None) -> A:
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -151,7 +152,7 @@ def pmax(x, axis_name, *, axis_index_groups=None):
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
 
-def pmin(x, axis_name, *, axis_index_groups=None):
+def pmin(x: A, axis_name, *, axis_index_groups=None) -> A:
   """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -188,7 +189,7 @@ def pargmin(x, axis_name):
   return _axis_index_of_val(x, pmin(x, axis_name), axis_name)
 
 # TODO(mattjj): add a pargmax_p, or add named axis support to lax.argmax_p
-def pargmax(x, axis_name):
+def pargmax(x: A, axis_name) -> A:
   if isinstance(axis_name, (tuple, list)):
     raise TypeError(f"pargmin only accepts a single axis, got {axis_name}")
   return _axis_index_of_val(x, pmax(x, axis_name), axis_name)
@@ -210,7 +211,7 @@ def _canonicalize_axis_index_groups(axis_index_groups):
     return
   return tuple(map(tuple, axis_index_groups))
 
-def ppermute(x, axis_name, perm):
+def ppermute(x: A, axis_name, perm) -> A:
   """Perform a collective permutation according to the permutation ``perm``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -239,7 +240,7 @@ def ppermute(x, axis_name, perm):
       partial(ppermute_p.bind, axis_name=axis_name,
               perm=tuple(map(tuple, perm))), x)
 
-def pshuffle(x, axis_name, perm):
+def pshuffle(x: A, axis_name, perm) -> A:
   """Convenience wrapper of jax.lax.ppermute with alternate permutation encoding
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -263,7 +264,7 @@ def pshuffle(x, axis_name, perm):
   return ppermute(x, axis_name, list(zip(perm, range(len(perm)))))
 
 
-def pswapaxes(x, axis_name, axis, *, axis_index_groups=None):
+def pswapaxes(x: A, axis_name, axis, *, axis_index_groups=None) -> A:
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -294,7 +295,7 @@ def pswapaxes(x, axis_name, axis, *, axis_index_groups=None):
   """
   return all_to_all(x, axis_name, axis, axis, axis_index_groups=axis_index_groups)
 
-def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None, tiled=False):
+def all_to_all(x: A, axis_name, split_axis, concat_axis, *, axis_index_groups=None, tiled=False) -> A:
   """Materialize the mapped axis and map a different axis.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -986,7 +987,7 @@ batching.axis_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
 core.axis_substitution_rules[all_to_all_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 
-def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
+def all_gather(x: A, axis_name, *, axis_index_groups=None, axis=0, tiled=False) -> A:
   """Gather values of x across all replicas.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -1272,7 +1273,7 @@ xla.register_translation(
 pxla.multi_host_supported_collectives.add(reduce_scatter_p)
 
 
-def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None, tiled=False):
+def psum_scatter(x: A, axis_name, *, scatter_dimension=0, axis_index_groups=None, tiled=False) -> A:
   """Compute an all-reduce sum over the axis ``axis_name``, and scatter the result.
 
   Args:
