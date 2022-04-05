@@ -123,6 +123,7 @@ from jax._src.api import (
 )
 from jax.experimental.maps import soft_pmap as soft_pmap
 from jax.version import __version__ as __version__
+from jax.version import __version_info__ as __version_info__
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
