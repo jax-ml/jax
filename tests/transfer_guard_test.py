@@ -100,149 +100,143 @@ _COMMON_TEST_PARAMETERS = [
     ("all", _all_funcs, jax.transfer_guard),
 ]
 
-if jax._src.lib.xla_extension_version < 58:
 
-  class TransferGuardTest(jtu.JaxTestCase):
-    pass
+class TransferGuardTest(jtu.JaxTestCase):
+  # `_default_config` is used by `jtu.JaxTestCase` to update the JAX config for
+  # every test case. TransferGuardTest disables `--jax_enable_checks` because it
+  # can prematurely fetch the value of device arrays and make device-to-host
+  # tests to incur no transfers unexpectedly.
+  _default_config = {"jax_enable_checks": False}
 
-else:
+  @contextlib.contextmanager
+  def assertAllows(self, func_name):
+    """Asserts that a transfer in the context is allowed."""
+    try:
+      yield
+    except Exception as e:  # pylint: disable=broad-except
+      raise RuntimeError(
+          f"Expected a transfer to be allowed while running: {func_name}"
+      ) from e
 
-  class TransferGuardTest(jtu.JaxTestCase):
-    # `_default_config` is used by `jtu.JaxTestCase` to update the JAX config
-    # for every test case. TransferGuardTest disables `--jax_enable_checks`
-    # because it can prematurely fetch the value of device arrays and make
-    # device-to-host tests to incur no transfers unexpectedly.
-    _default_config = {"jax_enable_checks": False}
+  @contextlib.contextmanager
+  def assertLogs(self, func_name):
+    """Asserts that a transfer in the context is logged and allowed."""
+    # Only check if the transfer is allowed until Abseil provides an interface
+    # to capture logs.
+    with self.assertAllows(func_name):
+      yield
 
-    @contextlib.contextmanager
-    def assertAllows(self, func_name):
-      """Asserts that a transfer in the context is allowed."""
-      try:
+  @contextlib.contextmanager
+  def assertDisallows(self, func_name):
+    """Asserts that a transfer in the context is disallowed."""
+    try:
+      with self.assertRaises(Exception):
         yield
-      except Exception as e:  # pylint: disable=broad-except
-        raise RuntimeError(
-            f"Expected a transfer to be allowed while running: {func_name}"
-        ) from e
+    except Exception as e:  # pylint: disable=broad-except
+      raise RuntimeError(
+          f"Expected a transfer to be disallowed while running: {func_name}"
+      ) from e
 
-    @contextlib.contextmanager
-    def assertLogs(self, func_name):
-      """Asserts that a transfer in the context is logged and allowed."""
-      # Only check if the transfer is allowed until Abseil provides an
-      # interface to capture logs.
-      with self.assertAllows(func_name):
-        yield
+  def test_simple(self):
+    """Simple transfer guard tests."""
+    with jax.transfer_guard("allow"):
+      with self.assertAllows("host_to_device_jnp_ones"):
+        jnp.ones(1)
+    with jax.transfer_guard("log"):
+      with self.assertLogs("host_to_device_jnp_ones"):
+        jnp.ones(1)
+    with jax.transfer_guard("disallow"):
+      with self.assertDisallows("host_to_device_jnp_ones"):
+        jnp.ones(1)
 
-    @contextlib.contextmanager
-    def assertDisallows(self, func_name):
-      """Asserts that a transfer in the context is disallowed."""
-      try:
-        with self.assertRaises(Exception):
-          yield
-      except Exception as e:  # pylint: disable=broad-except
-        raise RuntimeError(
-            f"Expected a transfer to be disallowed while running: {func_name}"
-        ) from e
-
-    def test_simple(self):
-      """Simple transfer guard tests."""
+  def test_nesting(self):
+    with jax.transfer_guard("disallow"):
       with jax.transfer_guard("allow"):
         with self.assertAllows("host_to_device_jnp_ones"):
           jnp.ones(1)
-      with jax.transfer_guard("log"):
-        with self.assertLogs("host_to_device_jnp_ones"):
-          jnp.ones(1)
-      with jax.transfer_guard("disallow"):
-        with self.assertDisallows("host_to_device_jnp_ones"):
-          jnp.ones(1)
+      with self.assertDisallows("host_to_device_jnp_ones"):
+        jnp.ones(1)
 
-    def test_nesting(self):
-      with jax.transfer_guard("disallow"):
-        with jax.transfer_guard("allow"):
-          with self.assertAllows("host_to_device_jnp_ones"):
-            jnp.ones(1)
-        with self.assertDisallows("host_to_device_jnp_ones"):
+  def test_mixed_nesting(self):
+    with jax.transfer_guard_host_to_device("disallow"):
+      with jax.transfer_guard("allow"):
+        with self.assertAllows("host_to_device_jnp_ones"):
           jnp.ones(1)
+      with self.assertDisallows("host_to_device_jnp_ones"):
+        jnp.ones(1)
 
-    def test_mixed_nesting(self):
-      with jax.transfer_guard_host_to_device("disallow"):
-        with jax.transfer_guard("allow"):
-          with self.assertAllows("host_to_device_jnp_ones"):
-            jnp.ones(1)
-        with self.assertDisallows("host_to_device_jnp_ones"):
+    with jax.transfer_guard("disallow"):
+      with jax.transfer_guard_host_to_device("allow"):
+        with self.assertAllows("host_to_device_jnp_ones"):
           jnp.ones(1)
+      with self.assertDisallows("host_to_device_jnp_ones"):
+        jnp.ones(1)
 
-      with jax.transfer_guard("disallow"):
-        with jax.transfer_guard_host_to_device("allow"):
-          with self.assertAllows("host_to_device_jnp_ones"):
-            jnp.ones(1)
-        with self.assertDisallows("host_to_device_jnp_ones"):
-          jnp.ones(1)
+  @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
+  def test_allow_by_default(self, func_generator, _):
+    for func_name, _, func in func_generator():
+      with self.assertAllows(func_name):
+        func()
 
-    @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
-    def test_allow_by_default(self, func_generator, _):
-      for func_name, _, func in func_generator():
+  @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
+  def test_allow(self, func_generator, jax_transfer_guard):
+    for func_name, _, func in func_generator():
+      with jax_transfer_guard("allow"):
         with self.assertAllows(func_name):
           func()
 
-    @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
-    def test_allow(self, func_generator, jax_transfer_guard):
-      for func_name, _, func in func_generator():
-        with jax_transfer_guard("allow"):
+  @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
+  def test_log(self, func_generator, jax_transfer_guard):
+    for func_name, explicit, func in func_generator():
+      with jax_transfer_guard("log"):
+        if explicit:
           with self.assertAllows(func_name):
             func()
-
-    @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
-    def test_log(self, func_generator, jax_transfer_guard):
-      for func_name, explicit, func in func_generator():
-        with jax_transfer_guard("log"):
-          if explicit:
-            with self.assertAllows(func_name):
-              func()
-          else:
-            with self.assertLogs(func_name):
-              func()
-
-    @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
-    def test_disallow(self, func_generator, jax_transfer_guard):
-      for func_name, explicit, func in func_generator():
-        with jax_transfer_guard("disallow"):
-          if explicit:
-            with self.assertAllows(func_name):
-              func()
-          else:
-            with self.assertDisallows(func_name):
-              func()
-
-    @parameterized.named_parameters(
-        ("device_to_host", _device_to_host_funcs,
-         jax.transfer_guard_device_to_host),
-        ("all", _device_to_host_funcs, jax.transfer_guard),
-    )
-    def test_disallow_ignores_arrays_on_cpu(self, func_generator,
-                                            jax_transfer_guard):
-      for func_name, _, func in func_generator():
-        with jax_transfer_guard("allow"):
-          # Transfer the device array to host.
-          func()
-        with jax_transfer_guard("disallow"):
-          with self.assertAllows(func_name):
-            # No error because the array has a value on host and no new transfer
-            # will occur.
-            func()
-
-    @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
-    def test_log_explicit(self, func_generator, jax_transfer_guard):
-      for func_name, _, func in func_generator():
-        with jax_transfer_guard("log_explicit"):
+        else:
           with self.assertLogs(func_name):
             func()
 
-    @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
-    def test_disallow_explicit(self, func_generator, jax_transfer_guard):
-      for func_name, _, func in func_generator():
-        with jax_transfer_guard("disallow_explicit"):
+  @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
+  def test_disallow(self, func_generator, jax_transfer_guard):
+    for func_name, explicit, func in func_generator():
+      with jax_transfer_guard("disallow"):
+        if explicit:
+          with self.assertAllows(func_name):
+            func()
+        else:
           with self.assertDisallows(func_name):
             func()
+
+  @parameterized.named_parameters(
+      ("device_to_host", _device_to_host_funcs,
+       jax.transfer_guard_device_to_host),
+      ("all", _device_to_host_funcs, jax.transfer_guard),
+  )
+  def test_disallow_ignores_arrays_on_cpu(self, func_generator,
+                                          jax_transfer_guard):
+    for func_name, _, func in func_generator():
+      with jax_transfer_guard("allow"):
+        # Transfer the device array to host.
+        func()
+      with jax_transfer_guard("disallow"):
+        with self.assertAllows(func_name):
+          # No error because the array has a value on host and no new transfer
+          # will occur.
+          func()
+
+  @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
+  def test_log_explicit(self, func_generator, jax_transfer_guard):
+    for func_name, _, func in func_generator():
+      with jax_transfer_guard("log_explicit"):
+        with self.assertLogs(func_name):
+          func()
+
+  @parameterized.named_parameters(*_COMMON_TEST_PARAMETERS)
+  def test_disallow_explicit(self, func_generator, jax_transfer_guard):
+    for func_name, _, func in func_generator():
+      with jax_transfer_guard("disallow_explicit"):
+        with self.assertDisallows(func_name):
+          func()
 
 
 if __name__ == "__main__":
