@@ -978,8 +978,13 @@ def xla_fallback_lowering(prim: core.Primitive):
                                flatten_lowering_ir_args(args)).result
     if not prim.multiple_results:
       return [call]
-    flat_results = [mhlo.GetTupleElementOp(typ, call, i32_attr(i)).result
-                    for i, typ in enumerate(flat_output_types)]
+    if jax._src.lib.mlir_api_version < 6:
+      flat_results = [mhlo.GetTupleElementOp(typ, call, i32_attr(i)).result
+                      for i, typ in enumerate(flat_output_types)]
+    else:
+      flat_results = [mhlo.GetTupleElementOp(call, i32_attr(i)).result
+                      for i in range(len(flat_output_types))]
+
     return util.unflatten(flat_results, map(len, output_types))
   return fallback
 
