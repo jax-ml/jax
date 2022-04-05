@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+def _version_as_tuple(version_str):
+  return tuple(int(i) for i in version_str.split(".") if i.isdigit())
+
 __version__ = "0.3.5"
+__version_info__ = _version_as_tuple(__version__)
 
 _minimum_jaxlib_version = "0.3.0"
+_minimum_jaxlib_version_info = _version_as_tuple(_minimum_jaxlib_version)
