@@ -24,6 +24,7 @@ from jax._src.scipy.linalg import (
   eigh_tridiagonal as eigh_tridiagonal,
   expm as expm,
   expm_frechet as expm_frechet,
+  hilbert as hilbert,
   inv as inv,
   lu as lu,
   lu_factor as lu_factor,
@@ -37,7 +38,6 @@ from jax._src.scipy.linalg import (
   svd as svd,
   tril as tril,
   triu as triu,
-  hilbert as hilbert,
 )
 
 from jax._src.lax.polar import (
