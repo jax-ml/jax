@@ -1567,7 +1567,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
   @parameterized.parameters(1, 5)
   def test_hilbert(self, n):
       args_maker = lambda: [n]
-      print(n)
       self._CheckAgainstNumpy(osp.linalg.hilbert, jsp.linalg.hilbert, args_maker)
 
 
