@@ -15,6 +15,9 @@
 import functools
 import operator
 
+import jaxlib.mlir.ir as ir
+import jaxlib.mlir.dialects.mhlo as mhlo
+
 import numpy as np
 
 from jaxlib import xla_client
@@ -61,3 +64,34 @@ def lu_pivots_to_permutation(c, pivots, *, permutation_size):
       opaque=opaque,
       api_version=xla_client.ops.CustomCallApiVersion
       .API_VERSION_STATUS_RETURNING)
+
+
+def lu_pivots_to_permutation_mhlo(pivots, *, permutation_size):
+  """Kernel for the transformation of pivots to permutations on GPU."""
+  typ = ir.RankedTensorType(pivots.type)
+  dims = typ.shape
+  i32_type = ir.IntegerType.get_signless(32)
+
+  assert typ.element_type == i32_type, typ
+
+  batch_size = _prod(dims[:-1])
+  pivot_size = dims[-1]
+
+  opaque = _hip_linalg.cuda_lu_pivots_to_permutation_descriptor(
+      batch_size, pivot_size, permutation_size)
+  pivots_layout = ir.DenseIntElementsAttr.get(np.arange(len(dims) - 1, -1, -1),
+                                              type=ir.IndexType.get())
+  permutations_layout = pivots_layout
+  permutations_dims = list(dims)
+  permutations_dims[-1] = permutation_size
+  permutations_type = ir.RankedTensorType.get(permutations_dims, i32_type)
+  return mhlo.CustomCallOp(
+      [permutations_type],
+      [pivots],
+      call_target_name = ir.StringAttr.get("cuda_lu_pivots_to_permutation"),
+      has_side_effect=ir.BoolAttr.get(False),
+      backend_config=ir.StringAttr.get(opaque),
+      api_version=ir.IntegerAttr.get(i32_type, 2),
+      called_computations=ir.ArrayAttr.get([]),
+      operand_layouts=ir.ArrayAttr.get([pivots_layout]),
+      result_layouts=ir.ArrayAttr.get([permutations_layout])).result

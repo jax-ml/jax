@@ -2143,20 +2143,6 @@ ad.defjvp(
     lambda g, x, y: mul(neg(g), floor(div(x, y))))
 mlir.register_lowering(rem_p, partial(_nary_lower_mhlo, mhlo.RemOp))
 
-
-def _broadcasting_select(c, which, x, y):
-  """Wrapper around XLA `Select` that broadcasts its arguments."""
-  which_shape, x_shape, y_shape = (
-    c.get_shape(t).dimensions() for t in (which, x, y))
-  out_shape = broadcast_shapes(which_shape, x_shape, y_shape)
-  bcast_dims = lambda shape: tuple(range(len(out_shape) - len(shape),
-                                         len(out_shape)))
-  which = xops.BroadcastInDim(which, out_shape, bcast_dims(which_shape))
-  x = xops.BroadcastInDim(x, out_shape, bcast_dims(x_shape))
-  y = xops.BroadcastInDim(y, out_shape, bcast_dims(y_shape))
-  return xops.Select(which, x, y)
-
-
 def _minmax_complex_lowering(x, y, *, lax_cmp_pick_x):
   result_shape = broadcast_shapes(np.shape(x), np.shape(y))
   x = _maybe_broadcast(result_shape, x)

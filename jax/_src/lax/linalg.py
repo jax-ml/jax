@@ -24,6 +24,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax import lax
 from jax._src import dtypes
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -31,8 +32,9 @@ from jax._src.util import prod
 from jax.core import Primitive, ShapedArray, raise_to_shaped
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
-    _input_dtype, _broadcasting_select)
+    _input_dtype)
 from jax._src.lax import lax as lax_internal
+import jax._src.lib
 from jax._src.lib import lapack
 
 from jax._src.lib import cuda_linalg
@@ -42,6 +44,10 @@ from jax._src.lib import hipsolver
 from jax._src.lib import sparse_apis
 
 from jax._src.lib import xla_client
+
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import chlo
+from jax._src.lib.mlir.dialects import mhlo
 
 xops = xla_client.ops
 
@@ -343,15 +349,6 @@ cholesky_p = standard_unop(_float | _complex, 'cholesky')
 ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
 batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
 
-def _nan_like(c, operand):
-  shape = c.get_shape(operand)
-  dtype = shape.element_type()
-  if jnp.issubdtype(dtype, np.complexfloating):
-    nan = xops.Constant(c, np.array(np.nan * (1. + 1j), dtype=dtype))
-  else:
-    nan = xops.Constant(c, np.array(np.nan, dtype=dtype))
-  return xops.Broadcast(nan, shape.dimensions())
-
 def _cholesky_cpu_gpu_translation_rule(potrf_impl, ctx, avals_in, avals_out,
                                        operand):
   operand_aval, = avals_in
@@ -380,6 +377,39 @@ if hipsolver is not None:
     partial(_cholesky_cpu_gpu_translation_rule, hipsolver.potrf),
     platform='gpu')
 
+def _cholesky_cpu_gpu_lowering(potrf_impl, ctx, operand):
+  operand_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
+  batch_dims = operand_aval.shape[:-2]
+  result, info = potrf_impl(operand_aval.dtype, operand, lower=True)
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+  return [_broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      result, _nan_like_mhlo(out_aval))]
+
+if jax._src.lib.version >= (0, 3, 3):
+  mlir.register_lowering(
+      cholesky_p,
+      partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
+      platform='cpu')
+
+  if cusolver is not None:
+    mlir.register_lowering(
+      cholesky_p,
+      partial(_cholesky_cpu_gpu_lowering, cusolver.potrf_mhlo),
+      platform='gpu')
+
+  if hipsolver is not None:
+    mlir.register_lowering(
+      cholesky_p,
+      partial(_cholesky_cpu_gpu_lowering, hipsolver.potrf_mhlo),
+      platform='gpu')
+
 # Asymmetric eigendecomposition
 
 def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors):
@@ -388,8 +418,7 @@ def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors):
                         compute_left_eigenvectors=compute_left_eigenvectors,
                         compute_right_eigenvectors=compute_right_eigenvectors))
 
-def eig_translation_rule(ctx, avals_in, avals_out, operand, *,
-                         compute_left_eigenvectors, compute_right_eigenvectors):
+def eig_lower(*args, **kw):
   raise NotImplementedError(
     "Nonsymmetric eigendecomposition is only implemented on the CPU backend. "
     "If your matrix is symmetric or Hermitian, you should use eigh instead.")
@@ -418,8 +447,6 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
 
   return tuple(output)
 
-_cpu_geev = lapack.geev
-
 def _eig_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
                               compute_left_eigenvectors,
                               compute_right_eigenvectors):
@@ -427,8 +454,8 @@ def _eig_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
   batch_dims = operand_aval.shape[:-2]
   c = ctx.builder
 
-  w, vl, vr, info = _cpu_geev(c, operand, jobvl=compute_left_eigenvectors,
-                              jobvr=compute_right_eigenvectors)
+  w, vl, vr, info = lapack.geev(c, operand, jobvl=compute_left_eigenvectors,
+                                jobvr=compute_right_eigenvectors)
 
   ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
@@ -446,6 +473,50 @@ def _eig_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
     output.append(vr)
 
   return output
+
+def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
+                      compute_right_eigenvectors):
+  operand_aval, = ctx.avals_in
+  out_aval = ctx.avals_out[0]
+  batch_dims = operand_aval.shape[:-2]
+
+  w, vl, vr, info = lapack.geev_mhlo(operand_aval.dtype, operand,
+                                     jobvl=compute_left_eigenvectors,
+                                     jobvr=compute_right_eigenvectors)
+
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+  w = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1,),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      w, _nan_like_mhlo(out_aval))
+  output = [w]
+
+  if compute_left_eigenvectors:
+    aval = ctx.avals_out[len(output)]
+    vl = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+        vl, _nan_like_mhlo(aval))
+    output.append(vl)
+
+  if compute_right_eigenvectors:
+    aval = ctx.avals_out[len(output)]
+    vr = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+        vr, _nan_like_mhlo(aval))
+    output.append(vr)
+
+  return output
+
 
 def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
                       compute_right_eigenvectors):
@@ -475,8 +546,11 @@ eig_p = Primitive('eig')
 eig_p.multiple_results = True
 eig_p.def_impl(eig_impl)
 eig_p.def_abstract_eval(eig_abstract_eval)
-xla.register_translation(eig_p, eig_translation_rule)
+xla.register_translation(eig_p, eig_lower)
 xla.register_translation(eig_p, _eig_cpu_translation_rule, platform='cpu')
+mlir.register_lowering(eig_p, eig_lower)
+if jax._src.lib.version >= (0, 3, 3):
+  mlir.register_lowering(eig_p, _eig_cpu_lowering, platform='cpu')
 batching.primitive_batchers[eig_p] = eig_batching_rule
 ad.primitive_jvps[eig_p] = eig_jvp_rule
 
@@ -522,6 +596,27 @@ def _eigh_cpu_gpu_translation_rule(syevd_impl, ctx, avals_in, avals_out,
                            _nan_like(c, w))
   return [v, w]
 
+def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower):
+  operand_aval, = ctx.avals_in
+  v_aval, w_aval = ctx.avals_out
+  batch_dims = operand_aval.shape[:-2]
+  v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
+  zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  ok = mlir.compare_mhlo(info, zeros, "EQ", "SIGNED")
+  v = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      v, _nan_like_mhlo(v_aval))
+  w = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1,),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      w, _nan_like_mhlo(w_aval))
+  return [v, w]
+
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
   # This is classic nondegenerate perurbation theory, but also see
@@ -563,21 +658,33 @@ xla.register_translation(eigh_p, _eigh_translation_rule)
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
-_cpu_syevd = lapack.syevd
-
 xla.register_translation(
-    eigh_p, partial(_eigh_cpu_gpu_translation_rule, _cpu_syevd),
+    eigh_p, partial(_eigh_cpu_gpu_translation_rule, lapack.syevd),
     platform='cpu')
+
+if jax._src.lib.version >= (0, 3, 3):
+  mlir.register_lowering(
+      eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),
+      platform='cpu')
+
 
 if cusolver is not None:
   xla.register_translation(
     eigh_p, partial(_eigh_cpu_gpu_translation_rule, cusolver.syevd),
     platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+      eigh_p, partial(_eigh_cpu_gpu_lowering, cusolver.syevd_mhlo),
+      platform='gpu')
 
 if hipsolver is not None:
   xla.register_translation(
     eigh_p, partial(_eigh_cpu_gpu_translation_rule, hipsolver.syevd),
     platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+      eigh_p, partial(_eigh_cpu_gpu_lowering, hipsolver.syevd_mhlo),
+      platform='gpu')
 
 
 triangular_solve_dtype_rule = partial(
@@ -730,6 +837,36 @@ xla.register_translation(triangular_solve_p,
                          _triangular_solve_cpu_translation_rule,
                          platform='cpu')
 
+def _triangular_solve_cpu_lower(
+    ctx, a, b, *, left_side, lower, transpose_a,
+    conjugate_a, unit_diagonal):
+  a_aval, _ = ctx.avals_in
+
+  if conjugate_a and not transpose_a:
+    a = chlo.ConjOp(a).result
+    conjugate_a = False
+  if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
+    alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
+    return [lapack.trsm_mhlo(
+      a_aval.dtype, alpha,
+      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
+  else:
+    # Fall back to the HLO implementation for unsupported types or batching.
+    # TODO: Consider swapping XLA for LAPACK in batched case
+    if transpose_a:
+      transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
+    else:
+      transpose = "NO_TRANSPOSE"
+    return mhlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
+                                  ir.BoolAttr.get(lower),
+                                  ir.BoolAttr.get(unit_diagonal),
+                                  mhlo.TransposeAttr.get(transpose)).results
+
+if jax._src.lib.version >= (0, 3, 3):
+  mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
+                         platform='cpu')
+
+
 def _triangular_solve_gpu_translation_rule(
     trsm_impl, ctx, avals_in, avals_out, a, b, *, left_side, lower, transpose_a,
     conjugate_a, unit_diagonal):
@@ -753,17 +890,51 @@ def _triangular_solve_gpu_translation_rule(
     return [xops.TriangularSolve(a, b, left_side, lower, unit_diagonal,
                                  transpose)]
 
+def _triangular_solve_gpu_lower(
+    trsm_impl, ctx, a, b, *, left_side, lower, transpose_a, conjugate_a,
+    unit_diagonal):
+  a_aval, _ = ctx.avals_in
+  m, n = a_aval.shape[-2:]
+  batch = prod(a_aval.shape[:-2])
+  if conjugate_a and not transpose_a:
+    a = chlo.ConjOp(a).result
+    conjugate_a = False
+  if batch > 1 and m <= 256 and n <= 256:
+    return [trsm_impl(a_aval.dtype, a, b, left_side, lower, transpose_a,
+                      conjugate_a, unit_diagonal)]
+  else:
+    # Use the XLA implementation for unbatched triangular_solve.
+    if transpose_a:
+      transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
+    else:
+      transpose = "NO_TRANSPOSE"
+    return mhlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
+                                  ir.BoolAttr.get(lower),
+                                  ir.BoolAttr.get(unit_diagonal),
+                                  mhlo.TransposeAttr.get(transpose)).results
+
+
 if cusolver is not None:
   xla.register_translation(
       triangular_solve_p,
       partial(_triangular_solve_gpu_translation_rule, cusolver.trsm),
       platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+        triangular_solve_p,
+        partial(_triangular_solve_gpu_lower, cusolver.trsm_mhlo),
+        platform='gpu')
 
 if hipsolver is not None:
   xla.register_translation(
       triangular_solve_p,
       partial(_triangular_solve_gpu_translation_rule, hipsolver.trsm),
       platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+        triangular_solve_p,
+        partial(_triangular_solve_gpu_lower, hipsolver.trsm_mhlo),
+        platform='gpu')
 
 # Support operation for LU decomposition: Transformation of the pivots returned
 # by LU decomposition into permutations.
@@ -845,6 +1016,15 @@ def _lu_pivots_to_permutation_gpu(ctx, avals_in, avals_out, pivots, *,
     return [hip_linalg.lu_pivots_to_permutation(
         ctx.builder, pivots, permutation_size=permutation_size)]
 
+def _lu_pivots_to_permutation_gpu_lowering(ctx, pivots, *, permutation_size):
+  if cuda_linalg:
+    return [cuda_linalg.lu_pivots_to_permutation_mhlo(
+        pivots, permutation_size=permutation_size)]
+  if hip_linalg:
+    return [hip_linalg.lu_pivots_to_permutation_mhlo(
+        pivots, permutation_size=permutation_size)]
+
+
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
 lu_pivots_to_permutation_p.multiple_results = False
 lu_pivots_to_permutation_p.def_impl(
@@ -857,15 +1037,26 @@ xla.register_translation(
     lu_pivots_to_permutation_p,
     xla.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False,
                   new_style=True))
+mlir.register_lowering(
+    lu_pivots_to_permutation_p,
+    mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
 
 if cuda_linalg:
   xla.register_translation(lu_pivots_to_permutation_p,
                            _lu_pivots_to_permutation_gpu,
                            platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(lu_pivots_to_permutation_p,
+                           _lu_pivots_to_permutation_gpu_lowering,
+                           platform='gpu')
 
 if hip_linalg:
   xla.register_translation(lu_pivots_to_permutation_p,
                            _lu_pivots_to_permutation_gpu,
+                           platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(lu_pivots_to_permutation_p,
+                           _lu_pivots_to_permutation_gpu_lowering,
                            platform='gpu')
 # LU decomposition
 
@@ -1036,6 +1227,32 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, ctx, avals_in, avals_out, operand):
                        multiple_results=False, backend=ctx.platform)(c, pivot)
   return [lu, pivot, perm]
 
+def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
+  operand_aval, = ctx.avals_in
+  out_aval, pivot_aval, perm_aval = ctx.avals_out
+  batch_dims = operand_aval.shape[:-2]
+  m = operand_aval.shape[-2]
+  lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
+  # Subtract 1 from the pivot to get 0-based indices.
+  pivot = mhlo.SubOp(pivot, mlir.full_like_aval(1, pivot_aval)).result
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "GE", "SIGNED")
+  lu = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      lu, _nan_like_mhlo(out_aval))
+  sub_ctx = mlir.LoweringRuleContext(module_context=ctx.module_context,
+                                     primitive=None,
+                                     avals_in=[pivot_aval],
+                                     avals_out=[perm_aval])
+  perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
+                           multiple_results=False)
+  perm, = perm_fn(sub_ctx, pivot)
+  return [lu, pivot, perm]
+
 
 def _lu_tpu_translation_rule(ctx, avals_in, avals_out, operand):
   return xops.LU(operand)
@@ -1047,22 +1264,35 @@ lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
 xla.register_translation(lu_p, xla.lower_fun(_lu_python, multiple_results=True,
                                              new_style=True))
+mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
 xla.register_translation(lu_p,
                          partial(_lu_cpu_gpu_translation_rule, lapack.getrf),
                          platform='cpu')
+if jax._src.lib.version >= (0, 3, 3):
+  mlir.register_lowering(lu_p,
+                         partial(_lu_cpu_gpu_lowering, lapack.getrf_mhlo),
+                         platform='cpu')
 
 if cusolver is not None:
   xla.register_translation(
       lu_p, partial(_lu_cpu_gpu_translation_rule, cusolver.getrf),
       platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+        lu_p, partial(_lu_cpu_gpu_lowering, cusolver.getrf_mhlo),
+        platform='gpu')
 
 if hipsolver is not None:
   xla.register_translation(
       lu_p, partial(_lu_cpu_gpu_translation_rule, hipsolver.getrf),
       platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+        lu_p, partial(_lu_cpu_gpu_lowering, hipsolver.getrf_mhlo),
+        platform='gpu')
 
 xla.register_translation(lu_p, _lu_tpu_translation_rule, platform='tpu')
 
@@ -1194,19 +1424,64 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, ctx, avals_in,
     q = xops.Pad(r, xops.Constant(c, np.array(0, dtype=operand_aval.dtype)),
                  xla_client.make_padding_config(padding_config))
     q, info_orgqr = orgqr_impl(c, q, tau)
-  if info_geqrf is not None:
-    ok = xops.And(
-      xops.Eq(info_geqrf, xops.Constant(c, np.array(0, np.int32))),
-      xops.Eq(info_orgqr, xops.Constant(c, np.array(0, np.int32))))
-    q = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), q,
-                             _nan_like(c, q))
-    r = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), r,
-                             _nan_like(c, r))
-  else:
-    pass # rocsolver does not return info
+  ok = xops.And(
+    xops.Eq(info_geqrf, xops.Constant(c, np.array(0, np.int32))),
+    xops.Eq(info_orgqr, xops.Constant(c, np.array(0, np.int32))))
+  q = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), q,
+                           _nan_like(c, q))
+  r = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), r,
+                           _nan_like(c, r))
 
   r = xla.lower_fun(jnp.triu, multiple_results=False,
                     backend=ctx.platform)(c, r)
+  return [q, r]
+
+def _qr_cpu_gpu_lowering(geqrf_impl, orgqr_impl, ctx, operand, *,
+                         full_matrices):
+  operand_aval, = ctx.avals_in
+  q_aval, r_aval = ctx.avals_out
+  dims = operand_aval.shape
+  m, n = dims[-2:]
+  batch_dims = dims[:-2]
+  r, tau, info_geqrf = geqrf_impl(operand_aval.dtype, operand)
+  if m < n:
+    q = mhlo.SliceOp(r,
+                     mlir.dense_int_elements([0] * len(dims)),
+                     mlir.dense_int_elements(list(batch_dims) + [m, m]),
+                     mlir.dense_int_elements([1] * len(dims))).result
+    q, info_orgqr = orgqr_impl(operand_aval.dtype, q, tau)
+  elif not full_matrices:
+    q, info_orgqr = orgqr_impl(operand_aval.dtype, r, tau)
+    r = mhlo.SliceOp(r,
+                     mlir.dense_int_elements([0] * len(dims)),
+                     mlir.dense_int_elements(list(batch_dims) + [n, n]),
+                     mlir.dense_int_elements([1] * len(dims))).result
+  else:
+    q = mhlo.PadOp(mlir.aval_to_ir_type(q_aval), r,
+                   mlir.ir_constant(np.array(0, dtype=operand_aval.dtype)),
+                   mlir.dense_int_elements([0] * len(dims)),
+                   mlir.dense_int_elements([0] * (len(dims) - 1) + [m - n]),
+                   mlir.dense_int_elements([0] * len(dims))).result
+    q, info_orgqr = orgqr_impl(operand_aval.dtype, q, tau)
+  if info_geqrf is not None:
+    zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+    ok = mhlo.AndOp(
+        mlir.compare_mhlo(info_geqrf, zeros, "EQ", "SIGNED"),
+        mlir.compare_mhlo(info_orgqr, zeros, "EQ", "SIGNED"))
+    ok = mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result
+    q = _broadcasting_select_mhlo(ok, q, _nan_like_mhlo(q_aval))
+    r = _broadcasting_select_mhlo(ok, r, _nan_like_mhlo(r_aval))
+  else:
+    pass # rocsolver does not return info
+
+  sub_ctx = mlir.LoweringRuleContext(module_context=ctx.module_context,
+                                     primitive=None,
+                                     avals_in=[r_aval],
+                                     avals_out=[r_aval])
+  r, = mlir.lower_fun(jnp.triu, multiple_results=False)(sub_ctx, r)
   return [q, r]
 
 qr_p = Primitive('qr')
@@ -1221,17 +1496,32 @@ xla.register_translation(
     qr_p, partial(_qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr),
     platform='cpu')
 
+if jax._src.lib.version >= (0, 3, 3):
+  mlir.register_lowering(
+      qr_p, partial(_qr_cpu_gpu_lowering, lapack.geqrf_mhlo, lapack.orgqr_mhlo),
+      platform='cpu')
+
 if cusolver is not None:
   xla.register_translation(
       qr_p,
       partial(_qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr),
       platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+        qr_p,
+        partial(_qr_cpu_gpu_lowering, cusolver.geqrf_mhlo, cusolver.orgqr_mhlo),
+        platform='gpu')
 
 if hipsolver is not None:
   xla.register_translation(
       qr_p,
       partial(_qr_cpu_gpu_translation_rule, hipsolver.geqrf, hipsolver.orgqr),
       platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+        qr_p,
+        partial(_qr_cpu_gpu_lowering, hipsolver.geqrf_mhlo, hipsolver.orgqr_mhlo),
+        platform='gpu')
 
 # Singular value decomposition
 
@@ -1370,6 +1660,49 @@ def _svd_cpu_gpu_translation_rule(gesvd_impl, ctx, avals_in, avals_out, operand,
 
   return result
 
+
+def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
+                          compute_uv):
+  operand_aval, = ctx.avals_in
+  s_aval = ctx.avals_out[0]
+  m, n = operand_aval.shape[-2:]
+  batch_dims = operand_aval.shape[:-2]
+
+  if m == 0 or n == 0:
+    return mlir.lower_fun(_empty_svd, multiple_results=True)(
+      ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
+  s, u, vt, info = gesvd_impl(operand_aval.dtype, operand,
+                              full_matrices=full_matrices,
+                              compute_uv=compute_uv)
+  zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  ok = mlir.compare_mhlo(info, zeros, "EQ", "SIGNED")
+  s = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1,),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      s, _nan_like_mhlo(s_aval))
+  result = [s]
+
+  if compute_uv:
+    u_aval, vt_aval = ctx.avals_out[1:]
+    u = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+            ir.RankedTensorType.get(batch_dims + (1, 1),
+                                    ir.IntegerType.get_signless(1)),
+            ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+        u, _nan_like_mhlo(u_aval))
+    vt = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+            ir.RankedTensorType.get(batch_dims + (1, 1),
+                                    ir.IntegerType.get_signless(1)),
+            ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+        vt, _nan_like_mhlo(vt_aval))
+    result += [u, vt]
+
+  return result
+
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args
   bd, = batch_dims
@@ -1392,20 +1725,35 @@ xla.register_translation(svd_p, _svd_translation_rule)
 xla.register_translation(
     svd_p, partial(_svd_cpu_gpu_translation_rule, lapack.gesdd),
     platform='cpu')
+if jax._src.lib.version >= (0, 3, 3):
+  mlir.register_lowering(
+      svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
+      platform='cpu')
 
 if cusolver is not None:
   xla.register_translation(
     svd_p, partial(_svd_cpu_gpu_translation_rule, cusolver.gesvd),
     platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+      svd_p, partial(_svd_cpu_gpu_lowering, cusolver.gesvd_mhlo),
+      platform='gpu')
 
 if hipsolver is not None:
   xla.register_translation(
     svd_p, partial(_svd_cpu_gpu_translation_rule, hipsolver.gesvd),
     platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(
+      svd_p, partial(_svd_cpu_gpu_lowering, hipsolver.gesvd_mhlo),
+      platform='gpu')
 
 def _tridiagonal_solve_gpu_translation_rule(ctx, avals_in, avals_out, dl, d, du,
                                             b, *, m, n, ldb, t):
   return [sparse_apis.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
+
+def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, m, n, ldb, t):
+  return [sparse_apis.gtsv2_mhlo(dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
 
 tridiagonal_solve_p = Primitive('tridiagonal_solve')
 tridiagonal_solve_p.multiple_results = False
@@ -1416,6 +1764,10 @@ tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
 if sparse_apis and hasattr(sparse_apis, "gtsv2"):
   xla.register_translation(tridiagonal_solve_p,
                            _tridiagonal_solve_gpu_translation_rule,
+                           platform='gpu')
+  if jax._src.lib.version >= (0, 3, 3):
+    mlir.register_lowering(tridiagonal_solve_p,
+                           _tridiagonal_solve_gpu_lowering,
                            platform='gpu')
 
 def _tridiagonal_solve_jax(dl, d, du, b, **kw):
@@ -1448,6 +1800,9 @@ def _tridiagonal_solve_jax(dl, d, du, b, **kw):
 
 xla.register_translation(tridiagonal_solve_p, xla.lower_fun(
     _tridiagonal_solve_jax, multiple_results=False, new_style=True))
+
+mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
+    _tridiagonal_solve_jax, multiple_results=False))
 
 
 def tridiagonal_solve(dl, d, du, b):
@@ -1609,3 +1964,57 @@ xla.register_translation(schur_p, _schur_translation_rule)
 xla.register_translation(schur_p, _schur_cpu_translation_rule, platform='cpu')
 batching.primitive_batchers[schur_p] = _schur_batching_rule
 ad.primitive_jvps[schur_p] = _schur_jvp_rule
+
+
+# Utilities
+
+def _nan_like(c, operand):
+  shape = c.get_shape(operand)
+  dtype = shape.element_type()
+  if jnp.issubdtype(dtype, np.complexfloating):
+    nan = xops.Constant(c, np.array(np.nan * (1. + 1j), dtype=dtype))
+  else:
+    nan = xops.Constant(c, np.array(np.nan, dtype=dtype))
+  return xops.Broadcast(nan, shape.dimensions())
+
+
+def _nan_like_mhlo(aval):
+  if jnp.issubdtype(aval.dtype, np.complexfloating):
+    return mlir.full_like_aval(np.nan + np.nan * 1j, aval)
+  else:
+    return mlir.full_like_aval(np.nan, aval)
+
+
+def _broadcasting_select(c, which, x, y):
+  """Wrapper around XLA `Select` that broadcasts its arguments."""
+  which_shape, x_shape, y_shape = (
+    c.get_shape(t).dimensions() for t in (which, x, y))
+  out_shape = lax_internal.broadcast_shapes(which_shape, x_shape, y_shape)
+  bcast_dims = lambda shape: tuple(range(len(out_shape) - len(shape),
+                                         len(out_shape)))
+  which = xops.BroadcastInDim(which, out_shape, bcast_dims(which_shape))
+  x = xops.BroadcastInDim(x, out_shape, bcast_dims(x_shape))
+  y = xops.BroadcastInDim(y, out_shape, bcast_dims(y_shape))
+  return xops.Select(which, x, y)
+
+def _broadcasting_select_mhlo(which, x, y):
+  """Wrapper around XLA `Select` that broadcasts its arguments."""
+  which_type, x_type, y_type = (
+    ir.RankedTensorType(v.type) for v in (which, x, y))
+  out_shape = list(lax_internal.broadcast_shapes(
+      tuple(which_type.shape), tuple(x_type.shape), tuple(y_type.shape)))
+  bcast_dims = lambda shape: mlir.dense_int_elements(
+      range(len(out_shape) - len(shape), len(out_shape)))
+  if which_type.shape != out_shape:
+    which = mhlo.BroadcastInDimOp(
+        ir.RankedTensorType.get(out_shape, which_type.element_type), which,
+        bcast_dims(which_type.shape))
+  if x_type.shape != out_shape:
+    x = mhlo.BroadcastInDimOp(
+        ir.RankedTensorType.get(out_shape, x_type.element_type), x,
+        bcast_dims(x_type.shape))
+  if y_type.shape != out_shape:
+    y = mhlo.BroadcastInDimOp(
+        ir.RankedTensorType.get(out_shape, y_type.element_type), y,
+        bcast_dims(y_type.shape))
+  return mhlo.SelectOp(which, x, y).result

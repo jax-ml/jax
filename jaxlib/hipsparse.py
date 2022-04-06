@@ -15,6 +15,9 @@
 hipsparse wrappers for performing sparse matrix computations in JAX on ROCM
 """
 
+import jaxlib.mlir.ir as ir
+import jaxlib.mlir.dialects.mhlo as mhlo
+
 import numpy as np
 
 from jaxlib import xla_client
@@ -330,3 +333,37 @@ def gtsv2(c, dl, d, du, B, *, m, n, ldb, t):
       api_version=xla_client.ops.CustomCallApiVersion
       .API_VERSION_STATUS_RETURNING)
   return _ops.GetTupleElement(out, 0)
+
+
+def gtsv2_mhlo(dl, d, du, B, *, m, n, ldb, t):
+  """Calls `hipsparse<t>gtsv2(dl, d, du, B, m, n, ldb)`."""
+  f32 = (t == np.float32)
+  if f32:
+    buffer_size = _hipsparse.gtsv2_f32_buffer_size(m, n, ldb)
+  else:
+    buffer_size = _hipsparse.gtsv2_f64_buffer_size(m, n, ldb)
+  i32_type = ir.IntegerType.get_signless(32)
+  out = mhlo.CustomCallOp(
+      [ir.TupleType.get_tuple([
+          ir.RankedTensorType.get(
+              [ldb, n], ir.F32Type.get() if f32 else ir.F64Type.get()),
+          ir.RankedTensorType.get([buffer_size], ir.IntegerType.get_signless(8)),
+      ])],
+      [dl, d, du, B],
+      call_target_name = ir.StringAttr.get(
+          "hipsparse_gtsv2_" + ("f32" if f32 else "f64")),
+      has_side_effect=ir.BoolAttr.get(False),
+      backend_config=ir.StringAttr.get(
+          _hipsparse.build_gtsv2_descriptor(m, n, ldb)),
+      api_version=ir.IntegerAttr.get(i32_type, 2),
+      called_computations=ir.ArrayAttr.get([]),
+      operand_layouts=ir.ArrayAttr.get([
+          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
+      ] * 3 + [
+          ir.DenseIntElementsAttr.get(np.array([1, 0]), type=ir.IndexType.get())
+      ]),
+      result_layouts=ir.ArrayAttr.get([
+          ir.DenseIntElementsAttr.get(np.array([1, 0]), type=ir.IndexType.get()),
+          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
+      ]))
+  return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
