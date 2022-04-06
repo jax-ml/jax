@@ -8,7 +8,7 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.5 (Unreleased)
+## jax 0.3.5 (April 6, 2022)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.4...main).
 * Changes:
@@ -21,11 +21,13 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Deprecations:
   * {func}`jax.nn.normalize` is being deprecated. Use {func}`jax.nn.standardize` instead ({jax-issue}`#9899`).
   * {func}`jax.tree_util.tree_multimap` is deprecated. Use {func}`jax.tree_util.tree_map` instead ({jax-issue}`#5746`).
+  * `jax.experimental.sharded_jit` is deprecated. Use `pjit` instead.
 
-## jaxlib 0.3.3 (Unreleased)
+## jaxlib 0.3.5 (April 6, 2022)
 * Bug fixes
   * Fixed a bug where double-precision complex-to-real IRFFTs would mutate their
     input buffers on GPU ({jax-issue}`#9946`).
+  * Fixed incorrect constant-folding of complex scatters ({jax-issue}`#10159`)
 
 ## jax 0.3.4 (March 18, 2022)
 * [GitHub
