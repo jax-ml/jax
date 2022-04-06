@@ -2107,14 +2107,14 @@ pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.register_translation(scan_p, xla.lower_fun(_scan_impl, new_style=True,
                                                multiple_results=True),
                          initial_style=True)
+mlir.register_lowering(scan_p,
+                       mlir.lower_fun(_scan_impl, multiple_results=True))
 batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
 masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = \
     partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'scan')
 
-mlir.register_lowering(scan_p,
-                       mlir.lower_fun(_scan_impl, multiple_results=True))
 
 
 @api_boundary
@@ -2667,6 +2667,9 @@ xla.register_translation(
     linear_solve_p, xla.lower_fun(_custom_linear_solve_impl, new_style=True,
                                   multiple_results=True),
     initial_style=True)
+mlir.register_lowering(
+    linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
+                                   multiple_results=True))
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
 batching.axis_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
 pe.partial_eval_jaxpr_custom_rules[linear_solve_p] = \

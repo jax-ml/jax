@@ -721,10 +721,11 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive in _platform_specific_lowerings[ctx.platform]:
         rule = _platform_specific_lowerings[ctx.platform][eqn.primitive]
+      elif eqn.primitive in xla._backend_specific_translations[ctx.platform]:
+        rule = xla_fallback_lowering(eqn.primitive)
       elif eqn.primitive in _lowerings:
         rule = _lowerings[eqn.primitive]
-      elif (eqn.primitive in xla._translations or
-            eqn.primitive in xla._backend_specific_translations[ctx.platform]):
+      elif eqn.primitive in xla._translations:
         rule = xla_fallback_lowering(eqn.primitive)
       else:
         raise NotImplementedError(
@@ -741,7 +742,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       out_nodes = tuple(map(wrap_singleton_ir_values, ans))
     except TypeError as e:
       raise ValueError("Output of translation rule must be iterable: "
-                       f"{eqn}") from e
+                       f"{eqn}, got output {ans}") from e
 
     assert all(isinstance(v, tuple) for v in out_nodes), (ans, eqn)
     assert all(isinstance(v, ir.Value) for w in out_nodes for v in w), (ans, eqn)

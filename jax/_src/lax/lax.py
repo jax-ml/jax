@@ -1674,17 +1674,18 @@ cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
 mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosOp))
 
-@partial(xla.lower_fun, multiple_results=False, new_style=True)
 @_upcast_fp16_for_computation
-def tan_translation_rule(x):
+def _tan_impl(x):
   return div(sin(x), cos(x))
 
-tan_p = standard_unop(_float | _complex, 'tan',
-                       translation_rule=tan_translation_rule)
+tan_p = standard_unop(
+    _float | _complex, 'tan',
+    translation_rule=xla.lower_fun(_tan_impl, multiple_results=False,
+                                   new_style=True))
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
+mlir.register_lowering(tan_p, mlir.lower_fun(_tan_impl, multiple_results=False))
 
-
-def asin_translation_rule(x):
+def asin_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
     return mul(_const(x, -1j), asinh(mul(_const(x, 1j), x)))
   else:
@@ -1692,13 +1693,14 @@ def asin_translation_rule(x):
                atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
 asin_p = standard_unop(_float | _complex, 'asin',
-                       translation_rule=xla.lower_fun(asin_translation_rule,
+                       translation_rule=xla.lower_fun(asin_impl,
                                                       multiple_results=False,
                                                       new_style=True))
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
+mlir.register_lowering(asin_p, mlir.lower_fun(asin_impl,
+                                              multiple_results=False))
 
-
-def acos_translation_rule(x):
+def acos_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
     result = mul(_const(x, 1j), acosh(x))
     # By convention, numpy chooses the branch with positive real part.
@@ -1716,19 +1718,23 @@ def acos_translation_rule(x):
         full_like(x, np.pi))
 
 acos_p = standard_unop(_float | _complex, 'acos',
-                       translation_rule=xla.lower_fun(acos_translation_rule,
+                       translation_rule=xla.lower_fun(acos_impl,
                                                       multiple_results=False,
                                                       new_style=True))
 ad.defjvp(acos_p, lambda g, x: mul(g, -rsqrt(_const(x, 1) - square(x))))
+mlir.register_lowering(acos_p,
+                       mlir.lower_fun(acos_impl, multiple_results=False))
 
-def atan_translation_rule(x):
+def atan_impl(x):
   return atan2(x, _const(x, 1))
 
 atan_p = standard_unop(_float | _complex, 'atan',
-                       translation_rule=xla.lower_fun(atan_translation_rule,
+                       translation_rule=xla.lower_fun(atan_impl,
                                                       multiple_results=False,
                                                       new_style=True))
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
+mlir.register_lowering(atan_p, mlir.lower_fun(atan_impl,
+                                              multiple_results=False))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
@@ -2660,6 +2666,9 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                             dot_dnums, precision_attr(precision)).result]
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
+# Explicitly register a CPU lowering so we don't fall back to the XLA lowering
+# on CPU.
+mlir.register_lowering(dot_general_p, _dot_general_lower, platform="cpu")
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):

@@ -1118,11 +1118,11 @@ tf_impl[lax.sinh_p] = tf.math.sinh
 tf_impl[lax.cos_p] = tf.math.cos
 tf_impl[lax.cosh_p] = tf.math.cosh
 tf_impl_with_avals[lax.acos_p] = _convert_jax_impl(
-    lax_internal.acos_translation_rule, multiple_results=False)
+    lax_internal.acos_impl, multiple_results=False)
 tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(
-    lax_internal.asin_translation_rule, multiple_results=False)
+    lax_internal.asin_impl, multiple_results=False)
 tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(
-    lax_internal.atan_translation_rule, multiple_results=False)
+    lax_internal.atan_impl, multiple_results=False)
 
 def _atan2(y, x, **kwargs):
   if x.dtype.is_complex or y.dtype.is_complex:

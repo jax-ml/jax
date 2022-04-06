@@ -33,6 +33,7 @@ from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.util import prod, canonicalize_axis
 
@@ -1018,6 +1019,12 @@ xla.register_translation(random_gamma_p, xla.lower_fun(
 xla.register_translation(random_gamma_p, xla.lower_fun(
     partial(_gamma_impl, use_vmap=False),
     multiple_results=False, new_style=True), platform='cpu')
+mlir.register_lowering(random_gamma_p, mlir.lower_fun(
+    partial(_gamma_impl, use_vmap=True),
+    multiple_results=False))
+mlir.register_lowering(random_gamma_p, mlir.lower_fun(
+    partial(_gamma_impl, use_vmap=False),
+    multiple_results=False), platform='cpu')
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key: KeyArray,
