@@ -430,10 +430,6 @@ ArrayMappingOrAuto = Union[ArrayMapping, _AUTOAxisResource]
 
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
-  # TODO(yashkatariya): Move PartitionSpec into a place where all files can
-  # import it without cyclic dependency.
-  from jax.interpreters.sharded_jit import PartitionSpec
-
   if not array_mapping:
     return PartitionSpec()
   max_index = -1
@@ -2171,6 +2167,35 @@ def _check_if_all_or_none_auto(axis_resources, name):
       raise ValueError(f'`pjit.AUTO` exists in {name}. '
                        f'Make sure that every entry in {name} is `pjit.AUTO`.')
   return should_auto
+
+
+class _UnconstrainedPartitionSingleton:
+
+  def __str__(self):
+    return "UNCONSTRAINED"
+
+
+# Unconstrained sentinel value for PartitionSpec, representing a dimension for
+# which the user wants XLA to assign the best partitioning.
+# TODO(yashkatariya): May rename to AUTO.
+_UNCONSTRAINED_PARTITION = _UnconstrainedPartitionSingleton()
+
+
+class PartitionSpec(tuple):
+  """Tuple of integer specifying how a value should be partitioned.
+
+  Each integer corresponds to how many ways a dimension is partitioned. We
+  create a separate class for this so JAX's pytree utilities can distinguish it
+  from a tuple that should be treated as a pytree.
+  """
+  def __new__(cls, *partitions):
+    return tuple.__new__(PartitionSpec, partitions)
+
+  def __repr__(self):
+    return "PartitionSpec%s" % tuple.__repr__(self)
+
+  """A sentinel value representing a dim is unconstrained."""
+  UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
 
 @profiler.annotate_function

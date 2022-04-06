@@ -48,7 +48,7 @@ from jax._src.public_test_util import (
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.experimental.maps import Mesh
-from jax.interpreters.sharded_jit import PartitionSpec
+from jax.interpreters.pxla import PartitionSpec
 from jax.experimental import pjit
 
 # This submodule includes private test utilities that are not exported to

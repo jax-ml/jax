@@ -21,7 +21,7 @@ import jax
 from jax.tree_util import PyTreeDef
 from jax.experimental import maps
 from jax.experimental.pjit import pjit, FROM_GDA
-from jax.interpreters.sharded_jit import PartitionSpec as P
+from jax.interpreters.pxla import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 import numpy as np
 

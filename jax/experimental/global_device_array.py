@@ -25,7 +25,7 @@ from jax._src.config import config
 from jax.interpreters import pxla, xla
 from jax._src.util import prod, safe_zip, cache
 from jax._src.api import device_put
-from jax.interpreters.sharded_jit import PartitionSpec
+from jax.interpreters.pxla import PartitionSpec
 
 Shape = Tuple[int, ...]
 MeshAxes = PartitionSpec

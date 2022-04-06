@@ -19,7 +19,7 @@ import google_benchmark
 import jax
 from jax._src import test_util as jtu
 from jax._src.util import prod
-from jax.interpreters.sharded_jit import PartitionSpec as P
+from jax.interpreters.pxla import PartitionSpec as P
 from jax.experimental import global_device_array as gda
 import numpy as np
 

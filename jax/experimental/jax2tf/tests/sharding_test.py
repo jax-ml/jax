@@ -29,7 +29,7 @@ from jax.experimental import jax2tf
 from jax.experimental import pjit
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.interpreters import sharded_jit
-from jax.interpreters.sharded_jit import PartitionSpec as P
+from jax.interpreters.pxla import PartitionSpec as P
 import jax.numpy as jnp
 import jax._src.lib.xla_bridge
 

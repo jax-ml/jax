@@ -40,7 +40,7 @@ from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-from jax.interpreters.sharded_jit import PartitionSpec
+from jax.interpreters.pxla import PartitionSpec
 from jax._src.lib import xla_client as xc
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            treedef_is_leaf, tree_structure, treedef_tuple)

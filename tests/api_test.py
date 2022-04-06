@@ -50,7 +50,7 @@ from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
-from jax.interpreters.sharded_jit import PartitionSpec as P
+from jax.interpreters.pxla import PartitionSpec as P
 from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_client

@@ -15,9 +15,9 @@
 # flake8: noqa: F401
 from jax.interpreters.sharded_jit import (
   sharded_jit as sharded_jit,
-  PartitionSpec as PartitionSpec,
   with_sharding_constraint as with_sharding_constraint,
 )
+from jax.interpreters.pxla import PartitionSpec as PartitionSpec
 from jax.experimental.x64_context import (
   enable_x64 as enable_x64,
   disable_x64 as disable_x64,

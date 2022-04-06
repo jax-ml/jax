@@ -289,35 +289,6 @@ xla.register_translation(sharded_call_p, _sharded_jit_translation_rule)
 mlir.register_lowering(sharded_call_p, _sharded_jit_lowering)
 
 
-class _UnconstrainedPartitionSingleton:
-
-  def __str__(self):
-    return "UNCONSTRAINED"
-
-
-# Unconstrained sentinel value for PartitionSpec, representing a dimension for
-# which the user wants XLA to assign the best partitioning.
-# TODO(yashkatariya): May rename to AUTO.
-_UNCONSTRAINED_PARTITION = _UnconstrainedPartitionSingleton()
-
-
-class PartitionSpec(tuple):
-  """Tuple of integer specifying how a value should be partitioned.
-
-  Each integer corresponds to how many ways a dimension is partitioned. We
-  create a separate class for this so JAX's pytree utilities can distinguish it
-  from a tuple that should be treated as a pytree.
-  """
-  def __new__(cls, *partitions):
-    return tuple.__new__(PartitionSpec, partitions)
-
-  def __repr__(self):
-    return "PartitionSpec%s" % tuple.__repr__(self)
-
-  """A sentinel value representing a dim is unconstrained."""
-  UNCONSTRAINED = _UNCONSTRAINED_PARTITION
-
-
 def sharded_jit(
     fun: Callable,
     in_parts,
@@ -496,7 +467,7 @@ def _sharding_constraint_lowering(ctx, x_node, partitions):
 mlir.register_lowering(sharding_constraint_p, _sharding_constraint_lowering)
 
 
-def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
+def with_sharding_constraint(x, partitions: Optional[pxla.PartitionSpec]):
   """Identity-like function that specifies how ``x`` should be sharded.
 
   WARNING: this feature is still under active development! It may not work well,
