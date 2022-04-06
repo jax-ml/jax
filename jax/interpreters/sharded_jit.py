@@ -14,7 +14,7 @@
 
 from functools import partial
 from typing import Callable, Iterable, Optional, Tuple, Union
-
+from warnings import warn
 from absl import logging
 import numpy as np
 
@@ -403,6 +403,9 @@ def sharded_jit(
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
   """
+  warn("`sharded_jit` is deprecated. Please use `pjit` instead. "
+       "See https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html for more information.",
+       DeprecationWarning)
   if num_partitions is not None:
     nparts = num_partitions
   else:
