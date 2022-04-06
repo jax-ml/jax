@@ -1228,6 +1228,45 @@ xla.register_translation(bcoo_spdot_general_p, xla.lower_fun(
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
+
+
+def bcoo_add_batch_dim(M):
+  """Convert a sparse dimension to a batch dimension
+
+  Please note that this function may result in a far less efficient storage scheme
+  for the matrix (storage required will increase by a factor of `M.shape[0] * M.nse`).
+  This utility is provided for convenience, e.g. to allow vmapping over non-batched
+  matrices.
+
+  Args:
+    M: BCOO matrix
+
+  Returns:
+    M2: BCOO matrix with n_batch = M.n_batch + 1 and n_sparse = M.n_sparse - 1
+  """
+  # TODO(jakevdp): allow user-specified nse?
+  if M.n_sparse == 0:
+    raise ValueError("Cannot add a batch dimension to a matrix with n_sparse=0")
+  f = _add_batch_dim
+  for _ in range(M.n_batch):
+    f = vmap(f)
+  return f(M)
+
+def _add_batch_dim(M):
+  assert M.n_batch == 0
+  assert M.n_sparse > 0
+  data = jnp.zeros_like(M.data, shape=(M.shape[0], *M.data.shape))
+  data = data.at[M.indices[:, 0], jnp.arange(M.nse)].set(M.data)
+  indices_shape = (M.shape[0], M.nse, M.n_sparse - 1)
+  if M.n_sparse > 1:
+    fill_value = jnp.array(M.shape[M.n_batch + 1: M.n_batch + M.n_sparse])
+    indices = jnp.full_like(M.indices, shape=indices_shape, fill_value=fill_value)
+    indices = indices.at[M.indices[:, 0], jnp.arange(M.nse)].set(M.indices[:, 1:])
+  else:
+    indices = jnp.empty_like(M.indices, shape=indices_shape)
+  return BCOO((data, indices), shape=M.shape)
+
+
 def bcoo_broadcast_in_dim(mat, *, shape, broadcast_dimensions):
   """Expand the size and rank of a BCOO array by duplicating the data.
 
