@@ -17,7 +17,7 @@ hipsparse wrappers for performing sparse matrix computations in JAX on ROCM
 
 import numpy as np
 
-from jax._src.lib import xla_client
+from jaxlib import xla_client
 
 try:
   from . import _hipsparse
