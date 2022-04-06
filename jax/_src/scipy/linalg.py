@@ -656,3 +656,13 @@ def sqrtm(A, blocksize=1):
   if blocksize > 1:
       raise NotImplementedError("Blocked version is not implemented yet.")
   return _sqrtm(A)
+
+
+@partial(jit, static_argnames=("n",))
+def hilbert(n):
+  a = jnp.arange(n)
+  return _arange_to_hilbert(a)
+
+@jit
+def _arange_to_hilbert(a):
+  return 1 / (a[:, None] + a[None, :] + 1)

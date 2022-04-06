@@ -37,6 +37,7 @@ from jax._src.scipy.linalg import (
   svd as svd,
   tril as tril,
   triu as triu,
+  hilbert as hilbert,
 )
 
 from jax._src.lax.polar import (

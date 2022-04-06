@@ -1564,5 +1564,12 @@ class LaxLinalgTest(jtu.JaxTestCase):
       Ts, Ss = vmap(lax.linalg.schur)(args)
       self.assertAllClose(reconstruct(Ss, Ts), args, atol=1e-4)
 
+  @parameterized.parameters(1, 5)
+  def test_hilbert(self, n):
+      args_maker = lambda: [n]
+      print(n)
+      self._CheckAgainstNumpy(osp.linalg.hilbert, jsp.linalg.hilbert, args_maker)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
