@@ -432,16 +432,17 @@ for _prim in [
   sparse_rules[_prim] = _zero_preserving_unary_op(_prim)
 
 def _dot_general_sparse(spenv, *spvalues, dimension_numbers, precision, preferred_element_type):
-  A, B = spvalues_to_arrays(spenv, spvalues)
+  # TODO(jakevdp): pass along these unused configurations?
+  del precision, preferred_element_type  # unused
   if spvalues[0].is_sparse() and spvalues[1].is_sparse():
-    shape = sparse.bcoo._dot_general_validated_shape(A.shape, B.shape, dimension_numbers)
-    data, indices = sparse.bcoo_spdot_general(A, B, dimension_numbers=dimension_numbers)
-    return [spenv.sparse(shape, data, indices)]
+    func = sparse.bcoo_spdot_general
   elif spvalues[0].is_sparse():
-    result = sparse.bcoo_dot_general(A, B, dimension_numbers=dimension_numbers)
+    func = sparse.bcoo_dot_general
   else:
-    result = sparse.bcoo_rdot_general(A, B, dimension_numbers=dimension_numbers)
-  return [spenv.dense(result)]
+    func = sparse.bcoo_rdot_general
+  A, B = spvalues_to_arrays(spenv, spvalues)
+  result = func(A, B, dimension_numbers=dimension_numbers)
+  return arrays_to_spvalues(spenv, [result])
 
 sparse_rules[lax.dot_general_p] = _dot_general_sparse
 
