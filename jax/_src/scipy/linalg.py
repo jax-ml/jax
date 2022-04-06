@@ -657,7 +657,7 @@ def sqrtm(A, blocksize=1):
       raise NotImplementedError("Blocked version is not implemented yet.")
   return _sqrtm(A)
 
-
+@_wraps(scipy.linalg.hilbert)
 @partial(jit, static_argnames=("n",))
 def hilbert(n):
   a = jnp.arange(n)

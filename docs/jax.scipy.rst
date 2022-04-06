@@ -29,6 +29,7 @@ jax.scipy.linalg
    eigh_tridiagonal
    expm
    expm_frechet
+   hilbert
    inv
    lu
    lu_factor
