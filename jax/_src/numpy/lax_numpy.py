@@ -2386,12 +2386,15 @@ def triu(m, k=0):
 @_wraps(np.trace, skip_params=['out'])
 @partial(jit, static_argnames=('offset', 'axis1', 'axis2', 'dtype'))
 def trace(a, offset=0, axis1: int = 0, axis2: int = 1, dtype=None, out=None):
+  _check_arraylike("trace", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
   lax_internal._check_user_dtype_supported(dtype, "trace")
 
-  d = _diagonal("trace", a, offset, axis1, axis2)
+  axis1 = _canonicalize_axis(axis1, ndim(a))
+  axis2 = _canonicalize_axis(axis2, ndim(a))
 
+  a_shape = shape(a)
   if dtype is None:
     dtype = _dtype(a)
     if issubdtype(dtype, integer):
@@ -2399,7 +2402,15 @@ def trace(a, offset=0, axis1: int = 0, axis2: int = 1, dtype=None, out=None):
       if iinfo(dtype).bits < iinfo(default_int).bits:
         dtype = default_int
 
-  return sum(d, axis=-1, dtype=dtype)
+  # Move the axis? dimensions to the end.
+  perm = [i for i in range(len(a_shape)) if i != axis1 and i != axis2]
+  perm = perm + [axis1, axis2]
+  a = lax.transpose(a, perm)
+
+  # Mask out the diagonal and reduce.
+  a = where(eye(a_shape[axis1], a_shape[axis2], k=offset, dtype=bool),
+            a, zeros_like(a))
+  return sum(a, axis=(-2, -1), dtype=dtype)
 
 
 def _wrap_indices_function(f):
@@ -2455,13 +2466,10 @@ def diag_indices_from(arr):
 @_wraps(np.diagonal, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('offset', 'axis1', 'axis2'))
 def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
-  return _diagonal("diagonal", a, offset, axis1, axis2)
-
-def _diagonal(op, a, offset=0, axis1: int = 0, axis2: int = 1):
-  _check_arraylike(op, a)
+  _check_arraylike("diagonal", a)
   a_shape = shape(a)
   a_ndims = len(a_shape)
-  offset = core.concrete_or_error(operator.index, offset, f"'offset' argument of jnp.{op}()")
+  offset = core.concrete_or_error(operator.index, offset, "'offset' argument of jnp.diagonal()")
 
   # Move the two dimensions to the end.
   axis1 = _canonicalize_axis(axis1, a_ndims)
