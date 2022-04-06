@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence, Tuple
-from typing_extensions import Protocol
+from typing import Any, Optional, Sequence, Tuple, TypeVar
+from typing_extensions import Protocol, ParamSpec
 
 from jax import core
 from jax import tree_util
@@ -31,6 +31,9 @@ traceback_util.register_exclusion(__file__)
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
+
+T_co = TypeVar("T_co", covariant=True)
+P_contra = ParamSpec("P_contra", contravariant=True)
 
 @dataclass
 class ArgInfo:
@@ -234,12 +237,12 @@ class Lowered(Stage):
     return self._lowering.hlo()
 
 
-class Wrapped(Protocol):
-  def __call__(self, *args, **kwargs):
+class Wrapped(Protocol[P_contra, T_co]):
+  def __call__(self, *args: P_contra.args, **kwargs: P_contra.kwargs) -> T_co:
     """Executes the wrapped function, lowering and compiling as needed."""
     raise NotImplementedError
 
-  def lower(self, *args, **kwargs) -> Lowered:
+  def lower(self, *args: P_contra.args, **kwargs: P_contra.kwargs) -> Lowered:
     """Lower this function for the given arguments.
 
     A lowered function is staged out of Python and translated to a
