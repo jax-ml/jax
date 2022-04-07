@@ -1028,11 +1028,13 @@ def bcoo_spdot_general(lhs, rhs, *, dimension_numbers: DotDimensionNumbers):
       (lhs_batch_dims, rhs_batch_dims))`.
 
   Returns:
-    An ndarray containing the result.
+    A BCOO array containing the result.
   """
-  return _bcoo_spdot_general(lhs.data, lhs.indices, rhs.data, rhs.indices,
-                             lhs_spinfo=lhs._info, rhs_spinfo=rhs._info,
-                             dimension_numbers=dimension_numbers)
+  shape = _dot_general_validated_shape(lhs.shape, rhs.shape, dimension_numbers)
+  data, indices = _bcoo_spdot_general(lhs.data, lhs.indices, rhs.data, rhs.indices,
+                                      lhs_spinfo=lhs._info, rhs_spinfo=rhs._info,
+                                      dimension_numbers=dimension_numbers)
+  return BCOO((data, indices), shape=shape)
 
 def _bcoo_spdot_general(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo: BCOOInfo, rhs_spinfo: BCOOInfo, dimension_numbers: DotDimensionNumbers):
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
