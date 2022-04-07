@@ -518,8 +518,12 @@ class PolyShape(tuple):
 
   See docstring of :func:`jax2tf.convert`.
   """
+
+  def __init__(self, *dim_specs):
+    tuple.__init__(dim_specs)
+
   def __new__(cls, *dim_specs):
-    for i, ds in enumerate(dim_specs):
+    for ds in dim_specs:
       if not isinstance(ds, (int, str)) and ds != ...:
         msg = (f"Invalid polymorphic shape element: {repr(ds)}; must be a string "
                "representing a dimension variable, or an integer, or ...")
