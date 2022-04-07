@@ -16,8 +16,9 @@ Parallelization primitives.
 """
 
 from functools import partial
+import itertools
 import string
-from typing import Union
+from typing import Sequence, Union
 import warnings
 
 import numpy as np
@@ -26,6 +27,7 @@ from jax import core
 from jax import tree_util
 from jax.core import ShapedArray, AxisName, raise_to_shaped
 from jax.interpreters import ad
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
@@ -34,7 +36,10 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import lax_numpy
+import jax._src.util as util
 from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, moveaxis
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import mhlo
 
 xops = xc.ops
 
@@ -634,6 +639,13 @@ def _replica_groups(axis_env, axis_name, axis_index_groups):
                       for axis_index_group in axis_index_groups]
   return replica_groups
 
+def _replica_groups_mhlo(replica_groups: Sequence[Sequence[int]]
+                        ) -> ir.DenseIntElementsAttr:
+  # Uneven replica groups are padded with -1.
+  groups = np.array(list(itertools.zip_longest(*replica_groups, fillvalue=-1)),
+                    dtype=np.int64).T
+  return ir.DenseIntElementsAttr.get(np.ascontiguousarray(groups))
+
 def _allreduce_impl(pos_reducer, *args, axes, axis_index_groups):
   assert axis_index_groups is None
   assert all(isinstance(axis, int) for axis in axes)
@@ -691,6 +703,63 @@ def _allreduce_translation_rule(prim, pos_fn, ctx, avals_in, avals_out, *args,
             else all_reduce(x) for x in args]
   return outs
 
+def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
+  if axis_index_groups is not None and ctx.module_context.platform == "tpu":
+    len_0 = len(axis_index_groups[0])
+    if any(len(g) != len_0 for g in axis_index_groups):
+      raise ValueError("axis_index_groups must all be the same size")
+  named_axes, positional_axes = axes_partition = [], []
+  for axis in axes:
+    axes_partition[isinstance(axis, int)].append(axis)
+
+  if positional_axes:
+    reducer = mlir.lower_fun(pos_fn, multiple_results=False)
+    def _positional_reduce(aval, arg):
+      aval_out = aval.update(
+          shape=np.delete(np.array(aval.shape, dtype=np.int64),
+                          positional_axes))
+      reducer_ctx = mlir.LoweringRuleContext(
+          module_context=ctx.module_context,
+          primitive=None,
+          avals_in=[aval],
+          avals_out=[aval_out])
+      out, = reducer(reducer_ctx, arg, axes=tuple(positional_axes))[0]
+      return out
+    args = map(_positional_reduce, ctx.avals_in, args)
+  if not named_axes:
+    return args
+
+  replica_groups = _replica_groups_mhlo(
+      _replica_groups(ctx.module_context.axis_env, named_axes,
+                      axis_index_groups))
+  def all_reduce(x_dtype, x):
+    op = mhlo.AllReduceOp(x, replica_groups=replica_groups, channel_handle=None)
+    scalar_aval = core.ShapedArray((), x_dtype)
+    scalar_type = mlir.aval_to_ir_type(scalar_aval)
+    reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
+    with ir.InsertionPoint(reducer_block):
+      lower_reducer = mlir.lower_fun(prim.bind, multiple_results=False)
+      reducer_ctx = mlir.LoweringRuleContext(
+        module_context = ctx.module_context,
+        primitive=None, avals_in=[scalar_aval] * 2, avals_out=[scalar_aval])
+      out_nodes = lower_reducer(
+          reducer_ctx, *([a] for a in reducer_block.arguments))
+      mhlo.ReturnOp(util.flatten(out_nodes))
+    return op.result
+
+  outs = []
+  for aval, x in zip(ctx.avals_in, args):
+    # TODO(b/141575627): we handle complex-dtype sum-reduction directly as a
+    # special case because it's not currently handled by XLA:GPU
+    if prim is lax.add_p and dtypes.issubdtype(aval.dtype, np.complexfloating):
+      real_dtype = np.finfo(aval.dtype).dtype
+      outs.append(mhlo.ComplexOp(all_reduce(real_dtype, mhlo.RealOp(x)),
+                                 all_reduce(real_dtype, mhlo.ImagOp(x))).result)
+    else:
+      outs.append(all_reduce(aval.dtype, x))
+  return outs
+
+
 def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
   named_axes, pos_axes = axes_partition = [], []
   for axis in axes:
@@ -717,6 +786,8 @@ psum_p.def_abstract_eval(_allreduce_abstract_eval)
 xla.register_translation(
     psum_p, partial(_allreduce_translation_rule, lax.add_p, lax._reduce_sum),
     is_collective=True)
+mlir.register_lowering(
+    psum_p, partial(_allreduce_lowering, lax.add_p, lax._reduce_sum))
 ad.deflinear2(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 batching.primitive_batchers[psum_p] = partial(_reduction_batcher, psum_p)
@@ -754,6 +825,8 @@ pmax_p.def_abstract_eval(_allreduce_abstract_eval)
 xla.register_translation(
     pmax_p, partial(_allreduce_translation_rule, lax.max_p, lax._reduce_max),
     is_collective=True)
+mlir.register_lowering(
+    pmax_p, partial(_allreduce_lowering, lax.max_p, lax._reduce_max))
 pxla.multi_host_supported_collectives.add(pmax_p)
 batching.primitive_batchers[pmax_p] = partial(_reduction_batcher, pmax_p)
 batching.axis_primitive_batchers[pmax_p] = \
@@ -768,6 +841,8 @@ pmin_p.def_abstract_eval(_allreduce_abstract_eval)
 xla.register_translation(
     pmin_p, partial(_allreduce_translation_rule, lax.min_p, lax._reduce_min),
     is_collective=True)
+mlir.register_lowering(
+    pmin_p, partial(_allreduce_lowering, lax.min_p, lax._reduce_min))
 pxla.multi_host_supported_collectives.add(pmin_p)
 batching.primitive_batchers[pmin_p] = partial(_reduction_batcher, pmin_p)
 batching.axis_primitive_batchers[pmin_p] = \
@@ -788,6 +863,23 @@ def _ppermute_translation_rule(ctx, avals_in, avals_out, x, *, axis_name, perm):
     grp = list(sorted(grp))
     full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
   return [xops.CollectivePermute(x, full_perm)]
+
+def _ppermute_lowering(ctx, x, *, axis_name, perm):
+  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name, None)
+  group_size = len(replica_groups[0])
+  srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
+  if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
+    msg = "ppermute sources and destinations must be unique, got {}."
+    raise ValueError(msg.format(perm))
+
+  full_perm = np.zeros((len(replica_groups), len(perm), 2), np.int64)
+  for i, grp in enumerate(replica_groups):
+    grp = list(sorted(grp))
+    for j, (src, dst) in enumerate(perm):
+      full_perm[i, j, 0] = grp[src]
+      full_perm[i, j, 1] = grp[dst]
+  full_perm = full_perm.reshape((-1, 2))
+  return mhlo.CollectivePermuteOp(x, mlir.dense_int_elements(full_perm)).results
 
 def _ppermute_transpose_rule(t, x, perm, axis_name):
   srcs, dsts = unzip2(perm)
@@ -820,6 +912,7 @@ ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
 xla.register_translation(ppermute_p, _ppermute_translation_rule,
                          is_collective=True)
+mlir.register_lowering(ppermute_p, _ppermute_lowering)
 pxla.multi_host_supported_collectives.add(ppermute_p)
 batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
 batching.axis_primitive_batchers[ppermute_p] = _ppermute_batcher
@@ -890,6 +983,38 @@ def _all_to_all_translation_rule(ctx, avals_in, avals_out, x, *, split_axis,
         split_axis=split_axis,
         concat_axis=concat_axis,
         axis_index_groups=axis_index_groups)
+
+def _all_to_all_lowering(ctx, x, *,
+                         split_axis, concat_axis, axis_name, axis_index_groups):
+  # Workaround for AllToAll not being implemented on CPU.
+  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+                                   axis_index_groups)
+  if len(replica_groups[0]) == 1:
+    return [x]
+  elif ((ctx.module_context.platform == "tpu") or
+        ((ctx.module_context.platform == "gpu") and (split_axis == 0) and
+        (concat_axis == 0))):
+    split_count = len(replica_groups[0])
+    if not all(split_count == len(g) for g in replica_groups):
+      raise ValueError('Replica groups must be equally sized')
+    return mhlo.AllToAllOp(mlir.aval_to_ir_type(ctx.avals_out[0]),
+                           x, mlir.i64_attr(split_axis),
+                           mlir.i64_attr(concat_axis),
+                           mlir.i64_attr(split_count),
+                           _replica_groups_mhlo(replica_groups)).results
+  else:
+    warnings.warn(
+        "all_to_all (and pswapaxes) are only implemented properly for TPUs and GPUs (if "
+        "split_axis and concat_axis are both 0). All other backends emulate it using a "
+        "very slow and memory intensive algorithm, so expect significant slowdowns."
+    )
+    lowering = mlir.lower_fun(_all_to_all_via_all_gather,
+                              multiple_results=False)
+    return lowering(ctx, x,
+                    axis_name=axis_name,
+                    split_axis=split_axis,
+                    concat_axis=concat_axis,
+                    axis_index_groups=axis_index_groups)
 
 def _all_to_all_transpose_rule(cts, x, axis_name, split_axis, concat_axis, axis_index_groups):
   return (all_to_all(
@@ -979,6 +1104,7 @@ all_to_all_p = core.AxisPrimitive('all_to_all')
 all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
 xla.register_translation(all_to_all_p, _all_to_all_translation_rule,
                          is_collective=True)
+mlir.register_lowering(all_to_all_p, _all_to_all_lowering)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
@@ -1103,6 +1229,34 @@ def _all_gather_translation_rule(
         axis_name=axis_name, axis_index_groups=axis_index_groups,
         axis_size=axis_size, tiled=tiled)
 
+def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
+                         axis_index_groups, axis_size, tiled):
+  # TODO(jekbradbury): enable for all_gather_dimension > 0
+  x_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
+  if (ctx.module_context.platform == 'tpu' or
+      ctx.module_context.platform == 'gpu' and all_gather_dimension == 0):
+    if not tiled:
+      new_shape = list(x_aval.shape)
+      new_shape.insert(all_gather_dimension, 1)
+      broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
+      x = mhlo.BroadcastInDimOp(
+          mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
+          mlir.dense_int_elements(broadcast_dimensions))
+    replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+                                     axis_index_groups)
+    return mhlo.AllGatherOp(
+        mlir.aval_to_ir_type(out_aval),
+        x, all_gather_dim=mlir.i64_attr(all_gather_dimension),
+        replica_groups=_replica_groups_mhlo(replica_groups),
+        channel_handle=None).results
+  else:
+    lowering = mlir.lower_fun(_all_gather_via_psum, multiple_results=False)
+    return lowering(
+        ctx, x, all_gather_dimension=all_gather_dimension,
+        axis_name=axis_name, axis_index_groups=axis_index_groups,
+        axis_size=axis_size, tiled=tiled)
+
 def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
@@ -1171,6 +1325,7 @@ all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
 all_gather_p.def_impl(_all_gather_impl)
 xla.register_translation(all_gather_p, _all_gather_translation_rule,
                          is_collective=True)
+mlir.register_lowering(all_gather_p, _all_gather_lowering)
 ad.deflinear2(all_gather_p, _all_gather_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_gather_p)
 batching.primitive_batchers[all_gather_p] = _all_gather_batcher
@@ -1234,6 +1389,48 @@ def _reduce_scatter_translation_rule(prim, reducer, ctx, avals_in, avals_out, x,
             axis_size=axis_size,
             tiled=tiled)
 
+def _reduce_scatter_lowering(prim, reducer, ctx, x,
+                             *, scatter_dimension, axis_name,
+                             axis_index_groups, axis_size, tiled):
+  if ctx.module_context.platform in ("tpu", "gpu"):
+    x_aval, = ctx.avals_in
+    aval_out, = ctx.avals_out
+    scalar_aval = x_aval.update(shape=())
+    replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+                                     axis_index_groups)
+    scatter_out_shape = list(x_aval.shape)
+    scatter_out_shape[scatter_dimension] //= axis_size
+    op = mhlo.ReduceScatterOp(
+        mlir.aval_to_ir_type(x_aval.update(shape=scatter_out_shape)),
+        x,
+        scatter_dimension=mlir.i64_attr(scatter_dimension),
+        replica_groups=_replica_groups_mhlo(replica_groups),
+        channel_handle=None)
+    scalar_type = mlir.aval_to_ir_type(scalar_aval)
+    reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
+    with ir.InsertionPoint(reducer_block):
+      lower_reducer = mlir.lower_fun(prim.bind, multiple_results=False)
+      reducer_ctx = mlir.LoweringRuleContext(
+        module_context = ctx.module_context,
+        primitive=None, avals_in=[scalar_aval] * 2, avals_out=[scalar_aval])
+      out_nodes = lower_reducer(
+          reducer_ctx, *([a] for a in reducer_block.arguments))
+      mhlo.ReturnOp(util.flatten(out_nodes))
+
+    if tiled:
+      return op.results
+    else:
+      return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), op.result).results
+  else:
+    return mlir.lower_fun(_reduce_scatter_via_reducer, multiple_results=False)(
+        ctx, x,
+        reducer=reducer,
+        scatter_dimension=scatter_dimension,
+        axis_name=axis_name,
+        axis_index_groups=axis_index_groups,
+        axis_size=axis_size,
+        tiled=tiled)
+
 
 def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
                                   axis_index_groups, axis_size, tiled):
@@ -1269,6 +1466,9 @@ xla.register_translation(
     reduce_scatter_p,
     partial(_reduce_scatter_translation_rule, lax.add_p, psum),
     is_collective=True)
+mlir.register_lowering(
+    reduce_scatter_p,
+    partial(_reduce_scatter_lowering, lax.add_p, psum))
 pxla.multi_host_supported_collectives.add(reduce_scatter_p)
 
 
@@ -1363,6 +1563,27 @@ def _build_axis_index_lowering(c, axis_name, axis_env):
 def _axis_index_translation_rule(ctx, avals_in, avals_out, *, axis_name):
   return [_build_axis_index_lowering(ctx.builder, axis_name, ctx.axis_env)]
 
+def _build_axis_index_lowering_mhlo(axis_name, axis_env):
+  if isinstance(axis_name, tuple):
+    assert axis_name, 'empty axis name'
+    if len(axis_name) > 1:
+      raise NotImplementedError(
+          '`axis_index` translation rule does not support multiple axis names.')
+    axis_name, = axis_name
+  axis_pos = list(axis_env.names).index(axis_name)
+  nreplicas = axis_env.nreps // prod(axis_env.sizes)
+  div = mlir.ir_constant(np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
+                                  dtype=np.uint32))
+  mod = mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
+  unsigned_index = mhlo.RemOp(mhlo.DivOp(mhlo.ReplicaIdOp(), div), mod)
+  return mhlo.ConvertOp(
+      ir.RankedTensorType.get([], ir.IntegerType.get_signless(32)),
+      unsigned_index).result
+
+def _axis_index_lowering(ctx, *, axis_name):
+  return [_build_axis_index_lowering_mhlo(axis_name,
+                                          ctx.module_context.axis_env)]
+
 
 def _axis_index_abstract_eval(*, axis_name):
   frame = core.axis_frame(axis_name)
@@ -1371,6 +1592,7 @@ def _axis_index_abstract_eval(*, axis_name):
 axis_index_p = core.Primitive('axis_index')
 xla.register_translation(axis_index_p, _axis_index_translation_rule,
                          is_collective=True)
+mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_abstract_eval(_axis_index_abstract_eval)
 pxla.multi_host_supported_collectives.add(axis_index_p)
 core.axis_substitution_rules[axis_index_p] = partial(_subst_all_names_in_param, 'axis_name')
@@ -1465,6 +1687,9 @@ xla.register_translation(
     pdot_p,
     xla.lower_fun(_pdot_lowering, multiple_results=False, new_style=True),
     is_collective=True)
+mlir.register_lowering(
+    pdot_p,
+    mlir.lower_fun(_pdot_lowering, multiple_results=False))
 
 def _pdot_transpose_lhs(g, y, *, axis_name, pos_contract, pos_batch, precision):
   # TODO: avals with names, call pbroadcast with axis_name
@@ -1512,6 +1737,13 @@ def _pgather_parallel_translation(ctx, avals_in, avals_out, src, idx, *, axes):
   return xla.lower_fun(_pgather_impl, multiple_results=False, new_style=True)(
       ctx, avals_in, avals_out, src, idx, axes=axes)
 
+def _pgather_parallel_lowering(ctx, src, idx, *, axes):
+  if any(not isinstance(axis, int) for axis in axes):
+    raise NotImplementedError("pgather only supported in the SPMD lowering."
+                              "Please open a feature request!")
+  return mlir.lower_fun(_pgather_impl, multiple_results=False)(
+      ctx, src, idx, axes=axes)
+
 def _pgather_batcher(vals_in, dims_in, *, axes):
   src, idx = vals_in
   dsrc, didx = dims_in
@@ -1555,6 +1787,7 @@ pgather_p.def_impl(_pgather_impl)
 pgather_p.def_abstract_eval(_pgather_abstract_eval)
 xla.register_translation(pgather_p, _pgather_parallel_translation,
                          is_collective=True)
+mlir.register_lowering(pgather_p, _pgather_parallel_lowering)
 # TODO: Transpose? That requires adding pscatter...
 batching.primitive_batchers[pgather_p] = _pgather_batcher
 batching.axis_primitive_batchers[pgather_p] = _pgather_collective_batcher
