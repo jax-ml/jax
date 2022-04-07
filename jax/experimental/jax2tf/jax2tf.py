@@ -2078,6 +2078,10 @@ tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
 
 
 def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm) -> Sequence[TfVal]:
+  is_uint32_key = key.dtype == _to_tf_dtype(jnp.uint32)
+  if is_uint32_key:
+    key = tf.reshape(key, (2, 2))
+    key = tfxla.bitcast_convert_type(key, _to_tf_dtype(jnp.uint64))
   shape_tf = _eval_shape(shape)
   # JAX uses XLA algorithm enums; tfxla uses tf.random.Algorithm
   if algorithm == lax.RandomAlgorithm.RNG_THREE_FRY:
@@ -2088,11 +2092,16 @@ def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm) -> Sequence[TfVal
     algorithm_tf = tf.random.Algorithm.AUTO_SELECT
   else:
     assert False
-  outs = tfxla.rng_bit_generator(algorithm_tf.value, key, shape_tf,
-                                 dtype=_to_tf_dtype(dtype))
+  (new_key, res) = tfxla.rng_bit_generator(algorithm_tf.value, key, shape_tf,
+                                           dtype=_to_tf_dtype(dtype))
+  if is_uint32_key:
+    new_key = tfxla.bitcast_convert_type(new_key, _to_tf_dtype(jnp.uint32))
+    new_key = tf.reshape(new_key, (4,))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    outs = tuple(tf.stop_gradient(out) for out in outs) # See #7839
-  return outs
+    # See #7839
+    new_key = tf.stop_gradient(new_key)
+    res = tf.stop_gradient(res)
+  return new_key, res
 
 
 tf_impl[lax.rng_bit_generator_p] = _rng_bit_generator
