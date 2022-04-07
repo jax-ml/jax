@@ -622,17 +622,31 @@ def bcoo_dot_general(lhs, rhs, *, dimension_numbers):
   """A general contraction operation.
 
   Args:
-    lhs: A BCOO-format array.
-    rhs: An ndarray.
+    lhs: An ndarray or BCOO-format sparse array.
+    rhs: An ndarray or BCOO-format sparse array..
     dimension_numbers: a tuple of tuples of the form
       `((lhs_contracting_dims, rhs_contracting_dims),
       (lhs_batch_dims, rhs_batch_dims))`.
 
   Returns:
-    An ndarray containing the result.
+    An ndarray or BCOO-format sparse array containing the result. If both inputs
+    are sparse, the result will be sparse, of type BCOO. If either input is dense,
+    the result will be dense, of type ndarray.
   """
-  return _bcoo_dot_general(*lhs._bufs, rhs, dimension_numbers=dimension_numbers,
-                           lhs_spinfo=lhs._info)
+  if isinstance(lhs, BCOO) and isinstance(rhs, BCOO):
+    shape = _dot_general_validated_shape(lhs.shape, rhs.shape, dimension_numbers)
+    bufs = _bcoo_spdot_general(lhs.data, lhs.indices, rhs.data, rhs.indices,
+                               lhs_spinfo=lhs._info, rhs_spinfo=rhs._info,
+                               dimension_numbers=dimension_numbers)
+    return BCOO(bufs, shape=shape)
+  elif isinstance(lhs, BCOO):
+    return _bcoo_dot_general(*lhs._bufs, rhs, dimension_numbers=dimension_numbers,
+                             lhs_spinfo=lhs._info)
+  elif isinstance(rhs, BCOO):
+    return _bcoo_rdot_general(lhs, *rhs._bufs, dimension_numbers=dimension_numbers,
+                              rhs_spinfo=rhs._info)
+  else:
+    return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
 
 def _bcoo_dot_general(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: BCOOInfo):
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
@@ -643,23 +657,6 @@ def _bcoo_dot_general(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spin
   return bcoo_dot_general_p.bind(jnp.asarray(lhs_data), jnp.asarray(lhs_indices), jnp.asarray(rhs),
                                  dimension_numbers=(cdims, bdims),
                                  lhs_spinfo=lhs_spinfo)
-
-def bcoo_rdot_general(lhs, rhs, *, dimension_numbers: DotDimensionNumbers):
-  """A general contraction operation.
-
-  Args:
-    lhs: An ndarray.
-    rhs: A BCOO-format array.
-    dimension_numbers: a tuple of tuples of the form
-      `((lhs_contracting_dims, rhs_contracting_dims),
-      (lhs_batch_dims, rhs_batch_dims))`.
-
-  Returns:
-    An ndarray containing the result.
-  """
-  return _bcoo_rdot_general(lhs, rhs.data, rhs.indices,
-                            dimension_numbers=dimension_numbers,
-                            rhs_spinfo=rhs._info)
 
 def _bcoo_rdot_general(lhs, rhs_data, rhs_indices, *, dimension_numbers: DotDimensionNumbers, rhs_spinfo: BCOOInfo):
   # TODO(jakevdp): perhaps this should be part of the bcoo_dot_general primitive?
@@ -1016,25 +1013,6 @@ xla.register_translation(bcoo_dot_general_sampled_p, xla.lower_fun(
 
 bcoo_spdot_general_p = core.Primitive('bcoo_spdot_general')
 bcoo_spdot_general_p.multiple_results = True
-
-def bcoo_spdot_general(lhs, rhs, *, dimension_numbers: DotDimensionNumbers):
-  """A general contraction operation.
-
-  Args:
-    lhs: A BCOO-format array.
-    rhs: A BCOO-format array.
-    dimension_numbers: a tuple of tuples of the form
-      `((lhs_contracting_dims, rhs_contracting_dims),
-      (lhs_batch_dims, rhs_batch_dims))`.
-
-  Returns:
-    A BCOO array containing the result.
-  """
-  shape = _dot_general_validated_shape(lhs.shape, rhs.shape, dimension_numbers)
-  data, indices = _bcoo_spdot_general(lhs.data, lhs.indices, rhs.data, rhs.indices,
-                                      lhs_spinfo=lhs._info, rhs_spinfo=rhs._info,
-                                      dimension_numbers=dimension_numbers)
-  return BCOO((data, indices), shape=shape)
 
 def _bcoo_spdot_general(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo: BCOOInfo, rhs_spinfo: BCOOInfo, dimension_numbers: DotDimensionNumbers):
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers

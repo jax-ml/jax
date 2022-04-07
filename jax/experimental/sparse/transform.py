@@ -434,14 +434,8 @@ for _prim in [
 def _dot_general_sparse(spenv, *spvalues, dimension_numbers, precision, preferred_element_type):
   # TODO(jakevdp): pass along these unused configurations?
   del precision, preferred_element_type  # unused
-  if spvalues[0].is_sparse() and spvalues[1].is_sparse():
-    func = sparse.bcoo_spdot_general
-  elif spvalues[0].is_sparse():
-    func = sparse.bcoo_dot_general
-  else:
-    func = sparse.bcoo_rdot_general
-  A, B = spvalues_to_arrays(spenv, spvalues)
-  result = func(A, B, dimension_numbers=dimension_numbers)
+  result = sparse.bcoo_dot_general(*spvalues_to_arrays(spenv, spvalues),
+                                   dimension_numbers=dimension_numbers)
   return arrays_to_spvalues(spenv, [result])
 
 sparse_rules[lax.dot_general_p] = _dot_general_sparse
