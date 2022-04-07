@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for the jax2tf conversion of sharded_jit."""
+"""Tests for the jax2tf conversion of pjit."""
 
 import functools
 import logging
@@ -28,7 +28,6 @@ from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental import pjit
 from jax.experimental.jax2tf.tests import tf_test_util
-from jax.interpreters import sharded_jit
 from jax.interpreters.pxla import PartitionSpec as P
 import jax.numpy as jnp
 import jax._src.lib.xla_bridge
@@ -141,84 +140,6 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
       failure_msg.append(
           f"!!! Not found[{next_expected_idx}] {expected[next_expected_idx]}")
       raise self.failureException("\n".join(failure_msg))
-
-  def test_sharded_jit_in_out(self):
-    """Test input and output sharding annotations."""
-    sharded_jax_func = sharded_jit.sharded_jit(
-        jnp.dot, in_parts=(P(1, 2), P(2, 1)), out_parts=P(1, 2))
-    xshape = (3, 8)
-    x = np.arange(np.prod(xshape), dtype=np.float32).reshape(xshape)
-    yshape = (8, 5)
-    y = np.arange(np.prod(yshape), dtype=np.float32).reshape(yshape)
-    self._check_sharding_annotations(
-        sharded_jax_func,
-        [x, y],
-        expected=[
-            r"f32\[3,8\].*sharding={devices=\[1,2\]",
-            r"f32\[8,5\].*sharding={devices=\[2,1\]",
-            r"f32\[3,5\].*sharding={devices=\[1,2\]"
-        ],
-        expected_opt=[
-            # TODO(necula): relax ordering
-            r"f32\[4,5\].*sharding={devices=\[2,1\]|f32\[3,4\].*sharding={devices=\[1,2\]",
-            r"f32\[4,5\].*sharding={devices=\[2,1\]|f32\[3,4\].*sharding={devices=\[1,2\]",
-            r"f32\[3,5\].*fusion",
-            r"f32\[3,5\].*all-reduce",
-        ],
-        num_partitions=2)
-
-  def test_sharded_jit_with_sharding_constraint(self):
-    """A sharding constraint in the middle."""
-
-    def jax_func(x, y):
-      logits1 = jnp.dot(x, y)
-      return jnp.sin(sharded_jit.with_sharding_constraint(logits1, P(2, 1)))
-
-    sharded_jax_func = sharded_jit.sharded_jit(
-        jax_func, in_parts=(P(1, 2), P(2, 1)), out_parts=P(1, 2))
-    xshape = (6, 8)
-    x = np.arange(np.prod(xshape), dtype=np.float32).reshape(xshape)
-    yshape = (8, 10)
-    y = np.arange(np.prod(yshape), dtype=np.float32).reshape(yshape)
-    self._check_sharding_annotations(
-        sharded_jax_func,
-        [x, y],
-        expected=[
-            r"f32\[6,8\].*sharding={devices=\[1,2\]",
-            r"f32\[8,10\].*sharding={devices=\[2,1\]",
-            r"f32\[6,10\].*sharding={devices=\[2,1\]",
-            r"f32\[6,10\].*sine.*sharding={devices=\[1,2\]"
-        ],
-        expected_opt=[
-            # TODO(necula): relax ordering
-            r"f32\[4,10\].*sharding={devices=\[2,1\]|f32\[6,4\].*sharding={devices=\[1,2\]",
-            r"f32\[4,10\].*sharding={devices=\[2,1\]|f32\[6,4\].*sharding={devices=\[1,2\]",
-        ],
-        num_partitions=2)
-
-  def test_sharded_jit_replicated(self):
-    """A replicated input and output."""
-
-    sharded_jax_func = sharded_jit.sharded_jit(
-        jnp.dot, in_parts=(P(1, 2), None), out_parts=None)
-    xshape = (3, 8)
-    x = np.arange(np.prod(xshape), dtype=np.float32).reshape(xshape)
-    yshape = (8, 5)
-    y = np.arange(np.prod(yshape), dtype=np.float32).reshape(yshape)
-    self._check_sharding_annotations(
-        sharded_jax_func,
-        [x, y],
-        expected=[
-            r"f32\[3,8\].*sharding={devices=\[1,2\]",
-            r"f32\[8,5\].*sharding={replicated}",
-            r"f32\[3,5\].*sharding={replicated}"
-        ],
-        expected_opt=[
-            # TODO(necula): relax ordering
-            r"f32\[8,5\].*sharding={replicated}|f32\[3,4\].*sharding={devices=\[1,2\]",
-            r"f32\[8,5\].*sharding={replicated}|f32\[3,4\].*sharding={devices=\[1,2\]",
-        ],
-        num_partitions=2)
 
   @jtu.with_mesh([("x", 2)])
   def test_pjit_basic1D(self):
