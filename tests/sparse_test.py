@@ -1815,6 +1815,9 @@ class BCOOTest(jtu.JaxTestCase):
     # bcoo_dot_general
     self.assertArraysEqual(x_sp @ y_de, x_de @ y_de)
 
+    # bcoo_rdot_general
+    self.assertArraysEqual(x_de @ y_sp, x_de @ y_de)
+
     # bcoo_spdot_general
     self.assertArraysEqual((x_sp @ y_sp).todense(), x_de @ y_de)
     self.assertArraysEqual((y_sp @ x_sp).todense(), y_de @ x_de)
