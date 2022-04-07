@@ -1391,6 +1391,25 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       self._CompileAndCheck(jsp.linalg.schur, args_maker)
 
   @parameterized.named_parameters(
+        jtu.cases_from_list({
+            "testcase_name":
+            "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+            "shape": shape, "dtype": dtype
+        } for shape in [(1, 1), (4, 4), (15, 15), (50, 50), (100, 100)]
+                            for dtype in float_types + complex_types))
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testRsf2csf(self, shape, dtype):
+      rng = jtu.rand_default(self.rng())
+      args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+      if shape[0] >= 50:
+        tol = 1e-5
+      else:
+        tol = 1e-6
+      self._CheckAgainstNumpy(osp.linalg.rsf2csf, jsp.linalg.rsf2csf,
+                              args_maker, tol=tol)
+      self._CompileAndCheck(jsp.linalg.rsf2csf, args_maker)
+
+  @parameterized.named_parameters(
     jtu.cases_from_list({
         "testcase_name":
         "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
