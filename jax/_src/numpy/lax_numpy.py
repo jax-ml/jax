@@ -2074,6 +2074,9 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
     start = require(start, msg("start"))
     stop = None if stop is None else require(stop, msg("stop"))
     step = None if step is None else require(step, msg("step"))
+    if step is None and start == 0 and stop is not None:
+      stop = np.ceil(stop).astype(int)
+      return lax.iota(dtype, stop)
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
 

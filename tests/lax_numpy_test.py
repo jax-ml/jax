@@ -4309,6 +4309,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # from https://github.com/google/jax/issues/3450
     self.assertAllClose(np_arange(2.5),
                         jnp.arange(2.5))
+    self.assertAllClose(np_arange(0., 2.5),
+                        jnp.arange(0., 2.5))
 
   def testArangeTypes(self):
     # Test that arange() output type is equal to the default types.
@@ -5019,6 +5021,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = jax.jit(lambda: jnp.arange(5))()
     expected = jtu.with_jax_dtype_defaults(np.arange)(5)
     self.assertAllClose(ans, expected)
+
+  @parameterized.named_parameters(
+    {"testcase_name": f"_{args}", "args": args} for args in [(5,), (0, 5)])
+  def testArangeJaxpr(self, args):
+    jaxpr = jax.make_jaxpr(lambda: jnp.arange(*args))()
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.iota_p)
 
   def testIssue830(self):
     a = jnp.arange(4, dtype=jnp.complex64)
