@@ -236,6 +236,9 @@ def _split_abstract_eval(mat):
 xla.register_translation(
     split_p, xla.lower_fun(_split_impl, multiple_results=True, new_style=True))
 
+mlir.register_lowering(
+    split_p, mlir.lower_fun(_split_impl, multiple_results=True))
+
 def make_sparse_array(rng, shape, dtype, nnz=0.2):
   mat = rng(shape, dtype)
   size = int(np.prod(shape))

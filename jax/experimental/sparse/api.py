@@ -41,6 +41,7 @@ from jax.experimental.sparse.csr import CSR, CSC
 from jax.experimental.sparse.util import _coo_extract
 from jax.interpreters import ad
 from jax.interpreters import batching
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src import dtypes
 
@@ -101,6 +102,9 @@ ad.primitive_transposes[todense_p] = _todense_transpose
 batching.primitive_batchers[todense_p] = _todense_batching_rule
 xla.register_translation(todense_p, xla.lower_fun(
     _todense_impl, multiple_results=False, new_style=True))
+
+mlir.register_lowering(todense_p, mlir.lower_fun(
+    _todense_impl, multiple_results=False))
 
 
 def empty(shape, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):

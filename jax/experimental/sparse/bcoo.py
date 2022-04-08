@@ -29,6 +29,7 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _safe_asarray, CuSparseEfficiencyWarning
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax.interpreters import xla
 import jax.numpy as jnp
 from jax.interpreters import ad
@@ -38,6 +39,9 @@ from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
+import jax._src.lib
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client as xc
 from jax._src.numpy.setops import _unique
 
@@ -145,6 +149,9 @@ def _bcoo_sort_indices(data, indices, shape):
 
 _bcoo_sort_indices_rule = xla.lower_fun(
     _bcoo_sort_indices, multiple_results=True, new_style=True)
+
+_bcoo_sort_indices_mhlo = mlir.lower_fun(
+    _bcoo_sort_indices, multiple_results=True)
 
 def _unbatch_bcoo(data, indices, shape):
   n_batch = _validate_bcoo(data, indices, shape).n_batch
@@ -282,6 +289,8 @@ ad.primitive_transposes[bcoo_todense_p] = _bcoo_todense_transpose
 batching.primitive_batchers[bcoo_todense_p] = _bcoo_todense_batching_rule
 xla.register_translation(bcoo_todense_p, xla.lower_fun(
     _bcoo_todense_impl, multiple_results=False, new_style=True))
+mlir.register_lowering(bcoo_todense_p, mlir.lower_fun(
+    _bcoo_todense_impl, multiple_results=False))
 
 #--------------------------------------------------------------------
 # bcoo_fromdense
@@ -408,6 +417,8 @@ ad.primitive_transposes[bcoo_fromdense_p] = _bcoo_fromdense_transpose
 batching.primitive_batchers[bcoo_fromdense_p] = _bcoo_fromdense_batching_rule
 xla.register_translation(bcoo_fromdense_p, xla.lower_fun(
     _bcoo_fromdense_impl, multiple_results=True, new_style=True))
+mlir.register_lowering(bcoo_fromdense_p, mlir.lower_fun(
+    _bcoo_fromdense_impl, multiple_results=True))
 
 #----------------------------------------------------------------------
 # bcoo_extract
@@ -487,6 +498,8 @@ ad.primitive_transposes[bcoo_extract_p] = _bcoo_extract_transpose
 batching.primitive_batchers[bcoo_extract_p] = _bcoo_extract_batching_rule
 xla.register_translation(bcoo_extract_p, xla.lower_fun(
     _bcoo_extract_impl, multiple_results=False, new_style=True))
+mlir.register_lowering(bcoo_extract_p, mlir.lower_fun(
+    _bcoo_extract_impl, multiple_results=False))
 
 #----------------------------------------------------------------------
 # bcoo_transpose
@@ -602,6 +615,8 @@ ad.primitive_transposes[bcoo_transpose_p] = _bcoo_transpose_transpose
 batching.primitive_batchers[bcoo_transpose_p] = _bcoo_transpose_batch_rule
 xla.register_translation(bcoo_transpose_p, xla.lower_fun(
     _bcoo_transpose_impl, multiple_results=True, new_style=True))
+mlir.register_lowering(bcoo_transpose_p, mlir.lower_fun(
+    _bcoo_transpose_impl, multiple_results=True))
 
 #----------------------------------------------------------------------
 # bcoo_dot_general
@@ -862,6 +877,146 @@ def _bcoo_dot_general_gpu_translation_rule(
       ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
+_bcoo_dot_general_default_lowering = mlir.lower_fun(
+    _bcoo_dot_general_impl, multiple_results=False)
+
+def _collapse_mhlo(x, start, end):
+  x_type = ir.RankedTensorType(x.type)
+  shape = x_type.shape
+  shape = (shape[:start]
+           + [functools.reduce(operator.mul, shape[start:end + 1])]
+           + shape[end + 1:])
+  return mhlo.ReshapeOp(
+      ir.RankedTensorType.get(shape, x_type.element_type), x).result
+
+def _bcoo_dot_general_cuda_lowering(
+    ctx, lhs_data, lhs_indices, rhs, *, dimension_numbers,
+    lhs_spinfo: BCOOInfo):
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
+  props = _validate_bcoo_indices(lhs_indices_aval, lhs_spinfo.shape)
+  rhs_ndim = len(ir.RankedTensorType(rhs.type).shape)
+
+  # Checks the shapes of lhs and rhs.
+  assert props.n_dense == 0
+  assert props.n_batch == 0
+  assert props.n_sparse in [1, 2]
+  assert rhs_ndim in [1, 2]
+
+  # Checks the operation dimensions.
+  assert len(lhs_batch) == 0
+  assert len(rhs_batch) == 0
+  assert len(lhs_contract) == 1
+
+  # Checks the dtype.
+  assert lhs_data_aval.dtype in [np.float32, np.float64, np.complex64,
+                                 np.complex128]
+  assert lhs_data_aval.dtype == rhs_aval.dtype
+  assert lhs_indices_aval.dtype == np.int32
+  assert sparse_apis is not None
+
+  if rhs_ndim == 1:
+    bcoo_dot_general_fn = sparse_apis.coo_matvec_mhlo
+  elif rhs_ndim == 2:
+    bcoo_dot_general_fn = sparse_apis.coo_matmat_mhlo
+    if rhs_contract[0] == 1:
+      rhs = mhlo.TransposeOp(
+          rhs, permutation=mlir.dense_int_elements([1, 0])).result
+  else:
+    raise ValueError(f"rhs has to be 1d or 2d; get {rhs_ndim}d.")
+
+  lhs_transpose = False
+  if props.n_sparse == 1:
+    # Converts lhs to a row vector.
+    col = _collapse_mhlo(lhs_indices, start=0, end=1)
+    row = mlir.full_like_aval(
+        0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
+                            np.dtype(np.int32)))
+    lhs_shape = (1, lhs_spinfo.shape[0])
+    dot_product = bcoo_dot_general_fn(
+        lhs_data, row, col, rhs, shape=lhs_shape, transpose=lhs_transpose,
+        data_dtype=lhs_data_aval.dtype, index_dtype=lhs_indices_aval.dtype,
+        x_dtype=rhs_aval.dtype)
+
+    if rhs_ndim == 1:
+      # Transforms a single-element array to a scalar.
+      return [mhlo.ReshapeOp(
+          ir.RankedTensorType(
+              [], ir.RankedTensorType(dot_product.type).element_type),
+          dot_product).result]
+    else:
+      return [_collapse_mhlo(dot_product, start=0, end=1)]
+  elif props.n_sparse == 2:
+    lhs_indices_shape = ir.RankedTensorType(lhs_indices.type).shape
+    row = _collapse_mhlo(
+        mhlo.SliceOp(
+            lhs_indices,
+            start_indices=mlir.dense_int_elements([0, 0]),
+            limit_indices=mlir.dense_int_elements([lhs_indices_shape[0], 1]),
+            strides=mlir.dense_int_elements([1, 1])).result,
+        start=0, end=1)
+    col = _collapse_mhlo(
+        mhlo.SliceOp(
+            lhs_indices,
+            start_indices=mlir.dense_int_elements([0, 1]),
+            limit_indices=mlir.dense_int_elements([lhs_indices_shape[0], 2]),
+            strides=mlir.dense_int_elements([1, 1])).result,
+        start=0, end=1)
+
+    if lhs_contract[0] == 0:
+      lhs_transpose = True
+
+    return [bcoo_dot_general_fn(
+        lhs_data, row, col, rhs, shape=lhs_spinfo.shape,
+        transpose=lhs_transpose, data_dtype=lhs_data_aval.dtype,
+        index_dtype=lhs_indices_aval.dtype,
+        x_dtype=rhs_aval.dtype)]
+  else:
+    raise ValueError(f"lhs has to be 1d or 2d; get {props.n_sparse}d.")
+
+def _bcoo_dot_general_gpu_lowering(
+    ctx, lhs_data, lhs_indices, rhs, *, dimension_numbers,
+    lhs_spinfo: BCOOInfo):
+
+  if not config.jax_bcoo_cusparse_lowering:
+    return _bcoo_dot_general_default_lowering(
+      ctx, lhs_data, lhs_indices, rhs,
+      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
+  n_batch, n_sparse, n_dense, nse = _validate_bcoo(
+      lhs_data_aval, lhs_indices_aval, lhs_spinfo.shape)
+
+  dtype = lhs_data_aval.dtype
+  if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
+    warnings.warn(f'bcoo_dot_general cusparse/hipsparse lowering not available '
+                  f'for dtype={dtype}. Falling back to default implementation.',
+                  CuSparseEfficiencyWarning)
+    return _bcoo_dot_general_default_lowering(
+      ctx, lhs_data, lhs_indices, rhs,
+      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+
+  if (n_batch or n_dense or
+      n_sparse not in [1, 2] or rhs_aval.ndim not in [1, 2] or
+      lhs_batch or rhs_batch or len(lhs_contract) != 1):
+    return _bcoo_dot_general_default_lowering(
+      ctx, lhs_data, lhs_indices, rhs,
+      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+  else:
+    # Sorts lhs by row indices.
+    sub_ctx = mlir.LoweringRuleContext(module_context=ctx.module_context,
+                                       primitive=None,
+                                       avals_in=ctx.avals_in[:2],
+                                       avals_out=ctx.avals_in[:2])
+
+    (lhs_data,), (lhs_indices,) = _bcoo_sort_indices_mhlo(
+        sub_ctx, lhs_data, lhs_indices, shape=lhs_spinfo.shape)
+
+    return _bcoo_dot_general_cuda_lowering(
+      ctx, lhs_data, lhs_indices, rhs,
+      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+
 def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: BCOOInfo):
   return _bcoo_dot_general(lhs_data_dot, lhs_indices, rhs, dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
@@ -930,9 +1085,15 @@ batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 
 xla.register_translation(
     bcoo_dot_general_p, _bcoo_dot_general_default_translation_rule)
+mlir.register_lowering(
+    bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
 if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(bcoo_dot_general_p,
                            _bcoo_dot_general_gpu_translation_rule,
+                           platform='gpu')
+  if jax._src.lib.version > (0, 3, 5):
+    mlir.register_lowering(bcoo_dot_general_p,
+                           _bcoo_dot_general_gpu_lowering,
                            platform='gpu')
 
 #----------------------------------------------------------------------
@@ -1005,6 +1166,9 @@ ad.primitive_transposes[bcoo_dot_general_sampled_p] = _bcoo_dot_general_sampled_
 batching.primitive_batchers[bcoo_dot_general_sampled_p] = _bcoo_dot_general_sampled_batch_rule
 xla.register_translation(bcoo_dot_general_sampled_p, xla.lower_fun(
     _bcoo_dot_general_sampled_impl, multiple_results=False, new_style=True))
+mlir.register_lowering(
+    bcoo_dot_general_sampled_p,
+    mlir.lower_fun(_bcoo_dot_general_sampled_impl, multiple_results=False))
 
 #----------------------------------------------------------------------
 # bcoo_spdot_general
@@ -1205,6 +1369,8 @@ batching.primitive_batchers[bcoo_spdot_general_p] = _bcoo_spdot_general_batch_ru
 ad.primitive_jvps[bcoo_spdot_general_p] = _bcoo_spdot_general_jvp
 xla.register_translation(bcoo_spdot_general_p, xla.lower_fun(
     _bcoo_spdot_general_impl, multiple_results=True, new_style=True))
+mlir.register_lowering(bcoo_spdot_general_p, mlir.lower_fun(
+    _bcoo_spdot_general_impl, multiple_results=True))
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
