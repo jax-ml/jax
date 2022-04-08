@@ -1454,6 +1454,38 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(jf_dense_0, jf_sparse_0, rtol=tol)
     self.assertAllClose(jf_dense_1, jf_sparse_1, rtol=tol)
 
+  def test_bcoo_spdot_general_ad_bug(self):
+    # Regression test for https://github.com/google/jax/issues/10163
+    A_indices = jnp.array([[0, 1], [0, 2], [1, 1], [1, 2], [1, 0]])
+    A_values = jnp.array([-2.0, 1.0, -1.0, 0.5, 2.0])
+    A_shape = (2, 3)
+
+    B_indices = jnp.array([[0, 2], [2, 1], [0, 3], [1, 3], [1, 0], [0, 0]])
+    B_values = jnp.array([10.0, 100.0, 1000.0, -5.0, -50.0, -500.0])
+    B_shape = (3, 4)
+
+    def sp_sp_product(v1, v2):
+        A = sparse.BCOO((v1, A_indices), shape=A_shape)
+        B = sparse.BCOO((v2, B_indices), shape=B_shape)
+        return (A @ B).todense()
+
+    def sp_de_product(v1, v2):
+        A = sparse.BCOO((v1, A_indices), shape=A_shape)
+        B = sparse.BCOO((v2, B_indices), shape=B_shape).todense()
+        return A @ B
+
+    def de_de_product(v1, v2):
+        sparse1 = sparse.BCOO((v1, A_indices), shape=A_shape).todense()
+        dense2 = sparse.BCOO((v2, B_indices), shape=B_shape).todense()
+        return sparse1 @ dense2
+
+    sp_sp_jac = jax.jacfwd(sp_sp_product, argnums=1)(A_values, B_values)
+    sp_de_jac = jax.jacfwd(sp_de_product, argnums=1)(A_values, B_values)
+    de_de_jac = jax.jacfwd(de_de_product, argnums=1)(A_values, B_values)
+
+    self.assertAllClose(sp_sp_jac, de_de_jac)
+    self.assertAllClose(sp_de_jac, de_de_jac)
+
   @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}[n_batch={}]_{}[n_batch={}]_in_axes={}".format(

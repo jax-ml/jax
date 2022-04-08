@@ -84,6 +84,8 @@ def _bcoo_nse(mat, n_batch=0, n_dense=0):
   mask = mask.sum(list(range(n_batch, mask.ndim)))
   return mask.max()
 
+# TODO(jakevdp): add a custom autodiff rule that errors if remove_zeros=True, because
+# it produces wrong values. See https://github.com/google/jax/issues/10163
 def _bcoo_sum_duplicates(data, indices, shape, nse=None, remove_zeros=True):
   if nse is None and isinstance(jnp.array(0), core.Tracer):
     raise ValueError("When used with JIT, vmap, or another transform, sum_duplicates() "
@@ -1229,7 +1231,8 @@ def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, 
   out_indices = out_indices.at[:, :, lhs_j.shape[-1]:].set(rhs_j[None, :])
   out_indices = out_indices.reshape(len(out_data), out_indices.shape[-1])
   out_nse = (lhs.nse if lhs_j.shape[1] else 1) * (rhs.nse if rhs_j.shape[1] else 1)
-  return _bcoo_sum_duplicates(out_data, out_indices, out_shape, nse=out_nse)
+  # Note: remove_zeros=True is incompatible with autodiff.
+  return _bcoo_sum_duplicates(out_data, out_indices, out_shape, nse=out_nse, remove_zeros=False)
 
 @bcoo_spdot_general_p.def_impl
 def _bcoo_spdot_general_impl(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo: BCOOInfo, rhs_spinfo: BCOOInfo, dimension_numbers):
@@ -1770,7 +1773,8 @@ class BCOO(JAXSparse):
         If it is smaller than the number required, data will be silently discarded.
       remove_zeros : bool (default=True). If True, remove explicit zeros from the data
         as part of summing duplicates. If False, then explicit zeros at unique indices
-        will remain among the specified elements.
+        will remain among the specified elements. Note: remove_zeros=True is incompatible
+        with autodiff.
     """
     data, indices = _bcoo_sum_duplicates(self.data, self.indices, self.shape,
                                          nse=nse, remove_zeros=remove_zeros)
