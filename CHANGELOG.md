@@ -8,9 +8,16 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.5 (April 6, 2022)
+## jax 0.3.6 (unreleased)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.4...main).
+  commits](https://github.com/google/jax/compare/jax-v0.3.5...main).
+
+## jaxlib 0.3.6 (unreleased)
+
+
+## jax 0.3.5 (April 7, 2022)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.3.4...jax-v0.3.5).
 * Changes:
   * added {func}`jax.random.loggamma` & improved behavior of {func}`jax.random.beta`
     and {func}`jax.random.dirichlet` for small parameter values ({jax-issue}`#9906`).
@@ -24,7 +31,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.tree_util.tree_multimap` is deprecated. Use {func}`jax.tree_util.tree_map` instead ({jax-issue}`#5746`).
   * `jax.experimental.sharded_jit` is deprecated. Use `pjit` instead.
 
-## jaxlib 0.3.5 (April 6, 2022)
+## jaxlib 0.3.5 (April 7, 2022)
 * Bug fixes
   * Fixed a bug where double-precision complex-to-real IRFFTs would mutate their
     input buffers on GPU ({jax-issue}`#9946`).
