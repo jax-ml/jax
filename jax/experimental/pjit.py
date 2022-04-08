@@ -740,7 +740,8 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_axis_resources,
                              mlir.flatten_lowering_ir_args(args))
   return util.unflatten(call.results, safe_map(len, output_types))
 
-mlir.register_lowering(pjit_p, _pjit_lowering)
+# TODO(phawkins): reenable after fixing test failures.
+# mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
 def _pjit_batcher(insert_axis,
