@@ -279,7 +279,7 @@ def prepare_wheel(sources_path):
 def build_wheel(sources_path, output_path, cpu):
   """Builds a wheel in `output_path` using the source tree in `sources_path`."""
   platform_name, cpu_name = {
-    ("Linux", "x86_64"): ("manylinux2010", "x86_64"),
+    ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
     ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
     ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
     ("Darwin", "x86_64"): ("macosx_10_9", "x86_64"),
