@@ -174,5 +174,58 @@ class AnnTest(jtu.JaxTestCase):
     self.assertGreater(ann_recall, recall)
 
 
+  def test_vmap_before(self):
+    batch = 4
+    qy_size = 128
+    db_size = 1024
+    feature_dim = 32
+    k = 10
+    rng = jtu.rand_default(self.rng())
+    qy = rng([batch, qy_size, feature_dim], np.float32)
+    db = rng([batch, db_size, feature_dim], np.float32)
+    recall = 0.95
+
+    # Create ground truth
+    gt_scores = lax.dot_general(qy, db, (([2], [2]), ([0], [0])))
+    _, gt_args = lax.top_k(gt_scores, k)
+    gt_args = lax.reshape(gt_args, [qy_size * batch, k])
+
+    # test target
+    def approx_max_k(qy, db):
+      scores = qy @ db.transpose()
+      return lax.approx_max_k(scores, k)
+    _, ann_args = jax.vmap(approx_max_k, (0, 0))(qy, db)
+    ann_args = lax.reshape(ann_args, [qy_size * batch, k])
+    ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
+    self.assertGreater(ann_recall, recall)
+
+
+  def test_vmap_after(self):
+    batch = 4
+    qy_size = 128
+    db_size = 1024
+    feature_dim = 32
+    k = 10
+    rng = jtu.rand_default(self.rng())
+    qy = rng([qy_size, feature_dim, batch], np.float32)
+    db = rng([db_size, feature_dim, batch], np.float32)
+    recall = 0.95
+
+    # Create ground truth
+    gt_scores = lax.dot_general(qy, db, (([1], [1]), ([2], [2])))
+    _, gt_args = lax.top_k(gt_scores, k)
+    gt_args = lax.transpose(gt_args, [2, 0, 1])
+    gt_args = lax.reshape(gt_args, [qy_size * batch, k])
+
+    # test target
+    def approx_max_k(qy, db):
+      scores = qy @ db.transpose()
+      return lax.approx_max_k(scores, k)
+    _, ann_args = jax.vmap(approx_max_k, (2, 2))(qy, db)
+    ann_args = lax.transpose(ann_args, [2, 0, 1])
+    ann_args = lax.reshape(ann_args, [qy_size * batch, k])
+    ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
+    self.assertGreater(ann_recall, recall)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
