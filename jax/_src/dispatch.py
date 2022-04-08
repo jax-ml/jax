@@ -583,7 +583,7 @@ class XlaCompiledComputation(stages.Executable):
     self._xla_executable = xla_executable
     self.in_avals = in_avals
     self._kept_var_idx = kept_var_idx
-    self.unsafe_call = unsafe_call
+    self._unsafe_call = unsafe_call
 
   @staticmethod
   def from_xla_computation(
@@ -616,6 +616,9 @@ class XlaCompiledComputation(stages.Executable):
 
   def is_trivial(self):
     return self._xla_executable == None
+
+  def unsafe_call(self, *args, **kwargs):
+    return self._unsafe_call(*args, **kwargs)
 
   @property
   def xla_executable(self):
