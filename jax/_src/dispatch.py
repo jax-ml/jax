@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # Primitive dispatch and jit dispatch.
+from __future__ import annotations
 
 import contextlib
 from functools import partial
@@ -48,6 +49,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
+from jax._src.util import flatten, unflatten
 
 FLAGS = flags.FLAGS
 
@@ -253,7 +255,6 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   axis_env = xla.AxisEnv(nreps, (), ())
   name_stack = xla.new_name_stack(xla.wrap_name(name, 'jit'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  module: Union[str, xc.XlaComputation]
   module_name = f"jit_{fun.__name__}"
   module = mlir.lower_jaxpr_to_module(
       module_name, closed_jaxpr, backend.platform,
@@ -434,35 +435,30 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
                       output_buffer_counts: Optional[Sequence[int]],
                       result_handlers, kept_var_idx, *args):
   device, = compiled.local_devices()
-  input_bufs = util.flatten(
-      device_put(x, device) for i, x in enumerate(args) if i in kept_var_idx)
-  out_bufs = compiled.execute(input_bufs)
-  check_special(name, out_bufs)
+  input_bufs_flat = flatten(device_put(x, device) for i, x in enumerate(args)
+                            if i in kept_var_idx)
+  out_bufs_flat = compiled.execute(input_bufs_flat)
+  check_special(name, out_bufs_flat)
   if output_buffer_counts is None:
-    return (result_handlers[0](*out_bufs),)
-  return tuple(
-      handler(*bs) for handler, bs in
-      unsafe_zip(result_handlers, util.unflatten(out_bufs, output_buffer_counts)))
+    return (result_handlers[0](*out_bufs_flat),)
+  out_bufs = unflatten(out_bufs_flat, output_buffer_counts)
+  return tuple(h(*bs) for h, bs in unsafe_zip(result_handlers, out_bufs))
 
 
 def _execute_replicated(name: str, compiled: XlaExecutable,
                         output_buffer_counts: Optional[Sequence[int]],
                         result_handlers, kept_var_idx, *args):
-  input_bufs = [
-      util.flatten(
-        device_put(x, device) for i, x in enumerate(args) if i in kept_var_idx)
-      for device in compiled.local_devices()
-  ]
-  out_bufs = [
-      buf[0] for buf in compiled.execute_sharded_on_local_devices(
-          list(zip(*input_bufs)))
-  ]
-  check_special(name, out_bufs)
+  input_bufs = [flatten(device_put(x, device) for i, x in enumerate(args)
+                        if i in kept_var_idx)
+                for device in compiled.local_devices()]
+  input_bufs_flip = list(unsafe_zip(*input_bufs))
+  out_bufs_flat_rep = compiled.execute_sharded_on_local_devices(input_bufs_flip)
+  out_bufs_flat = [bufs[0] for bufs in out_bufs_flat_rep]
+  check_special(name, out_bufs_flat)
   if output_buffer_counts is None:
-    return (result_handlers[0](*out_bufs),)
-  return tuple(
-      handler(*bs) for handler, bs in
-      unsafe_zip(result_handlers, util.unflatten(out_bufs, output_buffer_counts)))
+    return (result_handlers[0](*out_bufs_flat),)
+  out_bufs = unflatten(out_bufs_flat, output_buffer_counts)
+  return tuple(h(*bs) for h, bs in unsafe_zip(result_handlers, out_bufs))
 
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
@@ -588,20 +584,19 @@ class XlaCompiledComputation(stages.Executable):
   @staticmethod
   def from_xla_computation(
       name: str,
-      xla_computation,
+      xla_computation: Optional[ir.Module],
       nreps: int,
       device: Optional[Device],
-      backend,
+      backend: Backend,
       tuple_args: bool,
-      in_avals,
-      out_avals,
-      kept_var_idx) -> 'XlaCompiledComputation':
+      in_avals: Sequence[core.AbstractValue],
+      out_avals: Sequence[core.AbstractValue],
+      kept_var_idx: Set[int]) -> XlaCompiledComputation:
     sticky_device = device
     result_handlers = map(partial(aval_to_result_handler, sticky_device),
                           out_avals)
     options = xb.get_compile_options(
-        num_replicas=nreps,
-        num_partitions=1,
+        num_replicas=nreps, num_partitions=1,
         device_assignment=(sticky_device,) if sticky_device else None)
     options.parameter_is_tupled_arguments = tuple_args
     with log_elapsed_time(f"Finished XLA compilation of {name} "
