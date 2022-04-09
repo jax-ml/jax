@@ -89,7 +89,7 @@ def treedef_children(treedef):
 def treedef_is_leaf(treedef):
   return treedef.num_nodes == 1
 
-def all_leaves(iterable):
+def all_leaves(iterable, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Tests whether all elements in the given iterable are all leaves.
 
   >>> tree = {"a": [1, 2, 3]}
@@ -102,11 +102,17 @@ def all_leaves(iterable):
 
   Args:
     iterable: Iterable of leaves.
+    is_leaf: An optional function which should return True when a non-leaf
+      object should be considered as a leaf (and False otherwise).
 
   Returns:
     A boolean indicating if all elements in the input are leaves.
   """
-  return pytree.all_leaves(iterable)
+  if is_leaf is None:
+    return pytree.all_leaves(iterable)
+  else:
+    lst = list(iterable)
+    return lst == tree_leaves(lst, is_leaf)
 
 
 _Children = TypeVar("_Children", bound=Iterable[Any])
