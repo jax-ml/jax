@@ -438,7 +438,7 @@ class cuSparseTest(jtu.JaxTestCase):
     mat = sparse.COO.fromdense(sprng((5, 6), np.float32))
     perm = rng.permutation(mat.nse)
     mat_unsorted = sparse.COO((mat.data[perm], mat.row[perm], mat.col[perm]), shape=mat.shape)
-    mat_resorted = mat_unsorted._sort_rows()
+    mat_resorted = mat_unsorted._sort_indices()
     self.assertArraysEqual(mat.todense(), mat_resorted.todense())
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
@@ -460,15 +460,15 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertFalse(mat_unsorted._rows_sorted)
     self.assertFalse(mat_unsorted._cols_sorted)
 
-    self.assertArraysEqual(mat, mat_rows_sorted._sort_rows().todense())
-    self.assertArraysEqual(mat, mat_cols_sorted._sort_rows().todense())
-    self.assertArraysEqual(mat, mat_unsorted._sort_rows().todense())
+    self.assertArraysEqual(mat, mat_rows_sorted._sort_indices().todense())
+    self.assertArraysEqual(mat, mat_cols_sorted._sort_indices().todense())
+    self.assertArraysEqual(mat, mat_unsorted._sort_indices().todense())
 
     todense = jit(sparse.coo_todense)
     with self.assertNoWarnings():
       dense_rows_sorted = todense(mat_rows_sorted)
       dense_cols_sorted = todense(mat_cols_sorted)
-      dense_unsorted = todense(mat_unsorted._sort_rows())
+      dense_unsorted = todense(mat_unsorted._sort_indices())
     with self.assertWarnsRegex(sparse.CuSparseEfficiencyWarning, "coo_todense GPU lowering requires matrices with sorted rows.*"):
       dense_unsorted_fallback = todense(mat_unsorted)
     self.assertArraysEqual(mat, dense_rows_sorted)
@@ -482,7 +482,7 @@ class cuSparseTest(jtu.JaxTestCase):
     with self.assertNoWarnings():
       matvec_rows_sorted = matvec(mat_rows_sorted, rhs_vec)
       matvec_cols_sorted = matvec(mat_cols_sorted, rhs_vec)
-      matvec_unsorted = matvec(mat_unsorted._sort_rows(), rhs_vec)
+      matvec_unsorted = matvec(mat_unsorted._sort_indices(), rhs_vec)
     with self.assertWarnsRegex(sparse.CuSparseEfficiencyWarning, "coo_matvec GPU lowering requires matrices with sorted rows.*"):
       matvec_unsorted_fallback = matvec(mat_unsorted, rhs_vec)
     self.assertArraysEqual(matvec_expected, matvec_rows_sorted)
@@ -496,7 +496,7 @@ class cuSparseTest(jtu.JaxTestCase):
     with self.assertNoWarnings():
       matmat_rows_sorted = matmat(mat_rows_sorted, rhs_mat)
       matmat_cols_sorted = matmat(mat_cols_sorted, rhs_mat)
-      matmat_unsorted = matmat(mat_unsorted._sort_rows(), rhs_mat)
+      matmat_unsorted = matmat(mat_unsorted._sort_indices(), rhs_mat)
     with self.assertWarnsRegex(sparse.CuSparseEfficiencyWarning, "coo_matmat GPU lowering requires matrices with sorted rows.*"):
       matmat_unsorted_fallback = matmat(mat_unsorted, rhs_mat)
     self.assertArraysEqual(matmat_expected, matmat_rows_sorted)
