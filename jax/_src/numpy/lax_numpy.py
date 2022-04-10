@@ -2479,6 +2479,14 @@ def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
 
   diag_size = _max(0, _min(a_shape[axis1] + _min(offset, 0),
                            a_shape[axis2] - _max(offset, 0)))
+  # Skip index normalization for offset == 0
+  if offset == 0 and diag_size > 0:
+    idx_dtype = int64 if diag_size >= (1 << 31) else int_
+    idx = lax.broadcasted_iota(idx_dtype, (diag_size, 2), 0)
+    dims = tuple(range(len(a_shape)))
+    dnums = lax.GatherDimensionNumbers(
+      offset_dims=dims[:-2], collapsed_slice_dims=dims[-2:], start_index_map=dims[-2:])
+    return lax.gather(a, idx, dnums, (*a.shape[:-2], 1, 1), unique_indices=True)
   i = arange(diag_size)
   j = arange(_abs(offset), _abs(offset) + diag_size)
   return a[..., i, j] if offset >= 0 else a[..., j, i]

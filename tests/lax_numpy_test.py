@@ -2925,6 +2925,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+    jaxpr = jax.make_jaxpr(jnp_fun)(jnp.zeros(shape, dtype))
+    need_index_computation = "concatenate" in str(jaxpr)
+    assert need_index_computation == (offset != 0)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}".format(np.dtype(dtype).name, n),
