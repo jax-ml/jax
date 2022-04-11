@@ -144,15 +144,19 @@ def _sharded_callable(
               "Compiling %s for %d devices with args %s.",
               fun.__name__, nparts, global_abstract_args)
 
-  c = xc.XlaBuilder("spjit_{}".format(fun.__name__))
-  xla_consts = _map(partial(xla.pyval_to_ir_constant, c), consts)
-  xla_args = _xla_sharded_args(c, global_abstract_args, in_parts)
   axis_env = xla.AxisEnv(nrep, (), ())
-  ctx = xla.TranslationContext(
-      c, platform, axis_env, new_name_stack(wrap_name(name, "sharded_jit")))
-  out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-  out_tuple = xla.with_sharding(c, out_parts, xops.Tuple, c, out_nodes)
-  built = c.Build(out_tuple)
+  module = mlir.lower_jaxpr_to_module(
+      "spjit_{}".format(fun.__name__),
+      core.ClosedJaxpr(jaxpr, consts),
+      platform=platform,
+      axis_context=mlir.ReplicaAxisContext(axis_env),
+      name_stack=new_name_stack(wrap_name(name, "sharded_jit")),
+      donated_args=[False]*len(in_parts),
+      arg_shardings=safe_map(xla.sharding_to_proto, in_parts),
+      result_shardings=safe_map(xla.sharding_to_proto, out_parts))
+  built = xc._xla.mlir.mlir_module_to_xla_computation(
+      mlir.module_to_string(module), use_tuple_args=False,
+      return_tuple=True)
 
   if nparts <= xb.local_device_count():
     devices = xb.local_devices()[:nparts]
