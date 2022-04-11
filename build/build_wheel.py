@@ -99,7 +99,6 @@ _XLA_EXTENSION_STUBS = [
     "transfer_guard_lib.pyi",
 ]
 _OPTIONAL_XLA_EXTENSION_STUBS = [
-    "transfer_guard_lib.pyi",  # Will be required on xla_extension_version >= 58.
 ]
 
 
