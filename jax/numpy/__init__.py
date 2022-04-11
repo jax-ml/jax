@@ -298,6 +298,7 @@ from jax._src.numpy.polynomial import (
     poly as poly,
     polyadd as polyadd,
     polyder as polyder,
+    polydiv as polydiv,
     polyfit as polyfit,
     polyint as polyint,
     polymul as polymul,

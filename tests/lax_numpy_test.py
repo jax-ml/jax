@@ -2875,6 +2875,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun_co, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "a_shape={} , b_shape={}".format(
+          jtu.format_shape_dtype_string(a_shape, dtype),
+          jtu.format_shape_dtype_string(b_shape, dtype)),
+       "dtype": dtype, "a_shape": a_shape, "b_shape" : b_shape}
+      for dtype in default_dtypes
+      for a_shape in one_dim_array_shapes
+      for b_shape in one_dim_array_shapes))
+  def testPolyDiv(self, a_shape, b_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+
+    def np_fun(arg1, arg2):
+      q, r = np.polydiv(arg1, arg2)
+      while r.size < max(arg1.size, arg2.size): # Pad residual to same size
+        r = np.pad(r, (1, 0), 'constant')
+      return q, r
+
+    def jnp_fun(arg1, arg2):
+      q, r = jnp.polydiv(arg1, arg2, trim_leading_zeros=True)
+      while r.size < max(arg1.size, arg2.size): # Pad residual to same size
+        r = jnp.pad(r, (1, 0), 'constant')
+      return q, r
+
+    args_maker = lambda: [rng(a_shape, dtype), rng(b_shape, dtype)]
+    tol = {np.float16: 2e-1, np.float32: 5e-2, np.float64: 1e-13}
+
+    jnp_compile = jnp.polydiv # Without trim_leading_zeros (trim_zeros make it unable to be compiled by XLA)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp_compile, args_maker, check_dtypes=True, atol=tol, rtol=tol)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_offset={}_axis1={}_axis2={}".format(
           jtu.format_shape_dtype_string(shape, dtype), offset, axis1, axis2),
        "dtype": dtype, "shape": shape, "offset": offset, "axis1": axis1,
