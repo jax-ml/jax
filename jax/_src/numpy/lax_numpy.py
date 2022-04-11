@@ -27,6 +27,7 @@ rules for the underlying :code:`lax` primitives.
 import builtins
 import collections
 from functools import partial, wraps as functools_wraps
+import itertools as it
 import operator
 import types
 from typing import Any, Sequence, FrozenSet, Optional, Tuple, Union
@@ -1602,11 +1603,13 @@ def tile(A, reps):
     reps = (reps,)
   reps = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
                for rep in reps)
-  A_shape = (1,) * (len(reps) - ndim(A)) + shape(A)
-  reps = (1,) * (len(A_shape) - len(reps)) + reps
-  result = broadcast_to(reshape(A, [j for i in A_shape for j in [1, i]]),
-                        [k for pair in zip(reps, A_shape) for k in pair])
-  return reshape(result, tuple(np.multiply(A_shape, reps)))
+  rss = [*it.zip_longest(reps[::-1], shape(A)[::-1], fillvalue=1)][::-1]
+  rss_m = [[r*s] if core.symbolic_equal_one_of_dim(1, [r, s]) else [r, s] for r, s in rss]
+  tgts, dims = [*it.chain(*rss_m)], [*it.accumulate([-1, *map(len, rss_m)])][-ndim(A)-1:][1:]
+  if not _stackable(A): # numerical arrays
+    return reshape(lax.broadcast_in_dim(A, tgts, dims), [r * s for r, s in rss])
+  dims_new = sorted({*range(len(tgts))} - {*dims})
+  return reshape(broadcast_to(expand_dims(A, dims_new), tgts), [r * s for r, s in rss])
 
 def _concatenate_array(arr, axis: int):
   # Fast path for concatenation when the input is an ndarray rather than a list.
