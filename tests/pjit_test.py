@@ -346,7 +346,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[0].to_py(), expected,
                         check_dtypes=False)
 
-    hlo = jax.xla_computation(f)(np.ones(shape))
+    hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
     # Annotation from with_sharding_constraint
     self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
     # Annotation from pjit
@@ -371,7 +371,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertLen(actual[0]["a"].device_buffers, 2)
 
-    hlo = jax.xla_computation(f)(x)
+    hlo = f.lower(x).compiler_ir(dialect="hlo")
     # Annotations from with_sharding_constraint
     self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
     self.assertIn("sharding={devices=[1,2]0,1}", hlo.as_hlo_text())

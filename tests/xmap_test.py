@@ -390,7 +390,7 @@ class XMapTest(XMapTestCase):
     self.assertEqual(y[0].sharding_spec.mesh_mapping,
                      (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
     if config.experimental_xmap_spmd_lowering:
-      hlo = jax.xla_computation(f)(x).as_hlo_text()
+      hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
       # Make sure that there are non-partial sharding specs in the HLO
       self.assertRegex(hlo, r"sharding={devices=\[[0-9,]+\][0-9,]+}")
 
@@ -703,7 +703,7 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
     xshape = (8, 2, 4, 5)
     x = jnp.arange(np.prod(xshape)).reshape(xshape)
     y = f(x)
-    hlo = jax.xla_computation(f)(x).as_hlo_text()
+    hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
     match = re.search(r"sharding={devices=\[([0-9,]+)\][0-9,]+}", hlo)
     self.assertIsNot(match, None)
     tile_factors = [int(s) for s in match.group(1).split(',')]
