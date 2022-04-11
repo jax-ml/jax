@@ -322,6 +322,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-3)
     self._CompileAndCheck(lax_fun, args_maker)
 
+  def testLogisticLogpdfOverflow(self):
+    # Regression test for https://github.com/google/jax/issues/10219
+    self.assertAllClose(
+      np.array([-100, -100], np.float32),
+      lsp_stats.logistic.logpdf(np.array([-100, 100], np.float32)),
+      check_dtypes=False)
+
   @genNamedParametersNArgs(1)
   def testLogisticPpf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
