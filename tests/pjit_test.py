@@ -40,7 +40,7 @@ import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    SpecSync, FROM_GDA, AUTO)
 from jax.interpreters import pxla
-from jax.interpreters import xla
+from jax.interpreters import mlir
 from jax._src.lib import xla_client, xla_extension_version, xla_bridge
 from jax._src.util import prod, curry, unzip2, safe_zip
 
@@ -136,6 +136,20 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertLen(actual.device_buffers, 2)
     self.assertAllClose(actual.device_buffers[0].to_py(), expected,
                         check_dtypes=False)
+
+  @jtu.with_mesh([('x', 2)])
+  def testJitOfPjitDisallowed(self):
+    @partial(pjit,
+             in_axis_resources=(P('x'), P('x')),
+             out_axis_resources=None)
+    def f(x, y):
+      return x + y
+
+    shape = (8, 8)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    with self.assertRaises(RuntimeError,
+                           msg="Nesting pjit() inside jit() is not allowed."):
+      jax.jit(f)(x, x + 1)
 
   @jtu.with_mesh([('x', 2)])
   def testUnevenShardingConstraint(self):
@@ -520,7 +534,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     f = xmap(lambda x: h(x * 2), in_axes=['i', ...], out_axes=['i', ...],
              axis_resources={'i': 'y'})
     x = jnp.arange(16).reshape((4, 4))
-    rule = xla._translations[pjit_p]
+    rule = mlir._lowerings[pjit_p]
     test_rule_called = False
     def _test_rule(*args, **kwargs):
       nonlocal test_rule_called
@@ -530,11 +544,11 @@ class PJitTest(jtu.BufferDonationTestCase):
       self.assertIn(('y',), in_axis_resources[0].partitions)
       return rule(*args, **kwargs)
     try:
-      xla._translations[pjit_p] = _test_rule
+      mlir._lowerings[pjit_p] = _test_rule
       f(x)
       self.assertTrue(test_rule_called)
     finally:
-      xla._translations[pjit_p] = rule
+      mlir._lowerings[pjit_p] = rule
 
   @jtu.with_mesh([('x', 2)])
   def testLowerWithDuckTyping(self):

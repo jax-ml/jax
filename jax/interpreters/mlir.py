@@ -555,6 +555,7 @@ def lower_jaxpr_to_fun(
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
+    use_sharding_annotations: bool = True,
     input_output_aliases: Optional[Sequence[Optional[int]]] = None
 ) -> FuncOpType:
   """Lowers jaxpr and its callees to an IR function.
@@ -574,6 +575,11 @@ def lower_jaxpr_to_fun(
     replicated_args: if present, annotates arguments as replicated.
     arg_shardings: sharding annotations for each argument (optional).
     result_shardings: sharding annotations for each argument (optional).
+    use_sharding_annotations: if True, use mhlo.sharding annotations on
+      parameters and return values to express sharding. If False, use
+      mhlo.custom_call operators with sharding annotations.
+      TODO(b/228598865): remove this option when mhlo.sharding annotations are
+      propagated on non-entry functions during MHLO->HLO conversion.
     input_output_aliases: optional sequence that maps argument numbers to the
       corresponding output that should alias them.
   Returns the name of the function.
@@ -594,7 +600,18 @@ def lower_jaxpr_to_fun(
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
       "public" if public else "private")
   ctx.symbol_table.insert(func_op)
-  if (replicated_args is not None or arg_shardings is not None
+  ir_arg_shardings = None
+  if arg_shardings is not None:
+    ir_arg_shardings = util.flatten(
+        [[sharding] * len(types) for sharding, types
+         in zip(arg_shardings, input_types)])
+  ir_result_shardings = None
+  if result_shardings is not None:
+      ir_result_shardings = util.flatten(
+        [[sharding] * len(types) for sharding, types
+         in zip(result_shardings, output_types)])
+
+  if (replicated_args is not None or ir_arg_shardings is not None
       or input_output_aliases is not None):
     arg_attrs: List[Dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
@@ -606,10 +623,8 @@ def lower_jaxpr_to_fun(
         if replicated:
           attrs["mhlo.is_same_data_across_replicas"] = ir.UnitAttr.get()
 
-    if arg_shardings is not None:
-      ir_arg_shardings = [[sharding] * len(types) for sharding, types
-                          in zip(arg_shardings, input_types)]
-      for attrs, sharding in zip(arg_attrs, util.flatten(ir_arg_shardings)):
+    if use_sharding_annotations and ir_arg_shardings is not None:
+      for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
         if sharding is not None:
           attrs["mhlo.sharding"] = ir.StringAttr.get(
               sharding.SerializeToString())
@@ -631,10 +646,7 @@ def lower_jaxpr_to_fun(
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
 
-  if result_shardings is not None:
-    ir_result_shardings = util.flatten(
-        [[sharding] * len(types) for sharding, types
-         in zip(result_shardings, output_types)])
+  if use_sharding_annotations and ir_result_shardings is not None:
     func_op.result_attrs = ir.ArrayAttr.get([
         ir.DictAttr.get(
             {} if sharding is None else
@@ -644,7 +656,11 @@ def lower_jaxpr_to_fun(
 
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
-    unflattened_args = util.unflatten(entry_block.arguments,
+    flat_args = entry_block.arguments
+    if not use_sharding_annotations and ir_arg_shardings is not None:
+      flat_args = map(wrap_with_sharding_op, flat_args, ir_arg_shardings)
+
+    unflattened_args = util.unflatten(flat_args,
                                       map(len, input_types))
     args: List[List[ir.Value]] = []
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
@@ -667,7 +683,12 @@ def lower_jaxpr_to_fun(
         outs.append(ir_constants(np.zeros((), np.bool_)))
       else:
         outs.append(out)
-    func_dialect.ReturnOp(util.flatten(outs))
+    flat_outputs = util.flatten(outs)
+    if not use_sharding_annotations and ir_result_shardings is not None:
+      flat_outputs = map(wrap_with_sharding_op, flat_outputs,
+                         ir_result_shardings)
+
+    func_dialect.ReturnOp(flat_outputs)
 
   return func_op
 
@@ -915,7 +936,8 @@ def _wrap_with_spmd_op(name: str,
 def wrap_with_sharding_op(x: ir.Value,
                           sharding_proto: xc.OpSharding,
                           unspecified_dims: Optional[Set[int]] = None):
-  return _wrap_with_spmd_op("Sharding", x.type, x, sharding_proto, unspecified_dims)
+  return _wrap_with_spmd_op("Sharding", x.type, x, sharding_proto,
+                            unspecified_dims)
 
 wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
