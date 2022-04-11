@@ -286,7 +286,8 @@ def jit(
       should not reuse buffers that you donate to a computation, JAX will raise
       an error if you try to. By default, no argument buffers are donated.
 
-      For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+      For more details on buffer donation see the
+      [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
 
     inline: Specify whether this function should be inlined into enclosing
       jaxprs (rather than being represented as an application of the xla_call
