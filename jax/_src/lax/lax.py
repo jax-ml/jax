@@ -44,7 +44,6 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import ad
-from jax.interpreters import invertible_ad as iad
 from jax.interpreters import batching
 from jax.interpreters import masking
 import jax._src.pretty_printer as pp
@@ -1642,15 +1641,12 @@ mlir.register_lowering(is_finite_p, partial(_nary_lower_mhlo, mhlo.IsFiniteOp))
 
 exp_p = standard_unop(_float | _complex, 'exp')
 ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
-iad.definverse(exp_p, lambda r, x: log(r))
 # For exp_p it is more efficient to use the reconstructed output for the vjp
 # rule instead of computing it again from the input.
-iad.primitive_ivjps[exp_p] = lambda x, y, ct: [[log(y[0])], [ct[0] * y[0]]]
 mlir.register_lowering(exp_p, partial(_nary_lower_mhlo, mhlo.ExpOp))
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
-iad.definverse(log_p, lambda r, x: exp(r))
 mlir.register_lowering(log_p, partial(_nary_lower_mhlo, mhlo.LogOp))
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
@@ -2064,7 +2060,6 @@ def _add_inverse(r, x, y):
 add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
-iad.definverse(add_p, _add_inverse)
 mlir.register_lowering(add_p, partial(_nary_lower_mhlo, mhlo.AddOp))
 
 def _sub_jvp(primals, tangents):
@@ -2120,7 +2115,6 @@ ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))
 ad.primitive_transposes[mul_p] = _mul_transpose
-iad.definverse(mul_p, _mul_inverse)
 mlir.register_lowering(mul_p, partial(_nary_lower_mhlo, mhlo.MulOp))
 
 def _div_transpose_rule(cotangent, x, y):

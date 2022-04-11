@@ -64,7 +64,6 @@ from jax._src.api import (
   checkpoint_policies as checkpoint_policies,
   closure_convert as closure_convert,
   curry,  # TODO(phawkins): update users to avoid this.
-  custom_ivjp as custom_ivjp,
   custom_gradient as custom_gradient,
   custom_jvp as custom_jvp,
   custom_vjp as custom_vjp,
@@ -84,7 +83,6 @@ from jax._src.api import (
   host_count as host_count,
   host_id as host_id,
   host_ids as host_ids,
-  invertible as invertible,
   jacobian as jacobian,
   jacfwd as jacfwd,
   jacrev as jacrev,

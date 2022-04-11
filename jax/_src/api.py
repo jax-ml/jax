@@ -86,8 +86,6 @@ from jax.interpreters import pxla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import masking
-from jax.interpreters import invertible_ad as iad
-from jax.interpreters.invertible_ad import custom_ivjp
 
 from jax._src.config import (
     flags, config, bool_env,
@@ -3120,19 +3118,6 @@ def named_call(
     return tree_unflatten(out_tree(), out_flat)
 
   return named_call_f
-
-def invertible(fun: Callable) -> Callable:
-  """Asserts that the decorated function is invertible.
-
-  Applying reverse-mode AD to a decorated function will use a more memory efficient
-  procedure than usual, which will reconstruct the necessary intermediate values
-  by inverting the function. Note that this might degrade the numerical accuracy of
-  obtained gradients if the inverse is unstable.
-
-  Args:
-    fun: The function assumed to be invertible.
-  """
-  return iad.invertible(fun)
 
 
 def block_until_ready(x):
