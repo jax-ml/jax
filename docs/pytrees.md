@@ -286,3 +286,38 @@ taken to ensure that the auxiliary data specified in the flattening recipe
 supports a meaningful equality comparison.
 
 The whole set of functions for operating on pytrees are in {mod}`jax.tree_util`.
+
+### Custom PyTrees and Initialization
+
+One common gotcha with user-defined PyTree objects is that JAX transformations occasionally
+initialize them with unexpected values, so that any input validation done at initialization
+may fail. For example:
+
+```{code-cell}
+:tags: [skip-execution]
+class MyTree:
+  def __init__(self, a):
+    self.a = jnp.asarray(a)
+
+register_pytree_node(MyTree, lambda tree: ((tree.a,), None),
+    lambda _, args: MyTree(*args))
+
+tree = MyTree(jnp.arange(5.0))
+
+jax.vmap(lambda x: x)(tree)      # Error because object() is passed to MyTree.
+jax.jacobian(lambda x: x)(tree)  # Error because MyTree(...) is passed to MyTree
+```
+In the first case, JAX's internals use arrays of `object()` values to infer the structure
+of the tree; in the second case, the jacobian of a function mapping a tree to a tree
+is defined as a tree of trees.
+
+For this reason, the `__init__` and `__new__` methods of custom PyTree classes should
+generally avoid doing any array conversion or other input validation, or else
+anticipate and handle these special cases. For example:
+```{code-cell}
+class MyTree:
+  def __init__(self, a):
+    if not (type(a) is object or a is None or isinstance(a, MyTree)):
+      a = jnp.asarray(a)
+    self.a = a
+```
