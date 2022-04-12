@@ -41,13 +41,17 @@ from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            treedef_is_leaf, tree_structure, treedef_tuple)
 from jax._src.tree_util import prefix_errors
-from jax._src.util import (extend_name_stack, HashableFunction, safe_zip,
-                         wrap_name, wraps, distributed_debug_log,
-                         split_list, cache, tuple_insert, weakref_lru_cache)
+from jax._src import util
+from jax._src.util import (
+    extend_name_stack, HashableFunction, safe_map, safe_zip, wrap_name, wraps,
+    distributed_debug_log, split_list, cache, tuple_insert, weakref_lru_cache)
+
 xops = xc._xla.ops
 
 class _FromGdaSingleton:
@@ -701,6 +705,44 @@ def _pjit_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
   return xla.xla_destructure(ctx.builder,
                              xops.Call(ctx.builder, subc, list(in_nodes)))
 xla.register_translation(pjit_p, _pjit_translation_rule)
+
+def _pjit_lowering(ctx, *args, name, jaxpr, in_axis_resources,
+                   out_axis_resources, resource_env, donated_invars,
+                   in_positional_semantics, out_positional_semantics):
+  if not isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext):
+    raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
+  # TODO: use manual_axes!
+  mesh = resource_env.physical_mesh
+  output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
+  flat_output_types = util.flatten(output_types)
+
+  arg_shardings = []
+  for i, (aval, axis_resources) in enumerate(
+      safe_zip(ctx.avals_in, in_axis_resources)):
+    arg_shardings.append(get_aval_sharding_proto(aval, axis_resources, mesh))
+
+  result_shardings = [
+      get_aval_sharding_proto(aval, axis_resources, mesh)
+      for aval, axis_resources in safe_zip(
+          ctx.avals_out, out_axis_resources)
+  ]
+
+  sub_ctx = ctx.module_context.replace(
+      name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
+                                       wrap_name(name, "pjit")))
+  # TODO(b/228598865): inlined calls cannot have shardings set directly on the
+  # inputs or outputs because they are lost during MHLO->HLO conversion.
+  # using_sharding_annotation=False means we add an identity operation instead.
+  func = mlir.lower_jaxpr_to_fun(sub_ctx, f"pjit_{name}", jaxpr,
+                                 arg_shardings=arg_shardings,
+                                 result_shardings=result_shardings,
+                                 use_sharding_annotations=False)
+  call = func_dialect.CallOp(flat_output_types,
+                             ir.FlatSymbolRefAttr.get(func.name.value),
+                             mlir.flatten_lowering_ir_args(args))
+  return util.unflatten(call.results, safe_map(len, output_types))
+
+mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
 def _pjit_batcher(insert_axis,
