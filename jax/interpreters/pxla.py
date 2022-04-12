@@ -2188,6 +2188,10 @@ class PartitionSpec(tuple):
   create a separate class for this so JAX's pytree utilities can distinguish it
   from a tuple that should be treated as a pytree.
   """
+
+  def __init__(self, *partitions):
+    pass
+
   def __new__(cls, *partitions):
     return tuple.__new__(PartitionSpec, partitions)
 
