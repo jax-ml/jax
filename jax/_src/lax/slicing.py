@@ -22,10 +22,12 @@ import numpy as np
 from jax import core
 from jax._src import ad_util
 from jax._src import dtypes
+from jax._src import source_info_util
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax._src.lax.utils import (
     _argnum_weak_type,
@@ -2113,3 +2115,30 @@ def _dynamic_slice_indices(operand, start_indices: Any):
               lax.add(i, lax.convert_element_type(core.dimension_as_value(d), lax._dtype(i))),
               i)
           for i, d in zip(start_indices, operand.shape)]
+
+
+def _getslice(x, lo, hi):
+  return getslice_p.bind(x, lo, hi)
+
+getslice_p = core.Primitive('getslice')
+
+@getslice_p.def_impl
+def getslice_impl(x, lo, hi):
+  return x[lo:hi]
+
+def _getslice_staging_rule(trace, x, lo, hi):
+  size = lax.make_bint(lax.clamp(0, hi - lo, x.shape[0]), x.shape[0])
+  aval = core.DShapedArray((size,), x.dtype, x.weak_type)
+  source_info = source_info_util.current()
+  out_tracer = pe.DynamicJaxprTracer(trace, aval, source_info)
+  invars = map(trace.getvar, [x, lo, hi])
+  eqn = pe.new_jaxpr_eqn(invars, [trace.makevar(out_tracer)],
+                         getslice_p, {}, source_info)
+  trace.frame.eqns.append(eqn)
+  return out_tracer
+pe.custom_staging_rules[getslice_p] = _getslice_staging_rule
+
+def _getslice_padding_rule(in_avals, out_avals, x, lo, hi):
+  xx = lax.concatenate([x, x], 0)
+  return [dynamic_slice_in_dim(xx, lo, x.shape[0])]
+pe.padding_rules[getslice_p] = _getslice_padding_rule

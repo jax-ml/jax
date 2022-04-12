@@ -674,8 +674,7 @@ def jaxpr_collectives(jaxpr):
   for eqn in jaxpr.eqns:
     if eqn.primitive in _collective_primitives:
       yield eqn.primitive
-  for subjaxpr in core.subjaxprs(jaxpr):
-    yield from jaxpr_collectives(subjaxpr)
+  for subjaxpr in core.subjaxprs(jaxpr): yield from jaxpr_collectives(subjaxpr)
 
 
 ### xla_call underlying jit
@@ -832,6 +831,8 @@ pe.partial_eval_jaxpr_custom_rules[xla_call_p] = \
     partial(pe.call_partial_eval_custom_rule, 'call_jaxpr',
             _xla_call_partial_eval_custom_params_updater)
 pe.dce_rules[xla_call_p] = pe.dce_jaxpr_call_rule
+
+pe.padding_rules[xla_call_p] = partial(pe.call_padding_rule, xla_call_p)
 
 
 def _pp_xla_call(eqn: core.JaxprEqn, context: core.JaxprPpContext,

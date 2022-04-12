@@ -1034,6 +1034,18 @@ class AbstractUnit(AbstractValue):
 
 abstract_unit = AbstractUnit()
 
+class AbstractBInt(AbstractValue):
+  __slots__ = ['bound']
+  bound: int
+  def __init__(self, bound):
+    self.bound = bound
+  def str_short(self, short_dtypes=False) -> str:
+    return f'bint{{≤{self.bound}}}[]'
+  def __eq__(self, other):
+    return type(other) is AbstractBInt and self.bound == other.bound
+  def __hash__(self) -> int:
+    return hash((type(self), self.bound))
+
 def lattice_join(x: Optional[AbstractValue],
                  y: Optional[AbstractValue]) -> AbstractValue:
   if x is None:
@@ -1212,7 +1224,7 @@ AxisSize = Union[AxisSizeForTracing, AxisSizeForJaxprType,
 class DShapedArray(UnshapedArray):
   __slots__ = ['shape']
   shape: Tuple[AxisSize, ...]  # noqa: F821
-  array_abstraction_level = 2
+  array_abstraction_level: int = 2
 
   def __init__(self, shape, dtype, weak_type):
     self.shape = shape
@@ -1229,11 +1241,6 @@ class DShapedArray(UnshapedArray):
     return f'{dtype}[{shape}]'
   __str__ = __repr__ = str_short
 
-  def __eq__(self, other):
-    return (type(self) is type(other) and
-            self.dtype == other.dtype and self.shape == other.shape and
-            self.weak_type == other.weak_type)
-
   def update(self, shape=None, dtype=None, weak_type=None):
     if shape is None:
       shape = self.shape
@@ -1242,6 +1249,14 @@ class DShapedArray(UnshapedArray):
     if weak_type is None:
       weak_type = self.weak_type
     return DShapedArray(shape, dtype, weak_type)
+
+  def __eq__(self, other):
+    return (type(self) is type(other)
+            and self.dtype == other.dtype and self.shape == other.shape
+            and self.weak_type == other.weak_type)
+
+  def __hash__(self):
+    return hash((self.shape, self.dtype, self.weak_type))
 
 del AxisSize, AxisSizeForTracing, AxisSizeForJaxprType, \
     AxisSizeForJaxprTracingSpec
@@ -1415,6 +1430,7 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
 
 raise_to_shaped_mappings : Dict[type, Callable] = {
   AbstractUnit: lambda aval, _: aval,
+  AbstractBInt: lambda aval, _: aval,
   AbstractToken: lambda aval, _: aval,
   Bot: lambda aval, _: aval,
   UnshapedArray: lambda aval, _: aval,
@@ -1758,14 +1774,17 @@ class CallPrimitive(Primitive):
     new_params = dict(params)
     jaxpr = new_params.pop('call_jaxpr')
     subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
+    if config.jax_dynamic_shapes:
+      subfun = lu.annotate(subfun, tuple((v.aval, True) for v in jaxpr.invars))
     return [subfun], new_params
 
 def call_bind(primitive: CallPrimitive, fun, *args, **params):
   top_trace = find_top_trace(args)
-  fun, env_trace_todo = process_env_traces_call(
+  fun_, env_trace_todo = process_env_traces_call(
       fun, primitive, top_trace and top_trace.level, tuple(params.items()))
   tracers = map(top_trace.full_raise, args)
-  outs = top_trace.process_call(primitive, fun, tracers, params)
+  fun_ = lu.annotate(fun_, fun.in_type)
+  outs = top_trace.process_call(primitive, fun_, tracers, params)
   return map(full_lower, apply_todos(env_trace_todo(), outs))
 
 @lu.transformation_with_aux
@@ -1931,13 +1950,28 @@ def _unmap_shaped_array(size: int, axis_name, axis: Optional[int],
   named_shape = dict(aval.named_shape)
   # TODO: Make this mandatory
   named_shape.pop(axis_name, None)
-  if axis is None: return aval.replace(named_shape=named_shape)
+  if axis is None: return aval.update(named_shape=named_shape)
   return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                      named_shape=named_shape, weak_type=aval.weak_type)
+
+def _map_dshaped_array(size: Union[int, Tracer], axis: Optional[int],
+                       aval: ShapedArray) -> ShapedArray:
+  assert False  # TODO(mattjj, dougalm)
+
+def _unmap_dshaped_array(
+    size: Union[int, Tracer], axis_name, axis: Optional[int],
+    aval: DShapedArray) -> DShapedArray:
+  if isinstance(size, int):
+    if axis is None: return aval
+    return DShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
+                        weak_type=aval.weak_type)
+  else:
+    assert False  # TODO(mattjj, dougalm)
 
 AvalMapHandlerPair = Tuple[Callable, Callable]
 aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
     AbstractUnit: (_map_unit, _map_unit),
+    DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
     ConcreteArray: (_map_shaped_array, _unmap_shaped_array),
 }

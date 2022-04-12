@@ -7972,6 +7972,177 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertIs(c, c_)
     self.assertIs(d, d_)
 
+  def test_jit_abstracted_axes_staging(self):
+    # We just test make_jaxpr-of-jit because dynamic shape compilation/execution
+    # may not be supported.
+    @partial(jax.jit, abstracted_axes=('n',))
+    def f(x):
+      return jnp.sum(x)
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(3))
+    # { lambda ; a:f32[3]. let
+    #     b:f32[] = xla_call[
+    #       call_jaxpr={ lambda ; c:i32[] d:f32[c]. let
+    #           e:f32[] = reduce_sum[axes=(0,)] d
+    #         in (e,) }
+    #       name=f
+    #     ] 3 a
+    #   in (b,) }
+    a, = jaxpr.jaxpr.invars
+    e, = jaxpr.jaxpr.eqns
+    self.assertLen(e.invars, 2)
+    self.assertIsInstance(e.invars[0], core.Literal)
+    self.assertIs(e.invars[1], a)
+    b, = e.outvars
+    self.assertLen(b.aval.shape, 0)
+
+    subjaxpr = e.params['call_jaxpr']
+    c, d = subjaxpr.invars
+    self.assertLen(c.aval.shape, 0)
+    self.assertLen(d.aval.shape, 1)
+    self.assertIs(d.aval.shape[0], c)
+
+  def test_jit_abstracted_axes_staging2(self):
+    @partial(jax.jit, abstracted_axes=('n',))
+    def fun(x):
+      return jnp.sum(x)
+    jaxpr = jax.make_jaxpr(lambda n: fun(jnp.ones(n + n)))(3)
+    # { lambda ; a:i32[]. let
+    #     b:i32[] = add a a
+    #     c:f32[b] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] 1.0 b
+    #     d:f32[] = xla_call[
+    #       call_jaxpr={ lambda ; e:i32[] f:f32[e]. let
+    #           g:f32[] = reduce_sum[axes=(0,)] f
+    #         in (g,) }
+    #       name=f
+    #     ] b c
+    #   in (d,) }
+    a, = jaxpr.jaxpr.invars
+    e1, e2, e3 = jaxpr.jaxpr.eqns
+    b, = e1.outvars
+    c, = e2.outvars
+    b_, c_ = e3.invars
+    self.assertIs(b, b_)
+    self.assertIs(c, c_)
+
+    subjaxpr = e3.params['call_jaxpr']
+    e, f = subjaxpr.invars
+    self.assertLen(e.aval.shape, 0)
+    self.assertLen(f.aval.shape, 1)
+    self.assertIs(f.aval.shape[0], e)
+
+  def test_jit_abstracted_axes_staging3(self):
+    f = jax.jit(jnp.sum, abstracted_axes=('n',))
+    jaxpr = jax.make_jaxpr(f, abstracted_axes=('n',))(jnp.arange(3.))
+    # { lambda ; a:i32[] b:f32[a]. let
+    #     c:f32[] = xla_call[
+    #       call_jaxpr={ lambda ; d:i32[] e:f32[d]. let
+    #           f:f32[] = reduce_sum[axes=(0,)] e
+    #         in (f,) }
+    #       name=sum
+    #     ] a b
+    #   in (c,) }
+    a, b = jaxpr.jaxpr.invars
+    e, = jaxpr.jaxpr.eqns
+    self.assertIs(e.invars[0], a)
+    self.assertIs(e.invars[1], b)
+    c, = e.outvars
+    self.assertLen(c.aval.shape, 0)
+
+    subjaxpr = e.params['call_jaxpr']
+    d, e = subjaxpr.invars
+    self.assertLen(d.aval.shape, 0)
+    self.assertLen(e.aval.shape, 1)
+    self.assertIs(e.aval.shape[0], d)
+
+  def test_jit_abstracted_axes_return_polymorphic_shape(self):
+    f = jax.jit(lambda x: x, abstracted_axes=('n',))
+    jaxpr = jax.make_jaxpr(f)(jnp.arange(3))  # doesn't crash
+    # { lambda ; a:i32[3]. let
+    #     b:i32[3] = xla_call[
+    #       call_jaxpr={ lambda ; c:i32[] d:i32[c]. let  in (d,) }
+    #       name=<lambda>
+    #     ] 3 a
+    #   in (b,) }
+    a, = jaxpr.jaxpr.invars
+    e, = jaxpr.jaxpr.eqns
+    three, a_ = e.invars
+    b, = e.outvars
+    self.assertIsInstance(three, core.Literal)
+    self.assertEqual(three.val, 3)
+    self.assertIs(a_, a)
+    self.assertLen(b.aval.shape, 1)
+    self.assertEqual(b.aval.shape[0], 3)
+
+  def test_jit_abstracted_axes_return_polymorphic_shape2(self):
+    f = jax.jit(lambda n: jnp.ones(n))
+    # TODO(mattjj,dougalm): support dynamic shapes in type checker
+    with jax.enable_checks(False):
+      jaxpr = jax.make_jaxpr(f)(3)
+    # { lambda ; a:i32[]. let
+    #     b:f32[a] = xla_call[
+    #       call_jaxpr={ lambda ; c:i32[]. let
+    #           d:f32[c] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] 1.0
+    #             c
+    #         in (d,) }
+    #       name=<lambda>
+    #     ] a
+    #   in (b,) }
+    a, = jaxpr.jaxpr.invars
+    e, = jaxpr.jaxpr.eqns
+    a_, = e.invars
+    self.assertIs(a, a_)
+    b, = e.outvars
+    a__, = b.aval.shape
+    self.assertIs(a, a__)
+
+    with jax.enable_checks(False):
+      jaxpr = jax.make_jaxpr(lambda: f(3))()
+    # { lambda ; . let
+    #     a:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; b:i32[]. let
+    #           c:f32[b] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] 1.0
+    #             b
+    #         in (c,) }
+    #       name=<lambda>
+    #     ] 3
+    #   in (a,) }
+    () = jaxpr.jaxpr.invars
+    e, = jaxpr.jaxpr.eqns
+    three, = e.invars
+    self.assertIsInstance(three, core.Literal)
+    self.assertEqual(three.val, 3)
+    b, = e.outvars
+    three_, = b.aval.shape
+    self.assertIsInstance(three_, int)
+    self.assertEqual(three_, 3)
+
+  def test_jit_basic_iree(self):
+    if not jtu.device_under_test() == 'iree':
+      raise unittest.SkipTest("test only works on IREE")
+    @jax.jit
+    def f(i):
+      return jnp.sum(jnp.ones(i, dtype='float32'))
+
+    self.assertAllClose(f(3), jnp.array(3., dtype='float32'), check_dtypes=True)
+
+  def test_slicing_basic(self):
+    f = jax.jit(lambda x, n: jnp.sum(x[:n]))
+    ans = f(jnp.arange(10), 3)
+    expected = jnp.sum(jnp.arange(10)[:3])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+  def test_scan_basic(self):
+    def cumsum(x):
+      def body(i, _):
+        return i + 1, jnp.sum(x[:i+1])
+      _, ans = lax.scan(body, 0, None, length=len(x))
+      return ans
+    x = jnp.array([3, 1, 4, 1, 5, 9])
+    with jax.enable_checks(False):
+      ans = cumsum(x)
+    expected = jnp.cumsum(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
