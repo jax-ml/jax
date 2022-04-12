@@ -220,5 +220,16 @@ class DebugInfsTest(jtu.JaxTestCase):
       except FloatingPointError:
         pass
 
+  def testDebugNansDoesntReturnDeoptimizedResult(self):
+    @jax.jit
+    def f(x):
+      x + 2  # avoid trivial dispatch path by adding some eqn
+      return jnp.nan
+
+    with self.assertRaisesRegex(FloatingPointError, "de-optimized"):
+      with jax.debug_nans(True):
+        f(3)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
