@@ -182,6 +182,16 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
+  def approx_max_k(cls, harness: primitive_harness.Harness):
+    supported_dtypes = jtu.supported_dtypes()
+    return Jax2TfLimitation(
+        "eager is not supported in CPU or GPU.",
+        dtypes=[t for t in [jnp.bfloat16, np.float16, np.float32]
+                if t in supported_dtypes],
+        devices=("cpu", "gpu", "tpu"),
+        modes=("graph", "compiled"))
+
+  @classmethod
   def argmax(cls, harness: primitive_harness.Harness):
     return [
         Jax2TfLimitation(

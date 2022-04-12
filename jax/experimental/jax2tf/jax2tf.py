@@ -983,7 +983,6 @@ tf_not_yet_impl = [
     # Not high priority?
     "after_all",
     "all_to_all",
-    "approx_top_k",
     "create_token",
     "custom_transpose_call",
     "custom_vmap_call",
@@ -2378,6 +2377,23 @@ def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
 
 
 tf_impl[lax.top_k_p] = _top_k
+
+
+def _approx_top_k(operand: TfVal, k: int, reduction_dimension: int,
+                  recall_target: float, is_max_k: bool,
+                  reduction_input_size_override: int,
+                  aggregate_to_topk: bool) -> Tuple[TfVal, TfVal]:
+  if is_max_k:
+    return tf.math.approx_max_k(operand, k, reduction_dimension, recall_target,
+                                reduction_input_size_override,
+                                aggregate_to_topk)
+  else:
+    return tf.math.approx_min_k(operand, k, reduction_dimension, recall_target,
+                                reduction_input_size_override,
+                                aggregate_to_topk)
+
+
+tf_impl[lax.approx_top_k_p] = _approx_top_k
 
 
 def _sort(*operands: TfVal, dimension: int, is_stable: bool,
