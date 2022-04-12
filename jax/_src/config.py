@@ -582,6 +582,15 @@ jax2tf_associative_scan_reductions = config.define_bool_state(
     )
 )
 
+jax2tf_default_experimental_native_lowering = config.define_bool_state(
+    name='jax2tf_default_experimental_native_lowering',
+    default=bool_env('JAX2TF_DEFAULT_EXPERIMENTAL_NATIVE_LOWERING', False),
+    help=(
+        'DO NOT USE, highly experimental. Sets the default value of the '
+        'experimental_native_lowering parameter to jax2tf.convert.'
+    )
+)
+
 jax_platforms = config.define_string_state(
     name='jax_platforms',
     default=None,
