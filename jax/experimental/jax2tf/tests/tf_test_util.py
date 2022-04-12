@@ -430,7 +430,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # graph. We count the number of characters in the textual representation
     # of the constant.
     f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
-    matches = re.findall(r"tensor_content\s*:\s*\"([^\"]+)\"", str(f_tf_graph))
+    if config.jax2tf_default_experimental_native_lowering:
+      matches = re.findall(r"dense<([^>]+)>", str(f_tf_graph))
+    else:
+      matches = re.findall(r"tensor_content\s*:\s*\"([^\"]+)\"", str(f_tf_graph))
     large_matches = [m for m in matches if len(m) >= at_least]
     return len(large_matches)
 

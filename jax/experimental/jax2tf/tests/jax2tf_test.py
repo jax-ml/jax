@@ -47,9 +47,13 @@ config.parse_flags_with_absl()
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
+  def test_empty(self):
+    f_jax = lambda x, y: x
+    self.ConvertAndCompare(f_jax, 0.7, 1)
+
   def test_basics(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
-    _, res_tf = self.ConvertAndCompare(f_jax, 0.7)
+    self.ConvertAndCompare(f_jax, 0.7)
 
   def test_input_output_naming(self):
     @jax2tf.convert
@@ -779,8 +783,12 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     if flavor == "old":
       raise unittest.SkipTest("TODO: CSE widget not yet implemented for old-style remat")
     if jax.config.jax_remat_opt_barrier:
-      self.assertRegex(
-          str(f_tf_graph), r"remat_checkpoint_/XlaOptimizationBarrier")
+      if config.jax2tf_default_experimental_native_lowering:
+        self.assertRegex(
+          str(f_tf_graph), r"mhlo.optimization_barrier")
+      else:
+        self.assertRegex(
+            str(f_tf_graph), r"remat_checkpoint_/XlaOptimizationBarrier")
     elif config.jax_experimental_name_stack:
       self.assertRegex(str(f_tf_graph),
                        r'transpose/jax2tf_f_/jvp/checkpoint/remat_checkpoint_/cond/branch_1_fun/Sin')
@@ -813,7 +821,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sin(1.)
     f_tf = tf.function(jax2tf.convert(f_jax), autograph=False)
     f_tf_graph = f_tf.get_concrete_function().graph.as_graph_def()
-    self.assertIn('op: "Sin"', str(f_tf_graph))
+    if config.jax2tf_default_experimental_native_lowering:
+      self.assertIn("mhlo.sine", str(f_tf_graph))
+    else:
+      self.assertIn('op: "Sin"', str(f_tf_graph))
 
   def test_convert_of_nested_independent_jit(self):
     def func(x):
@@ -885,14 +896,13 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         return my_test_function(jnp.sin(x))
 
       out = jax2tf.convert(caller, with_gradient=False)(2.)
-      # When we use `with_gradient=False` the raw output of `caller` is passed
-      # through a `tf.raw_ops.PreventGradient` and a `tf.identity`, clobbering
-      # the name scope of the `mul` op. We need to get the grandparent of the
-      # `out` tensor to see the name scope of the result of the `mul`.
-      grandparent_op = out.op.inputs[0].op.inputs[0]
-      self.assertIn("my_test_function", grandparent_op.name)
       return out
-    run()
+    run_graph = run.get_concrete_function().graph.as_graph_def()
+    print(str(run_graph))
+    if config.jax2tf_default_experimental_native_lowering:
+      self.assertIn("my_test_function/mul", str(run_graph))
+    else:
+      self.assertIn("my_test_function/jit_fn_/Mul", str(run_graph))
 
   def test_bfloat16_constant(self):
     # Re: https://github.com/google/jax/issues/3942
@@ -917,7 +927,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    const = np.ones((16, 16))
+    const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     def f(x):
       return x + const + const + const + const
 
@@ -927,7 +937,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    const = np.arange(256, dtype=np.float32)
+    const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     x = np.ones((256,), dtype=np.float32)
     def f1(x):
       return lax.cond(x[0] >= 0., lambda x: x + const, lambda x: x * const, x) + const
@@ -939,7 +949,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_scan(self):
     # See https://github.com/google/jax/issues/7992.
-    const = np.arange(256, dtype=np.float32)
+    const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     xs = np.ones((8, 256), dtype=np.float32)
     def f1(xs):
       res, _ = lax.scan(lambda carry, x: (carry + x + const, None),
@@ -955,7 +965,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_jit(self):
     # We do not share constants under jit.
-    const = np.ones((16, 16))
+    const = np.random.uniform(size=(16, 16)).astype(np.float32)  # A shared constant
     @jax.jit
     def g_jit(x):
       return x * const
@@ -1011,6 +1021,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                         (grad_tf[0].numpy(), grad_tf[1].numpy()))
 
 
+  @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
   def test_enable_xla(self):
     # Tests that enable_xla flag is properly scoped to a conversion.
     def fun(x):

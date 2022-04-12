@@ -19,6 +19,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 import collections
 import functools
 from functools import partial
+import logging
 import operator
 import re
 
@@ -386,6 +387,24 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None, None]), tf.TensorSpec([None, None])],
         polymorphic_shapes=PS("h", "h"),
         expected_output_signature=tf.TensorSpec([None, None]))
+
+  def test_static_shape_result(self):
+    """The result has static shape."""
+
+    def f_jax(x):
+      return jnp.sum(x + jnp.sin(x), axis=0)
+
+    self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([2, 3])],
+        polymorphic_shapes=None,
+        expected_output_signature=tf.TensorSpec([3]))
+
+    self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([None, 3])],
+        polymorphic_shapes="b, _",
+        expected_output_signature=tf.TensorSpec([3]))
 
   def test_forgot_polymorphic_shapes_error(self):
     msg_re = "polymorphic shape None in axis .* must contain a dimension variable for unknown dimension in argument shape .*. Perhaps you forgot to add the polymorphic_shapes"
