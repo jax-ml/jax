@@ -3585,7 +3585,9 @@ def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
     y = lax.rev(y, indexer.reversed_y_dims)
 
   # This adds np.newaxis/None dimensions.
-  return expand_dims(y, indexer.newaxis_dims)
+  if indexer.newaxis_dims:
+    y = lax.expand_dims(y, indexer.newaxis_dims)
+  return y
 
 _Indexer = collections.namedtuple("_Indexer", [
   # The expected shape of the slice output.
