@@ -619,8 +619,7 @@ def ignore_errors_jaxpr(jaxpr, error):
   new_vars = core.gensym([jaxpr])
   new_invars = (new_vars(err_aval), new_vars(code_aval),
                 new_vars(payload_aval), *jaxpr.invars)
-  new_jaxpr = core.Jaxpr(jaxpr.constvars, new_invars,
-                         jaxpr.outvars, jaxpr.eqns)
+  new_jaxpr = jaxpr.replace(invars=new_invars)
   return core.ClosedJaxpr(new_jaxpr, consts)
 
 def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,

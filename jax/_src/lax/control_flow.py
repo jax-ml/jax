@@ -109,8 +109,7 @@ def _initial_style_jaxprs_with_common_consts(
     prefix = util.concatenate(unused_const_vars[:i])
     suffix = util.concatenate(unused_const_vars[i + 1:])
     constvars = [*prefix, *jaxpr.constvars, *suffix]
-    return core.Jaxpr(constvars=constvars, invars=jaxpr.invars,
-                      outvars=jaxpr.outvars, eqns=jaxpr.eqns)
+    return jaxpr.replace(constvars=constvars)
 
   consts = util.concatenate(all_consts)
   jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
@@ -315,6 +314,9 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     new_init_val, = tree_unflatten(in_tree, new_init_vals)
     init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(new_init_val)
   cond_jaxpr, cond_consts, body_consts, body_tree = rest
+  joined_effects = core.join_effects(body_jaxpr.effects, cond_jaxpr.effects)
+  if joined_effects:
+    raise NotImplementedError('Effects not supported in `while`.')
 
   in_tree_children = in_tree.children()
   assert len(in_tree_children) == 1
@@ -326,8 +328,9 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
   return tree_unflatten(body_tree, outs)
 
-def _while_loop_abstract_eval(*args, **kwargs):
-  return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
+def _while_loop_abstract_eval(*args, body_jaxpr, **kwargs):
+  del args, kwargs
+  return _map(raise_to_shaped, body_jaxpr.out_avals), core.no_effects
 
 def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
                                  body_jaxpr, cond_nconsts, body_nconsts):
@@ -516,7 +519,8 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
-                                    cond_jaxpr.jaxpr.eqns)
+                                    cond_jaxpr.jaxpr.eqns,
+                                    cond_jaxpr.jaxpr.effects)
   cond_jaxpr_augmented = core.ClosedJaxpr(cond_jaxpr_augmented, cond_jaxpr.consts)
 
   out = while_p.bind(
@@ -611,7 +615,7 @@ def _while_transpose_error(*_, **kwargs):
 while_p = core.AxisPrimitive('while')
 while_p.multiple_results = True
 while_p.def_impl(partial(xla.apply_primitive, while_p))
-while_p.def_abstract_eval(_while_loop_abstract_eval)
+while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval
 xla.register_translation(while_p, _while_loop_translation_rule,
@@ -875,6 +879,9 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals, 'cond')
+  joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
+  if joined_effects:
+    raise NotImplementedError('Effects not supported in `cond`.')
   true_jaxpr, false_jaxpr = jaxprs
   out_tree, false_out_tree = out_trees
 
@@ -926,8 +933,8 @@ def _cond_with_per_branch_args(pred,
                lambda op: false_fun(op[1]),
                (true_operand, false_operand))
 
-def _cond_abstract_eval(*args, **kwargs):
-  return _map(raise_to_shaped, kwargs["branches"][0].out_avals)
+def _cond_abstract_eval(*args, branches, **kwargs):
+  return _map(raise_to_shaped, branches[0].out_avals), core.no_effects
 
 def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
                            linear):
@@ -1121,11 +1128,13 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
 
   linear_2 = (False,) * num_res + linear
   params = dict(branches=branches_2, linear=linear_2)
+  if any((branch.effects for branch in branches_2)):
+    raise NotImplementedError('Effects not supported in `cond`.')
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
       [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
-      source)
+      core.no_effects, source)
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -1200,7 +1209,8 @@ def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
     aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))
     aug_invars = aug_res_vars + non_res_vars
     jaxpr_aug = core.Jaxpr(jaxpr.jaxpr.constvars, aug_invars,
-                           jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns)
+                           jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns,
+                           jaxpr.jaxpr.effects)
     jaxpr_aug = core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
     return jaxpr_aug
 
@@ -1304,6 +1314,11 @@ def _cond_typecheck(*avals, branches, linear):
     raise core.JaxprTypeError(
       f'cond branches take input types {jaxpr0_in_avals_str}, '
       f'called with operands of type {_avals_short(op_avals)}')
+  if any((b.effects != branches[0].effects for b in branches[1:])):
+    raise core.JaxprTypeError(
+      f'cond branches must have matching effect types: '
+      f'{[b.effects for b in branches]}')
+  return None, core.no_effects
 
 def cond_bind(*args, branches, linear):
   if config.jax_enable_checks:
@@ -1316,7 +1331,7 @@ def cond_bind(*args, branches, linear):
 cond_p = core.AxisPrimitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(xla.apply_primitive, cond_p))
-cond_p.def_abstract_eval(_cond_abstract_eval)
+cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp
 ad.reducing_transposes[cond_p] = _cond_transpose
@@ -1509,6 +1524,8 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     new_init = tree_unflatten(init_tree, new_init_flat)
     init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(new_init)
   in_flat, jaxpr, consts, out_tree, out_tree_children = rest
+  if jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `scan`.')
 
   _check_tree_and_avals("scan carry output and input",
                         # Extract the subtree and avals for the first element of the return tuple
@@ -1713,7 +1730,7 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll):
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
-  return carry_avals + ys_avals
+  return carry_avals + ys_avals, core.no_effects
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
               linear, unroll):
@@ -1884,6 +1901,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                                num_consts=num_consts_2,
                                num_carry=num_carry, linear=tuple(linear_2),
                                unroll=unroll),
+                          jaxpr_2_opt.effects,
                           source)
   for t in out_tracers: t.recipe = eqn
   return out_tracers
@@ -2088,6 +2106,7 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
     raise core.JaxprTypeError(
       f'scan jaxpr takes input sequence types\n{_avals_short(x_avals_jaxpr)},\n'
       f'called with sequence of type\n{_avals_short(x_avals)}')
+  return None, core.no_effects
 
 def scan_bind(*args, **params):
   if config.jax_enable_checks:
@@ -2100,7 +2119,7 @@ scan_p = core.AxisPrimitive("scan")
 scan_p.multiple_results = True
 scan_p.def_custom_bind(scan_bind)
 scan_p.def_impl(partial(xla.apply_primitive, scan_p))
-scan_p.def_abstract_eval(_scan_abstract_eval)
+scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.reducing_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval

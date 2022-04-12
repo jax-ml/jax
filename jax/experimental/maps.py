@@ -987,7 +987,7 @@ def _typecheck_xmap(
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [_insert_aval_axes(a, a_out_axes, local_axis_sizes)
                for a, a_out_axes in zip(mapped_out_avals, out_axes)]
-  return out_avals
+  return out_avals, call_jaxpr.effects
 core.custom_typechecks[xmap_p] = _typecheck_xmap
 
 
@@ -1087,7 +1087,7 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   del new_params['out_axes_thunk']
   del new_params['spmd_out_axes_thunk']
   eqn = new_jaxpr_eqn([*constvars, *invars], outvars, primitive,
-                      new_params, source_info)
+                      new_params, call_jaxpr.effects, source_info)
   self.frame.eqns.append(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore
@@ -1273,7 +1273,7 @@ def _jaxpr_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params
 
   eqn = new_eqn_recipe((*const_tracers, *unknown_tracers_in),
                        unknown_tracers_out,
-                       primitive, new_params, source_info_util.current())
+                       primitive, new_params, jaxpr.effects, source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
   return pe._zip_knowns(known_tracers_out, unknown_tracers_out, out_unknowns)
 pe.JaxprTrace.process_xmap = _jaxpr_trace_process_xmap
@@ -2079,13 +2079,14 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
   for eqn in jaxpr.eqns:
     new_jaxpr_params = core.traverse_jaxpr_params(rec, eqn.params)
     tmp_outvars = [gen_fresh_name(v.aval) for v in eqn.outvars]
-    new_eqns.append(core.JaxprEqn(eqn.invars, tmp_outvars, eqn.primitive,
-                                  dict(eqn.params, **new_jaxpr_params), eqn.source_info))
+    new_eqns.append(eqn.replace(
+      outvars=tmp_outvars, params=dict(eqn.params, **new_jaxpr_params)))
     for outvar, tmpvar in zip(eqn.outvars, tmp_outvars):
       new_eqns.append(core.JaxprEqn([tmpvar], [outvar], sharding_constraint_p,
                       dict(resource_env=resource_env, axis_resources=ParsedPartitionSpec((), ())),
+                      set(),
                       eqn.source_info))
-  return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, new_eqns)
+  return jaxpr.replace(eqns=new_eqns)
 
 def _flatten_axes(what, tree, axes, tupled_args):
   try:

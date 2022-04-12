@@ -809,7 +809,7 @@ class TensorFlowTrace(core.Trace):
     # abstract evaluation rules can properly track polymorphic shapes.
     # Unfortunately under op-by-op execution this is a rare occasion where we
     # need abstract evaluation.
-    out_aval = primitive.abstract_eval(*args_avals, **params)
+    out_aval, _ = primitive.abstract_eval(*args_avals, **params)
     args_tf: Sequence[TfVal] = [t.val for t in tracers]
     def invoke_impl() -> TfVal:
       if impl_needs_avals:

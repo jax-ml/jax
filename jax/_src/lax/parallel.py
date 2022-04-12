@@ -1642,7 +1642,7 @@ def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch, precision):
   if not len(set(axis_name)) == len(axis_name): raise ValueError
   pos_aval = lax.dot_general_p.abstract_eval(
       x, y, dimension_numbers=[pos_contract, pos_batch],
-      precision=precision, preferred_element_type=None)
+      precision=precision, preferred_element_type=None)[0]
   common_named_shape = core.join_named_shapes(x.named_shape, y.named_shape)
   named_shape = {name: size
                  for name, size in common_named_shape.items()

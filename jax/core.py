@@ -54,14 +54,21 @@ map, unsafe_map = safe_map, map
 
 # -------------------- jaxprs --------------------
 
+Effect = Any
+Effects = Set[Effect]
+
+no_effects: Effects = set()
+
 class Jaxpr:
   constvars: List[Var]
   invars: List[Var]
   outvars: List[Atom]
   eqns: List[JaxprEqn]
+  effects: Effects
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
-               outvars: Sequence[Atom], eqns: Sequence[JaxprEqn]):
+               outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
+               effects: Effects = no_effects):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -70,11 +77,14 @@ class Jaxpr:
         the inputs to the Jaxpr.
       outvars: list of output variables.
       eqns: list of equations.
+      effects: set of effects. The effects on a jaxpr are a superset of the
+        union of the effects for each equation.
     """
     self.constvars = list(constvars)
     self.invars = list(invars)
     self.outvars = list(outvars)
     self.eqns = list(eqns)
+    self.effects = effects
 
   def __str__(self):
     return str(pp_jaxpr(self, JaxprPpContext(), JaxprPpSettings()))
@@ -92,6 +102,18 @@ class Jaxpr:
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
 
+  def replace(self, *, constvars=None, invars=None, outvars=None, eqns=None,
+              effects=None):
+    constvars = self.constvars if constvars is None else constvars
+    invars =  self.invars if invars is None else invars
+    outvars = self.outvars if outvars is None else outvars
+    eqns = self.eqns if eqns is None else eqns
+    effects = self.effects if effects is None else effects
+    return Jaxpr(constvars=constvars, invars=invars, outvars=outvars, eqns=eqns,
+                 effects=effects)
+
+def join_effects(*effects: Effect) -> Effects:
+  return set.union(*effects) if effects else no_effects
 
 def jaxprs_in_params(params) -> Iterator[Jaxpr]:
   for val in params.values():
@@ -137,8 +159,17 @@ class ClosedJaxpr:
   def eqns(self):
     return self.jaxpr.eqns
 
+  @property
+  def effects(self) -> Effects:
+    return self.jaxpr.effects
+
   def map_jaxpr(self, f):
     return ClosedJaxpr(f(self.jaxpr), self.consts)
+
+  def replace(self, *, jaxpr=None, consts=None):
+    jaxpr = self.jaxpr if jaxpr is None else jaxpr
+    consts = self.consts if consts is None else consts
+    return ClosedJaxpr(jaxpr, consts)
 
   def __str__(self): return str(self.jaxpr)
   def __repr__(self): return repr(self.jaxpr)
@@ -164,16 +195,20 @@ class JaxprEqn(NamedTuple):
   outvars: List[Var]
   primitive: Primitive
   params: Dict[str, Any]
+  effects: Effects
   source_info: source_info_util.SourceInfo
 
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
 
-def new_jaxpr_eqn(invars, outvars, primitive, params, source_info=None):
+  def replace(self, *args, **kwargs):
+    return self._replace(*args, **kwargs)
+
+def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
   if primitive.call_primitive:
     assert len(outvars) == len(params["call_jaxpr"].outvars)
   source_info = source_info or source_info_util.new_source_info()
-  return JaxprEqn(invars, outvars, primitive, params, source_info)
+  return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
 
 @total_ordering
@@ -296,8 +331,12 @@ class Primitive:
     return impl
 
   def def_abstract_eval(self, abstract_eval):
-    self.abstract_eval = abstract_eval
+    self.abstract_eval = _effect_free_abstract_eval(abstract_eval)  # type: ignore[assignment]
     return abstract_eval
+
+  def def_effectful_abstract_eval(self, effectful_abstract_eval):
+    self.abstract_eval = effectful_abstract_eval  # type: ignore[assignment]
+    return effectful_abstract_eval
 
   def def_custom_bind(self, bind):
     self.bind = bind
@@ -314,6 +353,11 @@ class Primitive:
   def get_bind_params(self, params):
     return [], params
 
+
+def _effect_free_abstract_eval(abstract_eval):
+  def abstract_eval_(*args, **kwargs):
+    return abstract_eval(*args, **kwargs), no_effects
+  return abstract_eval_
 
 # -------------------- lifting --------------------
 
@@ -2018,7 +2062,7 @@ def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: Dict[Var, Var
     e.eqn = eqn
     raise
   params = subst_axis_names(eqn.primitive, eqn.params, subst)
-  return new_jaxpr_eqn(invars, outvars, eqn.primitive, params, eqn.source_info)
+  return eqn.replace(invars=invars, outvars=outvars, params=params)
 
 def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   consts = None
@@ -2030,7 +2074,7 @@ def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst
   constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]
   eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]
   outvars: List[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]
-  new_jaxpr = Jaxpr(constvars, invars, outvars, eqns)
+  new_jaxpr = Jaxpr(constvars, invars, outvars, eqns, jaxpr.effects)
   if consts is not None:
     return ClosedJaxpr(new_jaxpr, consts)
   return new_jaxpr
@@ -2172,15 +2216,20 @@ def _check_jaxpr(
       if any(isinstance(ina, ConcreteArray) for ina in in_avals):
         raise JaxprTypeError("Equation given ConcreteArray type inputs")
       if prim in custom_typechecks:
-        out_avals = custom_typechecks[prim](*in_avals, **eqn.params)
+        out_avals, effects = custom_typechecks[prim](*in_avals, **eqn.params)
         if out_avals is None:
           out_avals = [v.aval for v in eqn.outvars]
       elif prim.call_primitive:
-        out_avals = check_call(ctx_factory, prim, in_avals, eqn.params)
+        out_avals, effects = check_call(ctx_factory, prim, in_avals, eqn.params)
       elif prim.map_primitive:
-        out_avals = check_map(ctx_factory, prim, in_avals, eqn.params)
+        out_avals, effects = check_map(ctx_factory, prim, in_avals, eqn.params)
       else:
-        out_avals = check_eqn(prim, in_avals, eqn.params)
+        out_avals, effects = check_eqn(prim, in_avals, eqn.params)
+      if eqn.effects != effects:
+        print(eqn.effects, effects)
+        raise JaxprTypeError("Inferred effects do not match equation effects.")
+      if not eqn.effects.issubset(jaxpr.effects):
+        raise JaxprTypeError("Equation effects are not subset of Jaxpr effects.")
       map(write, eqn.outvars, out_avals)
     except JaxprTypeError as e:
       ctx, settings = ctx_factory()
@@ -2196,10 +2245,10 @@ def check_eqn(prim, in_avals, params):
   for jaxpr in jaxprs_in_params(params):
     check_jaxpr(jaxpr)
 
-  out_avals = prim.abstract_eval(*in_avals, **params)
+  out_avals, effects = prim.abstract_eval(*in_avals, **params)
   if not prim.multiple_results:
     out_avals = [out_avals]
-  return out_avals
+  return out_avals, effects
 
 def check_call(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
@@ -2221,12 +2270,14 @@ def check_call(ctx_factory, prim, in_avals, params):
   _check_jaxpr(ctx_factory, call_jaxpr, in_avals)
 
   out_avals = [v.aval for v in call_jaxpr.outvars]
-  return out_avals
+  return out_avals, call_jaxpr.effects
 
 def check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
+  if call_jaxpr.effects:
+    raise JaxprTypeError(f"Map primitive {prim} mapping an effectful function")
   if "axis_size" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
@@ -2257,7 +2308,7 @@ def check_map(ctx_factory, prim, in_avals, params):
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval) if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
-  return out_avals
+  return out_avals, call_jaxpr.effects
 
 
 # ------------------- Jaxpr printed representation -------------------
