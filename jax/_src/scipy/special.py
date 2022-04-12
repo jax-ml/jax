@@ -24,7 +24,7 @@ from jax import lax, core
 from jax.interpreters import ad
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.lax_numpy import asarray, _reduction_dims, _promote_args_inexact
+from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
 from jax._src.numpy.util import _wraps
 
 from typing import Optional, Tuple
@@ -89,7 +89,7 @@ def erfinv(x):
 @api.custom_jvp
 @_wraps(osp_special.logit, update_doc=False)
 def logit(x):
-  x = asarray(x)
+  x, = _promote_args_inexact("logit", x)
   return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
 logit.defjvps(
     lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(_lax_const(x, 1), x))))
@@ -98,7 +98,7 @@ logit.defjvps(
 @api.custom_jvp
 @_wraps(osp_special.expit, update_doc=False)
 def expit(x):
-  x = asarray(x)
+  x, = _promote_args_inexact("expit", x)
   one = _lax_const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
 expit.defjvps(lambda g, ans, x: g * ans * (_lax_const(ans, 1) - ans))
