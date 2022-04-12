@@ -1533,6 +1533,8 @@ class DynamicJaxprTrace(core.Trace):
     with core.new_sublevel():
       jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(
         f, self.main, in_avals, keep_inputs=keep_inputs)
+    if jaxpr.effects:
+      raise NotImplementedError('Effects not supported for call primitives.')
     tracers = [*im_tracers, *explicit_tracers]
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *tracers)
@@ -1552,7 +1554,7 @@ class DynamicJaxprTrace(core.Trace):
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars,
                         call_primitive, new_params,
                         new_params['call_jaxpr'].effects, source_info)
-    self.frame.eqns.append(eqn)
+    self.frame.add_eqn(eqn)
     return out_tracers
 
   def post_process_call(self, call_primitive, out_tracers, params):
@@ -1568,6 +1570,8 @@ class DynamicJaxprTrace(core.Trace):
       with core.new_sublevel():
         jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
             f, self.main, reduced_in_avals)
+      if jaxpr.effects:
+        raise NotImplementedError('Effects not supported for map primitives.')
       out_axes = params['out_axes_thunk']()
       out_avals = [core.unmapped_aval(axis_size, axis_name, out_axis, a)
                   if out_axis is not None else a
@@ -1586,7 +1590,7 @@ class DynamicJaxprTrace(core.Trace):
         new_params = update_params(new_params, [True] * len(tracers), len(consts))
       eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
                           new_params, new_params['call_jaxpr'].effects, source_info)
-      self.frame.eqns.append(eqn)
+      self.frame.add_eqn(eqn)
     return out_tracers
 
   def post_process_map(self, map_primitive, out_tracers, params):
@@ -1596,6 +1600,8 @@ class DynamicJaxprTrace(core.Trace):
     in_avals = [t.aval for t in tracers]
     with core.new_sublevel():
       fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
+    if fun_jaxpr.effects:
+      raise NotImplementedError('Effects not supported in `custom_jvp`.')
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
     main_ = ref(self.main)
     jvp_jaxpr_thunk = _memoize(
@@ -1610,7 +1616,7 @@ class DynamicJaxprTrace(core.Trace):
                              num_consts=len(consts)),
                         fun_jaxpr.effects,
                         source_info_util.current())
-    self.frame.eqns.append(eqn)
+    self.frame.add_eqn(eqn)
     return out_tracers
 
   def post_process_custom_jvp_call(self, out_tracers, _):
@@ -1620,6 +1626,8 @@ class DynamicJaxprTrace(core.Trace):
     in_avals = [t.aval for t in tracers]
     with core.new_sublevel():
       fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
+    if fun_jaxpr.effects:
+      raise NotImplementedError('Effects not supported in `custom_vjp`.')
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
     main_ = ref(self.main)
     fwd_jaxpr_thunk = _memoize(
@@ -1635,7 +1643,7 @@ class DynamicJaxprTrace(core.Trace):
                              bwd=bwd, out_trees=out_trees),
                         fun_jaxpr.effects,
                         source_info_util.current())
-    self.frame.eqns.append(eqn)
+    self.frame.add_eqn(eqn)
     return out_tracers
 
   def post_process_custom_vjp_call(self, out_tracers, _):
