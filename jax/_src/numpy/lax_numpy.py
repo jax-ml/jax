@@ -3416,6 +3416,12 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
+  try:
+    idx, ndim = operator.index(index), operator.index(axis_size)
+  except TypeError:
+    pass
+  else:
+    return idx + ndim if idx < 0 else idx
   if issubdtype(_dtype(index), np.unsignedinteger):
     return index
   if core.is_constant_dim(axis_size):
@@ -3725,8 +3731,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       ndim = len(shape)
 
       start_dim = len(gather_indices_shape)
-      gather_indices += ((lax.convert_element_type(a, index_dtype), start_dim)
-                         for a in advanced_indexes)
+      gather_indices += ((a, start_dim) for a in advanced_indexes)
       gather_indices_shape += shape
 
       start_index_map.extend(x_advanced_axes)
@@ -3751,7 +3756,6 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
-      i = lax.convert_element_type(i, index_dtype)
       gather_indices.append((i, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
@@ -3813,8 +3817,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
         if needs_rev:
           reversed_y_dims.append(collapsed_y_axis)
         if stride == 1:
-          i = lax.convert_element_type(start, index_dtype)
-          gather_indices.append((i, len(gather_indices_shape)))
+          gather_indices.append((start, len(gather_indices_shape)))
           slice_shape.append(limit - start)
           gather_slice_shape.append(limit - start)
           offset_dims.append(collapsed_y_axis)
@@ -3847,14 +3850,18 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     gather_indices_array = np.zeros((0,), dtype=index_dtype)
   elif len(gather_indices) == 1:
     g, _ = gather_indices[0]
-    gather_indices_array = lax.expand_dims(g, (g.ndim,))
+    try:
+      gather_indices_array = np.array([operator.index(g)], dtype=index_dtype)
+    except TypeError:
+      gather_indices_array = lax.expand_dims(lax.convert_element_type(g, index_dtype), (g.ndim,))
   else:
     last_dim = len(gather_indices_shape)
     gather_indices_shape.append(1)
     gather_indices_array = lax.concatenate([
-      lax.broadcast_in_dim(g, gather_indices_shape, tuple(range(i, i + g.ndim)))
-      for g, i in gather_indices],
-      last_dim)
+      lax.broadcast_in_dim(
+        lax.convert_element_type(g, index_dtype), gather_indices_shape, tuple(range(i, i + _ndim(g))))
+        for g, i in gather_indices],
+    last_dim)
 
   dnums = lax.GatherDimensionNumbers(
     offset_dims = tuple(offset_dims),
