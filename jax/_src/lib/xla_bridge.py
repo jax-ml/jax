@@ -261,9 +261,10 @@ def backends():
                        err)
           _backends_errors[platform] = str(err)
           continue
-    if _default_backend.platform == "cpu" and FLAGS.jax_platform_name != 'cpu':
-      logging.warning('No GPU/TPU found, falling back to CPU. '
-                      '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
+    if (_default_backend.platform == "cpu" and FLAGS.jax_platform_name != 'cpu'
+        and 'cpu' not in FLAGS.jax_platforms.split(',')):
+      warnings.warn('No GPU/TPU found, falling back to CPU. '
+                    '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
     return _backends
 
 

@@ -205,13 +205,24 @@ class GetBackendTest(jtu.JaxTestCase):
         "Could not initialize backend 'none'"):
       xb.get_backend("none")
 
-  def cpu_fallback_warning(self):
+  def test_cpu_fallback_warning(self):
     with warnings.catch_warnings(record=True) as w:
       warnings.simplefilter("always")
       xb.get_backend()
       self.assertLen(w, 1)
       msg = str(w[-1].message)
       self.assertIn("No GPU/TPU found, falling back to CPU", msg)
+
+  def test_cpu_fallback_warning_suppression(self):
+    orig_jax_platforms = config._read("jax_platforms")
+    try:
+      config.FLAGS.jax_platforms = "cpu"
+      with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        xb.get_backend()
+        self.assertLen(w, 0)
+    finally:
+      config.FLAGS.jax_platforms = orig_jax_platforms
 
   def test_jax_platforms_flag(self):
     self._register_factory("platform_A", 20)
