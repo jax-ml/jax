@@ -225,8 +225,8 @@ ad.primitive_transposes[custom_transpose_p] = custom_transpose_transpose_rule
 mlir.register_lowering(
     custom_transpose_p,
     mlir.lower_fun(custom_transpose_lowering, multiple_results=True))
+xla.register_initial_style_primitive(custom_transpose_p)
 xla.register_translation(
     custom_transpose_p,
     xla.lower_fun(
-        custom_transpose_lowering, new_style=True, multiple_results=True),
-    initial_style=True)
+        custom_transpose_lowering, new_style=True, multiple_results=True))

@@ -620,8 +620,8 @@ while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval
-xla.register_translation(while_p, _while_loop_translation_rule,
-                         initial_style=True)
+xla.register_initial_style_primitive(while_p)
+xla.register_translation(while_p, _while_loop_translation_rule)
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = \
@@ -1342,7 +1342,8 @@ ad.primitive_jvps[cond_p] = _cond_jvp
 ad.reducing_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.axis_primitive_batchers[cond_p] = _cond_batching_rule
-xla.register_translation(cond_p, _cond_translation_rule, initial_style=True)
+xla.register_initial_style_primitive(cond_p)
+xla.register_translation(cond_p, _cond_translation_rule)
 core.custom_typechecks[cond_p] = _cond_typecheck
 pe.partial_eval_jaxpr_custom_rules[cond_p] = \
     partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'cond')
@@ -2132,9 +2133,9 @@ scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.reducing_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
+xla.register_initial_style_primitive(scan_p)
 xla.register_translation(scan_p, xla.lower_fun(_scan_impl, new_style=True,
-                                               multiple_results=True),
-                         initial_style=True)
+                                               multiple_results=True))
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
 batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
@@ -2692,10 +2693,10 @@ linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
+xla.register_initial_style_primitive(linear_solve_p)
 xla.register_translation(
     linear_solve_p, xla.lower_fun(_custom_linear_solve_impl, new_style=True,
-                                  multiple_results=True),
-    initial_style=True)
+                                  multiple_results=True))
 mlir.register_lowering(
     linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
                                    multiple_results=True))

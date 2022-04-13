@@ -783,9 +783,9 @@ psum_p = core.AxisPrimitive('psum')
 psum_p.multiple_results = True
 psum_p.def_impl(partial(_allreduce_impl, lax._reduce_sum))
 psum_p.def_abstract_eval(_allreduce_abstract_eval)
+xla.register_collective_primitive(psum_p)
 xla.register_translation(
-    psum_p, partial(_allreduce_translation_rule, lax.add_p, lax._reduce_sum),
-    is_collective=True)
+    psum_p, partial(_allreduce_translation_rule, lax.add_p, lax._reduce_sum))
 mlir.register_lowering(
     psum_p, partial(_allreduce_lowering, lax.add_p, lax._reduce_sum))
 ad.deflinear2(psum_p, _psum_transpose_rule)
@@ -822,9 +822,9 @@ pmax_p = core.AxisPrimitive('pmax')
 pmax_p.multiple_results = True
 pmax_p.def_impl(partial(_allreduce_impl, lax._reduce_max))
 pmax_p.def_abstract_eval(_allreduce_abstract_eval)
+xla.register_collective_primitive(pmax_p)
 xla.register_translation(
-    pmax_p, partial(_allreduce_translation_rule, lax.max_p, lax._reduce_max),
-    is_collective=True)
+    pmax_p, partial(_allreduce_translation_rule, lax.max_p, lax._reduce_max))
 mlir.register_lowering(
     pmax_p, partial(_allreduce_lowering, lax.max_p, lax._reduce_max))
 pxla.multi_host_supported_collectives.add(pmax_p)
@@ -838,9 +838,9 @@ pmin_p = core.AxisPrimitive('pmin')
 pmin_p.multiple_results = True
 pmin_p.def_impl(partial(_allreduce_impl, lax._reduce_min))
 pmin_p.def_abstract_eval(_allreduce_abstract_eval)
+xla.register_collective_primitive(pmin_p)
 xla.register_translation(
-    pmin_p, partial(_allreduce_translation_rule, lax.min_p, lax._reduce_min),
-    is_collective=True)
+    pmin_p, partial(_allreduce_translation_rule, lax.min_p, lax._reduce_min))
 mlir.register_lowering(
     pmin_p, partial(_allreduce_lowering, lax.min_p, lax._reduce_min))
 pxla.multi_host_supported_collectives.add(pmin_p)
@@ -910,8 +910,8 @@ def _collective_batcher(prim, args, dims, **params):
 ppermute_p = core.AxisPrimitive('ppermute')
 ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
-xla.register_translation(ppermute_p, _ppermute_translation_rule,
-                         is_collective=True)
+xla.register_collective_primitive(ppermute_p)
+xla.register_translation(ppermute_p, _ppermute_translation_rule)
 mlir.register_lowering(ppermute_p, _ppermute_lowering)
 pxla.multi_host_supported_collectives.add(ppermute_p)
 batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
@@ -1102,8 +1102,8 @@ def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_
 
 all_to_all_p = core.AxisPrimitive('all_to_all')
 all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
-xla.register_translation(all_to_all_p, _all_to_all_translation_rule,
-                         is_collective=True)
+xla.register_collective_primitive(all_to_all_p)
+xla.register_translation(all_to_all_p, _all_to_all_translation_rule)
 mlir.register_lowering(all_to_all_p, _all_to_all_lowering)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
@@ -1323,8 +1323,8 @@ def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in,
 all_gather_p = core.AxisPrimitive('all_gather')
 all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
 all_gather_p.def_impl(_all_gather_impl)
-xla.register_translation(all_gather_p, _all_gather_translation_rule,
-                         is_collective=True)
+xla.register_collective_primitive(all_gather_p)
+xla.register_translation(all_gather_p, _all_gather_translation_rule)
 mlir.register_lowering(all_gather_p, _all_gather_lowering)
 ad.deflinear2(all_gather_p, _all_gather_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_gather_p)
@@ -1462,10 +1462,10 @@ def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
 
 reduce_scatter_p = core.AxisPrimitive("reduce_scatter")
 reduce_scatter_p.def_abstract_eval(_reduce_scatter_abstract_eval)
+xla.register_collective_primitive(reduce_scatter_p)
 xla.register_translation(
     reduce_scatter_p,
-    partial(_reduce_scatter_translation_rule, lax.add_p, psum),
-    is_collective=True)
+    partial(_reduce_scatter_translation_rule, lax.add_p, psum))
 mlir.register_lowering(
     reduce_scatter_p,
     partial(_reduce_scatter_lowering, lax.add_p, psum))
@@ -1590,8 +1590,8 @@ def _axis_index_abstract_eval(*, axis_name):
   return ShapedArray((), np.int32, named_shape={axis_name: frame.size})
 
 axis_index_p = core.Primitive('axis_index')
-xla.register_translation(axis_index_p, _axis_index_translation_rule,
-                         is_collective=True)
+xla.register_collective_primitive(axis_index_p)
+xla.register_translation(axis_index_p, _axis_index_translation_rule)
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_abstract_eval(_axis_index_abstract_eval)
 pxla.multi_host_supported_collectives.add(axis_index_p)
@@ -1683,10 +1683,10 @@ def _pdot_lowering(x, y, *, axis_name, pos_contract, pos_batch, precision):
                               precision=precision, preferred_element_type=None)
   return psum(local_out, axis_name) if axis_name is not None else local_out
 
+xla.register_collective_primitive(pdot_p)
 xla.register_translation(
     pdot_p,
-    xla.lower_fun(_pdot_lowering, multiple_results=False, new_style=True),
-    is_collective=True)
+    xla.lower_fun(_pdot_lowering, multiple_results=False, new_style=True))
 mlir.register_lowering(
     pdot_p,
     mlir.lower_fun(_pdot_lowering, multiple_results=False))
@@ -1785,8 +1785,8 @@ def _pgather_collective_batcher(axis_size, frame_name, _, vals_in, dims_in, *, a
 pgather_p = core.AxisPrimitive('pgather')
 pgather_p.def_impl(_pgather_impl)
 pgather_p.def_abstract_eval(_pgather_abstract_eval)
-xla.register_translation(pgather_p, _pgather_parallel_translation,
-                         is_collective=True)
+xla.register_collective_primitive(pgather_p)
+xla.register_translation(pgather_p, _pgather_parallel_translation)
 mlir.register_lowering(pgather_p, _pgather_parallel_lowering)
 # TODO: Transpose? That requires adding pscatter...
 batching.primitive_batchers[pgather_p] = _pgather_batcher

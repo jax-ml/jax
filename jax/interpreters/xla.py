@@ -870,17 +870,17 @@ _backend_specific_translations = defaultdict(dict)
 _collective_primitives: Set[core.Primitive] = set()
 _initial_style_primitives: Set[core.Primitive] = set()
 
+def register_initial_style_primitive(prim: core.Primitive):
+  _initial_style_primitives.add(prim)
+
+def register_collective_primitive(prim: core.Primitive):
+  _collective_primitives.add(prim)
+
 def register_translation(prim: core.Primitive, rule: TranslationRule, *,
-                         platform: Optional[str] = None,
-                         is_collective: bool = False,
-                         initial_style: bool = False) -> None:
+                         platform: Optional[str] = None) -> None:
   ts = (_translations if platform is None
         else _backend_specific_translations[platform])
   ts[prim] = rule
-  if is_collective:
-    _collective_primitives.add(prim)
-  if initial_style:
-    _initial_style_primitives.add(prim)
 
 # As a temporary backward compatibility measure, we use an adapter class to
 # convert from the old styles of translation rules to the newer ones.

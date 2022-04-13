@@ -397,11 +397,11 @@ def _custom_jvp_call_jaxpr_vmap(
   return batched_outs, out_dims
 batching.axis_primitive_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
 
+xla.register_initial_style_primitive(custom_jvp_call_jaxpr_p)
 xla.register_translation(
     custom_jvp_call_jaxpr_p,
     xla.lower_fun(_custom_jvp_call_jaxpr_impl, new_style=True,
-                  multiple_results=True),
-    initial_style=True)
+                  multiple_results=True))
 
 # If a (multi)linear function is defined with a custom jvp, then
 # custom_jvp_call_jaxpr can appear in jaxprs to be transposed. Since it's
@@ -768,11 +768,11 @@ def _custom_vjp_call_jaxpr_vmap(
   return batched_outs, out_dims
 batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
+xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 xla.register_translation(
     custom_vjp_call_jaxpr_p,
     xla.lower_fun(_custom_vjp_call_jaxpr_impl, new_style=True,
-                  multiple_results=True),
-    initial_style=True)
+                  multiple_results=True))
 
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 xla.register_translation(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
@@ -1164,10 +1164,10 @@ linear_call_p.multiple_results = True
 linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
+xla.register_initial_style_primitive(linear_call_p)
 xla.register_translation(linear_call_p,
                          xla.lower_fun(_linear_call_impl, new_style=True,
-                                       multiple_results=True),
-                         initial_style=True)
+                                       multiple_results=True))
 mlir.register_lowering(linear_call_p, mlir.lower_fun(
     _linear_call_impl, multiple_results=True))
 
