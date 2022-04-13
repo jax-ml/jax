@@ -2885,6 +2885,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testPolyDiv(self, a_shape, b_shape, dtype):
     rng = jtu.rand_default(self.rng())
 
+    @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero.*")
+    @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
     def np_fun(arg1, arg2):
       q, r = np.polydiv(arg1, arg2)
       while r.size < max(arg1.size, arg2.size): # Pad residual to same size
