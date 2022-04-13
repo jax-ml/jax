@@ -96,6 +96,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax._src.lax.control_flow._initial_style_jaxpr.cache_clear()
     jax._src.lax.control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
 
+  def testCallableErrors(self):
+    not_callable = 42
+    with self.assertRaisesRegex(TypeError, "lax.fori_loop.*callable.*"):
+      lax.fori_loop(0, 1, not_callable, 0)
+    with self.assertRaisesRegex(TypeError, "lax.while_loop.*callable.*"):
+      lax.while_loop(not_callable, not_callable, 0)
+    with self.assertRaisesRegex(TypeError, "lax.switch:.*callable.*"):
+      lax.switch(0, [not_callable])
+    with self.assertRaisesRegex(TypeError, "lax.cond.*callable.*"):
+      lax.cond(0, not_callable, not_callable)
+    with self.assertRaisesRegex(TypeError, "lax.scan.*callable.*"):
+      lax.scan(not_callable, 0, 1)
+    with self.assertRaisesRegex(TypeError, "lax.associative_scan.*callable.*"):
+      lax.associative_scan(not_callable, 0)
+
   def testWhileWithTuple(self):
     limit = 10
 
