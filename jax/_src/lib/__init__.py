@@ -34,6 +34,20 @@ if platform.system() == "Darwin" and platform.machine() == "arm64":
                 "Please see https://github.com/google/jax/issues/5501 in the "
                 "event of problems.")
 
+
+# This apparently-unused import is to work around
+# https://github.com/google/jax/issues/9218#issuecomment-1016949739
+# If the user is using Conda, we want to ensure that Conda's libstdc++ is chosen
+# by the dynamic linker in preference to the system libstdc++. Before importing
+# jaxlib, we first must import a library that:
+# a) is likely to be provided by Conda and not hand-installed by the user, and
+# b) uses C++ and links to libstdc++.
+# Some submodules of scipy (e.g., scipy.signal) satisfy this criterion.
+# If the user isn't using Conda, this code merely wastes a bit of time, but
+# we're likely to import scipy anyway later.
+import scipy.signal as _signal
+del _signal
+
 try:
   import jaxlib as jaxlib
 except ModuleNotFoundError as err:
