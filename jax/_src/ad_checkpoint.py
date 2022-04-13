@@ -276,10 +276,12 @@ def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
   del prevent_cse, differentiated, policy  # Unused.
   return core.eval_jaxpr(jaxpr, (), *args)
 
-@remat_p.def_abstract_eval
+@remat_p.def_effectful_abstract_eval
 def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
   del args, prevent_cse, differentiated, policy  # Unused.
-  return [v.aval for v in jaxpr.outvars]
+  if jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `remat`.')
+  return [v.aval for v in jaxpr.outvars], jaxpr.effects
 
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars

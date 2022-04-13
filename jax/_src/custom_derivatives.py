@@ -329,12 +329,14 @@ def _custom_jvp_call_jaxpr_impl(*args, fun_jaxpr: core.ClosedJaxpr, **params):
 
 def _custom_jvp_call_jaxpr_abstract_eval(*args, fun_jaxpr: core.ClosedJaxpr, **params):
   del args, params
-  return fun_jaxpr.out_avals
+  if fun_jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `custom_jvp`.')
+  return fun_jaxpr.out_avals, fun_jaxpr.effects
 
 custom_jvp_call_jaxpr_p = core.AxisPrimitive('custom_jvp_call_jaxpr')
 custom_jvp_call_jaxpr_p.multiple_results = True
 custom_jvp_call_jaxpr_p.def_impl(_custom_jvp_call_jaxpr_impl)
-custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
+custom_jvp_call_jaxpr_p.def_effectful_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 CustomJVPCallPrimitive.initial_style = custom_jvp_call_jaxpr_p
 
 mlir.register_lowering(custom_jvp_call_jaxpr_p, mlir.lower_fun(
@@ -694,12 +696,14 @@ def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
   return core.jaxpr_as_fun(fun_jaxpr)(*args)
 
 def _custom_vjp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
-  return fun_jaxpr.out_avals
+  if fun_jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `custom_vjp`.')
+  return fun_jaxpr.out_avals, fun_jaxpr.effects
 
 custom_vjp_call_jaxpr_p = core.AxisPrimitive('custom_vjp_call_jaxpr')
 custom_vjp_call_jaxpr_p.multiple_results = True
 custom_vjp_call_jaxpr_p.def_impl(_custom_vjp_call_jaxpr_impl)
-custom_vjp_call_jaxpr_p.def_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
+custom_vjp_call_jaxpr_p.def_effectful_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
 CustomVJPCallPrimitive.initial_style = custom_vjp_call_jaxpr_p
 
 mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(

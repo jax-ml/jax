@@ -665,9 +665,11 @@ def _pjit_lower(
 
 def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env,
                         out_positional_semantics, **_):
+  if jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `pjit`.')
   return global_to_local(out_positional_semantics, resource_env.physical_mesh,
-                         jaxpr.out_avals, out_axis_resources)
-pjit_p.def_abstract_eval(_pjit_abstract_eval)
+                         jaxpr.out_avals, out_axis_resources), jaxpr.effects
+pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
 def _pjit_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,

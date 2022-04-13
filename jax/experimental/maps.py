@@ -1051,6 +1051,8 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   with core.extend_axis_env_nd(global_axis_sizes.items()):
     jaxpr, mapped_out_avals, consts = trace_to_subjaxpr_dynamic(
         f, self.main, mapped_in_avals)
+  if jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `xmap`.')
   out_axes = params['out_axes_thunk']()
   if params['spmd_out_axes_thunk'] is not None:
     spmd_out_axes = params['spmd_out_axes_thunk']()

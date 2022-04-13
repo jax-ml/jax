@@ -314,23 +314,25 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     new_init_val, = tree_unflatten(in_tree, new_init_vals)
     init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(new_init_val)
   cond_jaxpr, cond_consts, body_consts, body_tree = rest
-  joined_effects = core.join_effects(body_jaxpr.effects, cond_jaxpr.effects)
-  if joined_effects:
-    raise NotImplementedError('Effects not supported in `while`.')
 
   in_tree_children = in_tree.children()
   assert len(in_tree_children) == 1
   _check_tree_and_avals("body_fun output and input",
                         body_tree, body_jaxpr.out_avals,
                         in_tree_children[0], init_avals)
+  if cond_jaxpr.effects or body_jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `while`.')
   outs = while_p.bind(*cond_consts, *body_consts, *init_vals,
                       cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
   return tree_unflatten(body_tree, outs)
 
-def _while_loop_abstract_eval(*args, body_jaxpr, **kwargs):
+def _while_loop_abstract_eval(*args, cond_jaxpr, body_jaxpr, **kwargs):
   del args, kwargs
-  return _map(raise_to_shaped, body_jaxpr.out_avals), core.no_effects
+  if cond_jaxpr.effects or body_jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `while_loop`.')
+  joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+  return _map(raise_to_shaped, body_jaxpr.out_avals), joined_effects
 
 def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
                                  body_jaxpr, cond_nconsts, body_nconsts):
@@ -796,11 +798,12 @@ def switch(index, branches: Sequence[Callable], *operands,
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       branches, ops_tree, ops_avals, primitive_name='switch')
-
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
     _check_tree_and_avals(f"branch 0 and {i + 1} outputs",
                           out_trees[0], jaxprs[0].out_avals,
                           out_tree, jaxpr.out_avals)
+  if any(b.effects for b in jaxprs):
+    raise NotImplementedError('Effects not supported in `switch`.')
 
   linear = (False,) * (len(consts) + len(ops))
   out = cond_p.bind(
@@ -879,15 +882,14 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals, 'cond')
-  joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
-  if joined_effects:
-    raise NotImplementedError('Effects not supported in `cond`.')
   true_jaxpr, false_jaxpr = jaxprs
   out_tree, false_out_tree = out_trees
 
   _check_tree_and_avals("true_fun and false_fun output",
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
+  if any(b.effects for b in jaxprs):
+    raise NotImplementedError('Effects not supported in `cond`.')
 
   index = lax.convert_element_type(pred, np.int32)
 
@@ -934,7 +936,10 @@ def _cond_with_per_branch_args(pred,
                (true_operand, false_operand))
 
 def _cond_abstract_eval(*args, branches, **kwargs):
-  return _map(raise_to_shaped, branches[0].out_avals), core.no_effects
+  if any(b.effects for b in branches):
+    raise NotImplementedError('Effects not supported in `cond`.')
+  joined_effects = core.join_effects(*(b.effects for b in branches))
+  return _map(raise_to_shaped, branches[0].out_avals), joined_effects
 
 def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
                            linear):
@@ -1128,8 +1133,6 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
 
   linear_2 = (False,) * num_res + linear
   params = dict(branches=branches_2, linear=linear_2)
-  if any((branch.effects for branch in branches_2)):
-    raise NotImplementedError('Effects not supported in `cond`.')
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
@@ -1282,6 +1285,8 @@ def _cond_typecheck(*avals, branches, linear):
   jaxpr0 = branches[0]
   jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
   jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
+  if any(b.effects for b in branches):
+    raise NotImplementedError('Effects not supported in `cond`.')
 
   for i, jaxpr in enumerate(branches[1:]):
     if len(jaxpr0.in_avals) != len(jaxpr.in_avals):
@@ -1318,7 +1323,8 @@ def _cond_typecheck(*avals, branches, linear):
     raise core.JaxprTypeError(
       f'cond branches must have matching effect types: '
       f'{[b.effects for b in branches]}')
-  return None, core.no_effects
+  joined_effects = core.join_effects(*(b.effects for b in branches))
+  return None, joined_effects
 
 def cond_bind(*args, branches, linear):
   if config.jax_enable_checks:
@@ -1524,13 +1530,13 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     new_init = tree_unflatten(init_tree, new_init_flat)
     init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(new_init)
   in_flat, jaxpr, consts, out_tree, out_tree_children = rest
-  if jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `scan`.')
 
   _check_tree_and_avals("scan carry output and input",
                         # Extract the subtree and avals for the first element of the return tuple
                         out_tree_children[0], carry_avals_out,
                         init_tree, carry_avals)
+  if jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `scan`.')
 
   out = scan_p.bind(*consts, *in_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
@@ -1723,6 +1729,8 @@ def _prepend_dim_to_aval(sz, aval):
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll):
+  if jaxpr.effects:
+    raise NotImplementedError('Effects not supported in `scan`.')
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   return carry_avals + ys_avals, core.no_effects
