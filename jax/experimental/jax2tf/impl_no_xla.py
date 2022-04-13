@@ -174,7 +174,8 @@ def _conv_general_dilated(
     lhs = _pad_spatial_dims(lhs, padding)
     padding_type = "VALID"
 
-  if any(r > l for l, r in zip(lhs.shape[1:3], rhs_dilated_shape)):
+  if any(r > l for l, r in zip(lhs.shape[1:3], rhs_dilated_shape)
+        ) and padding_type != "SAME":
     # If the filter shape is bigger than the input shape in a spatial dimension,
     # lax returns only zeros while tf.conv2d returns an error.
     # We thus return zeros to make sure the behavior is consistent.

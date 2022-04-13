@@ -2933,6 +2933,15 @@ _make_conv_harness(
     padding=((3, 3), (3, 3)),
     works_without_xla=True)
 
+# rhs out of bounds with "SAME" padding.
+_make_conv_harness(
+    "rhs_oob_same_padding",
+    lhs_shape=(1, 1, 16, 1),
+    padding="SAME",
+    rhs_shape=(4, 1, 1, 2),
+    dimension_numbers=("NHWC", "HWIO", "NHWC"),  # TF default
+    works_without_xla=True)
+
 
 # Dimension numbers and corresponding permutation
 for dimension_numbers, lhs_shape, rhs_shape in [
