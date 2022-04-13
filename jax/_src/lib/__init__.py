@@ -159,7 +159,7 @@ xla_extension_version = getattr(xla_client, '_version', 0)
 _xla_extension_version = xla_extension_version
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
-mlir_api_version = getattr(xla_client, 'mlir_api_version', 0)
+mlir_api_version = xla_client.mlir_api_version
 
 try:
   from jaxlib import tpu_client as tpu_driver_client  # pytype: disable=import-error

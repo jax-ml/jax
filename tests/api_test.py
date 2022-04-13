@@ -54,7 +54,6 @@ from jax.interpreters.pxla import PartitionSpec as P
 from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
@@ -457,7 +456,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     del g                   # no more references to x
     assert x() is None      # x is gone
 
-  @unittest.skipIf(xla_extension_version < 59, "Test requires jaxlib > 0.3.0")
   def test_jit_of_nonweakreferenceable_function(self):
     class CallableWithSlots:
       __slots__ = []
