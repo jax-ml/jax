@@ -90,40 +90,40 @@ def check_numpy_version(python_bin_path):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/5.1.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/5.1.1/"
 BazelPackage = collections.namedtuple("BazelPackage",
                                       ["base_uri", "file", "sha256"])
 bazel_packages = {
     ("Linux", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.0-linux-x86_64",
+            file="bazel-5.1.1-linux-x86_64",
             sha256=
-            "0440ae4581ea5eac5cb36ed0790b1e942778eb81e3ba9bc1326f189427aef0fd"),
+            "5e126060d9169b462a18e97435356c3b3712d20fdbef9ac7609016838a90e7d3"),
     ("Linux", "aarch64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.0-linux-arm64",
+            file="bazel-5.1.1-linux-arm64",
             sha256=
-            "8653f16a5c3b69c2cdaf897be364becf58d00e6a8051cc58f883457af0360b08"),
+            "a590a28608772e779efc0c29bb678cd2a150deb27a9f8c557cc1d2b131a779ef"),
     ("Darwin", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.0-darwin-x86_64",
+            file="bazel-5.1.1-darwin-x86_64",
             sha256=
-            "534fa0f305c5eabe5f3553a15c615a29f8ec9ac88496050fee1b3156dee4571e"),
+            "91d8958fffd3077c32466a03300b7eba3b680588688f11d378ccbf2ae9000753"),
     ("Darwin", "arm64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.0-darwin-arm64",
+            file="bazel-5.1.1-darwin-arm64",
             sha256=
-            "485afe1117d129c9a792ef484a7108e053e99ddb239591f3b8469091dd8359c2"),
+            "4fad9d066436ccca022578192be9fcc330d833799833c549683949939b3ce717"),
     ("Windows", "AMD64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.0-windows-x86_64.exe",
+            file="bazel-5.1.1-windows-x86_64.exe",
             sha256=
-            "edda0b9e5481931e9162a231a837eb8c8154a5904e93a344f2205e8b96f9b8f2"),
+            "03061f1e9aac1966155ca402dcd1075c6493dfe85df72aa2cf3e12fcaa258d90"),
 }
 
 
@@ -185,7 +185,7 @@ def get_bazel_paths(bazel_path_flag):
 
 def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found. Also,
-  checks Bazel's version is at least newer than 5.1.0
+  checks Bazel's version is at least newer than 5.1.1
 
   A manual version check is needed only for really old bazel versions.
   Newer bazel releases perform their own version check against .bazelversion
@@ -194,11 +194,11 @@ def get_bazel_path(bazel_path_flag):
   """
   for path in filter(None, get_bazel_paths(bazel_path_flag)):
     version = get_bazel_version(path)
-    if version is not None and version >= (5, 1, 0):
+    if version is not None and version >= (5, 1, 1):
       return path, ".".join(map(str, version))
 
   print("Cannot find or download a suitable version of bazel."
-        "Please install bazel >= 5.1.0.")
+        "Please install bazel >= 5.1.1.")
   sys.exit(-1)
 
 
