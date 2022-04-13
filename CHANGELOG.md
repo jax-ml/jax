@@ -8,12 +8,18 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.6 (unreleased)
+## jaxlib 0.3.6 (Unreleased)
+
+## jax 0.3.7 (Unreleased)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.5...main).
+  commits](https://github.com/google/jax/compare/jax-v0.3.6...main).
 
-## jaxlib 0.3.6 (unreleased)
 
+## jax 0.3.6 (April 12, 2022)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.3.5...jax-v0.3.6).
+* Changes:
+  * Upgraded libtpu wheel to the fixed version. Fixes [#10218](https://github.com/google/jax/issues/10218).
 
 ## jax 0.3.5 (April 7, 2022)
 * [GitHub
