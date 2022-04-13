@@ -948,22 +948,6 @@ class _cached_property:
     return self._value
 
 
-class _XLAShardingInfo(NamedTuple):
-  in_pspec: Tuple[PartitionSpec]
-  out_pspec: Tuple[PartitionSpec]
-  compiled: stages.Compiled
-
-
-def compile_and_get_sharding(pjitted_fn, mesh, global_inputs):
-  # TODO(yashkatariya): Check if the pjitted_fn comes from pjit.
-  inputs = [core.ShapedArray(i.shape, i.dtype) for i in global_inputs]
-  compiled = pjitted_fn.lower(*inputs, _global_avals=True).compile()
-  in_sharding, out_sharding = pjit._get_sharding_from_executable(
-      compiled.runtime_executable(), mesh)
-  return _XLAShardingInfo(in_pspec=in_sharding, out_pspec=out_sharding,
-                          compiled=compiled)
-
-
 class _LazyDtypes:
   """A class that unifies lists of supported dtypes.
 

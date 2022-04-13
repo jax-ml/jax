@@ -69,6 +69,26 @@ AUTO = pxla.AUTO
 _is_auto = pxla._is_auto
 
 
+class PjitCompiled(stages.Compiled):
+
+  @pxla.maybe_cached_property
+  def input_shardings(self) -> Sequence[pxla.PartitionSpec]:
+    return [pxla.array_mapping_to_axis_resources(i)
+            for i in self._executable._in_axes]  # pytype: disable=attribute-error
+
+  @pxla.maybe_cached_property
+  def output_shardings(self) -> Sequence[pxla.PartitionSpec]:
+    return [pxla.array_mapping_to_axis_resources(o)
+            for o in self._executable._out_axes]  # pytype: disable=attribute-error
+
+
+class PjitLowered(stages.Lowered):
+
+  def compile(self) -> PjitCompiled:
+    return PjitCompiled(self._lowering.compile(), self.args_info, self.out_tree,
+                        no_kwargs=self._no_kwargs)
+
+
 # TODO(yashkatariya): Add pjit microbenchmarks.
 def pjit(fun: Callable,
          in_axis_resources,
@@ -301,7 +321,7 @@ def pjit(fun: Callable,
 
     args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
-    return stages.Lowered.from_flat_info(
+    return PjitLowered.from_flat_info(
         lowering, args_kwargs_in_tree, local_in_avals, donate_argnums, out_tree,
         no_kwargs=True)
 

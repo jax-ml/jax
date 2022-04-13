@@ -198,8 +198,9 @@ class Lowered(Stage):
     self.args_info = args_info
     self.out_tree = out_tree
 
-  @staticmethod
-  def from_flat_info(lowering: Computation,
+  @classmethod
+  def from_flat_info(cls,
+                     lowering: Computation,
                      in_tree: tree_util.PyTreeDef,
                      in_avals,
                      donate_argnums: Tuple[int],
@@ -214,8 +215,8 @@ class Lowered(Stage):
         ``Compiled`` returned from this object will not support keyword
         arguments (an error will be raised if some are provided).
     """
-    return Lowered(lowering, make_args_info(in_tree, in_avals, donate_argnums),
-                   out_tree, no_kwargs=no_kwargs)
+    return cls(lowering, make_args_info(in_tree, in_avals, donate_argnums),
+               out_tree, no_kwargs=no_kwargs)
 
   def compile(self) -> Compiled:
     return Compiled(self._lowering.compile(), self.args_info,
