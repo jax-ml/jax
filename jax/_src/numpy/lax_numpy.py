@@ -26,7 +26,7 @@ rules for the underlying :code:`lax` primitives.
 
 import builtins
 import collections
-from functools import partial
+from functools import partial, wraps as functools_wraps
 import operator
 import types
 from typing import Any, Sequence, FrozenSet, Optional, Tuple, Union
@@ -4605,7 +4605,15 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
 _diff_methods = ["choose", "conj", "conjugate", "copy", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "tile", "trace", "var"]
+                 "swapaxes", "take", "trace", "var"]
+
+
+def _deprecate_function(fun, msg):
+  @functools_wraps(fun)
+  def wrapped(*args, **kwargs):
+    warnings.warn(msg, FutureWarning)
+    return fun(*args, **kwargs)
+  return wrapped
 
 # These methods are mentioned explicitly by nondiff_methods, so we create
 # _not_implemented implementations of them here rather than in __init__.py.
@@ -4936,6 +4944,8 @@ def _set_shaped_array_attributes(shaped_array):
   # Forward methods and properties using core.{aval_method, aval_property}:
   for method_name in _nondiff_methods + _diff_methods:
     setattr(shaped_array, method_name, core.aval_method(globals()[method_name]))
+  # TODO(jakevdp): remove tile method after August 2022
+  setattr(shaped_array, "tile", core.aval_method(_deprecate_function(tile, "arr.tile(...) is deprecated and will be removed. Use jnp.tile(arr, ...) instead.")))
   setattr(shaped_array, "reshape", core.aval_method(_reshape))
   setattr(shaped_array, "transpose", core.aval_method(_transpose))
   setattr(shaped_array, "flatten", core.aval_method(ravel))
@@ -4967,6 +4977,8 @@ def _set_device_array_base_attributes(device_array):
     setattr(device_array, "__{}__".format(operator_name), function)
   for method_name in _nondiff_methods + _diff_methods:
     setattr(device_array, method_name, globals()[method_name])
+  # TODO(jakevdp): remove tile method after August 2022
+  setattr(device_array, "tile", _deprecate_function(tile, "arr.tile(...) is deprecated and will be removed. Use jnp.tile(arr, ...) instead."))
   setattr(device_array, "reshape", _reshape)
   setattr(device_array, "transpose", _transpose)
   setattr(device_array, "flatten", ravel)
