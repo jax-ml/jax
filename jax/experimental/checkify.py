@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from jax.experimental.checkify.checkify_impl import (
+from jax._src.checkify import (
     Error as Error,
     ErrorCategory as ErrorCategory,
     all_checks as all_checks,
