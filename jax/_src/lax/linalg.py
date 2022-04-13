@@ -1816,8 +1816,7 @@ def _schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
       select_callable=select_callable)
 
 
-def _schur_translation_rule(ctx, avals_in, avals_out, operand, *,
-                            compute_schur_vectors, sort_eig_vals):
+def _schur_translation_rule(ctx, *args, **kwargs):
   raise NotImplementedError(
       "Schur decomposition is only implemented on the CPU backend.")
 
