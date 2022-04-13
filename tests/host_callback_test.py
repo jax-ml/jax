@@ -179,7 +179,7 @@ def helper_log_ir(name,
                   num_partitions=None,
                   strip_metadata=False):
   print(f"Jaxpr[{name}]: {jax.make_jaxpr(f_jax)(*args)}")
-  jax_comp = jax.xla_computation(f_jax, backend=jtu.device_under_test())(*args)
+  jax_comp = f_jax.lower(*args).compiler_ir(dialect="hlo")
   print(f"HLO[{name}]: {jax_comp.as_hlo_text()}")
 
   backend = xla_bridge.get_backend()

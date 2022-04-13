@@ -82,6 +82,7 @@ from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp
                                     custom_vjp, linear_call)
 from jax.custom_transpose import custom_transpose
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import ad
@@ -811,27 +812,21 @@ def xla_computation(fun: Callable,
       else:
         out_parts_flat = tuple(flatten_axes(
             "xla_computation out_parts", out_tree(), out_parts))
-      c = xc.XlaBuilder(f"xla_computation_{fun_name}")
-      xla_consts = map(partial(xla.pyval_to_ir_constant, c), consts)
+      m = mlir.lower_jaxpr_to_module(
+          f"xla_computation_{fun_name}",
+          core.ClosedJaxpr(jaxpr, consts),
+          platform=backend,
+          axis_context=mlir.ReplicaAxisContext(axis_env_),
+          name_stack=new_name_stack(wrap_name(fun_name, "xla_computation")),
+          donated_args=donated_invars,
+          arg_shardings=(None if in_parts_flat is None else
+                         map(xla.sharding_to_proto, in_parts_flat)),
+          result_shardings=(None if out_parts_flat is None else
+                            map(xla.sharding_to_proto, out_parts_flat)))
       should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
-      xla_args, donated_invars = xla._xla_callable_args(
-          c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)
-      name_stack = new_name_stack(wrap_name(fun_name, "xla_computation"))
-      ctx = xla.TranslationContext(c, backend, axis_env_, name_stack)
-      out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
-    build_out_tuple = partial(xc.ops.Tuple, c, out_nodes)
-    if out_parts is not None:
-      out_tuple = xla.with_sharding(c, out_parts_flat, build_out_tuple)
-    else:
-      out_tuple = build_out_tuple()
-
-    if any(donated_invars):
-      donated_invars = xla.set_up_aliases(c, xla_args, c.GetShape(out_tuple),
-                                          donated_invars, tuple_args)
-    if any(donated_invars):
-      shapes = [str(c.GetShape(a)) for a, d in zip(xla_args, donated_invars) if d]
-      warn(f"Some donated buffers were not usable: {', '.join(shapes)}")
-    built = c.build(out_tuple)
+      built = xc._xla.mlir.mlir_module_to_xla_computation(
+          mlir.module_to_string(m), use_tuple_args=should_tuple,
+          return_tuple=True)
     out_shapes_flat = [
         ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)

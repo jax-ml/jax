@@ -2158,8 +2158,8 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("constant(3)", hlo_text)
     # The static arguments should be removed from the function being compiled,
     # thus the function should have only a single argument.
-    self.assertIn("parameter.1", hlo_text)
-    self.assertNotIn("parameter.2", hlo_text)
+    self.assertIn("parameter(0)", hlo_text)
+    self.assertNotIn("parameter(1)", hlo_text)
 
   def test_xla_computation_return_shape(self):
     _, shape_tree = api.xla_computation(lambda x: (x + 1, jnp.zeros(2, jnp.float32)),

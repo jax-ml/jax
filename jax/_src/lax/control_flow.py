@@ -663,6 +663,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
 
   # Loop condition
   cond_block = while_op.regions[0].blocks.append(*flat_loop_carry_types)
+  name_stack = extend_name_stack(ctx.module_context.name_stack, 'while')
   with ir.InsertionPoint(cond_block):
     flat_cond_args = [
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
@@ -670,8 +671,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     cond_args = util.unflatten(flat_cond_args, _map(len, loop_carry_types))
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
     cond_ctx = ctx.module_context.replace(
-        name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                         'cond'))
+        name_stack=xla.extend_name_stack(name_stack, 'cond'))
     (pred,), = mlir.jaxpr_subcomp(cond_ctx, cond_jaxpr.jaxpr,
                                   _map(mlir.ir_constants, cond_jaxpr.consts),
                                   *(x + z))
@@ -698,14 +698,13 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     body_args = util.unflatten(flat_body_args, _map(len, loop_carry_types))
     x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
     body_ctx = ctx.module_context.replace(
-        name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                         'body'))
+        name_stack=xla.extend_name_stack(name_stack, 'body'))
     new_z = mlir.jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr,
                                _map(mlir.ir_constants, body_jaxpr.consts),
                                *(y + z))
     if batched:
       body_pred_ctx = ctx.module_context.replace(
-          name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
+          name_stack=xla.extend_name_stack(name_stack,
                                            'body_pred'))
       (body_pred,), = mlir.jaxpr_subcomp(
           body_pred_ctx, cond_jaxpr.jaxpr,
@@ -1360,11 +1359,14 @@ def _cond_lowering(ctx, index, *args, branches, linear):
   # TODO(phawkins): avoid build_generic when CaseOp is fixed.
   case_op = mhlo.CaseOp.build_generic(
       flat_output_types, [index], regions=len(branches))
+  name_stack = extend_name_stack(ctx.module_context.name_stack, 'cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
+      sub_ctx = ctx.module_context.replace(
+          name_stack=xla.extend_name_stack(name_stack, f'branch_{i}_fun'))
       out_vals = mlir.jaxpr_subcomp(
-          ctx.module_context, jaxpr.jaxpr,
+          sub_ctx, jaxpr.jaxpr,
           _map(mlir.ir_constants, jaxpr.consts),
           *_map(mlir.wrap_singleton_ir_values, args))
       mhlo.ReturnOp(util.flatten(out_vals))

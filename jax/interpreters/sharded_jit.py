@@ -230,12 +230,9 @@ def _sharded_jit_lowering(ctx, *in_nodes,
   args = []
   for ns, sharding in safe_zip(
       safe_map(mlir.wrap_singleton_ir_values, in_nodes), in_parts):
-    if sharding is not None:
-      args.append(
-          [mlir.wrap_with_sharding_op(n, xla.sharding_to_proto(sharding))
-           for n in ns])
-    else:
-      args.append(ns)
+    args.append(
+        [mlir.wrap_with_sharding_op(n, xla.sharding_to_proto(sharding))
+         for n in ns])
 
   sub_ctx = ctx.module_context.replace(
       name_stack=new_name_stack(wrap_name(name, "sharded_jit")))
@@ -252,12 +249,9 @@ def _sharded_jit_lowering(ctx, *in_nodes,
   out_parts = out_parts_thunk()
   outputs = []
   for ns, sharding in safe_zip(out_nodes, out_parts):
-    if sharding is not None:
-      outputs.append(
-          [mlir.wrap_with_sharding_op(n, xla.sharding_to_proto(sharding))
-           for n in ns])
-    else:
-      outputs.append(ns)
+    outputs.append(
+        [mlir.wrap_with_sharding_op(n, xla.sharding_to_proto(sharding))
+         for n in ns])
   return outputs
 
 

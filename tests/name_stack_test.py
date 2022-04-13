@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import functools
 
 from absl.testing import absltest
 import jax
@@ -104,11 +105,10 @@ class NameStackTest(_EnableNameStackTestCase):
       return core.call(_f, x)[0]
 
     jaxpr = jax.make_jaxpr(f)(2).jaxpr
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
 
     hlo_text = _get_hlo(f)(2)
-    self.assertIn('foo/core_call/bar', hlo_text)
+    self.assertIn('foo/jit(core_call)/bar', hlo_text)
 
   def test_xla_call_primitive_jaxpr_should_not_store_outer_name_stack(self):
     @extend_name_stack('foo')
@@ -201,14 +201,15 @@ class NameStackTransformationTest(_EnableNameStackTestCase):
     self.assertIn('foo/jvp(jit(f))/jvp(bar)', hlo_text)
 
   def test_grad_should_add_jvp_and_transpose_to_name_stack(self):
-    @jax.grad
+    @jax.value_and_grad
     def f(x):
       with extend_name_stack('foo'):
-        return jnp.sin(x)
+        return 2 * jnp.sin(x)
     jaxpr = jax.make_jaxpr(f)(1.).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'jvp(foo)')
     self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'jvp(foo)')
-    self.assertEqual(str(jaxpr.eqns[2].source_info.name_stack),
+    self.assertEqual(str(jaxpr.eqns[2].source_info.name_stack), 'jvp(foo)')
+    self.assertEqual(str(jaxpr.eqns[4].source_info.name_stack),
         'transpose(jvp(foo))')
 
     hlo_text = _get_hlo(f)(1.)
@@ -349,71 +350,77 @@ class NameStackControlFlowTest(_EnableNameStackTestCase):
   def test_cond_body_should_not_have_name_stack(self):
 
     @extend_name_stack('foo')
-    def f(x):
+    def f(x, y):
       @extend_name_stack('true')
       def true_fn(x):
         return x + 1
       @extend_name_stack('false')
       def false_fn(x):
         return x - 1
-      return lax.cond(True, true_fn, false_fn, x)
-    jaxpr = jax.make_jaxpr(f)(0)
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
-    self.assertEqual(str(
-      jaxpr.eqns[0].params['branches'][0].eqns[0].source_info.name_stack),
-      'false')
-    self.assertEqual(str(
-      jaxpr.eqns[0].params['branches'][1].eqns[0].source_info.name_stack),
-      'true')
+      return lax.cond(y, true_fn, false_fn, x)
+    jaxpr = jax.make_jaxpr(f)(0, True)
+    for eqn in jaxpr.eqns:
+      self.assertEqual(str(eqn.source_info.name_stack), 'foo')
+      if eqn.primitive is lax.cond_p:
+        self.assertEqual(str(
+          eqn.params['branches'][0].eqns[0].source_info.name_stack),
+          'false')
+        self.assertEqual(str(
+          eqn.params['branches'][1].eqns[0].source_info.name_stack),
+          'true')
 
-    hlo_text = _get_hlo(f)(1.)
+    hlo_text = _get_hlo(f)(1, True)
     self.assertIn('foo/cond/branch_0_fun/false/sub', hlo_text)
     self.assertIn('foo/cond/branch_1_fun/true/add', hlo_text)
 
   def test_vmap_of_cond_should_transform_name_stack(self):
 
     @extend_name_stack('foo')
-    @jax.vmap
-    def f(x):
+    @functools.partial(jax.vmap, in_axes=(0, None))
+    def f(x, y):
       @extend_name_stack('true')
       def true_fn(x):
         return x + 1
       @extend_name_stack('false')
       def false_fn(x):
         return x - 1
-      return lax.cond(True, true_fn, false_fn, x)
-    jaxpr = jax.make_jaxpr(f)(jnp.arange(2))
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
-    self.assertEqual(str(
-      jaxpr.eqns[0].params['branches'][0].eqns[0].source_info.name_stack),
-      'false')
-    self.assertEqual(str(
-      jaxpr.eqns[0].params['branches'][1].eqns[0].source_info.name_stack),
-      'true')
+      return lax.cond(y, true_fn, false_fn, x)
+    jaxpr = jax.make_jaxpr(f)(jnp.arange(2), True)
+    for eqn in jaxpr.eqns:
+      self.assertIn('foo', str(eqn.source_info.name_stack))
+      if eqn.primitive is lax.cond_p:
+        self.assertEqual(str(
+          eqn.params['branches'][0].eqns[0].source_info.name_stack),
+          'false')
+        self.assertEqual(str(
+          eqn.params['branches'][1].eqns[0].source_info.name_stack),
+          'true')
 
-    hlo_text = _get_hlo(f)(jnp.arange(2.))
+    hlo_text = _get_hlo(f)(jnp.arange(2.), True)
     self.assertIn('foo/vmap(cond)/vmap(branch_0_fun)/vmap(false)/sub', hlo_text)
     self.assertIn('foo/vmap(cond)/vmap(branch_1_fun)/vmap(true)/add', hlo_text)
 
   def test_jvp_of_cond_transforms_name_stack(self):
 
     @extend_name_stack('foo')
-    def f(x):
+    def f(x, y):
       @extend_name_stack('true')
       def true_fn(x):
         return x + 1
       @extend_name_stack('false')
       def false_fn(x):
         return x - 1
-      return lax.cond(True, true_fn, false_fn, x)
-    g = lambda x, t: jax.jvp(f, (x,), (t,))
+      return lax.cond(y, true_fn, false_fn, x)
+    f_ = lambda x: jax.jit(f)(x, True)
+    g = lambda x, t: jax.jvp(f_, (x,), (t,))
     jaxpr = jax.make_jaxpr(g)(jnp.arange(2.), jnp.ones(2))
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'jvp(foo)')
+    call_jaxpr = jaxpr.jaxpr.eqns[0].params['call_jaxpr']
+    self.assertEqual(str(call_jaxpr.eqns[1].source_info.name_stack), 'foo')
     self.assertEqual(str(
-      jaxpr.eqns[0].params['branches'][0].eqns[0].source_info.name_stack),
+      call_jaxpr.eqns[1].params['branches'][0].eqns[0].source_info.name_stack),
       'false')
     self.assertEqual(str(
-      jaxpr.eqns[0].params['branches'][1].eqns[0].source_info.name_stack),
+      call_jaxpr.eqns[1].params['branches'][1].eqns[0].source_info.name_stack),
       'true')
 
     hlo_text = _get_hlo(g)(jnp.arange(2.), jnp.ones(2))
@@ -423,22 +430,23 @@ class NameStackControlFlowTest(_EnableNameStackTestCase):
   def test_vmap_of_jvp_of_cond_transforms_name_stack(self):
 
     @extend_name_stack('foo')
-    def f(x):
+    def f(x, y):
       @extend_name_stack('true')
       def true_fn(x):
         return x + 1
       @extend_name_stack('false')
       def false_fn(x):
         return x - 1
-      return lax.cond(True, true_fn, false_fn, x)
-    g = jax.vmap(lambda x, t: jax.jvp(f, (x,), (t,)))
+      return lax.cond(y, true_fn, false_fn, x)
+    f_ = lambda x: jax.jit(f)(x, True)
+    g = jax.vmap(lambda x, t: jax.jvp(f_, (x,), (t,)))
     jaxpr = jax.make_jaxpr(g)(jnp.arange(2.), jnp.ones(2))
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'vmap(jvp(foo))')
+    call_jaxpr = jaxpr.jaxpr.eqns[0].params['call_jaxpr']
     self.assertEqual(str(
-      jaxpr.eqns[0].params['branches'][0].eqns[0].source_info.name_stack),
+      call_jaxpr.eqns[1].params['branches'][0].eqns[0].source_info.name_stack),
       'false')
     self.assertEqual(str(
-      jaxpr.eqns[0].params['branches'][1].eqns[0].source_info.name_stack),
+      call_jaxpr.eqns[1].params['branches'][1].eqns[0].source_info.name_stack),
       'true')
 
     hlo_text = _get_hlo(g)(jnp.arange(2.), jnp.ones(2))
@@ -453,20 +461,20 @@ class NameStackControlFlowTest(_EnableNameStackTestCase):
 
     @jax.grad
     @extend_name_stack('foo')
-    def f(x):
+    def f(x, y):
       @extend_name_stack('true')
       def true_fn(x):
-        return x * 2.
+        return x * x * 2.
       @extend_name_stack('false')
       def false_fn(x):
-        return x / 2.
-      return lax.cond(True, true_fn, false_fn, x)
-    jaxpr = jax.make_jaxpr(f)(1.)
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'jvp(foo)')
-    self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack),
+        return x / jnp.square(x)
+      return lax.cond(y, true_fn, false_fn, x)
+    jaxpr = jax.make_jaxpr(f)(1., True)
+    self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'jvp(foo)')
+    self.assertEqual(str(jaxpr.eqns[2].source_info.name_stack),
         'transpose(jvp(foo))')
 
-    hlo_text = _get_hlo(f)(1.)
+    hlo_text = _get_hlo(f)(1., True)
     self.assertIn(
         'jvp(foo)/jvp(cond)/jvp(branch_0_fun)/jvp(false)/div',
         hlo_text)
@@ -482,23 +490,23 @@ class NameStackControlFlowTest(_EnableNameStackTestCase):
 
   def test_vmap_of_grad_of_cond_transforms_name_stack(self):
 
-    @jax.vmap
+    @functools.partial(jax.vmap, in_axes=(0, None))
     @jax.grad
     @extend_name_stack('foo')
-    def f(x):
+    def f(x, y):
       @extend_name_stack('true')
       def true_fn(x):
-        return x * 2.
+        return x * x * 2.
       @extend_name_stack('false')
       def false_fn(x):
-        return x / 2.
-      return lax.cond(True, true_fn, false_fn, x)
-    jaxpr = jax.make_jaxpr(f)(jnp.arange(2.))
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'vmap(jvp(foo))')
-    self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack),
+        return x / x / 2.
+      return lax.cond(y, true_fn, false_fn, x)
+    jaxpr = jax.make_jaxpr(f)(jnp.arange(2.), True)
+    self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'vmap(jvp(foo))')
+    self.assertEqual(str(jaxpr.eqns[2].source_info.name_stack),
         'vmap(transpose(jvp(foo)))')
 
-    hlo_text = _get_hlo(f)(jnp.arange(2.))
+    hlo_text = _get_hlo(f)(jnp.arange(2.), True)
     self.assertIn(
         'vmap(jvp(foo))/vmap(jvp(cond))/vmap(jvp(branch_0_fun))/vmap(jvp(false))/div',
         hlo_text)
@@ -567,12 +575,12 @@ class NameStackControlFlowTest(_EnableNameStackTestCase):
 
   def test_grad_of_scan_should_transform_stack(self):
 
-    @jax.grad
+    @jax.value_and_grad
     @extend_name_stack('foo')
     def f(x):
       @extend_name_stack('scan_body')
       def body(carry, x):
-        return carry * x, carry + x
+        return 2 * carry * x, carry + x
       return lax.scan(body, x, jnp.arange(8.))[0]
     jaxpr = jax.make_jaxpr(f)(1.)
     self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'jvp(foo)')
@@ -589,7 +597,7 @@ class NameStackControlFlowTest(_EnableNameStackTestCase):
   def test_vmap_of_grad_of_scan_should_transform_stack(self):
 
     @jax.vmap
-    @jax.grad
+    @jax.value_and_grad
     @extend_name_stack('foo')
     def f(x):
       @extend_name_stack('scan_body')

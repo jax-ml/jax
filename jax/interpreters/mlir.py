@@ -41,6 +41,7 @@ from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
 from jax._src import source_info_util
 import jax._src.util as util
+from jax.config import config
 import jax.interpreters.ad as ad
 import jax.interpreters.partial_eval as pe
 import jax.interpreters.xla as xla
@@ -288,7 +289,12 @@ def _source_info_to_location(
     primitive: core.Primitive, params: Dict,
     source_info: source_info_util.SourceInfo,
     name_stack: Union[str, source_info_util.NameStack] = "") -> ir.Location:
-  eqn_str = str(name_stack) + core.str_eqn_compact(primitive.name, params)
+  if config.jax_experimental_name_stack:
+    eqn_str = (f'{str(source_info.name_stack)}/'
+               f'{core.str_eqn_compact(primitive.name, params)}')
+  else:
+    assert isinstance(name_stack, str)
+    eqn_str = name_stack + core.str_eqn_compact(primitive.name, params)
   frame = source_info_util.user_frame(source_info)
   if frame is None:
     loc = ir.Location.unknown()
@@ -746,7 +752,13 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
-    loc = _source_info_to_location(eqn.primitive, eqn.params, eqn.source_info,
+    if config.jax_experimental_name_stack:
+      assert isinstance(ctx.name_stack, source_info_util.NameStack), type(ctx.name_stack)
+      source_info = eqn.source_info.replace(
+          name_stack=ctx.name_stack + eqn.source_info.name_stack)
+    else:
+      source_info = eqn.source_info
+    loc = _source_info_to_location(eqn.primitive, eqn.params, source_info,
                                    name_stack=ctx.name_stack)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive in _platform_specific_lowerings[ctx.platform]:
@@ -762,8 +774,10 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
             f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
             f"found for platform {ctx.platform}")
 
+      eqn_ctx = (ctx.replace(name_stack=source_info.name_stack) if
+          config.jax_experimental_name_stack else ctx)
       rule_ctx = LoweringRuleContext(
-          module_context=ctx, primitive=eqn.primitive,
+          module_context=eqn_ctx, primitive=eqn.primitive,
           avals_in=map(aval, eqn.invars), avals_out=map(aval, eqn.outvars))
       ans = rule(rule_ctx, *map(_unwrap_singleton_ir_values, in_nodes),
                  **eqn.params)
@@ -812,9 +826,7 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   xla.check_backend_matches(backend, ctx.platform)
   output_types = map(aval_to_ir_types, avals_out)
   flat_output_types = util.flatten(output_types)
-  sub_ctx = ctx.replace(
-      name_stack=xla.extend_name_stack(ctx.name_stack, stack_name))
-  symbol_name = lower_jaxpr_to_fun(sub_ctx, fn_name,
+  symbol_name = lower_jaxpr_to_fun(ctx, fn_name,
                                    core.ClosedJaxpr(call_jaxpr, ())).name.value
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(symbol_name),
@@ -825,7 +837,7 @@ def _xla_call_lower(ctx, *args,
                     backend=None, name, call_jaxpr, donated_invars, inline=None,
                     device=None):
   del device, donated_invars, inline  # Ignored.
-  return _call_lowering(f"jit_{name}", xla.wrap_name(name, "jit"), call_jaxpr,
+  return _call_lowering(name, xla.wrap_name(name, "jit"), call_jaxpr,
                         backend, ctx.module_context, ctx.avals_in, ctx.avals_out,
                         *args)
 

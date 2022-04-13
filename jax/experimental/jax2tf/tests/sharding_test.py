@@ -73,7 +73,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     if jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("Sharding HLO tests not useful for GPU")
 
-    jax_comp = jax.xla_computation(f_jax)(*args)
+    jax_comp = f_jax.lower(*args).compiler_ir(dialect="hlo")
     jax_hlo = jax_comp.as_hlo_text()
     if LOG_HLO:
       logging.info("[%s] got JAX HLO %s", self._testMethodName, jax_hlo)
@@ -152,7 +152,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
 
     shape = (8, 10)
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    hlo = jax.xla_computation(jax_func)(x, x).as_hlo_text()
+    hlo = jax_func.lower(x, x).compiler_ir(dialect="hlo").as_hlo_text()
     print(f"HLO is {hlo}")
     print(f"JAXPR is {jax.make_jaxpr(jax_func)(x, x)}")
     self._check_sharding_annotations(
@@ -222,7 +222,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
             r"f32\[2,2\].*sharding={devices=\[4,1\]0,1,2,3|f32\[6,8\].*sharding={devices=\[4,1\]0,1,2,3",
             r"f32\[2,2\].*sharding={devices=\[4,1\]0,1,2,3|f32\[6,8\].*sharding={devices=\[4,1\]0,1,2,3",
             # TODO: why we cannot see .*sharding={devices=\[4,1\]0,1,2,3
-            r"f32\[1,6,2\]",  # output
+            r"f32\[6,2\]",  # output
         ],
         num_partitions=4)
 
@@ -247,7 +247,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         expected_opt=[
             r"f32\[12,8\].*sharding={replicated}",  # x
             # TODO: why can't we see "sharding={devices=\[2,1\]0,1"
-            r"f32\[1,12,8\]",  # y
+            r"f32\[12,8\]",  # y
             # TODO: why can't we see "sharding={replicated}" ?
             r"f32\[6,8\]",  # output
         ],
