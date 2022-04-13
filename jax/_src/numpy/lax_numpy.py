@@ -41,7 +41,7 @@ from jax import jit
 from jax import core
 from jax import errors
 from jax import lax
-from jax.core import ShapedArray, DShapedArray, ConcreteArray, canonicalize_shape
+from jax.core import ShapedArray, DShapedArray, ConcreteArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
@@ -80,6 +80,15 @@ from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_rat
                            canonicalize_axis as _canonicalize_axis)
 
 newaxis = None
+
+# Like core.canonicalize_shape, but also accept int-like (non-sequence)
+# arguments for `shape`.
+def canonicalize_shape(
+    shape: Union[core.Shape, int, core.Tracer], context: str="") -> core.Shape:
+  if isinstance(shape, core.Tracer) or ndim(shape) == 0:
+    return core.canonicalize_shape((shape,), context)
+  else:
+    return core.canonicalize_shape(shape, context)  # type: ignore
 
 # Common docstring additions:
 
@@ -1923,15 +1932,15 @@ def zeros(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   lax_internal._check_user_dtype_supported(dtype, "zeros")
-  shape = canonicalize_shape((shape,) if ndim(shape) == 0 else shape)
+  shape = canonicalize_shape(shape)
   return lax.full(shape, 0, _jnp_dtype(dtype))
 
 @_wraps(np.ones)
 def ones(shape, dtype=None):
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
+  shape = canonicalize_shape(shape)
   lax_internal._check_user_dtype_supported(dtype, "ones")
-  shape = canonicalize_shape((shape,) if ndim(shape) == 0 else shape)
   return lax.full(shape, 1, _jnp_dtype(dtype))
 
 

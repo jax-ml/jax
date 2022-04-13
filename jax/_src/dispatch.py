@@ -228,7 +228,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   backend = xb.get_device_backend(device) if device else xb.get_backend(backend)
 
   if (config.jax_dynamic_shapes and jaxpr_has_bints(jaxpr) and
-      backend.platform != 'iree'):
+      not _backend_supports_unbounded_dynamic_shapes(backend)):
     jaxpr, consts = pe.pad_jaxpr(jaxpr, consts)
 
   # Computations that only produce constants and/or only rearrange their inputs,
@@ -279,6 +279,10 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
       name, module, False, donated_invars, which_explicit, nreps=nreps,
       device=device, backend=backend, tuple_args=tuple_args,
       in_avals=abstract_args, out_avals=out_avals, kept_var_idx=kept_var_idx)
+
+
+def _backend_supports_unbounded_dynamic_shapes(backend: Backend) -> bool:
+  return backend.platform == 'iree'
 
 
 def prefetch(x):
@@ -408,12 +412,14 @@ num_buffers_handlers[core.ShapedArray] = lambda _: 1
 num_buffers_handlers[core.ConcreteArray] = lambda _: 1
 
 
-def _input_handler(which_explicit: Optional[Sequence[bool]],
+def _input_handler(backend: Backend,
+                   which_explicit: Optional[Sequence[bool]],
                    in_avals: Sequence[core.AbstractValue]
                    ) -> Optional[Callable]:
   # Extract implicit inputs, and pad bounded-size inputs to their max size.
   needs_implicit = which_explicit and not all(which_explicit)
-  needs_padding = any(type(in_avals[d.val]) is core.AbstractBInt  # type: ignore
+  needs_padding = any(backend.platform != 'iree' and
+                      type(in_avals[d.val]) is core.AbstractBInt  # type: ignore
                       for a in in_avals if type(a) is core.DShapedArray
                       for d in a.shape if type(d) is pe.DBIdx)
 
@@ -448,13 +454,16 @@ def _input_handler(which_explicit: Optional[Sequence[bool]],
     explicit_args_ = iter(explicit_args)
     args = [next(explicit_args_) if ex else None for ex in which_explicit]
     assert next(explicit_args_, None) is None
+    assert needs_implicit
     for i, j, k in implicit_args_from_axes:
       if args[i] is None:
         args[i] = args[j].shape[k]  # type: ignore
       else:
         if args[i] != args[j].shape[k]:
           raise Exception("inconsistent argument axis sizes for type")
-    return tuple([pad(x) if pad else x for x, pad in zip(args, padders)])
+    if needs_padding:
+      args = tuple([pad(x) if pad else x for x, pad in zip(args, padders)])
+    return args
   return elaborate_and_pad
 
 def _pad_arg(shape, x):
@@ -686,7 +695,7 @@ class XlaCompiledComputation(stages.Executable):
       out_avals: Sequence[core.AbstractValue],
       kept_var_idx: Set[int]) -> XlaCompiledComputation:
     sticky_device = device
-    input_handler = _input_handler(explicit_args, in_avals)
+    input_handler = _input_handler(backend, explicit_args, in_avals)
     result_handlers = map(partial(aval_to_result_handler, sticky_device),
                           out_avals)
     options = xb.get_compile_options(
