@@ -21,7 +21,7 @@ from jax import jit
 from jax import lax
 from jax._src.numpy.lax_numpy import (
     all, arange, argmin, array, asarray, atleast_1d, concatenate, convolve, diag, dot, finfo,
-    full, hstack, maximum, ones, outer, sqrt, trim_zeros, true_divide, vander, zeros)
+    full, hstack, maximum, ones, outer, sqrt, trim_zeros, trim_zeros_tol, true_divide, vander, zeros)
 from jax._src.numpy import linalg
 from jax._src.numpy.util import _check_arraylike, _promote_dtypes, _promote_dtypes_inexact, _wraps
 import numpy as np
@@ -277,6 +277,9 @@ def polyder(p, m=1):
 _LEADING_ZEROS_DOC = """\
 Setting trim_leading_zeros=True makes the output match that of numpy.
 But prevents the function from being able to be used in compiled code.
+Due to differences in accumulation of floating point arithmetic errors, the cutoff for values to be
+considered zero may lead to inconsistent results between NumPy and JAX, and even between different
+JAX backends. The result may lead to inconsistent output shapes when trim_leading_zeros=True.
 """
 
 @_wraps(np.polymul, lax_description=_LEADING_ZEROS_DOC)
@@ -292,6 +295,23 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   val = convolve(a1, a2, mode='full')
   return val
 
+@_wraps(np.polydiv, lax_description=_LEADING_ZEROS_DOC)
+def polydiv(u, v, *, trim_leading_zeros=False):
+  _check_arraylike("polydiv", u, v)
+  u, v = _promote_dtypes_inexact(u, v)
+  m = len(u) - 1
+  n = len(v) - 1
+  scale = 1. / v[0]
+  q = zeros(max(m - n + 1, 1), dtype = u.dtype) # force same dtype
+  for k in range(0, m-n+1):
+    d = scale * u[k]
+    q = q.at[k].set(d)
+    u = u.at[k:k+n+1].add(-d*v)
+  if trim_leading_zeros:
+    # use the square root of finfo(dtype) to approximate the absolute tolerance used in numpy
+    return q, trim_zeros_tol(u, tol=sqrt(finfo(u.dtype).eps), trim='f')
+  else:
+    return q, u
 
 @_wraps(np.polysub)
 @jit

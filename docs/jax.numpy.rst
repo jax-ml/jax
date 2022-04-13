@@ -305,6 +305,7 @@ namespace; they are listed below.
     poly
     polyadd
     polyder
+    polydiv
     polyfit
     polyint
     polymul
