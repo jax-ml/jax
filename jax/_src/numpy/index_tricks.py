@@ -43,14 +43,9 @@ class _IndexGrid(abc.ABC):
   op_name: str
 
   def __getitem__(self, key):
-    single_slice = isinstance(key, slice)
-    if single_slice:
-      key = (key,)
-    output = []
-    for k in key:
-      output.append(_make_1d_grid_from_slice(k, op_name=self.op_name))
-    if single_slice:
-      return output[0]
+    if isinstance(key, slice):
+      return _make_1d_grid_from_slice(key, op_name=self.op_name)
+    output = (_make_1d_grid_from_slice(k, op_name=self.op_name) for k in key)
     output = meshgrid(*output, indexing='ij', sparse=self.sparse)
     return output if self.sparse else stack(output, 0)
 
