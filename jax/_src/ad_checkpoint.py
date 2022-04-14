@@ -22,6 +22,7 @@ from jax import linear_util as lu
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
@@ -394,6 +395,7 @@ ad.primitive_jvps[name_p] = name_jvp
 
 xla.register_translation(name_p,
                          lambda ctx, avals_in, avals_out, x, *, name: [x])
+mlir.register_lowering(name_p, lambda ctx, x, *, name: [x])
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims
