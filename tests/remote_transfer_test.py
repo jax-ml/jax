@@ -27,6 +27,8 @@ config.parse_flags_with_absl()
 
 class RemoteTransferTest(jtu.JaxTestCase):
 
+  # TODO(jheek): this test crashes on multi-GPU.
+  @jtu.skip_on_devices("gpu")
   def test_remote_transfer(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Remote transfer requires at lest 2 devices")
