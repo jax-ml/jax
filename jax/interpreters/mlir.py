@@ -365,6 +365,7 @@ class ModuleContext:
   platform: str
   axis_context: AxisContext
   name_stack: NameStack
+  keepalives: List[Any]
 
   # Cached primitive lowerings.
   cached_primitive_lowerings: Dict[Any, func_dialect.FuncOp]
@@ -378,6 +379,7 @@ class ModuleContext:
       platform: str,
       axis_context: AxisContext,
       name_stack: NameStack,
+      keepalives: List[Any],
       context: Optional[ir.Context] = None,
       module: Optional[ir.Module] = None,
       ip: Optional[ir.InsertionPoint] = None,
@@ -393,6 +395,10 @@ class ModuleContext:
     self.name_stack = name_stack
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
                                        else cached_primitive_lowerings)
+    self.keepalives = keepalives
+
+  def add_keepalive(self, keepalive: Any) -> None:
+    self.keepalives.append(keepalive)
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 
@@ -483,7 +489,7 @@ def lower_jaxpr_to_module(
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None
-    ) -> ir.Module:
+    ) -> Tuple[ir.Module, Optional[Any]]:
   """Lowers a top-level jaxpr to an MHLO module.
 
   Handles the quirks of the argument/return value passing conventions of the
@@ -518,7 +524,9 @@ def lower_jaxpr_to_module(
       msg = f"Donation is not implemented for {platform}.\n{msg}"
     warnings.warn(f"Some donated buffers were not usable: {', '.join(unused_donations)}.\n{msg}")
 
-  ctx = ModuleContext(platform, axis_context, name_stack)
+  # Create a keepalives list that will be mutated during the lowering.
+  keepalives: List[Any] = []
+  ctx = ModuleContext(platform, axis_context, name_stack, keepalives)
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
@@ -541,7 +549,7 @@ def lower_jaxpr_to_module(
         input_output_aliases=input_output_aliases)
 
   ctx.module.operation.verify()
-  return ctx.module
+  return ctx.module, ctx.keepalives
 
 def module_to_string(module: ir.Module) -> str:
   output = io.StringIO()

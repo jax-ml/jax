@@ -88,9 +88,6 @@ def _(*avals, callback, out_avals, effect):
   del avals, callback
   return out_avals, {effect}
 
-
-# TODO(sharadmv): Attach keep alive to executable
-leak = [].append
 def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out_avals, effect):
   del out_avals
   def _token_callback(token, *args):
@@ -102,7 +99,7 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
       ctx.module_context.platform, _token_callback,
       [token_in, *args], [core.abstract_token, *ctx.avals_in],
       [core.abstract_token, *ctx.avals_out], True)
-  leak(keep_alive)
+  ctx.module_context.add_keepalive(keep_alive)
   ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
     token_out})))
   return out_op
