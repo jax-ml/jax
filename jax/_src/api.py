@@ -236,6 +236,7 @@ def jit(
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
     abstracted_axes: Optional[Any] = None,
+    out_type: Optional[Any] = None,
   ) -> stages.Wrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -332,7 +333,7 @@ def jit(
                     donate_argnums, inline)
   else:
     return _python_jit(fun, static_argnums, static_argnames, device, backend,
-                       donate_argnums, inline, abstracted_axes)
+                       donate_argnums, inline, abstracted_axes, out_type)
 
 
 def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
@@ -365,6 +366,7 @@ def _python_jit(
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
     abstracted_axes: Optional[PytreeOfAbstractedAxesSpec] = None,
+    out_type: Optional[Any] = None,
   ) -> stages.Wrapped:
   _check_callable(fun)
   static_argnums, static_argnames = _infer_argnums_and_argnames(
@@ -387,7 +389,8 @@ def _python_jit(
       axes_specs = (None if abstracted_axes is None else
                     _flat_axes_specs(abstracted_axes, *args, **kwargs))
       in_type = pe.infer_lambda_input_type(axes_specs, args_flat)
-      flat_fun = lu.annotate(flat_fun, in_type)
+      out_type_ = pe.canonicalize_out_type(out_type, out_tree)
+      flat_fun = lu.annotate(flat_fun, in_type, out_type_)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
@@ -461,7 +464,8 @@ def _cpp_jit(
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     if jax.config.jax_dynamic_shapes:
       in_type = pe.infer_lambda_input_type(None, args_flat)
-      flat_fun = lu.annotate(flat_fun, in_type)
+      out_type = pe.canonicalize_out_type(None, out_tree)
+      flat_fun = lu.annotate(flat_fun, in_type, out_type)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,

@@ -117,7 +117,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
 
     self._npy_value = None
     if config.jax_enable_checks:
-      assert type(aval) is core.ShapedArray
+      assert type(aval) is core.ShapedArray or type(aval) is core.DShapedArray
       npy_value = self._value
       assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape, (
           aval, npy_value.shape, npy_value.dtype)

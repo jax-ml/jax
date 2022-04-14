@@ -4217,6 +4217,10 @@ def make_bint(i, bd: int):
 
 bint_p = core.Primitive('bint')
 
+@bint_p.def_impl
+def bint_impl(i, *, bd: int):
+  return core.BInt(i, bd)
+
 @bint_p.def_abstract_eval
 def bint_abstract_eval(_, *, bd: int):
   return core.AbstractBInt(bound=bd)

@@ -127,23 +127,24 @@ class WrappedFun:
     params: extra parameters to pass as keyword arguments to `f`, along with the
       transformed keyword arguments.
   """
-  __slots__ = ("f", "transforms", "stores", "params", "in_type")
+  __slots__ = ("f", "transforms", "stores", "params", "in_type", "out_type")
 
-  def __init__(self, f, transforms, stores, params, in_type):
+  def __init__(self, f, transforms, stores, params, in_type, out_type):
     self.f = f
     self.transforms = transforms
     self.stores = stores
     self.params = params
     self.in_type = in_type
+    self.out_type = out_type
 
   @property
   def __name__(self):
     return getattr(self.f, '__name__', '<unnamed wrapped function>')
 
-  def wrap(self, gen, gen_static_args, out_store) -> 'WrappedFun':
+  def wrap(self, gen, gen_static_args, out_store) -> WrappedFun:
     """Add another transform and its store."""
     return WrappedFun(self.f, ((gen, gen_static_args),) + self.transforms,
-                      (out_store,) + self.stores, self.params, None)
+                      (out_store,) + self.stores, self.params, None, None)
 
   def populate_stores(self, stores):
     """Copy the values from the `stores` into `self.stores`."""
@@ -202,11 +203,13 @@ class WrappedFun:
     return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(self.f) + '\n'
 
   def __hash__(self):
-    return hash((self.f, self.transforms, self.params, self.in_type))
+    return hash((self.f, self.transforms, self.params,
+                 self.in_type, self.out_type))
 
   def __eq__(self, other):
     return (self.f == other.f and self.transforms == other.transforms and
-            self.params == other.params and self.in_type == other.in_type)
+            self.params == other.params and self.in_type == other.in_type and
+            self.out_type == other.out_type)
 
 @curry
 def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
@@ -234,18 +237,20 @@ def fun_name(f):
 def wrap_init(f, params=None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params = () if params is None else tuple(sorted(params.items()))
-  return WrappedFun(f, (), (), params, None)
+  return WrappedFun(f, (), (), params, None, None)
 
 def annotate(f: WrappedFun,
-             in_type: Optional[Tuple[Tuple[core.AbstractValue, bool], ...]]
+             in_type: Optional[Tuple[Tuple[core.AbstractValue, bool], ...]],
+             out_type: Optional[Tuple[core.AbstractValue, ...]],
              ) -> WrappedFun:
-  assert f.in_type is None
-  if in_type is None:
+  assert f.in_type is None and f.out_type is None
+  if in_type is None and out_type is None:
     return f
   assert (type(in_type) is tuple and all(type(e) is tuple for e in in_type) and
           all(isinstance(a, core.AbstractValue) and type(b) is bool
               for a, b in in_type))
-  return WrappedFun(f.f, f.transforms, f.stores, f.params, in_type)
+  # TODO(mattjj,dougalm) check something about out_type
+  return WrappedFun(f.f, f.transforms, f.stores, f.params, in_type, out_type)
 
 
 class _CacheLocalContext(threading.local):

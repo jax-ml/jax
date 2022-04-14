@@ -43,7 +43,7 @@ def _update_annotation(
     return f
   batched_in_type = [(core.unmapped_aval(axis_size, axis_name, dim, aval), keep)
                      for dim, (aval, keep) in zip(in_dims, orig_type)]
-  return lu.annotate(f, tuple(batched_in_type))
+  return lu.annotate(f, tuple(batched_in_type), f.out_type)
 
 ### vmappable typeclass
 

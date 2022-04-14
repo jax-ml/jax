@@ -1133,6 +1133,19 @@ unitvar = UnitVar()
 
 pytype_aval_mappings[Unit] = lambda _: abstract_unit
 
+
+class BInt:
+  val: Any
+  bound: int
+  def __init__(self, val: Any, bound: int) -> None:
+    self.val = val
+    self.bound = int(bound)
+  def __repr__(self) -> str:
+    return f'{self.val}{{≤{self.bound}}}'
+
+pytype_aval_mappings[BInt] = lambda x: AbstractBInt(x.bound)
+
+
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
   fname_context = f"The problem arose with the `{fname}` function. "
@@ -1236,9 +1249,9 @@ class UnshapedArray(AbstractValue):
 # the input and output to pe.trace_to_jaxpr_dynamic), Tracers (while tracing),
 # or Vars (when used as jaxpr type annotations). We could reduce this
 # polymorphism if it seems cleaner, though it's kind of convenient!
-AxisSizeForTracing = Union[int, Tracer]
-AxisSizeForJaxprType = Union[int, Var]
-AxisSizeForJaxprTracingSpec = Union[int, AbstractValue]
+AxisSizeForTracing          = Union[int, BInt, Tracer]
+AxisSizeForJaxprType        = Union[int, BInt, Var]
+AxisSizeForJaxprTracingSpec = Union[int, BInt, AbstractValue]
 AxisSize = Union[AxisSizeForTracing, AxisSizeForJaxprType,
                  AxisSizeForJaxprTracingSpec]
 
@@ -1433,7 +1446,7 @@ class AbstractToken(AbstractValue):
 abstract_token: AbstractToken = AbstractToken()
 
 # Concrete token object
-class Token(object): pass
+class Token: pass
 token: Token = Token()
 pytype_aval_mappings[Token] = lambda _: abstract_token
 
@@ -1808,7 +1821,7 @@ def call_bind(primitive: CallPrimitive, fun, *args, **params):
   fun_, env_trace_todo = process_env_traces_call(
       fun, primitive, top_trace and top_trace.level, tuple(params.items()))
   tracers = map(top_trace.full_raise, args)
-  fun_ = lu.annotate(fun_, fun.in_type)
+  fun_ = lu.annotate(fun_, fun.in_type, fun.out_type)
   outs = top_trace.process_call(primitive, fun_, tracers, params)
   return map(full_lower, apply_todos(env_trace_todo(), outs))
 

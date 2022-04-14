@@ -253,14 +253,17 @@ def _canonicalize_python_scalar_dtype(typ, x):
   return np.asarray(
       x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
 
-canonicalize_dtype_handlers: Dict[Any, Callable] = {core.Unit: identity}
+canonicalize_dtype_handlers: Dict[Any, Callable] = {
+    core.Unit: identity,
+    core.Token: identity,
+    core.BInt: identity
+}
 for t in device_array.device_array_types:
   canonicalize_dtype_handlers[t] = lambda x: x
 canonicalize_dtype_handlers.update(
     (t, _canonicalize_ndarray_dtype) for t in array_types)
 canonicalize_dtype_handlers.update(
     (t, partial(_canonicalize_python_scalar_dtype, t)) for t in _scalar_types)
-canonicalize_dtype_handlers[core.Token] = lambda x: x
 
 def abstractify(x) -> core.AbstractValue:
   typ = type(x)
@@ -278,10 +281,11 @@ def _make_abstract_python_scalar(typ, val):
 
 pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {
     core.Unit: lambda _: core.abstract_unit,
+    core.Token: lambda _: core.abstract_token,
+    core.BInt: lambda x: core.AbstractBInt(x.bound),
 }
 for t in device_array.device_array_types:
   pytype_aval_mappings[t] = operator.attrgetter('aval')
-pytype_aval_mappings[core.Token] = lambda _: core.abstract_token
 pytype_aval_mappings.update((t, make_shaped_array) for t in array_types)
 pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)

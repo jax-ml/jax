@@ -48,7 +48,7 @@ def _update_annotation(
     return f
   tan_types = [(aval.at_least_vspace(), keep)
                for nz, (aval, keep) in zip(nonzeros, orig_type) if nz]
-  return lu.annotate(f, (*orig_type, *tan_types))
+  return lu.annotate(f, (*orig_type, *tan_types), f.out_type)
 
 def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
     transform_stack=True) -> Any:

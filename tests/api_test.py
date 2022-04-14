@@ -8261,6 +8261,15 @@ class DynamicShapeTest(jtu.JaxTestCase):
     expected = jnp.cumsum(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_jit_of_broadcast(self):
+    x = jax.jit(jnp.ones)(3)
+    self.assertAllClose(x, jnp.ones(3))
+
+  def test_jit_of_broadcast_bounded(self):
+    x = jax.jit(jnp.ones)(core.BInt(3, 5))
+    self.assertAllClose(x, jnp.ones(3))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
