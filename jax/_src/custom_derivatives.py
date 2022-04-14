@@ -1188,6 +1188,7 @@ unreachable_p.def_impl(unreachable_impl)
 # that errs. Since translation over-approximates concrete evaluation,
 # we err on translation for the time being.
 xla.register_translation(unreachable_p, unreachable_impl)
+mlir.register_lowering(unreachable_p, unreachable_impl)
 
 # Abstract evaluation proceeds without issue, to allow for staging
 unreachable_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
