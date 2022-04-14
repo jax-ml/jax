@@ -731,7 +731,7 @@ config.define_bool_state(
 # TODO(parkers): Remove if there are no complaints.
 config.define_bool_state(
     name='jax_remat_opt_barrier',
-    default=True,
+    default=(lib.version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
 @contextlib.contextmanager
