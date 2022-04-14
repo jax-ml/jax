@@ -3749,11 +3749,15 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       # Normalize the slice to use None when possible
       start, stop, step = i.start, i.stop, i.step
       try:
-        if ((step is None or core.symbolic_equal_dim(step, 1)) and
-            stop is not None and core.symbolic_equal_dim(stop, x_shape[x_axis])):
-          # The following is a useful special case with shape polymorphism
-          stop = None
-      except TypeError:
+        if step is None or core.symbolic_equal_dim(step, 1):
+          step = None
+        if step is None:
+          if start is None or core.symbolic_equal_dim(start, 0):
+            start = None
+          if stop is None or (not isinstance(stop, core.Tracer) and
+              core.greater_equal_dim(stop, x_shape[x_axis])):
+            stop = None
+      except (TypeError, core.InconclusiveDimensionOperation):
         pass
 
       # Handle slice(None)
