@@ -3425,6 +3425,10 @@ def _normalize_index(index, axis_size):
 @partial(jit, static_argnames=('axis',))
 def take_along_axis(arr, indices, axis: Optional[int]):
   _check_arraylike("take_along_axis", arr, indices)
+  index_dtype = dtypes.dtype(indices)
+  if not dtypes.issubdtype(index_dtype, integer):
+    raise TypeError("take_along_axis indices must be of integer type, got "
+                    f"{str(index_dtype)}")
   if axis is None:
     if ndim(indices) != 1:
       msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
@@ -3442,12 +3446,8 @@ def take_along_axis(arr, indices, axis: Optional[int]):
     return tuple(lst)
 
   use_64bit_index = _any([not core.is_constant_dim(d) or d >= (1 << 31) for d in arr.shape])
-  index_dtype = int64 if use_64bit_index else int32
+  index_dtype = dtype(int64 if use_64bit_index else int32)
   indices = lax.convert_element_type(indices, index_dtype)
-
-  bcast_shape = lax.broadcast_shapes(replace(arr.shape, 1), replace(indices.shape, 1))
-  indices = broadcast_to(indices, replace(bcast_shape, indices.shape[axis]))
-  arr     = broadcast_to(arr,     replace(bcast_shape, arr.shape[axis]))
 
   axis_size = arr.shape[axis]
   arr_shape = replace(arr.shape, 1)
@@ -3471,26 +3471,38 @@ def take_along_axis(arr, indices, axis: Optional[int]):
       start_index_map.append(i)
       collapsed_slice_dims.append(i)
       j += 1
-    elif not core.symbolic_equal_dim(idx_shape[i], 1):
-      # TODO(mattjj): next line needs updating for dynamic shapes
-      iota = lax.iota(_dtype(indices), out_shape[i])  # type: ignore
-      iota = lax.broadcast_in_dim(iota, gather_index_shape, (j,))
-      gather_indices.append(iota)
+    elif core.symbolic_equal_dim(idx_shape[i], 1):
+      # If idx_shape[i] == 1, we can just take the entirety of the arr's axis
+      # and avoid forming an iota index.
+      offset_dims.append(i)
+      slice_sizes.append(arr_shape[i])
+    elif core.symbolic_equal_dim(arr_shape[i], 1):
+      # If the array dimension is 1 but the index dimension is not, we
+      # broadcast the array dimension to the index dimension by repeatedly
+      # gathering the first element.
+      gather_indices.append(zeros(gather_index_shape, dtype=index_dtype))
       slice_sizes.append(1)
       start_index_map.append(i)
       collapsed_slice_dims.append(i)
       j += 1
     else:
-      # If idx_shape[i] == 1, we can just take the entirety of the arr's axis
-      # and avoid forming an iota index.
-      offset_dims.append(i)
-      slice_sizes.append(arr_shape[i])
+      # Otherwise, idx_shape[i] == arr_shape[i]. Use an iota index so
+      # corresponding elements of array and index are gathered.
+      # TODO(mattjj): next line needs updating for dynamic shapes
+      iota = lax.broadcasted_iota(index_dtype, gather_index_shape, j)
+      gather_indices.append(iota)
+      slice_sizes.append(1)
+      start_index_map.append(i)
+      collapsed_slice_dims.append(i)
+      j += 1
+
 
   gather_indices = lax.concatenate(gather_indices, dimension=j)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map))
+  # TODO(phawkins): change the mode to "fill".
   return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes))
 
 ### Indexing
