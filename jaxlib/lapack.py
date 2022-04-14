@@ -1307,3 +1307,97 @@ def gees(c, a, jobvs=True, sort=False, select=None):
   else:
     return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 3),
             _ops.GetTupleElement(out, 5))
+
+def gees_mhlo(a, jobvs=True, sort=False, select=None):
+  a_type = ir.RankedTensorType(a.type)
+  etype = a_type.element_type
+  dims = a_type.shape
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  assert m == n
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+  layout = ir.DenseIntElementsAttr.get(
+      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+      type=ir.IndexType.get())
+
+  if sort:
+    raise NotImplementedError(
+        "The sort feature of LAPACK's gees routine is not implemented.")
+
+  jobvs = ord('V' if jobvs else 'N')
+  sort = ord('S' if sort else 'N')
+
+  if not ir.ComplexType.isinstance(etype):
+    fn = "lapack_sgees" if etype == ir.F32Type.get() else "lapack_dgees"
+    schurvecs_type = etype
+    workspaces = [ir.RankedTensorType.get(dims, schurvecs_type)]
+    workspace_layouts = [layout]
+    eigvals = [ir.RankedTensorType.get(batch_dims + (n,), etype)] * 2
+    eigvals_layouts = [
+        ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
+                                    type=ir.IndexType.get())
+    ] * 2
+  else:
+    fn = ("lapack_cgees" if etype == ir.ComplexType.get(ir.F32Type.get())
+          else "lapack_zgees")
+    schurvecs_type = etype
+    workspaces = [
+        ir.RankedTensorType.get(dims, schurvecs_type),
+        ir.RankedTensorType.get([n], ir.ComplexType(etype).element_type),
+    ]
+    workspace_layouts = [
+        layout,
+        ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
+    ]
+    eigvals = [ir.RankedTensorType.get(batch_dims + (n,), etype)]
+    eigvals_layouts = [
+        ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
+                                    type=ir.IndexType.get())
+    ]
+
+  i32_type = ir.IntegerType.get_signless(32)
+
+  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
+                                              type=ir.IndexType.get())
+  out = mhlo.CustomCallOp(
+      [ir.TupleType.get_tuple(workspaces + eigvals + [
+        ir.RankedTensorType.get(dims, schurvecs_type),
+        ir.RankedTensorType.get(batch_dims, i32_type),
+        ir.RankedTensorType.get(batch_dims, i32_type),
+      ])],
+      [
+          _mhlo_s32(b),
+          _mhlo_s32(n),
+          _mhlo_u8(np.uint8(jobvs)),
+          _mhlo_u8(np.uint8(sort)),
+          # TODO: figure out how to put the callable select function here
+          a
+      ],
+      call_target_name = ir.StringAttr.get(fn),
+      has_side_effect=ir.BoolAttr.get(False),
+      backend_config=ir.StringAttr.get(""),
+      api_version=ir.IntegerAttr.get(i32_type, 2),
+      called_computations=ir.ArrayAttr.get([]),
+      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 4 + [layout]),
+      result_layouts=ir.ArrayAttr.get(workspace_layouts + eigvals_layouts + [
+          layout,
+          ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
+                                      type=ir.IndexType.get()),
+          ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
+                                      type=ir.IndexType.get()),
+      ])
+  )
+  i32_attr = lambda i: ir.IntegerAttr.get(i32_type, i)
+  if sort == ord('S'):
+    return (mhlo.GetTupleElementOp(out, i32_attr(0)).result,
+            mhlo.GetTupleElementOp(out, i32_attr(3)).result,
+            mhlo.GetTupleElementOp(out, i32_attr(4)).result,
+            mhlo.GetTupleElementOp(out, i32_attr(5)).result)
+  else:
+    return (mhlo.GetTupleElementOp(out, i32_attr(0)).result,
+            mhlo.GetTupleElementOp(out, i32_attr(3)).result,
+            mhlo.GetTupleElementOp(out, i32_attr(5)).result)
