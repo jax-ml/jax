@@ -44,10 +44,9 @@ def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   Args:
     tree: a pytree to flatten.
     is_leaf: an optionally specified function that will be called at each
-      flattening step. It should return a boolean, which indicates whether
-      the flattening should traverse the current object, or if it should be
-      stopped immediately, with the whole subtree being treated as a leaf.
-
+      flattening step. It should return a boolean, with true stopping the
+      traversal and the whole subtree being treated as a leaf, and false
+      indicating the flattening should traverse the current object.
   Returns:
     A pair where the first element is a list of leaf values and the second
     element is a treedef representing the structure of the flattened tree.
