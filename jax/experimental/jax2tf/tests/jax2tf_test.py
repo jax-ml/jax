@@ -701,8 +701,12 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf_graph = f_tf.get_concrete_function(arg).graph.as_graph_def()
     if flavor == "old":
       raise unittest.SkipTest("TODO: CSE widget not yet implemented for old-style remat")
-    self.assertRegex(str(f_tf_graph),
-                     r'remat_checkpoint_/switch_case/indexed_case/Sin')
+    if config.jax_experimental_name_stack:
+      self.assertRegex(str(f_tf_graph),
+                       r'transpose/jax2tf_f_/jvp/checkpoint/remat_checkpoint_/cond/branch_1_fun/Sin')
+    else:
+      self.assertRegex(str(f_tf_graph),
+                       r'remat_checkpoint_/switch_case/indexed_case/Sin')
 
   def test_remat_free_var(self):
     def f(x):
