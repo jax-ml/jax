@@ -20,6 +20,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   commits](https://github.com/google/jax/compare/jax-v0.3.5...jax-v0.3.6).
 * Changes:
   * Upgraded libtpu wheel to the fixed version. Fixes [#10218](https://github.com/google/jax/issues/10218).
+* Deprecations:
+  * {module}`jax.experimental.loops` is being deprecated. See {jax-issue}`#10278`
+  for an alternative API.
 
 ## jax 0.3.5 (April 7, 2022)
 * [GitHub
