@@ -20,12 +20,15 @@ import numpy as np
 
 from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
 from jax.core import Primitive
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.util import prod
 from jax._src import dtypes
 from jax import lax
 from jax.interpreters import ad
 from jax.interpreters import batching
+import jax._src.lib
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 from jax._src.lib import pocketfft
 
@@ -77,7 +80,7 @@ def fft(x, fft_type: Union[xla_client.FftType, str], fft_lengths: Sequence[int])
   fft_lengths = tuple(fft_lengths)
   return fft_p.bind(x, fft_type=typ, fft_lengths=fft_lengths)
 
-def fft_impl(x, fft_type, fft_lengths):
+def _fft_impl(x, fft_type, fft_lengths):
   return xla.apply_primitive(fft_p, x, fft_type=fft_type, fft_lengths=fft_lengths)
 
 _complex_dtype = lambda dtype: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
@@ -105,6 +108,19 @@ def _fft_translation_rule_cpu(ctx, avals_in, avals_out, x, *, fft_type,
                                fft_lengths):
   return [pocketfft.pocketfft(ctx.builder, x, fft_type=fft_type,
                               fft_lengths=fft_lengths)]
+
+def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
+  out_aval, = ctx.avals_out
+  return [mhlo.FftOp(mlir.aval_to_ir_type(out_aval), x,
+                     mhlo.FftTypeAttr.get(fft_type.name),
+                     mlir.dense_int_elements(fft_lengths)).result]
+
+
+def _fft_lowering_cpu(ctx, x, *, fft_type, fft_lengths):
+  x_aval, = ctx.avals_in
+  return [pocketfft.pocketfft_mhlo(x, x_aval.dtype, fft_type=fft_type,
+                                   fft_lengths=fft_lengths)]
+
 
 def _naive_rfft(x, fft_lengths):
   y = fft(x, xla_client.FftType.FFT, fft_lengths)
@@ -146,7 +162,7 @@ def _irfft_transpose(t, fft_lengths):
   # https://github.com/google/jax/issues/6223#issuecomment-807740707
   return lax.conj(out)
 
-def fft_transpose_rule(t, operand, fft_type, fft_lengths):
+def _fft_transpose_rule(t, operand, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
     result = _rfft_transpose(t, fft_lengths)
   elif fft_type == xla_client.FftType.IRFFT:
@@ -155,17 +171,20 @@ def fft_transpose_rule(t, operand, fft_type, fft_lengths):
     result = fft(t, fft_type, fft_lengths)
   return result,
 
-def fft_batching_rule(batched_args, batch_dims, fft_type, fft_lengths):
+def _fft_batching_rule(batched_args, batch_dims, fft_type, fft_lengths):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   return fft(x, fft_type, fft_lengths), 0
 
 fft_p = Primitive('fft')
-fft_p.def_impl(fft_impl)
+fft_p.def_impl(_fft_impl)
 fft_p.def_abstract_eval(fft_abstract_eval)
 xla.register_translation(fft_p, _fft_translation_rule)
-ad.deflinear2(fft_p, fft_transpose_rule)
-batching.primitive_batchers[fft_p] = fft_batching_rule
+mlir.register_lowering(fft_p, _fft_lowering)
+ad.deflinear2(fft_p, _fft_transpose_rule)
+batching.primitive_batchers[fft_p] = _fft_batching_rule
 if pocketfft:
   xla.register_translation(fft_p, _fft_translation_rule_cpu, platform='cpu')
+  if jax._src.lib.version >= (0, 3, 6):
+    mlir.register_lowering(fft_p, _fft_lowering_cpu, platform='cpu')
