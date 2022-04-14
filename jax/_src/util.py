@@ -34,22 +34,18 @@ Seq = Sequence
 T = TypeVar("T")
 
 def safe_zip(*args):
-  n = len(args[0])
-  for arg in args[1:]:
-    assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
+  args = [list(arg) for arg in args]
+  lens = [len(arg) for arg in args]
+  assert lens[:-1] == lens[1:], f'length mismatch: {lens}'
   return list(zip(*args))
 
 def safe_map(f, *args):
-  args = list(map(list, args))
-  n = len(args[0])
-  for arg in args[1:]:
-    assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
-  return list(map(f, *args))
+  return [f(*arg) for arg in safe_zip(*args)]
 
 def unzip2(xys):
   xs = []
   ys = []
-  for x, y in xys:
+  for x, y in xys: # verbose for nice error message
     xs.append(x)
     ys.append(y)
   return tuple(xs), tuple(ys)
@@ -58,7 +54,7 @@ def unzip3(xyzs):
   xs = []
   ys = []
   zs = []
-  for x, y, z in xyzs:
+  for x, y, z in xyzs: # verbose for nice error message
     xs.append(x)
     ys.append(y)
     zs.append(z)
@@ -72,22 +68,15 @@ def subvals(lst, replace):
 
 def split_list(args: Sequence[T], ns: Sequence[int]) -> List[List[T]]:
   args = list(args)
-  lists = []
-  for n in ns:
-    lists.append(args[:n])
-    args = args[n:]
-  lists.append(args)
-  return lists
+  bounds = [0, *it.accumulate(ns), len(args)]
+  return [args[begin:end] for begin, end in zip(bounds, bounds[1:])] # it.pairwise in python-3.10
 
 def partition_list(bs: Sequence[bool], l: Sequence[T]) -> Tuple[List[T], List[T]]:
   assert len(bs) == len(l)
-  lists = [], []  # type: ignore
-  for b, x in zip(bs, l):
-    lists[b].append(x)
-  return lists
+  return [x for b, x in zip(bs, l) if not b], [x for b, x in zip(bs, l) if b]
 
 def merge_lists(bs: Sequence[bool], l0: Sequence[T], l1: Sequence[T]) -> List[T]:
-  assert sum(bs) == len(l1) and len(bs) - sum(bs) == len(l0)
+  assert sum(bs) == len(l1) and len(bs) - len(l1) == len(l0) # verbose for nice error message
   i0, i1 = iter(l0), iter(l1)
   out = [next(i1) if b else next(i0) for b in bs]
   sentinel = object()
@@ -172,13 +161,7 @@ def check_toposort(nodes):
     visited.add(id(node))
 
 def _remove_duplicates(node_list):
-  seen = set()
-  out = []
-  for n in node_list:
-    if id(n) not in seen:
-      seen.add(id(n))
-      out.append(n)
-  return out
+  return list({id(n): n for n in node_list}.values())
 
 def split_merge(predicate, xs):
   sides = list(map(predicate, xs))
@@ -428,7 +411,7 @@ def assert_unreachable(x):
 
 def tuple_insert(t, idx, val):
   assert 0 <= idx <= len(t), (idx, len(t))
-  return t[:idx] + (val,) + t[idx:]
+  return (*t[:idx], val, *t[idx:])
 
 def tuple_delete(t, idx):
   assert 0 <= idx < len(t), (idx, len(t))
