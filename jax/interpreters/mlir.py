@@ -83,6 +83,14 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 
+def shape_tensor(sizes: Sequence[Union[int, ir.RankedTensorType]]
+                 ) -> ir.RankedTensorType:
+  sizes = [ir_constant(np.array(d, np.dtype('int32'))) if type(d) is int else d
+           for d in sizes]
+  int1d = aval_to_ir_type(core.ShapedArray((1,), np.dtype('int32')))
+  return mhlo.ConcatenateOp([mhlo.ReshapeOp(int1d, d) for d in sizes],
+                            i64_attr(0)).results
+
 
 # IR Types
 
@@ -666,8 +674,7 @@ def lower_jaxpr_to_fun(
     if not use_sharding_annotations and ir_arg_shardings is not None:
       flat_args = map(wrap_with_sharding_op, flat_args, ir_arg_shardings)
 
-    unflattened_args = util.unflatten(flat_args,
-                                      map(len, input_types))
+    unflattened_args = util.unflatten(flat_args, map(len, input_types))
     args: List[List[ir.Value]] = []
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
       if replace_units_with_dummy and aval is core.abstract_unit:

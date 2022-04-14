@@ -8114,21 +8114,46 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertIsInstance(three_, int)
     self.assertEqual(three_, 3)
 
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
   def test_jit_basic_iree(self):
     if not jtu.device_under_test() == 'iree':
       raise unittest.SkipTest("test only works on IREE")
+
     @jax.jit
     def f(i):
       return jnp.sum(jnp.ones(i, dtype='float32'))
 
     self.assertAllClose(f(3), jnp.array(3., dtype='float32'), check_dtypes=True)
 
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_jit_basic_iree_2(self):
+    count = 0
+
+    @partial(jax.jit, abstracted_axes=('n',))
+    def f(x):
+      nonlocal count
+      count += 1
+      return jnp.sum(x)
+
+    x = f(jnp.arange(3))
+    y = f(jnp.arange(4))
+    self.assertAllClose(x, 3., check_dtypes=False)
+    self.assertAllClose(y, 6., check_dtypes=False)
+    self.assertEqual(count, 1)
+
+  # TODO(mattjj,dougalm,phawkins): debug iree failure, "'arith.subi' op requires
+  # the same type for all operands and results"
+  # https://github.com/google/iree/issues/8881
+  @jtu.skip_on_devices('iree')
   def test_slicing_basic(self):
     f = jax.jit(lambda x, n: jnp.sum(x[:n]))
     ans = f(jnp.arange(10), 3)
     expected = jnp.sum(jnp.arange(10)[:3])
     self.assertAllClose(ans, expected, check_dtypes=True)
 
+  # TODO(mattjj,dougalm,phawkins): debug iree failure, "failed to legalize
+  # operation 'mhlo.while' that was explicitly marked illegal"
+  @jtu.skip_on_devices('iree')
   def test_scan_basic(self):
     def cumsum(x):
       def body(i, _):
