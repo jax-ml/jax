@@ -1933,7 +1933,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
-    update_ctx = ctx.module_context.replace(name_stack='')
+    update_ctx = ctx.module_context.replace(name_stack=util.new_name_stack())
     out_nodes = mlir.jaxpr_subcomp(
         update_ctx, update_jaxpr, update_consts,
         (update.arguments[0],), (update.arguments[1],))

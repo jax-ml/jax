@@ -1407,7 +1407,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   # translation rule just because the extra tuple stuff is a pain.
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       xla.wrap_name(name, 'xmap')))
+                                       wrap_name(name, 'xmap')))
   tiled_outs = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (), *tiled_ins)
 
   outs = [
@@ -1472,7 +1472,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   # translation rule just because the extra tuple stuff is a pain.
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       xla.wrap_name(name, 'xmap')))
+                                       wrap_name(name, 'xmap')))
   global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
                                         *sharded_global_in_nodes)
 
@@ -1520,7 +1520,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   assert isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext)
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       xla.wrap_name(name, 'xmap')),
+                                       wrap_name(name, 'xmap')),
       axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
   global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
                                         *([n] for n in global_in_nodes))

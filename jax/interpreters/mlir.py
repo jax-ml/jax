@@ -673,7 +673,7 @@ def lower_jaxpr_to_fun(
       else:
         args.append(arg)
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
-                                              xla.wrap_name(name, 'jit'))
+                                              util.wrap_name(name, 'jit'))
     out_vals = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
                              jaxpr.jaxpr, map(ir_constants, jaxpr.consts),
                              *args)
@@ -834,7 +834,7 @@ def _xla_call_lower(ctx, *args,
                     backend=None, name, call_jaxpr, donated_invars, inline=None,
                     device=None):
   del device, donated_invars, inline  # Ignored.
-  return _call_lowering(name, xla.wrap_name(name, "jit"), call_jaxpr,
+  return _call_lowering(name, util.wrap_name(name, "jit"), call_jaxpr,
                         backend, ctx.module_context, ctx.avals_in, ctx.avals_out,
                         *args)
 
