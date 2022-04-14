@@ -1053,8 +1053,9 @@ def lower_parallel_callable(
   tuple_args = should_tuple_args(shards)
   module_name = f"pmap_{fun.__name__}"
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+    effects = list(closed_jaxpr.effects)
     module = mlir.lower_jaxpr_to_module(
-        module_name, closed_jaxpr, backend.platform, mlir.ReplicaAxisContext(axis_env),
+        module_name, closed_jaxpr, effects, backend.platform, mlir.ReplicaAxisContext(axis_env),
         name_stack, donated_invars, replicated_args=replicated_args,
         arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
         result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
@@ -2236,8 +2237,9 @@ def lower_mesh_computation(
   module: Union[str, xc.XlaComputation]
   module_name = f"{api_name}_{fun_name}"
   with core.extend_axis_env_nd(mesh.shape.items()):
+    effects = list(closed_jaxpr.effects)
     module = mlir.lower_jaxpr_to_module(
-        module_name, closed_jaxpr, backend.platform, axis_ctx, name_stack,
+        module_name, closed_jaxpr, effects, backend.platform, axis_ctx, name_stack,
         donated_invars, replicated_args=replicated_args,
         arg_shardings=in_partitions, result_shardings=out_partitions)
 

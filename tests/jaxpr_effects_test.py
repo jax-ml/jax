@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import functools
+import threading
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -20,10 +23,12 @@ from jax import ad_checkpoint
 from jax import core
 from jax import lax
 from jax import linear_util as lu
+from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax.config import config
 from jax.interpreters import mlir
+from jax._src import lib as jaxlib
+from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
 import numpy as np
@@ -47,6 +52,7 @@ core.ordered_effects.add('foo2')
 def trivial_effect_lowering(ctx, *, effect):
   ctx.set_tokens_out(ctx.tokens_in)
   return []
+mlir.register_lowering(effect_p, trivial_effect_lowering)
 
 def function_effect_lowering(ctx, *, effect):
   def _f(ctx):
@@ -64,6 +70,58 @@ def function_effect_lowering(ctx, *, effect):
   tokens, out = util.split_list(call.results, [len(ctx.tokens_in)])
   ctx.set_tokens_out(mlir.TokenSet(zip(ctx.tokens_in.effects(), tokens)))
   return out
+
+callback_p = core.Primitive('callback')
+callback_p.multiple_results = True
+
+mlir.lowerable_effects.add('log')
+core.ordered_effects.add('log')
+
+@callback_p.def_impl
+def _(*args, callback, out_avals, effect):
+  del out_avals, effect
+  callback(*args)
+  return []
+
+@callback_p.def_effectful_abstract_eval
+def _(*avals, callback, out_avals, effect):
+  del avals, callback
+  return out_avals, {effect}
+
+
+# TODO(sharadmv): Attach keep alive to executable
+leak = [].append
+def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out_avals, effect):
+  del out_avals
+  def _token_callback(token, *args):
+    out = callback(*args)
+    flat_out = jax.tree_util.tree_leaves(out)
+    return (token, *flat_out)
+  token_in = ctx.tokens_in.get(effect)[0]
+  (token_out, *out_op), keep_alive = mlir.emit_python_callback(
+      ctx.module_context.platform, _token_callback,
+      [token_in, *args], [core.abstract_token, *ctx.avals_in],
+      [core.abstract_token, *ctx.avals_out], True)
+  leak(keep_alive)
+  ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
+    token_out})))
+  return out_op
+
+mlir.register_lowering(callback_p, callback_effect_lowering)
+
+
+prev_xla_flags = None
+
+
+def setUpModule():
+  global prev_xla_flags
+  # This will control the CPU devices. On TPU we always have 2 devices
+  prev_xla_flags = jtu.set_host_platform_device_count(2)
+
+
+# Reset to previous configuration in case other test modules will be run.
+def tearDownModule():
+  prev_xla_flags()
 
 
 class JaxprEffectsTest(jtu.JaxTestCase):
@@ -210,6 +268,18 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return []
     mlir.register_lowering(effect_p, _effect_lowering)
 
+  def setUp(self):
+    super().setUp()
+    self.old_x64 = config.jax_enable_x64
+    config.update('jax_enable_x64', False)
+    dispatch.runtime_tokens.clear()
+
+  def tearDown(self):
+    super().tearDown()
+    dispatch.runtime_tokens.clear()
+    config.update('jax_enable_x64', self.old_x64)
+
+  def test_cannot_lower_unlowerable_effect(self):
     @jax.jit
     def f(x):
       effect_p.bind(effect='foo')
@@ -349,6 +419,194 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     self.assertEqual(func.name.value, "effect")
     self.assertLen(list(func.type.inputs), 0)
     self.assertLen(list(func.type.results), 0)
+
+  def test_lowered_jaxpr_without_ordered_effects_takes_no_dummy_inputs(self):
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='bar')
+      return x + 1.
+    mhlo = f.lower(1.).compiler_ir(dialect='mhlo')
+    input_types = mhlo.body.operations[0].type.inputs
+    # First argument should be dummy token
+    self.assertLen(list(input_types), 1)
+    self.assertEqual(str(input_types[0]), 'tensor<f32>')
+
+    # First output should be dummy token
+    result_types = mhlo.body.operations[0].type.results
+    self.assertLen(list(result_types), 1)
+    self.assertEqual(str(result_types[0]), 'tensor<f32>')
+
+  def test_lowered_jaxpr_with_ordered_effects_takes_in_dummy_inputs(self):
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    mhlo = f.lower(1.).compiler_ir(dialect='mhlo')
+    input_types = mhlo.body.operations[0].type.inputs
+    # First argument should be dummy token
+    self.assertLen(list(input_types), 2)
+    self.assertEqual(str(input_types[0]), 'tensor<0xi1>')
+
+    # First output should be dummy token
+    result_types = mhlo.body.operations[0].type.results
+    self.assertLen(list(result_types), 2)
+    self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
+
+  def test_lowered_jaxpr_with_multiple_ordered_effects_takes_in_dummy_inputs(self):
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      effect_p.bind(effect='foo2')
+      return x + 1.
+    mhlo = f.lower(1.).compiler_ir(dialect='mhlo')
+    input_types = mhlo.body.operations[0].type.inputs
+    # First two arguments should be dummy values
+    self.assertLen(list(input_types), 3)
+    self.assertEqual(str(input_types[0]), 'tensor<0xi1>')
+    self.assertEqual(str(input_types[1]), 'tensor<0xi1>')
+
+    # First two outputs should be dummy values
+    result_types = mhlo.body.operations[0].type.results
+    self.assertLen(list(result_types), 3)
+    self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
+    self.assertEqual(str(result_types[1]), 'tensor<0xi1>')
+
+  def test_can_lower_and_run_jaxpr_with_ordered_effects(self):
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    self.assertEqual(f(2.), 3.)
+
+  def test_can_lower_and_run_jaxpr_with_unordered_effects(self):
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='bar')
+      return x + 1.
+    self.assertEqual(f(2.), 3.)
+
+  def test_runtime_tokens_should_update_after_running_effectful_function(self):
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    self.assertNotIn('foo', dispatch.runtime_tokens.tokens)
+    f(2.)
+    prev_token = dispatch.runtime_tokens.tokens['foo']
+    f(2.)
+    curr_token = dispatch.runtime_tokens.tokens['foo']
+    self.assertIsNot(prev_token, curr_token)
+
+  def test_can_lower_multiple_effects(self):
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      effect_p.bind(effect='foo2')
+      return x + 1.
+    @jax.jit
+    def g(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    self.assertNotIn('foo', dispatch.runtime_tokens.tokens)
+    self.assertNotIn('foo2', dispatch.runtime_tokens.tokens)
+    f(2.)
+    foo_token = dispatch.runtime_tokens.tokens['foo'][0]
+    foo2_token = dispatch.runtime_tokens.tokens['foo'][0]
+    f(2.)
+    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens['foo'][0])
+    self.assertIsNot(foo2_token, dispatch.runtime_tokens.tokens['foo2'][0])
+    foo_token = dispatch.runtime_tokens.tokens['foo'][0]
+    foo2_token = dispatch.runtime_tokens.tokens['foo2'][0]
+    g(2.)
+    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens['foo'][0])
+    self.assertIs(foo2_token, dispatch.runtime_tokens.tokens['foo2'][0])
+
+class EffectOrderingTest(jtu.JaxTestCase):
+
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_can_execute_python_callback(self):
+    # TODO(sharadmv): remove jaxlib check when minimum version is bumped
+    # TODO(sharadmv): enable this test on GPU and TPU when backends are
+    # supported
+    if jaxlib.version < (0, 3, 8):
+      raise unittest.SkipTest("`emit_python_callback` only supported in jaxlib >= 0.3.8")
+    log = []
+    def log_value(x):
+      log.append(x)
+      return ()
+
+    @jax.jit
+    def f(x):
+      return callback_p.bind(x, callback=log_value, effect='log', out_avals=[])
+
+    f(2.)
+    self.assertListEqual(log, [2.])
+    f(3.)
+    self.assertListEqual(log, [2., 3.])
+    dispatch.runtime_tokens.block_until_ready()
+
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_ordered_effect_remains_ordered_across_multiple_devices(self):
+    # TODO(sharadmv): remove jaxlib check when minimum version is bumped
+    # TODO(sharadmv): enable this test on GPU and TPU when backends are
+    # supported
+    if jaxlib.version < (0, 3, 8):
+      raise unittest.SkipTest("`emit_python_callback` only supported in jaxlib >= 0.3.8")
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices.")
+    log = []
+    def log_value(x):
+      log.append(x)
+      return ()
+
+    @functools.partial(jax.jit, device=jax.devices()[0])
+    def f(x):
+      # Expensive computation
+      x = x.dot(x)
+      x = jnp.log(x.sum())
+      return callback_p.bind(x, callback=log_value, effect='log', out_avals=[])
+
+    @functools.partial(jax.jit, device=jax.devices()[1])
+    def g(x):
+      return callback_p.bind(x, callback=log_value, effect='log', out_avals=[])
+
+    f(jnp.ones((500, 500)))
+    g(3.)
+    f(jnp.ones((500, 500)))
+    g(3.)
+    f(jnp.ones((500, 500)))
+    g(3.)
+    dispatch.runtime_tokens.block_until_ready()
+    x_, y_ = float(jnp.log(1.25e8)), 3.
+    expected_log = [x_, y_, x_, y_, x_, y_]
+    self.assertListEqual(log, expected_log)
+
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_different_threads_get_different_tokens(self):
+    # TODO(sharadmv): remove jaxlib check when minimum version is bumped
+    # TODO(sharadmv): enable this test on GPU and TPU when backends are
+    # supported
+    if jaxlib.version < (0, 3, 8):
+      raise unittest.SkipTest("`emit_python_callback` only supported in jaxlib >= 0.3.8")
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices.")
+    tokens = []
+    def _noop(_):
+      tokens.append(dispatch.runtime_tokens.tokens['log'][0])
+      return ()
+
+    @functools.partial(jax.jit, device=jax.devices()[0])
+    def f(x):
+      return callback_p.bind(x, callback=_noop, effect='log', out_avals=[])
+
+    t1 = threading.Thread(target=lambda: f(2.))
+    t2 = threading.Thread(target=lambda: f(3.))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    token1, token2 = tokens
+    self.assertIsNot(token1, token2)
 
 
 class ControlFlowEffectsTest(jtu.JaxTestCase):
