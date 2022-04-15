@@ -4725,6 +4725,8 @@ class _IndexUpdateHelper:
       - ``"fill"``: alias for ``"drop"``.  For `get()`, the optional ``fill_value``
         argument specifies the value that will be returned.
 
+        See :class:`jax.lax.GatherScatterMode` for more details.
+
   indices_are_sorted : bool
       If True, the implementation will assume that the indices passed to ``at[]``
       are sorted in ascending order, which can lead to more efficient execution
