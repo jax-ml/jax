@@ -3040,10 +3040,10 @@ def _remat_translation_rule(*args,
 
   del concrete, policy  # Unused.
   if differentiated and prevent_cse:
-    if platform == "gpu":
-      translation_rule = _remat_translation_using_while
-    elif platform == "tpu" and config.jax_remat_opt_barrier:
+    if config.jax_remat_opt_barrier:
       translation_rule = _remat_translation_using_opt_barrier
+    elif platform == 'gpu':
+      translation_rule = _remat_translation_using_while
     else:
       translation_rule = _remat_translation_using_cond
   else:

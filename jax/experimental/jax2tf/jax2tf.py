@@ -1002,7 +1002,6 @@ tf_not_yet_impl = [
     "reduce_precision",
     "schur",
     "name",
-    "optimization_barrier",
     "unreachable",
 
     # Not high priority?
@@ -2383,6 +2382,8 @@ tf_impl_with_avals[ad_checkpoint.remat_p] = \
                             platform="cpu"),
                     multiple_results=True,
                     extra_name_stack="checkpoint")
+
+tf_impl[lax_control_flow.optimization_barrier_p] = tfxla.optimization_barrier
 
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted
