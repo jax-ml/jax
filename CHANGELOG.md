@@ -8,18 +8,25 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jaxlib 0.3.6 (Unreleased)
 
-## jax 0.3.7 (Unreleased)
+## jax 0.3.7 (April 15, 2022)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.6...main).
+  commits](https://github.com/google/jax/compare/jax-v0.3.6...jax-v0.3.7).
+* Changes:
+  * Fixed a performance problem if the indices passed to
+    {func}`jax.numpy.take_along_axis` were broadcasted ({jax-issue}`#10281`).
+  * {func}`jax.scipy.special.expit` and {func}`jax.scipy.special.logit` now
+    require their arguments to be scalars or JAX arrays. They also now promote
+    integer arguments to floating point.
 
+## jaxlib 0.3.7 (April 15, 2202)
 
 ## jax 0.3.6 (April 12, 2022)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.5...jax-v0.3.6).
 * Changes:
-  * Upgraded libtpu wheel to the fixed version. Fixes [#10218](https://github.com/google/jax/issues/10218).
+  * Upgraded libtpu wheel to a version that fixes a hang when initializing a TPU
+    pod. Fixes [#10218](https://github.com/google/jax/issues/10218).
 * Deprecations:
   * {mod}`jax.experimental.loops` is being deprecated. See {jax-issue}`#10278`
   for an alternative API.
