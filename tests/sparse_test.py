@@ -1582,6 +1582,51 @@ class BCOOTest(jtu.JaxTestCase):
       sorted = jax.vmap(jnp.lexsort)(flatind[:, ::-1])
       self.assertArraysEqual(sorted, lax.broadcasted_iota(sorted.dtype, sorted.shape, sorted.ndim - 1))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_bcoo_sort_indices_ad(self, shape, dtype, n_batch, n_dense):
+    rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
+    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
+    M.indices = M.indices[..., ::-1, :]
+
+    def sort_indices(data):
+      return sparse.BCOO((data, M.indices), shape=M.shape).sort_indices().data
+
+    # Forward-mode
+    data_dot_fwd = jax.jacfwd(sort_indices)(M.data)
+    data_dot_rev = jax.jacrev(sort_indices)(M.data)
+
+    self.assertAllClose(data_dot_fwd, data_dot_rev)
+
+  def test_bcoo_sort_indices_broadcasted(self):
+    rng_index = jtu.rand_int(self.rng(), low=0, high=10)
+    rng_data = jtu.rand_default(self.rng())
+
+    # Construct matrix with three broadcasted batch dimensions.
+    indices = rng_index((1, 3, 1, 10, 2), dtype='int32')
+    data = rng_data((1, 1, 4, 10, 3), dtype='int32')
+    shape = (2, 3, 4, 5, 4, 3)
+    mat = sparse.BCOO((data, indices), shape=shape)
+
+    indices_shape_out = indices.shape
+    data_shape_out = (*map(max, indices.shape[:3], data.shape[:3]), *data.shape[3:])
+
+    mat_sorted = sparse.bcoo_sort_indices(mat)
+    assert mat_sorted.indices.shape == indices_shape_out
+    assert mat_sorted.data.shape == data_shape_out
+    self.assertArraysEqual(mat.todense(), mat_sorted.todense())
+
+    mat_sorted_jit = jit(sparse.bcoo_sort_indices)(mat)
+    assert mat_sorted_jit.indices.shape == indices_shape_out
+    assert mat_sorted_jit.data.shape == data_shape_out
+    self.assertArraysEqual(mat.todense(), mat_sorted_jit.todense())
+
   def test_bcoo_sum_duplicates_inferred_nse(self):
     x = sparse.BCOO.fromdense(jnp.diag(jnp.arange(4)))
     self.assertEqual(x.nse, 3)

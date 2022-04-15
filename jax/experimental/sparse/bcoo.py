@@ -132,29 +132,6 @@ def _bcoo_sum_duplicates_unbatched(data, indices, *, shape, nse, remove_zeros):
   data_unique = jnp.where(oob_mask[(...,) + props.n_dense * (None,)], 0, data_unique)
   return data_unique, indices_unique, nse
 
-def _bcoo_sort_indices(data, indices, shape):
-  props = _validate_bcoo(data, indices, shape)
-  if props.n_sparse == 0:
-    return data, indices
-  def f(data, indices):
-    _, N = indices.shape
-    idx_cols = (indices[:, i] for i in range(N))
-    if data.ndim > 1:
-      *indices, i = lax.sort((*idx_cols, lax.iota(indices.dtype, len(data))), num_keys=N)
-      data = data[i]
-    else:
-      *indices, data = lax.sort((*idx_cols, data), num_keys=N)
-    return data, jnp.column_stack(indices)
-  for _ in range(props.n_batch):
-    f = broadcasting_vmap(f)
-  return f(data, indices)
-
-_bcoo_sort_indices_rule = xla.lower_fun(
-    _bcoo_sort_indices, multiple_results=True, new_style=True)
-
-_bcoo_sort_indices_mhlo = mlir.lower_fun(
-    _bcoo_sort_indices, multiple_results=True)
-
 def _unbatch_bcoo(data, indices, shape):
   n_batch = _validate_bcoo(data, indices, shape).n_batch
   if n_batch == 0:
@@ -872,8 +849,7 @@ def _bcoo_dot_general_gpu_translation_rule(
   else:
     # Sorts lhs by row indices.
     lhs_data, lhs_indices = _bcoo_sort_indices_rule(
-        ctx, avals_in[:2], avals_in[:2], lhs_data, lhs_indices,
-        shape=lhs_spinfo.shape)
+        ctx, avals_in[:2], avals_in[:2], lhs_data, lhs_indices, spinfo=lhs_spinfo)
 
     return _bcoo_dot_general_cuda_translation_rule(
       ctx, avals_in, avals_out, lhs_data, lhs_indices, rhs,
@@ -1013,7 +989,7 @@ def _bcoo_dot_general_gpu_lowering(
                                        avals_out=ctx.avals_in[:2])
 
     (lhs_data,), (lhs_indices,) = _bcoo_sort_indices_mhlo(
-        sub_ctx, lhs_data, lhs_indices, shape=lhs_spinfo.shape)
+        sub_ctx, lhs_data, lhs_indices, spinfo=lhs_spinfo)
 
     return _bcoo_dot_general_cuda_lowering(
       ctx, lhs_data, lhs_indices, rhs,
@@ -1374,6 +1350,101 @@ xla.register_translation(bcoo_spdot_general_p, xla.lower_fun(
     _bcoo_spdot_general_impl, multiple_results=True, new_style=True))
 mlir.register_lowering(bcoo_spdot_general_p, mlir.lower_fun(
     _bcoo_spdot_general_impl, multiple_results=True))
+
+
+#----------------------------------------------------------------------
+# bcoo_sort_indices
+# Utility to sort the indices of a BCOO representation. This primitive
+# does not support deduplication or removing of zeros; see bcoo_sum_duplicates.
+
+bcoo_sort_indices_p = core.Primitive("bcoo_sort_indices")
+bcoo_sort_indices_p.multiple_results = True
+
+def bcoo_sort_indices(mat):
+  """Sort indices of a BCOO array, and optionally sum duplicates & eliminate zeros.
+
+  Args:
+    mat : BCOO array
+
+  Returns:
+    mat_out : BCOO array with sorted indices.
+  """
+  data, indices = bcoo_sort_indices_p.bind(*mat._bufs, spinfo=mat._info)
+  return BCOO((data, indices), shape=mat.shape)
+
+@bcoo_sort_indices_p.def_impl
+def _bcoo_sort_indices_impl(data, indices, *, spinfo):
+  props = _validate_bcoo(data, indices, spinfo.shape)
+  if props.n_sparse == 0:
+    return data, indices
+  f = _bcoo_sort_indices_unbatched
+  for _ in range(props.n_batch):
+    f = vmap(f)
+  indices, perm = f(indices)
+  permute = lambda d, p: d[p]
+  for _ in range(props.n_batch):
+    permute = broadcasting_vmap(permute)
+  data = permute(data, perm)
+  return data, indices
+
+def _bcoo_sort_indices_unbatched(indices):
+  # sort indices without summing duplicates
+  nse, N = indices.shape
+  idx_cols = (indices[:, i] for i in range(N))
+  *indices, perm = lax.sort((*idx_cols, lax.iota(indices.dtype, nse)), num_keys=N)
+  return jnp.column_stack(indices), perm
+
+@bcoo_sort_indices_p.def_abstract_eval
+def _bcoo_sort_indices_abstract_eval(data, indices, *, spinfo):
+  props = _validate_bcoo(data, indices, spinfo.shape)
+  if props.n_sparse == 0:
+    return data, indices
+  data_out = core.ShapedArray(
+    (*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
+     props.nse, *data.shape[props.n_batch + 1:]), data.dtype, weak_type=data.weak_type)
+  return data_out, indices
+
+def _bcoo_sort_indices_batching_rule(batched_args, batch_dims, *, spinfo):
+  data, indices = batched_args
+  if any(b not in [0, None] for b in batch_dims):
+    raise NotImplementedError(f"batch_dims={batch_dims}. Only 0 and None are supported.")
+  if batch_dims[0] is None:
+    data = data[None, ...]
+  if batch_dims[1] is None:
+    indices = indices[None, ...]
+  new_spinfo = BCOOInfo(shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape))
+  return bcoo_sort_indices_p.bind(data, indices, spinfo=new_spinfo), (0, 0)
+
+def _bcoo_sort_indices_jvp(primals, tangents, *, spinfo):
+  props = _validate_bcoo(*primals, spinfo.shape)
+  if props.n_sparse == 0:
+    return primals, tangents
+
+  data, indices = primals
+  data_dot, _ = tangents
+  f = _bcoo_sort_indices_unbatched
+  for _ in range(props.n_batch):
+    f = broadcasting_vmap(f)
+  indices_out, perm = f(indices)
+  permute = lambda d, p: d[p]
+  for _ in range(props.n_batch):
+    permute = broadcasting_vmap(permute)
+  data_out = permute(data, perm)
+
+  indices_dot_out = ad.Zero.from_value(indices)
+  data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot, perm)
+  return (data_out, indices_out), (data_dot_out, indices_dot_out)
+
+_bcoo_sort_indices_rule = xla.lower_fun(
+    _bcoo_sort_indices_impl, multiple_results=True, new_style=True)
+
+_bcoo_sort_indices_mhlo = mlir.lower_fun(
+    _bcoo_sort_indices_impl, multiple_results=True)
+
+ad.primitive_jvps[bcoo_sort_indices_p] = _bcoo_sort_indices_jvp
+batching.primitive_batchers[bcoo_sort_indices_p] = _bcoo_sort_indices_batching_rule
+xla.register_translation(bcoo_sort_indices_p, _bcoo_sort_indices_rule)
+mlir.register_lowering(bcoo_sort_indices_p, _bcoo_sort_indices_mhlo)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
@@ -1782,8 +1853,7 @@ class BCOO(JAXSparse):
 
   def sort_indices(self):
     """Return a copy of the matrix with indices sorted."""
-    data, indices = _bcoo_sort_indices(self.data, self.indices, self.shape)
-    return BCOO((data, indices), shape=self.shape)
+    return bcoo_sort_indices(self)
 
   def todense(self):
     """Create a dense version of the array."""
