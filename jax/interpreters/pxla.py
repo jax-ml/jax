@@ -1835,8 +1835,9 @@ class Mesh(ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
 
   In particular, all ``axis_names`` become valid resource names inside the
-  managed block and can be used e.g. in the ``axis_resources`` argument of
-  :py:func:`xmap`.
+  managed block and can be used e.g. in the ``in_axis_resources`` argument of
+  :py:func:`jax.experimental.pjit.pjit`. Also see JAX's multi-process programming model (https://jax.readthedocs.io/en/latest/multi_process.html)
+  and pjit tutorial (https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html).
 
   If you are compiling in multiple threads, make sure that the
   ``with Mesh`` context manager is inside the function that the threads will
@@ -1858,7 +1859,7 @@ class Mesh(ContextDecorator):
     ...
     >>> inp = np.arange(16).reshape((8, 2))
     >>> devices = np.array(jax.devices()).reshape(4, 2)
-    ...g
+    ...
     >>> # Declare a 2D mesh with axes `x` and `y`.
     >>> global_mesh = Mesh(devices, ('x', 'y'))
     >>> # Use the mesh object directly as a context manager.
@@ -1869,7 +1870,7 @@ class Mesh(ContextDecorator):
     >>> with Mesh(devices, ('x', 'y')) as global_mesh:
     ...   pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
 
-    >>> # Also you can use it as `with ... as m`.
+    >>> # Also you can use it as `with ... as ...`.
     >>> global_mesh = Mesh(devices, ('x', 'y'))
     >>> with global_mesh as m:
     ...   pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
