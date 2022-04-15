@@ -1869,7 +1869,7 @@ class Mesh(ContextDecorator):
     >>> with Mesh(devices, ('x', 'y')) as global_mesh:
     ...   pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
 
-    >>> # Also you can use it as `with ... as ...`.
+    >>> # Also you can use it as `with ... as m`.
     >>> global_mesh = Mesh(devices, ('x', 'y'))
     >>> with global_mesh as m:
     ...   pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
