@@ -1553,6 +1553,9 @@ class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
     ref = jnp.broadcast_to(like(key), (3,))
     self.assertEqual(out.shape, ref.shape)
     self.assertEqual(out.shape, (3,))
+    out = jnp.broadcast_to(key, 3)
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (3,))
 
   def test_expand_dims(self):
     key = random.PRNGKey(123)

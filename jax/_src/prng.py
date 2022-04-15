@@ -210,6 +210,8 @@ class PRNGKeyArray:
     return PRNGKeyArray(self.impl, jnp.concatenate(arrs, axis))
 
   def broadcast_to(self, shape):
+    if jnp.ndim(shape) == 0:
+      shape = (shape,)
     new_shape = (*shape, *self.impl.key_shape)
     return PRNGKeyArray(self.impl, jnp.broadcast_to(self._keys, new_shape))
 
