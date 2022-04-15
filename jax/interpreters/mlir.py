@@ -1060,7 +1060,6 @@ register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 # lax.asinh_p,
 # lax.atan_p,
 # lax.atanh_p,
-# lax.cosh_p,
 # lax.tan_p,
 
 # # CHLO doesn't have a legalization for bf16 (b/203774470)

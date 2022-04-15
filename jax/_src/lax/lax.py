@@ -1745,6 +1745,8 @@ if jax._src.lib.mlir_api_version >= 7:
 
 cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
+if jax._src.lib.mlir_api_version >= 8:
+  mlir.register_lowering(cosh_p, partial(_nary_lower_mhlo, chlo.CoshOp))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
 ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(square(x) + _one(x))))

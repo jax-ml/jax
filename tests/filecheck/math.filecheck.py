@@ -182,7 +182,7 @@ def main(_):
   print_ir(np.float32(0))(lax.cos)
 
   # CHECK-LABEL: TEST: cosh float32[]
-  # CHECK: xla_fallback_cosh
+  # CHECK: chlo.cosh
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.cosh)
 
