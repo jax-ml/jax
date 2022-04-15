@@ -379,7 +379,7 @@ def _one_hot(x: Array, num_classes: int, *,
                        f"but {num_classes} != {axis_size}") from None
     axis_idx = lax.axis_index(axis)
     return jnp.asarray(x == axis_idx, dtype=dtype)
-  axis = operator.index(axis)
+  axis = operator.index(axis)  # type: ignore[arg-type]
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
   rhs_shape.insert(output_pos_axis, num_classes)
