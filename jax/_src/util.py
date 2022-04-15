@@ -47,6 +47,9 @@ def safe_map(f, *args):
   return list(map(f, *args))
 
 def unzip2(xys):
+  """Unzip sequence of length-2 tuples into two tuples."""
+  # Note: we deliberately don't use zip(*xys) because it is lazily evaluated,
+  # is too permissive about inputs, and does not guarantee a length-2 output.
   xs = []
   ys = []
   for x, y in xys:
@@ -55,6 +58,9 @@ def unzip2(xys):
   return tuple(xs), tuple(ys)
 
 def unzip3(xyzs):
+  """Unzip sequence of length-3 tuples into three tuples."""
+  # Note: we deliberately don't use zip(*xyzs) because it is lazily evaluated,
+  # is too permissive about inputs, and does not guarantee a length-3 output.
   xs = []
   ys = []
   zs = []

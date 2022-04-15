@@ -348,6 +348,13 @@ cholesky_p = standard_unop(_float | _complex, 'cholesky')
 ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
 batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
 
+def _cholesky_lowering(ctx, x):
+  aval, = ctx.avals_out
+  return mhlo.CholeskyOp(mlir.aval_to_ir_type(aval), x,
+                         lower=ir.BoolAttr.get(True)).results
+
+mlir.register_lowering(cholesky_p, _cholesky_lowering)
+
 def _cholesky_cpu_gpu_translation_rule(potrf_impl, ctx, avals_in, avals_out,
                                        operand):
   operand_aval, = avals_in
@@ -785,6 +792,24 @@ ad.defjvp2(triangular_solve_p,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
 ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
 batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
+
+
+def _triangular_solve_lowering(
+    ctx, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+  out_aval, = ctx.avals_out
+  if conjugate_a and not transpose_a:
+    a = chlo.ConjOp(a)
+    conjugate_a = False
+  if not transpose_a:
+    transpose = "NO_TRANSPOSE"
+  else:
+    transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
+  return mhlo.TriangularSolveOp(
+      mlir.aval_to_ir_type(out_aval), a, b, ir.BoolAttr.get(left_side),
+      ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
+      mhlo.TransposeAttr.get(transpose)).results
+
+mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 
 
 def _triangular_solve_cpu_translation_rule(
@@ -1862,7 +1887,7 @@ def _schur_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
   _cpu_gees = lapack.gees
 
   if sort_eig_vals:
-    T, vs, sdim, info = _cpu_gees(
+    T, vs, _sdim, info = _cpu_gees(
         c,
         operand,
         jobvs=compute_schur_vectors,
@@ -1883,6 +1908,49 @@ def _schur_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
   if compute_schur_vectors:
     vs = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vs,
                               _nan_like(c, vs))
+
+    output.append(vs)
+
+  return output
+
+def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
+                        select_callable):
+  operand_aval, = ctx.avals_in
+  batch_dims = operand_aval.shape[:-2]
+
+  if sort_eig_vals:
+    T, vs, _sdim, info = lapack.gees_mhlo(
+        operand,
+        jobvs=compute_schur_vectors,
+        sort=sort_eig_vals,
+        select=select_callable)
+  else:
+    T, vs, info = lapack.gees_mhlo(
+        operand,
+        jobvs=compute_schur_vectors,
+        sort=sort_eig_vals,
+        select=select_callable)
+
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+
+  T = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok,
+          mlir.dense_int_elements(range(len(batch_dims)))).result,
+      T, _nan_like_mhlo(ctx.avals_out[0]))
+  output = [T]
+  if compute_schur_vectors:
+    vs = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+            ir.RankedTensorType.get(batch_dims + (1, 1),
+                                    ir.IntegerType.get_signless(1)),
+            ok,
+            mlir.dense_int_elements(range(len(batch_dims)))).result,
+        vs, _nan_like_mhlo(ctx.avals_out[1]))
 
     output.append(vs)
 
@@ -1914,6 +1982,9 @@ schur_p.def_impl(_schur_impl)
 schur_p.def_abstract_eval(_schur_abstract_eval)
 xla.register_translation(schur_p, _schur_translation_rule)
 xla.register_translation(schur_p, _schur_cpu_translation_rule, platform='cpu')
+mlir.register_lowering(schur_p, _schur_translation_rule)
+if jax._src.lib.version >= (0, 3, 6):
+  mlir.register_lowering(schur_p, _schur_cpu_lowering, platform='cpu')
 batching.primitive_batchers[schur_p] = _schur_batching_rule
 ad.primitive_jvps[schur_p] = _schur_jvp_rule
 

@@ -65,6 +65,7 @@ from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # ty
 from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
 # pylint: enable=g-direct-tensorflow-import
 
+NameStack = source_info_util.NameStack
 PolyShape = shape_poly.PolyShape
 
 # A temporary internal flag, to enable the wrapping of jax.jit functions
@@ -77,7 +78,7 @@ _WRAP_JAX_JIT_WITH_TF_FUNCTION = False
 # The scope name need to be a valid TensorFlow name. See
 # https://github.com/tensorflow/tensorflow/blob/r2.3/tensorflow/core/framework/node_def_util.cc#L731
 _VALID_SCOPE_REGEX = re.compile("^[A-Za-z0-9.][A-Za-z0-9_.\\/>-]*$")
-_INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/>-]")
+_INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/-]")
 
 map = util.safe_map
 zip = util.safe_zip
@@ -176,7 +177,9 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def _get_current_name_stack():
+def _get_current_name_stack() -> Union[NameStack, str]:
+  if config.jax_experimental_name_stack:
+    return source_info_util.current_name_stack()
   return _thread_local_state.name_stack
 
 @contextlib.contextmanager
@@ -262,7 +265,7 @@ def convert(fun: Callable,
   """
   api._check_callable(fun)
   fun_name = getattr(fun, "__name__", "unknown")
-  name_stack = util.wrap_name(fun_name, "jax2tf") + "/"
+  name_stack = util.wrap_name(fun_name, "jax2tf")
   def converted_fun(*args: TfVal, **kwargs: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
     if not core.trace_state_clean() and not _thread_local_state.inside_call_tf:
@@ -476,6 +479,13 @@ def dtype_of_val(val: TfVal) -> DType:
 
 @contextlib.contextmanager
 def _extended_name_stack(extra_name_stack: Optional[str]):
+  if config.jax_experimental_name_stack:
+    name_ctx = (source_info_util.extend_name_stack(extra_name_stack)
+        if extra_name_stack
+        else contextlib.nullcontext())
+    with name_ctx:
+      yield
+    return
   prev_name_stack = _thread_local_state.name_stack
   if extra_name_stack:
     if not prev_name_stack:
@@ -821,22 +831,37 @@ class TensorFlowTrace(core.Trace):
       else:
         return impl(*args_tf, **params)
 
-    if _thread_local_state.include_xla_op_metadata:
-      op_metadata = xla.make_op_metadata(primitive, params,
-                                         name_stack=_get_current_name_stack(),
-                                         source_info=source_info_util.current())
-      op_metadata_proto = xla_data_pb2.OpMetadata(
-          op_type=op_metadata.op_type,
-          op_name=op_metadata.op_name,
-          source_file=op_metadata.source_file,
-          source_line=op_metadata.source_line
-      )
-      with tf_ops.get_default_graph()._attr_scope(
-          {"_XlaOpMetadata": attr_value_pb2.AttrValue(
-              s=op_metadata_proto.SerializeToString())}):
-        val_out = invoke_impl()
+    current_name_stack = _get_current_name_stack()
+    if config.jax_experimental_name_stack:
+      # We don't use `str(name_stack)` because it uses parentheses for
+      # transformations, which aren't allowed in `name_scope`.
+      scope = '/'.join([s.name for s in current_name_stack.stack])  # type: ignore[union-attr]
     else:
-      val_out = invoke_impl()
+      scope = str(current_name_stack)
+    # We need to add a '/' to the name stack string to force `tf.name_scope`
+    # to interpret it as an absolute scope, not a relative scope.
+    scope = scope + '/'
+    name_scope = (
+        tf.name_scope(_sanitize_scope_name(scope)) if
+        config.jax_experimental_name_stack else contextlib.nullcontext())
+
+    with name_scope:
+      if _thread_local_state.include_xla_op_metadata:
+        op_metadata = xla.make_op_metadata(primitive, params,
+                                           name_stack=current_name_stack,
+                                           source_info=source_info_util.current())
+        op_metadata_proto = xla_data_pb2.OpMetadata(
+            op_type=op_metadata.op_type,
+            op_name=op_metadata.op_name,
+            source_file=op_metadata.source_file,
+            source_line=op_metadata.source_line
+        )
+        with tf_ops.get_default_graph()._attr_scope(
+            {"_XlaOpMetadata": attr_value_pb2.AttrValue(
+                s=op_metadata_proto.SerializeToString())}):
+          val_out = invoke_impl()
+      else:
+        val_out = invoke_impl()
 
     if primitive.multiple_results:
       out = [
@@ -2257,6 +2282,10 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
       for jaxpr in branches
       for i, jaxpr in enumerate(branches)
   ]
+  if config.jax_experimental_name_stack:
+    # Same name stack as XLA translation of cond_p
+    branches_tf = list(map(source_info_util.extend_name_stack("cond"),
+        branches_tf))
   return tf.switch_case(index, branches_tf)
 
 

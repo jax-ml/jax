@@ -443,7 +443,7 @@ def main(_):
   print_ir(np.float32(0))(lax.sin)
 
   # CHECK-LABEL: TEST: sinh float32[]
-  # CHECK: xla_fallback_sinh
+  # CHECK: chlo.sinh
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.sinh)
 

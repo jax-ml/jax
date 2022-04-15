@@ -442,6 +442,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(mat.todense(), mat_resorted.todense())
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   @jtu.skip_on_devices("rocm")  # TODO(rocm): see SWDEV-328107
   def test_coo_sorted_indices_gpu_lowerings(self):
     dtype = jnp.float32

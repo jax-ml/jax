@@ -1740,9 +1740,8 @@ mlir.register_lowering(atan2_p, partial(_nary_lower_mhlo, mhlo.Atan2Op))
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
 ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))
-# TODO(b/209505237): the CHLO lowering of chlo.sinh is less accurate than that
-# in the XLA client library. Use the fallback path for now.
-# mlir.register_lowering(sinh_p, partial(_nary_lower_mhlo, chlo.SinhOp))
+if jax._src.lib.mlir_api_version >= 7:
+  mlir.register_lowering(sinh_p, partial(_nary_lower_mhlo, chlo.SinhOp))
 
 cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
@@ -2784,13 +2783,23 @@ pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
 
-def _broadcast_in_dim_lower(ctx, x, *, shape, broadcast_dimensions):
-  del shape
+def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   aval_out, = ctx.avals_out
-  return mhlo.BroadcastInDimOp(
-      mlir.aval_to_ir_type(aval_out), x,
-      mlir.dense_int_elements(broadcast_dimensions)
-  ).results
+  if dyn_shape:
+    dyn_shape = iter(dyn_shape)
+    shape = [next(dyn_shape) if d is None else d for d in shape]
+    assert next(dyn_shape, None) is None
+    return mhlo.DynamicBroadcastInDimOp(
+        mlir.aval_to_ir_type(aval_out), x,
+        mlir.shape_tensor(shape),
+        mlir.dense_int_elements(broadcast_dimensions),
+        None, None,
+    ).results
+  else:
+    return mhlo.BroadcastInDimOp(
+        mlir.aval_to_ir_type(aval_out), x,
+        mlir.dense_int_elements(broadcast_dimensions)
+    ).results
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
 
 
@@ -4529,6 +4538,7 @@ def bint_abstract_eval(_, *, bd: int):
   return core.AbstractBInt(bound=bd)
 
 pe.padding_rules[bint_p] = lambda _, __, i, bd: [i]
+mlir.register_lowering(bint_p, lambda ctx, x, bd: [x])
 
 
 ### util

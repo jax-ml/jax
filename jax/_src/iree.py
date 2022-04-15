@@ -20,7 +20,9 @@ using IREE to compile and run JAX computations instead of XLA.
 
 # pytype: skip-file
 
-from typing import Any, List, Sequence
+from __future__ import annotations
+
+from typing import Any, List, Sequence, Optional
 
 import iree.compiler
 from iree import runtime as iree_runtime
@@ -48,7 +50,7 @@ class IreeDevice:
   def transfer_from_outfeed(self, shape: xla_client.Shape):
     raise NotImplementedError("transfer_to_outfeed")
 
-  def live_buffers(self) -> List['IreeBuffer']:
+  def live_buffers(self) -> List[IreeBuffer]:
     raise NotImplementedError("live_buffers")
 
 
@@ -57,6 +59,7 @@ class IreeBuffer(xla_client.DeviceArrayBase):
   def __init__(self, client, device, npy_value):
     self.client = client
     self._device = device
+    assert device is not None
     self._npy_value = np.asarray(npy_value)
 
   def copy_to_device(self, device):
@@ -73,6 +76,9 @@ class IreeBuffer(xla_client.DeviceArrayBase):
 
   def device(self):
     return self._device
+
+  def block_until_ready(self) -> IreeBuffer:
+    return self  # no async
 
 class IreeExecutable:
 
@@ -136,8 +142,12 @@ class IreeClient:
 
   def compile(self, computation: str,
               compile_options: xla_client.CompileOptions) -> IreeExecutable:
+    del compile_options  # Ignored.
     iree_binary = iree.compiler.compile_str(
-        computation, target_backends=["dylib"], input_type="mhlo")
+        computation, target_backends=["dylib"], input_type="mhlo",
+        # extra_args=["--print-ir-after-all"],
+        # extended_diagnostics=True,
+    )
     # Load it into the runtime.
     vm_module = iree_runtime.binding.VmModule.from_flatbuffer(iree_binary)
     module_object = iree_runtime.load_vm_module(vm_module, self.iree_config)
@@ -146,13 +156,16 @@ class IreeClient:
   def buffer_from_pyval(
       self,
       argument: Any,
-      device: IreeDevice,
+      device: Optional[IreeDevice],
       force_copy: bool = True,
       host_buffer_semantics: xla_client.HostBufferSemantics = xla_client
       .HostBufferSemantics.ZERO_COPY
   ) -> IreeBuffer:
     # TODO(phawkins): IREE's python API will accept a numpy array directly but
     # may want to explicitly construct a lower level BufferView to avoid copies.
+    if device is None:
+      assert type(argument) is np.ndarray
+      device = self._devices[0]
     return IreeBuffer(self, device, np.array(argument, copy=True))
 
 

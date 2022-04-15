@@ -704,6 +704,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     if jax.config.jax_remat_opt_barrier:
       self.assertRegex(
           str(f_tf_graph), r"remat_checkpoint_/XlaOptimizationBarrier")
+    elif config.jax_experimental_name_stack:
+      self.assertRegex(str(f_tf_graph),
+                       r'transpose/jax2tf_f_/jvp/checkpoint/remat_checkpoint_/cond/branch_1_fun/Sin')
     else:
       self.assertRegex(str(f_tf_graph),
                        r'remat_checkpoint_/switch_case/indexed_case/Sin')

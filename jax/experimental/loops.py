@@ -12,7 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Loops is an **experimental** module for syntactic sugar for loops and control-flow.
+"""Loops is **DEPRECATED** and will be removed in August 2022.
+
+Here is a quick recipe for replacing usage of this module with standard
+JAX APIs:
+
+Where you would be using::
+
+  from jax.experimental import loops
+  with loops.Scope() as s:
+    s.arr = np.zeros(5)  # Create the mutable state of the loop as `scope` fields.
+    s.other = 0
+    for i in s.range(s.arr.shape[0]):
+      s.arr = s.arr.at[i].set(s.arr[i] + 2.)
+      s.other += 1
+
+you can now create a dictionary (or any other Python container) to keep the
+loop-carried state (`arr` and `other` in this case),
+and use a :func:`lax.fori_loop` instead::
+
+  def loop_body(i, s):
+    s["arr"] = s["arr"].at[i].set(s["arr"][i] + 2.)
+    s["other"] += 1
+    return s
+  init_s = dict(arr=np.zeros(5), other=0)
+  s = lax.fori_loop(0, s.arr.shape[0], loop_body, init_s)
+
+Below is the original documentation of the loops module:
+
+Loops is an **experimental** module for syntactic sugar for loops and control-flow.
 
 The current implementation should convert loops correctly to JAX internal
 representation, and most transformations should work (see below), but we have
@@ -111,6 +139,7 @@ import itertools
 import numpy as np
 import traceback
 from typing import Any, Dict, List, cast
+from warnings import warn
 
 from jax import lax, core
 from jax._src.lax import control_flow as lax_control_flow
@@ -135,6 +164,9 @@ class Scope(object):
   """
 
   def __init__(self):
+    warn("`jax.experimental.loops` is deprecated and will be removed in August 2022. "
+         "See https://jax.readthedocs.io/en/latest/jax.experimental.loops.html?highlight=deprecated#module-jax.experimental.loops.",
+         DeprecationWarning)
     # state to be functionalized, indexed by names, can be pytrees
     self._mutable_state: Dict[str, Any] = {}
     # the pytrees of abstract values; set when the loop starts.

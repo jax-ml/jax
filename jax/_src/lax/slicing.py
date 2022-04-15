@@ -812,7 +812,6 @@ batching.primitive_batchers[slice_p] = _slice_batching_rule
 masking.masking_rules[slice_p] = _slice_masking_rule
 
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
-  aval_out, = ctx.avals_out
   strides = strides or [1] * len(start_indices)
   return mhlo.SliceOp(x,
                       mlir.dense_int_elements(start_indices),
@@ -2142,3 +2141,11 @@ def _getslice_padding_rule(in_avals, out_avals, x, lo, hi):
   xx = lax.concatenate([x, x], 0)
   return [dynamic_slice_in_dim(xx, lo, x.shape[0])]
 pe.padding_rules[getslice_p] = _getslice_padding_rule
+
+def _getslice_lower(ctx, x, lo, hi):
+  aval_out, = ctx.avals_out
+  return mhlo.RealDynamicSliceOp(
+      mlir.aval_to_ir_type(aval_out), x,
+      mlir.shape_tensor([lo]), mlir.shape_tensor([hi]), mlir.shape_tensor([1])
+  ).results
+mlir.register_lowering(getslice_p, _getslice_lower)
