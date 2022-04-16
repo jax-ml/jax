@@ -409,7 +409,7 @@ pip install --upgrade "jax[cpu]"
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
-`manylinux2010` wheels.
+`manylinux2014` wheels.
 
 ### pip installation: GPU (CUDA)
 

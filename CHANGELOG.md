@@ -13,6 +13,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.7...main).
 
+## jaxlib 0.3.8 (Unreleased)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jaxlib-v0.3.7...main).
+
 ## jax 0.3.7 (April 15, 2022)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.6...jax-v0.3.7).
@@ -26,7 +30,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     `tile()` method. As a replacement for this, use {func}`jax.numpy.tile`
     ({jax-issue}`#10266`).
 
-## jaxlib 0.3.7 (April 15, 2202)
+## jaxlib 0.3.7 (April 15, 2022)
 * Changes:
   * Linux wheels are now built conforming to the `manylinux2014` standard, instead
     of `manylinux2010`.
