@@ -64,6 +64,7 @@ from jax._src.lax.utils import (
   standard_multi_result_abstract_eval,
   standard_named_shape_rule,
   standard_primitive,
+  standard_translate,
 )
 from jax._src.lax import slicing
 
@@ -1745,17 +1746,21 @@ if jax._src.lib.mlir_api_version >= 7:
 
 cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
+xla.register_translation(cosh_p, standard_translate(cosh_p))
 if jax._src.lib.mlir_api_version >= 8:
   mlir.register_lowering(cosh_p, partial(_nary_lower_mhlo, chlo.CoshOp))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
 ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(square(x) + _one(x))))
+xla.register_translation(asinh_p, standard_translate(asinh_p))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
+xla.register_translation(acosh_p, standard_translate(acosh_p))
 ad.defjvp(acosh_p,
           lambda g, x: mul(g, rsqrt((x - _one(x)) * (x + _one(x)))))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
+xla.register_translation(atanh_p, standard_translate(atanh_p))
 ad.defjvp(atanh_p,
           lambda g, x: mul(reciprocal(_one(x) + x), div(g, (_one(x) - x))))
 
@@ -1815,9 +1820,11 @@ random_gamma_grad_p = standard_naryop([_float, _float], 'random_gamma_grad',
   translation_rule=partial(_broadcast_translate, xops.RandomGammaGrad))
 
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
+xla.register_translation(bessel_i0e_p, standard_translate(bessel_i0e_p))
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
 
 bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
+xla.register_translation(bessel_i1e_p, standard_translate(bessel_i1e_p))
 def _bessel_i1e_jvp(g, y, x):
   eps = dtypes.finfo(_dtype(x)).eps
   x_is_not_tiny = abs(x) > eps
@@ -1830,14 +1837,17 @@ ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / np.sqrt(np.pi)),
                                   mul(g, exp(neg(square(x))))))
+xla.register_translation(erf_p, standard_translate(erf_p))
 
 erfc_p = standard_unop(_float, 'erfc')
 ad.defjvp(erfc_p, lambda g, x: mul(_const(x, -2. / np.sqrt(np.pi)),
                                    mul(g, exp(neg(square(x))))))
+xla.register_translation(erfc_p, standard_translate(erfc_p))
 
 erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
+xla.register_translation(erf_inv_p, standard_translate(erf_inv_p))
 
 real_p = unop(_complex_basetype, _complex, 'real')
 ad.deflinear2(real_p, lambda t, _: [complex(t, np.zeros((), _dtype(t)))])
