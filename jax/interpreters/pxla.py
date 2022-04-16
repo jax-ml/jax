@@ -1874,6 +1874,10 @@ class Mesh(ContextDecorator):
     >>> global_mesh = Mesh(devices, ('x', 'y'))
     >>> with global_mesh as m:
     ...   out = pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
+
+    >>> # You can also use it as `with Mesh(...)`.
+    >>> with Mesh(devices, ('x', 'y')):
+    ...   out = pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
   """
 
   devices: np.ndarray
