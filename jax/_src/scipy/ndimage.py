@@ -67,7 +67,7 @@ def _linear_indices_and_weights(coordinate):
   return [(index, lower_weight), (index + 1, upper_weight)]
 
 
-@functools.partial(api.jit, static_argnums=(2, 3, 4))
+@api._make_jit(static_argnums=(2, 3, 4))
 def _map_coordinates(input, coordinates, order, mode, cval):
   input = jnp.asarray(input)
   coordinates = [jnp.asarray(c) for c in coordinates]

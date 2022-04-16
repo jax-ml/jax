@@ -28,7 +28,7 @@ from jax.dtypes import float0
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax._src.api import jit, vmap
+from jax._src.api import _make_jit, vmap
 from jax._src.lax import lax as lax_internal
 import jax._src.lib
 from jax._src.lib import xla_client
@@ -456,7 +456,7 @@ if cuda_prng or hip_prng:
     mlir.register_lowering(threefry2x32_p, _threefry2x32_gpu_lowering,
                            platform='gpu')
 
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def threefry_2x32(keypair, count):
   """Apply the Threefry 2x32 hash.
 
@@ -493,7 +493,7 @@ def threefry_2x32(keypair, count):
 def threefry_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
   return _threefry_split(key, int(num))  # type: ignore
 
-@partial(jit, static_argnums=(1,), inline=True)
+@_make_jit(static_argnums=(1,), inline=True)
 def _threefry_split(key, num) -> jnp.ndarray:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
@@ -502,12 +502,12 @@ def _threefry_split(key, num) -> jnp.ndarray:
 def threefry_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
   return _threefry_fold_in(key, jnp.uint32(data))
 
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def _threefry_fold_in(key, data):
   return threefry_2x32(key, threefry_seed(data))
 
 
-@partial(jit, static_argnums=(1, 2), inline=True)
+@_make_jit(static_argnums=(1, 2), inline=True)
 def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_threefry_prng_key(key):

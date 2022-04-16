@@ -33,17 +33,15 @@ SIAM Journal on Matrix Analysis and Applications 31, no. 5 (2010): 2700-2720.
 https://epubs.siam.org/doi/abs/10.1137/090774999
 """
 
-import functools
-
 from typing import Sequence
 
-import jax
 from jax import core
 from jax import lax
 import jax.numpy as jnp
+from jax._src.api import _make_jit
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2))
+@_make_jit(static_argnums=(1, 2))
 def _svd(a: jnp.ndarray,
          is_hermitian: bool,
          max_iterations: int) -> Sequence[jnp.ndarray]:
@@ -92,7 +90,7 @@ def _svd(a: jnp.ndarray,
   return (u_out, s_out, v_out)
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2))
+@_make_jit(static_argnums=(1, 2))
 def svd(a: jnp.ndarray,
         is_hermitian: bool = False,
         max_iterations: int = 10) -> Sequence[jnp.ndarray]:

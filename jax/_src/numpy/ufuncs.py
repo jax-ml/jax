@@ -23,7 +23,7 @@ from textwrap import dedent
 
 import numpy as np
 
-from jax._src.api import jit, custom_jvp
+from jax._src.api import _make_jit, jit, custom_jvp
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.util import (
@@ -111,7 +111,7 @@ def _comparison_op(numpy_fn, lax_fn):
 
 def _logical_op(np_op, bitwise_op):
   @_wraps(np_op, update_doc=False)
-  @partial(jit, inline=True)
+  @_make_jit(inline=True)
   def op(*args):
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
     args = (x if dtypes.issubdtype(dtypes.dtype(x), np.bool_) else lax.ne(x, zero(x))
@@ -183,7 +183,7 @@ def arccosh(x):
 
 
 @_wraps(np.right_shift)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def right_shift(x1, x2):
   x1, x2 = _promote_args(np.right_shift.__name__, x1, x2)
   lax_fn = lax.shift_right_logical if \
@@ -192,7 +192,7 @@ def right_shift(x1, x2):
 
 
 @_wraps(np.absolute)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def absolute(x):
   _check_arraylike('absolute', x)
   dt = dtypes.dtype(x)
@@ -234,7 +234,7 @@ def copysign(x1, x2):
 
 
 @_wraps(np.true_divide)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def true_divide(x1, x2):
   x1, x2 = _promote_args_inexact("true_divide", x1, x2)
   return lax.div(x1, x2)
@@ -289,7 +289,7 @@ def _float_divmod(x1, x2):
   return lax.round(div), mod
 
 
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def _power(x1, x2):
   x1, x2 = _promote_args("power", x1, x2)
   dtype = dtypes.dtype(x1)
@@ -395,21 +395,21 @@ def _logaddexp2_jvp(primals, tangents):
 
 
 @_wraps(np.log2)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def log2(x):
   x, = _promote_args_inexact("log2", x)
   return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
 
 
 @_wraps(np.log10)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def log10(x):
   x, = _promote_args_inexact("log10", x)
   return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
 
 
 @_wraps(np.exp2)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def exp2(x):
   x, = _promote_args_inexact("exp2", x)
   return lax.exp(lax.mul(lax.log(_constant_like(x, 2)), x))
@@ -542,21 +542,21 @@ def fmod(x1, x2):
 
 
 @_wraps(np.square)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def square(x):
   _check_arraylike("square", x)
   return lax.integer_pow(x, 2)
 
 
 @_wraps(np.deg2rad)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def deg2rad(x):
   x, = _promote_args_inexact("deg2rad", x)
   return lax.mul(x, _lax_const(x, np.pi / 180))
 
 
 @_wraps(np.rad2deg)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def rad2deg(x):
   x, = _promote_args_inexact("rad2deg", x)
   return lax.mul(x, _lax_const(x, 180 / np.pi))
@@ -567,7 +567,7 @@ radians = deg2rad
 
 
 @_wraps(np.conjugate)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def conjugate(x):
   _check_arraylike("conjugate", x)
   return lax.conj(x) if np.iscomplexobj(x) else x
@@ -575,14 +575,14 @@ conj = conjugate
 
 
 @_wraps(np.imag)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def imag(val):
   _check_arraylike("imag", val)
   return lax.imag(val) if np.iscomplexobj(val) else lax.full_like(val, 0)
 
 
 @_wraps(np.real)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def real(val):
   _check_arraylike("real", val)
   return lax.real(val) if np.iscomplexobj(val) else val
@@ -677,7 +677,7 @@ def hypot(x1, x2):
 
 
 @_wraps(np.reciprocal)
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def reciprocal(x):
   _check_arraylike("reciprocal", x)
   x, = _promote_dtypes_inexact(x)

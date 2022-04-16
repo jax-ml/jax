@@ -47,6 +47,7 @@ from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src.api import _make_jit
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator)
@@ -328,7 +329,7 @@ def result_type(*args):
 
 
 @_wraps(np.trapz)
-@partial(jit, static_argnames=('axis',))
+@_make_jit(static_argnames=('axis',))
 def trapz(y, x=None, dx=1.0, axis: int = -1):
   _check_arraylike('trapz', y)
   y = moveaxis(y, axis, -1)
@@ -347,7 +348,7 @@ def trunc(x):
   return where(lax.lt(x, _lax_const(x, 0)), ceil(x), floor(x))
 
 
-@partial(jit, static_argnums=(2, 3, 4))
+@_make_jit(static_argnums=(2, 3, 4))
 def _conv(x, y, mode, op, precision):
   if ndim(x) != 1 or ndim(y) != 1:
     raise ValueError(f"{op}() only support 1-dimensional inputs.")
@@ -381,14 +382,14 @@ def _conv(x, y, mode, op, precision):
 
 
 @_wraps(np.convolve, lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('mode', 'precision'))
+@_make_jit(static_argnames=('mode', 'precision'))
 def convolve(a, v, mode='full', *, precision=None):
   _check_arraylike("convolve", a, v)
   return _conv(a, v, mode, 'convolve', precision)
 
 
 @_wraps(np.correlate, lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('mode', 'precision'))
+@_make_jit(static_argnames=('mode', 'precision'))
 def correlate(a, v, mode='valid', *, precision=None):
   _check_arraylike("correlate", a, v)
   return _conv(a, v, mode, 'correlate', precision)
@@ -513,7 +514,7 @@ def transpose(a, axes=None):
 
 
 @_wraps(np.rot90, lax_description=_ARRAY_VIEW_DOC)
-@partial(jit, static_argnames=('k', 'axes'))
+@_make_jit(static_argnames=('k', 'axes'))
 def rot90(m, k=1, axes=(0, 1)):
   _check_arraylike("rot90", m)
   ax1, ax2 = axes
@@ -539,7 +540,7 @@ def rot90(m, k=1, axes=(0, 1)):
 def flip(m, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   return _flip(m, _ensure_optional_axes(axis))
 
-@partial(jit, static_argnames=('axis',))
+@_make_jit(static_argnames=('axis',))
 def _flip(m, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   _check_arraylike("flip", m)
   if axis is None:
@@ -570,7 +571,7 @@ def isreal(x):
   return lax.eq(i, _lax_const(i, 0))
 
 @_wraps(np.angle)
-@partial(jit, static_argnames=['deg'])
+@_make_jit(static_argnames=['deg'])
 def angle(z, deg=False):
   re = real(z)
   im = imag(z)
@@ -585,7 +586,7 @@ def angle(z, deg=False):
 
 
 @_wraps(np.diff)
-@partial(jit, static_argnames=('n', 'axis'))
+@_make_jit(static_argnames=('n', 'axis'))
 def diff(a, n=1, axis: int = -1, prepend=None, append=None):
   _check_arraylike("diff", a)
   n = core.concrete_or_error(operator.index, n, "'n' argument of jnp.diff")
@@ -657,7 +658,7 @@ def ediff1d(ary, to_end=None, to_begin=None):
 
 
 @_wraps(np.gradient, skip_params=['edge_order'])
-@partial(jit, static_argnames=('axis', 'edge_order'))
+@_make_jit(static_argnames=('axis', 'edge_order'))
 def gradient(f, *varargs, axis: Optional[Union[int, Tuple[int, ...]]] = None,
              edge_order=None):
   if edge_order is not None:
@@ -763,7 +764,7 @@ def _transpose(a, *args):
   return transpose(a, axis)
 
 @_wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
-@partial(jit, static_argnames=('order',), inline=True)
+@_make_jit(static_argnames=('order',), inline=True)
 def ravel(a, order="C"):
   _stackable(a) or _check_arraylike("ravel", a)
   if order == "K":
@@ -826,7 +827,7 @@ def unravel_index(indices, shape):
   return tuple(idx)
 
 @_wraps(np.resize)
-@partial(jit, static_argnames=('new_shape',))
+@_make_jit(static_argnames=('new_shape',))
 def resize(a, new_shape):
   _check_arraylike("resize", a)
   new_shape = _ensure_index_tuple(new_shape)
@@ -849,7 +850,7 @@ def resize(a, new_shape):
 def squeeze(a, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   return _squeeze(a, _ensure_index_tuple(axis) if axis is not None else None)
 
-@partial(jit, static_argnames=('axis',), inline=True)
+@_make_jit(static_argnames=('axis',), inline=True)
 def _squeeze(a, axis):
   _check_arraylike("squeeze", a)
   if axis is None:
@@ -868,7 +869,7 @@ def expand_dims(a, axis: Union[int, Sequence[int]]):
 
 
 @_wraps(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
-@partial(jit, static_argnames=('axis1', 'axis2'), inline=True)
+@_make_jit(static_argnames=('axis1', 'axis2'), inline=True)
 def swapaxes(a, axis1: int, axis2: int):
   _check_arraylike("swapaxes", a)
   perm = np.arange(ndim(a))
@@ -882,7 +883,7 @@ def moveaxis(a, source: Union[int, Sequence[int]],
   return _moveaxis(a, _ensure_index_tuple(source),
                    _ensure_index_tuple(destination))
 
-@partial(jit, static_argnames=('source', 'destination'), inline=True)
+@_make_jit(static_argnames=('source', 'destination'), inline=True)
 def _moveaxis(a, source: Tuple[int, ...], destination: Tuple[int, ...]):
   _check_arraylike("moveaxis", a)
   source = tuple(_canonicalize_axis(i, ndim(a)) for i in source)
@@ -897,7 +898,7 @@ def _moveaxis(a, source: Tuple[int, ...], destination: Tuple[int, ...]):
 
 
 @_wraps(np.isclose)
-@partial(jit, static_argnames=('equal_nan',))
+@_make_jit(static_argnames=('equal_nan',))
 def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
   a, b = _promote_args("isclose", a, b)
   dtype = _dtype(a)
@@ -936,7 +937,7 @@ def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
 
 
 @_wraps(np.interp)
-@partial(jit, static_argnames=('period',))
+@_make_jit(static_argnames=('period',))
 def interp(x, xp, fp, left=None, right=None, period=None):
   if shape(xp) != shape(fp) or ndim(xp) != 1:
     raise ValueError("xp and fp must be one-dimensional arrays of equal size")
@@ -1124,7 +1125,7 @@ def clip(a, a_min=None, a_max=None, out=None):
   return a
 
 @_wraps(np.around, skip_params=['out'])
-@partial(jit, static_argnames=('decimals',))
+@_make_jit(static_argnames=('decimals',))
 def round(a, decimals=0, out=None):
   _check_arraylike("round", a)
   decimals = core.concrete_or_error(operator.index, decimals, "'decimals' argument of jnp.round")
@@ -1189,7 +1190,7 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 
 
 @_wraps(np.allclose)
-@partial(jit, static_argnames=('equal_nan',))
+@_make_jit(static_argnames=('equal_nan',))
 def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
   _check_arraylike("allclose", a, b)
   return all(isclose(a, b, rtol, atol, equal_nan))
@@ -1239,7 +1240,7 @@ def flatnonzero(a, *, size=None, fill_value=None):
 
 
 @_wraps(np.unwrap)
-@partial(jit, static_argnames=('axis',))
+@_make_jit(static_argnames=('axis',))
 def unwrap(p, discont=pi, axis: int = -1):
   _check_arraylike("unwrap", p)
   dd = diff(p, axis=axis)
@@ -1484,7 +1485,7 @@ def _broadcast_to_pairs(nvals, nd, name):
                      f"Valid shapes are ({nd}, 2), (1, 2), (2,), (1,), or ().")
 
 
-@partial(jit, static_argnums=(1, 2, 4, 5, 6))
+@_make_jit(static_argnums=(1, 2, 4, 5, 6))
 def _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type):
   array = asarray(array)
   nd = ndim(array)
@@ -2100,7 +2101,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   return _linspace(start, stop, int(num), endpoint, retstep, dtype,
                    operator.index(axis))
 
-@partial(jit, static_argnames=('num', 'endpoint', 'retstep', 'dtype', 'axis'))
+@_make_jit(static_argnames=('num', 'endpoint', 'retstep', 'dtype', 'axis'))
 def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
               axis: int = 0):
   """Implementation of linspace differentiable in start and stop args."""
@@ -2163,7 +2164,7 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
   return _logspace(start, stop, int(num), endpoint, base, dtype,
                    operator.index(axis))
 
-@partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
+@_make_jit(static_argnames=('num', 'endpoint', 'dtype', 'axis'))
 def _logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
              axis: int = 0):
   """Implementation of logspace differentiable in start and stop args."""
@@ -2187,7 +2188,7 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   return _geomspace(start, stop, int(num), endpoint, dtype,
                     operator.index(axis))
 
-@partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
+@_make_jit(static_argnames=('num', 'endpoint', 'dtype', 'axis'))
 def _geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   """Implementation of geomspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "geomspace")
@@ -2373,7 +2374,7 @@ def tri(N, M=None, k=0, dtype=None):
 
 
 @_wraps(np.tril)
-@partial(jit, static_argnames=('k',))
+@_make_jit(static_argnames=('k',))
 def tril(m, k=0):
   _check_arraylike("tril", m)
   m_shape = shape(m)
@@ -2384,7 +2385,7 @@ def tril(m, k=0):
 
 
 @_wraps(np.triu, update_doc=False)
-@partial(jit, static_argnames=('k',))
+@_make_jit(static_argnames=('k',))
 def triu(m, k=0):
   _check_arraylike("triu", m)
   m_shape = shape(m)
@@ -2395,7 +2396,7 @@ def triu(m, k=0):
 
 
 @_wraps(np.trace, skip_params=['out'])
-@partial(jit, static_argnames=('offset', 'axis1', 'axis2', 'dtype'))
+@_make_jit(static_argnames=('offset', 'axis1', 'axis2', 'dtype'))
 def trace(a, offset=0, axis1: int = 0, axis2: int = 1, dtype=None, out=None):
   _check_arraylike("trace", a)
   if out is not None:
@@ -2469,7 +2470,7 @@ def diag_indices_from(arr):
   return diag_indices(arr.shape[0], ndim=arr.ndim)
 
 @_wraps(np.diagonal, lax_description=_ARRAY_VIEW_DOC)
-@partial(jit, static_argnames=('offset', 'axis1', 'axis2'))
+@_make_jit(static_argnames=('offset', 'axis1', 'axis2'))
 def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
   _check_arraylike("diagonal", a)
   a_shape = shape(a)
@@ -2488,7 +2489,7 @@ def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
 def diag(v, k=0):
   return _diag(v, int(k))
 
-@partial(jit, static_argnames=('k',))
+@_make_jit(static_argnames=('k',))
 def _diag(v, k):
   _check_arraylike("diag", v)
   v_shape = shape(v)
@@ -2549,7 +2550,7 @@ def trim_zeros_tol(filt, tol, trim='fb'):
 
 
 @_wraps(np.append)
-@partial(jit, static_argnames=('axis',))
+@_make_jit(static_argnames=('axis',))
 def append(arr, values, axis: Optional[int] = None):
   if axis is None:
     return concatenate([ravel(arr), ravel(values)], 0)
@@ -2681,7 +2682,7 @@ def apply_over_axes(func, a, axes):
 
 
 @_wraps(np.dot, lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('precision',), inline=True)
+@_make_jit(static_argnames=('precision',), inline=True)
 def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("dot", a, b)
   a, b = _promote_dtypes(a, b)
@@ -2700,7 +2701,7 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
 
 
 @_wraps(np.matmul, lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('precision',), inline=True)
+@_make_jit(static_argnames=('precision',), inline=True)
 def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   for i, x in enumerate((a, b)):
@@ -2763,7 +2764,7 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
 
 
 @_wraps(np.vdot, lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('precision',), inline=True)
+@_make_jit(static_argnames=('precision',), inline=True)
 def vdot(a, b, *, precision=None):
   _check_arraylike("vdot", a, b)
   if issubdtype(_dtype(a), complexfloating):
@@ -2852,7 +2853,7 @@ def einsum_path(subscripts, *operands, optimize='greedy'):
 def _removechars(s, chars):
   return s.translate(str.maketrans(dict.fromkeys(chars)))
 
-@partial(jit, static_argnums=(1, 2))
+@_make_jit(static_argnums=(1, 2))
 def _einsum(operands: Sequence,
             contractions: Sequence[Tuple[Tuple[int, ...], FrozenSet[str], str]],
             precision):
@@ -2998,7 +2999,7 @@ def _movechars(s, src, dst):
 
 
 @_wraps(np.inner, lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('precision',), inline=True)
+@_make_jit(static_argnames=('precision',), inline=True)
 def inner(a, b, *, precision=None):
   if ndim(a) == 0 or ndim(b) == 0:
     return a * b
@@ -3006,7 +3007,7 @@ def inner(a, b, *, precision=None):
 
 
 @_wraps(np.outer, skip_params=['out'])
-@partial(jit, inline=True)
+@_make_jit(inline=True)
 def outer(a, b, out=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.outer is not supported.")
@@ -3014,7 +3015,7 @@ def outer(a, b, out=None):
   return ravel(a)[:, None] * ravel(b)[None, :]
 
 @_wraps(np.cross)
-@partial(jit, static_argnames=('axisa', 'axisb', 'axisc', 'axis'))
+@_make_jit(static_argnames=('axisa', 'axisb', 'axisc', 'axis'))
 def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
           axis: Optional[int] = None):
   if axis is not None:
@@ -3055,7 +3056,7 @@ def kron(a, b):
 
 
 @_wraps(np.vander)
-@partial(jit, static_argnames=('N', 'increasing'))
+@_make_jit(static_argnames=('N', 'increasing'))
 def vander(x, N=None, increasing=False):
   _check_arraylike("vander", x)
   x = asarray(x)
@@ -3108,7 +3109,7 @@ def argwhere(a, *, size=None, fill_value=None):
 def argmax(a, axis: Optional[int] = None, out=None, keepdims=None):
   return _argmax(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
-@partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
+@_make_jit(static_argnames=('axis', 'keepdims'), inline=True)
 def _argmax(a, axis: Optional[int] = None, out=None, keepdims=False):
   _check_arraylike("argmax", a)
   if out is not None:
@@ -3128,7 +3129,7 @@ def _argmax(a, axis: Optional[int] = None, out=None, keepdims=False):
 def argmin(a, axis: Optional[int] = None, out=None, keepdims=None):
   return _argmin(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
-@partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
+@_make_jit(static_argnames=('axis', 'keepdims'), inline=True)
 def _argmin(a, axis: Optional[int] = None, out=None, keepdims=False):
   _check_arraylike("argmin", a)
   if out is not None:
@@ -3156,7 +3157,7 @@ def nanargmax(a, axis: Optional[int] = None, out : Any = None, keepdims : Option
     raise NotImplementedError("The 'out' argument to jnp.nanargmax is not supported.")
   return _nanargmax(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
-@partial(jit, static_argnames=('axis', 'keepdims'))
+@_make_jit(static_argnames=('axis', 'keepdims'))
 def _nanargmax(a, axis: Optional[int] = None, keepdims: bool = False):
   _check_arraylike("nanargmax", a)
   if not issubdtype(_dtype(a), inexact):
@@ -3172,7 +3173,7 @@ def nanargmin(a, axis: Optional[int] = None, out : Any = None, keepdims : Option
     raise NotImplementedError("The 'out' argument to jnp.nanargmin is not supported.")
   return _nanargmin(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
-@partial(jit, static_argnames=('axis', 'keepdims'))
+@_make_jit(static_argnames=('axis', 'keepdims'))
 def _nanargmin(a, axis: Optional[int] = None, keepdims : bool = False):
   _check_arraylike("nanargmin", a)
   if not issubdtype(_dtype(a), inexact):
@@ -3184,7 +3185,7 @@ def _nanargmin(a, axis: Optional[int] = None, keepdims : bool = False):
 
 
 @_wraps(np.sort)
-@partial(jit, static_argnames=('axis', 'kind', 'order'))
+@_make_jit(static_argnames=('axis', 'kind', 'order'))
 def sort(a, axis: Optional[int] = -1, kind='quicksort', order=None):
   _check_arraylike("sort", a)
   if kind != 'quicksort':
@@ -3205,7 +3206,7 @@ def sort_complex(a):
   return lax.convert_element_type(a, result_type(a, dtypes.canonicalize_dtype(complex_)))
 
 @_wraps(np.lexsort)
-@partial(jit, static_argnames=('axis',))
+@_make_jit(static_argnames=('axis',))
 def lexsort(keys, axis=-1):
   keys = tuple(keys)
   if len(keys) == 0:
@@ -3226,7 +3227,7 @@ a warning and be treated as if they were :code:`'stable'`.
 """
 
 @_wraps(np.argsort, lax_description=_ARGSORT_DOC)
-@partial(jit, static_argnames=('axis', 'kind', 'order'))
+@_make_jit(static_argnames=('axis', 'kind', 'order'))
 def argsort(a, axis: Optional[int] = -1, kind='stable', order=None):
   _check_arraylike("argsort", a)
   if kind != 'stable':
@@ -3250,7 +3251,7 @@ def msort(a):
   return sort(a, axis=0)
 
 
-@partial(jit, static_argnums=(2,))
+@_make_jit(static_argnums=(2,))
 def _roll(a, shift, axis):
   a_shape = shape(a)
   if axis is None:
@@ -3281,7 +3282,7 @@ def roll(a, shift, axis: Optional[Union[int, Sequence[int]]] = None):
 
 
 @_wraps(np.rollaxis, lax_description=_ARRAY_VIEW_DOC)
-@partial(jit, static_argnames=('axis', 'start'))
+@_make_jit(static_argnames=('axis', 'start'))
 def rollaxis(a, axis: int, start=0):
   _check_arraylike("rollaxis", a)
   start = core.concrete_or_error(operator.index, start, "'start' argument of jnp.rollaxis()")
@@ -3297,7 +3298,7 @@ def rollaxis(a, axis: int, start=0):
 
 
 @_wraps(np.packbits)
-@partial(jit, static_argnames=('axis', 'bitorder'))
+@_make_jit(static_argnames=('axis', 'bitorder'))
 def packbits(a, axis: Optional[int] = None, bitorder='big'):
   _check_arraylike("packbits", a)
   if not (issubdtype(_dtype(a), integer) or issubdtype(_dtype(a), bool_)):
@@ -3325,7 +3326,7 @@ def packbits(a, axis: Optional[int] = None, bitorder='big'):
 
 
 @_wraps(np.unpackbits)
-@partial(jit, static_argnames=('axis', 'count', 'bitorder'))
+@_make_jit(static_argnames=('axis', 'count', 'bitorder'))
 def unpackbits(a, axis: Optional[int] = None, count=None, bitorder='big'):
   _check_arraylike("unpackbits", a)
   if _dtype(a) != uint8:
@@ -3349,7 +3350,7 @@ def take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   return _take(a, indices, None if axis is None else operator.index(axis), out,
                mode)
 
-@partial(jit, static_argnames=('axis', 'mode'))
+@_make_jit(static_argnames=('axis', 'mode'))
 def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
@@ -3422,7 +3423,7 @@ def _normalize_index(index, axis_size):
     index)
 
 @_wraps(np.take_along_axis, update_doc=False)
-@partial(jit, static_argnames=('axis',))
+@_make_jit(static_argnames=('axis',))
 def take_along_axis(arr, indices, axis: Optional[int]):
   _check_arraylike("take_along_axis", arr, indices)
   # index_dtype = dtypes.dtype(indices)
@@ -3529,7 +3530,7 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @partial(jit, static_argnums=(1, 2))
+# @_make_jit(static_argnums=(1, 2))
 def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
             unique_indices, mode, fill_value):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
@@ -4061,7 +4062,7 @@ def compress(condition, a, axis: Optional[int] = None, out=None):
 
 
 @_wraps(np.cov)
-@partial(jit, static_argnames=('rowvar', 'bias', 'ddof'))
+@_make_jit(static_argnames=('rowvar', 'bias', 'ddof'))
 def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
         aweights=None):
   if y is not None:
@@ -4127,7 +4128,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
 
 @_wraps(np.corrcoef)
-@partial(jit, static_argnames=('rowvar',))
+@_make_jit(static_argnames=('rowvar',))
 def corrcoef(x, y=None, rowvar=True):
   _check_arraylike("corrcoef", x)
   c = cov(x, y, rowvar)
@@ -4149,7 +4150,7 @@ def corrcoef(x, y=None, rowvar=True):
 
 
 @_wraps(np.quantile, skip_params=['out', 'overwrite_input'])
-@partial(jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
+@_make_jit(static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
 def quantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
              overwrite_input=False, method="linear", keepdims=False,
@@ -4165,7 +4166,7 @@ def quantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
   return _quantile(a, q, axis, interpolation or method, keepdims, False)
 
 @_wraps(np.nanquantile, skip_params=['out', 'overwrite_input'])
-@partial(jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
+@_make_jit(static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
 def nanquantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                 out=None, overwrite_input=False, method="linear",
@@ -4320,7 +4321,7 @@ def _searchsorted(a, v, side):
 
 
 @_wraps(np.searchsorted, skip_params=['sorter'])
-@partial(jit, static_argnames=('side', 'sorter'))
+@_make_jit(static_argnames=('side', 'sorter'))
 def searchsorted(a, v, side='left', sorter=None):
   _check_arraylike("searchsorted", a, v)
   if side not in ['left', 'right']:
@@ -4333,7 +4334,7 @@ def searchsorted(a, v, side='left', sorter=None):
 
 
 @_wraps(np.digitize)
-@partial(jit, static_argnames=('right',))
+@_make_jit(static_argnames=('right',))
 def digitize(x, bins, right=False):
   _check_arraylike("digitize", x, bins)
   right = core.concrete_or_error(bool, right, "right argument of jnp.digitize()")
@@ -4371,7 +4372,7 @@ def piecewise(x, condlist, funclist, *args, **kw):
                     frozenset(funcs.items()),  # dict is not hashable.
                     *args, **kw)
 
-@partial(jit, static_argnames=['funcs'])
+@_make_jit(static_argnames=['funcs'])
 def _piecewise(x, condlist, consts, funcs, *args, **kw):
   funcs = dict(funcs)
   funclist = [consts.get(i, funcs.get(i)) for i in range(len(condlist) + 1)]
@@ -4386,7 +4387,7 @@ def _piecewise(x, condlist, consts, funcs, *args, **kw):
 
 
 @_wraps(np.percentile, skip_params=['out', 'overwrite_input'])
-@partial(jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
+@_make_jit(static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
 def percentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                out=None, overwrite_input=False, method="linear",
@@ -4398,7 +4399,7 @@ def percentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                   interpolation=interpolation, method=method, keepdims=keepdims)
 
 @_wraps(np.nanpercentile, skip_params=['out', 'overwrite_input'])
-@partial(jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
+@_make_jit(static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
 def nanpercentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                   out=None, overwrite_input=False, method="linear",
@@ -4410,7 +4411,7 @@ def nanpercentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                      keepdims=keepdims)
 
 @_wraps(np.median, skip_params=['out', 'overwrite_input'])
-@partial(jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
+@_make_jit(static_argnames=('axis', 'overwrite_input', 'keepdims'))
 def median(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
            overwrite_input=False, keepdims=False):
   _check_arraylike("median", a)
@@ -4418,7 +4419,7 @@ def median(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
                   keepdims=keepdims, method='midpoint')
 
 @_wraps(np.nanmedian, skip_params=['out', 'overwrite_input'])
-@partial(jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
+@_make_jit(static_argnames=('axis', 'overwrite_input', 'keepdims'))
 def nanmedian(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
               overwrite_input=False, keepdims=False):
   _check_arraylike("nanmedian", a)
@@ -4638,7 +4639,7 @@ def _compress_method(a, condition, axis=None, out=None):
   return compress(condition, a, axis, out)
 
 
-@partial(jit, static_argnums=(1,2,3))
+@_make_jit(static_argnums=(1,2,3))
 def _multi_slice(arr,
                  start_indices: Tuple[Tuple[int, ...]],
                  limit_indices: Tuple[Tuple[int, ...]],

@@ -74,7 +74,7 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @partial(jit, static_argnums=(2, 3, 4))
+# @_make_jit(static_argnums=(2, 3, 4))
 def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
                   indices_are_sorted, unique_indices, mode,
                   normalize_indices):

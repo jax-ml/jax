@@ -23,6 +23,7 @@ from jax import jit
 from jax import lax, core
 from jax.interpreters import ad
 import jax.numpy as jnp
+from jax._src.api import _make_jit
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
 from jax._src.numpy.util import _wraps
@@ -726,7 +727,7 @@ def _gen_recurrence_mask(
   return (d0_mask_3d, d1_mask_3d)
 
 
-@partial(jit, static_argnums=(2))
+@_make_jit(static_argnums=(2))
 def _gen_derivatives(p: jnp.ndarray,
                      x: jnp.ndarray,
                      is_normalized: bool) -> jnp.ndarray:
@@ -818,7 +819,7 @@ def _gen_derivatives(p: jnp.ndarray,
   return p_derivative
 
 
-@partial(jit, static_argnums=(0, 2))
+@_make_jit(static_argnums=(0, 2))
 def _gen_associated_legendre(l_max: int,
                              x: jnp.ndarray,
                              is_normalized: bool) -> jnp.ndarray:
@@ -1019,7 +1020,7 @@ def lpmn_values(m: int, n: int, z: jnp.ndarray, is_normalized: bool) -> jnp.ndar
 
 
 
-@partial(jit, static_argnums=(4,))
+@_make_jit(static_argnums=(4,))
 def _sph_harm(m: jnp.ndarray,
               n: jnp.ndarray,
               theta: jnp.ndarray,
@@ -1085,11 +1086,11 @@ def sph_harm(m: jnp.ndarray,
 
   if n_max is None:
     n_max = jnp.max(n)
-  n_max = core.concrete_or_error(
+  n_max_int: int = core.concrete_or_error(
       int, n_max, 'The `n_max` argument of `jnp.scipy.special.sph_harm` must '
       'be statically specified to use `sph_harm` within JAX transformations.')
 
-  return _sph_harm(m, n, theta, phi, n_max)
+  return _sph_harm(m, n, theta, phi, n_max_int)
 
 
 # exponential integrals
