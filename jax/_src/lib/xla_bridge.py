@@ -113,9 +113,8 @@ def get_compile_options(
   compile_options.num_partitions = num_partitions
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
-  if jax._src.lib.xla_extension_version >= 61:
-    build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
-  if use_auto_spmd_partitioning and jax._src.lib.xla_extension_version >= 62:
+  build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
+  if use_auto_spmd_partitioning:
     build_options.auto_spmd_partitioning_mesh_shape = auto_spmd_partitioning_mesh_shape
     build_options.auto_spmd_partitioning_mesh_ids = auto_spmd_partitioning_mesh_ids
   if device_assignment is not None:

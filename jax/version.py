@@ -18,5 +18,5 @@ def _version_as_tuple(version_str):
 __version__ = "0.3.8"
 __version_info__ = _version_as_tuple(__version__)
 
-_minimum_jaxlib_version = "0.3.2"
+_minimum_jaxlib_version = "0.3.7"
 _minimum_jaxlib_version_info = _version_as_tuple(_minimum_jaxlib_version)

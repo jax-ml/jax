@@ -14,7 +14,6 @@
 
 
 import itertools
-import unittest
 
 import numpy as np
 
@@ -109,8 +108,6 @@ class FftTest(jtu.JaxTestCase):
                         lax.fft(x, "FFT", fft_lengths=(10,)))
 
   @parameterized.parameters((np.float32,), (np.float64,))
-  @unittest.skipIf(jax._src.lib.xla_extension_version < 63,
-                   "Test fails for jaxlib <= 0.3.2")
   def testLaxIrfftDoesNotMutateInputs(self, dtype):
     if dtype == np.float64 and not config.x64_enabled:
       raise self.skipTest("float64 requires jax_enable_x64=true")

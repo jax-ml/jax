@@ -39,7 +39,6 @@ from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
-import jax._src.lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client as xc
@@ -1069,10 +1068,9 @@ if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(bcoo_dot_general_p,
                            _bcoo_dot_general_gpu_translation_rule,
                            platform='gpu')
-  if jax._src.lib.version > (0, 3, 5):
-    mlir.register_lowering(bcoo_dot_general_p,
-                           _bcoo_dot_general_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(bcoo_dot_general_p,
+                         _bcoo_dot_general_gpu_lowering,
+                         platform='gpu')
 
 #----------------------------------------------------------------------
 # bcoo_dot_general_sampled

@@ -1741,8 +1741,7 @@ mlir.register_lowering(atan2_p, partial(_nary_lower_mhlo, mhlo.Atan2Op))
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
 ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))
-if jax._src.lib.mlir_api_version >= 7:
-  mlir.register_lowering(sinh_p, partial(_nary_lower_mhlo, chlo.SinhOp))
+mlir.register_lowering(sinh_p, partial(_nary_lower_mhlo, chlo.SinhOp))
 
 cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
@@ -2653,11 +2652,8 @@ def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
     full_precision = (precision, precision)
   else:
     full_precision = precision
-  if jax._src.lib.mlir_api_version >= 3:
-    return ir.ArrayAttr.get(
-        [mhlo.PrecisionAttr.get(str(p)) for p in full_precision])
-  else:
-    return ir.ArrayAttr.get([ir.StringAttr.get(str(p)) for p in full_precision])
+  return ir.ArrayAttr.get(
+      [mhlo.PrecisionAttr.get(str(p)) for p in full_precision])
 
 
 

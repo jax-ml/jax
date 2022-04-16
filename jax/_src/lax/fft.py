@@ -27,7 +27,6 @@ from jax._src import dtypes
 from jax import lax
 from jax.interpreters import ad
 from jax.interpreters import batching
-import jax._src.lib
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 from jax._src.lib import pocketfft
@@ -186,5 +185,4 @@ ad.deflinear2(fft_p, _fft_transpose_rule)
 batching.primitive_batchers[fft_p] = _fft_batching_rule
 if pocketfft:
   xla.register_translation(fft_p, _fft_translation_rule_cpu, platform='cpu')
-  if jax._src.lib.version >= (0, 3, 6):
-    mlir.register_lowering(fft_p, _fft_lowering_cpu, platform='cpu')
+  mlir.register_lowering(fft_p, _fft_lowering_cpu, platform='cpu')

@@ -30,7 +30,6 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.api import jit, vmap
 from jax._src.lax import lax as lax_internal
-import jax._src.lib
 from jax._src.lib import xla_client
 from jax._src.lib import cuda_prng
 from jax._src.lib.mlir.dialects import mhlo
@@ -452,9 +451,8 @@ mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
 if cuda_prng or hip_prng:
   xla.register_translation(threefry2x32_p, _threefry2x32_gpu_translation_rule,
                            platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(threefry2x32_p, _threefry2x32_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(threefry2x32_p, _threefry2x32_gpu_lowering,
+                         platform='gpu')
 
 @partial(jit, inline=True)
 def threefry_2x32(keypair, count):
