@@ -20,6 +20,7 @@ Implements ufuncs for jax.numpy.
 from functools import partial
 import operator
 from textwrap import dedent
+from typing import Any, Callable
 
 import numpy as np
 
@@ -29,6 +30,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.numpy.util import (
    _check_arraylike, _promote_args, _promote_args_inexact,
    _promote_dtypes_inexact, _promote_shapes, _where, _wraps)
+from jax._src.numpy.ndarray import ndarray
 from jax import core
 from jax import lax
 
@@ -55,7 +57,7 @@ def _replace_inf(x):
   return lax.select(isposinf(real(x)), lax_internal._zeros(x), x)
 
 
-def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
+def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False) -> Callable[[Any], ndarray]:
   if promote_to_inexact:
     fn = lambda x: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x))
   else:
@@ -68,7 +70,7 @@ def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
     return _wraps(numpy_fn)(fn)
 
 
-def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
+def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False) -> Callable[[Any, Any], ndarray]:
   if promote_to_inexact:
     fn = lambda x1, x2: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x1, x2))
   else:

@@ -872,7 +872,7 @@ def _gen_associated_legendre(l_max: int,
   a_idx = jnp.arange(1, l_max + 1)
   b_idx = jnp.arange(l_max)
   if is_normalized:
-    initial_value = 0.5 / jnp.sqrt(jnp.pi)  # The initial value p(0,0).
+    initial_value = 0.5 / np.sqrt(np.pi)  # The initial value p(0,0).
     f_a = jnp.cumprod(-1 * jnp.sqrt(1.0 + 0.5 / a_idx))
     f_b = jnp.sqrt(2.0 * b_idx + 3.0)
   else:

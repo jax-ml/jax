@@ -1593,6 +1593,7 @@ def stack(arrays, axis: int = 0, out=None):
       new_arrays.append(expand_dims(a, axis))
     return concatenate(new_arrays, axis=axis)
 
+
 @_wraps(np.tile)
 def tile(A, reps):
   _stackable(A) or _check_arraylike("tile", A)
@@ -1622,8 +1623,9 @@ def _concatenate_array(arr, axis: int):
   dimensions = [*range(1, axis + 1), 0, *range(axis + 1, arr.ndim)]
   return lax.reshape(arr, shape, dimensions)
 
+
 @_wraps(np.concatenate)
-def concatenate(arrays, axis: int = 0):
+def concatenate(arrays, axis: int = 0) -> ndarray:
   if isinstance(arrays, (np.ndarray, ndarray)):
     return _concatenate_array(arrays, axis)
   _stackable(*arrays) or _check_arraylike("concatenate", *arrays)
@@ -1790,7 +1792,7 @@ https://jax.readthedocs.io/en/latest/faq.html).
 """
 
 @_wraps(np.array, lax_description=_ARRAY_DOC)
-def array(object, dtype=None, copy=True, order="K", ndmin=0):
+def array(object, dtype=None, copy=True, order="K", ndmin=0) -> ndarray:
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
@@ -1836,11 +1838,11 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     # performance implications.
     out = np.array(object, dtype=dtype, ndmin=ndmin, copy=False)
   elif isinstance(object, ndarray_types):
-    if object.aval is None:
+    if object.aval is None: # type: ignore[union-attr] # xc.DeviceArrayBase
       # object is a raw buffer; convert to device array on its current device.
-      aval = ShapedArray(object.xla_shape().dimensions(), object.dtype,
+      aval = ShapedArray(object.xla_shape().dimensions(), object.dtype, # type: ignore[union-attr] # xc.DeviceArrayBase
                          weak_type=bool(getattr(object, "weak_type", False)))
-      object = device_array.make_device_array(aval, object.device(), object)
+      object = device_array.make_device_array(aval, object.device(), object) # type: ignore[union-attr, arg-type]
     out = _array_copy(object) if copy else object
   elif isinstance(object, (list, tuple)):
     if object:
@@ -1860,7 +1862,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   out = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
   if ndmin > ndim(out):
     out = lax.expand_dims(out, range(ndmin - ndim(out)))
-  return out
+  return out # type: ignore[return-value]
 
 
 def _convert_to_array_if_dtype_fails(x):
@@ -1885,7 +1887,7 @@ def copy(a, order=None):
 
 
 @_wraps(np.zeros_like)
-def zeros_like(a, dtype=None, shape=None):
+def zeros_like(a, dtype=None, shape=None) -> ndarray:
   _check_arraylike("zeros_like", a)
   lax_internal._check_user_dtype_supported(dtype, "zeros_like")
   if np.isscalar(shape):
@@ -1894,7 +1896,7 @@ def zeros_like(a, dtype=None, shape=None):
 
 
 @_wraps(np.ones_like)
-def ones_like(a, dtype=None, shape=None):
+def ones_like(a, dtype=None, shape=None) -> ndarray:
   _check_arraylike("ones_like", a)
   lax_internal._check_user_dtype_supported(dtype, "ones_like")
   if np.isscalar(shape):
@@ -1903,7 +1905,7 @@ def ones_like(a, dtype=None, shape=None):
 
 
 @_wraps(np.full)
-def full(shape, fill_value, dtype=None):
+def full(shape, fill_value, dtype=None) -> ndarray:
   lax_internal._check_user_dtype_supported(dtype, "full")
   _check_arraylike("full", fill_value)
   if ndim(fill_value) == 0:
@@ -1914,7 +1916,7 @@ def full(shape, fill_value, dtype=None):
 
 
 @_wraps(np.full_like)
-def full_like(a, fill_value, dtype=None, shape=None):
+def full_like(a, fill_value, dtype=None, shape=None) -> ndarray:
   lax_internal._check_user_dtype_supported(dtype, "full_like")
   _check_arraylike("full_like", a, fill_value)
   if shape is not None:
@@ -1928,7 +1930,7 @@ def full_like(a, fill_value, dtype=None, shape=None):
 
 
 @_wraps(np.zeros)
-def zeros(shape, dtype=None):
+def zeros(shape, dtype=None) -> ndarray:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   lax_internal._check_user_dtype_supported(dtype, "zeros")
@@ -1936,7 +1938,7 @@ def zeros(shape, dtype=None):
   return lax.full(shape, 0, _jnp_dtype(dtype))
 
 @_wraps(np.ones)
-def ones(shape, dtype=None):
+def ones(shape, dtype=None) -> ndarray:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   shape = canonicalize_shape(shape)
@@ -2035,7 +2037,7 @@ def fromstring(string, dtype=float, count=-1, *, sep):
 
 
 @_wraps(np.eye)
-def eye(N, M=None, k=0, dtype=None):
+def eye(N, M=None, k=0, dtype=None) -> ndarray:
   lax_internal._check_user_dtype_supported(dtype, "eye")
   N = core.canonicalize_dim(N, "'N' argument of jnp.eye()")
   M = N if M is None else core.canonicalize_dim(M, "'M' argument of jnp.eye()")
@@ -2053,7 +2055,7 @@ def identity(n, dtype=None):
 
 @_wraps(np.arange)
 def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
-           step: Optional[core.DimSize]=None, dtype=None):
+           step: Optional[core.DimSize]=None, dtype=None) -> ndarray:
   lax_internal._check_user_dtype_supported(dtype, "arange")
   require = partial(core.concrete_or_error, None)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
@@ -2094,7 +2096,7 @@ def _wrap_numpy_nullary_function(f):
 
 @_wraps(np.linspace)
 def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
-             axis: int = 0):
+             axis: int = 0) -> ndarray:
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.linspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
   return _linspace(start, stop, int(num), endpoint, retstep, dtype,
@@ -4790,7 +4792,7 @@ class _IndexUpdateRef:
     return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
 
   def get(self, indices_are_sorted=False, unique_indices=False,
-          mode=None, fill_value=None):
+          mode=None, fill_value=None) -> ndarray:
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -4806,7 +4808,7 @@ class _IndexUpdateRef:
                            fill_value=fill_value)
 
   def set(self, values, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+          mode=None) -> ndarray:
     """Pure equivalent of ``x[idx] = y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -4842,7 +4844,7 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode)
 
   def add(self, values, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+          mode=None) -> ndarray:
     """Pure equivalent of ``x[idx] += y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -4856,7 +4858,7 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode)
 
   def multiply(self, values, indices_are_sorted=False, unique_indices=False,
-               mode=None):
+               mode=None) -> ndarray:
     """Pure equivalent of ``x[idx] *= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -4872,7 +4874,7 @@ class _IndexUpdateRef:
   mul = multiply
 
   def divide(self, values, indices_are_sorted=False, unique_indices=False,
-             mode=None):
+             mode=None) -> ndarray:
     """Pure equivalent of ``x[idx] /= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -4888,7 +4890,7 @@ class _IndexUpdateRef:
                               unique_indices=unique_indices, mode=mode))
 
   def power(self, values, indices_are_sorted=False, unique_indices=False,
-            mode=None):
+            mode=None) -> ndarray:
     """Pure equivalent of ``x[idx] **= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -4904,7 +4906,7 @@ class _IndexUpdateRef:
                               unique_indices=unique_indices, mode=mode))
 
   def min(self, values, indices_are_sorted=False, unique_indices=False,  # noqa: F811
-          mode=None):
+          mode=None) -> ndarray:
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -4919,7 +4921,7 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode)
 
   def max(self, values, indices_are_sorted=False, unique_indices=False,  # noqa: F811
-          mode=None):
+          mode=None) -> ndarray:
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
