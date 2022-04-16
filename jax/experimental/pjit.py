@@ -71,13 +71,13 @@ class PjitCompiled(stages.Compiled):
 
   @pxla.maybe_cached_property
   def input_shardings(self) -> Sequence[pxla.PartitionSpec]:
-    return [pxla.array_mapping_to_axis_resources(i)
-            for i in self._executable._in_axes]  # pytype: disable=attribute-error
+    return self.in_tree.unflatten([pxla.array_mapping_to_axis_resources(i)
+                                   for i in self._executable._in_axes])[0]  # pytype: disable=attribute-error
 
   @pxla.maybe_cached_property
   def output_shardings(self) -> Sequence[pxla.PartitionSpec]:
-    return [pxla.array_mapping_to_axis_resources(o)
-            for o in self._executable._out_axes]  # pytype: disable=attribute-error
+    return self.out_tree.unflatten([pxla.array_mapping_to_axis_resources(o)
+                                    for o in self._executable._out_axes])[0]  # pytype: disable=attribute-error
 
 
 class PjitLowered(stages.Lowered):
@@ -254,12 +254,6 @@ def pjit(fun: Callable,
       donated_invars = (False,) * len(args_flat)
 
     _maybe_check_pjit_gda_mesh(args_flat, mesh)
-
-    # TODO(yashkatariya): Make sure you are not checking explicitly for `ShapedArray`.
-    # One possibility, is to only allow GDA and fully replicated inputs for AUTO.
-    if in_all_auto:
-      assert all(isinstance(a, GDA) or (isinstance(a, core.ShapedArray) and _global_avals)
-                 for a in args_flat), args_flat
 
     local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
     # TODO(yashkatariya): This is a hack. This should go away when avals have
@@ -1113,7 +1107,7 @@ def _calc_is_global_sequence(in_positional_semantics, in_axis_resources):
 def _get_in_positional_semantics(global_avals: bool, arg) -> maps._PositionalSemantics:
   if isinstance(arg, GDA):
     return maps._PositionalSemantics.GLOBAL
-  if global_avals and isinstance(arg, core.ShapedArray):
+  if global_avals:
     return maps._PositionalSemantics.GLOBAL
   return maps._positional_semantics.val
 
