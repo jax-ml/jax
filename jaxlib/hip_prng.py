@@ -71,7 +71,7 @@ def threefry2x32_lowering(keys, data):
     assert x.type == typ, (x.type, typ)
   ndims = len(dims)
 
-  opaque = _hip_prng.cuda_threefry2x32_descriptor(_prod(dims))
+  opaque = _hip_prng.hip_threefry2x32_descriptor(_prod(dims))
   layout = ir.DenseIntElementsAttr.get(np.arange(ndims - 1, -1, -1),
                                        type=ir.IndexType.get())
   i32_type = ir.IntegerType.get_signless(32)
@@ -86,6 +86,6 @@ def threefry2x32_lowering(keys, data):
       operand_layouts=ir.ArrayAttr.get([layout] * 4),
       result_layouts=ir.ArrayAttr.get([layout] * 2)).result
   return [
-    mhlo.GetTupleElementOp(typ, tup, ir.IntegerAttr.get(i32_type, i)).result
+    mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, i)).result
     for i in range(2)
   ]

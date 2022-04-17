@@ -77,7 +77,7 @@ def lu_pivots_to_permutation_mhlo(pivots, *, permutation_size):
   batch_size = _prod(dims[:-1])
   pivot_size = dims[-1]
 
-  opaque = _hip_linalg.cuda_lu_pivots_to_permutation_descriptor(
+  opaque = _hip_linalg.hip_lu_pivots_to_permutation_descriptor(
       batch_size, pivot_size, permutation_size)
   pivots_layout = ir.DenseIntElementsAttr.get(np.arange(len(dims) - 1, -1, -1),
                                               type=ir.IndexType.get())
@@ -88,7 +88,7 @@ def lu_pivots_to_permutation_mhlo(pivots, *, permutation_size):
   return mhlo.CustomCallOp(
       [permutations_type],
       [pivots],
-      call_target_name = ir.StringAttr.get("cuda_lu_pivots_to_permutation"),
+      call_target_name = ir.StringAttr.get("hip_lu_pivots_to_permutation"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
