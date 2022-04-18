@@ -138,39 +138,6 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
   return builder.Output(), out_dtype, out_shape
 
 
-def pocketfft(c, a, *, fft_type: FftType, fft_lengths: List[int]):
-  """PocketFFT kernel for CPU."""
-  shape = c.get_shape(a)
-  n = len(shape.dimensions())
-  dtype = shape.element_type()
-
-  fft_lengths = list(fft_lengths)
-  descriptor_bytes, out_dtype, out_shape = _pocketfft_descriptor(
-      list(shape.dimensions()), dtype, fft_type, fft_lengths)
-
-  if 0 in shape.dimensions() or 0 in out_shape:
-    return xla_client.ops.Broadcast(
-        xla_client.ops.Constant(c, np.array(0, dtype=out_dtype)), out_shape)
-
-  return xla_client.ops.CustomCallWithLayout(
-      c,
-      b"pocketfft",
-      operands=(
-          xla_client.ops.Constant(
-              c, np.frombuffer(descriptor_bytes, dtype=np.uint8)),
-          a,
-      ),
-      shape_with_layout=xla_client.Shape.array_shape(
-          out_dtype, out_shape, tuple(range(n - 1, -1, -1))),
-      operand_shapes_with_layout=(
-          xla_client.Shape.array_shape(
-              np.dtype(np.uint8), (len(descriptor_bytes),), (0,)),
-          xla_client.Shape.array_shape(dtype, shape.dimensions(),
-                                       tuple(range(n - 1, -1, -1))),
-      ),
-      api_version=xla_client.ops.CustomCallApiVersion
-      .API_VERSION_STATUS_RETURNING)
-
 def pocketfft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
   """PocketFFT kernel for CPU."""
   a_type = ir.RankedTensorType(a.type)

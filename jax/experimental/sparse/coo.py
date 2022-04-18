@@ -24,18 +24,14 @@ from jax import core
 from jax import lax
 from jax.interpreters import ad
 from jax.interpreters import mlir
-from jax.interpreters import xla
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _coo_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import sparse_apis
 from jax._src.numpy.lax_numpy import _promote_dtypes
-from jax._src.lib import xla_client
 import jax.numpy as jnp
 
-
-xops = xla_client.ops
 
 Dtype = Any
 Shape = Tuple[int, ...]
@@ -158,36 +154,6 @@ def _coo_todense_impl(data, row, col, *, spinfo):
 def _coo_todense_abstract_eval(data, row, col, *, spinfo):
   return core.ShapedArray(spinfo.shape, data.dtype)
 
-_coo_todense_translation_rule = xla.lower_fun(
-    _coo_todense_impl, multiple_results=False, new_style=True)
-
-def _coo_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
-                                      *, spinfo):
-  dtype = avals_in[0].dtype
-  if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
-    warnings.warn(f"coo_todense cusparse/hipsparse lowering not available for dtype={dtype}. "
-                  "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _coo_todense_translation_rule(ctx, avals_in, avals_out, data, row, col,
-                                         spinfo=spinfo)
-
-  if spinfo.rows_sorted:
-    shape = spinfo.shape
-    transpose = False
-  elif spinfo.cols_sorted:
-    row, col = col, row
-    transpose = True
-    shape = spinfo.shape[::-1]
-  else:
-    warnings.warn("coo_todense GPU lowering requires matrices with sorted rows or sorted cols. "
-                  "To sort the rows in your matrix, use e.g. mat = mat._sort_rows(). Falling "
-                  "back to the default implementation.", CuSparseEfficiencyWarning)
-    return _coo_todense_translation_rule(ctx, avals_in, avals_out, data, row, col,
-                                         spinfo=spinfo)
-
-  result = sparse_apis.coo_todense(ctx.builder, data, row, col, shape=shape)
-
-
-  return [xops.Transpose(result, (1, 0))] if transpose else [result]
 _coo_todense_lowering = mlir.lower_fun(
     _coo_todense_impl, multiple_results=False)
 
@@ -235,11 +201,8 @@ def _coo_todense_transpose(ct, data, row, col, *, spinfo):
 
 ad.defjvp(coo_todense_p, _coo_todense_jvp, None, None)
 ad.primitive_transposes[coo_todense_p] = _coo_todense_transpose
-xla.register_translation(coo_todense_p, _coo_todense_translation_rule)
 mlir.register_lowering(coo_todense_p, _coo_todense_lowering)
 if sparse_apis and sparse_apis.is_supported:
-  xla.register_translation(coo_todense_p, _coo_todense_gpu_translation_rule,
-                           platform='gpu')
   mlir.register_lowering(coo_todense_p, _coo_todense_gpu_lowering,
                          platform='gpu')
 
@@ -303,21 +266,6 @@ def _coo_fromdense_abstract_eval(mat, *, nse, index_dtype):
   row = col = core.ShapedArray((nse,), index_dtype)
   return data, row, col
 
-_coo_fromdense_translation_rule = xla.lower_fun(
-    _coo_fromdense_impl, multiple_results=True, new_style=True)
-
-def _coo_fromdense_gpu_translation_rule(ctx, avals_in, avals_out, mat, *, nse,
-                                        index_dtype):
-  dtype = avals_in[0].dtype
-  if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
-    warnings.warn(f"coo_fromdense cusparse/hipsparse lowering not available for dtype={dtype}. "
-                  "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _coo_fromdense_translation_rule(ctx, avals_in, avals_out, mat,
-                                           nse=nse, index_dtype=index_dtype)
-  data, row, col = sparse_apis.coo_fromdense(
-      ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
-  return [data, row, col]
-
 _coo_fromdense_lowering = mlir.lower_fun(
     _coo_fromdense_impl, multiple_results=True)
 
@@ -363,12 +311,8 @@ def _coo_fromdense_transpose(ct, M, *, nse, index_dtype):
 ad.primitive_jvps[coo_fromdense_p] = _coo_fromdense_jvp
 ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
 
-xla.register_translation(coo_fromdense_p, _coo_fromdense_translation_rule)
 mlir.register_lowering(coo_fromdense_p, _coo_fromdense_lowering)
 if sparse_apis and sparse_apis.is_supported:
-  xla.register_translation(coo_fromdense_p,
-                           _coo_fromdense_gpu_translation_rule,
-                           platform='gpu')
   mlir.register_lowering(coo_fromdense_p,
                          _coo_fromdense_gpu_lowering,
                          platform='gpu')
@@ -433,34 +377,6 @@ def _coo_matvec_abstract_eval(data, row, col, v, *, spinfo, transpose):
   out_shape = spinfo.shape[1] if transpose else spinfo.shape[0]
   return core.ShapedArray((out_shape,), data.dtype)
 
-_coo_matvec_translation_rule = xla.lower_fun(
-    _coo_matvec_impl, multiple_results=False, new_style=True)
-
-def _coo_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
-                                     v, *, spinfo, transpose):
-  dtype = avals_in[0].dtype
-  if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f"coo_matvec cusparse/hipsparse lowering not available for dtype={dtype}. "
-                  "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _coo_matvec_translation_rule(ctx, avals_in, avals_out, data, row, col, v,
-                                        spinfo=spinfo, transpose=transpose)
-
-  if spinfo.rows_sorted:
-    shape = spinfo.shape
-  elif spinfo.cols_sorted:
-    row, col = col, row
-    transpose = not transpose
-    shape = spinfo.shape[::-1]
-  else:
-    warnings.warn("coo_matvec GPU lowering requires matrices with sorted rows or sorted cols. "
-                  "To sort the rows in your matrix, use e.g. mat = mat._sort_rows(). Falling "
-                  "back to the default implementation.", CuSparseEfficiencyWarning)
-    return _coo_matvec_translation_rule(ctx, avals_in, avals_out, data, row, col, v,
-                                        spinfo=spinfo, transpose=transpose)
-
-  return [sparse_apis.coo_matvec(ctx.builder, data, row, col, v, shape=shape,
-                                 transpose=transpose)]
-
 _coo_matvec_lowering = mlir.lower_fun(
     _coo_matvec_impl, multiple_results=False)
 
@@ -511,11 +427,8 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, spinfo, transpose):
 
 ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
 ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
-xla.register_translation(coo_matvec_p, _coo_matvec_translation_rule)
 mlir.register_lowering(coo_matvec_p, _coo_matvec_lowering)
 if sparse_apis and sparse_apis.is_supported:
-  xla.register_translation(coo_matvec_p, _coo_matvec_gpu_translation_rule,
-                           platform='gpu')
   mlir.register_lowering(coo_matvec_p, _coo_matvec_gpu_lowering,
                          platform='gpu')
 
@@ -578,34 +491,6 @@ def _coo_matmat_abstract_eval(data, row, col, B, *, spinfo, transpose):
   out_shape = spinfo.shape[1] if transpose else spinfo.shape[0]
   return core.ShapedArray((out_shape, B.shape[1]), data.dtype)
 
-_coo_matmat_translation_rule = xla.lower_fun(
-    _coo_matmat_impl, multiple_results=False, new_style=True)
-
-def _coo_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
-                                     B, *, spinfo, transpose):
-  dtype = avals_in[0].dtype
-  if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f"coo_matmat cusparse/hipsprse lowering not available for dtype={dtype}. "
-                  "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _coo_matmat_translation_rule(ctx, avals_in, avals_out, data, row, col, B,
-                                        spinfo=spinfo, transpose=transpose)
-
-  if spinfo.rows_sorted:
-    shape = spinfo.shape
-  elif spinfo.cols_sorted:
-    row, col = col, row
-    transpose = not transpose
-    shape = spinfo.shape[::-1]
-  else:
-    warnings.warn("coo_matmat GPU lowering requires matrices with sorted rows or sorted cols. "
-                  "To sort the rows in your matrix, use e.g. mat = mat._sort_rows(). Falling "
-                  "back to the default implementation.", CuSparseEfficiencyWarning)
-    return _coo_matmat_translation_rule(ctx, avals_in, avals_out, data, row, col, B,
-                                        spinfo=spinfo, transpose=transpose)
-
-  return [sparse_apis.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
-                                 transpose=transpose)]
-
 _coo_matmat_lowering = mlir.lower_fun(_coo_matmat_impl, multiple_results=False)
 
 def _coo_matmat_gpu_lowering(ctx, data, row, col, B, *, spinfo, transpose):
@@ -652,10 +537,7 @@ def _coo_matmat_transpose(ct, data, row, col, B, *, spinfo, transpose):
 
 ad.defjvp(coo_matmat_p, _coo_matmat_jvp_left, None, None, _coo_matmat_jvp_right)
 ad.primitive_transposes[coo_matmat_p] = _coo_matmat_transpose
-xla.register_translation(coo_matmat_p, _coo_matmat_translation_rule)
 mlir.register_lowering(coo_matmat_p, _coo_matmat_lowering)
 if sparse_apis and sparse_apis.is_supported:
-  xla.register_translation(coo_matmat_p, _coo_matmat_gpu_translation_rule,
-                           platform='gpu')
   mlir.register_lowering(coo_matmat_p, _coo_matmat_gpu_lowering,
                          platform='gpu')

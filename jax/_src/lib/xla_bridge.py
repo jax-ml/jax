@@ -47,7 +47,6 @@ except (ModuleNotFoundError, ImportError):
 traceback_util.register_exclusion(__file__)
 
 
-xops = xla_client.ops
 XlaBackend = xla_client._xla.Client
 
 FLAGS = flags.FLAGS

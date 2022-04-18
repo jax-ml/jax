@@ -28,7 +28,6 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
 from jax._src.lax.utils import (
     _argnum_weak_type,
     _input_dtype,
@@ -44,7 +43,6 @@ from jax._src.lib import xla_client
 
 xb = xla_bridge
 xc = xla_client
-xops = xla_client.ops
 
 Array = Any
 Shape = core.Shape
@@ -752,11 +750,6 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
   diff = core.diff_shape(limit_indices, start_indices)
   return core.stride_shape(diff, (1,) * len(diff), strides)
 
-def _slice_translation_rule(ctx, avals_in, avals_out, operand, *, start_indices,
-                            limit_indices, strides):
-  return [xops.Slice(operand, start_indices, limit_indices,
-                     strides or [1] * len(start_indices))]
-
 def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
@@ -805,8 +798,7 @@ def _slice_masking_rule(
                limit_indices=masking.padded_shape_as_value(limit_indices),
                strides=strides)
 
-slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
-                             _slice_translation_rule)
+slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice')
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 masking.masking_rules[slice_p] = _slice_masking_rule
@@ -847,10 +839,6 @@ def _dynamic_slice_dtype_rule(operand, *start_indices, slice_sizes):
            "type, got: {}")
     raise TypeError(msg.format(", ".join(i.dtype.name for i in start_indices)))
   return operand.dtype
-
-def _dynamic_slice_translation_rule(ctx, avals_in, avals_out, operand,
-                                    *start_indices, slice_sizes):
-  return [xops.DynamicSlice(operand, start_indices, slice_sizes)]
 
 def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
   tangent_out = tangents[0]
@@ -905,7 +893,7 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
 
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
-    _dynamic_slice_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp  # TODO
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
@@ -974,10 +962,6 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
     update_t = ds(t, start_indices, update_shape) if ad.is_undefined_primal(update) else None
   return [operand_t, update_t] + [None] * len(start_indices)
 
-def _dynamic_update_slice_translation_rule(ctx, avals_in, avals_out, operand,
-                                           update, *start_indices):
-  return [xops.DynamicUpdateSlice(operand, update, start_indices)]
-
 def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
   # A dynamic update slice is a special case of scatter; we can delegate to the
   # scatter batching rule.
@@ -1001,7 +985,7 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
 
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
-    'dynamic_update_slice', _dynamic_update_slice_translation_rule)
+    'dynamic_update_slice')
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
@@ -1203,29 +1187,6 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
     gather_out, lax.full_like(gather_out, fill_value=fill_value))
 
 
-def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
-                             dimension_numbers,
-                             slice_sizes, unique_indices, indices_are_sorted,
-                             mode, fill_value):
-  aval_out, = avals_out
-  if mode == GatherScatterMode.FILL_OR_DROP:
-    gather_fill_fn = xla.lower_fun(_gather_fill, multiple_results=False,
-                                   new_style=True)
-    return gather_fill_fn(
-        ctx, avals_in, avals_out, operand, indices,
-        dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
-        unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-        fill_value=fill_value, output_shape=aval_out.shape)
-
-  operand_aval, indices_aval = avals_in
-  dimensions = _gather_dimensions_proto(indices_aval.shape, dimension_numbers)
-  assert (mode == GatherScatterMode.CLIP or
-          mode == GatherScatterMode.PROMISE_IN_BOUNDS), mode
-  # XLA's Gather has clamp semantics, so we can just call it directly.
-  return [xops.Gather(operand, indices, dimensions, slice_sizes,
-                      indices_are_sorted=indices_are_sorted)]
-
-
 def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
                      slice_sizes, unique_indices, indices_are_sorted, mode,
                      fill_value):
@@ -1332,7 +1293,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    _gather_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
@@ -1510,63 +1471,6 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
   return lax.clamp(np.int64(0), lax.convert_element_type(indices, np.int64),
                    upper_bound)
 
-def _scatter_translation_rule(ctx, avals_in, avals_out, operand, indices,
-                              updates, *, update_jaxpr, update_consts,
-                              dimension_numbers, indices_are_sorted,
-                              unique_indices, mode):
-  operand_aval, indices_aval, updates_aval = avals_in
-  if mode == GatherScatterMode.CLIP:
-    clip_fn = xla.lower_fun(_clamp_scatter_indices, multiple_results=False,
-                            new_style=True)
-    indices, = clip_fn(ctx, avals_in, None, operand, indices, updates,
-                       dnums=dimension_numbers)
-
-  c = ctx.builder
-
-  init_value = xla.pyval_to_ir_constant(c, np.array(0, operand_aval.dtype))
-  update_computation = lax._reduction_computation(
-      ctx, update_jaxpr, update_consts, init_value)
-  return [xops.Scatter(
-      operand, indices, updates, update_computation,
-      _scatter_dimensions_proto(indices_aval.shape, dimension_numbers),
-      indices_are_sorted, unique_indices)]
-
-def _scatter_add_translation_rule(
-    ctx, avals_in, avals_out, operand, indices, updates, *, update_jaxpr,
-    update_consts, dimension_numbers, indices_are_sorted, unique_indices, mode,
-    expand_complex128=False):
-  operand_aval, indices_aval, updates_aval = avals_in
-  if mode == GatherScatterMode.CLIP:
-    clip_fn = xla.lower_fun(_clamp_scatter_indices, multiple_results=False,
-                            new_style=True)
-    indices, = clip_fn(ctx, avals_in, None, operand, indices, updates,
-                       dnums=dimension_numbers)
-
-  dtype = operand_aval.dtype
-  scatter_dims = _scatter_dimensions_proto(
-      indices_aval.shape, dimension_numbers)
-
-  def _make_reducer(dtype):
-    subc = xc.XlaBuilder("scatter_add_reducer")
-    shape = xc.Shape.array_shape(np.dtype(dtype), ())
-    args = [xla.parameter(subc, 0, shape), xla.parameter(subc, 1, shape)]
-    out = xops.Add(args[0], args[1])
-    return subc.build(out)
-
-  if expand_complex128 and dtype == np.complex128:
-    update_computation = _make_reducer(np.float64)
-    re = xops.Scatter(xops.Real(operand), indices, xops.Real(updates),
-                      update_computation, scatter_dims, indices_are_sorted,
-                      unique_indices)
-    im = xops.Scatter(xops.Imag(operand), indices, xops.Imag(updates),
-                      update_computation, scatter_dims, indices_are_sorted,
-                      unique_indices)
-    return [xops.Complex(re, im)]
-  else:
-    update_computation = _make_reducer(dtype)
-    return [xops.Scatter(operand, indices, updates, update_computation,
-                         scatter_dims, indices_are_sorted, unique_indices)]
-
 def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
                      dimension_numbers, indices_are_sorted, unique_indices,
                      mode):
@@ -1716,19 +1620,15 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
-    _scatter_add_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
 
-xla.register_translation(scatter_add_p, partial(_scatter_add_translation_rule,
-                                                expand_complex128=True),
-                         platform='gpu')
-
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
-    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 
 def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
                          indices_are_sorted, unique_indices, mode, **kw):
@@ -1851,14 +1751,14 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
 scatter_min_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
-    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_min_p] = (
   partial(_scatter_batching_rule, scatter_min))
 ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 
 scatter_max_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
-    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max))
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
@@ -2004,7 +1904,7 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
 
 scatter_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter',
-    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.primitive_batchers[scatter_p] = (

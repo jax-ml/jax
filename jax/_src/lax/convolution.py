@@ -518,6 +518,7 @@ def _conv_general_dilated_transpose_rhs(
       preferred_element_type=preferred_element_type)
 
 
+# TODO(phawkins): remove after removing all users.
 def _conv_general_dilated_translation_rule(
     ctx, avals_in, avals_out, lhs, rhs, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
@@ -678,20 +679,7 @@ def _conv_general_dilated_masking_rule(
 
 conv_general_dilated_p = lax.standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
-    'conv_general_dilated', partial(_conv_general_dilated_translation_rule,
-                                    expand_complex_convolutions=False))
-
-# TODO(b/161124619, b/161126248): XLA does not support complex convolution on
-# GPU, and on CPU it uses a slow loop-based implementation;
-# on these backends, lower complex convolutions away.
-xla.register_translation(conv_general_dilated_p,
-                         partial(_conv_general_dilated_translation_rule,
-                                 expand_complex_convolutions=True),
-                         platform='cpu')
-xla.register_translation(conv_general_dilated_p,
-                         partial(_conv_general_dilated_translation_rule,
-                                 expand_complex_convolutions=True),
-                         platform='gpu')
+    'conv_general_dilated')
 
 ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_lhs,
@@ -772,6 +760,9 @@ def _conv_general_dilated_lower(
                       lax.precision_attr(precision)).result]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
+# TODO(b/161124619, b/161126248): XLA does not support complex convolution on
+# GPU, and on CPU it uses a slow loop-based implementation;
+# on these backends, lower complex convolutions away.
 mlir.register_lowering(
     conv_general_dilated_p,
     partial(_conv_general_dilated_lower, expand_complex_convolutions=True),

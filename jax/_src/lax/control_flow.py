@@ -49,7 +49,6 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
-from jax._src.lib import xla_client
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip,
                            split_list, cache, extend_name_stack, wrap_name)
@@ -58,8 +57,6 @@ from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_leaves, tree_structure)
 from jax._src import ad_util
 from jax.config import config
-
-xops = xla_client.ops
 
 _map = safe_map
 zip = safe_zip
@@ -338,78 +335,6 @@ def _while_loop_abstract_eval(*args, cond_jaxpr, body_jaxpr, **kwargs):
   joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
   return _map(raise_to_shaped, body_jaxpr.out_avals), joined_effects
 
-def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
-                                 body_jaxpr, cond_nconsts, body_nconsts):
-  c = ctx.builder
-  cond_consts, body_consts, init_vals = split_list(args, [cond_nconsts, body_nconsts])
-  batched = bool(cond_jaxpr.out_avals[0].shape)
-
-  # Since jaxprs don't have tuples and have multiple return values, but we need
-  # the HLO While loop to take a single tuple input and output a single boolean
-  # (for the cond computation) or a single tuple output (for the body
-  # computation), we build XLA computations that handle the tuple munging before
-  # generating a Call into the computations formed from the jaxprs.
-
-  init_carry = xops.Tuple(c, cond_consts + body_consts + init_vals)
-
-  cond_c = xla_client.XlaBuilder("cond_computation")
-  cond_carry = xla.parameter(cond_c, 0, c.get_shape(init_carry))
-  cond_carry_elts = [xops.GetTupleElement(cond_carry, i) for i in range(len(args))]
-  x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
-  name_stack = extend_name_stack(ctx.name_stack, 'while')
-  cond_ctx = ctx.replace(builder=cond_c,
-                         name_stack=extend_name_stack(name_stack, 'cond'))
-  pred, = xla.jaxpr_subcomp(
-      cond_ctx, cond_jaxpr.jaxpr,
-      _map(partial(xla.pyval_to_ir_constant, cond_c), cond_jaxpr.consts),
-      *(x + z))
-  if batched:
-    scalar = ShapedArray((), np.bool_)
-    or_ = xla.primitive_subcomputation(ctx.platform, ctx.axis_env, lax.or_p,
-                                       scalar, scalar)
-    pred = xops.Reduce(cond_c, [pred], [xops.Constant(cond_c, np.array(False))],
-                       or_, list(range(cond_jaxpr.out_avals[0].ndim)))
-
-  body_c = xla_client.XlaBuilder("body_computation")
-  body_carry = xla.parameter(body_c, 0, c.get_shape(init_carry))
-  body_carry_elts = [xops.GetTupleElement(body_carry, i) for i in range(len(args))]
-  x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
-  body_ctx = ctx.replace(builder=body_c,
-                         name_stack=extend_name_stack(name_stack, 'body'))
-  new_z = xla.jaxpr_subcomp(
-      body_ctx, body_jaxpr.jaxpr,
-      _map(partial(xla.pyval_to_ir_constant, body_c), body_jaxpr.consts),
-      *(y + z))
-  if batched:
-    body_pred_ctx = body_ctx.replace(
-        name_stack=extend_name_stack(name_stack, 'body_pred'))
-    body_pred, = xla.jaxpr_subcomp(
-        body_pred_ctx, cond_jaxpr.jaxpr,
-        _map(partial(xla.pyval_to_ir_constant, body_c), cond_jaxpr.consts),
-        *(x + z))
-    new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z,
-                 body_jaxpr.out_avals)
-    assert _map(body_c.get_shape, new_z) == _map(body_c.get_shape, z) # no broadcast
-  new_carry = xops.Tuple(body_c, [*x, *y, *new_z])
-
-  ans = xops.While(cond_c.build(pred), body_c.build(new_carry), init_carry)
-  ans_elts = [xops.GetTupleElement(ans, i) for i in range(len(args))]
-  _,  _, z = split_list(ans_elts, [cond_nconsts, body_nconsts])
-  return z
-
-def _pred_bcast_select(c, pred, x, y, x_y_aval: core.AbstractValue):
-  pred_shape = c.get_shape(pred).dimensions()
-  x_shape = c.get_shape(x).dimensions()
-  y_shape = c.get_shape(y).dimensions()
-  assert x_shape == y_shape
-  if x_y_aval is core.abstract_unit:
-    return x
-  elif x_y_aval is core.abstract_token:
-    return xops.AfterAll(c, [x, y])
-  else:
-    assert pred_shape == x_shape[:len(pred_shape)] == y_shape[:len(pred_shape)], (pred_shape, x_shape, y_shape)
-    bcast_pred = xops.BroadcastInDim(pred, x_shape, list(range(len(pred_shape))))
-    return xops.Select(bcast_pred, x, y)
 
 def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
                               cond_nconsts, cond_jaxpr,
@@ -625,7 +550,6 @@ while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval
 xla.register_initial_style_primitive(while_p)
-xla.register_translation(while_p, _while_loop_translation_rule)
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = \
@@ -949,32 +873,6 @@ def _cond_abstract_eval(*args, branches, **kwargs):
     raise NotImplementedError('Effects not supported in `cond`.')
   joined_effects = core.join_effects(*(b.effects for b in branches))
   return _map(raise_to_shaped, branches[0].out_avals), joined_effects
-
-def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
-                           linear):
-  del linear  # Unused.
-
-  name_stack = extend_name_stack(ctx.name_stack, "cond")
-  def make_computation(name, jaxpr, op_shape):
-    c = xla_client.XlaBuilder(name + '_comp')
-    op = xla.parameter(c, 0, op_shape)
-    ops = [xops.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
-    subctx = ctx.replace(
-        builder=c, name_stack=extend_name_stack(name_stack, name + '_fun'))
-    outs = xla.jaxpr_subcomp(
-        subctx, jaxpr.jaxpr,
-        _map(partial(xla.pyval_to_ir_constant, c), jaxpr.consts), *ops)
-    return c.build(xops.Tuple(c, outs))
-
-  c = ctx.builder
-  op = xops.Tuple(c, args)
-  op_shape = c.get_shape(op)
-  branch_computations = [
-      make_computation(f'branch_{i}', jaxpr, op_shape)
-      for i, jaxpr in enumerate(branches)]
-  return xla.xla_destructure(
-      c, xops.Conditional(index, branch_computations, [op] * len(branches)))
-
 
 def _bcast_select(pred, on_true, on_false):
   if np.ndim(pred) != np.ndim(on_true):
@@ -1353,7 +1251,6 @@ ad.reducing_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.axis_primitive_batchers[cond_p] = _cond_batching_rule
 xla.register_initial_style_primitive(cond_p)
-xla.register_translation(cond_p, _cond_translation_rule)
 core.custom_typechecks[cond_p] = _cond_typecheck
 pe.partial_eval_jaxpr_custom_rules[cond_p] = \
     partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'cond')
@@ -2146,8 +2043,6 @@ ad.primitive_jvps[scan_p] = _scan_jvp
 ad.reducing_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.register_initial_style_primitive(scan_p)
-xla.register_translation(scan_p, xla.lower_fun(_scan_impl, new_style=True,
-                                               multiple_results=True))
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
 batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
@@ -2706,9 +2601,6 @@ linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
 xla.register_initial_style_primitive(linear_solve_p)
-xla.register_translation(
-    linear_solve_p, xla.lower_fun(_custom_linear_solve_impl, new_style=True,
-                                  multiple_results=True))
 mlir.register_lowering(
     linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
                                    multiple_results=True))
@@ -2893,8 +2785,7 @@ def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
 
 
 
-def _cumred_tpu_translation_rule(window_reduce: Callable, x, *,
-                                 axis: int, reverse: bool):
+def cumred_tpu_impl(window_reduce: Callable, x, *, axis: int, reverse: bool):
   # On TPU, an implementation using reduce_window is handled specially by the
   # compiler and is efficient. On other backends, it is O(n^2).
   n = x.shape[axis]
@@ -2926,13 +2817,7 @@ def _cumulative_reduction_primitive(name,
                                     tpu_reduce_window_fn):
   reducer_p = lax.standard_primitive(
     _cumred_shape_rule, partial(_cumred_dtype_rule, name),
-    name,
-    translation_rule=xla.lower_fun(
-      partial(associative_scan, reduce_fn),
-      multiple_results=False, new_style=True))
-  xla.register_translation(reducer_p, xla.lower_fun(
-      partial(_cumred_tpu_translation_rule, tpu_reduce_window_fn),
-      multiple_results=False, new_style=True), platform='tpu')
+    name)
   batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
                                                    reducer_p)
   mlir.register_lowering(
@@ -2942,8 +2827,8 @@ def _cumulative_reduction_primitive(name,
                          multiple_results=False)))
   mlir.register_lowering(
       reducer_p,
-      mlir.lower_fun(partial(_cumred_tpu_translation_rule,
-                             tpu_reduce_window_fn), multiple_results=False),
+      mlir.lower_fun(partial(cumred_tpu_impl, tpu_reduce_window_fn),
+                     multiple_results=False),
       platform='tpu')
   return reducer_p
 
@@ -3022,14 +2907,14 @@ def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
   return core.eval_jaxpr(jaxpr, (), *args)
 
 
-def _remat_translation_rule(*args,
-                            call_jaxpr: Optional[core.Jaxpr] = None,
-                            jaxpr: Optional[core.Jaxpr] = None,
-                            platform: str,
-                            prevent_cse: bool, differentiated: bool,
-                            policy,
-                            concrete: bool = False,
-                            name: str = "checkpoint"):
+def remat_impl(*args,
+               call_jaxpr: Optional[core.Jaxpr] = None,
+               jaxpr: Optional[core.Jaxpr] = None,
+               platform: str,
+               prevent_cse: bool, differentiated: bool,
+               policy,
+               concrete: bool = False,
+               name: str = "checkpoint"):
   # Support either "jaxpr" (for remat2) and "call_jaxpr" (for remat)
   # name is not passed for remat2, defaults to "checkpoint"
   # TODO: remove call_jaxpr once we drop the remat call primitive
@@ -3053,14 +2938,8 @@ def _remat_translation_rule(*args,
 
 for platform in ("cpu", "gpu", "tpu"):
   for remat_primitive in (pe.remat_call_p, ad_checkpoint.remat_p):  # type: ignore
-    xla.register_translation(remat_primitive,
-                             xla.lower_fun(partial(_remat_translation_rule,
-                                                   platform=platform),
-                                           new_style=True, multiple_results=True,
-                                           backend=platform),
-                            platform=platform)
     mlir.register_lowering(remat_primitive,
-                           mlir.lower_fun(partial(_remat_translation_rule,
+                           mlir.lower_fun(partial(remat_impl,
                                                    platform=platform),
                                           multiple_results=True),
                            platform=platform)
@@ -3068,11 +2947,6 @@ for platform in ("cpu", "gpu", "tpu"):
 
 def _optimization_barrier_abstract_eval(*args):
   return args
-
-
-def _optimization_barrier_translation_rule(ctx, avals_in, avals_out, *args):
-  out = xops.OptimizationBarrier(xops.Tuple(ctx.builder, args))
-  return [xops.GetTupleElement(out, i) for i in range(len(args))]
 
 
 def _optimization_barrier_lowering_rule(ctx, *args):
@@ -3094,7 +2968,5 @@ optimization_barrier_p.multiple_results = True
 optimization_barrier_p.def_impl(
     partial(xla.apply_primitive, optimization_barrier_p))
 optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
-xla.register_translation(optimization_barrier_p,
-                         _optimization_barrier_translation_rule)
 mlir.register_lowering(optimization_barrier_p,
                        _optimization_barrier_lowering_rule)

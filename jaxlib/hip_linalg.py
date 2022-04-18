@@ -32,40 +32,6 @@ except ImportError:
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def lu_pivots_to_permutation(c, pivots, *, permutation_size):
-  """Kernel for the transformation of pivots to permutations on GPU."""
-  pivots_shape = c.get_shape(pivots)
-  dims = pivots_shape.dimensions()
-  dtype = np.dtype(np.int32)
-
-  assert pivots_shape.element_type() == dtype
-
-  batch_size = _prod(dims[:-1])
-  pivot_size = dims[-1]
-
-  opaque = _hip_linalg.hip_lu_pivots_to_permutation_descriptor(
-      batch_size, pivot_size, permutation_size)
-  pivots_layout = tuple(range(len(dims) - 1, -1, -1))
-  pivots_shape_with_layout = xla_client.Shape.array_shape(
-      dtype, dims, pivots_layout)
-
-  permutations_layout = pivots_layout
-  permutations_dims = list(dims)
-  permutations_dims[-1] = permutation_size
-  permutations_shape_with_layout = xla_client.Shape.array_shape(
-      dtype, permutations_dims, permutations_layout)
-
-  return xla_client.ops.CustomCallWithLayout(
-      c,
-      b"hip_lu_pivots_to_permutation",
-      operands=(pivots,),
-      shape_with_layout=permutations_shape_with_layout,
-      operand_shapes_with_layout=(pivots_shape_with_layout,),
-      opaque=opaque,
-      api_version=xla_client.ops.CustomCallApiVersion
-      .API_VERSION_STATUS_RETURNING)
-
-
 def lu_pivots_to_permutation_mhlo(pivots, *, permutation_size):
   """Kernel for the transformation of pivots to permutations on GPU."""
   typ = ir.RankedTensorType(pivots.type)

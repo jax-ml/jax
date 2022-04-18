@@ -65,6 +65,7 @@ from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax.config import config
 from jax.experimental import jax2tf
+from jax.interpreters import mlir
 from jax.interpreters import xla
 
 import numpy as np
@@ -124,7 +125,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         set(xla._translations)
         | set(xla._backend_specific_translations["cpu"])
         | set(xla._backend_specific_translations["gpu"])
-        | set(xla._backend_specific_translations["tpu"]))
+        | set(xla._backend_specific_translations["tpu"])
+        | set(mlir._lowerings)
+        | set(mlir._platform_specific_lowerings["cpu"])
+        | set(mlir._platform_specific_lowerings["gpu"])
+        | set(mlir._platform_specific_lowerings["tpu"]))
 
     tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl) | set(
         jax.experimental.jax2tf.jax2tf.tf_impl_with_avals)

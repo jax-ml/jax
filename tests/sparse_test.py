@@ -40,7 +40,7 @@ from jax import tree_util
 from jax import vmap
 from jax._src import test_util as jtu
 from jax._src.lax.lax import remaining, DotDimensionNumbers
-from jax import xla
+from jax.interpreters import mlir
 import jax.numpy as jnp
 from jax.util import split_list
 import numpy as np
@@ -514,15 +514,15 @@ class cuSparseTest(jtu.JaxTestCase):
       if cuda_version is None or cuda_version < 11000:
         self.assertFalse(sparse_apis and sparse_apis.is_supported)
         self.assertNotIn(sparse.csr_todense_p,
-                         xla._backend_specific_translations["gpu"])
+                         mlir._platform_specific_lowerings["gpu"])
       else:
         self.assertTrue(sparse_apis and sparse_apis.is_supported)
         self.assertIn(sparse.csr_todense_p,
-                      xla._backend_specific_translations["gpu"])
+                      mlir._platform_specific_lowerings["gpu"])
     else:
       self.assertTrue(sparse_apis and sparse_apis.is_supported)
       self.assertIn(sparse.csr_todense_p,
-                    xla._backend_specific_translations["gpu"])
+                    mlir._platform_specific_lowerings["gpu"])
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(

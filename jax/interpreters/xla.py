@@ -14,7 +14,7 @@
 
 # Lowering of jaxprs into XLA (HLO) computations.
 
-from collections import defaultdict, deque
+from collections import defaultdict
 import collections.abc
 import dataclasses
 import functools
@@ -22,7 +22,7 @@ from functools import partial
 import itertools as it
 import operator
 import re
-from typing import (Any, Callable, Deque, Dict, List, NamedTuple, Optional,
+from typing import (Any, Callable, Dict, List, NamedTuple, Optional,
                     Sequence, Set, Type, Tuple, Union)
 from typing_extensions import Protocol
 
@@ -30,7 +30,6 @@ import numpy as np
 
 from jax.config import config
 from jax import core
-from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
 from jax import linear_util as lu
@@ -40,8 +39,13 @@ from jax.core import (ConcreteArray, ShapedArray,
                       Literal, str_eqn_compact, abstract_token)
 import jax._src.pretty_printer as pp
 from jax._src import util
-from jax._src.util import (prod, extend_name_stack, new_name_stack, wrap_name,
-                           safe_zip, safe_map, partition_list)
+from jax._src.util import (prod, new_name_stack, safe_zip, safe_map,
+                           partition_list)
+
+# TODO: update callers to refer to new location.
+from jax._src.util import extend_name_stack as extend_name_stack  # noqa: F401
+from jax._src.util import wrap_name as wrap_name  # noqa: F401
+
 from jax._src.lib import xla_client as xc
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
@@ -435,18 +439,22 @@ def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',
                              prim: core.Primitive,
                              *avals: core.AbstractValue, **params):
   c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
-  f = lower_fun(prim.bind, multiple_results=prim.multiple_results,
-                new_style=True)
   xla_args, _ = _xla_callable_args(c, avals, tuple_args=False,
                                    filter_tokens=False)
   ctx = TranslationContext(builder=c, platform=platform, axis_env=axis_env,
                            name_stack=new_name_stack())
-  ans = f(ctx.replace(builder=c), avals, None, *xla_args, **params)
+  wrapped_fun = lu.wrap_init(prim.bind, params)
+  if not prim.multiple_results:
+    wrapped_fun = _tuple_output(wrapped_fun)
+  with core.extend_axis_env_nd(zip(ctx.axis_env.names, ctx.axis_env.sizes)):
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+  ans = _jaxpr_subcomp(ctx, jaxpr, _xla_consts(ctx.builder, consts),
+                       *xla_args)
   if prim.multiple_results:
-    ans = xops.Tuple(c, ans)
+    return c.build(xops.Tuple(c, ans))
   else:
-    ans, = ans
-  return c.build(ans)
+    x, = ans
+    return c.build(x)
 
 
 # Used within _xla_callable_args and _xla_param to distinguish between None (no
@@ -558,8 +566,8 @@ class TranslationContext:
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 
 
-def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
-                  consts: Sequence[XlaOp], *args: XlaOp) -> Sequence[XlaOp]:
+def _jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
+                   consts: Sequence[XlaOp], *args: XlaOp) -> Sequence[XlaOp]:
   assert ctx.platform is not None
   def read(v):
     if type(v) is Literal:
@@ -680,47 +688,6 @@ def jaxpr_collectives(jaxpr):
 ### xla_call underlying jit
 
 
-def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
-  """Expands a given shape tree into a flat list of indices to arrays.
-
-  Given the following computation:
-
-  >>> c = xc.XlaBuilder("example")
-  >>> p0 = parameter(c, 1, xc.shape_from_pyval(jnp.ones([1])))
-  >>> p1 = parameter(c, 2, xc.shape_from_pyval(jnp.ones([2])))
-  >>> p2 = parameter(c, 3, xc.shape_from_pyval(jnp.ones([3])))
-  >>> o = xops.Tuple(c, [p0, p1, p2])
-
-  We can query the arrays in the output tuple:
-
-  >>> flatten_shape(c.GetShape(o))
-  [((0,), f32[1]{0}), ((1,), f32[2]{0}), ((2,), f32[3]{0})]
-
-  Or the arrays in one of the parameters (which is itself an array):
-
-  >>> flatten_shape(c.GetShape(p0))
-  [((), f32[1]{0})]
-
-  Args
-    s: The input shape.
-
-  Returns:
-    An iterable of pairs of indices and shapes for each array within the shape
-    tree.
-  """
-  results: List[Tuple[Tuple[int, ...], XlaShape]] = []
-  _flatten_shape(s, (), results)
-  return results
-
-def _flatten_shape(s: XlaShape, index: Tuple[int, ...],
-                   results: List[Tuple[Tuple[int, ...], XlaShape]]) -> None:
-  if s.is_array() or s.is_token():
-    results.append((index, s))
-  else:
-    assert s.is_tuple()
-    for i, sub in enumerate(s.tuple_shapes()):
-      _flatten_shape(sub, index + (i,), results)
-
 
 def _xla_consts(c, consts):
   unique_consts = {id(const): const for const in consts}
@@ -729,36 +696,6 @@ def _xla_consts(c, consts):
   return [c for const in consts for c in xla_consts[id(const)]]
 
 
-
-
-def set_up_aliases(c, xla_args, out_shape: XlaShape, donated_args, tuple_args):
-  """Configures input/output "must" aliasing based on `donated_args`."""
-  # First for every input array add it to `donations` iff it is a member of
-  # `donated_args`.
-  donations: Dict[Tuple[Tuple[int, ...], Any], Deque]
-  donations = defaultdict(deque)
-  for arg_index, arg in enumerate(xla_args):
-    if donated_args[arg_index]:
-      for param_index, element in flatten_shape(c.GetShape(arg)):
-        key = (element.dimensions(), element.xla_element_type())
-        if tuple_args:
-          param_number = 0
-          param_index = (arg_index,) + tuple(param_index)
-          donations[key].append((param_number, param_index, arg_index))
-        else:
-          param_number = arg_index
-          donations[key].append((param_number, param_index, arg_index))
-
-  # Consume donations for outputs.
-  out_donated_args = list(donated_args)
-  for output_index, element in flatten_shape(out_shape):
-    key = (element.dimensions(), element.xla_element_type())
-    if donations.get(key, ()):
-      param_number, param_index, arg_index = donations[key].popleft()
-      out_donated_args[arg_index] = False
-      c.setup_alias(output_index, param_number, param_index)
-
-  return tuple(out_donated_args)
 
 
 xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
@@ -793,25 +730,6 @@ def _xla_call_transpose_update_params(params, undef_primals, nonzero_cts):
 ad.call_transpose_param_updaters[xla_call_p] = _xla_call_transpose_update_params
 
 
-def _xla_call_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
-                               backend=None, call_jaxpr, donated_invars,
-                               inline=None, device=None):
-  del device, donated_invars, inline  # Ignored.
-  c = ctx.builder
-  check_backend_matches(backend, ctx.platform)
-  subc = xc.XlaBuilder(f"jit_{name}")
-  args = [parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
-  sub_ctx = ctx.replace(
-      builder=subc,
-      name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'jit')))
-  out_nodes = jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
-
-  if len(out_nodes) == 1:
-    subc = subc.Build(out_nodes[0])
-    return [xops.Call(c, subc, list(in_nodes))]
-  else:
-    subc = subc.Build(xops.Tuple(subc, out_nodes))
-    return xla_destructure(c, xops.Call(c, subc, list(in_nodes)))
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
@@ -944,108 +862,21 @@ call_translations = _TranslationRuleAdapter(
 
 
 
-register_translation(xla_call_p, _xla_call_translation_rule)
-
-def zeros_like_translation_rule(c, x):
-  shape = c.get_shape(x)
-  assert not shape.is_tuple()
-  zero = xops.Constant(c, np.array(0, shape.element_type()))
-  return xops.Broadcast(zero, shape.dimensions())
-translations[ad_util.zeros_like_p] = zeros_like_translation_rule
-
-def add_jaxvals_translation_rule(c, x, y):
-  shape = c.get_shape(x)
-  assert not shape.is_tuple()
-  return xops.Add(x, y)
-translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
-
-translations[ad_util.stop_gradient_p] = lambda c, x: x
-
-
 @lu.transformation
 def _tuple_output(*args, **kwargs):
   ans = yield args, kwargs
   yield (ans,)
 
+# TODO(phawkins): remove lower_fun completely after updating users.
 def lower_fun(fun: Callable, *, multiple_results: bool, backend=None,
               new_style: bool = False) -> Callable:
-  if new_style:
-    def f_new(ctx: TranslationContext, avals_in: Sequence[core.AbstractValue],
-              avals_out: Optional[Sequence[core.AbstractValue]],
-              *xla_args: xc.XlaOp,
-              **params) -> Sequence[xc.XlaOp]:
-      wrapped_fun = lu.wrap_init(fun, params)
-      if not multiple_results:
-        wrapped_fun = _tuple_output(wrapped_fun)
-      with core.extend_axis_env_nd(zip(ctx.axis_env.names, ctx.axis_env.sizes)):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals_in)
-      return jaxpr_subcomp(ctx, jaxpr, _xla_consts(ctx.builder, consts),
-                           *xla_args)
-    return f_new
-
-  # TODO(phawkins): migrate dependent code & always use new_style=True.
-
-  if backend is None:
-    # The user didn't specify a backend. This isn't possible with the new style
-    # API.
-    backend = "backend_not_specified"
-
-  def f(c, *xla_args, **params):
-    avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
-    return f_with_avals(c, avals, xla_args, params)
-
-  def f_with_avals(c, avals, xla_args, params):
-    # parallelism is only supported via the new-style API.
-    axis_env = AxisEnv(1, (), ())
-    wrapped_fun = lu.wrap_init(fun, params)
-    if not multiple_results:
-      wrapped_fun = _tuple_output(wrapped_fun)
-    with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-    ctx = TranslationContext(c, backend, axis_env, new_name_stack())
-    outs = jaxpr_subcomp(ctx, jaxpr, _xla_consts(c, consts), *xla_args)
-    if (multiple_results or
-        any(len(aval_to_xla_shapes(v.aval)) > 1 for v in jaxpr.outvars)):
-      return xops.Tuple(c, outs)
-    else:
-      assert len(outs) == 1, outs
-      return outs[0]
-
+  def f(*args, **kw):
+    raise RuntimeError("XLA translation rules are deprecated and "
+                       "jax.interpreters.xla.lower_fun is no longer supported. "
+                       "Add an MLIR (MHLO) lowering via jax.interpreters.mlir "
+                       "instead.")
   return f
-
-def _array_aval_from_xla_shape(xla_shape):
-  # This function instantiates the assumption that we can map fro XLA array
-  # types to JAX array types.
-  # TODO(mattjj): remove assumption can map XLA array types to JAX array types
-  assert not xla_shape.is_tuple()
-  return ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
 
 
 ad.primitive_transposes[core.named_call_p] = partial(ad.call_transpose,
                                                      core.named_call_p)
-
-
-def _named_call_translation_rule(ctx, avals_in, avals_out, *in_nodes,
-                                 name="core_call", backend=None, call_jaxpr):
-  check_backend_matches(backend, ctx.platform)
-  c = ctx.builder
-  subc = xc.XlaBuilder(name)
-  args = [parameter(subc, i, c.GetShape(n)) for i, n in enumerate(in_nodes)]
-  sub_ctx = ctx.replace(builder=subc,
-                        name_stack=extend_name_stack(ctx.name_stack, name))
-  out_nodes = jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
-  if len(out_nodes) == 1:
-    subc = subc.Build(out_nodes[0])
-    return [xops.Call(c, subc, list(in_nodes))]
-  else:
-    subc = subc.Build(xops.Tuple(subc, out_nodes))
-    return xla_destructure(c, xops.Call(c, subc, list(in_nodes)))
-register_translation(core.named_call_p, _named_call_translation_rule)
-
-
-def _call_translation_rule(ctx, avals_in, avals_out, *in_nodes, backend=None,
-                           call_jaxpr):
-  return _named_call_translation_rule(
-      ctx, avals_in, avals_out, *in_nodes, name="core_call", backend=backend,
-      call_jaxpr=call_jaxpr)
-register_translation(core.call_p, _call_translation_rule)

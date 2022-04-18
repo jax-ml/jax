@@ -33,31 +33,6 @@ except ImportError:
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
-def threefry2x32(c, keys, data):
-  """ThreeFry2x32 kernel for GPU."""
-  assert len(keys) == 2, keys
-  assert len(data) == 2, data
-  dims = c.get_shape(keys[0]).dimensions()
-  dtype = np.dtype(np.uint32)
-  for x in itertools.chain(keys, data):
-    x_shape = c.get_shape(x)
-    assert x_shape.element_type() == dtype
-    assert dims == x_shape.dimensions(), (dims, x_shape)
-  ndims = len(dims)
-
-  opaque = _cuda_prng.cuda_threefry2x32_descriptor(_prod(dims))
-  layout = tuple(range(ndims - 1, -1, -1))
-  shape = xla_client.Shape.array_shape(dtype, dims, layout)
-  return xla_client.ops.CustomCallWithLayout(
-      c, b"cuda_threefry2x32",
-      operands=(keys[0], keys[1], data[0], data[1]),
-      shape_with_layout=xla_client.Shape.tuple_shape([shape, shape]),
-      operand_shapes_with_layout=(shape,) * 4,
-      opaque=opaque,
-      api_version=xla_client.ops.CustomCallApiVersion
-      .API_VERSION_STATUS_RETURNING)
-
-
 
 def threefry2x32_lowering(keys, data):
   """ThreeFry2x32 kernel for GPU."""

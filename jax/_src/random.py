@@ -34,7 +34,6 @@ from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
-from jax.interpreters import xla
 from jax._src.util import prod, canonicalize_axis
 
 
@@ -1013,12 +1012,6 @@ random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
 random_gamma_p.def_abstract_eval(lambda key, a, **_: core.raise_to_shaped(a))
 ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a, **kwds: tangent * _gamma_grad(ans, a, **kwds))
-xla.register_translation(random_gamma_p, xla.lower_fun(
-    partial(_gamma_impl, use_vmap=True),
-    multiple_results=False, new_style=True))
-xla.register_translation(random_gamma_p, xla.lower_fun(
-    partial(_gamma_impl, use_vmap=False),
-    multiple_results=False, new_style=True), platform='cpu')
 mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     partial(_gamma_impl, use_vmap=True),
     multiple_results=False))

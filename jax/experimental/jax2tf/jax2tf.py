@@ -1003,6 +1003,10 @@ tf_not_yet_impl = [
     "schur",
     "name",
     "unreachable",
+    "bint",
+    "getslice",
+    "full_to_shard",
+    "shard_to_full",
 
     # Not high priority?
     "after_all",
@@ -2013,7 +2017,7 @@ def _reduce(*operands: TfVal,
 tf_impl_with_avals[lax.reduce_p] = _reduce
 
 
-# We use lax._cumred_tpu_translation_rule to convert cummax,
+# We use lax.cumred_tpu_impl to convert cummax,
 # cummin, cumsum and cumprod. This is efficient on TPU, but the complexity is
 # O(n^2) on other backends. This may be implemented using associative_scan
 # instead to favor different backends.
@@ -2026,7 +2030,7 @@ def _cumred(lax_reduce_fn: Callable,
                              multiple_results=False,
                              extra_name_stack=extra_name_stack)
   else:
-    return _convert_jax_impl(partial(lax_control_flow._cumred_tpu_translation_rule,
+    return _convert_jax_impl(partial(lax_control_flow.cumred_tpu_impl,
                                      lax_reduce_window_fn),
                              multiple_results=False,
                              extra_name_stack=extra_name_stack)
@@ -2377,7 +2381,7 @@ tf_impl_with_avals[lax.scan_p] = _convert_jax_impl(
     extra_name_stack="scan")
 
 tf_impl_with_avals[ad_checkpoint.remat_p] = \
-  _convert_jax_impl(partial(lax_control_flow._remat_translation_rule,
+  _convert_jax_impl(partial(lax_control_flow.remat_impl,
                             # TODO: jax2tf cannot discriminate by platform
                             platform="cpu"),
                     multiple_results=True,

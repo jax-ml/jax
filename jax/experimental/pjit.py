@@ -48,10 +48,8 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
 from jax._src.tree_util import prefix_errors
 from jax._src import util
 from jax._src.util import (
-    extend_name_stack, HashableFunction, safe_map, safe_zip, wrap_name, wraps,
+    HashableFunction, safe_map, safe_zip, wrap_name, wraps,
     distributed_debug_log, split_list, cache, tuple_insert, weakref_lru_cache)
-
-xops = xc._xla.ops
 
 class _FromGdaSingleton:
   pass
@@ -687,42 +685,6 @@ def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env,
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
-def _pjit_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
-                           jaxpr, in_axis_resources, out_axis_resources,
-                           resource_env, donated_invars, in_positional_semantics,
-                           out_positional_semantics):
-  # TODO: Make this into an MLIR rule and use manual_axes!
-  mesh = resource_env.physical_mesh
-  subc = xc.XlaBuilder(f"pjit_{name}")
-
-  args = []
-  for i, (n, aval, axis_resources) in enumerate(
-      safe_zip(in_nodes, avals_in, in_axis_resources)):
-    # N.B. inlined calls shouldn't have shardings set directly on the inputs or
-    # outputs (set_sharding_proto adds an identity operation).
-    arg = xla.parameter(subc, i, ctx.builder.GetShape(n))
-    args.append(
-        xla.set_sharding_proto(
-            subc, arg, get_aval_sharding_proto(aval, axis_resources, mesh)))
-
-  # TODO: Think about how to avoid duplicating constants with the outer jaxpr
-  sub_ctx = ctx.replace(
-      builder=subc,
-      name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, "pjit")))
-  out_nodes = xla.jaxpr_subcomp(
-      sub_ctx, jaxpr.jaxpr, xla._xla_consts(subc, jaxpr.consts), *args)
-  out_nodes = [
-      xla.set_sharding_proto(subc, out,
-                             get_aval_sharding_proto(aval, axis_resources, mesh))
-      for out, aval, axis_resources in safe_zip(
-          out_nodes, avals_out, out_axis_resources)
-  ]
-
-  subc = subc.build(xops.Tuple(subc, out_nodes))
-  return xla.xla_destructure(ctx.builder,
-                             xops.Call(ctx.builder, subc, list(in_nodes)))
-xla.register_translation(pjit_p, _pjit_translation_rule)
-
 def _pjit_lowering(ctx, *args, name, jaxpr, in_axis_resources,
                    out_axis_resources, resource_env, donated_invars,
                    in_positional_semantics, out_positional_semantics):
@@ -1045,20 +1007,6 @@ ad.deflinear2(sharding_constraint_p,
               lambda ct, _, axis_resources, resource_env: (
                   sharding_constraint_p.bind(
                       ct, axis_resources=axis_resources, resource_env=resource_env),))
-
-def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node, *,
-                                          axis_resources, resource_env):
-  aval, = avals_in
-  mesh = resource_env.physical_mesh
-  return [
-      xla.set_sharding_proto(
-          ctx.builder,
-          x_node,
-          get_aval_sharding_proto(
-              aval, axis_resources, mesh, allow_uneven_axes=True),
-          unspecified_dims=get_unconstrained_dims(axis_resources))
-  ]
-xla.register_translation(sharding_constraint_p, _sharding_constraint_translation_rule)
 
 def _sharding_constraint_mhlo_lowering(ctx, x_node, *, axis_resources,
                                        resource_env):

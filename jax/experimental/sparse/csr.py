@@ -23,7 +23,6 @@ import numpy as np
 from jax import core
 from jax.interpreters import ad
 from jax.interpreters import mlir
-from jax.interpreters import xla
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
 from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, _safe_asarray, CuSparseEfficiencyWarning
@@ -172,19 +171,6 @@ def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
   assert indptr.shape[0] == shape[0] + 1
   return core.ShapedArray(shape, data.dtype)
 
-_csr_todense_translation_rule = xla.lower_fun(
-    _csr_todense_impl, multiple_results=False, new_style=True)
-
-def _csr_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
-                                      indptr, *, shape):
-  dtype = avals_in[0].dtype
-  if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
-    warnings.warn(f"csr_todense cusparse/hipsparse lowering not available for dtype={dtype}. "
-                  "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _csr_todense_translation_rule(ctx, avals_in, avals_out, data, indices,
-                                         indptr, shape=shape)
-  return [sparse_apis.csr_todense(ctx.builder, data, indices, indptr, shape=shape)]
-
 _csr_todense_lowering = mlir.lower_fun(
     _csr_todense_impl, multiple_results=False)
 
@@ -216,11 +202,8 @@ def _csr_todense_transpose(ct, data, indices, indptr, *, shape):
 
 ad.defjvp(csr_todense_p, _csr_todense_jvp, None, None)
 ad.primitive_transposes[csr_todense_p] = _csr_todense_transpose
-xla.register_translation(csr_todense_p, _csr_todense_translation_rule)
 mlir.register_lowering(csr_todense_p, _csr_todense_lowering)
 if sparse_apis and sparse_apis.is_supported:
-  xla.register_translation(csr_todense_p, _csr_todense_gpu_translation_rule,
-                           platform='gpu')
   mlir.register_lowering(csr_todense_p, _csr_todense_gpu_lowering,
                          platform='gpu')
 
@@ -271,21 +254,6 @@ def _csr_fromdense_abstract_eval(mat, *, nse, index_dtype):
   indptr = core.ShapedArray((mat.shape[0] + 1,), index_dtype)
   return data, indices, indptr
 
-_csr_fromdense_translation_rule = xla.lower_fun(
-    _csr_fromdense_impl, multiple_results=True, new_style=True)
-
-def _csr_fromdense_gpu_translation_rule(ctx, avals_in, avals_out, mat, *, nse,
-                                        index_dtype):
-  dtype = avals_in[0].dtype
-  if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
-    warnings.warn(f"csr_fromdense cusparse/hipsparse lowering not available for dtype={dtype}. "
-                  "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _csr_fromdense_translation_rule(ctx, avals_in, avals_out, mat,
-                                           nse=nse, index_dtype=index_dtype)
-  data, indices, indptr = sparse_apis.csr_fromdense(
-      ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
-  return [data, indices, indptr]
-
 _csr_fromdense_lowering = mlir.lower_fun(_csr_fromdense_impl,
                                          multiple_results=True)
 
@@ -328,12 +296,8 @@ def _csr_fromdense_transpose(ct, M, *, nse, index_dtype):
 
 ad.primitive_jvps[csr_fromdense_p] = _csr_fromdense_jvp
 ad.primitive_transposes[csr_fromdense_p] = _csr_fromdense_transpose
-xla.register_translation(csr_fromdense_p, _csr_fromdense_translation_rule)
 mlir.register_lowering(csr_fromdense_p, _csr_fromdense_lowering)
 if sparse_apis and sparse_apis.is_supported:
-  xla.register_translation(csr_fromdense_p,
-                           _csr_fromdense_gpu_translation_rule,
-                           platform='gpu')
   mlir.register_lowering(csr_fromdense_p,
                          _csr_fromdense_gpu_lowering,
                          platform='gpu')
@@ -378,20 +342,6 @@ def _csr_matvec_abstract_eval(data, indices, indptr, v, *, shape, transpose):
   assert v.shape[0] == (shape[0] if transpose else shape[1])
   return core.ShapedArray((out_shape,), data.dtype)
 
-_csr_matvec_translation_rule = xla.lower_fun(
-    _csr_matvec_impl, multiple_results=False, new_style=True)
-
-def _csr_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
-                                     indptr, v, *, shape, transpose):
-  dtype = avals_in[0].dtype
-  if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f"csr_matvec cusparse/hipsparse lowering not available for dtype={dtype}. "
-                  "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _csr_matvec_translation_rule(ctx, avals_in, avals_out, data, indices, indptr, v,
-                                        shape=shape, transpose=transpose)
-  return [sparse_apis.csr_matvec(ctx.builder, data, indices, indptr, v,
-                                 shape=shape, transpose=transpose)]
-
 _csr_matvec_lowering = mlir.lower_fun(_csr_matvec_impl, multiple_results=False)
 
 def _csr_matvec_gpu_lowering(ctx, data, indices, indptr, v, *,
@@ -429,11 +379,8 @@ def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
 
 ad.defjvp(csr_matvec_p, _csr_matvec_jvp_mat, None, None, _csr_matvec_jvp_vec)
 ad.primitive_transposes[csr_matvec_p] = _csr_matvec_transpose
-xla.register_translation(csr_matvec_p, _csr_matvec_translation_rule)
 mlir.register_lowering(csr_matvec_p, _csr_matvec_lowering)
 if sparse_apis and sparse_apis.is_supported:
-  xla.register_translation(csr_matvec_p, _csr_matvec_gpu_translation_rule,
-                           platform='gpu')
   mlir.register_lowering(csr_matvec_p, _csr_matvec_gpu_lowering,
                          platform='gpu')
 
@@ -479,20 +426,6 @@ def _csr_matmat_abstract_eval(data, indices, indptr, B, *, shape, transpose):
   assert B.shape[0] == (shape[0] if transpose else shape[1])
   return core.ShapedArray((out_shape, B.shape[1]), data.dtype)
 
-_csr_matmat_translation_rule = xla.lower_fun(
-    _csr_matmat_impl, multiple_results=False, new_style=True)
-
-def _csr_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
-                                     indptr, B, *, shape, transpose):
-  dtype = avals_in[0].dtype
-  if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f"csr_matmat cusparse/hipsparse lowering not available for dtype={dtype}. "
-                  "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _csr_matmat_translation_rule(ctx, avals_in, avals_out, data, indices, indptr, B,
-                                        shape=shape, transpose=transpose)
-  return [sparse_apis.csr_matmat(ctx.builder, data, indices, indptr, B,
-                                 shape=shape, transpose=transpose)]
-
 _csr_matmat_lowering = mlir.lower_fun(_csr_matmat_impl, multiple_results=False)
 
 def _csr_matmat_gpu_lowering(ctx, data, indices, indptr, B, *, shape, transpose):
@@ -528,10 +461,7 @@ def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
 
 ad.defjvp(csr_matmat_p, _csr_matmat_jvp_left, None, None, _csr_matmat_jvp_right)
 ad.primitive_transposes[csr_matmat_p] = _csr_matmat_transpose
-xla.register_translation(csr_matmat_p, _csr_matmat_translation_rule)
 mlir.register_lowering(csr_matmat_p, _csr_matmat_lowering)
 if sparse_apis and sparse_apis.is_supported:
-  xla.register_translation(csr_matmat_p, _csr_matmat_gpu_translation_rule,
-                           platform='gpu')
   mlir.register_lowering(csr_matmat_p, _csr_matmat_gpu_lowering,
                          platform='gpu')

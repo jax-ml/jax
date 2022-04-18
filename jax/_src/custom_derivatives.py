@@ -398,10 +398,6 @@ def _custom_jvp_call_jaxpr_vmap(
 batching.axis_primitive_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
 
 xla.register_initial_style_primitive(custom_jvp_call_jaxpr_p)
-xla.register_translation(
-    custom_jvp_call_jaxpr_p,
-    xla.lower_fun(_custom_jvp_call_jaxpr_impl, new_style=True,
-                  multiple_results=True))
 
 # If a (multi)linear function is defined with a custom jvp, then
 # custom_jvp_call_jaxpr can appear in jaxprs to be transposed. Since it's
@@ -769,13 +765,9 @@ def _custom_vjp_call_jaxpr_vmap(
 batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
-xla.register_translation(
-    custom_vjp_call_jaxpr_p,
-    xla.lower_fun(_custom_vjp_call_jaxpr_impl, new_style=True,
-                  multiple_results=True))
 
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
-xla.register_translation(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
+mlir.register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 
 pe.partial_eval_jaxpr_custom_rules[custom_vjp_call_jaxpr_p] = \
     custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
@@ -1165,9 +1157,6 @@ linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
 xla.register_initial_style_primitive(linear_call_p)
-xla.register_translation(linear_call_p,
-                         xla.lower_fun(_linear_call_impl, new_style=True,
-                                       multiple_results=True))
 mlir.register_lowering(linear_call_p, mlir.lower_fun(
     _linear_call_impl, multiple_results=True))
 
@@ -1185,9 +1174,8 @@ unreachable_p.def_impl(unreachable_impl)
 
 # Translation raises an exception
 # TODO(frostig,mattjj): We have no good way to translate a function
-# that errs. Since translation over-approximates concrete evaluation,
-# we err on translation for the time being.
-xla.register_translation(unreachable_p, unreachable_impl)
+# that errs. Since MHLO lowering over-approximates concrete evaluation,
+# we err on MHLO lowering for the time being.
 mlir.register_lowering(unreachable_p, unreachable_impl)
 
 # Abstract evaluation proceeds without issue, to allow for staging

@@ -31,8 +31,6 @@ from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 from jax._src.lib import pocketfft
 
-xops = xla_client.ops
-
 __all__ = [
   "fft",
   "fft_p",
@@ -98,15 +96,6 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
     shape = x.shape
     dtype = x.dtype
   return x.update(shape=shape, dtype=dtype)
-
-def _fft_translation_rule(ctx, avals_in, avals_out, x, *, fft_type,
-                          fft_lengths):
-  return [xops.Fft(x, fft_type, fft_lengths)]
-
-def _fft_translation_rule_cpu(ctx, avals_in, avals_out, x, *, fft_type,
-                               fft_lengths):
-  return [pocketfft.pocketfft(ctx.builder, x, fft_type=fft_type,
-                              fft_lengths=fft_lengths)]
 
 def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   out_aval, = ctx.avals_out
@@ -179,10 +168,8 @@ def _fft_batching_rule(batched_args, batch_dims, fft_type, fft_lengths):
 fft_p = Primitive('fft')
 fft_p.def_impl(_fft_impl)
 fft_p.def_abstract_eval(fft_abstract_eval)
-xla.register_translation(fft_p, _fft_translation_rule)
 mlir.register_lowering(fft_p, _fft_lowering)
 ad.deflinear2(fft_p, _fft_transpose_rule)
 batching.primitive_batchers[fft_p] = _fft_batching_rule
 if pocketfft:
-  xla.register_translation(fft_p, _fft_translation_rule_cpu, platform='cpu')
   mlir.register_lowering(fft_p, _fft_lowering_cpu, platform='cpu')

@@ -48,8 +48,8 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
               weak_type_rule, named_shape_rule))
-  xla.register_translation(
-      prim, translation_rule or standard_translate(prim))
+  if translation_rule is not None:
+    xla.register_translation(prim, translation_rule)
   return prim
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,

@@ -26,7 +26,6 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge, xla_client
-xops = xla_client.ops
 xc = xla_client
 xb = xla_bridge
 
@@ -163,12 +162,8 @@ def _sp_indices_impl(mat):
 def _sp_indices_abstract_eval(mat):
   return mat.indices_aval
 
-def _sp_indices_translation_rule(ctx, avals_in, avals_out, data, indices):
-  return [indices]
-
 # Note: cannot use lower_fun to define attribute access primitives
 # because it leads to infinite recursion.
-xla.register_translation(sp_indices_p, _sp_indices_translation_rule)
 
 def _sp_indices_mhlo_lowering(ctx, data_and_indices):
   return [data_and_indices[1]]
@@ -185,12 +180,8 @@ def _sp_data_impl(mat):
 def _sp_data_abstract_eval(mat):
   return mat.data_aval
 
-def _sp_data_translation_rule(ctx, avals_in, avals_out, data, indices):
-  return [data]
-
 # Note: cannot use lower_fun to define attribute access primitives
 # because it leads to infinite recursion.
-xla.register_translation(sp_data_p, _sp_data_translation_rule)
 
 def _sp_data_mhlo_lowering(ctx, data_and_indices):
   return [data_and_indices[0]]
@@ -210,11 +201,6 @@ def _identity_impl(mat):
 def _identity_abstract_eval(mat):
   return AbstractSparseArray(mat.shape, mat.dtype, mat.index_dtype, mat.nnz)
 
-xla.register_translation(
-    identity_p, xla.lower_fun(_identity_impl, multiple_results=False,
-                              new_style=True))
-
-
 mlir.register_lowering(
     identity_p, mlir.lower_fun(_identity_impl, multiple_results=False))
 
@@ -232,9 +218,6 @@ def _split_impl(mat):
 def _split_abstract_eval(mat):
   m = AbstractSparseArray(mat.shape, mat.dtype, mat.index_dtype, mat.nnz)
   return m, m
-
-xla.register_translation(
-    split_p, xla.lower_fun(_split_impl, multiple_results=True, new_style=True))
 
 mlir.register_lowering(
     split_p, mlir.lower_fun(_split_impl, multiple_results=True))

@@ -190,24 +190,17 @@ def count_jit_and_pmap_compiles():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
-  xla_jaxpr_subcomp = xla.jaxpr_subcomp
   mlir_jaxpr_subcomp = mlir.jaxpr_subcomp
   count = [0]
-
-  def xla_jaxpr_subcomp_and_count(*args, **kwargs):
-    count[0] += 1
-    return xla_jaxpr_subcomp(*args, **kwargs)
 
   def mlir_jaxpr_subcomp_and_count(*args, **kwargs):
     count[0] += 1
     return mlir_jaxpr_subcomp(*args, **kwargs)
 
-  xla.jaxpr_subcomp = xla_jaxpr_subcomp_and_count
   mlir.jaxpr_subcomp = mlir_jaxpr_subcomp_and_count
   try:
     yield count
   finally:
-    xla.jaxpr_subcomp = xla_jaxpr_subcomp
     mlir.jaxpr_subcomp = mlir_jaxpr_subcomp
 
 @contextmanager

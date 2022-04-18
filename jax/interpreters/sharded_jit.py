@@ -39,8 +39,6 @@ from jax._src.util import (new_name_stack, wrap_name, wraps, safe_map,
                            safe_zip, HashableFunction)
 from jax._src.config import config
 
-xops = xc._xla.ops
-
 
 def _map(f, *xs):
   return tuple(map(f, *xs))
@@ -186,38 +184,6 @@ def _sharded_callable(
                  handle_outs)
 
 
-def _sharded_jit_translation_rule(ctx, avals_in, avals_out, *in_nodes,
-                                  in_parts, out_parts_thunk, nparts,
-                                  name, call_jaxpr, local_in_parts,
-                                  local_out_parts_thunk, local_nparts):
-  subc = xc.XlaBuilder(f"sharded_jit_{name}")
-
-  # We assume any extra leading in_nodes are constants and replicate them.
-  num_extra_nodes = len(in_nodes) - len(in_parts)
-  assert num_extra_nodes >= 0
-  in_parts = (None,) * num_extra_nodes + in_parts
-
-  args = []
-  for i, (n, sharding) in enumerate(safe_zip(in_nodes, in_parts)):
-    # We use xla.set_sharding instead of xla.with_sharding because inlined calls
-    # shouldn't have shardings set directly on the inputs or outputs.
-    arg = xla.parameter(subc, i, ctx.builder.GetShape(n))
-    args.append(xla.set_sharding(subc, arg, sharding))
-
-  sub_ctx = ctx.replace(
-      builder=subc,
-      name_stack=new_name_stack(wrap_name(name, "sharded_jit")))
-  out_nodes = xla.jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
-  out_parts = out_parts_thunk()
-  assert len(out_parts) == len(out_nodes)
-  out_nodes = [xla.set_sharding(subc, out, sharding)
-               for out, sharding in safe_zip(out_nodes, out_parts)]
-
-  subc = subc.build(xops.Tuple(subc, out_nodes))
-  return xla.xla_destructure(ctx.builder,
-                             xops.Call(ctx.builder, subc, list(in_nodes)))
-
-
 def _sharded_jit_lowering(ctx, *in_nodes,
                           in_parts, out_parts_thunk, nparts,
                           name, call_jaxpr, local_in_parts,
@@ -283,7 +249,6 @@ def _sharded_call_impl(fun, *args, nparts, in_parts, out_parts_thunk,
 sharded_call_p = core.CallPrimitive("sharded_call")
 sharded_call = sharded_call_p.bind
 sharded_call_p.def_impl(_sharded_call_impl)
-xla.register_translation(sharded_call_p, _sharded_jit_translation_rule)
 mlir.register_lowering(sharded_call_p, _sharded_jit_lowering)
 
 
@@ -447,17 +412,11 @@ def _sharding_constraint_impl(x, partitions):
   raise NotImplementedError(
       "with_sharding_constraint() should only be called inside sharded_jit()")
 
-def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node,
-                                          partitions):
-  return [xla.set_sharding(ctx.builder, x_node, partitions)]
-
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
 sharding_constraint_p.def_abstract_eval(lambda x, partitions: x)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, partitions: (with_sharding_constraint(ct, partitions),))
-xla.register_translation(sharding_constraint_p,
-                         _sharding_constraint_translation_rule)
 
 def _sharding_constraint_lowering(ctx, x_node, partitions):
   return [mlir.wrap_with_sharding_op(x_node, xla.sharding_to_proto(partitions))]

@@ -290,26 +290,14 @@ def _approx_top_k_fallback_translation(ctx, avals_in, avals_out, operand, *, k,
   comparator = _comparator_builder(op_type, is_max_k)
   iota = xc.ops.Iota(c, xc.Shape.array_shape(np.dtype(np.int32), op_dims),
                      reduction_dimension)
-  if xc._version >= 60:
-    init_val_literal = _get_init_val_literal(op_type, is_max_k)
-    init_val = xc.ops.Constant(c, init_val_literal)
-    init_arg = xc.ops.Constant(c, np.int32(-1))
-    out = xc.ops.ApproxTopKFallback(c, [operand, iota], [init_val, init_arg], k,
-                                    reduction_dimension, comparator,
-                                    recall_target, aggregate_to_topk,
-                                    reduction_input_size_override)
-    return xla.xla_destructure(c, out)
-  else:
-    val_arg = xc.ops.Sort(c, [operand, iota], comparator, reduction_dimension)
-    vals = xc.ops.GetTupleElement(val_arg, 0)
-    args = xc.ops.GetTupleElement(val_arg, 1)
-    sliced_vals = xc.ops.SliceInDim(vals, 0,
-                                    avals_out[0].shape[reduction_dimension], 1,
-                                    reduction_dimension)
-    sliced_args = xc.ops.SliceInDim(args, 0,
-                                    avals_out[0].shape[reduction_dimension], 1,
-                                    reduction_dimension)
-    return sliced_vals, sliced_args
+  init_val_literal = _get_init_val_literal(op_type, is_max_k)
+  init_val = xc.ops.Constant(c, init_val_literal)
+  init_arg = xc.ops.Constant(c, np.int32(-1))
+  out = xc.ops.ApproxTopKFallback(c, [operand, iota], [init_val, init_arg], k,
+                                  reduction_dimension, comparator,
+                                  recall_target, aggregate_to_topk,
+                                  reduction_input_size_override)
+  return xla.xla_destructure(c, out)
 
 
 def _approx_top_k_batch_rule(batch_operands, batch_axes, *, k,

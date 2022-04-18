@@ -70,7 +70,7 @@ from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.util import (unzip3, prod, safe_map, safe_zip,
-                           extend_name_stack, new_name_stack, wrap_name, assert_unreachable,
+                           new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log)
 
 
@@ -88,7 +88,6 @@ if sys.version_info >= (3, 9):
 else:
   OrderedDictType = Dict
 
-xops = xc.ops
 xe = xc._xla
 
 unsafe_map, map = map, safe_map  # type: ignore
@@ -1596,105 +1595,7 @@ ad.call_param_updaters[xla_pmap_p] = ad.call_param_updaters[xla.xla_call_p]
 ad.call_transpose_param_updaters[xla_pmap_p] = \
     ad.call_transpose_param_updaters[xla.xla_call_p]
 
-def _pmap_translation_rule(ctx, avals_in, avals_out, *in_nodes,
-                           axis_name, axis_size,
-                           global_axis_size, devices, name,
-                           call_jaxpr, backend=None, in_axes, out_axes,
-                           donated_invars, global_arg_shapes):
-  del donated_invars  # Unused.
-  xla.check_backend_matches(backend, ctx.platform)
-  # We in-line here rather than generating a Call HLO as in the xla_call
-  # translation rule just because the extra tuple stuff is a pain.
-  if ctx.axis_env.names and devices is not None:
-    raise ValueError("Nested pmap with explicit devices argument.")
-  if global_axis_size is None:
-    global_axis_size = axis_size
-  new_env = xla.extend_axis_env(ctx.axis_env, axis_name, global_axis_size)
-  # Shard the in_nodes that are mapped
-  in_avals = [v.aval for v in call_jaxpr.invars]
-  in_nodes_sharded = (
-      _xla_shard(ctx.builder, aval, new_env, in_node, in_axis)
-      if in_axis is not None else in_node
-      for aval, in_node, in_axis in safe_zip(in_avals, in_nodes, in_axes))
-
-  with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    sub_ctx = ctx.replace(
-        axis_env=new_env,
-        name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'pmap')))
-    sharded_outs = xla.jaxpr_subcomp(sub_ctx, call_jaxpr, (), *in_nodes_sharded)
-  out_avals = [v.aval for v in call_jaxpr.outvars]
-  outs = [_xla_unshard(ctx.builder, aval, new_env, out_axis, shard,
-                       backend=backend)
-          for aval, out_axis, shard in safe_zip(out_avals, out_axes, sharded_outs)]
-  return outs
-
-xla.register_translation(xla_pmap_p, _pmap_translation_rule)
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
-
-def _xla_shard(c, aval, axis_env, x, in_axis):
-  if aval is core.abstract_unit:
-    return x
-  elif aval is core.abstract_token:
-    return x
-  elif isinstance(aval, ShapedArray):
-    dims = list(c.get_shape(x).dimensions())
-    zero = xops.Constant(c, np.zeros((), dtype=np.uint32))
-    idxs = [zero] * (len(dims) - 1)
-    idxs.insert(in_axis, _unravel_index(c, axis_env))
-    dims_unsqueezed = dims.copy()
-    dims_unsqueezed[in_axis] = 1
-    dims_squeezed = dims.copy()
-    dims_squeezed.pop(in_axis)
-    return xops.Reshape(xops.DynamicSlice(x, idxs, dims_unsqueezed), dims_squeezed)
-  else:
-    raise TypeError((aval, c.get_shape(x)))
-
-# TODO(b/110096942): more efficient gather
-def _xla_unshard(c, aval, axis_env, out_axis, x, backend):
-  if aval is core.abstract_unit:
-    return x
-  elif aval is core.abstract_token:
-    return x
-  elif isinstance(aval, ShapedArray):
-    # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
-    convert_bool = (np.issubdtype(aval.dtype, np.bool_)
-                    and xb.get_backend(backend).platform in ('cpu', 'gpu'))
-    if convert_bool:
-      x = xops.ConvertElementType(
-          x, xla.dtype_to_primitive_type(np.dtype(np.float32)))
-
-    xla_shape = c.get_shape(x)
-    dims = list(xla_shape.dimensions())
-    padded = xops.Broadcast(
-        xops.Constant(c, np.array(0, xla_shape.numpy_dtype())),
-        [axis_env.sizes[-1]] + dims)
-    zero = xops.Constant(c, np.zeros((), dtype=np.uint32))
-    idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
-    padded = xops.DynamicUpdateSlice(padded, xops.Reshape(x, [1] + dims), idxs)
-    replica_groups_protos = xc.make_replica_groups(
-      xla.axis_groups(axis_env, axis_env.names[-1]))
-    out = xops.CrossReplicaSum(padded, replica_groups_protos)
-    if out_axis != 0:
-      # TODO(apaszke,mattjj): Change the indices to DynamicUpdateSlice instead
-      perm = list(range(1, len(dims)))
-      perm.insert(out_axis, 0)
-      out = xops.Transpose(out, perm)
-
-    # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
-    if convert_bool:
-      nonzero = xops.Ne(out, xops.Constant(c, np.array(0, dtype=np.float32)))
-      out = xops.ConvertElementType(
-          nonzero, xla.dtype_to_primitive_type(np.dtype(np.bool_)))
-    return out
-  else:
-    raise TypeError((aval, c.get_shape(x)))
-
-def _unravel_index(c, axis_env):
-  div = xops.Constant(c, np.array(axis_env.nreps // prod(axis_env.sizes),
-                                  np.uint32))
-  mod = xops.Constant(c, np.array(axis_env.sizes[-1], np.uint32))
-  return xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
-
 
 
 def _unravel_index_mhlo(axis_env):

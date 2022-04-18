@@ -2641,23 +2641,17 @@ class APITest(jtu.JaxTestCase):
     def g(x):
       return f(2, x)
 
-    xla_jaxpr_subcomp = xla.jaxpr_subcomp
     mlir_jaxpr_subcomp = mlir.jaxpr_subcomp
 
     jaxprs = []
-    def xla_jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
-      jaxprs.append(jaxpr)
-      return xla_jaxpr_subcomp(c, jaxpr, *args, **kwargs)
     def mlir_jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
       jaxprs.append(jaxpr)
       return mlir_jaxpr_subcomp(c, jaxpr, *args, **kwargs)
 
     try:
-      xla.jaxpr_subcomp = xla_jaxpr_subcomp_and_collect
       mlir.jaxpr_subcomp = mlir_jaxpr_subcomp_and_collect
       ans = g(3)
     finally:
-      xla.jaxpr_subcomp = xla_jaxpr_subcomp
       mlir.jaxpr_subcomp = mlir_jaxpr_subcomp
 
     self.assertEqual(ans, (7, 3))
@@ -2987,8 +2981,7 @@ class APITest(jtu.JaxTestCase):
     tokentest_p = core.Primitive("tokentest")
     tokentest_p.def_impl(partial(xla.apply_primitive, tokentest_p))
     tokentest_p.def_abstract_eval(lambda x, y: x)
-    xla.register_translation(tokentest_p,
-                             lambda ctx, avals_in, avals_out, x, y: [x])
+    mlir.register_lowering(tokentest_p, lambda ctx, x, y: [x])
     ad.defjvp(tokentest_p, (lambda g, x, token: x), None)
 
     token = jax.lax.create_token(123)
