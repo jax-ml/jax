@@ -545,7 +545,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian):
     if (jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
+        jtu.device_under_test() == "tpu" and
+        not (not full_matrices and compute_uv and len(b) == 0)):
       raise unittest.SkipTest("No complex SVD implementation")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(b + (m, n), dtype)]
