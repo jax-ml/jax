@@ -828,23 +828,6 @@ def _wrap_old_translation(prim: core.Primitive, f: Callable) -> TranslationRule:
   return wrapped
 
 
-def _wrap_old_call_translation(prim: core.Primitive,
-                               f: Callable) -> TranslationRule:
-  @functools.wraps(f)
-  def wrapped(ctx: TranslationContext, avals_in: Sequence[core.AbstractValue],
-              avals_out: Sequence[core.AbstractValue],
-               *args: XlaOp, **kw) -> Sequence[XlaOp]:
-    platform = kw.pop("backend", None)
-    check_backend_matches(platform, ctx.platform)
-    ans = f(ctx.builder, ctx.axis_env, args, ctx.name_stack,
-            backend=ctx.platform, **kw)
-    if (prim.multiple_results or
-        any(len(aval_to_xla_shapes(aval)) > 1 for aval in avals_out)):
-      return xla_destructure(ctx.builder, ans)
-    else:
-      return [ans]
-  return wrapped
-
 translations : _TranslationRuleAdapter
 translations = _TranslationRuleAdapter(_translations, _wrap_old_translation)
 
@@ -856,9 +839,6 @@ class _BackendSpecificTranslationsAdapter(defaultdict):
 
 backend_specific_translations: Dict[str, _TranslationRuleAdapter]
 backend_specific_translations = _BackendSpecificTranslationsAdapter()
-call_translations : _TranslationRuleAdapter
-call_translations = _TranslationRuleAdapter(
-    _translations, _wrap_old_call_translation)
 
 
 
