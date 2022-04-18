@@ -30,7 +30,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     `tile()` method. As a replacement for this, use {func}`jax.numpy.tile`
     ({jax-issue}`#10266`).
 
-## jaxlib 0.3.7 (April 15, 2202)
+## jaxlib 0.3.7 (April 15, 2022)
 * Changes:
   * Linux wheels are now built conforming to the `manylinux2014` standard, instead
     of `manylinux2010`.
