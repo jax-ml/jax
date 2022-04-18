@@ -28,7 +28,6 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
 from typing_extensions import Protocol
 import warnings
 
-import jax
 from jax import core
 from jax import linear_util as lu
 from jax._src import ad_util
@@ -46,16 +45,6 @@ import jax.interpreters.ad as ad
 import jax.interpreters.partial_eval as pe
 import jax.interpreters.xla as xla
 import numpy as np
-
-# TODO(jakevdp): remove this when minimum_jaxlib_version >= 0.3.3
-if jax._src.lib.mlir_api_version >= 4:
-  FuncOp = func_dialect.FuncOp  # pytype: disable=module-attr
-else:
-  from jax._src.lib.mlir.dialects import builtin  # pylint: disable=import-not-at-top
-  FuncOp = builtin.FuncOp  # pytype: disable=module-attr
-# mypy gets confused by conditional imports, so alias to Any for now.
-FuncOpType = Any
-
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -373,7 +362,7 @@ class ModuleContext:
   name_stack: NameStack
 
   # Cached primitive lowerings.
-  cached_primitive_lowerings: Dict[Any, FuncOpType]
+  cached_primitive_lowerings: Dict[Any, func_dialect.FuncOp]
 
   @property
   def axis_env(self) -> xla.AxisEnv:
@@ -388,7 +377,7 @@ class ModuleContext:
       module: Optional[ir.Module] = None,
       ip: Optional[ir.InsertionPoint] = None,
       symbol_table: Optional[ir.SymbolTable] = None,
-      cached_primitive_lowerings: Optional[Dict[Any, FuncOpType]] = None):
+      cached_primitive_lowerings: Optional[Dict[Any, func_dialect.FuncOp]] = None):
     assert platform is not None
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -571,7 +560,7 @@ def lower_jaxpr_to_fun(
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Optional[Sequence[Optional[int]]] = None
-) -> FuncOpType:
+) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -610,7 +599,7 @@ def lower_jaxpr_to_fun(
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
-  func_op = FuncOp(name, ftype, ip=ctx.ip)
+  func_op = func_dialect.FuncOp(name, ftype, ip=ctx.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
       "public" if public else "private")
   ctx.symbol_table.insert(func_op)
@@ -706,7 +695,7 @@ def lower_jaxpr_to_fun(
   return func_op
 
 def _emit_lowering_rule_as_fun(lowering_rule,
-                               ctx: LoweringRuleContext) -> FuncOpType:
+                               ctx: LoweringRuleContext) -> func_dialect.FuncOp:
   """Emits the contents of a lowering rule as a private function."""
   input_types = map(aval_to_ir_types, ctx.avals_in)
   output_types = map(aval_to_ir_types, ctx.avals_out)
@@ -714,7 +703,8 @@ def _emit_lowering_rule_as_fun(lowering_rule,
   flat_output_types = util.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
   assert ctx.primitive is not None
-  func_op = FuncOp(ctx.primitive.name, ftype, ip=ctx.module_context.ip)
+  func_op = func_dialect.FuncOp(ctx.primitive.name, ftype,
+                                ip=ctx.module_context.ip)
   func_op.attributes["sym_visibility"] = ir.StringAttr.get("private")
   ctx.module_context.symbol_table.insert(func_op)
   entry_block = func_op.add_entry_block()
@@ -880,17 +870,8 @@ register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
 
 def compare_mhlo(x, y, direction, type):
   """Creates mhlo.CompareOp."""
-  if jax._src.lib.mlir_api_version >= 5:
-    return mhlo.CompareOp(x, y, mhlo.ComparisonDirectionAttr.get(direction),
-                          mhlo.ComparisonTypeAttr.get(type))
-  dims = ir.RankedTensorType(x.type).shape
-  bool_shape = ir.RankedTensorType.get(dims, ir.IntegerType.get_signless(1))
-  if jax._src.lib.mlir_api_version >= 3:
-    return mhlo.CompareOp(bool_shape, x, y,
-                          mhlo.ComparisonDirectionAttr.get(direction),
-                          mhlo.ComparisonTypeAttr.get(type))
-  return mhlo.CompareOp(bool_shape, x, y, ir.StringAttr.get(direction),
-                        ir.StringAttr.get(type))
+  return mhlo.CompareOp(x, y, mhlo.ComparisonDirectionAttr.get(direction),
+                        mhlo.ComparisonTypeAttr.get(type))
 
 def _minmax_mhlo(op, cmp, x, y):
   """Min/max that compares complex values lexicographically as pairs."""
@@ -1010,7 +991,7 @@ def xla_fallback_lowering(prim: core.Primitive):
     submodule = ir.Module.parse(submodule_str)
     callee_name = None
     for op in submodule.body.operations:
-      op = typing.cast(FuncOpType, op)
+      op = typing.cast(func_dialect.FuncOp, op)
       module_ctx.module.body.append(op)
       if op.name.value == "main":
         op.attributes["sym_name"] = ir.StringAttr.get(f"xla_fallback_{prim.name}")
@@ -1029,12 +1010,8 @@ def xla_fallback_lowering(prim: core.Primitive):
                                flatten_lowering_ir_args(args)).result
     if not prim.multiple_results:
       return [call]
-    if jax._src.lib.mlir_api_version < 6:
-      flat_results = [mhlo.GetTupleElementOp(typ, call, i32_attr(i)).result
-                      for i, typ in enumerate(flat_output_types)]
-    else:
-      flat_results = [mhlo.GetTupleElementOp(call, i32_attr(i)).result
-                      for i in range(len(flat_output_types))]
+    flat_results = [mhlo.GetTupleElementOp(call, i32_attr(i)).result
+                    for i in range(len(flat_output_types))]
 
     return util.unflatten(flat_results, map(len, output_types))
   return fallback
@@ -1069,6 +1046,3 @@ register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 # # Not present in cHLO or mHLO (b/203798239), although we could just emit the
 # # lowered pattern ourselves.
 # lax.top_k_p,
-
-# # TODO(phawkins): implement these lax ops:
-# lax.rng_bit_generator_p,

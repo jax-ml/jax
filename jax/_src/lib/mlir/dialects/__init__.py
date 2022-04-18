@@ -16,9 +16,4 @@
 import jaxlib.mlir.dialects.builtin as builtin
 import jaxlib.mlir.dialects.chlo as chlo
 import jaxlib.mlir.dialects.mhlo as mhlo
-try:
-  import jaxlib.mlir.dialects.func as func  # pytype: disable=import-error
-except ImportError:
-  # TODO(phawkins): remove std dialect after MLIR change lands, most likely in
-  # jaxlib > 0.3.0.
-  import jaxlib.mlir.dialects.std as func  # pytype: disable=import-error
+import jaxlib.mlir.dialects.func as func

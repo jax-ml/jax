@@ -34,7 +34,6 @@ from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
 from jax._src.lax import lax as lax_internal
-import jax._src.lib
 from jax._src.lib import lapack
 
 from jax._src.lib import cuda_linalg
@@ -392,17 +391,16 @@ def _cholesky_cpu_gpu_lowering(potrf_impl, ctx, operand):
           ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
       result, _nan_like_mhlo(out_aval))]
 
-if jax._src.lib.version >= (0, 3, 3):
-  mlir.register_lowering(
-      cholesky_p,
-      partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
-      platform='cpu')
+mlir.register_lowering(
+    cholesky_p,
+    partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
+    platform='cpu')
 
-  if solver_apis is not None:
-    mlir.register_lowering(
-      cholesky_p,
-      partial(_cholesky_cpu_gpu_lowering, solver_apis.potrf_mhlo),
-      platform='gpu')
+if solver_apis is not None:
+  mlir.register_lowering(
+    cholesky_p,
+    partial(_cholesky_cpu_gpu_lowering, solver_apis.potrf_mhlo),
+    platform='gpu')
 
 # Asymmetric eigendecomposition
 
@@ -543,8 +541,7 @@ eig_p.def_abstract_eval(eig_abstract_eval)
 xla.register_translation(eig_p, eig_lower)
 xla.register_translation(eig_p, _eig_cpu_translation_rule, platform='cpu')
 mlir.register_lowering(eig_p, eig_lower)
-if jax._src.lib.version >= (0, 3, 3):
-  mlir.register_lowering(eig_p, _eig_cpu_lowering, platform='cpu')
+mlir.register_lowering(eig_p, _eig_cpu_lowering, platform='cpu')
 batching.primitive_batchers[eig_p] = eig_batching_rule
 ad.primitive_jvps[eig_p] = eig_jvp_rule
 
@@ -656,20 +653,18 @@ xla.register_translation(
     eigh_p, partial(_eigh_cpu_gpu_translation_rule, lapack.syevd),
     platform='cpu')
 
-if jax._src.lib.version >= (0, 3, 3):
-  mlir.register_lowering(
-      eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),
-      platform='cpu')
+mlir.register_lowering(
+    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),
+    platform='cpu')
 
 
 if solver_apis is not None:
   xla.register_translation(
     eigh_p, partial(_eigh_cpu_gpu_translation_rule, solver_apis.syevd),
     platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(
-      eigh_p, partial(_eigh_cpu_gpu_lowering, solver_apis.syevd_mhlo),
-      platform='gpu')
+  mlir.register_lowering(
+    eigh_p, partial(_eigh_cpu_gpu_lowering, solver_apis.syevd_mhlo),
+    platform='gpu')
 
 
 triangular_solve_dtype_rule = partial(
@@ -865,9 +860,8 @@ def _triangular_solve_cpu_lower(
                                   ir.BoolAttr.get(unit_diagonal),
                                   mhlo.TransposeAttr.get(transpose)).results
 
-if jax._src.lib.version >= (0, 3, 3):
-  mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
-                         platform='cpu')
+mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
+                       platform='cpu')
 
 
 def _triangular_solve_gpu_translation_rule(
@@ -922,11 +916,10 @@ if solver_apis is not None:
       triangular_solve_p,
       partial(_triangular_solve_gpu_translation_rule, solver_apis.trsm),
       platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(
-        triangular_solve_p,
-        partial(_triangular_solve_gpu_lower, solver_apis.trsm_mhlo),
-        platform='gpu')
+  mlir.register_lowering(
+      triangular_solve_p,
+      partial(_triangular_solve_gpu_lower, solver_apis.trsm_mhlo),
+      platform='gpu')
 
 
 # Support operation for LU decomposition: Transformation of the pivots returned
@@ -1038,19 +1031,17 @@ if cuda_linalg:
   xla.register_translation(lu_pivots_to_permutation_p,
                            _lu_pivots_to_permutation_gpu,
                            platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(lu_pivots_to_permutation_p,
-                           _lu_pivots_to_permutation_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(lu_pivots_to_permutation_p,
+                         _lu_pivots_to_permutation_gpu_lowering,
+                         platform='gpu')
 
 if hip_linalg:
   xla.register_translation(lu_pivots_to_permutation_p,
                            _lu_pivots_to_permutation_gpu,
                            platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(lu_pivots_to_permutation_p,
-                           _lu_pivots_to_permutation_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(lu_pivots_to_permutation_p,
+                         _lu_pivots_to_permutation_gpu_lowering,
+                         platform='gpu')
 # LU decomposition
 
 # Computes a pivoted LU decomposition such that
@@ -1264,19 +1255,17 @@ batching.primitive_batchers[lu_p] = _lu_batching_rule
 xla.register_translation(lu_p,
                          partial(_lu_cpu_gpu_translation_rule, lapack.getrf),
                          platform='cpu')
-if jax._src.lib.version >= (0, 3, 3):
-  mlir.register_lowering(lu_p,
-                         partial(_lu_cpu_gpu_lowering, lapack.getrf_mhlo),
-                         platform='cpu')
+mlir.register_lowering(lu_p,
+                       partial(_lu_cpu_gpu_lowering, lapack.getrf_mhlo),
+                       platform='cpu')
 
 if solver_apis is not None:
   xla.register_translation(
       lu_p, partial(_lu_cpu_gpu_translation_rule, solver_apis.getrf),
       platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(
-        lu_p, partial(_lu_cpu_gpu_lowering, solver_apis.getrf_mhlo),
-        platform='gpu')
+  mlir.register_lowering(
+      lu_p, partial(_lu_cpu_gpu_lowering, solver_apis.getrf_mhlo),
+      platform='gpu')
 
 xla.register_translation(lu_p, _lu_tpu_translation_rule, platform='tpu')
 
@@ -1480,21 +1469,19 @@ xla.register_translation(
     qr_p, partial(_qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr),
     platform='cpu')
 
-if jax._src.lib.version >= (0, 3, 3):
-  mlir.register_lowering(
-      qr_p, partial(_qr_cpu_gpu_lowering, lapack.geqrf_mhlo, lapack.orgqr_mhlo),
-      platform='cpu')
+mlir.register_lowering(
+    qr_p, partial(_qr_cpu_gpu_lowering, lapack.geqrf_mhlo, lapack.orgqr_mhlo),
+    platform='cpu')
 
 if solver_apis is not None:
   xla.register_translation(
       qr_p,
       partial(_qr_cpu_gpu_translation_rule, solver_apis.geqrf, solver_apis.orgqr),
       platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(
-        qr_p,
-        partial(_qr_cpu_gpu_lowering, solver_apis.geqrf_mhlo, solver_apis.orgqr_mhlo),
-        platform='gpu')
+  mlir.register_lowering(
+      qr_p,
+      partial(_qr_cpu_gpu_lowering, solver_apis.geqrf_mhlo, solver_apis.orgqr_mhlo),
+      platform='gpu')
 
 # Singular value decomposition
 
@@ -1712,19 +1699,17 @@ xla.register_translation(svd_p, _svd_translation_rule)
 xla.register_translation(
     svd_p, partial(_svd_cpu_gpu_translation_rule, lapack.gesdd),
     platform='cpu')
-if jax._src.lib.version >= (0, 3, 3):
-  mlir.register_lowering(
-      svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
-      platform='cpu')
+mlir.register_lowering(
+    svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
+    platform='cpu')
 
 if solver_apis is not None:
   xla.register_translation(
     svd_p, partial(_svd_cpu_gpu_translation_rule, solver_apis.gesvd),
     platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(
-      svd_p, partial(_svd_cpu_gpu_lowering, solver_apis.gesvd_mhlo),
-      platform='gpu')
+  mlir.register_lowering(
+    svd_p, partial(_svd_cpu_gpu_lowering, solver_apis.gesvd_mhlo),
+    platform='gpu')
 
 def _tridiagonal_solve_gpu_translation_rule(ctx, avals_in, avals_out, dl, d, du,
                                             b, *, m, n, ldb, t):
@@ -1743,10 +1728,9 @@ if sparse_apis and hasattr(sparse_apis, "gtsv2"):
   xla.register_translation(tridiagonal_solve_p,
                            _tridiagonal_solve_gpu_translation_rule,
                            platform='gpu')
-  if jax._src.lib.version >= (0, 3, 3):
-    mlir.register_lowering(tridiagonal_solve_p,
-                           _tridiagonal_solve_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(tridiagonal_solve_p,
+                         _tridiagonal_solve_gpu_lowering,
+                         platform='gpu')
 
 def _tridiagonal_solve_jax(dl, d, du, b, **kw):
   """Pure JAX implementation of `tridiagonal_solve`."""
@@ -1983,8 +1967,7 @@ schur_p.def_abstract_eval(_schur_abstract_eval)
 xla.register_translation(schur_p, _schur_translation_rule)
 xla.register_translation(schur_p, _schur_cpu_translation_rule, platform='cpu')
 mlir.register_lowering(schur_p, _schur_translation_rule)
-if jax._src.lib.version >= (0, 3, 6):
-  mlir.register_lowering(schur_p, _schur_cpu_lowering, platform='cpu')
+mlir.register_lowering(schur_p, _schur_cpu_lowering, platform='cpu')
 batching.primitive_batchers[schur_p] = _schur_batching_rule
 ad.primitive_jvps[schur_p] = _schur_jvp_rule
 

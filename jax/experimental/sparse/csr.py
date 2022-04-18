@@ -28,7 +28,6 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
 from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
-import jax._src.lib
 from jax._src.lib import sparse_apis
 from jax._src.numpy.lax_numpy import _promote_dtypes
 import jax.numpy as jnp
@@ -222,9 +221,8 @@ mlir.register_lowering(csr_todense_p, _csr_todense_lowering)
 if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(csr_todense_p, _csr_todense_gpu_translation_rule,
                            platform='gpu')
-  if jax._src.lib.version > (0, 3, 5):
-    mlir.register_lowering(csr_todense_p, _csr_todense_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(csr_todense_p, _csr_todense_gpu_lowering,
+                         platform='gpu')
 
 #--------------------------------------------------------------------
 # csr_fromdense
@@ -336,10 +334,9 @@ if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(csr_fromdense_p,
                            _csr_fromdense_gpu_translation_rule,
                            platform='gpu')
-  if jax._src.lib.version > (0, 3, 5):
-    mlir.register_lowering(csr_fromdense_p,
-                           _csr_fromdense_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(csr_fromdense_p,
+                         _csr_fromdense_gpu_lowering,
+                         platform='gpu')
 
 #--------------------------------------------------------------------
 # csr_matvec
@@ -437,9 +434,8 @@ mlir.register_lowering(csr_matvec_p, _csr_matvec_lowering)
 if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(csr_matvec_p, _csr_matvec_gpu_translation_rule,
                            platform='gpu')
-  if jax._src.lib.version > (0, 3, 5):
-    mlir.register_lowering(csr_matvec_p, _csr_matvec_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(csr_matvec_p, _csr_matvec_gpu_lowering,
+                         platform='gpu')
 
 
 #--------------------------------------------------------------------
@@ -537,6 +533,5 @@ mlir.register_lowering(csr_matmat_p, _csr_matmat_lowering)
 if sparse_apis and sparse_apis.is_supported:
   xla.register_translation(csr_matmat_p, _csr_matmat_gpu_translation_rule,
                            platform='gpu')
-  if jax._src.lib.version > (0, 3, 5):
-    mlir.register_lowering(csr_matmat_p, _csr_matmat_gpu_lowering,
-                           platform='gpu')
+  mlir.register_lowering(csr_matmat_p, _csr_matmat_gpu_lowering,
+                         platform='gpu')
