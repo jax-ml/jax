@@ -60,6 +60,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     and {func}`jax.numpy.fromstring` ({jax-issue}`#10049`).
   * `DeviceArray.copy()` now returns a `DeviceArray` rather than a `np.ndarray` ({jax-issue}`#10069`)
   * added {func}`jax.scipy.linalg.rsf2csf`
+  * `jax.experimental.sharded_jit` has been deprecated and will be removed soon.
 * Deprecations:
   * {func}`jax.nn.normalize` is being deprecated. Use {func}`jax.nn.standardize` instead ({jax-issue}`#9899`).
   * {func}`jax.tree_util.tree_multimap` is deprecated. Use {func}`jax.tree_util.tree_map` instead ({jax-issue}`#5746`).
