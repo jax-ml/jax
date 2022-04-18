@@ -12,6 +12,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.3.8 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.7...main).
+* Changes
+  * `jax.experimental.maps.mesh` has been deleted.
+    Please use `jax.experimental.maps.Mesh`. Please see https://jax.readthedocs.io/en/latest/_autosummary/jax.experimental.maps.Mesh.html#jax.experimental.maps.Mesh
+    for more information.
 
 ## jaxlib 0.3.8 (Unreleased)
 * [GitHub
