@@ -3427,12 +3427,21 @@ def _normalize_index(index, axis_size):
     lax.add(index, axis_size_val),
     index)
 
-@_wraps(np.take_along_axis, update_doc=False)
+
+TAKE_ALONG_AXIS_DOC = """
+Unlike :func:`numpy.take_along_axis`, if indices are out of bounds an error
+will not be raised; instead, invalid values (e.g., ``NaN``) will be returned
+for those indices. See the :code:`FILL_OR_DROP` mode of
+:class:`jax.lax.GatherScatterMode` for details.
+"""
+
+@_wraps(np.take_along_axis, update_doc=False,
+        lax_description=TAKE_ALONG_AXIS_DOC)
 @partial(jit, static_argnames=('axis',))
 def take_along_axis(arr, indices, axis: Optional[int]):
   _check_arraylike("take_along_axis", arr, indices)
   # index_dtype = dtypes.dtype(indices)
-  # TODO(phawkins): reenalbe this check after fixing callers
+  # TODO(phawkins): reenable this check after fixing callers
   # if not dtypes.issubdtype(index_dtype, integer):
   #   raise TypeError("take_along_axis indices must be of integer type, got "
   #                   f"{str(index_dtype)}")
@@ -3509,8 +3518,7 @@ def take_along_axis(arr, indices, axis: Optional[int]):
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map))
-  # TODO(phawkins): change the mode to "fill".
-  return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes))
+  return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes), mode="fill")
 
 ### Indexing
 

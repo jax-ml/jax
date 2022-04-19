@@ -16,6 +16,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jax.experimental.maps.mesh` has been deleted.
     Please use `jax.experimental.maps.Mesh`. Please see https://jax.readthedocs.io/en/latest/_autosummary/jax.experimental.maps.Mesh.html#jax.experimental.maps.Mesh
     for more information.
+  * {func}`jax.numpy.take_along_axis` now returns invalid values (e.g., NaN) if
+    passed an out-of-range index. These correspond to the `fill` semantics
+    of {class}`jax.lax.GatherScatterMode`. We intend to change the default for
+    other indexing operators to `fill` in the future as well.
+
 
 ## jaxlib 0.3.8 (Unreleased)
 * [GitHub

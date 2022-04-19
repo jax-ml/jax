@@ -4573,6 +4573,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     q1 = np.take_along_axis( h, g, axis=-1)
     np.testing.assert_equal(q0, q1)
 
+  def testTakeAlongAxisOutOfBoundsHasFillSemantics(self):
+    x = jnp.arange(10, dtype=jnp.float32)
+    idx = jnp.array([-11, -10, -9, -5, -1, 0, 1, 5, 9, 10, 11])
+    out = jnp.take_along_axis(x, idx, axis=0)
+    expected = np.array([jnp.nan, 0., 1., 5., 9., 0., 1., 5., 9., jnp.nan,
+                         jnp.nan], np.float32)
+    np.testing.assert_array_equal(expected, out)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}_increasing={}".format(
           jtu.format_shape_dtype_string([shape], dtype),
