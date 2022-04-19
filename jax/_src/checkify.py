@@ -25,9 +25,11 @@ import jax.numpy as jnp
 from jax import core
 from jax import linear_util as lu
 from jax.api_util import flatten_fun
+from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
 from jax._src import source_info_util, traceback_util
+from jax._src.lax import control_flow as cf
 from jax import lax
 from jax._src.util import (as_hashable_function, unzip2, split_list, safe_map,
                            safe_zip)
@@ -457,14 +459,23 @@ def assert_impl(pred, code, payload, *, msgs):
   Error(~pred, code, msgs, payload).throw()
   return []
 
-@assert_p.def_abstract_eval
+CheckEffect = object()
+
+@assert_p.def_effectful_abstract_eval
 def assert_abstract_eval(pred, code, payload, *, msgs):
-  # TODO(lenamartens) add in-depth explanation to link to in module docs.
+  return [], {CheckEffect}
+
+def assert_lowering_rule(*a, **k):
+  # TODO(lenamartens): actually throw an error through emit_python_callable
+  # TODO(lenamartens) add in-depth error explanation to link to in module docs.
   raise ValueError('Cannot abstractly evaluate a checkify.check which was not'
                    ' functionalized. This probably means you tried to stage'
                    ' (jit/scan/pmap/...) a `check` without functionalizing it'
                    ' through `checkify.checkify`.'
                    )
+mlir.register_lowering(assert_p, assert_lowering_rule)
+mlir.lowerable_effects.add(CheckEffect)
+cf.allowed_effects.add(CheckEffect)
 
 ## checkify rules
 
@@ -611,17 +622,11 @@ def checkify_while_body_jaxpr(cond_jaxpr, body_jaxpr, error, enabled_errors, c_c
   return checkify_fun_to_jaxpr(lu.wrap_init(new_body_f), error, enabled_errors,
                                body_jaxpr.in_avals)
 
-def ignore_errors_jaxpr(jaxpr, error):
-  """Constructs a jaxpr which takes two extra args but ignores them."""
-  err_aval = core.raise_to_shaped(core.get_aval(error.err))
-  code_aval = core.raise_to_shaped(core.get_aval(error.code))
-  payload_aval = core.raise_to_shaped(core.get_aval(error.payload))
+def ignore_error_output_jaxpr(jaxpr):
+  """Constructs a checked jaxpr which does not output its error value."""
   consts = jaxpr.consts
   jaxpr = jaxpr.jaxpr
-  new_vars = core.gensym([jaxpr])
-  new_invars = (new_vars(err_aval), new_vars(code_aval),
-                new_vars(payload_aval), *jaxpr.invars)
-  new_jaxpr = jaxpr.replace(invars=new_invars)
+  new_jaxpr = jaxpr.replace(outvars=jaxpr.outvars[3:])
   return core.ClosedJaxpr(new_jaxpr, consts)
 
 def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,
@@ -629,17 +634,17 @@ def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,
   c_consts, b_consts, carry = split_list(in_flat, [cond_nconsts, body_nconsts])
 
   # Check if the first cond application will error.
-  cond_jaxpr_, msgs_cond = checkify_jaxpr(cond_jaxpr, error, enabled_errors)
-  cond_err, cond_code, cond_payload, _ = core.jaxpr_as_fun(cond_jaxpr_)(
+  checked_cond_jaxpr, msgs_cond = checkify_jaxpr(cond_jaxpr, error,
+                                                 enabled_errors)
+  cond_err, cond_code, cond_payload, _ = core.jaxpr_as_fun(checked_cond_jaxpr)(
       error.err, error.code, error.payload, *c_consts, *carry)
-  del cond_jaxpr_
 
   checked_body_jaxpr_, msgs_body = checkify_while_body_jaxpr(
     cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts)
   to_move = [False] * 3 + [True] * body_nconsts + [False] * len(carry)
   checked_body_jaxpr = pe.move_binders_to_front(checked_body_jaxpr_, to_move)
 
-  compat_cond_jaxpr_ = ignore_errors_jaxpr(cond_jaxpr, error)
+  compat_cond_jaxpr_ = ignore_error_output_jaxpr(checked_cond_jaxpr)
   to_move = [False] * 3 + [True] * cond_nconsts + [False] * len(carry)
   compat_cond_jaxpr = pe.move_binders_to_front(compat_cond_jaxpr_, to_move)
   new_in_flat = [*c_consts, *b_consts, cond_err, cond_code, cond_payload, *carry]
