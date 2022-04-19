@@ -159,8 +159,7 @@ def leaky_relu(x: Array, negative_slope: Array = 1e-2) -> Array:
     x : input array
     negative_slope : array or scalar specifying the negative slope (default: 0.01)
   """
-  safe_x = jnp.where(x > 0, 0., x)
-  return jnp.where(x >= 0, x, negative_slope * safe_x)
+  return jnp.where(x >= 0, x, negative_slope * x)
 
 @jax.jit
 def hard_tanh(x: Array) -> Array:
