@@ -2474,17 +2474,6 @@ def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
   new_dimension_numbers = ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch))
   return new_dimension_numbers, int(result_batch_dim)
 
-# TODO(phawkins): remove after removing all users.
-def _dot_general_translation_rule(ctx, avals_in, avals_out, lhs, rhs, *,
-                                  dimension_numbers, precision,
-                                  preferred_element_type: Optional[DType]):
-  if preferred_element_type is not None:
-    preferred_element_type = xla.dtype_to_primitive_type(preferred_element_type)
-  return [xops.DotGeneral(lhs, rhs,
-                          xc.make_dot_dimension_numbers(dimension_numbers),
-                          precision_config=_precision_config(precision),
-                          preferred_element_type=preferred_element_type)]
-
 def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
                               precision,
                               preferred_element_type: Optional[DType]):

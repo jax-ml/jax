@@ -25,12 +25,9 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.interpreters import mlir
-from jax.interpreters import xla
 from jax._src.util import safe_zip
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
-
-xops = xla_client.ops
 
 _max = builtins.max
 
@@ -516,56 +513,6 @@ def _conv_general_dilated_transpose_rhs(
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count, precision=precision,
       preferred_element_type=preferred_element_type)
-
-
-# TODO(phawkins): remove after removing all users.
-def _conv_general_dilated_translation_rule(
-    ctx, avals_in, avals_out, lhs, rhs, *, window_strides, padding,
-    lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
-    batch_group_count, precision, expand_complex_convolutions,
-    preferred_element_type, **unused_kwargs):
-  assert type(dimension_numbers) is ConvDimensionNumbers
-  dimension_numbers = _conv_general_proto(dimension_numbers)
-  precision_config = lax._precision_config(precision)
-  dtype = avals_in[0].dtype
-  if expand_complex_convolutions and np.issubdtype(dtype, np.complexfloating):
-    # We use a trick for complex multiplication due to Gauss which uses three
-    # multiplications and five additions; instead of the naive method of four
-    # multiplications and two additions.
-    # https://en.wikipedia.org/wiki/Multiplication_algorithm#Complex_multiplication_algorithm
-    #
-    # This performance win comes with a trade-off in accuracy; especially in
-    # cases when the real and imaginary differ hugely in magnitude. The relative
-    # error bound (e.g. 1p-24 in case of float32) would be relative to the
-    # maximum of real and imaginary parts of the result instead of being
-    # satisfied by the real and imaginary parts independently of each other.
-    if preferred_element_type is not None:
-      # Convert complex dtype to types used for real and imaginary parts
-      assert np.issubdtype(preferred_element_type, np.complexfloating)
-      preferred_element_type = xla.dtype_to_primitive_type(np.dtype(
-          np.float64 if preferred_element_type == np.complex128
-          else np.float32))
-
-    conv = lambda x, y: xops.ConvGeneralDilated(
-        x, y, window_strides, padding, lhs_dilation, rhs_dilation,
-        dimension_numbers, feature_group_count, batch_group_count,
-        precision_config=precision_config,
-        preferred_element_type=preferred_element_type)
-    lhs_real, lhs_imag = xops.Real(lhs), xops.Imag(lhs)
-    rhs_real, rhs_imag = xops.Real(rhs), xops.Imag(rhs)
-    k1 = conv(xops.Add(lhs_real, lhs_imag), rhs_real)
-    k2 = conv(lhs_real, xops.Sub(rhs_imag, rhs_real))
-    k3 = conv(lhs_imag, xops.Add(rhs_real, rhs_imag))
-    return [xops.Complex(xops.Sub(k1, k3), xops.Add(k1, k2))]
-
-  if preferred_element_type is not None:
-    preferred_element_type = xla.dtype_to_primitive_type(preferred_element_type)
-
-  return [xops.ConvGeneralDilated(
-      lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-      dimension_numbers, feature_group_count, batch_group_count,
-      precision_config=precision_config,
-      preferred_element_type=preferred_element_type)]
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, *, window_strides, padding,
