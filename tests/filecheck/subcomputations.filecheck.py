@@ -20,8 +20,6 @@ from absl import app
 
 import jax
 from jax import numpy as jnp
-from jax.interpreters import mlir
-from jax._src.lib.mlir import ir
 import numpy as np
 
 from jax.tests.filecheck.jax_filecheck_helpers import print_ir
@@ -40,34 +38,6 @@ def main(_):
   @print_ir(np.empty([2, 7], np.int32), np.empty([2, 7], np.int32))
   def cumsum_only_once(x, y):
     return jnp.cumsum(x) + jnp.cumsum(y)
-
-  # Test merging modules
-  # CHECK-LABEL: TEST: merge_modules
-  # CHECK: module @jit_g
-  # CHECK: func public @main
-  # CHECK: func private @f
-  # CHECK: func private @m2_main_renamed
-  # CHECK: func private @f_0
-  def make_module(c):
-    @jax.jit
-    def f(x):
-      return x + c
-
-    @jax.jit
-    def g(x):
-      return f(x * 2)
-
-    return g.lower(7).compiler_ir()
-
-  m1 = make_module(10)
-  m2 = str(make_module(20))
-
-  with m1.context:
-    # Reparse m2 in m1's context.
-    m2_copy = ir.Module.parse(m2)
-    mlir.merge_mhlo_modules(m1, "m2_main_renamed", m2_copy)
-  print("\nTEST: merge_modules")
-  print(str(m1))
 
 if __name__ == "__main__":
   app.run(main)

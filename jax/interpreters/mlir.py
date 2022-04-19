@@ -190,7 +190,7 @@ def ir_constants(val: Any,
 
 def ir_constant(val: Any, canonicalize_types: bool = True) -> ir.Value:
   """Convenience wrapper around ir_constants for singleton values."""
-  values = ir_constants(val, canonicalize_types=canonicalize_types)
+  values = ir_constants(val)
   if len(values) != 1:
     raise TypeError(f"ir_constant called on {val} which corresponds to "
                     f"multiple IR values {values}")
@@ -981,43 +981,6 @@ def cache_lowering(f):
   return cached_lowering
 
 
-
-def xla_computation_to_mhlo_module(xla_computation: xc.XlaComputation
-                                  ) -> ir.Module:
-  module_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
-  return ir.Module.parse(module_str)
-
-def merge_mhlo_modules(dst_module: ir.Module,
-                       sym_name: str,
-                       src_module: ir.Module) -> str:
-  """Returns the name of src_module's main() function, after renaming."""
-  callee_name = None
-  assert dst_module.context == src_module.context
-  src_symtab = ir.SymbolTable(src_module.operation)
-  dst_symbol_table = ir.SymbolTable(dst_module.operation)
-  for op in src_module.body.operations:
-    op = typing.cast(func_dialect.FuncOp, op)
-    old_name = op.name.value
-    if op.name.value == "main":
-      src_symtab.set_symbol_name(op, sym_name)
-      op.attributes["sym_visibility"] = ir.StringAttr.get("private")
-      callee_name = ir.StringAttr(dst_symbol_table.insert(op)).value
-      new_name = callee_name
-    else:
-      new_name = ir.StringAttr(dst_symbol_table.insert(op)).value
-
-    # Replace references to the symbol with the new name
-    for other_op in src_module.body.operations:
-      src_symtab.replace_all_symbol_uses(
-          old_name, new_name, other_op.operation)
-
-  for op in src_module.body.operations:
-    dst_module.body.append(op)
-
-  assert callee_name is not None
-  return callee_name
-
-
 def xla_fallback_lowering(prim: core.Primitive):
   @cache_lowering
   def fallback(ctx: LoweringRuleContext, *args, **params):
@@ -1025,9 +988,19 @@ def xla_fallback_lowering(prim: core.Primitive):
     xla_computation = xla.primitive_subcomputation(
         module_ctx.platform, module_ctx.axis_env, prim, ctx.avals_in,
         ctx.avals_out, **params)
-    xla_module = xla_computation_to_mhlo_module(xla_computation)
-    callee_name = merge_mhlo_modules(
-        module_ctx.module, f"xla_fallback_{prim.name}", xla_module)
+    submodule_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
+    submodule = ir.Module.parse(submodule_str)
+    callee_name = None
+    for op in submodule.body.operations:
+      op = typing.cast(func_dialect.FuncOp, op)
+      module_ctx.module.body.append(op)
+      if op.name.value == "main":
+        op.attributes["sym_name"] = ir.StringAttr.get(f"xla_fallback_{prim.name}")
+        callee_name = ir.StringAttr(module_ctx.symbol_table.insert(op)).value
+        op.attributes["sym_visibility"] = ir.StringAttr.get("private")
+      else:
+        module_ctx.symbol_table.insert(op)
+
     output_types = map(aval_to_ir_types, ctx.avals_out)
     flat_output_types = util.flatten(output_types)
     output_type = (ir.TupleType.get_tuple(flat_output_types)
