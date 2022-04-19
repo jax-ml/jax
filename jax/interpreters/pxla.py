@@ -759,18 +759,12 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
   return bufs
 
 
-def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
-  return xla.pyval_to_ir_constants(c, np.asarray(val),
-                                   canonicalize_types=canonicalize_types)
-
-
 def _sharded_device_array_mlir_constant_handler(val, canonicalize_types=True):
   return mlir.ir_constants(np.asarray(val),
                            canonicalize_types=canonicalize_types)
 
 def _register_handlers_for_sharded_device_array(sda):
   shard_arg_handlers[sda] = _shard_sharded_device_array_slow_path
-  xla.register_constant_handler(sda, _sharded_device_array_constant_handler)
   mlir.register_constant_handler(sda,
                                  _sharded_device_array_mlir_constant_handler)
 

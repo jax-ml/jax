@@ -126,12 +126,6 @@ def sparse_array_device_put_handler(a, device):
     xb.get_device_backend(device).buffer_from_pyval(a.indices, device)
   )
 
-def sparse_array_constant_handler(c, val, canonicalize_dtypes):
-  return (
-    xla.pyval_to_ir_constant(val.data, canonicalize_dtypes),
-    xla.pyval_to_ir_constant(val.indices, canonicalize_dtypes)
-  )
-
 core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
 xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
@@ -140,7 +134,6 @@ dispatch.device_put_handlers[SparseArray] = sparse_array_device_put_handler
 dispatch.result_handlers[AbstractSparseArray] = sparse_array_result_handler
 dispatch.num_buffers_handlers[AbstractSparseArray] = lambda _: 2
 xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
-xla.register_constant_handler(SparseArray, sparse_array_constant_handler)
 
 def sparse_array_mlir_type_handler(a):
   return (

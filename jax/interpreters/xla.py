@@ -15,7 +15,6 @@
 # Lowering of jaxprs into XLA (HLO) computations.
 
 from collections import defaultdict
-import collections.abc
 import dataclasses
 import functools
 from functools import partial
@@ -32,13 +31,10 @@ from jax.config import config
 from jax import core
 from jax._src import device_array
 from jax._src import dtypes
-from jax import linear_util as lu
 from jax._src import source_info_util
 from jax._src.abstract_arrays import (make_shaped_array, array_types)
-from jax.core import (ConcreteArray, ShapedArray,
-                      Literal, str_eqn_compact, abstract_token)
+from jax.core import (ConcreteArray, ShapedArray, str_eqn_compact)
 import jax._src.pretty_printer as pp
-from jax._src import util
 from jax._src.util import (prod, new_name_stack, safe_zip, safe_map,
                            partition_list)
 
@@ -83,8 +79,6 @@ def identity(x): return x
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 # unit representation
-def _make_unit_constant(c): return [
-    xops.Constant(c, np.zeros((), dtype=np.dtype('bool')))]
 def _make_unit_shape(_): return (xc.Shape.array_shape(np.dtype('bool'), ()),)
 def _make_array_shape(a: ShapedArray) -> Sequence[XlaShape]:
   if a.dtype is dtypes.float0:
@@ -173,25 +167,6 @@ def tuple_sharding_proto(elems):
   return proto
 
 
-def set_sharding_proto(builder, op, sharding_proto, unspecified_dims=None):
-  """Uses CustomCall to annotate a value as sharded."""
-  # "Sharding" is a built-in custom call target that acts like an identity
-  # function, and is used to attach an OpSharding to.
-  def _create_custom_call(x):
-    # unspecified_dims indicate dimensions whose shardings are not specified and
-    # XLA sharding propagation can change them.
-    if unspecified_dims:
-      opaque = 'unspecified_dims=[' + ','.join(
-          [str(i) for i in unspecified_dims]) + ']'
-      opaque = bytes(opaque, 'utf-8')
-      return xops.CustomCall(
-          builder, b'Sharding', [x], builder.get_shape(x), opaque=opaque)
-    else:
-      return xops.CustomCall(builder, b'Sharding', [x], builder.get_shape(x))
-
-  return with_sharding_proto(builder, sharding_proto, _create_custom_call, op)
-
-
 def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
   builder.set_sharding(sharding_proto)
@@ -199,11 +174,6 @@ def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
     return op_fn(*args, **kwargs)
   finally:
     builder.clear_sharding()
-
-def set_sharding(builder, op, sharding: SpatialSharding, unspecified_dims=None):
-  """Uses CustomCall to annotate a value as sharded."""
-  return set_sharding_proto(builder, op, sharding_to_proto(sharding),
-                            unspecified_dims)
 
 def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
@@ -264,124 +234,6 @@ xla_shape_handlers[core.AbstractToken] = lambda _: (xc.Shape.token_shape(),)
 
 # IR constants
 
-_constant_handlers: Dict[type, Callable] = {}
-
-def pyval_to_ir_constants(builder, py_val, canonicalize_types=True):
-  """Translate a general constant `py_val` to a constant, canonicalizing its dtype.
-
-  Args:
-    py_val: a Python value to be translated to a constant.
-
-  Returns:
-    A representation of the constant as a list of xla ops.
-  """
-  for t in type(py_val).__mro__:
-    handler = _constant_handlers.get(t)
-    if handler: return handler(builder, py_val, canonicalize_types)
-  if hasattr(py_val, '__jax_array__'):
-    return pyval_to_ir_constants(builder, py_val.__jax_array__(),
-                                 canonicalize_types)
-  raise TypeError("No constant handler for type: {}".format(type(py_val)))
-
-def pyval_to_ir_constant(builder, py_val, canonicalize_types=True):
-  """Translate constant `py_val` to a constant, canonicalizing its dtype.
-
-  Args:
-    py_val: a Python value to be translated to a constant.
-
-  Returns:
-    A representation of the constant, either a ComputationDataHandle or None
-  """
-  const = pyval_to_ir_constants(builder, py_val, canonicalize_types=canonicalize_types)
-  assert len(const) == 1, f"Internal error: cannot create constant from object of type {type(py_val)}"
-  return const[0]
-
-
-def register_constant_handler(type_, handler_fun):
-  _constant_handlers[type_] = handler_fun
-
-register_constant_handler(core.Unit, lambda c, *_: _make_unit_constant(c))
-
-
-# TODO(mattjj,frostig): try to remove this function
-def _normalize_to_xla_dtypes(val):
-  """Normalize dtypes in a value."""
-  if hasattr(val, '__array__') or np.isscalar(val):
-    return np.asarray(val, dtype=dtypes.canonicalize_dtype(dtypes.result_type(val)))
-  elif isinstance(val, (tuple, list)):
-    return tuple(_normalize_to_xla_dtypes(x) for x in val)
-  raise TypeError('Can\'t convert to XLA: {}'.format(val))
-
-def _numpy_array_constant(builder, value, canonicalize_types=True):
-  if canonicalize_types:
-    value = _normalize_to_xla_dtypes(value)
-  return [xops.Constant(builder, value)]
-
-
-def _ndarray_constant_handler(c, val, canonicalize_types=True):
-  """Constant handler for ndarray literals, handling zero-size strides.
-
-  This function essentially calls _numpy_array_constant(val) except it has
-  special handling of arrays with any strides of size zero: for those, it
-  generates appropriate calls to NumpyArrayConstant, Broadcast, and Transpose
-  to avoid staging in large literals that might arise from np.zeros or np.ones
-  or the output of lax.broadcast (which uses np.broadcast_to which in turn
-  uses size-zero strides).
-
-  Args:
-    c: an XlaBuilder
-    val: an ndarray.
-
-  Returns:
-    An XLA ComputationDataHandle / XlaOp representing the constant ndarray
-    staged into the XLA Computation.
-  """
-  # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
-  if dtypes.result_type(val) == dtypes.float0:
-    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool_))
-  elif np.any(np.equal(0, val.strides)) and val.size > 0:
-    zero_stride_axes, = np.where(np.equal(0, val.strides))
-    other_axes, = np.where(np.not_equal(0, val.strides))
-    collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
-                              for ax in range(val.ndim))]
-    xla_val = xops.Broadcast(
-        _numpy_array_constant(c, collapsed_val, canonicalize_types)[0],
-        np.take(val.shape, zero_stride_axes))
-    permutation = np.argsort(tuple(zero_stride_axes) + tuple(other_axes))
-    return [xops.Transpose(xla_val, permutation)]
-  else:
-    return _numpy_array_constant(c, val, canonicalize_types)
-register_constant_handler(np.ndarray, _ndarray_constant_handler)
-
-
-def _scalar_constant_handler(c, val, canonicalize_types=True):
-  return _numpy_array_constant(c, val, canonicalize_types)
-
-for scalar_type in [np.int8, np.int16, np.int32, np.int64,
-                    np.uint8, np.uint16, np.uint32, np.uint64,
-                    np.float16, np.float32, np.float64,
-                    np.bool_, np.longlong,
-                    dtypes.bfloat16]:
-  register_constant_handler(scalar_type, _scalar_constant_handler)
-
-# https://github.com/winpython/winpython/issues/613#issuecomment-380121523
-if hasattr(np, "float128"):
-  register_constant_handler(np.float128, _scalar_constant_handler)
-
-def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
-  return _numpy_array_constant(c, dtype.type(val))
-
-for ptype, dtype in dtypes.python_scalar_dtypes.items():
-  register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
-
-def _device_array_constant_handler(c, val, canonicalize_types=True):
-  return pyval_to_ir_constants(c, val.device_buffer.to_py())
-for t in device_array.device_array_types:
-  register_constant_handler(t, _device_array_constant_handler)
-
-
-register_constant_handler(core.Token, lambda c, _, __: [xops.CreateToken(c)])
-
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
   typ = type(x)
@@ -437,19 +289,23 @@ pytype_aval_mappings.update(
 
 def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',
                              prim: core.Primitive,
-                             *avals: core.AbstractValue, **params):
+                             avals_in: Sequence[core.AbstractValue],
+                             avals_out: Sequence[core.AbstractValue],
+                             **params):
   c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
-  xla_args, _ = _xla_callable_args(c, avals, tuple_args=False,
-                                   filter_tokens=False)
+  counts = it.count()
+  xla_args = [parameter(c, next(counts), xla_shape)
+              for a in avals_in for xla_shape in aval_to_xla_shapes(a)]
+  if (platform is not None and
+      prim in _backend_specific_translations[platform]):
+    rule = _backend_specific_translations[platform][prim]
+  elif prim in _translations:
+    rule = _translations[prim]
+
   ctx = TranslationContext(builder=c, platform=platform, axis_env=axis_env,
                            name_stack=new_name_stack())
-  wrapped_fun = lu.wrap_init(prim.bind, params)
-  if not prim.multiple_results:
-    wrapped_fun = _tuple_output(wrapped_fun)
-  with core.extend_axis_env_nd(zip(ctx.axis_env.names, ctx.axis_env.sizes)):
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-  ans = _jaxpr_subcomp(ctx, jaxpr, _xla_consts(ctx.builder, consts),
-                       *xla_args)
+  ans = rule(ctx, avals_in, avals_out, *xla_args, **params)
+
   if prim.multiple_results:
     return c.build(xops.Tuple(c, ans))
   else:
@@ -457,96 +313,8 @@ def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',
     return c.build(x)
 
 
-# Used within _xla_callable_args and _xla_param to distinguish between None (no
-# sharding annotation set) and replicated.
-_replicated_param = object()
-
-def _token_param_shape():
-  """Shape used in place of tokens as top-level computation arguments."""
-  return xc.Shape.array_shape(np.dtype(np.bool_), [])
-
-def _make_token_return_value(c):
-  """Value used in place of tokens as a top-level computation return value."""
-  return xops.Constant(c, np.zeros((), dtype=np.dtype(np.bool_)))
-
-def _xla_callable_args(
-    c, avals, tuple_args, *,
-    replicated=None,
-    partitions=None,
-    partitions_proto: bool = False,
-    donated_invars=None,
-    filter_tokens=True):
-  assert partitions is None or len(partitions) == len(avals)
-  if not tuple_args:
-    if replicated is None:
-      replicated = [None] * len(avals)
-    if partitions is None:
-      parts: List[object] = [None] * len(avals)
-    elif partitions_proto:
-      parts = partitions
-    else:
-      parts = [_replicated_param if part is None else part
-               for part in partitions]
-    counts = it.count()
-    xla_args = [_xla_param(c, next(counts), xla_shape, r, p, partitions_proto,
-                           filter_tokens)
-                for (a, r, p) in safe_zip(avals, replicated, parts)
-                for xla_shape in aval_to_xla_shapes(a)]
-    if donated_invars is not None:
-      donated_invars = [
-          d for (a, _, _, d) in zip(avals, replicated, parts, donated_invars)
-          for xla_shape in aval_to_xla_shapes(a)]
-    return xla_args, donated_invars
-  else:
-    if replicated is not None:
-      replicated = [r for a, r in zip(avals, replicated)
-                    if a is not abstract_token]
-    if partitions is None:
-      tuple_parts = None
-    elif partitions_proto:
-      tuple_parts = tuple_sharding_proto(partitions)
-    else:
-      tuple_parts = tuple(partitions)
-    tuple_shape = xc.Shape.tuple_shape(
-        [shape if not (filter_tokens and a is abstract_token)
-         else _token_param_shape()
-         for a in avals for shape in aval_to_xla_shapes(a)])
-    tuple_param = _xla_param(c, 0, tuple_shape, replicated, tuple_parts,
-                             partitions_proto, filter_tokens)
-    xla_args = [v if not (filter_tokens and a is abstract_token)
-                else xops.CreateToken(c)
-                for a, v in zip(avals, xla_destructure(c, tuple_param))]
-    return xla_args, donated_invars
-
-def _xla_param(builder, param_num, xla_shape, replicated, partitions,
-               parts_proto, filter_tokens):
-  is_token = xla_shape.is_token()
-  if filter_tokens and is_token:
-    xla_shape = _token_param_shape()
-  make_param = partial(parameter, builder, param_num, xla_shape,
-                       replicated=replicated)
-  with_sharding_fn = with_sharding_proto if parts_proto else with_sharding
-  if partitions is None:
-    out = make_param()
-  elif partitions is _replicated_param:
-    out = with_sharding_fn(builder, None, make_param)
-  else:
-    out = with_sharding_fn(builder, partitions, make_param)
-  if filter_tokens and is_token:
-    out = xops.CreateToken(builder)
-  return out
-
-
 ### compiling jaxprs
 
-
-def _flatmap(func: Callable, vars: Sequence):
-  return list(it.chain.from_iterable(map(func, vars)))
-
-def _partitionmap(func: Callable, vars: Sequence, nodes: Sequence):
-  return map(func, vars,
-             util.unflatten(nodes,
-                            [len(aval_to_xla_shapes(v.aval)) for v in vars]))
 
 class AxisEnv(NamedTuple):
   """Represents a pmap mesh (only along the replica axes)."""
@@ -565,64 +333,6 @@ class TranslationContext:
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 
-
-def _jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
-                   consts: Sequence[XlaOp], *args: XlaOp) -> Sequence[XlaOp]:
-  assert ctx.platform is not None
-  def read(v):
-    if type(v) is Literal:
-      return pyval_to_ir_constants(ctx.builder, canonicalize_dtype(v.val))
-    else:
-      return env[v]
-
-  def aval(v):
-    if type(v) is Literal:
-      return abstractify(v.val)
-    else:
-      return v.aval
-
-  def write(v, node):
-    assert node is not None
-    env[v] = node
-
-  env: Dict[core.Var, Sequence[XlaOp]] = {}
-  _partitionmap(write, [core.unitvar],
-                pyval_to_ir_constants(ctx.builder, core.unit))
-  _partitionmap(write, jaxpr.constvars, consts)
-  _partitionmap(write, jaxpr.invars, args)
-  for eqn in jaxpr.eqns:
-    if config.jax_experimental_name_stack:
-      assert isinstance(ctx.name_stack, source_info_util.NameStack), type(ctx.name_stack)
-      source_info = eqn.source_info.replace(
-          name_stack=ctx.name_stack + eqn.source_info.name_stack)
-    else:
-      source_info = eqn.source_info
-    op_metadata = make_op_metadata(
-        eqn.primitive, eqn.params, name_stack=ctx.name_stack,
-        source_info=source_info)
-    ctx.builder.set_op_metadata(op_metadata)
-    in_nodes = _flatmap(read, eqn.invars)
-    if (ctx.platform is not None and
-        eqn.primitive in _backend_specific_translations[ctx.platform]):
-      rule = _backend_specific_translations[ctx.platform][eqn.primitive]
-    elif eqn.primitive in _translations:
-      rule = _translations[eqn.primitive]
-    else:
-      raise NotImplementedError(
-          f"XLA translation rule for primitive '{eqn.primitive.name}' not found")
-
-    with source_info_util.user_context(eqn.source_info.traceback):
-      eqn_ctx = (ctx.replace(name_stack=source_info.name_stack) if
-          config.jax_experimental_name_stack else ctx)
-      ans = rule(eqn_ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
-                 *in_nodes, **eqn.params)
-
-    assert isinstance(ans, collections.abc.Sequence), (ans, eqn)
-    assert all(isinstance(x, xe.XlaOp) for x in ans), (ans, eqn)
-    map(ctx.builder.get_shape, ans)  # force xla to do shape error checking
-    ctx.builder.clear_op_metadata()
-    _partitionmap(write, eqn.outvars, ans)
-  return _flatmap(read, jaxpr.outvars)
 
 
 def xla_destructure(c, ans):
@@ -686,16 +396,6 @@ def jaxpr_collectives(jaxpr):
 
 
 ### xla_call underlying jit
-
-
-
-def _xla_consts(c, consts):
-  unique_consts = {id(const): const for const in consts}
-  xla_consts = {
-      id_: pyval_to_ir_constants(c, const) for id_, const in unique_consts.items()}
-  return [c for const in consts for c in xla_consts[id(const)]]
-
-
 
 
 xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
@@ -839,13 +539,6 @@ class _BackendSpecificTranslationsAdapter(defaultdict):
 
 backend_specific_translations: Dict[str, _TranslationRuleAdapter]
 backend_specific_translations = _BackendSpecificTranslationsAdapter()
-
-
-
-@lu.transformation
-def _tuple_output(*args, **kwargs):
-  ans = yield args, kwargs
-  yield (ans,)
 
 # TODO(phawkins): remove lower_fun completely after updating users.
 def lower_fun(fun: Callable, *, multiple_results: bool, backend=None,

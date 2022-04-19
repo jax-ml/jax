@@ -986,7 +986,8 @@ def xla_fallback_lowering(prim: core.Primitive):
   def fallback(ctx: LoweringRuleContext, *args, **params):
     module_ctx = ctx.module_context
     xla_computation = xla.primitive_subcomputation(
-        module_ctx.platform, module_ctx.axis_env, prim, *ctx.avals_in, **params)
+        module_ctx.platform, module_ctx.axis_env, prim, ctx.avals_in,
+        ctx.avals_out, **params)
     submodule_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
     submodule = ir.Module.parse(submodule_str)
     callee_name = None

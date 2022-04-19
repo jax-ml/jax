@@ -227,15 +227,6 @@ def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   return out_handler(out_bufs)
 
 
-def _xla_sharded_args(c, avals, in_parts):
-  xla_args = []
-  for i, (sharding, aval) in enumerate(safe_zip(in_parts, avals)):
-    param = xla.with_sharding(c, sharding, xla.parameter, c, i,
-                             *xla.aval_to_xla_shapes(aval))
-    xla_args.append(param)
-  return xla_args
-
-
 def _sharded_call_impl(fun, *args, nparts, in_parts, out_parts_thunk,
                        local_in_parts, local_out_parts_thunk, local_nparts,
                        name):
