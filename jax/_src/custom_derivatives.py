@@ -22,8 +22,9 @@ from typing import (Callable, Generic, Optional, Sequence, Tuple, List, TypeVar,
 from jax import core
 from jax import linear_util as lu
 from jax.custom_transpose import custom_transpose
-from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, treedef_is_leaf,
-                           treedef_tuple, register_pytree_node_class)
+from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
+                           treedef_is_leaf, treedef_tuple,
+                           register_pytree_node_class, tree_leaves)
 from jax._src import custom_api_util
 from jax._src import dtypes
 from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
@@ -564,21 +565,17 @@ class custom_vjp(Generic[ReturnValue]):
       out_tree = aux if fst else aux[0]
       return tree_unflatten(out_tree, out_flat)
 
-@partial(partial, tree_map)
 def _check_for_tracers(x):
-  if isinstance(x, core.Tracer):
-    msg = ("Found a JAX Tracer object passed as an argument to a custom_vjp "
-           "function in a position indicated by nondiff_argnums as "
-           "non-differentiable. Tracers cannot be passed as non-differentiable "
-           "arguments to custom_vjp functions; instead, nondiff_argnums should "
-           "only be used for arguments that can't be or contain JAX tracers, "
-           "e.g. function-valued arguments. In particular, array-valued "
-           "arguments should typically not be indicated as nondiff_argnums. "
-           "\n\n"
-           "This behavior recently changed in JAX. "
-           "See https://github.com/google/jax/blob/main/docs/custom_vjp_update.md "
-           "for more information.")
-    raise UnexpectedTracerError(msg)
+  for leaf in tree_leaves(x):
+    if isinstance(x, core.Tracer):
+      msg = ("Found a JAX Tracer object passed as an argument to a custom_vjp "
+            "function in a position indicated by nondiff_argnums as "
+            "non-differentiable. Tracers cannot be passed as non-differentiable "
+            "arguments to custom_vjp functions; instead, nondiff_argnums should "
+            "only be used for arguments that can't be or contain JAX tracers, "
+            "e.g. function-valued arguments. In particular, array-valued "
+            "arguments should typically not be indicated as nondiff_argnums.")
+      raise UnexpectedTracerError(msg)
 
 @lu.transformation_with_aux
 def _flatten_fwd(in_tree, *args):
@@ -610,11 +607,11 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
   zero = object()  # non-pytree sentinel to replace Nones in py_cts_in
   dummy = tree_unflatten(in_tree, [object()] * in_tree.num_leaves)
   cts_in_flat = []
-  append_cts = lambda x, d: cts_in_flat.extend([x] * len(tree_flatten(d)[0]))
+  append = lambda x, d: cts_in_flat.extend([x] * len(tree_flatten(d)[0])) or x
   try:
     if not isinstance(py_cts_in, tuple):
       raise ValueError
-    tree_map(append_cts,
+    tree_map(append,
              tuple(zero if ct is None else ct for ct in py_cts_in), dummy)
   except ValueError:
     _, in_tree2 = tree_flatten(py_cts_in)

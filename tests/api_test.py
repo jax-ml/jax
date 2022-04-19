@@ -6442,6 +6442,26 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jtu.check_grads(h, (jnp.float32(3.14),), order=1, modes=['rev'])
 
+  def test_pytrees_not_required_to_contain_nones(self):
+    class A(list):
+      pass
+
+    def unflatten(_, children):
+      assert children[0] is not None
+      return A(children)
+
+    tree_util.register_pytree_node(A, lambda x: (x, None), unflatten)
+
+    @jax.custom_vjp
+    def f(x):
+      return x[0]
+    def f_fwd(x):
+      return x[0], None
+    def f_bwd(_, g):
+      return A([g]),
+    f.defvjp(f_fwd, f_bwd)
+
+    jax.grad(f)(A([1.]))  # doesn't crash
 
 def transpose_unary(f, x_example):
   def transposed(y):
