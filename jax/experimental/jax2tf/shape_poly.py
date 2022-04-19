@@ -442,6 +442,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
   def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
     """Implements `(d - window_size) // window_stride + 1`"""
     try:
+      # TODO(necula): check for d == 0 or window_size > d and return 0.
       q, r = _ensure_poly(d - window_size).divmod(window_stride)
       return q + 1
     except InconclusiveDimensionOperation as e:

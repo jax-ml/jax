@@ -1511,7 +1511,11 @@ class DimensionHandler:
     return sz1 // sz2
 
   def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
-    """(d - window_size) // window_stride + 1"""
+    """(d - window_size) // window_stride + 1.
+
+    If d == 0 or window_size > d, returns 0.
+    """
+    if d == 0 or window_size > d: return 0
     return (d - window_size) // window_stride + 1
 
   def dilate(self, d: DimSize, dilation: int) -> DimSize:
