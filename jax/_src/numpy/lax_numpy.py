@@ -3344,7 +3344,11 @@ def unpackbits(a, axis: Optional[int] = None, count=None, bitorder='big'):
   return swapaxes(unpacked, axis, -1)
 
 
-@_wraps(np.take, skip_params=['out'])
+@_wraps(np.take, skip_params=['out'], lax_description="""\
+In the JAX version, the ``mode`` argument defaults to a special version of ``"clip"``
+that handles negative indices. See :attr:`jax.numpy.ndarray.at` for more discussion
+of out-of-bounds indexing in JAX.
+""")
 def take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   return _take(a, indices, None if axis is None else operator.index(axis), out,
                mode)
