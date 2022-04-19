@@ -628,7 +628,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "hi"):
       f()
 
-  def test_assert_primitive_(self):
+  def test_assert_primitive_staging(self):
     @jax.jit
     def f():
       checkify.check(False, "hi")
@@ -658,15 +658,32 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "must be positive")
 
+  def test_assert_discharging_no_data_dependence(self):
+    @jax.jit
+    def g(x):
+      @checkify.checkify
+      def f():
+        # Note that x is not an argument to the checkified function.
+        checkify.check(x > 0, "must be positive!")
+        return jnp.log(x)
+      return f()
+
+    err, _ = g(1.)
+    self.assertIsNone(err.get())
+
+    err, _ = g(0.)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "must be positive")
+
   def test_check_error(self):
-    def f(pred):  # note: data dependence needed!
-      checkify.check_error(checkify.Error(~pred, 0, {0: "hi"}))
+    def f():
+      checkify.check_error(checkify.Error(True, 0, {0: "hi"}))
 
     with self.assertRaisesRegex(ValueError, "hi"):
-      f(False)
+      f()
 
     f = checkify.checkify(f)
-    err, none = f(False)
+    err, none = f()
 
     self.assertIsNone(none)
     self.assertIsNotNone(err.get())

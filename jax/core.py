@@ -478,6 +478,25 @@ class Trace:
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)
 
+
+def raise_as_much_as_possible(tracer) -> Tracer:
+  # Find 'true' bottom of trace stack (highest dynamic Trace on the stack).
+  trace_stack = thread_local_state.trace_state.trace_stack.stack
+  idx = next(i for i, m in enumerate(trace_stack) if m is
+             thread_local_state.trace_state.trace_stack.dynamic)
+
+  # Only pay attention to 'true' part of trace stack.
+  trace_stack = trace_stack[idx:]
+
+  # Lift tracer into everything in the 'true' part of the stack.
+  for trace in trace_stack:
+    trace = trace.with_cur_sublevel()
+    if (not isinstance(tracer, Tracer) or tracer._trace.level < trace.level):
+      tracer = trace.full_raise(tracer)
+
+  return tracer
+
+
 def escaped_tracer_error(tracer, detail=None):
   num_frames = FLAGS.jax_tracer_error_num_traceback_frames
   msg = ('Encountered an unexpected tracer. A function transformed by JAX '
