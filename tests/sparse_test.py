@@ -1539,11 +1539,13 @@ class BCOOTest(jtu.JaxTestCase):
       for nse in [None, np.prod(shape) - 1]
       for remove_zeros in [True, False]))
   def test_bcoo_sum_duplicates(self, shape, dtype, n_batch, n_dense, nse, remove_zeros):
-    rng = self.rng()
+    # Create a matrix with duplicate indices
     rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
     M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
-    for i, s in enumerate(shape[n_batch:len(shape) - n_dense]):
-      M.indices = M.indices.at[..., i].set(rng.randint(0, s, size=M.nse))
+    new_indices = jnp.concatenate([M.indices, M.indices], axis=n_batch)
+    new_data = jnp.concatenate([M.data, M.data], axis=n_batch)
+    M = sparse.BCOO((new_data, new_indices), shape=M.shape)
+
     dedupe = partial(M.sum_duplicates, nse=nse, remove_zeros=remove_zeros)
     jit_dedupe = jax.jit(dedupe)
 
@@ -1553,12 +1555,47 @@ class BCOOTest(jtu.JaxTestCase):
       self.assertEqual(M_dedup.nse, nse)
 
     if not nse:
-      with self.assertRaisesRegex(ValueError, ".*nse argument"):
+      with self.assertRaisesRegex(ValueError, ".*nse must be specified.*"):
         jit_dedupe()
     else:
       M_dedup = jit_dedupe()
       self.assertAllClose(M.todense(), M_dedup.todense())
       self.assertEqual(M_dedup.nse, nse)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}_nse={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, nse),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense, "nse": nse}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)
+      for nse in [None, 5, np.prod(shape) - 1]
+  ))
+  def test_bcoo_sum_duplicates_ad(self, shape, dtype, n_batch, n_dense, nse):
+    # Create a matrix with duplicate indices
+    rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
+    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
+    new_indices = jnp.concatenate([M.indices, M.indices], axis=n_batch)
+    new_data = jnp.concatenate([M.data, M.data], axis=n_batch)
+    M = sparse.BCOO((new_data, new_indices), shape=M.shape)
+
+    # TODO(jakevdp) address this corner case.
+    if M.nse == 0:
+      self.skipTest("known failure for nse=0")
+
+    if nse == 'all':
+      nse = M.nse
+
+    def dedupe(data, nse=nse):
+      mat = sparse.BCOO((data, M.indices), shape=M.shape)
+      mat_dedup = mat.sum_duplicates(nse=nse, remove_zeros=False)
+      return mat_dedup.data
+
+    data_dot_fwd = jax.jacfwd(dedupe)(M.data)
+    data_dot_rev = jax.jacrev(dedupe)(M.data)
+
+    self.assertAllClose(data_dot_fwd, data_dot_rev)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
@@ -1598,7 +1635,6 @@ class BCOOTest(jtu.JaxTestCase):
     def sort_indices(data):
       return sparse.BCOO((data, M.indices), shape=M.shape).sort_indices().data
 
-    # Forward-mode
     data_dot_fwd = jax.jacfwd(sort_indices)(M.data)
     data_dot_rev = jax.jacrev(sort_indices)(M.data)
 

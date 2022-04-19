@@ -80,4 +80,4 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=jnp.int_,
   data = generator(data_key, shape=data_shape, dtype=dtype, **kwds)
   indices = _indices(index_keys).reshape(indices_shape).astype(indices_dtype)
   mat = sparse.BCOO((data, indices), shape=shape)
-  return mat.sum_duplicates() if sorted_indices else mat
+  return mat.sort_indices() if sorted_indices else mat
