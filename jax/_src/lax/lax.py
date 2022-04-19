@@ -3389,7 +3389,7 @@ def _reduce_lower(ctx, *values, computation, jaxpr, consts, dimensions):
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
-    reducer_ctx = ctx.module_context.replace(name_stack='')
+    reducer_ctx = ctx.module_context.replace(name_stack=util.new_name_stack())
     out_nodes = mlir.jaxpr_subcomp(reducer_ctx, jaxpr, consts,
                                    *([a] for a in reducer.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))

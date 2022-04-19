@@ -62,9 +62,14 @@ class MetadataTest(jtu.JaxTestCase):
     def foo(x):
       return jnp.sin(x)
     hlo = jax.xla_computation(jax.grad(foo))(1.).get_hlo_module().to_string()
-    self.assertRegex(hlo, 'op_name=".*jit\\(jvp\\(foo\\)\\)/sin"')
-    self.assertRegex(hlo, 'op_name=".*jit\\(jvp\\(foo\\)\\)/cos"')
-    self.assertRegex(hlo, 'op_name=".*jit\\(transpose\\(jvp\\(foo\\)\\)\\)/mul"')
+    if config.jax_experimental_name_stack:
+      self.assertRegex(hlo, 'op_name=".*jvp\\(jit\\(foo\\)\\)/sin"')
+      self.assertRegex(hlo, 'op_name=".*jvp\\(jit\\(foo\\)\\)/cos"')
+      self.assertRegex(hlo, 'op_name=".*transpose\\(jvp\\(jit\\(foo\\)\\)\\)/mul"')
+    else:
+      self.assertRegex(hlo, 'op_name=".*jit\\(jvp\\(foo\\)\\)/sin"')
+      self.assertRegex(hlo, 'op_name=".*jit\\(jvp\\(foo\\)\\)/cos"')
+      self.assertRegex(hlo, 'op_name=".*jit\\(transpose\\(jvp\\(foo\\)\\)\\)/mul"')
 
   def test_cond_metadata(self):
     def true_fun(x):
