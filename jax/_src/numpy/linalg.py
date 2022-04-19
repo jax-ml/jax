@@ -24,6 +24,7 @@ from jax import jit, custom_jvp
 from jax import lax
 
 from jax._src import dtypes
+from jax._src.api import _make_jit
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import lax_numpy as jnp
@@ -56,7 +57,7 @@ def cholesky(a):
 
 
 @_wraps(np.linalg.svd)
-@partial(jit, static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
+@_make_jit(static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
 def svd(a, full_matrices: bool = True, compute_uv: bool = True,
         hermitian: bool = False):
   a = _promote_arg_dtypes(jnp.asarray(a))
@@ -80,7 +81,7 @@ def svd(a, full_matrices: bool = True, compute_uv: bool = True,
 
 
 @_wraps(np.linalg.matrix_power)
-@partial(jit, static_argnames=('n',))
+@_make_jit(static_argnames=('n',))
 def matrix_power(a, n):
   a = _promote_arg_dtypes(jnp.asarray(a))
 
@@ -325,7 +326,7 @@ def eigvals(a):
 
 
 @_wraps(np.linalg.eigh)
-@partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
+@_make_jit(static_argnames=('UPLO', 'symmetrize_input'))
 def eigh(a, UPLO=None, symmetrize_input=True):
   if UPLO is None or UPLO == "L":
     lower = True
@@ -341,7 +342,7 @@ def eigh(a, UPLO=None, symmetrize_input=True):
 
 
 @_wraps(np.linalg.eigvalsh)
-@partial(jit, static_argnames=('UPLO',))
+@_make_jit(static_argnames=('UPLO',))
 def eigvalsh(a, UPLO='L'):
   w, _ = eigh(a, UPLO)
   return w
@@ -403,7 +404,7 @@ def inv(a):
 
 
 @_wraps(np.linalg.norm)
-@partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
+@_make_jit(static_argnames=('ord', 'axis', 'keepdims'))
 def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
          keepdims=False):
   x = _promote_arg_dtypes(jnp.asarray(x))
@@ -490,7 +491,7 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
 
 
 @_wraps(np.linalg.qr)
-@partial(jit, static_argnames=('mode',))
+@_make_jit(static_argnames=('mode',))
 def qr(a, mode="reduced"):
   if mode in ("reduced", "r", "full"):
     full_matrices = False

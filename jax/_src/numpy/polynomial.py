@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-from functools import partial
 import operator
 
 from jax import core
 from jax import jit
 from jax import lax
+from jax._src.api import _make_jit
 from jax._src.numpy.lax_numpy import (
     all, arange, argmin, array, asarray, atleast_1d, concatenate, convolve, diag, dot, finfo,
     full, hstack, maximum, ones, outer, sqrt, trim_zeros, trim_zeros_tol, true_divide, vander, zeros)
@@ -106,7 +105,7 @@ Unlike NumPy's implementation of polyfit, :py:func:`jax.numpy.polyfit` will not 
 Also, it works best on rcond <= 10e-3 values.
 """
 @_wraps(np.polyfit, lax_description=_POLYFIT_DOC)
-@partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
+@_make_jit(static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x, y, deg, rcond=None, full=False, w=None, cov=False):
   _check_arraylike("polyfit", x, y)
   deg = core.concrete_or_error(int, deg, "deg must be int")
@@ -219,7 +218,7 @@ parameter controls the number of unrolled steps with ``lax.scan`` inside the
 improve runtime performance on accelerators, at the cost of increased
 compilation time.
 """)
-@partial(jit, static_argnames=['unroll'])
+@_make_jit(static_argnames=['unroll'])
 def polyval(p, x, *, unroll=16):
   _check_arraylike("polyval", p, x)
   p, x = _promote_dtypes_inexact(p, x)
@@ -240,7 +239,7 @@ def polyadd(a1, a2):
 
 
 @_wraps(np.polyint)
-@partial(jit, static_argnames=('m',))
+@_make_jit(static_argnames=('m',))
 def polyint(p, m=1, k=None):
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyint")
   k = 0 if k is None else k
@@ -261,7 +260,7 @@ def polyint(p, m=1, k=None):
 
 
 @_wraps(np.polyder)
-@partial(jit, static_argnames=('m',))
+@_make_jit(static_argnames=('m',))
 def polyder(p, m=1):
   _check_arraylike("polyder", p)
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyder")

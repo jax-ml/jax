@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import builtins
-from functools import partial
 import operator
 from typing import Optional, Tuple, Union
 import warnings
@@ -151,7 +150,7 @@ def _ensure_optional_axes(x):
     force, x, "The axis argument must be known statically.")
 
 
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
 def _reduce_sum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                 dtype=None, out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "sum", np.sum, lax.add, 0,
@@ -166,7 +165,7 @@ def sum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
                      keepdims=keepdims, initial=initial, where=where)
 
 
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
 def _reduce_prod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                  dtype=None, out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "prod", np.prod, lax.mul, 1,
@@ -181,7 +180,7 @@ def prod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
                       out=out, keepdims=keepdims, initial=initial, where=where)
 
 
-@partial(api.jit, static_argnames=('axis', 'keepdims'), inline=True)
+@api._make_jit(static_argnames=('axis', 'keepdims'), inline=True)
 def _reduce_max(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
                 keepdims=None, initial=None, where=None):
   return _reduction(a, "max", np.max, lax.max, -np.inf, has_identity=False,
@@ -194,7 +193,7 @@ def max(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
   return _reduce_max(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, initial=initial, where=where)
 
-@partial(api.jit, static_argnames=('axis', 'keepdims'), inline=True)
+@api._make_jit(static_argnames=('axis', 'keepdims'), inline=True)
 def _reduce_min(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
                 keepdims=None, initial=None, where=None):
   return _reduction(a, "min", np.min, lax.min, np.inf, has_identity=False,
@@ -207,7 +206,7 @@ def min(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
   return _reduce_min(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, initial=initial, where=where)
 
-@partial(api.jit, static_argnames=('axis', 'keepdims'), inline=True)
+@api._make_jit(static_argnames=('axis', 'keepdims'), inline=True)
 def _reduce_all(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
                 keepdims=None, *, where=None):
   return _reduction(a, "all", np.all, lax.bitwise_and, True, preproc=_cast_to_bool,
@@ -219,7 +218,7 @@ def all(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
   return _reduce_all(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, where=where)
 
-@partial(api.jit, static_argnames=('axis', 'keepdims'), inline=True)
+@api._make_jit(static_argnames=('axis', 'keepdims'), inline=True)
 def _reduce_any(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
                 keepdims=None, *, where=None):
   return _reduction(a, "any", np.any, lax.bitwise_or, False, preproc=_cast_to_bool,
@@ -252,7 +251,7 @@ def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   return _mean(a, _ensure_optional_axes(axis), dtype, out, keepdims,
                where=where)
 
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
 def _mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
          out=None, keepdims=False, *, where=None):
   _check_arraylike("mean", a)
@@ -284,7 +283,7 @@ def average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
             returned=False):
   return _average(a, _ensure_optional_axes(axis), weights, returned)
 
-@partial(api.jit, static_argnames=('axis', 'returned'), inline=True)
+@api._make_jit(static_argnames=('axis', 'returned'), inline=True)
 def _average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
             returned=False):
   a = _asarray(a)
@@ -340,7 +339,7 @@ def var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   return _var(a, _ensure_optional_axes(axis), dtype, out, ddof, keepdims,
               where=where)
 
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def _var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
         out=None, ddof=0, keepdims=False, *, where=None):
   _check_arraylike("var", a)
@@ -396,7 +395,7 @@ def std(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   return _std(a, _ensure_optional_axes(axis), dtype, out, ddof, keepdims,
               where=where)
 
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def _std(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
         out=None, ddof=0, keepdims=False, *, where=None):
   _check_arraylike("std", a)
@@ -411,7 +410,7 @@ def ptp(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
         keepdims=False):
   return _ptp(a, _ensure_optional_axes(axis), out, keepdims)
 
-@partial(api.jit, static_argnames=('axis', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'keepdims'))
 def _ptp(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
         keepdims=False):
   _check_arraylike("ptp", a)
@@ -423,7 +422,7 @@ def _ptp(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 
 
 @_wraps(np.count_nonzero)
-@partial(api.jit, static_argnames=('axis', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'keepdims'))
 def count_nonzero(a, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                   keepdims=False):
   _check_arraylike("count_nonzero", a)
@@ -446,7 +445,7 @@ def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
     return out
 
 @_wraps(np.nanmin, skip_params=['out'])
-@partial(api.jit, static_argnames=('axis', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'keepdims'))
 def nanmin(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
            keepdims=None, initial=None, where=None):
   return _nan_reduction(a, 'nanmin', min, np.inf, nan_if_all_nan=initial is None,
@@ -454,7 +453,7 @@ def nanmin(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
                         initial=initial, where=where)
 
 @_wraps(np.nanmax, skip_params=['out'])
-@partial(api.jit, static_argnames=('axis', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'keepdims'))
 def nanmax(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
            keepdims=None, initial=None, where=None):
   return _nan_reduction(a, 'nanmax', max, -np.inf, nan_if_all_nan=initial is None,
@@ -462,7 +461,7 @@ def nanmax(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
                         initial=initial, where=where)
 
 @_wraps(np.nansum, skip_params=['out'])
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, keepdims=None, initial=None, where=None):
   lax_internal._check_user_dtype_supported(dtype, "nanprod")
@@ -474,7 +473,7 @@ def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
 
 @_wraps(np.nanprod, skip_params=['out'])
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def nanprod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
             out=None, keepdims=None, initial=None, where=None):
   lax_internal._check_user_dtype_supported(dtype, "nanprod")
@@ -483,7 +482,7 @@ def nanprod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
                         initial=initial, where=where)
 
 @_wraps(np.nanmean, skip_params=['out'])
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def nanmean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
             out=None, keepdims=False, where=None):
   _check_arraylike("nanmean", a)
@@ -502,7 +501,7 @@ def nanmean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 
 
 @_wraps(np.nanvar, skip_params=['out'])
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, ddof=0, keepdims=False, where=None):
   _check_arraylike("nanvar", a)
@@ -531,7 +530,7 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 
 
 @_wraps(np.nanstd, skip_params=['out'])
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
+@api._make_jit(static_argnames=('axis', 'dtype', 'keepdims'))
 def nanstd(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, ddof=0, keepdims=False, where=None):
   _check_arraylike("nanstd", a)
@@ -548,7 +547,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
                            dtype=None, out=None):
     return _cumulative_reduction(a, _ensure_optional_axes(axis), dtype, out)
 
-  @partial(api.jit, static_argnames=('axis', 'dtype'))
+  @api._make_jit(static_argnames=('axis', 'dtype'))
   def _cumulative_reduction(a,
                            axis: Optional[Union[int, Tuple[int, ...]]] = None,
                            dtype=None, out=None):

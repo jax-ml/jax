@@ -24,11 +24,10 @@ SIAM Journal on Matrix Analysis and Applications 31, no. 5 (2010): 2700-2720.
 https://epubs.siam.org/doi/abs/10.1137/090774999
 """
 
-import functools
-
 import jax
 from jax import core
 import jax.numpy as jnp
+from jax._src.api import _make_jit
 from jax._src.lax import linalg as lax_linalg
 
 
@@ -65,7 +64,7 @@ def _use_cholesky(u, params):
   return u
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2, 3))
+@_make_jit(static_argnums=(1, 2, 3))
 def _qdwh(x, is_symmetric, max_iterations):
   """QR-based dynamically weighted Halley iteration for polar decomposition."""
 

@@ -34,6 +34,7 @@ import types
 from typing import (Any, Callable, Iterable, NamedTuple, Mapping, Optional,
                     Sequence, Tuple, TypeVar, Union, overload, Dict, Hashable,
                     List)
+from typing_extensions import ParamSpec
 from warnings import warn
 
 import numpy as np
@@ -110,6 +111,7 @@ AxisName = Any
 F = TypeVar("F", bound=Callable)
 T = TypeVar("T")
 U = TypeVar("U")
+P = ParamSpec("P")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -226,9 +228,7 @@ def _infer_argnums_and_argnames(
       )
   return argnums, argnames
 
-
-def jit(
-    fun: Callable,
+def _make_jit(
     *,
     static_argnums: Union[int, Iterable[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
@@ -237,7 +237,31 @@ def jit(
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
     abstracted_axes: Optional[Any] = None,
-  ) -> stages.Wrapped:
+  ) -> Callable[[Callable[P, T]], stages.Wrapped[P, T]]:
+  def _jit(f: Callable[P, T]):
+    return jit(
+      f,
+      static_argnums=static_argnums,
+      static_argnames=static_argnames,
+      device=device,
+      backend=backend,
+      donate_argnums=donate_argnums,
+      inline=inline,
+      abstracted_axes=abstracted_axes
+    )
+  return _jit
+
+def jit(
+    fun: Callable[P, T],
+    *,
+    static_argnums: Union[int, Iterable[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
+    device: Optional[xc.Device] = None,
+    backend: Optional[str] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
+    inline: bool = False,
+    abstracted_axes: Optional[Any] = None,
+  ) -> stages.Wrapped[P, T]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -329,10 +353,10 @@ def jit(
     DeviceArray([   0,    1,  256, 6561], dtype=int32)
   """
   if FLAGS.experimental_cpp_jit and not config.jax_dynamic_shapes:
-    return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
+    return _cpp_jit(fun, static_argnums, static_argnames, device, backend, # type: ignore # mypy bug
                     donate_argnums, inline)
   else:
-    return _python_jit(fun, static_argnums, static_argnames, device, backend,
+    return _python_jit(fun, static_argnums, static_argnames, device, backend, # type: ignore # mypy bug
                        donate_argnums, inline, abstracted_axes)
 
 
@@ -358,7 +382,7 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
 PytreeOfAbstractedAxesSpec = Any
 
 def _python_jit(
-    fun: Callable,
+    fun: Callable[P, T],
     static_argnums: Union[int, Iterable[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
@@ -366,7 +390,7 @@ def _python_jit(
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
     abstracted_axes: Optional[PytreeOfAbstractedAxesSpec] = None,
-  ) -> stages.Wrapped:
+  ) -> stages.Wrapped[P, T]:
   _check_callable(fun)
   static_argnums, static_argnames = _infer_argnums_and_argnames(
       fun, static_argnums, static_argnames)
@@ -423,14 +447,14 @@ class _FastpathData(NamedTuple):
 _cpp_jit_cache = jax_jit.CompiledFunctionCache()
 
 def _cpp_jit(
-    fun: Callable,
+    fun: Callable[P, T],
     static_argnums: Union[int, Iterable[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
-  ) -> stages.Wrapped:
+  ) -> stages.Wrapped[P, T]:
   # An implementation of `jit` that tries to do as much as possible in C++.
   # The goal of this function is to speed up the time it takes to process the
   # arguments, find the correct C++ executable, start the transfer of arguments

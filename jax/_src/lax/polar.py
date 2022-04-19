@@ -20,9 +20,9 @@ positive semidefinite (or positive definite if A is nonsingular). The method
 is described in the docstring to `polarU`. This file covers the serial
 case.
 """
-import functools
 import jax
 from jax import lax
+from jax._src.api import _make_jit
 import jax.numpy as jnp
 import jax.scipy as jsp
 
@@ -90,7 +90,7 @@ def polar(a, side='right', method='qdwh', eps=None, maxiter=50):
   return _polar(a, side, method, eps, maxiter)
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2, 4))
+@_make_jit(static_argnums=(1, 2, 4))
 def _polar(a, side, method, eps, maxiter):
   if side not in ("left", "right"):
     raise ValueError(f"side={side} was invalid.")
@@ -111,7 +111,7 @@ def polar_unitary(a, method="qdwh", eps=None, maxiter=50):
   return _polar_unitary(a, method, eps, maxiter)
 
 
-@functools.partial(jax.jit, static_argnums=(1, 3))
+@_make_jit(static_argnums=(1, 3))
 def _polar_unitary(a, method, eps, maxiter):
   if method not in ("svd", "qdwh"):
     raise ValueError(f"method={method} is unsupported.")
@@ -128,7 +128,7 @@ def _polar_unitary(a, method, eps, maxiter):
   return unitary, info
 
 
-@functools.partial(jax.jit, static_argnums=(2,))
+@_make_jit(static_argnums=(2,))
 def _qdwh(matrix, eps, maxiter):
   """ Computes the unitary factor in the polar decomposition of A using
   the QDWH method. QDWH implements a 3rd order Pade approximation to the

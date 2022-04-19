@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import enum
 from typing import Callable, Sequence, Union
 
 from jax import core
-from jax import jit
 from jax import lax
 from jax import numpy as jnp
+from jax._src.api import _make_jit
 from jax._src.util import canonicalize_axis
 import numpy as np
 
@@ -269,7 +268,7 @@ def _resize_nearest(x, output_shape: core.Shape):
   return x
 
 
-@partial(jit, static_argnums=(1, 2, 3, 4))
+@_make_jit(static_argnums=(1, 2, 3, 4))
 def _resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
             antialias: bool, precision):
   if len(shape) != image.ndim:

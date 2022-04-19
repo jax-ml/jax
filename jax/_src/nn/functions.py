@@ -14,7 +14,6 @@
 
 """Shared neural network activations and other functions."""
 
-from functools import partial
 import operator
 import warnings
 import numpy as np
@@ -27,6 +26,7 @@ from jax import lax
 from jax import core
 from jax.core import AxisName
 from jax._src import util
+from jax._src.api import _make_jit
 from jax.scipy.special import expit
 from jax.scipy.special import logsumexp as _logsumexp
 import jax.numpy as jnp
@@ -229,7 +229,7 @@ def selu(x: Array) -> Array:
   return scale * elu(x, alpha)
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-# @partial(jax.jit, static_argnames=("approximate",))
+# @_make_jit(static_argnames=("approximate",))
 def gelu(x: Array, approximate: bool = True) -> Array:
   r"""Gaussian error linear unit activation function.
 
@@ -259,7 +259,7 @@ def gelu(x: Array, approximate: bool = True) -> Array:
   else:
     return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
 
-@partial(jax.jit, static_argnames=("axis",))
+@_make_jit(static_argnames=("axis",))
 def glu(x: Array, axis: int = -1) -> Array:
   """Gated linear unit activation function.
 
@@ -277,7 +277,7 @@ def glu(x: Array, axis: int = -1) -> Array:
 logsumexp = _logsumexp
 
 
-@partial(jax.jit, static_argnames=("axis",))
+@_make_jit(static_argnames=("axis",))
 def log_softmax(x: Array,
                 axis: Optional[Union[int, Tuple[int, ...]]] = -1,
                 where: Optional[Array] = None,
@@ -307,7 +307,7 @@ def log_softmax(x: Array,
 
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-#@partial(jax.jit, static_argnames=("axis",))
+#@_make_jit(static_argnames=("axis",))
 def softmax(x: Array,
             axis: Optional[Union[int, Tuple[int, ...]]] = -1,
             where: Optional[Array] = None,
@@ -333,7 +333,7 @@ def softmax(x: Array,
   unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
 
-@partial(jax.jit, static_argnames=("axis",))
+@_make_jit(static_argnames=("axis",))
 def standardize(x: Array,
               axis: Optional[Union[int, Tuple[int, ...]]] = -1,
               mean: Optional[Array] = None,
@@ -362,7 +362,7 @@ def normalize(x: Array,
   warnings.warn("jax.nn.normalize will be deprecated. Use jax.nn.standardize instead.", DeprecationWarning)
   return standardize(x, axis, mean, variance, epsilon, where)
 
-@partial(jax.jit, static_argnames=("num_classes", "dtype", "axis"))
+@_make_jit(static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
              dtype: Any, axis: Union[int, AxisName]) -> Array:
   num_classes = core.concrete_or_error(

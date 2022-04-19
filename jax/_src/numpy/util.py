@@ -327,7 +327,7 @@ def _promote_args_inexact(fun_name, *args):
   return _promote_shapes(fun_name, *_promote_dtypes_inexact(*args))
 
 
-@partial(api.jit, inline=True)
+@api._make_jit(inline=True)
 def _broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [np.shape(arg) for arg in args]

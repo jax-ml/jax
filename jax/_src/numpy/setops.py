@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import operator
 from textwrap import dedent as _dedent
 from typing import Optional
 
 from jax._src import dtypes
+from jax._src.api import _make_jit
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import (
     any, append, arange, array, asarray, concatenate, cumsum, diff,
@@ -26,7 +26,6 @@ from jax._src.numpy.lax_numpy import (
 from jax._src.numpy.util import _check_arraylike, _wraps
 from jax._src.util import prod as _prod
 from jax import core
-from jax import jit
 from jax import lax
 import numpy as np
 
@@ -37,7 +36,7 @@ _lax_const = lax_internal._const
 @_wraps(np.in1d, lax_description="""
 In the JAX version, the `assume_unique` argument is not referenced.
 """)
-@partial(jit, static_argnames=('assume_unique', 'invert',))
+@_make_jit(static_argnames=('assume_unique', 'invert',))
 def in1d(ar1, ar2, assume_unique=False, invert=False):  # noqa: F811
   del assume_unique  # unused
   _check_arraylike("in1d", ar1, ar2)
@@ -142,7 +141,7 @@ def setxor1d(ar1, ar2, assume_unique=False):
   return aux[flag[1:] & flag[:-1]]
 
 
-@partial(jit, static_argnums=2)
+@_make_jit(static_argnums=2)
 def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
   """
     Helper function for intersect1d which is jit-able
@@ -206,7 +205,7 @@ def isin(element, test_elements, assume_unique=False, invert=False):  # noqa: F8
 
 
 ### SetOps
-@partial(jit, static_argnums=1)
+@_make_jit(static_argnums=1)
 def _unique_sorted_mask(ar, axis):
   aux = moveaxis(ar, axis, 0)
   if np.issubdtype(aux.dtype, np.complexfloating):

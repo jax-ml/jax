@@ -34,6 +34,7 @@ import jax.numpy as jnp
 from jax import core
 from jax import custom_derivatives
 from jax import lax
+from jax._src.api import _make_jit
 from jax._src.util import safe_map, safe_zip
 from jax.flatten_util import ravel_pytree
 from jax.tree_util import tree_leaves, tree_map
@@ -173,7 +174,7 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
   converted, consts = custom_derivatives.closure_convert(func, y0, t[0], *args)
   return _odeint_wrapper(converted, rtol, atol, mxstep, y0, t, *args, *consts)
 
-@partial(jax.jit, static_argnums=(0, 1, 2, 3))
+@_make_jit(static_argnums=(0, 1, 2, 3))
 def _odeint_wrapper(func, rtol, atol, mxstep, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
   func = ravel_first_arg(func, unravel)
