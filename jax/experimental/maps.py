@@ -1394,7 +1394,9 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
                    multiple_results=False)(
           mlir.LoweringRuleContext(module_context=ctx.module_context,
                                    primitive=None,
-                                   avals_in=[aval], avals_out=None),
+                                   avals_in=[aval], avals_out=None,
+                                   tokens_in=ctx.tokens_in,
+                                   tokens_out=ctx.tokens_out),
           in_node)[0]
     if v.aval is not core.abstract_unit else in_node
     for v, aval, in_node, arg_in_axes
@@ -1408,7 +1410,9 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')))
-  tiled_outs = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (), *tiled_ins)
+  if vectorized_jaxpr.effects:
+    raise NotImplementedError('Cannot lower effectful `xmap`')
+  tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(), (), *tiled_ins)
 
   outs = [
       mlir.lower_fun(
@@ -1418,7 +1422,9 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
               mlir.LoweringRuleContext(module_context=ctx.module_context,
                                        primitive=None,
                                        avals_in=[vectorized_outvar.aval],
-                                       avals_out=None), tiled_out)[0]
+                                       avals_out=None,
+                                       tokens_in=ctx.tokens_in,
+                                       tokens_out=ctx.tokens_out), tiled_out)[0]
       if v.aval is not core.abstract_unit else tiled_out
       for v, vectorized_outvar, tiled_out, ans_out_axes
       in zip(call_jaxpr.outvars, vectorized_jaxpr.outvars, tiled_outs,
@@ -1473,8 +1479,10 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')))
-  global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
-                                        *sharded_global_in_nodes)
+  if vectorized_jaxpr.effects:
+    raise NotImplementedError('Cannot lower effectful `xmap`')
+  global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
+      mlir.TokenSet(), (), *sharded_global_in_nodes)
 
   sharded_global_out_nodes = [
     mlir.wrap_with_sharding_op(node, global_sharding_spec(aval, aval_axes).sharding_proto())
@@ -1522,8 +1530,10 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')),
       axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
-  global_out_nodes = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, (),
-                                        *([n] for n in global_in_nodes))
+  if vectorized_jaxpr.effects:
+    raise NotImplementedError('Cannot lower effectful `xmap`')
+  global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
+      mlir.TokenSet(), (), *([n] for n in global_in_nodes))
 
   return global_out_nodes
 

@@ -24,7 +24,9 @@ from jax import linear_util as lu
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.config import config
+from jax.interpreters import mlir
 from jax._src import test_util as jtu
+from jax._src import util
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -35,6 +37,34 @@ effect_p.multiple_results = True
 @effect_p.def_effectful_abstract_eval
 def _(*, effect):
   return [], {effect}
+
+mlir.lowerable_effects.add('foo')
+mlir.lowerable_effects.add('foo2')
+mlir.lowerable_effects.add('bar')
+core.ordered_effects.add('foo')
+core.ordered_effects.add('foo2')
+
+
+def trivial_effect_lowering(ctx, *, effect):
+  ctx.set_tokens_out(ctx.tokens_in)
+  return []
+
+def function_effect_lowering(ctx, *, effect):
+  def _f(ctx):
+    ctx.set_tokens_out(ctx.tokens_in)
+    return []
+  func = mlir._emit_lowering_rule_as_fun(_f, ctx)
+
+  output_types = map(mlir.aval_to_ir_types, ctx.avals_out)
+  token_types = [mlir.token_type() for _ in ctx.tokens_in.items()]
+  output_types = [*token_types, *output_types]
+  flat_output_types = util.flatten(output_types)
+  call = mlir.func_dialect.CallOp(flat_output_types,
+                                  mlir.ir.FlatSymbolRefAttr.get(func.name.value),
+                                  mlir.flatten_lowering_ir_args(ctx.tokens_in.tokens()))
+  tokens, out = util.split_list(call.results, [len(ctx.tokens_in)])
+  ctx.set_tokens_out(mlir.TokenSet(zip(ctx.tokens_in.effects(), tokens)))
+  return out
 
 
 class JaxprEffectsTest(jtu.JaxTestCase):
@@ -175,14 +205,153 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
-  def test_cannot_lower_jaxpr_with_effects_in_hop(self):
+  def test_should_pass_tokens_into_ordered_effect(self):
+
+    def _effect_lowering(ctx, *, effect):
+      self.assertListEqual(list(ctx.tokens_in.effects()), ['foo'])
+      ctx.set_tokens_out(ctx.tokens_in)
+      return []
+    mlir.register_lowering(effect_p, _effect_lowering)
+
     @jax.jit
     def f(x):
       effect_p.bind(effect='foo')
       return x + 1.
-    with self.assertRaisesRegex(NotImplementedError, 'Lowering jaxprs with '
-        'effects not supported'):
-      f(2.)
+    f.lower(2.)
+
+  def test_should_not_pass_tokens_into_unordered_effect(self):
+
+    def effect_lowering(ctx, *, effect):
+      self.assertEmpty(ctx.tokens_in)
+      return []
+    mlir.register_lowering(effect_p, effect_lowering)
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='bar')
+      return x + 1.
+    f.lower(2.)
+
+  def test_lowering_that_doesnt_set_tokens_should_cause_error(self):
+
+    def bad_effect_lowering(ctx, *, effect):
+      # Doesn't call `ctx.set_tokens_out`!
+      return []
+    mlir.register_lowering(effect_p, bad_effect_lowering)
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    with self.assertRaisesRegex(ValueError, 'Lowering rule for `effect` needs to '
+        'set `tokens_out`'):
+      f.lower(2.)
+
+  def test_lowering_that_sets_wrong_tokens_should_cause_error(self):
+
+    def bad_effect_lowering(ctx, *, effect):
+      ctx.set_tokens_out(mlir.TokenSet(bar=ctx.tokens_in.get('foo')))
+      return []
+    mlir.register_lowering(effect_p, bad_effect_lowering)
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    with self.assertRaisesRegex(ValueError, 'Lowering rule for `effect` returns '
+        'incorrect set of output token.'):
+      f.lower(2.)
+
+  def test_lowering_ordered_effect_should_create_tokens(self):
+
+    def effect_lowering(ctx, *, effect):
+      ctx.set_tokens_out(ctx.tokens_in)
+      return []
+    mlir.register_lowering(effect_p, effect_lowering)
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    mhlo = f.lower(2.).compiler_ir()
+    main = mhlo.body.operations[0]
+    first_op = main.body.blocks[0].operations[0]
+    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      effect_p.bind(effect='foo2')
+      return x + 1.
+    mhlo = f.lower(2.).compiler_ir()
+    main = mhlo.body.operations[0]
+    first_op = main.body.blocks[0].operations[0]
+    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+    second_op = main.body.blocks[0].operations[1]
+    self.assertEqual(second_op.operation.name, "mhlo.create_token")
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    mhlo = f.lower(2.).compiler_ir()
+    main = mhlo.body.operations[0]
+    first_op = main.body.blocks[0].operations[0]
+    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      effect_p.bind(effect='foo2')
+      return x + 1.
+    mhlo = f.lower(2.).compiler_ir()
+    main = mhlo.body.operations[0]
+    first_op = main.body.blocks[0].operations[0]
+    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+    second_op = main.body.blocks[0].operations[1]
+    self.assertEqual(second_op.operation.name, "mhlo.create_token")
+
+  def test_nontrivial_lowering_with_ordered_effect_should_consume_token(self):
+
+    mlir.register_lowering(effect_p, function_effect_lowering)
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+
+    mhlo = f.lower(2.).compiler_ir()
+    main = mhlo.body.operations[0]
+    first_op = main.body.blocks[0].operations[0]
+    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+    second_op = main.body.blocks[0].operations[1]
+    self.assertEqual(second_op.operation.name, "func.call")
+    self.assertEqual(str(second_op.attributes["callee"]), "@effect")
+    self.assertEqual(second_op.operands[0].owner, first_op)
+    func = mhlo.body.operations[1]
+    self.assertEqual(func.name.value, "effect")
+    self.assertEqual(str(func.type.inputs[0]), "!mhlo.token")
+    self.assertEqual(str(func.type.results[0]), "!mhlo.token")
+
+  def test_nontrivial_lowering_with_unordered_effect_should_consume_token(self):
+
+    mlir.register_lowering(effect_p, function_effect_lowering)
+
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect='bar')
+      return x + 1.
+
+    mhlo = f.lower(2.).compiler_ir()
+    main = mhlo.body.operations[0]
+    first_op = main.body.blocks[0].operations[0]
+    self.assertEqual(first_op.operation.name, "func.call")
+    self.assertEqual(str(first_op.attributes["callee"]), "@effect")
+    self.assertLen(list(first_op.operands), 0)
+    func = mhlo.body.operations[1]
+    self.assertEqual(func.name.value, "effect")
+    self.assertLen(list(func.type.inputs), 0)
+    self.assertLen(list(func.type.results), 0)
 
 
 class ControlFlowEffectsTest(jtu.JaxTestCase):

@@ -310,8 +310,10 @@ def _generic_reduce_window_lower(ctx, *args, jaxpr, consts,
       ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
   reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
   with ir.InsertionPoint(reducer):
-    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, jaxpr, consts,
-                                   *([a] for a in reducer.arguments))
+    if jaxpr.effects:
+      raise NotImplementedError('Cannot lower effectful `reduce_window`.')
+    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr,
+        mlir.TokenSet(), consts, *([a] for a in reducer.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return rw.results
 
@@ -499,15 +501,19 @@ def _select_and_scatter_lower(
       ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
   select = op.select.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(select):
-    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, select_jaxpr,
-                                   select_consts,
-                                   *([a] for a in select.arguments))
+    if select_jaxpr.effects:
+      raise NotImplementedError('Cannot lower effectful `select`.')
+    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, select_jaxpr,
+                                      mlir.TokenSet(), select_consts,
+                                      *([a] for a in select.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   scatter = op.scatter.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(scatter):
-    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, scatter_jaxpr,
-                                   scatter_consts,
-                                   *([a] for a in scatter.arguments))
+    if scatter_jaxpr.effects:
+      raise NotImplementedError('Cannot lower effectful `scatter`.')
+    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, scatter_jaxpr,
+                                      mlir.TokenSet(), scatter_consts,
+                                      *([a] for a in scatter.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
 

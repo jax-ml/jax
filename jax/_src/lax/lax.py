@@ -3390,8 +3390,10 @@ def _reduce_lower(ctx, *values, computation, jaxpr, consts, dimensions):
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
     reducer_ctx = ctx.module_context.replace(name_stack=util.new_name_stack())
-    out_nodes = mlir.jaxpr_subcomp(reducer_ctx, jaxpr, consts,
-                                   *([a] for a in reducer.arguments))
+    if jaxpr.effects:
+      raise NotImplementedError('Cannot lower effectful `reduce`.')
+    out_nodes, _ = mlir.jaxpr_subcomp(reducer_ctx, jaxpr, mlir.TokenSet(), consts,
+                                      *([a] for a in reducer.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
 
@@ -3782,7 +3784,9 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
         module_context = ctx.module_context,
         primitive=None,
         avals_in=util.flatten(zip(scalar_avals, scalar_avals)),
-        avals_out=[core.ShapedArray((), np.bool_)])
+        avals_out=[core.ShapedArray((), np.bool_)],
+        tokens_in=ctx.tokens_in,
+        tokens_out=ctx.tokens_out)
 
     out = lower_comparator(sub_ctx, *[[a] for a in comparator.arguments],
                            num_keys=num_keys)

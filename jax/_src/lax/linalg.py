@@ -1054,7 +1054,9 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
   sub_ctx = mlir.LoweringRuleContext(module_context=ctx.module_context,
                                      primitive=None,
                                      avals_in=[pivot_aval],
-                                     avals_out=[perm_aval])
+                                     avals_out=[perm_aval],
+                                     tokens_in=ctx.tokens_in,
+                                     tokens_out=ctx.tokens_out)
   perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
                            multiple_results=False)
   perm, = perm_fn(sub_ctx, pivot)
@@ -1234,7 +1236,9 @@ def _qr_cpu_gpu_lowering(geqrf_impl, orgqr_impl, ctx, operand, *,
   sub_ctx = mlir.LoweringRuleContext(module_context=ctx.module_context,
                                      primitive=None,
                                      avals_in=[r_aval],
-                                     avals_out=[r_aval])
+                                     avals_out=[r_aval],
+                                     tokens_in=ctx.tokens_in,
+                                     tokens_out=ctx.tokens_out)
   r, = mlir.lower_fun(jnp.triu, multiple_results=False)(sub_ctx, r)
   return [q, r]
 
