@@ -35,7 +35,7 @@ https://epubs.siam.org/doi/abs/10.1137/090774999
 
 import functools
 
-from typing import Sequence
+from typing import Sequence, Union
 
 import jax
 from jax import core
@@ -43,30 +43,36 @@ from jax import lax
 import jax.numpy as jnp
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2))
+@functools.partial(jax.jit, static_argnums=(1, 2, 3))
 def _svd(a: jnp.ndarray,
          is_hermitian: bool,
-         max_iterations: int) -> Sequence[jnp.ndarray]:
+         compute_uv: bool,
+         max_iterations: int) -> Union[jnp.ndarray, Sequence[jnp.ndarray]]:
   """Singular value decomposition for m x n matrix and m >= n.
 
   Args:
     a: A matrix of shape `m x n` with `m >= n`.
     is_hermitian: True if `a` is Hermitian.
+    compute_uv: Whether to compute also `u` and `v` in addition to `s`.
     max_iterations: The predefined maximum number of iterations of QDWH.
 
   Returns:
     A 3-tuple (`u`, `s`, `v`), where `u` is a unitary matrix of shape `m x n`,
     `s` is vector of length `n` containing the singular values in the descending
     order, `v` is a unitary matrix of shape `n x n`, and
-    `a = (u * s) @ v.T.conj()`.
+    `a = (u * s) @ v.T.conj()`. For `compute_uv=False`, only `s` is returned.
   """
 
   u, h, _, _ = lax.linalg.qdwh(a, is_hermitian, max_iterations)
 
+  # TODO: Uses `eigvals_only=True` if `compute_uv=False`.
   v, s = lax.linalg.eigh(h)
 
   # Flips the singular values in descending order.
   s_out = jnp.flip(s)
+
+  if not compute_uv:
+    return s_out
 
   # Reorders eigenvectors.
   v_out = jnp.fliplr(v)
@@ -92,22 +98,24 @@ def _svd(a: jnp.ndarray,
   return (u_out, s_out, v_out)
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2))
+@functools.partial(jax.jit, static_argnums=(1, 2, 3))
 def svd(a: jnp.ndarray,
         is_hermitian: bool = False,
-        max_iterations: int = 10) -> Sequence[jnp.ndarray]:
+        compute_uv: bool = True,
+        max_iterations: int = 10) -> Union[jnp.ndarray, Sequence[jnp.ndarray]]:
   """Singular value decomposition.
 
   Args:
     a: A matrix of shape `m x n`.
     is_hermitian: True if `a` is Hermitian.
+    compute_uv: Whether to compute also `u` and `v` in addition to `s`.
     max_iterations: The predefined maximum number of iterations of QDWH.
 
   Returns:
     A 3-tuple (`u`, `s`, `vh`), where `u` is a unitary matrix of shape `m x k`,
     `s` is vector of length `k` containing the singular values in the descending
     order, `vh` is a unitary matrix of shape `k x n`, `k = min(m, n)`, and
-    `a = (u * s) @ vh`.
+    `a = (u * s) @ vh`. For `compute_uv=False`, only `s` is returned.
   """
 
   is_hermitian = core.concrete_or_error(
@@ -132,7 +140,10 @@ def svd(a: jnp.ndarray,
     q, a = lax.linalg.qr(a, full_matrices=False)
     reduce_to_square = True
 
-  u_out, s_out, v_out = _svd(a, is_hermitian, max_iterations)
+  if not compute_uv:
+    return _svd(a, is_hermitian, compute_uv, max_iterations)
+
+  u_out, s_out, v_out = _svd(a, is_hermitian, compute_uv, max_iterations)
 
   if reduce_to_square:
     u_out = q @ u_out
