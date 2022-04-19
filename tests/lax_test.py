@@ -1931,6 +1931,17 @@ class LaxTest(jtu.JaxTestCase):
     # to https://www.tensorflow.org/xla/operation_semantics#reducewindow.
     self.assertEqual(shape, result.shape)
 
+  def testReduceWindowWithEmptyOutput(self):
+    # https://github.com/google/jax/issues/10315
+    shape = (5, 3, 2)
+    operand, padding, strides = np.ones(shape), 'VALID', (1,) * len(shape)
+    out = jax.eval_shape(lambda x: lax.reduce_window(x, 0., lax.add, padding=padding,
+                         window_strides=strides,
+                         window_dimensions=(3, 1, 1),
+                         window_dilation=(3, 1, 1)), operand)
+    self.assertEqual((0, 3, 2), out.shape)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_shape={}_axis={}_reverse={}"
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis,
