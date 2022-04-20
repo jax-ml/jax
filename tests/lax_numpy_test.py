@@ -4586,6 +4586,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     out = jnp.take_along_axis(x, idx, axis=0, mode="fill")
     np.testing.assert_array_equal(expected_fill, out)
 
+  def testTakeAlongAxisRequiresIntIndices(self):
+    x = jnp.arange(5)
+    idx = jnp.array([3.], jnp.float32)
+    with self.assertRaisesRegex(
+        TypeError,
+        "take_along_axis indices must be of integer type, got float32"):
+      jnp.take_along_axis(x, idx, axis=0)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}_increasing={}".format(
           jtu.format_shape_dtype_string([shape], dtype),

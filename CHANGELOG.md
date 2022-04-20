@@ -18,6 +18,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     for more information.
   * {func}`jax.numpy.take_along_axis` now takes an optional `mode` parameter
     that specifies the behavior of out-of-bounds indexing.
+  * {func}`jax.numpy.take_along_axis` now raises a `TypeError` if its indices
+    are not of an integer type, matching the behavior of
+    {func}`numpy.take_along_axis`. Previously non-integer indices were silently
+    cast to integers.
 
 ## jaxlib 0.3.8 (Unreleased)
 * [GitHub
