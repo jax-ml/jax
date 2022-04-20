@@ -383,8 +383,7 @@ def _one_hot(x: Array, num_classes: int, *,
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
   rhs_shape.insert(output_pos_axis, num_classes)
-  rhs = lax.broadcast_in_dim(jnp.arange(num_classes, dtype=x.dtype),
-                             rhs_shape, (output_pos_axis,))
+  rhs = lax.broadcasted_iota(x.dtype, rhs_shape, output_pos_axis)
   return jnp.asarray(lhs == rhs, dtype=dtype)
 
 def one_hot(x: Array, num_classes: int, *,
