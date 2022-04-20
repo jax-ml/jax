@@ -4573,6 +4573,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     q1 = np.take_along_axis( h, g, axis=-1)
     np.testing.assert_equal(q0, q1)
 
+  def testTakeAlongAxisOutOfBounds(self):
+    x = jnp.arange(10, dtype=jnp.float32)
+    idx = jnp.array([-11, -10, -9, -5, -1, 0, 1, 5, 9, 10, 11])
+    out = jnp.take_along_axis(x, idx, axis=0)
+    expected_clip = np.array([0, 0, 1, 5, 9, 0, 1, 5, 9, 9, 9], np.float32)
+    np.testing.assert_array_equal(expected_clip, out)
+    out = jnp.take_along_axis(x, idx, axis=0, mode="clip")
+    np.testing.assert_array_equal(expected_clip, out)
+    expected_fill = np.array([jnp.nan, 0, 1, 5, 9, 0, 1, 5, 9, jnp.nan,
+                              jnp.nan], np.float32)
+    out = jnp.take_along_axis(x, idx, axis=0, mode="fill")
+    np.testing.assert_array_equal(expected_fill, out)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}_increasing={}".format(
           jtu.format_shape_dtype_string([shape], dtype),
@@ -6162,6 +6175,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'broadcast_to': ['arr'],
       'einsum': ['precision'],
       'einsum_path': ['subscripts'],
+      'take_along_axis': ['mode'],
     }
 
     mismatches = {}

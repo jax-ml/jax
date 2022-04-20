@@ -16,6 +16,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jax.experimental.maps.mesh` has been deleted.
     Please use `jax.experimental.maps.Mesh`. Please see https://jax.readthedocs.io/en/latest/_autosummary/jax.experimental.maps.Mesh.html#jax.experimental.maps.Mesh
     for more information.
+  * {func}`jax.numpy.take_along_axis` now takes an optional `mode` parameter
+    that specifies the behavior of out-of-bounds indexing.
 
 ## jaxlib 0.3.8 (Unreleased)
 * [GitHub
