@@ -327,6 +327,8 @@ def promote_types(a, b):
   Returns:
     A :class:`numpy.dtype` object.
   """
+  # Note: we deliberately avoid `if a in _weak_types` here because we want to check
+  # object identity, not object equality, due to the behavior of np.dtype.__eq__
   a = a if any(a is t for t in _weak_types) else np.dtype(a)
   b = b if any(b is t for t in _weak_types) else np.dtype(b)
   return np.dtype(_least_upper_bound(a, b))
