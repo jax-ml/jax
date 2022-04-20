@@ -106,13 +106,14 @@ def eigh(x, lower: bool = True, symmetrize_input: bool = True):
       eigendecomposition by computing :math:`\\frac{1}{2}(x + x^H)`.
 
   Returns:
-    A tuple ``(w, v)``.
+    A tuple ``(v, w)``.
 
-    ``w`` is an array with the same dtype as ``x`` such that ``w[..., :, i]`` is
-    the eigenvector corresponding to ``v[..., i]``.
+    ``v`` is an array with the same dtype as ``x`` such that ``v[..., :, i]`` is
+    the normalized eigenvector corresponding to eigenvalue ``w[..., i]``.
 
-    ``v`` is an array with the same dtype as ``x`` (or its real counterpart if
-    complex) with shape ``[..., n]`` containing the eigenvalues of ``x``.
+    ``w`` is an array with the same dtype as ``x`` (or its real counterpart if
+    complex) with shape ``[..., n]`` containing the eigenvalues of ``x`` in
+    ascending order(each repeated according to its multiplicity).
   """
   if symmetrize_input:
     x = symmetrize(x)
