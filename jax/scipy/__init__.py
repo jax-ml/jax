@@ -20,3 +20,4 @@ from jax.scipy import sparse as sparse
 from jax.scipy import special as special
 from jax.scipy import stats as stats
 from jax.scipy import fft as fft
+from jax.scipy import cluster as cluster
