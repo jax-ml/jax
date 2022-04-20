@@ -3417,6 +3417,8 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
+  if issubdtype(_dtype(index), np.unsignedinteger):
+    return index
   if core.is_constant_dim(axis_size):
     axis_size_val = _lax_const(index, axis_size)
   else:

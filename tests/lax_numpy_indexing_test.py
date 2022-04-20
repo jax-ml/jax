@@ -27,6 +27,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+from jax import lax
 from jax import numpy as jnp
 from jax import ops
 
@@ -615,6 +616,22 @@ class IndexingTest(jtu.JaxTestCase):
     jnp_fun = lambda x, idx: jnp.asarray(x)[idx]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{dtype}", "dtype": dtype}
+      for dtype in jtu.dtypes.unsigned + jtu.dtypes.integer)
+  def testIndicesNormalizationByType(self, dtype):
+    x = jnp.arange(10)
+    jaxpr = jax.make_jaxpr(x.__getitem__)(jnp.arange(3, dtype=dtype))
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
+    if np.issubdtype(dtype, np.unsignedinteger):
+      # Unsigned integers should not require lt, add, and select.
+      self.assertEqual(primitives, [lax.convert_element_type_p, lax.broadcast_in_dim_p, lax.gather_p])
+    else:
+      # May or may not contain convert_element_type.
+      self.assertIn(len(primitives), [5, 6])
+      self.assertEqual(primitives[:3], [lax.lt_p, lax.add_p, lax.select_n_p])
+      self.assertEqual(primitives[-2:], [lax.broadcast_in_dim_p, lax.gather_p])
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
