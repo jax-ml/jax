@@ -615,6 +615,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         atol = 5e-4
       self.assertArraysAllClose(t_out, b.real, atol=atol)
 
+  def testJspSVDBasic(self):
+    # since jax.scipy.linalg.svd is almost the same as jax.numpy.linalg.svd
+    # do not check it functionality here
+    jsp.linalg.svd(np.ones((2, 2), dtype=np.float32))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),

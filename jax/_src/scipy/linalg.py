@@ -63,7 +63,7 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
 
 @partial(jit, static_argnames=('full_matrices', 'compute_uv'))
 def _svd(a, *, full_matrices, compute_uv):
-  a = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 @_wraps(scipy.linalg.svd)
