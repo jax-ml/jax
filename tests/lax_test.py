@@ -38,7 +38,6 @@ from jax._src import test_util as jtu
 from jax._src import lax_reference
 from jax._src.util import prod
 from jax._src.lax import lax as lax_internal
-from jax._src.lax.lax import _device_put_raw
 
 
 from jax.config import config
@@ -2796,7 +2795,7 @@ class LazyConstantTest(jtu.JaxTestCase):
       for dtype_in in all_dtypes for dtype_out in all_dtypes))
   @jtu.ignore_warning(category=np.ComplexWarning)
   def testConvertElementTypeAvoidsCopies(self, dtype_in, dtype_out):
-    x = _device_put_raw(np.zeros(5, dtype_in))
+    x = jax.device_put(np.zeros(5, dtype_in))
     self.assertEqual(x.dtype, dtype_in)
     y = lax.convert_element_type(x, dtype_out)
     self.assertEqual(y.dtype, dtype_out)
