@@ -23,35 +23,20 @@ from typing import Tuple, Union, cast
 from jax import jit, custom_jvp
 from jax import lax
 
-from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import _wraps, _promote_dtypes_inexact
 from jax._src.util import canonicalize_axis
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 _H = lambda x: jnp.conjugate(jnp.swapaxes(x, -1, -2))
 
 
-def _promote_arg_dtypes(*args):
-  """Promotes `args` to a common inexact type."""
-  dtype, weak_type = dtypes._lattice_result_type(*args)
-  if not jnp.issubdtype(dtype, jnp.inexact):
-    dtype, weak_type = jnp.float_, False
-  dtype = dtypes.canonicalize_dtype(dtype)
-  args = [lax_internal._convert_element_type(arg, dtype, weak_type)
-          for arg in args]
-  if len(args) == 1:
-    return args[0]
-  else:
-    return args
-
-
 @_wraps(np.linalg.cholesky)
 @jit
 def cholesky(a):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.cholesky(a)
 
 
@@ -59,7 +44,7 @@ def cholesky(a):
 @partial(jit, static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
 def svd(a, full_matrices: bool = True, compute_uv: bool = True,
         hermitian: bool = False):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   if hermitian:
     w, v = lax_linalg.eigh(a)
     s = lax.abs(v)
@@ -82,7 +67,7 @@ def svd(a, full_matrices: bool = True, compute_uv: bool = True,
 @_wraps(np.linalg.matrix_power)
 @partial(jit, static_argnames=('n',))
 def matrix_power(a, n):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
 
   if a.ndim < 2:
     raise TypeError("{}-dimensional array given. Array must be at least "
@@ -120,7 +105,7 @@ def matrix_power(a, n):
 @_wraps(np.linalg.matrix_rank)
 @jit
 def matrix_rank(M, tol=None):
-  M = _promote_arg_dtypes(jnp.asarray(M))
+  M, = _promote_dtypes_inexact(jnp.asarray(M))
   if M.ndim > 2:
     raise TypeError("array should have 2 or fewer dimensions")
   if M.ndim < 2:
@@ -135,7 +120,7 @@ def matrix_rank(M, tol=None):
 @_wraps(np.linalg.slogdet)
 @jit
 def slogdet(a):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   dtype = lax.dtype(a)
   a_shape = jnp.shape(a)
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
@@ -215,8 +200,8 @@ def _cofactor_solve(a, b):
   Returns:
     det(a) and cofactor(a)^T*b, aka adjugate(a)*b
   """
-  a = _promote_arg_dtypes(jnp.asarray(a))
-  b = _promote_arg_dtypes(jnp.asarray(b))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  b, = _promote_dtypes_inexact(jnp.asarray(b))
   a_shape = jnp.shape(a)
   b_shape = jnp.shape(b)
   a_ndims = len(a_shape)
@@ -281,7 +266,7 @@ def _det_3x3(a):
 @_wraps(np.linalg.det)
 @jit
 def det(a):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   a_shape = jnp.shape(a)
   if len(a_shape) >= 2 and a_shape[-1] == 2 and a_shape[-2] == 2:
     return _det_2x2(a)
@@ -313,7 +298,7 @@ backend. However eigendecomposition for symmetric/Hermitian matrices is
 implemented more widely (see :func:`jax.numpy.linalg.eigh`).
 """)
 def eig(a):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.eig(a, compute_left_eigenvectors=False)
 
 
@@ -335,7 +320,7 @@ def eigh(a, UPLO=None, symmetrize_input=True):
     msg = "UPLO must be one of None, 'L', or 'U', got {}".format(UPLO)
     raise ValueError(msg)
 
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower, symmetrize_input=symmetrize_input)
   return w, v
 
@@ -406,7 +391,7 @@ def inv(a):
 @partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
 def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
          keepdims=False):
-  x = _promote_arg_dtypes(jnp.asarray(x))
+  x, = _promote_dtypes_inexact(jnp.asarray(x))
   x_shape = jnp.shape(x)
   ndim = len(x_shape)
 
@@ -498,7 +483,7 @@ def qr(a, mode="reduced"):
     full_matrices = True
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices)
   if mode == "r":
     return r
@@ -508,14 +493,14 @@ def qr(a, mode="reduced"):
 @_wraps(np.linalg.solve)
 @jit
 def solve(a, b):
-  a, b = _promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   return lax_linalg._solve(a, b)
 
 
 def _lstsq(a, b, rcond, *, numpy_resid=False):
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   # TODO: add custom jvp rule for more robust lstsq differentiation
-  a, b = _promote_arg_dtypes(a, b)
+  a, b = _promote_dtypes_inexact(a, b)
   if a.shape[0] != b.shape[0]:
     raise ValueError("Leading dimensions of input arrays must match")
   b_orig_ndim = b.ndim
