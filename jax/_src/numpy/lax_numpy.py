@@ -3352,9 +3352,10 @@ def unpackbits(a, axis: Optional[int] = None, count=None, bitorder='big'):
 
 
 @_wraps(np.take, skip_params=['out'], lax_description="""\
-In the JAX version, the ``mode`` argument defaults to a special version of ``"clip"``
-that handles negative indices. See :attr:`jax.numpy.ndarray.at` for more discussion
-of out-of-bounds indexing in JAX.
+In the JAX version, the ``mode`` argument defaults to a special mode
+(``"fill"``) that returns invalid values (e.g., NaN) for out-of-bounds indices.
+See :attr:`jax.numpy.ndarray.at` for more discussion of out-of-bounds indexing
+in JAX.
 """)
 def take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   return _take(a, indices, None if axis is None else operator.index(axis), out,
@@ -3374,23 +3375,16 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   else:
     axis_idx = _canonicalize_axis(axis, ndim(a))
 
-  if mode is None:
-    # TODO(phawkins): change default mode to "fill" and delete this case.
+  if mode is None or mode == "fill":
+    gather_mode = lax.GatherScatterMode.FILL_OR_DROP
     # lax.gather() does not support negative indices, so we wrap them here
     indices = where(indices < 0, indices + a.shape[axis_idx], indices)
-    gather_mode = lax.GatherScatterMode.CLIP
   elif mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
     indices = mod(indices, _lax_const(indices, a.shape[axis_idx]))
     gather_mode = lax.GatherScatterMode.PROMISE_IN_BOUNDS
-  elif mode == "fill":
-    # Undocumented non-standard mode corresponding to the fill_or_drop mode on
-    # lax.gather()
-    gather_mode = lax.GatherScatterMode.FILL_OR_DROP
-    # lax.gather() does not support negative indices, so we wrap them here
-    indices = where(indices < 0, indices + a.shape[axis_idx], indices)
   elif mode == "clip":
     gather_mode = lax.GatherScatterMode.CLIP
   else:
@@ -3439,7 +3433,7 @@ TAKE_ALONG_AXIS_DOC = """
 Unlike :func:`numpy.take_along_axis`, :func:`jax.numpy.take_along_axis` takes
 an optional ``mode`` parameter controlling how out-of-bounds indices should be
 handled. By default, out-of-bounds indices yield invalid values (e.g., ``NaN``).
-See :attr:`jax.numpy.ndarray.at` for futrher discussion of out-of-bounds
+See :attr:`jax.numpy.ndarray.at` for further discussion of out-of-bounds
 indexing in JAX.
 """
 
