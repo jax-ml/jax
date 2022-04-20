@@ -23,7 +23,7 @@ from jax import jit, vmap, jvp
 from jax import lax
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import polar as lax_polar
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import _wraps, _promote_dtypes_inexact
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg as np_linalg
 
@@ -31,7 +31,7 @@ _T = lambda x: jnp.swapaxes(x, -1, -2)
 
 @partial(jit, static_argnames=('lower',))
 def _cholesky(a, lower):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
   return l if lower else jnp.conj(_T(l))
 
@@ -46,7 +46,7 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
 
 @partial(jit, static_argnames=('lower',))
 def _cho_solve(c, b, lower):
-  c, b = np_linalg._promote_arg_dtypes(jnp.asarray(c), jnp.asarray(b))
+  c, b = _promote_dtypes_inexact(jnp.asarray(c), jnp.asarray(b))
   lax_linalg._check_solve_shapes(c, b)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
@@ -63,7 +63,7 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
 
 @partial(jit, static_argnames=('full_matrices', 'compute_uv'))
 def _svd(a, *, full_matrices, compute_uv):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a = _promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 @_wraps(scipy.linalg.svd)
@@ -88,7 +88,7 @@ def _eigh(a, b, lower, eigvals_only, eigvals, type):
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
 
   if eigvals_only:
@@ -126,7 +126,7 @@ def inv(a, overwrite_a=False, check_finite=True):
 @partial(jit, static_argnames=('overwrite_a', 'check_finite'))
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   lu, pivots, _ = lax_linalg.lu(a)
   return lu, pivots
 
@@ -143,7 +143,7 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
 
 @partial(jit, static_argnums=(1,))
 def _lu(a, permute_l):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   lu, pivots, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
@@ -173,7 +173,7 @@ def _qr(a, mode, pivoting):
     full_matrices = False
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices)
   if mode == "r":
     return r
@@ -191,7 +191,7 @@ def _solve(a, b, sym_pos, lower):
   if not sym_pos:
     return np_linalg.solve(a, b)
 
-  a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   lax_linalg._check_solve_shapes(a, b)
 
   # With custom_linear_solve, we can reuse the same factorization when
@@ -227,7 +227,7 @@ def _solve_triangular(a, b, trans, lower, unit_diagonal):
   else:
     raise ValueError("Invalid 'trans' value {}".format(trans))
 
-  a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
 
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
   b_is_vector = jnp.ndim(a) == jnp.ndim(b) + 1
