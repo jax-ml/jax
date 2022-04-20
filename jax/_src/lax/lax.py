@@ -1806,12 +1806,18 @@ ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / np.sqrt(np.pi)),
                                   mul(g, exp(neg(square(x))))))
-xla.register_translation(erf_p, standard_translate(erf_p))
+if jax._src.lib.mlir_api_version >= 12:
+  mlir.register_lowering(erf_p, partial(_nary_lower_mhlo, chlo.ErfOp))
+else:
+  xla.register_translation(erf_p, standard_translate(erf_p))
 
 erfc_p = standard_unop(_float, 'erfc')
 ad.defjvp(erfc_p, lambda g, x: mul(_const(x, -2. / np.sqrt(np.pi)),
                                    mul(g, exp(neg(square(x))))))
-xla.register_translation(erfc_p, standard_translate(erfc_p))
+if jax._src.lib.mlir_api_version >= 12:
+  mlir.register_lowering(erfc_p, partial(_nary_lower_mhlo, chlo.ErfcOp))
+else:
+  xla.register_translation(erfc_p, standard_translate(erfc_p))
 
 erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),

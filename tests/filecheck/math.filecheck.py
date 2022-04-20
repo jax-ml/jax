@@ -225,12 +225,12 @@ def main(_):
   print_ir(np.uint16(1), np.uint16(2))(lax.eq)
 
   # CHECK-LABEL: TEST: erf float32[]
-  # CHECK: xla_fallback_erf
+  # CHECK: chlo.erf
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erf)
 
   # CHECK-LABEL: TEST: erfc float32[]
-  # CHECK: xla_fallback_erfc
+  # CHECK: chlo.erfc
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erfc)
 
