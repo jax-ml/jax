@@ -445,6 +445,8 @@ def check_error(error: Error) -> None:
     err, code, payload = _reduce_any_error(error.err, error.code, error.payload)
   else:
     err, code, payload = error.err, error.code, error.payload
+
+  err = core.raise_as_much_as_possible(err)
   return assert_p.bind(~err, code, payload, msgs=error.msgs)
 
 assert_p = core.Primitive('assert') # TODO: rename to check?
