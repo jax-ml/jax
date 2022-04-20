@@ -30,7 +30,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import device_array
-from jax._src import dispatch
 from jax import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util
@@ -1089,13 +1088,6 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
   return broadcast(fill_value, shape)
-
-def _device_put_raw(x, weak_type=None):
-  if isinstance(x, device_array.DeviceArray):
-    return x
-  else:
-    aval = raise_to_shaped(core.get_aval(x), weak_type=weak_type)
-    return dispatch.array_result_handler(None, aval)(*dispatch.device_put(x))
 
 def zeros_like_shaped_array(aval: Array) -> Array:
   assert isinstance(aval, ShapedArray)

@@ -1823,7 +1823,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
 
 def _maybe_device_put(x):
   if isinstance(x, np.ndarray):
-    return lax._device_put_raw(x)
+    return jax.device_put(x, jax.devices('cpu')[0])
   else:
     return x
 
