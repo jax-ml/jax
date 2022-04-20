@@ -327,8 +327,8 @@ def promote_types(a, b):
   Returns:
     A :class:`numpy.dtype` object.
   """
-  a = a if any(a is t for t in _weak_types) else np.dtype(a)
-  b = b if any(b is t for t in _weak_types) else np.dtype(b)
+  a = a if a in _weak_types else np.dtype(a)
+  b = b if b in _weak_types else np.dtype(b)
   return np.dtype(_least_upper_bound(a, b))
 
 def is_weakly_typed(x):
