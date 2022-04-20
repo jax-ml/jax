@@ -17,7 +17,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     Please use `jax.experimental.maps.Mesh`. Please see https://jax.readthedocs.io/en/latest/_autosummary/jax.experimental.maps.Mesh.html#jax.experimental.maps.Mesh
     for more information.
   * {func}`jax.numpy.take_along_axis` now takes an optional `mode` parameter
-    that specifies the behavior of out-of-bounds indexing.
+    that specifies the behavior of out-of-bounds indexing. By default,
+    invalid values (e.g., NaN) will be returned for out-of-bounds indices. In
+    previous versions of JAX, invalid indices were clamped into range. The
+    previous behavior can be restored by passing `mode="clip"`.
   * {func}`jax.numpy.take_along_axis` now raises a `TypeError` if its indices
     are not of an integer type, matching the behavior of
     {func}`numpy.take_along_axis`. Previously non-integer indices were silently
