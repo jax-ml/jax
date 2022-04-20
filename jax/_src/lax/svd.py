@@ -45,14 +45,14 @@ import jax.numpy as jnp
 
 @functools.partial(jax.jit, static_argnums=(1, 2, 3))
 def _svd(a: jnp.ndarray,
-         is_hermitian: bool,
+         hermitian: bool,
          compute_uv: bool,
          max_iterations: int) -> Union[jnp.ndarray, Sequence[jnp.ndarray]]:
   """Singular value decomposition for m x n matrix and m >= n.
 
   Args:
     a: A matrix of shape `m x n` with `m >= n`.
-    is_hermitian: True if `a` is Hermitian.
+    hermitian: True if `a` is Hermitian.
     compute_uv: Whether to compute also `u` and `v` in addition to `s`.
     max_iterations: The predefined maximum number of iterations of QDWH.
 
@@ -63,7 +63,7 @@ def _svd(a: jnp.ndarray,
     `a = (u * s) @ v.T.conj()`. For `compute_uv=False`, only `s` is returned.
   """
 
-  u, h, _, _ = lax.linalg.qdwh(a, is_hermitian, max_iterations)
+  u, h, _, _ = lax.linalg.qdwh(a, hermitian, max_iterations)
 
   # TODO: Uses `eigvals_only=True` if `compute_uv=False`.
   v, s = lax.linalg.eigh(h)
@@ -98,28 +98,33 @@ def _svd(a: jnp.ndarray,
   return (u_out, s_out, v_out)
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2, 3))
+@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
 def svd(a: jnp.ndarray,
-        is_hermitian: bool = False,
+        full_matrices: bool,
         compute_uv: bool = True,
+        hermitian: bool = False,
         max_iterations: int = 10) -> Union[jnp.ndarray, Sequence[jnp.ndarray]]:
   """Singular value decomposition.
 
   Args:
     a: A matrix of shape `m x n`.
-    is_hermitian: True if `a` is Hermitian.
+    full_matrices: If True, `u` and `vh` have the shapes `m x m` and `n x n`,
+      respectively. If False, the shapes are `m x k` and `k x n`, respectively,
+      where `k = min(m, n)`.
     compute_uv: Whether to compute also `u` and `v` in addition to `s`.
+    hermitian: True if `a` is Hermitian.
     max_iterations: The predefined maximum number of iterations of QDWH.
 
   Returns:
-    A 3-tuple (`u`, `s`, `vh`), where `u` is a unitary matrix of shape `m x k`,
-    `s` is vector of length `k` containing the singular values in the descending
-    order, `vh` is a unitary matrix of shape `k x n`, `k = min(m, n)`, and
-    `a = (u * s) @ vh`. For `compute_uv=False`, only `s` is returned.
+    A 3-tuple (`u`, `s`, `vh`), where `u` and `vh` are unitary matrices,
+    `s` is vector of length `k` containing the singular values in the
+    non-increasing order, and `k = min(m, n)`. The shapes of `u` and `vh`
+    depend on the value of `full_matrices`. For `compute_uv=False`,
+    only `s` is returned.
   """
 
-  is_hermitian = core.concrete_or_error(
-      bool, is_hermitian, 'The `is_hermitian` argument must be statically '
+  hermitian = core.concrete_or_error(
+      bool, hermitian, 'The `hermitian` argument must be statically '
       'specified to use `qdwh` within JAX transformations.')
 
   max_iterations = core.concrete_or_error(
@@ -135,18 +140,29 @@ def svd(a: jnp.ndarray,
     is_flip = True
 
   reduce_to_square = False
-  if m > 1.15 * n:
-    m = n
-    q, a = lax.linalg.qr(a, full_matrices=False)
+  if full_matrices:
+    q_full, a_full = lax.linalg.qr(a, full_matrices=True)
+    q = q_full[:, :n]
+    u_out_null = q_full[:, n:]
+    a = a_full[:n, :]
     reduce_to_square = True
+  else:
+    # The constant `1.15` comes from Yuji Nakatsukasa's implementation
+    # https://www.mathworks.com/matlabcentral/fileexchange/36830-symmetric-eigenvalue-decomposition-and-the-svd?s_tid=FX_rc3_behav
+    if m > 1.15 * n:
+      q, a = lax.linalg.qr(a, full_matrices=False)
+      reduce_to_square = True
 
   if not compute_uv:
-    return _svd(a, is_hermitian, compute_uv, max_iterations)
+    return _svd(a, hermitian, compute_uv, max_iterations)
 
-  u_out, s_out, v_out = _svd(a, is_hermitian, compute_uv, max_iterations)
+  u_out, s_out, v_out = _svd(a, hermitian, compute_uv, max_iterations)
 
   if reduce_to_square:
     u_out = q @ u_out
+
+  if full_matrices:
+    u_out = jnp.hstack((u_out, u_out_null))
 
   if is_flip:
     return(v_out, s_out, u_out.T.conj())

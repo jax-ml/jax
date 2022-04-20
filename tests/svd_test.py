@@ -47,45 +47,55 @@ class SvdTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {    # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}'.format(m, n, log_cond),
-          'm': m, 'n': n, 'log_cond': log_cond}
+          'testcase_name': '_m={}_by_n={}_log_cond={}_full_matrices={}'.format(
+              m, n, log_cond, full_matrices),
+          'm': m, 'n': n, 'log_cond': log_cond, 'full_matrices': full_matrices}
       for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])
-      for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
+      for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)
+      for full_matrices in [True, False]))
   @jtu.skip_on_devices("rocm")  # will be fixed on rocm-5.1
-  def testSvdWithRectangularInput(self, m, n, log_cond):
+  def testSvdWithRectangularInput(self, m, n, log_cond, full_matrices):
     """Tests SVD with rectangular input."""
     with jax.default_matmul_precision('float32'):
       a = np.random.uniform(
           low=0.3, high=0.9, size=(m, n)).astype(_SVD_TEST_DTYPE)
-      u, s, v = jnp.linalg.svd(a, full_matrices=False)
+      u, s, v = osp_linalg.svd(a, full_matrices=False)
       cond = 10**log_cond
       s = jnp.linspace(cond, 1, min(m, n))
       a = (u * s) @ v
       a = a + 1j * a
 
-      osp_linalg_fn = functools.partial(osp_linalg.svd, full_matrices=False)
-      actual_u, actual_s, actual_v = svd.svd(a)
+      osp_linalg_fn = functools.partial(
+          osp_linalg.svd, full_matrices=full_matrices)
+      actual_u, actual_s, actual_v = svd.svd(a, full_matrices=full_matrices)
 
       k = min(m, n)
       if m > n:
-        unitary_u = jnp.abs(actual_u.T.conj() @ actual_u)
-        unitary_v = jnp.abs(actual_v.T.conj() @ actual_v)
+        unitary_u = jnp.real(actual_u.T.conj() @ actual_u)
+        unitary_v = jnp.real(actual_v.T.conj() @ actual_v)
+        unitary_u_size = m if full_matrices else k
+        unitary_v_size = k
       else:
-        unitary_u = jnp.abs(actual_u @ actual_u.T.conj())
-        unitary_v = jnp.abs(actual_v @ actual_v.T.conj())
+        unitary_u = jnp.real(actual_u @ actual_u.T.conj())
+        unitary_v = jnp.real(actual_v @ actual_v.T.conj())
+        unitary_u_size = k
+        unitary_v_size = n if full_matrices else k
 
       _, expected_s, _ = osp_linalg_fn(a)
 
+      svd_fn = lambda a: svd.svd(a, full_matrices=full_matrices)
       args_maker = lambda: [a]
 
       with self.subTest('Test JIT compatibility'):
-        self._CompileAndCheck(svd.svd, args_maker)
+        self._CompileAndCheck(svd_fn, args_maker)
 
       with self.subTest('Test unitary u.'):
-        self.assertAllClose(np.eye(k), unitary_u, rtol=_SVD_RTOL, atol=2E-3)
+        self.assertAllClose(np.eye(unitary_u_size), unitary_u, rtol=_SVD_RTOL,
+                            atol=2E-3)
 
       with self.subTest('Test unitary v.'):
-        self.assertAllClose(np.eye(k), unitary_v, rtol=_SVD_RTOL, atol=2E-3)
+        self.assertAllClose(np.eye(unitary_v_size), unitary_v, rtol=_SVD_RTOL,
+                            atol=2E-3)
 
       with self.subTest('Test s.'):
         self.assertAllClose(
@@ -100,7 +110,7 @@ class SvdTest(jtu.JaxTestCase):
     with jax.default_matmul_precision('float32'):
       np.random.seed(1235)
       a = np.random.randn(m, n).astype(_SVD_TEST_DTYPE)
-      u, s, v = svd.svd(a, is_hermitian=False)
+      u, s, v = svd.svd(a, full_matrices=False, hermitian=False)
 
       relative_diff = np.linalg.norm(a - (u * s) @ v) / np.linalg.norm(a)
 
@@ -126,19 +136,21 @@ class SvdTest(jtu.JaxTestCase):
       a = (u * s) @ v
 
       with jax.default_matmul_precision('float32'):
-        u, s, v = svd.svd(a, is_hermitian=False)
+        u, s, v = svd.svd(a, full_matrices=False, hermitian=False)
       diff = np.linalg.norm(a - (u * s) @ v)
 
       np.testing.assert_almost_equal(diff, 1E-4, decimal=2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {    # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}'.format(m, n, log_cond),
-          'm': m, 'n': n, 'log_cond': log_cond}
+          'testcase_name': '_m={}_by_n={}_log_cond={}_full_matrices={}'.format(
+              m, n, log_cond, full_matrices),
+          'm': m, 'n': n, 'log_cond': log_cond, 'full_matrices': full_matrices}
       for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])
-      for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
+      for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)
+      for full_matrices in [True, False]))
   @jtu.skip_on_devices("rocm")  # will be fixed on rocm-5.1
-  def testSingularValues(self, m, n, log_cond):
+  def testSingularValues(self, m, n, log_cond, full_matrices):
     """Tests singular values."""
     with jax.default_matmul_precision('float32'):
       a = np.random.uniform(
@@ -153,15 +165,16 @@ class SvdTest(jtu.JaxTestCase):
       compute_uv = False
 
       osp_linalg_fn = functools.partial(
-          osp_linalg.svd, full_matrices=False, compute_uv=compute_uv)
-      actual_s = svd.svd(a, compute_uv=compute_uv)
+          osp_linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv)
+      actual_s = svd.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
       expected_s = osp_linalg_fn(a)
 
+      svd_fn = lambda a: svd.svd(a, full_matrices=full_matrices)
       args_maker = lambda: [a]
 
       with self.subTest('Test JIT compatibility'):
-        self._CompileAndCheck(svd.svd, args_maker)
+        self._CompileAndCheck(svd_fn, args_maker)
 
       with self.subTest('Test s.'):
         self.assertAllClose(expected_s, actual_s, rtol=_SVD_RTOL, atol=1E-6)
