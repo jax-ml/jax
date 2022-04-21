@@ -82,6 +82,21 @@ symlink_inputs(
 )
 
 symlink_inputs(
+    name = "sparse_tensor_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@llvm-project//mlir/python:SparseTensorOpsPyFiles",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsSparseTensor",
+        "//jaxlib/mlir/_mlir_libs:_mlirSparseTensorPasses",
+    ],
+)
+
+symlink_inputs(
     name = "mhlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [

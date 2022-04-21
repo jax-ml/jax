@@ -43,6 +43,33 @@ py_extension(
     ],
 )
 
+py_extension(
+    name = "_mlirDialectsSparseTensor",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/DialectSparseTensor.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPISparseTensorHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@pybind11",
+    ],
+)
+
+py_extension(
+    name = "_mlirSparseTensorPasses",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/SparseTensorPasses.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPISparseTensorHeaders",
+        "@pybind11",
+    ],
+)
+
 ##---------------------------------------------------------------------------##
 # MHLO Extensions
 ##---------------------------------------------------------------------------##
@@ -80,6 +107,7 @@ cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
         "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
+        "@llvm-project//mlir:CAPISparseTensorObjects",
         "@org_tensorflow//tensorflow/compiler/mlir/hlo:CAPIObjects",
     ],
 )
