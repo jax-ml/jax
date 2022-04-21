@@ -3417,21 +3417,22 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
   try:
-    idx = core.concrete_or_error(operator.index, index, "normalize index")
-    ndim = core.concrete_or_error(operator.index, axis_size, "normalize axis_size")
-    return _canonicalize_axis(idx, ndim)
-  except (TypeError, ValueError, IndexError, core.ConcretizationTypeError):
-    if issubdtype(_dtype(index), np.unsignedinteger):
-      return index
-    if core.is_constant_dim(axis_size):
-      axis_size_val = _lax_const(index, axis_size)
-    else:
-      axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
-                                              _dtype(index))
-    return lax.select(
-      lax.lt(index, _lax_const(index, 0)),
-      lax.add(index, axis_size_val),
-      index)
+    idx, ndim = operator.index(index), operator.index(axis_size)
+  except TypeError:
+    pass
+  else:
+    return idx + ndim if idx < 0 else idx
+  if issubdtype(_dtype(index), np.unsignedinteger):
+    return index
+  if core.is_constant_dim(axis_size):
+    axis_size_val = _lax_const(index, axis_size)
+  else:
+    axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
+                                             _dtype(index))
+  return lax.select(
+    lax.lt(index, _lax_const(index, 0)),
+    lax.add(index, axis_size_val),
+    index)
 
 
 TAKE_ALONG_AXIS_DOC = """
@@ -3660,9 +3661,10 @@ def _is_basic_int_index(x):
             not aval.shape and issubdtype(aval.dtype, integer))
   try:
     operator.index(x)
-    return not isinstance(x, bool)
   except TypeError:
     return False
+  else:
+    return not isinstance(x, bool)
 
 def _index_to_gather(x_shape, idx, normalize_indices=True):
   # Remove ellipses and add trailing slice(None)s.
