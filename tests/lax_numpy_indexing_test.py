@@ -875,6 +875,19 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{idx_type_name}_{idx}", "idx": idx, "idx_type": idx_type}
+      for idx in (-3, 5)
+      for idx_type_name, idx_type in (
+        ("int", int), ("np.array", np.array), ("jnp.array", jnp.array),
+        ("slice_up_to", slice), ("slice_from", lambda s: slice(s, None))))
+  def testConstantIndexing(self, idx, idx_type):
+    x = jnp.arange(10)
+    idx = idx_type(idx)
+    jaxpr = jax.make_jaxpr(lambda: x[idx])()
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.gather_p)
+
   def testIndexingEmptyDimension(self):
     # Issue 2671: XLA error when indexing into dimension of size 0
     x = jnp.ones((2, 0))
