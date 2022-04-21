@@ -1699,8 +1699,8 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
         axis_context=mlir.ReplicaAxisContext(new_env),
         name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                          util.wrap_name(name, 'pmap')))
-    sharded_outs = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, (),
-                                      *in_nodes_sharded)
+    sharded_outs, _ = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, mlir.TokenSet(), (),
+                                         *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_mhlo_unshard(aval, new_env, out_axis, shard,
                         platform=ctx.module_context.platform)

@@ -227,8 +227,6 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
                         "for jit in {elapsed_time} sec"):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(
         fun, abstract_args, pe.debug_info_final(fun, "jit"), which_explicit)
-  if jaxpr.effects:
-    raise NotImplementedError('Lowering jaxprs with effects not supported.')
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
   # TODO(mattjj): handle argument pruning w/ dynamic shapes

@@ -592,6 +592,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   # Loop condition
   cond_block = while_op.regions[0].blocks.append(*flat_loop_carry_types)
   name_stack = extend_name_stack(ctx.module_context.name_stack, 'while')
+  if cond_jaxpr.effects:
+    raise NotImplementedError('`while_loop` with effects in `cond` not supported.')
   with ir.InsertionPoint(cond_block):
     flat_cond_args = [
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
@@ -600,15 +602,17 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
     cond_ctx = ctx.module_context.replace(
         name_stack=xla.extend_name_stack(name_stack, 'cond'))
-    (pred,), = mlir.jaxpr_subcomp(cond_ctx, cond_jaxpr.jaxpr,
-                                  _map(mlir.ir_constants, cond_jaxpr.consts),
-                                  *(x + z))
+    ((pred,),), _ = mlir.jaxpr_subcomp(cond_ctx, cond_jaxpr.jaxpr, mlir.TokenSet(),
+                                    _map(mlir.ir_constants, cond_jaxpr.consts),
+                                    *(x + z))
     if batched:
       pred_ctx = mlir.LoweringRuleContext(
           module_context=ctx.module_context,
           primitive=None,
           avals_in=[pred_aval],
-          avals_out=[pred_aval.update(shape=())])
+          avals_out=[pred_aval.update(shape=())],
+          tokens_in=mlir.TokenSet(),
+          tokens_out=None)
       pred, = lax._unary_reduce_lower(
           mhlo.OrOp,
           lambda dtype: np.array(False, dtype),
@@ -627,15 +631,17 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
     body_ctx = ctx.module_context.replace(
         name_stack=xla.extend_name_stack(name_stack, 'body'))
-    new_z = mlir.jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr,
-                               _map(mlir.ir_constants, body_jaxpr.consts),
-                               *(y + z))
+    if body_jaxpr.effects:
+      raise NotImplementedError('`while_loop` with effects in `body` not supported.')
+    new_z, _ = mlir.jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr, mlir.TokenSet(),
+                                  _map(mlir.ir_constants, body_jaxpr.consts),
+                                  *(y + z))
     if batched:
       body_pred_ctx = ctx.module_context.replace(
           name_stack=xla.extend_name_stack(name_stack,
                                            'body_pred'))
-      (body_pred,), = mlir.jaxpr_subcomp(
-          body_pred_ctx, cond_jaxpr.jaxpr,
+      ((body_pred,),), _ = mlir.jaxpr_subcomp(
+          body_pred_ctx, cond_jaxpr.jaxpr, mlir.TokenSet(),
           _map(mlir.ir_constants, cond_jaxpr.consts), *(x + z))
       new_z = _map(
           partial(_pred_bcast_select_mhlo, pred_aval, body_pred), new_z, z,
@@ -1271,10 +1277,12 @@ def _cond_lowering(ctx, index, *args, branches, linear):
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
+      if jaxpr.effects:
+        raise NotImplementedError('Cannot lower effectful `cond`.')
       sub_ctx = ctx.module_context.replace(
           name_stack=xla.extend_name_stack(name_stack, f'branch_{i}_fun'))
-      out_vals = mlir.jaxpr_subcomp(
-          sub_ctx, jaxpr.jaxpr,
+      out_vals, _ = mlir.jaxpr_subcomp(
+          sub_ctx, jaxpr.jaxpr, mlir.TokenSet(),
           _map(mlir.ir_constants, jaxpr.consts),
           *_map(mlir.wrap_singleton_ir_values, args))
       mhlo.ReturnOp(util.flatten(out_vals))

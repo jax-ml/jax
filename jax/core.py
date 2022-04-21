@@ -59,6 +59,8 @@ Effects = Set[Effect]
 
 no_effects: Effects = set()
 
+ordered_effects: Set[Effect] = set()
+
 class Jaxpr:
   constvars: List[Var]
   invars: List[Var]

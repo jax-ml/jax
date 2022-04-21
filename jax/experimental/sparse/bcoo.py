@@ -825,7 +825,9 @@ def _bcoo_dot_general_gpu_lowering(
     sub_ctx = mlir.LoweringRuleContext(module_context=ctx.module_context,
                                        primitive=None,
                                        avals_in=ctx.avals_in[:2],
-                                       avals_out=ctx.avals_in[:2])
+                                       avals_out=ctx.avals_in[:2],
+                                       tokens_in=ctx.tokens_in,
+                                       tokens_out=ctx.tokens_out)
 
     (lhs_data,), (lhs_indices,) = _bcoo_sort_indices_mhlo(
         sub_ctx, lhs_data, lhs_indices, spinfo=lhs_spinfo)

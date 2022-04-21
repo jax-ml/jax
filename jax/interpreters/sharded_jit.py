@@ -203,7 +203,8 @@ def _sharded_jit_lowering(ctx, *in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=new_name_stack(wrap_name(name, "sharded_jit")))
   fn = mlir.lower_jaxpr_to_fun(sub_ctx, f"sharded_jit_{name}",
-                               core.ClosedJaxpr(call_jaxpr, ()))
+                               core.ClosedJaxpr(call_jaxpr, ()),
+                               ())
 
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
   flat_output_types = util.flatten(output_types)
