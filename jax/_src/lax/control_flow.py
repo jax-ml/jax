@@ -205,8 +205,8 @@ def fori_loop(lower, upper, body_fun, init_val):
   if (isinstance(core.get_aval(lower), ConcreteArray) and
       isinstance(core.get_aval(upper), ConcreteArray)):
     try:
-      lower_ = int(lower)
-      upper_ = int(upper)
+      lower_ = operator.index(lower)
+      upper_ = operator.index(upper)
     except TypeError:
       use_scan = False
     else:
@@ -1382,7 +1382,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
                            if not hasattr(x, 'shape')))) from err
 
   if length is not None:
-    length = int(length)
+    length = operator.index(length)
     if not all(length == l for l in lengths):
       msg = ("scan got `length` argument of {} which disagrees with "
              "leading axis sizes {}.")

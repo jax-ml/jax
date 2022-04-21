@@ -15,6 +15,7 @@
 # Helpers for indexed updates.
 
 import sys
+import operator
 from typing import Any, Callable, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -154,7 +155,7 @@ def _segment_update(name: str,
   dtype = data.dtype
   if num_segments is None:
     num_segments = jnp.max(segment_ids) + 1
-  num_segments = core.concrete_or_error(int, num_segments, "segment_sum() `num_segments` argument.")
+  num_segments = core.concrete_or_error(operator.index, num_segments, "segment_sum() `num_segments` argument.")
   if num_segments is not None and num_segments < 0:
     raise ValueError("num_segments must be non-negative.")
 

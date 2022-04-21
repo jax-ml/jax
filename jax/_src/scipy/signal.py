@@ -257,7 +257,7 @@ def _spectral_helper(x, y,
   axis = canonicalize_axis(axis, x.ndim)
 
   if nperseg is not None:  # if specified by user
-    nperseg = jax.core.concrete_or_error(int, nperseg,
+    nperseg = jax.core.concrete_or_error(operator.index, nperseg,
                                          "nperseg of windowed-FFT")
     if nperseg < 1:
       raise ValueError('nperseg must be a positive integer')
@@ -268,12 +268,12 @@ def _spectral_helper(x, y,
   if noverlap is None:
     noverlap = nperseg // 2
   else:
-    noverlap = jax.core.concrete_or_error(int, noverlap,
+    noverlap = jax.core.concrete_or_error(operator.index, noverlap,
                                           "noverlap of windowed-FFT")
   if nfft is None:
     nfft = nperseg
   else:
-    nfft = jax.core.concrete_or_error(int, nfft,
+    nfft = jax.core.concrete_or_error(operator.index, nfft,
                                       "nfft of windowed-FFT")
 
   _check_arraylike("_spectral_helper", x)
@@ -506,7 +506,7 @@ def _overlap_and_add(x, step_size):
     An array with `(..., output_size)`-shape containing overlapped signal.
   """
   _check_arraylike("_overlap_and_add", x)
-  step_size = jax.core.concrete_or_error(int, step_size,
+  step_size = jax.core.concrete_or_error(operator.index, step_size,
                                         "step_size for overlap_and_add")
   if x.ndim < 2:
     raise ValueError('Input must have (..., frames, frame_length) shape.')
@@ -560,7 +560,7 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
   n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
                else Zxx.shape[freq_axis])
 
-  nperseg = jax.core.concrete_or_error(int, nperseg or n_default,
+  nperseg = jax.core.concrete_or_error(operator.index, nperseg or n_default,
                                        "nperseg: segment length of STFT")
   if nperseg < 1:
     raise ValueError('nperseg must be a positive integer')
@@ -570,12 +570,12 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
     if input_onesided and nperseg == n_default + 1:
       nfft += 1  # Odd nperseg, no FFT padding
   else:
-    nfft = jax.core.concrete_or_error(int, nfft, "nfft of STFT")
+    nfft = jax.core.concrete_or_error(operator.index, nfft, "nfft of STFT")
   if nfft < nperseg:
     raise ValueError(
         f'FFT length ({nfft}) must be longer than nperseg ({nperseg}).')
 
-  noverlap = jax.core.concrete_or_error(int, noverlap or nperseg // 2,
+  noverlap = jax.core.concrete_or_error(operator.index, noverlap or nperseg // 2,
                                         "noverlap of STFT")
   if noverlap >= nperseg:
     raise ValueError('noverlap must be less than nperseg.')

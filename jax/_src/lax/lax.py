@@ -1062,7 +1062,7 @@ def sort_key_val(keys: Array, values: Array, dimension: int = -1,
 
 def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the last axis of ``operand``."""
-  k = int(k)
+  k = operator.index(k)
   if k < 0:
     raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
   return top_k_p.bind(operand, k=k)
@@ -1118,7 +1118,7 @@ def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
 
 def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
-  offset = int(offset)
+  offset = operator.index(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
@@ -1138,7 +1138,7 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
 
 def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
-  offset = int(offset)
+  offset = operator.index(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
@@ -1340,7 +1340,7 @@ def _iter(tracer):
   if tracer.ndim == 0:
     raise TypeError("iteration over a 0-d array")  # same as numpy error
   else:
-    n = int(tracer.shape[0])
+    n = operator.index(tracer.shape[0])
     # return (index_in_dim(tracer, i, keepdims=False) for i in range(n))
     return iter([slicing.index_in_dim(tracer, i, keepdims=False)
                  for i in range(n)])
@@ -2464,7 +2464,7 @@ def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
       rhs_contract = bump_dims(rhs_contract, rbd)
 
   new_dimension_numbers = ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch))
-  return new_dimension_numbers, int(result_batch_dim)
+  return new_dimension_numbers, operator.index(result_batch_dim)
 
 def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
                               precision,

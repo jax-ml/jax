@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import operator
 
 import numpy as np
 import scipy.special as osp_special
@@ -172,7 +173,7 @@ def entr(x):
 
 @_wraps(osp_special.multigammaln, update_doc=False)
 def multigammaln(a, d):
-  d = core.concrete_or_error(int, d, "d argument of multigammaln")
+  d = core.concrete_or_error(operator.index, d, "d argument of multigammaln")
   a, d_ = _promote_args_inexact("multigammaln", a, d)
 
   constant = lax.mul(lax.mul(lax.mul(_lax_const(a, 0.25), d_),
@@ -950,8 +951,8 @@ def lpmn(m: int, n: int, z: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
   if z.ndim != 1:
     raise ValueError('z must be a 1D array.')
 
-  m = core.concrete_or_error(int, m, 'Argument m of lpmn.')
-  n = core.concrete_or_error(int, n, 'Argument n of lpmn.')
+  m = core.concrete_or_error(operator.index, m, 'Argument m of lpmn.')
+  n = core.concrete_or_error(operator.index, n, 'Argument n of lpmn.')
 
   if m != n:
     raise NotImplementedError('Computations for m!=n are not yet supported.')
@@ -1007,8 +1008,8 @@ def lpmn_values(m: int, n: int, z: jnp.ndarray, is_normalized: bool) -> jnp.ndar
   if z.ndim != 1:
     raise ValueError('z must be a 1D array.')
 
-  m = core.concrete_or_error(int, m, 'Argument m of lpmn.')
-  n = core.concrete_or_error(int, n, 'Argument n of lpmn.')
+  m = core.concrete_or_error(operator.index, m, 'Argument m of lpmn.')
+  n = core.concrete_or_error(operator.index, n, 'Argument n of lpmn.')
 
   if m != n:
     raise NotImplementedError('Computations for m!=n are not yet supported.')

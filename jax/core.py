@@ -1676,8 +1676,7 @@ def canonicalize_shape(shape: Shape, context: str="") -> Shape:
   try:
     return tuple(unsafe_map(_canonicalize_dimension, shape))
   except TypeError:
-    pass
-  raise _invalid_shape_error(shape, context)
+    raise _invalid_shape_error(shape, context)
 
 def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
   """Canonicalizes and checks for errors in a user-provided shape dimension value.
