@@ -182,7 +182,6 @@ To fit the same model on sparse data, we can apply the :func:`sparsify` transfor
      -0.670236    0.03132951 -0.05356663]
 """
 
-# flake8: noqa: F401
 from jax.experimental.sparse.ad import (
     grad as grad,
     value_and_grad as value_and_grad,

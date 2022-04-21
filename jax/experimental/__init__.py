@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax.interpreters.sharded_jit import (
   sharded_jit as sharded_jit,
   with_sharding_constraint as with_sharding_constraint,

@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
-
 from contextlib import contextmanager
 import inspect
 import functools
@@ -21,7 +19,7 @@ from functools import partial
 import re
 import os
 import textwrap
-from typing import Dict, List, Generator, Sequence, Tuple, Union, NamedTuple
+from typing import Dict, List, Generator, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib
@@ -32,7 +30,6 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
-from jax import stages
 from jax._src import api
 from jax import core
 from jax._src import dtypes as _dtypes
@@ -42,14 +39,11 @@ from jax._src.util import prod, unzip2
 from jax.tree_util import tree_map, tree_all
 from jax._src.lib import xla_bridge
 from jax._src import dispatch
-from jax._src.public_test_util import (
+from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
     check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, device_under_test, tolerance)
 from jax.interpreters import mlir
-from jax.interpreters import xla
 from jax.experimental.maps import Mesh
-from jax.interpreters.pxla import PartitionSpec
-from jax.experimental import pjit
 
 # This submodule includes private test utilities that are not exported to
 # jax.test_util. Functionality appearing here is for internal use only, and

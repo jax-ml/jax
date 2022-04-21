@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax._src.util import (
   HashableFunction as HashableFunction,
   as_hashable_function as as_hashable_function,

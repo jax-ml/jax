@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax._src.ops.scatter import (
   segment_sum as segment_sum,
   segment_prod as segment_prod,

@@ -20,7 +20,6 @@ JAX, such as `PIX`_.
 .. _PIX: https://github.com/deepmind/dm_pix
 """
 
-# flake8: noqa: F401
 from jax._src.image.scale import (
   resize as resize,
   ResizeMethod as ResizeMethod,

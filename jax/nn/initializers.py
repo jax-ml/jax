@@ -17,7 +17,6 @@ Common neural network layer initializers, consistent with definitions
 used in Keras and Sonnet.
 """
 
-# flake8: noqa: F401
 from jax._src.nn.initializers import (
   constant as constant,
   delta_orthogonal as delta_orthogonal,

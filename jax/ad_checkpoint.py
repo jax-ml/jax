@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax._src.ad_checkpoint import (
   checkpoint,
   checkpoint_policies,

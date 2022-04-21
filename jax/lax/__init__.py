@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
   Precision as Precision,
@@ -22,11 +21,6 @@ from jax._src.lax.lax import (
   abs_p as abs_p,
   acos as acos,
   acos_p as acos_p,
-  acosh as acosh,
-  acosh_p as acosh_p,
-  abs as abs,
-  abs_p as abs_p,
-  acos as acos,
   acosh as acosh,
   acosh_p as acosh_p,
   add as add,
