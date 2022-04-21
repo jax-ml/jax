@@ -35,7 +35,6 @@ See the `JAX pytrees note <pytrees.html>`_
 for examples.
 """
 
-# flake8: noqa: F401
 from jax._src.tree_util import (
   Partial as Partial,
   PyTreeDef as PyTreeDef,

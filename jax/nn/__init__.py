@@ -14,8 +14,6 @@
 
 """Common functions for neural network libraries."""
 
-# flake8: noqa: F401
-
 from jax.numpy import tanh as tanh
 from jax.nn import initializers as initializers
 from jax._src.nn.functions import (

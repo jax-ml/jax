@@ -21,7 +21,6 @@ tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
 
-# flake8: noqa: F401
 import collections
 import functools
 from functools import partial
@@ -1540,7 +1539,7 @@ def pmap(
     in_axes=0,
     out_axes=0,
     static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-    devices: Optional[Sequence[xc.Device]] = None,
+    devices: Optional[Sequence[xc.Device]] = None,  # noqa: F811
     backend: Optional[str] = None,
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
@@ -1876,7 +1875,7 @@ def _get_f_mapped(
     in_axes=0,
     out_axes=0,
     static_broadcasted_tuple: Tuple[int],
-    devices: Optional[Sequence[xc.Device]],
+    devices: Optional[Sequence[xc.Device]],  # noqa: F811
     backend: Optional[str],
     axis_size: Optional[int],
     donate_tuple: Tuple[int],
@@ -1926,7 +1925,7 @@ def _python_pmap(
     in_axes=0,
     out_axes=0,
     static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-    devices: Optional[Sequence[xc.Device]] = None,
+    devices: Optional[Sequence[xc.Device]] = None,  # noqa: F811
     backend: Optional[str] = None,
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
@@ -1985,7 +1984,7 @@ def _cpp_pmap(
     in_axes=0,
     out_axes=0,
     static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-    devices: Optional[Sequence[xc.Device]] = None,
+    devices: Optional[Sequence[xc.Device]] = None,  # noqa: F811
     backend: Optional[str] = None,
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
@@ -2061,7 +2060,7 @@ def _cpp_pmap(
 
 
 def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
-                devices, backend, axis_size, global_arg_shapes, donate_tuple):
+                devices, backend, axis_size, global_arg_shapes, donate_tuple):  # noqa: F811
   """Make a ``lower`` method for pmapped functions."""
   # If the function we returned from ``pmap`` were a class instance,
   # this might naturally be a method, with ``fun`` as a ``self`` and
@@ -2667,7 +2666,7 @@ def device_put(x, device: Optional[xc.Device] = None):
     return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
 
 
-def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
+def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # noqa: F811
   """Transfer array shards to specified devices and form ShardedDeviceArray(s).
 
   Args:
@@ -2739,7 +2738,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     return tree_map(_device_put_sharded, *shards)
 
 
-def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
+def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
   """Transfer array(s) to each specified device and form ShardedDeviceArray(s).
 
   Args:

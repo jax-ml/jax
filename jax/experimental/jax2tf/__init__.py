@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax.experimental.jax2tf.jax2tf import (convert, dtype_of_val,
                                             split_to_logical_devices, PolyShape)
 from jax.experimental.jax2tf.call_tf import call_tf

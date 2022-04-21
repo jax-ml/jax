@@ -14,7 +14,6 @@
 
 # TODO(phawkins): fix users of these aliases and delete this file.
 
-# flake8: noqa: F401
 from jax._src.abstract_arrays import array_types
 from jax.core import (
   ShapedArray,

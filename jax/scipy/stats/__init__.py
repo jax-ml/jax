@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax.scipy.stats import bernoulli as bernoulli
 from jax.scipy.stats import beta as beta
 from jax.scipy.stats import cauchy as cauchy

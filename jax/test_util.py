@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.public_test_util import (  # noqa: F401
+from jax._src.public_test_util import (
   check_grads as check_grads,
   check_jvp as check_jvp,
   check_vjp as check_vjp,

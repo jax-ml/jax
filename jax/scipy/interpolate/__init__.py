@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
-
 # Already deprecate namespaces that will be removed in SciPy v2.0.0
 
 from jax._src.third_party.scipy.interpolate import (

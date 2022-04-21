@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
-
 from jax._src.scipy.signal import (
   convolve as convolve,
   convolve2d as convolve2d,

@@ -118,8 +118,6 @@ Here is a short summary:
 
 """
 
-# flake8: noqa: F401
-
 # TODO(frostig): replace with KeyArray from jax._src.random once we
 # always enable_custom_prng
 from jax._src.prng import PRNGKeyArray
@@ -163,4 +161,3 @@ from jax._src.random import (
   unsafe_rbg_key as unsafe_rbg_key,
   weibull_min as weibull_min,
 )
-

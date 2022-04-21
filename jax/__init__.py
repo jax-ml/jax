@@ -29,8 +29,6 @@ except Exception as exc:
   del _warn
 del _cloud_tpu_init
 
-# flake8: noqa: F401
-
 # Confusingly there are two things named "config": the module and the class.
 # We want the exported object to be the class, so we first import the module
 # to make sure a later import doesn't overwrite the class.
