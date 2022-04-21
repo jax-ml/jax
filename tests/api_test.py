@@ -824,10 +824,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f_exe = self.jit(f).lower(1., 1.).compile()
     self.assertAllClose(f_exe(1., 1.), 1.)
 
+  @jtu.skip_on_devices("cpu")   # no donation on cpu, so this would warn
   def test_jit_lower_donate_argnums_available(self):
     def f(*args):
       x, *_ = args
-      return x
+      return x + 4.
     f_low = self.jit(f, donate_argnums=(0,)).lower(1., 1.)
     f_com = f_low.compile()
     f_low.donate_argnums == f_com.donate_argnums == (0,)
@@ -850,6 +851,16 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_jit_lower_compile_compiler_ir(self):
     f = self.jit(lambda x: x + 4).lower(1.).compile()
+    self.assertIsNotNone(f.compiler_ir())
+
+  def test_jit_lower_trivial_compiler_ir(self):
+    f = self.jit(lambda x: x).lower(1.)
+    self.assertIsNotNone(f.compiler_ir())
+    self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
+    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+
+  def test_jit_lower_trivial_compile_compiler_ir(self):
+    f = self.jit(lambda x: x).lower(1.).compile()
     self.assertIsNotNone(f.compiler_ir())
 
   def test_jit_lower_compile_executable(self):

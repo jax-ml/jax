@@ -194,7 +194,7 @@ xla.xla_call_p.def_impl(_xla_call_impl)
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
                            donated_invars, *arg_specs):
-  return lower_xla_callable(fun, device, backend, name, donated_invars,
+  return lower_xla_callable(fun, device, backend, name, donated_invars, False,
                             *arg_specs).compile().unsafe_call
 
 _xla_callable = lu.cache(_xla_callable_uncached)
@@ -214,7 +214,7 @@ def log_elapsed_time(fmt: str):
 
 @profiler.annotate_function
 def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
-                       donated_invars, *arg_specs):
+                       donated_invars, always_lower: bool, *arg_specs):
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
@@ -255,7 +255,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
-  if not jaxpr.eqns:
+  if not jaxpr.eqns and not always_lower:
     return XlaComputation(
         name, None, True, None, None, jaxpr=jaxpr, consts=consts, device=device,
         in_avals=abstract_args, out_avals=out_avals, kept_var_idx=kept_var_idx)
