@@ -25,6 +25,14 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     are not of an integer type, matching the behavior of
     {func}`numpy.take_along_axis`. Previously non-integer indices were silently
     cast to integers.
+* Deprecations
+  * Many functions and objects available in {mod}`jax.test_util` are now deprecated and will raise a
+    warning on import. This includes `cases_from_list`, `check_close`, `check_eq`, `device_under_test`,
+    `format_shape_dtype_string`, `rand_uniform`, `skip_on_devices`, `with_config`, `xla_bridge`, and
+    `_default_tolerance` ({jax-issue}`#10389`). These, along with previously-deprecated `JaxTestCase`,
+    `JaxTestLoader`, and `BufferDonationTestCase`, will be removed in a future JAX release.
+    Many of these utilities still exist in `jax._src.test_util`, but these are not public APIs and
+    as such may be changed or removed without notice.
 
 ## jaxlib 0.3.8 (Unreleased)
 * [GitHub
@@ -56,7 +64,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     pod. Fixes [#10218](https://github.com/google/jax/issues/10218).
 * Deprecations:
   * {mod}`jax.experimental.loops` is being deprecated. See {jax-issue}`#10278`
-  for an alternative API.
+    for an alternative API.
 
 ## jax 0.3.5 (April 7, 2022)
 * [GitHub
