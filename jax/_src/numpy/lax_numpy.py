@@ -3431,10 +3431,9 @@ def _normalize_index(index, axis_size):
 TAKE_ALONG_AXIS_DOC = """
 Unlike :func:`numpy.take_along_axis`, :func:`jax.numpy.take_along_axis` takes
 an optional ``mode`` parameter controlling how out-of-bounds indices should be
-handled. By default, out-of-bounds indices are clamped into range. In a future
-change, out-of-bounds indices will return invalid (e.g., ``NaN``) values
-instead. See :attr:`jax.numpy.ndarray.at` for more discussion
-of out-of-bounds indexing in JAX.
+handled. By default, out-of-bounds indices yield invalid values (e.g., ``NaN``).
+See :attr:`jax.numpy.ndarray.at` for futrher discussion of out-of-bounds
+indexing in JAX.
 """
 
 @_wraps(np.take_along_axis, update_doc=False,
@@ -3520,9 +3519,8 @@ def take_along_axis(arr, indices, axis: Optional[int],
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map))
-  # TODO(phawkins): change the mode to "fill".
   return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes),
-                    mode="clip" if mode is None else mode)
+                    mode="fill" if mode is None else mode)
 
 ### Indexing
 

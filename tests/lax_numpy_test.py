@@ -4577,14 +4577,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jnp.arange(10, dtype=jnp.float32)
     idx = jnp.array([-11, -10, -9, -5, -1, 0, 1, 5, 9, 10, 11])
     out = jnp.take_along_axis(x, idx, axis=0)
-    expected_clip = np.array([0, 0, 1, 5, 9, 0, 1, 5, 9, 9, 9], np.float32)
-    np.testing.assert_array_equal(expected_clip, out)
-    out = jnp.take_along_axis(x, idx, axis=0, mode="clip")
-    np.testing.assert_array_equal(expected_clip, out)
     expected_fill = np.array([jnp.nan, 0, 1, 5, 9, 0, 1, 5, 9, jnp.nan,
                               jnp.nan], np.float32)
+    np.testing.assert_array_equal(expected_fill, out)
     out = jnp.take_along_axis(x, idx, axis=0, mode="fill")
     np.testing.assert_array_equal(expected_fill, out)
+
+    expected_clip = np.array([0, 0, 1, 5, 9, 0, 1, 5, 9, 9, 9], np.float32)
+    out = jnp.take_along_axis(x, idx, axis=0, mode="clip")
+    np.testing.assert_array_equal(expected_clip, out)
 
   def testTakeAlongAxisRequiresIntIndices(self):
     x = jnp.arange(5)
