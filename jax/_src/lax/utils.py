@@ -20,6 +20,7 @@ import builtins
 from functools import partial
 import operator
 from typing import Callable
+import warnings
 
 from jax import core
 from jax._src import dtypes
@@ -115,3 +116,16 @@ def standard_named_shape_rule(*avals, **kwargs):
 
 def _standard_weak_type_rule(*avals, **kwargs):
   return all(aval.weak_type for aval in avals)
+
+def _check_integer(func_name: str, var_name: str, x):
+  try:
+    return operator.index(x)
+  except TypeError:
+    try:
+      x = int(x)
+    except Exception as e:
+      raise e from Exception(f"{func_name}: {var_name}")
+    msg = (f"{func_name}: {var_name} must be an integer."
+          "In future JAX versions non-integer values will result in an error.")
+    warnings.warn(msg)
+    return x

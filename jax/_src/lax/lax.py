@@ -64,6 +64,7 @@ from jax._src.lax.utils import (
   standard_named_shape_rule,
   standard_primitive,
   standard_translate,
+  _check_integer,
 )
 from jax._src.lax import slicing
 
@@ -1062,7 +1063,7 @@ def sort_key_val(keys: Array, values: Array, dimension: int = -1,
 
 def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the last axis of ``operand``."""
-  k = int(k)
+  k = _check_integer("lax.topk", "k", k)
   if k < 0:
     raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
   return top_k_p.bind(operand, k=k)
@@ -1118,7 +1119,7 @@ def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
 
 def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
-  offset = int(offset)
+  assert type(offset) is int
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
@@ -1138,7 +1139,7 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
 
 def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
-  offset = int(offset)
+  assert type(offset) is int
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
