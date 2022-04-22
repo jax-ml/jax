@@ -9,6 +9,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    :maxdepth: 1
    :caption: Getting Started
 
+   installation
    notebooks/quickstart
    notebooks/thinking_in_jax
    notebooks/Common_Gotchas_in_JAX
