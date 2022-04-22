@@ -44,6 +44,7 @@ import sys
 from absl import logging
 import numpy as np
 
+import jax
 from jax import core
 from jax import linear_util as lu
 from jax.core import ConcreteArray, ShapedArray
@@ -1644,12 +1645,15 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
     padded = mlir.full_like_aval(0, padded_aval)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index_mhlo(axis_env)] + [zero] * len(dims)
+    if jax._src.lib.mlir_api_version < 9:
+      broadcast_result = mhlo.BroadcastOp(
+          mlir.aval_to_ir_type(aval.update(shape=[1] + dims)), x,
+          mlir.dense_int_elements([1])).result
+    else:
+      broadcast_result = mhlo.BroadcastOp(
+          x, mlir.dense_int_elements([1])).result
     padded = mhlo.DynamicUpdateSliceOp(
-        padded.type,
-        padded,
-        mhlo.BroadcastOp(mlir.aval_to_ir_type(aval.update(shape=[1] + dims)), x,
-                         mlir.dense_int_elements([1])).result,
-        idxs).result
+        padded.type, padded, broadcast_result, idxs).result
     replica_groups = mlir.dense_int_elements(
       xla.axis_groups(axis_env, axis_env.names[-1]))
     out = mhlo.CrossReplicaSumOp(padded, replica_groups).result

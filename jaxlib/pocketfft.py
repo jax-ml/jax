@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import jax
 # flatbuffers needs importlib.util but fails to import it itself.
 import importlib.util  # noqa: F401
 from typing import List
@@ -162,10 +163,15 @@ def pocketfft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
     zero = mhlo.ConstOp(ir.RankedTensorType.get([], out_type),
                         ir.DenseElementsAttr.get(np.array(0, dtype=out_dtype),
                                                  type=out_type))
-    return mhlo.BroadcastOp(
-        ir.RankedTensorType.get(out_shape, out_type),
-        zero,
-        ir.DenseElementsAttr.get(np.asarray(out_shape, np.int64))).result
+    if jax._src.lib.mlir_api_version < 9:
+      return mhlo.BroadcastOp(
+          ir.RankedTensorType.get(out_shape, out_type),
+          zero,
+          ir.DenseElementsAttr.get(np.asarray(out_shape, np.int64))).result
+    else:
+      return mhlo.BroadcastOp(
+          zero,
+          ir.DenseElementsAttr.get(np.asarray(out_shape, np.int64))).result
 
   u8_type = ir.IntegerType.get_unsigned(8)
   descriptor = mhlo.ConstOp(

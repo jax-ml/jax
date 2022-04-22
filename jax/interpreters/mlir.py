@@ -29,6 +29,7 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
 from typing_extensions import Protocol
 import warnings
 
+import jax
 from jax import core
 from jax import linear_util as lu
 from jax._src import ad_util
@@ -1005,8 +1006,12 @@ register_lowering(core.call_p, partial(_named_call_lowering, name="core_call"))
 def full_like_aval(value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
   zero = ir_constant(np.array(value, aval.dtype))
-  return mhlo.BroadcastOp(aval_to_ir_type(aval), zero,
-                          dense_int_elements(aval.shape)).result
+  if jax._src.lib.mlir_api_version < 9:
+    return mhlo.BroadcastOp(aval_to_ir_type(aval), zero,
+                            dense_int_elements(aval.shape)).result
+  else:
+    return mhlo.BroadcastOp(zero, dense_int_elements(aval.shape)).result
+
 
 def zeros_like_lowering(ctx, x):
   aval, = ctx.avals_in
