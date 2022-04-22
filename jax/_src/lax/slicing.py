@@ -1965,7 +1965,7 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
 
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
-    (indices,), = clip_fn(ctx, ctx.avals_in, None, operand, indices, updates,
+    (indices,), = clip_fn(ctx.replace(avals_out=None), operand, indices, updates,
                           dnums=dimension_numbers)
 
   aval_out, = ctx.avals_out
