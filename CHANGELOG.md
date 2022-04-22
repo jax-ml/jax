@@ -31,8 +31,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     `format_shape_dtype_string`, `rand_uniform`, `skip_on_devices`, `with_config`, `xla_bridge`, and
     `_default_tolerance` ({jax-issue}`#10389`). These, along with previously-deprecated `JaxTestCase`,
     `JaxTestLoader`, and `BufferDonationTestCase`, will be removed in a future JAX release.
-    Many of these utilities still exist in `jax._src.test_util`, but these are not public APIs and
-    as such may be changed or removed without notice.
+    Most of these utilites can be replaced by calls to standard python & numpy testing utilities found
+    in e.g.  {mod}`unittest`, {mod}`absl.testing`, {mod}`numpy.testing`, etc. JAX-specific functionality
+    such as device checking can be replaced through the use of public APIs such as {func}`jax.devices`.
+    Many of the deprecated utilities will still exist in {mod}`jax._src.test_util`, but these are not
+    public APIs and as such may be changed or removed without notice in future releases.
 
 ## jaxlib 0.3.8 (Unreleased)
 * [GitHub
