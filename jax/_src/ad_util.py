@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 from typing import Any, Callable, Dict, Type
 
@@ -45,7 +46,12 @@ def add_abstract(xs, ys):
 
 jaxval_zeros_likers: Dict[type, Array] = {}
 
-def zeros_like_aval(aval):
+def instantiate(z: Union[Zero, Array]) -> Array:
+  if type(z) is Zero:
+    return zeros_like_aval(z.aval)
+  return z
+
+def zeros_like_aval(aval: core.AbstractValue) -> Array:
   return aval_zeros_likers[type(aval)](aval)
 
 aval_zeros_likers: Dict[Type[core.AbstractValue], Array] = {}
