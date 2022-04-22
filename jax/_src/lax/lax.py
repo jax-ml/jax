@@ -1643,7 +1643,11 @@ def _tan_impl(x):
 
 tan_p = standard_unop(_float | _complex, 'tan')
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
-mlir.register_lowering(tan_p, mlir.lower_fun(_tan_impl, multiple_results=False))
+if jax._src.lib.mlir_api_version >= 11:
+  mlir.register_lowering(tan_p, partial(_nary_lower_mhlo, chlo.TanOp))
+else:
+  mlir.register_lowering(tan_p,
+                         mlir.lower_fun(_tan_impl, multiple_results=False))
 
 def asin_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
