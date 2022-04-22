@@ -2272,11 +2272,11 @@ class LaxTest(jtu.JaxTestCase):
       lax.gather(operand, indices, dimension_numbers, slice_sizes)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
+      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}_mode={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
-          idxs, update_shape, dnums),
+          idxs, update_shape, dnums, mode),
        "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
-       "update_shape": update_shape, "dnums": dnums}
+       "update_shape": update_shape, "dnums": dnums, "mode": mode}
       for dtype in inexact_dtypes
       for arg_shape, idxs, update_shape, dnums in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
@@ -2288,14 +2288,15 @@ class LaxTest(jtu.JaxTestCase):
           ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
-      ]))
-  def testScatterAdd(self, arg_shape, dtype, idxs, update_shape, dnums):
+      ]
+      for mode in ["clip", "fill", None]))
+  def testScatterAdd(self, arg_shape, dtype, idxs, update_shape, dnums, mode):
     rng = jtu.rand_default(self.rng())
     rng_idx = jtu.rand_int(self.rng(), high=max(arg_shape))
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
     args_maker = lambda: [rng(arg_shape, dtype), rand_idxs(),
                           rng(update_shape, dtype)]
-    fun = partial(lax.scatter_add, dimension_numbers=dnums)
+    fun = partial(lax.scatter_add, dimension_numbers=dnums, mode=mode)
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
