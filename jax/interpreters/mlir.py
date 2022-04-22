@@ -1219,15 +1219,6 @@ register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 # lax.erf_inv_p,
 # lax.regularized_incomplete_beta_p,
 
-# # CHLO doesn't have complex lowerings of these primitives (b/203718937)
-# lax.acos_p,
-# lax.acosh_p,
-# lax.asin_p,
-# lax.asinh_p,
-# lax.atan_p,
-# lax.atanh_p,
-# lax.tan_p,
-
 # # CHLO doesn't have a legalization for bf16 (b/203774470)
 # lax.erf_p,
 # lax.erfc_p,

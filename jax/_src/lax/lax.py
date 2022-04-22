@@ -1699,23 +1699,35 @@ mlir.register_lowering(sinh_p, partial(_nary_lower_mhlo, chlo.SinhOp))
 
 cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
-xla.register_translation(cosh_p, standard_translate(cosh_p))
-if jax._src.lib.mlir_api_version >= 8:
+if jax._src.lib.mlir_api_version >= 10:
   mlir.register_lowering(cosh_p, partial(_nary_lower_mhlo, chlo.CoshOp))
+else:
+  xla.register_translation(cosh_p, standard_translate(cosh_p))
+  if jax._src.lib.mlir_api_version >= 8:
+    mlir.register_lowering(cosh_p, partial(_nary_lower_mhlo, chlo.CoshOp))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
 ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(square(x) + _one(x))))
-xla.register_translation(asinh_p, standard_translate(asinh_p))
+if jax._src.lib.mlir_api_version >= 10:
+  mlir.register_lowering(asinh_p, partial(_nary_lower_mhlo, chlo.AsinhOp))
+else:
+  xla.register_translation(asinh_p, standard_translate(asinh_p))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
-xla.register_translation(acosh_p, standard_translate(acosh_p))
 ad.defjvp(acosh_p,
           lambda g, x: mul(g, rsqrt((x - _one(x)) * (x + _one(x)))))
+if jax._src.lib.mlir_api_version >= 10:
+  mlir.register_lowering(acosh_p, partial(_nary_lower_mhlo, chlo.AcoshOp))
+else:
+  xla.register_translation(acosh_p, standard_translate(acosh_p))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
-xla.register_translation(atanh_p, standard_translate(atanh_p))
 ad.defjvp(atanh_p,
           lambda g, x: mul(reciprocal(_one(x) + x), div(g, (_one(x) - x))))
+if jax._src.lib.mlir_api_version >= 10:
+  mlir.register_lowering(atanh_p, partial(_nary_lower_mhlo, chlo.AtanhOp))
+else:
+  xla.register_translation(atanh_p, standard_translate(atanh_p))
 
 regularized_incomplete_beta_p = standard_naryop(
     [_float, _float, _float], 'regularized_incomplete_beta')
