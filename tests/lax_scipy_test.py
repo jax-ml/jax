@@ -24,6 +24,7 @@ from absl.testing import parameterized
 
 import numpy as np
 import scipy.special as osp_special
+import scipy.cluster as osp_cluster
 
 import jax
 from jax import numpy as jnp
@@ -31,6 +32,7 @@ from jax import lax
 from jax import scipy as jsp
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
+from jax.scipy import cluster as lsp_cluster
 import jax._src.scipy.eigh
 
 from jax.config import config
@@ -609,6 +611,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     v_unitary_delta = jnp.dot(V.conj().T, V, precision=lax.Precision.HIGHEST)
     v_eye = jnp.eye(v_unitary_delta.shape[0], dtype=dtype)
     self.assertAllClose(v_unitary_delta, v_eye, atol=eps)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{jtu.format_shape_dtype_string((n_obs, n_codes, *n_feats), dtype)}",
+       "n_obs": n_obs, "n_codes": n_codes, "n_feats": n_feats, "dtype": dtype}
+      for n_obs in [1, 3, 5]
+      for n_codes in [1, 2, 4]
+      for n_feats in [()] + [(i,) for i in range(1, 3)]
+      for dtype in float_dtypes + int_dtypes)) # scipy doesn't support complex
+  def test_vq(self, n_obs, n_codes, n_feats, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((n_obs, *n_feats), dtype), rng((n_codes, *n_feats), dtype)]
+    self._CheckAgainstNumpy(osp_cluster.vq.vq, lsp_cluster.vq.vq, args_maker, check_dtypes=False)
+    self._CompileAndCheck(lsp_cluster.vq.vq, args_maker)
 
 
 if __name__ == "__main__":
