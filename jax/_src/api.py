@@ -566,7 +566,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
     else:
       arg_specs = []
     computation = dispatch.lower_xla_callable(flat_fun, device, backend, name,
-                                              donated_invars,
+                                              donated_invars, True,
                                               *arg_specs_and_device)
     return stages.Lowered.from_flat_info(
         computation, in_tree, arg_specs, donate_argnums, out_tree())

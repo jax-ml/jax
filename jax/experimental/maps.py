@@ -716,7 +716,8 @@ def make_xmap_callable(fun: lu.WrappedFun,
         tiling_method=tiling_method, in_is_global=in_is_global)
   else:
     return dispatch.lower_xla_callable(
-        f, None, backend, name, donated_invars, *((a, None) for a in in_avals))
+        f, None, backend, name, donated_invars, False,
+        *[(a, None) for a in in_avals])
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
