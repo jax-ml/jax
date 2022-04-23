@@ -106,7 +106,7 @@ class CheckpointTest(jtu.JaxTestCase):
     num = util.prod(global_input_shape)
 
     # First GDA
-    global_input_data1 = np.arange(num).reshape(global_input_shape)
+    global_input_data1 = np.arange(num, dtype=np.int32).reshape(global_input_shape)
     def cb1(index):
       return global_input_data1[index]
     gda1 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
@@ -123,17 +123,18 @@ class CheckpointTest(jtu.JaxTestCase):
         [P('x', 'y')],
         tspecs,
         [(12, 2)],
+        [np.float32]
     )
 
     expected_data = {
-        0: np.array([[0], [2], [4]]),
-        1: np.array([[1], [3], [5]]),
-        2: np.array([[6], [8], [10]]),
-        3: np.array([[7], [9], [11]]),
-        4: np.array([[12], [14], [0]]),
-        5: np.array([[13], [15], [0]]),
-        6: np.array([[0], [0], [0]]),
-        7: np.array([[0], [0], [0]]),
+        0: np.array([[0], [2], [4]], dtype=np.float32),
+        1: np.array([[1], [3], [5]], dtype=np.float32),
+        2: np.array([[6], [8], [10]], dtype=np.float32),
+        3: np.array([[7], [9], [11]], dtype=np.float32),
+        4: np.array([[12], [14], [0]], dtype=np.float32),
+        5: np.array([[13], [15], [0]], dtype=np.float32),
+        6: np.array([[0], [0], [0]], dtype=np.float32),
+        7: np.array([[0], [0], [0]], dtype=np.float32),
     }
 
     for l in m1.local_shards:
