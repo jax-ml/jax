@@ -994,9 +994,8 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
     move = [False] * len(ops_uk) + [True] * branch_num_res
     branch_jaxpr_2 = pe.move_binders_to_front(branch_jaxpr_2, move)
 
-    # TODO(frostig,mattjj): pe.partial_eval_jaxpr should raise to shaped avals
-    res_avals = _map(
-        raise_to_shaped, branch_jaxpr_2.in_avals[:branch_num_res])
+    res_avals = branch_jaxpr_2.in_avals[:branch_num_res]
+    assert not any(isinstance(a, core.ConcreteArray) for a in res_avals)
 
     branches_1.append(branch_jaxpr_1)
     branches_2.append(branch_jaxpr_2)
@@ -1018,19 +1017,16 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   branches_2 = _join_cond_pe_staged_jaxpr_inputs(
       branches_2, all_res_avals, res_avals_per_branch)
 
-  # TODO(frostig,mattjj): reinstate this assertion once pe.partial_eval_jaxpr
-  # raises to shaped avals
-  # for j in branches_1[1:]:
-  #   assert j.out_avals == branches_1[0].out_avals
+  for j in branches_1[1:]:
+    assert all(_map(core.typematch, j.out_avals, branches_1[0].out_avals))
   num_res = len(all_res_avals)
 
   _, in_consts = unzip2([t.pval for t in tracers])
   out_consts_res = cond_p.bind(*in_consts, branches=branches_1, linear=linear)
   out_consts, res = split_list(out_consts_res, [len(out_consts_res) - num_res])
 
-  # TODO(frostig,mattjj): remove raised_to_shaped of avals once
-  # pe.partial_eval_jaxpr handles it
-  out_avals = _map(raise_to_shaped, branches_2[0].out_avals)
+  out_avals = branches_2[0].out_avals
+  assert not any(isinstance(a, core.ConcreteArray) for a in out_avals)
   out_pvs = [aval if uk else None for aval, uk in zip(out_avals, out_uks)]
 
   index_tracer = trace.instantiate_const(tracers[0])
