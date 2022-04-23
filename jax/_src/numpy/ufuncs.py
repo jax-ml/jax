@@ -317,13 +317,12 @@ def power(x1, x2):
   # Using lax.pow may be imprecise for floating-point values; the goal of this
   # code path is to make sure we end up with a precise output for the common
   # pattern ``x ** 2`` or similar.
-  if isinstance(core.get_aval(x2), core.ConcreteArray):
-    try:
-      x2 = operator.index(x2)
-    except TypeError:
-      pass
-    else:
-      return lax.integer_pow(x1, x2)
+  if isinstance(x2, int):
+    return lax.integer_pow(x1, x2)
+  if isinstance(x2, core.Tracer):
+    return _power(x1, x2)
+  if issubclass(np.result_type(x2).type, np.integer) and np.ndim(x2) == 0:
+    return lax.integer_pow(x1, operator.index(x2))
   return _power(x1, x2)
 
 
