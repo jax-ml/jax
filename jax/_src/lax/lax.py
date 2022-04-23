@@ -2212,7 +2212,11 @@ def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
 def _convert_elt_type_folding_rule(consts, eqn):
   c, = consts
   if type(c) in core.literalable_types and not np.shape(c):
-    return [np.array(c, eqn.params['new_dtype'])], None
+    out = np.array(c, eqn.params['new_dtype'])
+    if eqn.outvars[0].aval.weak_type:
+      return [out.item()], None  # return as Python scalar to preserve weak_type
+    else:
+      return [out], None
   else:
     return [None], eqn
 
