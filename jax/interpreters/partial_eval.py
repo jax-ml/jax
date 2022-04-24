@@ -609,6 +609,19 @@ def trace_to_jaxpr(
 
   return jaxpr, out_pvals, consts
 
+@profiler.annotate_function
+def trace_to_jaxpr_nounits(
+    fun: lu.WrappedFun, pvals: Sequence[PartialVal],
+    instantiate: Union[bool, Sequence[bool]] = False,
+  ) -> Tuple[Jaxpr, List[PartialVal], List[core.Value]]:
+  current_name_stack = source_info_util.current_name_stack()
+  with core.new_main(JaxprTrace, name_stack=current_name_stack) as main:
+    fun = trace_to_subjaxpr_nounits(fun, main, instantiate)
+    jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
+    assert not env
+    del main, fun, env
+  return jaxpr, out_pvals, consts
+
 
 @lu.transformation
 def trace_to_subjaxpr_nounits(
@@ -785,88 +798,119 @@ def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
 def _split_aval(unknown: bool, aval: AbstractValue) -> Tuple[AbstractValue, AbstractValue]:
   return (abstract_unit, aval) if unknown else (aval, abstract_unit)
 
-def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
-                       instantiate: Union[bool, Sequence[bool]],
-                       ) -> Tuple[ClosedJaxpr, ClosedJaxpr, Sequence[bool]]:
-  """Specializes a Jaxpr given an indication of which inputs are known.
 
-  Returns: (jaxpr_known, jaxpr_unknown, out_unknowns).
+def partial_eval_jaxpr_nounits(
+    jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
+    instantiate: Union[bool, Sequence[bool]],
+  ) -> Tuple[ClosedJaxpr, ClosedJaxpr, List[bool]]:
+  """Unzip a jaxpr in two by data dependence into 'known' and 'unknown' parts.
 
-  `out_unknowns` specifies which outputs are unknown (depend on some unknown inputs).
-  `jaxpr_known` takes the same inputs as `jaxpr`, ignores the unknown inputs,
-  and performs *all* the computation in `jaxpr` that depends only on the known inputs.
-  Outputs correspond to those of `jaxpr`, with the unknown ones replaced with `*`,
-  appended with the known residuals (the intermediate computations in `jaxpr`
-  that depend only on known inputs and that are needed to compute the unknown outputs).
+  That is, given a jaxpr and a sequence of booleans indicating which jaxpr
+  inputs (i.e. invars) are considered unknown, produce two jaxprs and a list of
+  booleans representing which of the original jaxpr's outputs are unknown (i.e.
+  have a data dependence on an unknown input). The two jaxprs result from
+  partitioning the original jaxpr's first-order primitive applications based on
+  whether all the inputs to the application are known (in which case the
+  application is represented in the 'known' jaxpr and its result is considered
+  known) or whether any inputs to the application are unknown (in which case the
+  application is represented in the 'unknown' jaxpr and its result is considered
+  unknown). Higher-order primitives are recursively unzipped in two.
 
-  `jaxpr_unknown` takes the same inputs as `jaxpr` along with the known residuals
-  computed by `jaxpr_known` and returns the same outputs as `jaxpr` with the known
-  outputs replaced by `*`.
+  The instantiate argument can be used to ensure some outputs are lifted into
+  the 'unknown' jaxpr.
 
-  Roughly, `jaxpr(ki, ui)` is decomposed assuming `ki` and `ui` are the known and respectively
-  unknown inputs into:
+  For example, give an input jaxpr:
 
-    jaxpr(ki, ui) = let kout, _, kresidual = jaxpr_known(kin, *)
-                    let _, uout = jaxpr_unknown(ki, ui, kresidual)
-                    in (kout, uout)
+    { lambda ; a:f32[] b:f32[]. let
+        c:f32[] = cos a
+        d:f32[] = sin a
+        e:f32[] = neg d
+        f:f32[] = mul e b
+      in (c, f) }
 
-  For example, if `jaxpr` is lambda ki, ui: let ka = ki + 2
-                                            in (ki + 3, ui + ka)"
-  then
-    `jaxpr_known` = lambda ki, ui: let ka = ki + 2
-                                    in (ki + 3, *, ka)
-    'jaxpr_unknown` = lambda ki, ui, ka: (*, ui + ka)
+  then applying this function with `unknowns=[False, True]` and
+  `instantiate=False` produces as an output triple:
 
-  Note that if instantiate is True for a given output, then jaxpr_known always returns a
-  unit in its place. So when instantiate is True, the expectation is the one doesn't
-  run `jaxpr_known` for any of its outputs, but only to generate residuals that will allow
-  to obtain the full outputs once `jaxpr_unknown` is ran. Outputs known ahead of time will
-  simply get passed as residual constants and returned immediately.
+    # jaxpr_known
+    { lambda ; a:f32[]. let
+       b:f32[] = cos a
+       c:f32[] = sin a
+       d:f32[] = neg c
+     in (b, d) }
+
+    # jaxpr_unknown
+    { lambda ; a:f32[] b:f32[]. let c:f32[] = mul b a in (c,) }
+
+    # out_unknowns
+    [False, True]
+
+  Notice in particular that the first output (jaxpr_known) contains all the
+  primitive applications which do not have a data dependence on an unknown
+  input. Also notice the input and output types: the input type of the first
+  jaxpr produced represents the type of the known inputs of the original jaxpr,
+  and the output type of the second jaxpr produced represents the type of the
+  unknown outputs of the original jaxpr.
+
+  In the above example, the output of jaxpr_known named `d` is a _residual_
+  output, and corresponds to the input named `a` in jaxpr_unknown. In general,
+  jaxpr_known will produce extra outputs (at the end of its output list)
+  corresponding to intermeidate values of the original jaxpr which must be
+  passed to jaxpr_unknown (as leading inputs).
   """
   instantiate = tuple(instantiate) if isinstance(instantiate, list) else instantiate
-  return _partial_eval_jaxpr(jaxpr, tuple(unknowns), instantiate)
+  return _partial_eval_jaxpr_nounits(jaxpr, tuple(unknowns), instantiate)
 
 @weakref_lru_cache
-def _partial_eval_jaxpr(jaxpr, unknowns, instantiate):
+def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
   cell = []
-  def fun(*vals):
-    pvals = [PartialVal.unknown(aval) if uk else PartialVal.known(val)
-            for aval, val, uk in zip(jaxpr.in_avals, vals, unknowns)]
-    jaxpr_2, out_pvals_2, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
-    out_pvs_2, out_consts_2 = unzip2(out_pvals_2)
-    cell.append((out_pvs_2, jaxpr_2, len(consts_2)))
-    return out_consts_2 + consts_2
+  def fun(*known_vals_in):
+    known_vals_in = iter(known_vals_in)
+    unknown_avals = (a for a, uk in zip(jaxpr.in_avals, in_unknowns) if uk)
+    in_pvals = [PartialVal.unknown(next(unknown_avals)) if uk
+                else PartialVal.known(next(known_vals_in)) for uk in in_unknowns]
+    assert next(known_vals_in, None) is next(unknown_avals, None) is None
+    jaxpr_unknown, out_pvals, residuals = trace_to_jaxpr_nounits(
+        f, in_pvals, instantiate=instantiate)
+    out_unknowns = [not pval.is_known() for pval in out_pvals]
+    res_avals = [core.raise_to_shaped(core.get_aval(r)) for r in residuals]
+    cell.append((out_unknowns, jaxpr_unknown, res_avals))
+    known_vals_out = [pval.get_known() for pval in out_pvals if pval.is_known()]
+    return [*known_vals_out, *residuals]
 
-  # For jaxpr_known we pass core.unit for the unknown inputs, and known
-  # PartialVal for the known inputs.
-  in_avals = [abstract_unit if uk else a for a, uk in zip(jaxpr.in_avals, unknowns)]
-  jaxpr_1, out_avals, consts_1 = trace_to_jaxpr_dynamic(lu.wrap_init(fun), in_avals)
-  (out_pvs_2, jaxpr_2, num_res), = cell
-  assert len(jaxpr_2.constvars) == num_res
+  in_avals = [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if not uk]
+  jaxpr_known, _, consts_known = trace_to_jaxpr_dynamic(lu.wrap_init(fun), in_avals)
+  (out_unknowns, jaxpr_unknown, res_avals), = cell
+  num_res = len(res_avals)
 
-  #   jaxpr :: a -> b
-  # jaxpr_1 :: a1 -> [b1, res]
-  # jaxpr_2 :: res | a2 -> b2
-  # jaxpr_2 :: [a2, res] -> b2
-  jaxpr_2 = convert_constvars_jaxpr(jaxpr_2)
-  jaxpr_2.invars = jaxpr_2.invars[num_res:] + jaxpr_2.invars[:num_res]
-  for var, unknown in zip(jaxpr_2.invars[:len(unknowns)], unknowns):
-    if not unknown:
-      var.aval = abstract_unit
+  # move jaxpr_unknown's residual inputs from constvars to the end of invars
+  assert [v.aval for v in jaxpr_unknown.constvars] == res_avals
+  jaxpr_unknown = convert_constvars_jaxpr(jaxpr_unknown)
+  jaxpr_unknown.invars = (jaxpr_unknown.invars[num_res:] +
+                          jaxpr_unknown.invars[:num_res])
 
-  uk_out = [pv is not None for pv in out_pvs_2]
+  # check jaxpr_known and jaxpr_unknown in isolation
+  if config.jax_enable_checks:
+    core.check_jaxpr(jaxpr_known)
+    core.check_jaxpr(jaxpr_unknown)
+  # check jaxpr_known has input type corresponding to known inputs of jaxpr
+  assert ([v.aval for v in jaxpr_known.invars] ==
+          [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if not uk])
+  # check jaxpr_known has out type corresponding to known outs of jaxpr plus res
+  assert ([v.aval for v in jaxpr_known.outvars] ==
+          [a for a, uk in zip(jaxpr.out_avals, out_unknowns) if not uk] +
+          res_avals)
+  # check jaxpr_unknown has input type corresponding to unknown inputs plus res
+  assert ([v.aval for v in jaxpr_unknown.invars] ==
+          [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if uk] + res_avals)
+  # check jaxpr_unknown has output type corresponding to unknown outputs
+  assert ([v.aval for v in jaxpr_unknown.outvars] ==
+          [a for a, uk in zip(jaxpr.out_avals, out_unknowns) if uk])
 
-  in_avals_1, in_avals_2 = unzip2(map(_split_aval, unknowns, jaxpr.in_avals))
-  out_avals_1, out_avals_2 = unzip2(map(_split_aval, uk_out, jaxpr.out_avals))
-  # out_avals_1 and in_avals_2 need the residuals added
-  res_avals = out_avals[len(jaxpr.out_avals):]
-  assert len(res_avals) == num_res
-  out_avals_1 = [*out_avals_1, *res_avals]
-  in_avals_2 = [*in_avals_2, *res_avals]
-
-  return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
+  closed_jaxpr_known = ClosedJaxpr(jaxpr_known, consts_known)
+  closed_jaxpr_unknown = ClosedJaxpr(jaxpr_unknown, ())
+  return closed_jaxpr_known, closed_jaxpr_unknown, out_unknowns
 
 
 remat_call_p: Primitive = core.CallPrimitive('remat_call')
@@ -2141,3 +2185,51 @@ def partial_eval_wrapper(pvs: Sequence[Optional[AbstractValue]], *consts):
   out_pvs, out_consts = unzip2(out_pvals)
   out = tuple(out_consts) + tuple(consts)
   yield out, (out_pvs, jaxpr, env)
+
+def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
+                       instantiate: Union[bool, Sequence[bool]],
+                       ) -> Tuple[ClosedJaxpr, ClosedJaxpr, Sequence[bool]]:
+  instantiate = tuple(instantiate) if isinstance(instantiate, list) else instantiate
+  return _partial_eval_jaxpr(jaxpr, tuple(unknowns), instantiate)
+
+@weakref_lru_cache
+def _partial_eval_jaxpr(jaxpr, unknowns, instantiate):
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+
+  cell = []
+  def fun(*vals):
+    pvals = [PartialVal.unknown(aval) if uk else PartialVal.known(val)
+            for aval, val, uk in zip(jaxpr.in_avals, vals, unknowns)]
+    jaxpr_2, out_pvals_2, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
+    out_pvs_2, out_consts_2 = unzip2(out_pvals_2)
+    cell.append((out_pvs_2, jaxpr_2, len(consts_2)))
+    return out_consts_2 + consts_2
+
+  # For jaxpr_known we pass core.unit for the unknown inputs, and known
+  # PartialVal for the known inputs.
+  in_avals = [abstract_unit if uk else a for a, uk in zip(jaxpr.in_avals, unknowns)]
+  jaxpr_1, out_avals, consts_1 = trace_to_jaxpr_dynamic(lu.wrap_init(fun), in_avals)
+  (out_pvs_2, jaxpr_2, num_res), = cell
+  assert len(jaxpr_2.constvars) == num_res
+
+  #   jaxpr :: a -> b
+  # jaxpr_1 :: a1 -> [b1, res]
+  # jaxpr_2 :: res | a2 -> b2
+  # jaxpr_2 :: [a2, res] -> b2
+  jaxpr_2 = convert_constvars_jaxpr(jaxpr_2)
+  jaxpr_2.invars = jaxpr_2.invars[num_res:] + jaxpr_2.invars[:num_res]
+  for var, unknown in zip(jaxpr_2.invars[:len(unknowns)], unknowns):
+    if not unknown:
+      var.aval = abstract_unit
+
+  uk_out = [pv is not None for pv in out_pvs_2]
+
+  in_avals_1, in_avals_2 = unzip2(map(_split_aval, unknowns, jaxpr.in_avals))
+  out_avals_1, out_avals_2 = unzip2(map(_split_aval, uk_out, jaxpr.out_avals))
+  # out_avals_1 and in_avals_2 need the residuals added
+  res_avals = out_avals[len(jaxpr.out_avals):]
+  assert len(res_avals) == num_res
+  out_avals_1 = [*out_avals_1, *res_avals]
+  in_avals_2 = [*in_avals_2, *res_avals]
+
+  return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
