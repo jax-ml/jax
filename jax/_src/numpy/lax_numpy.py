@@ -3664,7 +3664,7 @@ def _is_basic_int_index(x):
   except TypeError:
     return False
   else:
-    return not isinstance(x, bool)
+    return not isinstance(x, (bool, np.bool_))
 
 def _index_to_gather(x_shape, idx, normalize_indices=True):
   # Remove ellipses and add trailing slice(None)s.
