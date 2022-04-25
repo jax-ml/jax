@@ -26,6 +26,22 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     are not of an integer type, matching the behavior of
     {func}`numpy.take_along_axis`. Previously non-integer indices were silently
     cast to integers.
+  * {func}`jax.numpy.ravel_multi_index` now raises a `TypeError` if its `dims` argument
+    is not of an integer type, matching the behavior of
+    {func}`numpy.ravel_multi_index`. Previously non-integer `dims` was silently
+    cast to integers.
+  * {func}`jax.numpy.split` now raises a `TypeError` if its `axis` argument
+    is not of an integer type, matching the behavior of
+    {func}`numpy.split`. Previously non-integer `axis` was silently
+    cast to integers.
+  * {func}`jax.numpy.indices` now raises a `TypeError` if its dimensions
+    are not of an integer type, matching the behavior of
+    {func}`numpy.indices`. Previously non-integer dimensions were silently
+    cast to integers.
+  * {func}`jax.numpy.diag` now raises a `TypeError` if its `k` argument
+    is not of an integer type, matching the behavior of
+    {func}`numpy.diag`. Previously non-integer `k` was silently
+    cast to integers.
 * Deprecations
   * Many functions and objects available in {mod}`jax.test_util` are now deprecated and will raise a
     warning on import. This includes `cases_from_list`, `check_close`, `check_eq`, `device_under_test`,
