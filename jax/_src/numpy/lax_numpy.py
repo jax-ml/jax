@@ -3657,8 +3657,8 @@ def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
 def _is_basic_int_index(x):
   if isinstance(x, core.Tracer):
     aval = x.aval
-    return (isinstance(aval, (ConcreteArray, ShapedArray)) and
-            not aval.shape and issubdtype(aval.dtype, integer))
+    return (isinstance(aval, ShapedArray) and not aval.shape
+            and issubdtype(aval.dtype, integer))
   try:
     operator.index(x)
   except TypeError:
