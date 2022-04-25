@@ -1930,6 +1930,35 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loop, (x,), order=2, modes=["fwd"])
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_jit_loop={}_jit_body={}_jit_cond={}".format(
+          jit_loop, jit_body, jit_cond),
+       "jit_loop": jit_loop, "jit_body": jit_body, "jit_cond": jit_cond}
+      for jit_loop in [False, True]
+      for jit_body in [False, True]
+      for jit_cond in [False, True])
+  def testWhileLinearize(self, jit_loop=True, jit_body=False, jit_cond=True):
+    cond = lambda x: x[0, 2] <= 8
+    body = lambda x: x * x
+
+    if jit_cond:
+      cond = jax.jit(cond)
+    if jit_body:
+      body = jax.jit(body)
+
+    loop = partial(lax.while_loop, cond, body)
+    if jit_loop:
+      loop = jax.jit(loop)
+
+    loop_ref = partial(while_loop_reference, cond, body)
+
+    x = jnp.arange(9.).reshape((3, 3))
+    y, f_lin = jax.linearize(loop, x)
+    ydot = f_lin(x)
+    y_expected, ydot_expected = jax.jvp(loop_ref, (x,), (x,))
+    self.assertAllClose(y, y_expected, check_dtypes=False)
+    self.assertAllClose(ydot, ydot_expected, check_dtypes=False)
+
   def testWhileJVPViaForiLoop(self):
     f = lambda x: lax.fori_loop(0, 3, lambda i, x: x * 2, x)
     self.assertAllClose(f(2.), 16., check_dtypes=False)
