@@ -3278,9 +3278,7 @@ def _roll(a, shift, axis):
                   np.broadcast_to(axis, b_shape)):
     i = _canonicalize_axis(i, a_ndim)
     x = remainder(x, (a_shape[i] or 1))
-    reps = [1] * a_ndim
-    reps[i] = 2
-    a = tile(a, reps)
+    a = lax.concatenate((a, a), i)
     a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
   return a
 
