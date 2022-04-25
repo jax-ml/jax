@@ -35,6 +35,18 @@ class SparsifyTest(jtu.JaxTestCase):
   def sparsify(cls, f):
     return sparsify(f, use_tracer=False)
 
+  def testNotImplementedMessages(self):
+    x = BCOO.fromdense(jnp.arange(5.0))
+    # Test a densifying primitive
+    with self.assertRaisesRegex(NotImplementedError,
+        r"^sparse rule for cos is not implemented because it would result in dense output\."):
+      self.sparsify(lax.cos)(x)
+
+    # Test a generic not implemented primitive.
+    with self.assertRaisesRegex(NotImplementedError,
+        r"^sparse rule for complex is not implemented\.$"):
+      self.sparsify(lax.complex)(x, x)
+
   def testTracerIsInstanceCheck(self):
     @self.sparsify
     def f(x):
