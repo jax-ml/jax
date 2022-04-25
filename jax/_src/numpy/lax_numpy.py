@@ -1240,11 +1240,19 @@ def flatnonzero(a, *, size=None, fill_value=None):
 
 @_wraps(np.unwrap)
 @partial(jit, static_argnames=('axis',))
-def unwrap(p, discont=pi, axis: int = -1):
+def unwrap(p, discont=None, axis: int = -1, period = 2 * pi):
   _check_arraylike("unwrap", p)
+  p = asarray(p)
+  if issubdtype(p.dtype, np.complexfloating):
+    raise ValueError("jnp.unwrap does not support complex inputs.")
+  if p.shape[axis] == 0:
+    return _promote_dtypes_inexact(p)[0]
+  if discont is None:
+    discont = period / 2
+  interval = period / 2
   dd = diff(p, axis=axis)
-  ddmod = mod(dd + pi, 2 * pi) - pi
-  ddmod = where((ddmod == -pi) & (dd > 0), pi, ddmod)
+  ddmod = mod(dd + interval, period) - interval
+  ddmod = where((ddmod == -interval) & (dd > 0), interval, ddmod)
 
   ph_correct = where(abs(dd) < discont, 0, ddmod - dd)
 

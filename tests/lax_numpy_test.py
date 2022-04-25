@@ -947,6 +947,33 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_axis={}_discont={}_period={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, discont, period),
+       "shape": shape, "dtype": dtype, "axis": axis, "discont": discont, "period": period}
+      for shape in all_shapes for dtype in default_dtypes
+      for discont in [None, "pi", 2]
+      for period in ["2pi", "pi"]
+      for axis in list(range(-len(shape), len(shape)))))
+  def testUnwrap(self, shape, dtype, axis, discont, period):
+    if numpy_version < (1, 21) and period != "2pi":
+      self.skipTest("numpy < 1.21 does not support the period argument to unwrap()")
+    special_vals = {"pi": np.pi, "2pi": 2 * np.pi}
+    period = special_vals.get(period, period)
+    discont = special_vals.get(discont, discont)
+
+    rng = jtu.rand_default(self.rng())
+    if numpy_version < (1, 21):
+      np_fun = partial(np.unwrap, axis=axis, discont=discont)
+    else:
+      np_fun = partial(np.unwrap, axis=axis, discont=discont, period=period)
+    jnp_fun = partial(jnp.unwrap, axis=axis, discont=discont, period=period)
+    args_maker = lambda: [rng(shape, dtype)]
+    if dtype != jnp.bfloat16:  # numpy crashes on bfloat16
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
@@ -6185,7 +6212,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'tri': ['like'],
-      'unwrap': ['period'],
       'zeros_like': ['subok', 'order']
     }
 
