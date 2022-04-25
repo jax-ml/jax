@@ -970,85 +970,63 @@ def _cond_jvp(primals, tangents, branches, linear):
   return out_primals, out_tangents
 
 def _cond_partial_eval(trace, *tracers, branches, linear):
-  unknowns = [t.pval[0] is not None for t in tracers]
-  index_uk, *ops_uk = unknowns
+  in_unknowns = [t.pval[0] is not None for t in tracers]
+  index_uk, *ops_uk = in_unknowns
 
   if index_uk:
     # When the branch index is unknown, we stage out the whole cond.
+    # TODO(mattjj): remove this path when old remat is removed
     params = dict(branches=branches, linear=linear)
     return trace.default_process_primitive(cond_p, tracers, params)
 
   branches_out_uks = []
   for branch_jaxpr in branches:
-    _, _, out_uks = pe.partial_eval_jaxpr(branch_jaxpr, ops_uk, instantiate=False)
+    _, _, out_uks, _ = pe.partial_eval_jaxpr_nounits(
+        branch_jaxpr, ops_uk, instantiate=False)
     branches_out_uks.append(out_uks)
   out_uks = [any(uks) for uks in zip(*branches_out_uks)]
 
-  branches_1, branches_2, branch_res_avals = [], [], []
+  branches_known, branches_unknown, branch_res_avals = [], [], []
   for branch_jaxpr in branches:
-    branch_jaxpr_1, branch_jaxpr_2, _ = pe.partial_eval_jaxpr(
-        branch_jaxpr, ops_uk, instantiate=out_uks)
-    branch_num_res = len(branch_jaxpr_1.out_avals) - len(out_uks)
-
-    # move residuals to the front
-    move = [False] * len(ops_uk) + [True] * branch_num_res
-    branch_jaxpr_2 = pe.move_binders_to_front(branch_jaxpr_2, move)
-
-    res_avals = branch_jaxpr_2.in_avals[:branch_num_res]
-    assert not any(isinstance(a, core.ConcreteArray) for a in res_avals)
-
-    branches_1.append(branch_jaxpr_1)
-    branches_2.append(branch_jaxpr_2)
+    branch_jaxpr_known, branch_jaxpr_unknown, _, res_avals = \
+        pe.partial_eval_jaxpr_nounits(branch_jaxpr, ops_uk, instantiate=out_uks)
+    branches_known.append(branch_jaxpr_known)
+    branches_unknown.append(branch_jaxpr_unknown)
     branch_res_avals.append(res_avals)
 
-  branches_1 = tuple(branches_1)
-  branches_2 = tuple(branches_2)
-
-  for jaxpr in branches_2[1:]:
-    assert len(jaxpr.out_avals) == len(branches_2[0].out_avals)
-
-  num_outs = len(branches_2[0].out_avals)
-
-  all_res_avals, res_avals_per_branch = _merge_branch_residuals(
-      branch_res_avals)
-
-  branches_1 = _join_cond_outputs(
-      branches_1, all_res_avals, res_avals_per_branch, num_outs)
-  branches_2 = _join_cond_pe_staged_jaxpr_inputs(
-      branches_2, all_res_avals, res_avals_per_branch)
-
-  for j in branches_1[1:]:
-    assert all(_map(core.typematch, j.out_avals, branches_1[0].out_avals))
+  all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
   num_res = len(all_res_avals)
 
-  _, in_consts = unzip2([t.pval for t in tracers])
-  out_consts_res = cond_p.bind(*in_consts, branches=branches_1, linear=linear)
+  num_known_outs = len(out_uks) - sum(out_uks)
+  branches_known = _join_cond_outputs(
+      branches_known, all_res_avals, res_avals_per_branch, num_known_outs)
+  branches_unknown = _join_cond_pe_staged_jaxpr_inputs(
+      branches_unknown, all_res_avals, res_avals_per_branch)
+  assert all(all(_map(core.typematch, j.out_avals, branches_known[0].out_avals))
+             for j in branches_known[1:])
+
+  in_consts = [t.pval.get_known() for t in tracers if t.pval.is_known()]
+  linear_known = [l for l, uk in zip(linear, ops_uk) if not uk]
+  out_consts_res = cond_p.bind(*in_consts, branches=branches_known,
+                               linear=tuple(linear_known))
   out_consts, res = split_list(out_consts_res, [len(out_consts_res) - num_res])
 
-  out_avals = branches_2[0].out_avals
-  assert not any(isinstance(a, core.ConcreteArray) for a in out_avals)
-  out_pvs = [aval if uk else None for aval, uk in zip(out_avals, out_uks)]
-
   index_tracer = trace.instantiate_const(tracers[0])
-
-  ops_tracers = [trace.instantiate_const(t) if uk
-                 else trace.new_instantiated_literal(core.unit)
-                 for uk, t in zip(unknowns[1:], tracers[1:])]
-
+  ops_tracers = [trace.instantiate_const(t)
+                 for uk, t in zip(in_unknowns[1:], tracers[1:]) if uk]
   res_tracers = _map(trace.new_instantiated_const, res)
-
-  out_tracers = [pe.JaxprTracer(trace, pe.PartialVal((pv, const)), None)
-                 for pv, const in zip(out_pvs, out_consts)]
-
-  linear_2 = (False,) * num_res + linear
-  params = dict(branches=branches_2, linear=linear_2)
+  out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
+                 for aval in branches_unknown[0].out_avals]
+  linear_unknown = ([False] * num_res +
+                    [l for l, uk in zip(linear, in_unknowns[1:]) if uk])
+  params = dict(branches=branches_unknown, linear=tuple(linear_unknown))
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
       [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
       core.no_effects, source)
   for t in out_tracers: t.recipe = eqn
-  return out_tracers
+  return util.merge_lists(out_uks, out_consts, out_tracers)
 
 # When partially evaluating conditionals, each branch produces residuals
 # depending on the computation carried out by the branch, and a corresponding

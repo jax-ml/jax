@@ -802,21 +802,23 @@ def _split_aval(unknown: bool, aval: AbstractValue) -> Tuple[AbstractValue, Abst
 def partial_eval_jaxpr_nounits(
     jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
     instantiate: Union[bool, Sequence[bool]],
-  ) -> Tuple[ClosedJaxpr, ClosedJaxpr, List[bool]]:
+  ) -> Tuple[ClosedJaxpr, ClosedJaxpr, List[bool], List[AbstractValue]]:
   """Unzip a jaxpr in two by data dependence into 'known' and 'unknown' parts.
 
   That is, given a jaxpr and a sequence of booleans indicating which jaxpr
-  inputs (i.e. invars) are considered unknown, produce two jaxprs and a list of
+  inputs (i.e. invars) are considered unknown, produce two jaxprs, a list of
   booleans representing which of the original jaxpr's outputs are unknown (i.e.
-  have a data dependence on an unknown input). The two jaxprs result from
-  partitioning the original jaxpr's first-order primitive applications based on
-  whether all the inputs to the application are known (in which case the
-  application is represented in the 'known' jaxpr and its result is considered
-  known) or whether any inputs to the application are unknown (in which case the
-  application is represented in the 'unknown' jaxpr and its result is considered
-  unknown). Higher-order primitives are recursively unzipped in two.
+  have a data dependence on an unknown input), and a list of abstract values
+  representing residuals (part of the first jaxpr's output and the second
+  jaxpr's input). The two jaxprs result from partitioning the original jaxpr's
+  first-order primitive applications based on whether all the inputs to the
+  application are known (in which case the application is represented in the
+  'known' jaxpr and its result is considered known) or whether any inputs to the
+  application are unknown (in which case the application is represented in the
+  'unknown' jaxpr and its result is considered unknown). Higher-order primitives
+  are recursively unzipped in two.
 
-  The instantiate argument can be used to ensure some outputs are lifted into
+  The `instantiate` argument can be used to ensure some outputs are lifted into
   the 'unknown' jaxpr.
 
   For example, give an input jaxpr:
@@ -871,24 +873,18 @@ def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
     in_pvals = [PartialVal.unknown(next(unknown_avals)) if uk
                 else PartialVal.known(next(known_vals_in)) for uk in in_unknowns]
     assert next(known_vals_in, None) is next(unknown_avals, None) is None
-    jaxpr_unknown, out_pvals, residuals = trace_to_jaxpr_nounits(
+    jaxpr_unknown_, out_pvals, residuals = trace_to_jaxpr_nounits(
         f, in_pvals, instantiate=instantiate)
+    jaxpr_unknown = convert_constvars_jaxpr(jaxpr_unknown_)
     out_unknowns = [not pval.is_known() for pval in out_pvals]
     res_avals = [core.raise_to_shaped(core.get_aval(r)) for r in residuals]
     cell.append((out_unknowns, jaxpr_unknown, res_avals))
     known_vals_out = [pval.get_known() for pval in out_pvals if pval.is_known()]
     return [*known_vals_out, *residuals]
 
-  in_avals = [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if not uk]
-  jaxpr_known, _, consts_known = trace_to_jaxpr_dynamic(lu.wrap_init(fun), in_avals)
+  known_avals = [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if not uk]
+  jaxpr_known, _, consts_known = trace_to_jaxpr_dynamic(lu.wrap_init(fun), known_avals)
   (out_unknowns, jaxpr_unknown, res_avals), = cell
-  num_res = len(res_avals)
-
-  # move jaxpr_unknown's residual inputs from constvars to the end of invars
-  assert [v.aval for v in jaxpr_unknown.constvars] == res_avals
-  jaxpr_unknown = convert_constvars_jaxpr(jaxpr_unknown)
-  jaxpr_unknown.invars = (jaxpr_unknown.invars[num_res:] +
-                          jaxpr_unknown.invars[:num_res])
 
   # check jaxpr_known and jaxpr_unknown in isolation
   if config.jax_enable_checks:
@@ -903,14 +899,14 @@ def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
           res_avals)
   # check jaxpr_unknown has input type corresponding to unknown inputs plus res
   assert ([v.aval for v in jaxpr_unknown.invars] ==
-          [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if uk] + res_avals)
+          res_avals + [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if uk])
   # check jaxpr_unknown has output type corresponding to unknown outputs
   assert ([v.aval for v in jaxpr_unknown.outvars] ==
           [a for a, uk in zip(jaxpr.out_avals, out_unknowns) if uk])
 
   closed_jaxpr_known = ClosedJaxpr(jaxpr_known, consts_known)
   closed_jaxpr_unknown = ClosedJaxpr(jaxpr_unknown, ())
-  return closed_jaxpr_known, closed_jaxpr_unknown, out_unknowns
+  return closed_jaxpr_known, closed_jaxpr_unknown, out_unknowns, res_avals
 
 
 remat_call_p: Primitive = core.CallPrimitive('remat_call')
