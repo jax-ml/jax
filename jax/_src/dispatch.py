@@ -692,8 +692,13 @@ def compile_or_get_cached(backend, computation, compile_options):
       return compiled
 
   if FLAGS.jax_dump_ir_to:
-    ir_str = (computation if isinstance(computation, str)
-              else computation.as_hlo_text())
+    if isinstance(computation, xc.XlaComputation):
+      ir_str = computation.as_hlo_text()
+    elif isinstance(computation, ir.Module):
+      ir_str = mlir.module_to_string(computation)
+    else:
+      assert isinstance(computation, str)
+      ir_str = computation
     _dump_ir_to_file(module_name, ir_str)
   return backend_compile(backend, computation, compile_options)
 
