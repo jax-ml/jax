@@ -742,6 +742,17 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertEqual(j1.shape, data.shape + M.shape)
     self.assertEqual(hess.shape, data.shape + 2 * M.shape)
 
+  def test_bcoo_fromdense_indices_sorted(self):
+    rng = self.rng()
+    rng_sparse = rand_sparse(rng)
+    mat = sparse.BCOO.fromdense(rng_sparse((5, 6), np.float32))
+    perm = rng.permutation(mat.nse)
+    mat_unsorted = sparse.BCOO((mat.data[perm], mat.indices[perm]),
+                               shape=mat.shape)
+    mat_resorted = mat_unsorted.sort_indices()
+    self.assertArraysEqual(mat.indices, mat_resorted.indices)
+    self.assertArraysEqual(mat.data, mat_resorted.data)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
@@ -901,6 +912,22 @@ class BCOOTest(jtu.JaxTestCase):
     # TODO(jakevdp) also test against dense version?
     self.assertAllClose(jf_sparse, jr_sparse, rtol=tol)
 
+  def test_bcoo_transpose_indices_sorted(self):
+    rng = self.rng()
+    rng_sparse = rand_sparse(rng)
+    n_batch, n_dense = 2, 2
+    shape = (2, 3, 4, 5, 6, 7, 8)
+    mat = sparse.BCOO.fromdense(rng_sparse(shape, np.float32),
+                                n_dense=n_dense, n_batch=n_batch)
+
+    permutations = (1, 0, 2, 3, 4, 6, 5)
+    mat_T_indices_sorted = mat.transpose(axes=permutations)
+    self.assertTrue(mat_T_indices_sorted._indices_sorted)
+
+    permutations = (0, 1, 3, 2, 4, 5, 6)
+    mat_T_indices_unsorted = mat.transpose(axes=permutations)
+    self.assertFalse(mat_T_indices_unsorted._indices_sorted)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
@@ -953,6 +980,7 @@ class BCOOTest(jtu.JaxTestCase):
     # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -974,6 +1002,7 @@ class BCOOTest(jtu.JaxTestCase):
           [(5, 3), (5, 2), [0], [0]],
       ]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def test_bcoo_dot_general_cusparse(
     self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting):
     rng = jtu.rand_small(self.rng())
@@ -982,84 +1011,77 @@ class BCOOTest(jtu.JaxTestCase):
       lhs = rng_sparse(lhs_shape, dtype)
       rhs = rng(rhs_shape, dtype)
       nse = int(sparse_bcoo._bcoo_nse(lhs, n_batch=0, n_dense=0))
-      data, indices = sparse_bcoo._bcoo_fromdense(lhs, nse=nse, index_dtype=jnp.int32)
-      return data, indices, lhs, rhs
+      lhs_bcoo = sparse_bcoo.bcoo_fromdense(lhs, nse=nse, index_dtype=jnp.int32)
+      return lhs_bcoo, lhs, rhs
+
     dimension_numbers = ((lhs_contracting, rhs_contracting), ([], []))
 
-    def f_dense(data, indices, lhs, rhs):
+    def f_dense(lhs_bcoo, lhs, rhs):
       return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
 
-    def f_sparse(data, indices, lhs, rhs):
-      return sparse_bcoo._bcoo_dot_general(data, indices, rhs,
-                                           dimension_numbers=dimension_numbers,
-                                           lhs_spinfo=BCOOInfo(lhs.shape))
+    def f_sparse(lhs_bcoo, lhs, rhs):
+      return sparse_bcoo.bcoo_dot_general(lhs_bcoo, rhs,
+                                          dimension_numbers=dimension_numbers)
 
     self._CompileAndCheck(f_sparse, args_maker)
     self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
 
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  @jtu.skip_on_devices("rocm")  # TODO(rocm): see SWDEV-328107
   def test_bcoo_dot_general_oob_and_unsorted_indices_cusparse(self):
     """Tests bcoo dot general with out-of-bound and unsorted indices."""
 
     rhs = jnp.ones((5, 3), dtype=jnp.float32)
 
     # It creates out-of-bound indices when nse > nnz.
-    lhs_2d_dense = jnp.array([[1, 0, 2, 3, 0], [0, 0, 0, 4, 0]],
-                             dtype=jnp.float32)
-    lhs_2d_sparse, lhs_sparse_2d_indicdes = sparse_bcoo._bcoo_fromdense(
-        lhs_2d_dense, nse=7)
-
-    def create_unsorted_indices(data, indices):
-      data_to_shuffle = jnp.hstack((jnp.expand_dims(data, axis=1), indices))
-      key = jax.random.PRNGKey(1701)
-      data_after_shuffle = jax.random.permutation(key, data_to_shuffle)
-      return (data_after_shuffle[:, 0],
-              data_after_shuffle[:, 1:].astype(dtype=jnp.int32))
-
-    # Random permutate the indices to make them unsorted.
-    lhs_2d_sparse, lhs_sparse_2d_indicdes = create_unsorted_indices(
-        lhs_2d_sparse, lhs_sparse_2d_indicdes)
+    lhs_mat_dense = jnp.array([[1, 0, 2, 3, 0], [0, 0, 0, 4, 0]],
+                              dtype=jnp.float32)
+    lhs_mat_bcoo = sparse.BCOO.fromdense(lhs_mat_dense, nse=7)
+    rng = self.rng()
+    perm = rng.permutation(lhs_mat_bcoo.nse)
+    lhs_mat_bcoo_unsorted = sparse.BCOO(
+        (lhs_mat_bcoo.data[perm], lhs_mat_bcoo.indices[perm]),
+        shape=lhs_mat_dense.shape)
 
     dimension_numbers_2d = (([1], [0]), ([], []))
+    sp_matmat = jit(partial(sparse_bcoo.bcoo_dot_general,
+                            dimension_numbers=dimension_numbers_2d))
 
-    def args_maker_2d():
-      return lhs_2d_sparse, lhs_sparse_2d_indicdes, lhs_2d_dense, rhs
+    matmat_expected = lax.dot_general(lhs_mat_dense, rhs,
+                                      dimension_numbers=dimension_numbers_2d)
+    if config.jax_bcoo_cusparse_lowering:
+      with self.assertWarnsRegex(
+          sparse.CuSparseEfficiencyWarning,
+          "bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
+        matmat_unsorted_fallback = sp_matmat(lhs_mat_bcoo_unsorted, rhs)
 
-    def f_dense_2d(data, indices, lhs, rhs):
-      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers_2d)
+      with self.subTest(msg="2D"):
+        self.assertArraysEqual(matmat_expected, matmat_unsorted_fallback)
 
-    def f_sparse_2d(data, indices, lhs, rhs):
-      return sparse_bcoo._bcoo_dot_general(data, indices, rhs,
-                                           dimension_numbers=dimension_numbers_2d,
-                                           lhs_spinfo=BCOOInfo(lhs.shape))
-    with self.subTest(msg="2D"):
-      self._CompileAndCheck(f_sparse_2d, args_maker_2d)
-      self._CheckAgainstNumpy(f_dense_2d, f_sparse_2d, args_maker_2d)
-
-    lhs_1d_dense = jnp.array([0, 1, 0, 2, 0], dtype=jnp.float32)
-    lhs_1d_sparse, lhs_sparse_1d_indicdes = sparse_bcoo._bcoo_fromdense(
-        lhs_1d_dense, nse=5)
-
-    # Random permutate the indices to make them unsorted.
-    lhs_1d_sparse, lhs_sparse_1d_indicdes = create_unsorted_indices(
-        lhs_1d_sparse, lhs_sparse_1d_indicdes)
+    lhs_vec_dense = jnp.array([0, 1, 0, 2, 0], dtype=jnp.float32)
+    lhs_vec_bcoo = sparse.BCOO.fromdense(lhs_vec_dense, nse=5)
+    rng = self.rng()
+    perm = rng.permutation(lhs_vec_bcoo.nse)
+    lhs_vec_bcoo_unsorted = sparse.BCOO(
+        (lhs_vec_bcoo.data[perm], lhs_vec_bcoo.indices[perm]),
+        shape=lhs_vec_dense.shape, indices_sorted=False)
 
     dimension_numbers_1d = (([0], [0]), ([], []))
+    sp_vecmat = jit(partial(sparse_bcoo.bcoo_dot_general,
+                            dimension_numbers=dimension_numbers_1d))
 
-    def args_maker_1d():
-      return lhs_1d_sparse, lhs_sparse_1d_indicdes, lhs_1d_dense, rhs
+    vecmat_expected = lax.dot_general(lhs_vec_dense, rhs,
+                                      dimension_numbers=dimension_numbers_1d)
 
-    def f_dense_1d(data, indices, lhs, rhs):
-      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers_1d)
+    if config.jax_bcoo_cusparse_lowering:
+      with self.assertWarnsRegex(
+          sparse.CuSparseEfficiencyWarning,
+          "bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
+        vecmat_unsorted_fallback = sp_vecmat(lhs_vec_bcoo_unsorted, rhs)
 
-    def f_sparse_1d(data, indices, lhs, rhs):
-      return sparse_bcoo._bcoo_dot_general(data, indices, rhs,
-                                           dimension_numbers=dimension_numbers_1d,
-                                           lhs_spinfo=BCOOInfo(lhs.shape))
-
-    with self.subTest(msg="1D"):
-      self._CompileAndCheck(f_sparse_1d, args_maker_1d)
-      self._CheckAgainstNumpy(f_dense_1d, f_sparse_1d, args_maker_1d)
+      with self.subTest(msg="1D"):
+        self.assertArraysEqual(vecmat_expected, vecmat_unsorted_fallback)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": props.testcase_name(), "props": props}
@@ -1662,6 +1684,7 @@ class BCOOTest(jtu.JaxTestCase):
     assert mat_sorted_jit.indices.shape == indices_shape_out
     assert mat_sorted_jit.data.shape == data_shape_out
     self.assertArraysEqual(mat.todense(), mat_sorted_jit.todense())
+
 
   def test_bcoo_sum_duplicates_inferred_nse(self):
     x = sparse.BCOO.fromdense(jnp.diag(jnp.arange(4)))

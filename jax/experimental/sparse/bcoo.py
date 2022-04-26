@@ -116,7 +116,7 @@ class BCOOProperties(NamedTuple):
 
 class BCOOInfo(NamedTuple):
   shape: Shape
-
+  indices_sorted: bool = False
 
 def _validate_bcoo(data: jnp.ndarray, indices: jnp.ndarray, shape: Sequence[int]) -> BCOOProperties:
   props = _validate_bcoo_indices(indices, shape)
@@ -263,7 +263,7 @@ def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32
   nse = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
   return BCOO(_bcoo_fromdense(mat, nse=nse, n_batch=n_batch, n_dense=n_dense,
                               index_dtype=index_dtype),
-              shape=mat.shape)
+              shape=mat.shape, indices_sorted=True)
 
 def _bcoo_fromdense(mat, *, nse, n_batch=0, n_dense=0, index_dtype=jnp.int32):
   """Create BCOO-format sparse matrix from a dense matrix.
@@ -800,9 +800,9 @@ def _bcoo_dot_general_gpu_lowering(
       ctx, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
-  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  (lhs_contract, _), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
-  n_batch, n_sparse, n_dense, nse = _validate_bcoo(
+  n_batch, n_sparse, n_dense, _ = _validate_bcoo(
       lhs_data_aval, lhs_indices_aval, lhs_spinfo.shape)
 
   dtype = lhs_data_aval.dtype
@@ -821,16 +821,14 @@ def _bcoo_dot_general_gpu_lowering(
       ctx, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
   else:
-    # Sorts lhs by row indices.
-    sub_ctx = mlir.LoweringRuleContext(module_context=ctx.module_context,
-                                       primitive=None,
-                                       avals_in=ctx.avals_in[:2],
-                                       avals_out=ctx.avals_in[:2],
-                                       tokens_in=ctx.tokens_in,
-                                       tokens_out=ctx.tokens_out)
-
-    (lhs_data,), (lhs_indices,) = _bcoo_sort_indices_mhlo(
-        sub_ctx, lhs_data, lhs_indices, spinfo=lhs_spinfo)
+    if not lhs_spinfo.indices_sorted:
+      warnings.warn("bcoo_dot_general GPU lowering requires matrices with "
+                    "sorted indices. To sort the rows in your matrix, use e.g. "
+                    "mat = mat.sort_indices(). Falling back to the default "
+                    "implementation.", CuSparseEfficiencyWarning)
+      return _bcoo_dot_general_default_lowering(
+        ctx, lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
     return _bcoo_dot_general_cuda_lowering(
       ctx, lhs_data, lhs_indices, rhs,
@@ -1202,7 +1200,7 @@ def bcoo_sort_indices(mat):
     mat_out : BCOO array with sorted indices.
   """
   data, indices = bcoo_sort_indices_p.bind(*mat._bufs, spinfo=mat._info)
-  return BCOO((data, indices), shape=mat.shape)
+  return BCOO((data, indices), shape=mat.shape, indices_sorted=True)
 
 @bcoo_sort_indices_p.def_impl
 def _bcoo_sort_indices_impl(data, indices, *, spinfo):
@@ -1305,7 +1303,7 @@ def bcoo_sum_duplicates(mat, nse=None):
     mat_out : BCOO array with sorted indices and no duplicate indices.
   """
   data, indices = _bcoo_sum_duplicates(mat.data, mat.indices, spinfo=mat._info, nse=nse)
-  return BCOO((data, indices), shape=mat.shape)
+  return BCOO((data, indices), shape=mat.shape, indices_sorted=True)
 
 def _bcoo_sum_duplicates(data, indices, *, spinfo, nse):
   if nse is not None:
@@ -1355,6 +1353,7 @@ def _bcoo_sum_duplicates_unbatched(indices, *, shape):
   fill_value = jnp.expand_dims(jnp.array(shape[:props.n_sparse], dtype=indices.dtype), (0,))
   out_of_bounds = (indices >= fill_value).any(-1, keepdims=True)
   indices = jnp.where(out_of_bounds, fill_value, indices)
+  # TODO: check if `_indices_sorted` is True.
   indices_unique, inv_idx, nse = _unique(
     indices, axis=0, return_inverse=True, return_true_size=True,
     size=props.nse, fill_value=fill_value)
@@ -1765,13 +1764,15 @@ class BCOO(JAXSparse):
   n_batch = property(lambda self: self.indices.ndim - 2)
   n_sparse = property(lambda self: self.indices.shape[-1])
   n_dense = property(lambda self: self.data.ndim - 1 - self.n_batch)
-  _info = property(lambda self: BCOOInfo(self.shape))
+  _info = property(lambda self: BCOOInfo(self.shape, self._indices_sorted))
   _bufs = property(lambda self: (self.data, self.indices))
+  _indices_sorted: bool
 
-  def __init__(self, args, *, shape):
+  def __init__(self, args, *, shape, indices_sorted=False):
     # JAX transforms will sometimes instantiate pytrees with null values, so we
     # must catch that in the initialization of inputs.
     self.data, self.indices = _safe_asarray(args)
+    self._indices_sorted = indices_sorted
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -1785,10 +1786,13 @@ class BCOO(JAXSparse):
     """Create a BCOO array from a :mod:`scipy.sparse` array."""
     if n_dense != 0 or n_batch != 0:
       raise NotImplementedError("BCOO.fromscipy with nonzero n_dense/n_batch")
+
     mat = mat.tocoo()
     data = jnp.asarray(mat.data)
-    indices = jnp.column_stack((mat.row, mat.col)).astype(index_dtype or jnp.int32)
-    return cls((data, indices), shape=mat.shape)
+    indices = jnp.column_stack((mat.row, mat.col)).astype(
+        index_dtype or jnp.int32)
+    # TODO: determines sorted indices for scipy conversion.
+    return cls((data, indices), shape=mat.shape, indices_sorted=False)
 
   @classmethod
   def _empty(cls, shape, *, dtype=None, index_dtype='int32', n_dense=0, n_batch=0, nse=0):
@@ -1800,7 +1804,7 @@ class BCOO(JAXSparse):
     batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
     data = jnp.zeros((*batch_shape, nse, *dense_shape), dtype)
     indices = jnp.full((*batch_shape, nse, n_sparse), jnp.array(sparse_shape), index_dtype)
-    return cls((data, indices), shape=shape)
+    return cls((data, indices), shape=shape, indices_sorted=True)
 
   def _unbatch(self):
     """Return an unbatched representation of the BCOO matrix."""
@@ -1849,7 +1853,16 @@ class BCOO(JAXSparse):
     axes = np.arange(self.ndim)[::-1] if axes is None else axes
     mat_T = bcoo_transpose(self, permutation=axes)
     shape_T = tuple(self.shape[i] for i in axes)
-    return BCOO((mat_T.data, mat_T.indices), shape=shape_T)
+    sparse_perm = [p - self.n_batch
+                   for p in axes[self.n_batch: self.n_batch + self.n_sparse]]
+    if tuple(sparse_perm) == tuple(range(self.n_sparse)):
+      is_sorted = self._indices_sorted
+    else:
+      # TODO: address the corner cases that the transposed indices are sorted.
+      # possibly use permutation?
+      is_sorted = False
+    return BCOO((mat_T.data, mat_T.indices), shape=shape_T,
+                indices_sorted=is_sorted)
 
   def tree_flatten(self):
     return (self.data, self.indices), self._info._asdict()

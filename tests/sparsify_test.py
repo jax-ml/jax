@@ -26,6 +26,7 @@ import jax._src.test_util as jtu
 from jax.experimental.sparse import BCOO, sparsify, todense, SparseTracer
 from jax.experimental.sparse.transform import (
   arrays_to_spvalues, spvalues_to_arrays, sparsify_raw, SparsifyValue, SparsifyEnv)
+from jax.experimental.sparse.util import CuSparseEfficiencyWarning
 
 config.parse_flags_with_absl()
 
@@ -125,9 +126,11 @@ class SparsifyTest(jtu.JaxTestCase):
     def func(x, v):
       return -jnp.sin(jnp.pi * x).T @ (v + 1)
 
+    with jtu.ignore_warning(
+        category=CuSparseEfficiencyWarning,
+        message="bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
+      result_sparse = func(M_sparse, v)
     result_dense = func(M_dense, v)
-    result_sparse = func(M_sparse, v)
-
     self.assertAllClose(result_sparse, result_dense)
 
   def testSparsifyWithConsts(self):
@@ -149,13 +152,21 @@ class SparsifyTest(jtu.JaxTestCase):
     Y = jnp.ones(4)
     Ysp = BCOO.fromdense(Y)
 
+    func = self.sparsify(operator.matmul)
+
     # dot_general
-    result_sparse = self.sparsify(operator.matmul)(Xsp, Y)
+    with jtu.ignore_warning(
+        category=CuSparseEfficiencyWarning,
+        message="bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
+      result_sparse = func(Xsp, Y)
     result_dense = operator.matmul(X, Y)
     self.assertAllClose(result_sparse, result_dense)
 
     # rdot_general
-    result_sparse = self.sparsify(operator.matmul)(Y, Xsp)
+    with jtu.ignore_warning(
+        category=CuSparseEfficiencyWarning,
+        message="bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
+      result_sparse = func(Y, Xsp)
     result_dense = operator.matmul(Y, X)
     self.assertAllClose(result_sparse, result_dense)
 
@@ -353,7 +364,10 @@ class SparsifyTest(jtu.JaxTestCase):
     M_bcoo = BCOO.fromdense(M)
 
     result_dense = func(M, x)
-    result_sparse = self.sparsify(func)(M_bcoo, x)
+    with jtu.ignore_warning(
+        category=CuSparseEfficiencyWarning,
+        message="bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
+      result_sparse = self.sparsify(func)(M_bcoo, x)
 
     self.assertArraysAllClose(result_dense, result_sparse)
 
