@@ -1332,6 +1332,15 @@ class PDotTests(XMapTestCase):
     expected = np.einsum('ij,ij->i', x, y)
     self.assertAllClose(out, expected, check_dtypes=True)
 
+  def test_xeinsum_no_named_axes_batch_matmul(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3, 5, 4)
+    y = rng.randn(3, 4, 2)
+    out = jnp.einsum('bij,bjk->bik', x, y, _use_xeinsum=True)
+    expected = np.einsum('bij,bjk->bik', x, y)
+    tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+    self.assertAllClose(out, expected, check_dtypes=True, atol=tol, rtol=tol)
+
   def test_xeinsum_no_named_axes_reduce_sum(self):
     rng = self.rng()
     x = rng.randn(3)
@@ -1339,6 +1348,107 @@ class PDotTests(XMapTestCase):
     out = jnp.einsum('i,->', x, y, _use_xeinsum=True)
     expected = np.einsum('i,->', x, y)
     self.assertAllClose(out, expected, check_dtypes=True)
+
+
+  def test_xeinsum_no_named_axes_reduce_and_contract(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3, 5, 4)
+    y = rng.randn(2, 4, 2)
+    out = jnp.einsum('bij,cjk->ik', x, y, _use_xeinsum=True)
+    expected = np.einsum('bij,cjk->ik', x, y)
+    tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+    self.assertAllClose(out, expected, check_dtypes=True, atol=tol, rtol=tol)
+
+  def test_xeinsum_named_axes_reduce(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3, 4)
+    y = rng.randn(5,)
+
+    def check(spec):
+      out = xmap(partial(jnp.einsum, spec),
+                 in_axes=(['i', 'j'], ['k']),
+                 out_axes=['i', 'k'])(x, y)
+      expected = np.einsum('ij,k->ik', x, y)
+      tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+      self.assertAllClose(out, expected, check_dtypes=True,
+                          atol=tol, rtol=tol)
+    check('{i,j},{k}->{i,k}')
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def test_xeinsum_named_axes_reduce_with_mesh(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(6, 4)
+    y = rng.randn(8,)
+
+    def check(spec):
+      out = xmap(partial(jnp.einsum, spec),
+                 in_axes=(['i', 'j'], ['k']),
+                 out_axes=['i', 'k'],
+                 axis_resources={'i': 'x', 'k': 'y'})(x, y)
+      expected = np.einsum('ij,k->ik', x, y)
+      tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+      self.assertAllClose(out, expected, check_dtypes=True,
+                          atol=tol, rtol=tol)
+
+    check('{i,j},{k}->{i,k}')
+    check('{i,j},{k}->{k,i}')  # order of named axes in the spec doesn't matter!
+    check('{j,i},{k}->{i,k}')
+    check('{j,i},{k}->{k,i}')
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def test_xeinsum_named_axes_batch_matmul_with_mesh(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(8, 3, 4)
+    y = rng.randn(8, 4, 5)
+
+    def check(spec):
+      out = xmap(partial(jnp.einsum, spec),
+                 in_axes=(['b', 'i', 'j'], ['b', 'j', 'k']),
+                 out_axes=['b', 'i', 'k'],
+                 axis_resources={'b': 'x', 'j': 'y'})(x, y)
+      expected = np.einsum('bij,bjk->bik', x, y)
+      tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+      self.assertAllClose(out, expected, check_dtypes=True,
+                          atol=tol, rtol=tol)
+
+    check('{b,i,j},{b,j,k}->{b,i,k}')
+    check('{j,i,b},{j,b,k}->{i,b,k}')  # order of named axes in the spec doesn't matter!
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def test_xeinsum_named_axes_unary_reduce_with_mesh(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(8, 6, 4)
+
+    def check(spec):
+      out = xmap(partial(jnp.einsum, spec),
+                 in_axes=['b', 'i', 'j'],
+                 out_axes=['b'],
+                 axis_resources={'b': 'x', 'i': 'y'})(x)
+      expected = np.einsum('bij->b', x)
+      tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+      self.assertAllClose(out, expected, check_dtypes=True,
+                          atol=tol, rtol=tol)
+
+    check('{b,i,j}->{b}')
+    check('{b,j,i}->{b}')  # order of named axes in the spec doesn't matter!
+    check('{i,j,b}->{b}')
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def test_xeinsum_mixed_axes_unary_reduce_with_mesh(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(8, 6, 4, 5)
+
+    def check(spec):
+      out = xmap(partial(jnp.einsum, spec),
+                 in_axes=['b', 'i', ...],
+                 out_axes=['b', ...],
+                 axis_resources={'b': 'x', 'i': 'y'})(x)
+      expected = np.einsum('bijk->bk', x)
+      tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+      self.assertAllClose(out, expected, check_dtypes=True,
+                          atol=tol, rtol=tol)
+
+    check('jk{i,b}->k{b}')
 
 
 class XMapErrorTest(jtu.JaxTestCase):

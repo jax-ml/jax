@@ -36,7 +36,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.numpy import lax_numpy
 import jax._src.util as util
-from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, moveaxis
+from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, safe_zip, moveaxis
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 
@@ -419,50 +419,74 @@ def pdot(x, y, axis_name, pos_contract=((), ()), pos_batch=((), ()),
                      precision=lax.canonicalize_precision(precision))
 
 
-def xeinsum(spec: str, x, y):
+def xeinsum(spec: str, *operands):
   in_spec, out_spec = spec.split('->')
-  (lhs_subs, lhs_named), (rhs_subs, rhs_named) = XeinsumSpecParser(in_spec).parse_args()
+  all_in_subs, all_in_named = unzip2(XeinsumSpecParser(in_spec).parse_args())
   (out_subs, out_named), = XeinsumSpecParser(out_spec).parse_args()
-  all_named = {*lhs_named, *rhs_named, *out_named}
-  all_subs = {*lhs_subs, *rhs_subs, *out_subs}
-  lhs_uniques = set(lhs_subs) - set(rhs_subs)
-  rhs_uniques = set(rhs_subs) - set(lhs_subs)
-  if all_subs & all_named:
-    raise NotImplementedError
-  if not set(out_named).issubset({*lhs_named, *rhs_named}):
-    raise ValueError
 
-  # if a named axis appears in both inputs and not the output, contract!
-  named_contract = list(all_named - set(out_named))
+  if len(operands) != len(all_in_named):
+    raise ValueError("Expecting the same number of argument specs in the "
+                     "subscript ({in_spec}) as the number of operands. But got "
+                     "{len(all_in_named)} argument specs for "
+                     "{len(operands)} operands")
 
-  # if a subscript appears in both inputs and not the outputs, contract!
-  subs_contract = all_subs - set(out_subs)
+  if len(operands) > 2:
+    raise NotImplementedError("Only one or two operands are supported. "
+                              f"But got {len(operands)} operands")
 
-  lhs_reduce_axes = [lhs_subs.index(n) for n in lhs_uniques & subs_contract]
-  if lhs_reduce_axes:
-    x = lax._reduce_sum(x, lhs_reduce_axes)
-    for i in sorted(lhs_reduce_axes, reverse=True):
-      del lhs_subs[i]
+  # output subs and named axes must appear in at least one of the inputs.
+  if not set(out_named).issubset(set().union(*all_in_named)):
+    raise ValueError("Found named axes "
+                     f"{set(out_named) - set().union(*all_in_named)} "
+                     "appearing in the output spec but not in the input")
+  if not set(out_subs).issubset(set().union(*all_in_subs)):
+    raise ValueError("Found subscript(s) "
+                     f"{set(out_subs) - set().union(*all_in_subs)} "
+                     "appearing in the output spec but not in the input")
 
-  rhs_reduce_axes = [rhs_subs.index(n) for n in rhs_uniques & subs_contract]
-  if rhs_reduce_axes:
-    y = lax._reduce_sum(y, rhs_reduce_axes)
-    for i in sorted(rhs_reduce_axes, reverse=True):
-      del rhs_subs[i]
+  xs = list(operands)
+  for idx, (in_subs, in_named) in enumerate(safe_zip(all_in_subs, all_in_named)):
+    # if a subscript axis appears only in one input and not the output, reduce!
+    other_named = set().union(  # type: ignore
+        *[named for i, named in enumerate(all_in_named) if i != idx])
+    other_subs = set().union(  # type: ignore
+        *[subs for i, subs in enumerate(all_in_subs) if i != idx])
 
-  pos_contract = unzip2((lhs_subs.index(n), rhs_subs.index(n))
-                        for n in subs_contract - (lhs_uniques | rhs_uniques))
+    subs_reduce = list(set(in_subs) - {*out_subs, *other_subs})
+    subs_reduce_axes = [in_subs.index(n) for n in subs_reduce]
+    named_reduce_axes = list(set(in_named) - {*out_named, *other_named})
 
-  # if a subscript apperas in both inputs _and_ the outputs, batch!
-  subs_batch = all_subs - subs_contract
-  if subs_batch & (lhs_uniques | rhs_uniques):
-    raise NotImplementedError
+    if subs_reduce_axes or named_reduce_axes:
+      xs[idx] = psum(xs[idx], axis_name=subs_reduce_axes + named_reduce_axes)
+      for i in sorted(subs_reduce_axes, reverse=True):
+        del all_in_subs[idx][i]
+      for named_axis in named_reduce_axes:
+        all_in_named[idx].remove(named_axis)
 
-  pos_batch = unzip2((lhs_subs.index(n), rhs_subs.index(n))
-                        for n in subs_batch)
+  if len(operands) == 1:
+    return xs[0]
 
-  return pdot(x, y, axis_name=named_contract,
-              pos_contract=pos_contract, pos_batch=pos_batch)
+  if len(operands) == 2:
+    x, y = xs
+    lhs_subs, rhs_subs = all_in_subs
+    lhs_named, rhs_named = all_in_named
+
+    # if a named axis appears in both inputs and not the output, contract!
+    named_contract = list((set(lhs_named) & set(rhs_named)) - set(out_named))
+
+    # if a subscript appears in both inputs and not the outputs, contract!
+    subs_contract = (set(lhs_subs) & set(rhs_subs)) - set(out_subs)
+
+    pos_contract = unzip2((lhs_subs.index(n), rhs_subs.index(n))
+                          for n in subs_contract)
+
+    # if a subscript appears in both inputs _and_ the outputs, batch!
+    subs_batch = (set(lhs_subs) & set(rhs_subs)) - subs_contract
+    pos_batch = unzip2((lhs_subs.index(n), rhs_subs.index(n)) for n in subs_batch)
+
+    return pdot(x, y, axis_name=named_contract,
+                pos_contract=pos_contract, pos_batch=pos_batch)
+
 
 class XeinsumSpecParser:
   spec: str
