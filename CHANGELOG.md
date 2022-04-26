@@ -17,6 +17,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jax.experimental.maps.mesh` has been deleted.
     Please use `jax.experimental.maps.Mesh`. Please see https://jax.readthedocs.io/en/latest/_autosummary/jax.experimental.maps.Mesh.html#jax.experimental.maps.Mesh
     for more information.
+  * {func}`jax.scipy.linalg.qr` now returns a length-1 tuple rather than the raw array when
+    `mode='r'`, in order to match the behavior of `scipy.linalg.qr` ({jax-issue}`#10452`)
   * {func}`jax.numpy.take_along_axis` now takes an optional `mode` parameter
     that specifies the behavior of out-of-bounds indexing. By default,
     invalid values (e.g., NaN) will be returned for out-of-bounds indices. In
