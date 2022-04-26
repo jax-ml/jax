@@ -1681,143 +1681,119 @@ def _prune_zeros(ts):
 def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                        jaxpr, linear, unroll):
   num_ys = len(jaxpr.out_avals) - num_carry
-  unknowns = [not t.pval.is_known() for t in tracers]
+
+  unknowns = [t.pval[0] is not None for t in tracers]
   const_uk, init_uk, xs_uk = split_list(unknowns, [num_consts, num_carry])
 
-  # Fixpoint computation of which carry elements are unknown. Each iteration
-  # promotes at least one carry to unknown. We need at most len(carry)
-  # iterations, but we need one last iteration to prepare the jaxpr based on the
-  # final carry_uk.
+  # Fixpoint computation of which carry are unknown (not a constant): either
+  # unknown from init, or the carry out is unknown. Each iteration promotes
+  # at least one carry to unknown. We need at most len(carry) iterations,
+  # but we need one last iteration to prepare the jaxpr based on the final
+  # carry_uk.
   carry_uk = init_uk
   for _ in range(1 + len(carry_uk)):
     unknowns = const_uk + carry_uk + xs_uk
-    jaxpr_known, jaxpr_unknown, out_uk, res_avals = pe.partial_eval_jaxpr_nounits(
+    jaxpr_1, jaxpr_2, out_uk = pe.partial_eval_jaxpr(
         jaxpr, unknowns, instantiate=carry_uk + [False] * num_ys)
-    carry_uk_out, ys_uk = split_list(out_uk, [num_carry])
+    carry_uk_out = out_uk[:num_carry]
     if carry_uk_out == carry_uk:
       break
     else:
       carry_uk = _map(operator.or_, carry_uk, carry_uk_out)
   else:
     assert False, "Fixpoint not reached"
-  num_res = len(res_avals)
-  del res_avals, carry_uk_out
+  num_res = len(jaxpr_1.out_avals) - len(jaxpr_2.out_avals)
 
-  # Instantiate those inputs which must be treated as unknown from the fixpoint.
-  tracers = [trace.instantiate_const(t) if uk else t
-             for t, uk in zip(tracers, unknowns)]
-
-  # The residual inputs and outputs of the jaxprs produced haven't yet been
-  # adapted to the scan calling convention; in particular, jaxpr_known has its
-  # residual outputs all at the end, meaning they're extensive outputs (which is
-  # fully general but may be wasteful for residuals which are loop-invariant)
-  # while jaxpr_unknown has its corresponding residual inputs at the front (just
-  # as a convention with partial_eval_jaxpr_nounits), making them constant
-  # inputs. To make them consistent, we move the residual inputs on
-  # jaxpr_unknown to the end, even though we may move some back in the sequel.
-  jaxpr_unknown = pe.move_binders_to_back(
-      jaxpr_unknown, [True] * num_res + [False] * sum(unknowns))
-
-  # At this point, all residuals are treated as extensive outputs of jaxpr_known
-  # (and extensive inputs to jaxpr_unknown). But residuals that are loop-
-  # invariant can be hoisted out of the scan, rather than letting them get
-  # broadcast (as in e.g. scanning multiplication by a constant matrix; we don't
-  # want to broadcast the matrix!). So, outside the loop we perform a partial
-  # evaluation with known 'const' inputs (but all other inputs unknown).
-  const_pvals = [pe.PartialVal.known(t.pval.get_known())
-                 for t in tracers[:num_consts] if t.pval.is_known()]
-  other_pvals = [pe.PartialVal.unknown(aval)
-                 for aval in jaxpr_known.in_avals[len(const_pvals):]]
+  # The residuals are treated as extensive outputs of jaxpr_1 (and extensive
+  # inputs to jaxpr_2), but residuals that are loop-invariant can be hoisted.
+  # TODO(mattjj): hoist other loop-invariant values here too (instantiate=False)
+  invariant_pvals = [pe.PartialVal.known(core.unit if uk else t.pval[1])
+                     for uk, t in zip(unknowns[:num_consts], tracers[:num_consts])]
+  other_pvals = [pe.PartialVal.unknown(a) for a in jaxpr_1.in_avals[num_consts:]]
+  in_pvals_1 = invariant_pvals + other_pvals
   with source_info_util.reset_name_stack():
-    jaxpr_known_, invar_pvals_out, jaxpr_known_consts = pe.trace_to_jaxpr_nounits(
-        lu.wrap_init(core.jaxpr_as_fun(jaxpr_known)), const_pvals + other_pvals,
-        instantiate=[True] * (len(out_uk) - sum(out_uk)) + [False] * num_res)
-  jaxpr_known = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr_known_), ())
-  # The above trace_to_jaxpr_nounits call computed loop-invariant residuals
-  # (known values in invar_pvals_out) and also computed loop-invariant values
-  # needed by the new jaxpr_known (in jaxpr_known_consts, which replace the
-  # previous consts). We need to collect the computed inteisive residuals, and
-  # move corresponding intensive residual binders in jaxpr_unknown to the front.
-  res_pvals = invar_pvals_out[len(invar_pvals_out) - num_res:]
-  intensive_res = [pval.get_known() for pval in res_pvals if pval.is_known()]
-  jaxpr_unknown = pe.move_binders_to_front(
-      jaxpr_unknown,
-      [False] * sum(unknowns) + [pval.is_known() for pval in res_pvals])
-  del const_pvals, other_pvals, invar_pvals_out, jaxpr_known_, res_pvals
-  # We use `jaxpr_known_consts` when we call scan_p.bind with jaxpr_known, and
-  # we use `intensive_res` when we build the jaxpr eqn with jaxpr_unknown.
+    jaxpr_1_opt, out_pvals_1, consts_1 = pe.trace_to_jaxpr(
+        lu.wrap_init(core.jaxpr_as_fun(jaxpr_1)), in_pvals_1,
+        instantiate=[True] * (num_carry + num_ys) + [False] * num_res)
+  jaxpr_1_opt = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr_1_opt), ())
+  num_consts_1 = num_consts + len(consts_1)
+  # any now-known residuals are intensive, so we want to revise jaxpr_2 to take
+  # those inputs as constants rather than as extensive inputs
+  _, _, res_pvals = split_list(out_pvals_1, [num_carry, num_ys])
+  intensive_residuals = [const for pv, const in res_pvals if pv is None]
+  move = [False] * len(jaxpr_1.in_avals) + [pv is None for pv, _ in res_pvals]
+  jaxpr_2_opt = pe.move_binders_to_front(jaxpr_2, move)
+  num_consts_2 = num_consts + len(intensive_residuals)
 
   # As another optimization, for any extensive inputs that are just forwarded to
-  # extensive outputs, to avoid a copy (which would be looping over
-  # dynamic-update-slice) we'd rather forward the input tracer/value. That means
-  # pruning some outputs from jaxpr_known here, and updating `out_flat` below.
-  fwds_known = pe._jaxpr_forwarding(jaxpr_known.jaxpr)
-  # Prune fwds_known to include only extensive input to extensive output.
-  fwds_known = [in_idx if out_idx >= num_carry - sum(carry_uk) and
-                in_idx is not None and
-                in_idx >= len(jaxpr_known_consts) + num_carry - sum(carry_uk)
-                else None for out_idx, in_idx in enumerate(fwds_known)]
-  # DCE any (extensive) output we can instead get by forwarding an input.
-  jaxpr_known_, kept_inputs = pe.dce_jaxpr(
-      jaxpr_known.jaxpr, [i is None for i in fwds_known])
-  jaxpr_known = core.ClosedJaxpr(jaxpr_known_, ())
-  del jaxpr_known_
-  # We must use `kept_inputs` below when forming the inputs to jaxpr_known, and
-  # we must use `fwds_known` when forming its output.
+  # extensive outputs, to avoid a copy (looping over dynamic-update-slice) we'd
+  # rather just forward the input tracer. That means pruning some extensive
+  # outputs from the jaxpr here, and updating out_flat below.
+  extensive_invars = jaxpr_1_opt.jaxpr.invars[num_consts_1 + num_carry:]
+  extensive_outvars = jaxpr_1_opt.jaxpr.outvars[num_carry:]
+  extensive_avals = [core.unmapped_aval(length, core.no_axis_name, 0,
+                                        core.raise_to_shaped(v.aval))
+                     for v in extensive_outvars]
+  fwd_extensive = [num_consts + num_carry + extensive_invars.index(v)
+                   if v in extensive_invars else None for v in extensive_outvars]
+  jaxpr_1_opt.jaxpr.outvars = (
+      jaxpr_1_opt.jaxpr.outvars[:num_carry] +
+      [v for i, v in zip(fwd_extensive, extensive_outvars) if i is None])
 
-  # Run the known part of the scan.
-  known_inputs = (list(jaxpr_known_consts) +
-                  [t.pval.get_known() for t in tracers[num_consts:]
-                   if t.pval.is_known()])
-  known_inputs_prune = [c for c, kept in zip(known_inputs, kept_inputs) if kept]
-  kept_consts, kept_carry, _ = split_list(kept_inputs, [len(jaxpr_known_consts),
-                                                        num_carry-sum(carry_uk)])
-  linear_known = [False] * len(known_inputs_prune)  # conservative!
-  out_known = scan_p.bind(
-      *known_inputs_prune, reverse=reverse, length=length, jaxpr=jaxpr_known,
-      num_consts=sum(kept_consts), num_carry=sum(kept_carry),
-      linear=tuple(linear_known), unroll=unroll)
-  # Complete the known output by filling in forwarded values using fwds_known.
-  out_known_iter = iter(out_known)
-  out_known = [next(out_known_iter) if f is None else _maybe_put(known_inputs[f])
-               for f in fwds_known]
-  assert next(out_known_iter, None) is None
-  del kept_inputs, known_inputs, known_inputs_prune, out_known_iter
+  in_consts = (list(consts_1) + [core.unit] * num_consts +
+               [core.unit if uk else t.pval[1]
+                for uk, t in zip(unknowns[num_consts:], tracers[num_consts:])])
+  linear_1 = ([False] * len(consts_1) + [True] * num_consts +
+              [lin or uk for uk, lin
+               in zip(unknowns[num_consts:], linear[num_consts:])])
+  out_flat = scan_p.bind(
+      *in_consts, reverse=reverse, length=length, jaxpr=jaxpr_1_opt,
+      num_consts=num_consts_1, num_carry=num_carry, linear=tuple(linear_1),
+      unroll=unroll)
 
-  # Split known outputs from residuals.
-  out_known, extensive_res = split_list(out_known, [len(out_uk) - sum(out_uk)])
-  assert len(intensive_res) + len(extensive_res) == num_res
+  # Propagate the forwarded extensive outputs using fwd_extensive. Any
+  # numpy.ndarray inputs should be converted to JAX DeviceArrays.
+  out_carry, out_extensive = split_list(out_flat, [num_carry])
+  out_extensive_iter = iter(out_extensive)
+  out_extensive = [next(out_extensive_iter) if i is None
+                   else _maybe_device_put(tracers[i].pval[1]) if tracers[i].is_known()
+                   else tracers[i] for i in fwd_extensive]
+  assert all(core.typematch(a, core.get_aval(out))
+             for a, out in zip(extensive_avals, out_extensive))
+  out_flat = out_carry + out_extensive
 
-  # Create input tracers for jaxpr_unknown bind.
-  unknown_inputs = [t for t in tracers if not t.pval.is_known()]
-  intensive_res = _map(trace.new_instantiated_const, intensive_res)
-  extensive_res = _map(trace.new_instantiated_const, extensive_res)
-  # Create output tracers for jaxpr_unknown bind, adapting extensive shapes.
-  carry_avals, y_avals = split_list(jaxpr_unknown.out_avals, [sum(carry_uk)])
-  ys_avals = [core.unmapped_aval(length, core.no_axis_name, 0, y_aval)
-              for y_aval in y_avals]
-  out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
-                 for a in itertools.chain(carry_avals, ys_avals)]
-  del carry_avals, y_avals
-  # Create equation.
-  linear_unknown = tuple([False] * len(intensive_res) +
-                         [l for l, uk in zip(linear, unknowns) if uk] +
-                         [False] * len(extensive_res))
+  out_carry, ys, res_and_units = split_list(out_flat, [num_carry, num_ys])
+  extensive_residuals = [r for r, (pv, _) in zip(res_and_units, res_pvals) if pv is not None]
+
+  new_tracers = [trace.instantiate_const(t) if uk else trace.new_instantiated_literal(core.unit)
+                 for uk, t in zip(unknowns, tracers)]
+  carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
+  ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
+  out_avals = carry_avals + ys_avals
+  out_pvs = [aval if uk else None for aval, uk in zip(out_avals, out_uk)]
+
+  out_consts = out_carry + ys
+  int_res_tracers = _map(trace.new_instantiated_const, intensive_residuals)
+  ext_res_tracers = _map(trace.new_instantiated_const, extensive_residuals)
+  out_tracers = [pe.JaxprTracer(trace, pe.PartialVal((pv, const)), None)
+                 for pv, const in zip(out_pvs, out_consts)]
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
-  eqn = pe.new_eqn_recipe([*intensive_res, *unknown_inputs, *extensive_res],
+  linear_2 = ([False] * len(int_res_tracers) +
+              [lin or not uk for uk, lin in zip(unknowns, linear)] +
+              [False] * len(ext_res_tracers))
+  eqn = pe.new_eqn_recipe(int_res_tracers + new_tracers + ext_res_tracers,
                           out_tracers, scan_p,
-                          dict(reverse=reverse, length=length, unroll=unroll,
-                               jaxpr=jaxpr_unknown, linear=linear_unknown,
-                               num_consts=len(intensive_res) + sum(const_uk),
-                               num_carry=sum(carry_uk)),
-                          jaxpr_unknown.effects, source)
+                          dict(reverse=reverse, length=length, jaxpr=jaxpr_2_opt,
+                               num_consts=num_consts_2,
+                               num_carry=num_carry, linear=tuple(linear_2),
+                               unroll=unroll),
+                          jaxpr_2_opt.effects,
+                          source)
   for t in out_tracers: t.recipe = eqn
+  return out_tracers
 
-  # Merge known and unknown outputs into final result.
-  return util.merge_lists(out_uk, out_known, out_tracers)
-
-def _maybe_put(x):
+def _maybe_device_put(x):
   if isinstance(x, np.ndarray):
     return jax.device_put(x, jax.devices('cpu')[0])
   else:
