@@ -176,7 +176,7 @@ def _qr(a, mode, pivoting):
   a, = _promote_dtypes_inexact(jnp.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices)
   if mode == "r":
-    return r
+    return (r,)
   return q, r
 
 @_wraps(scipy.linalg.qr)

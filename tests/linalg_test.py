@@ -621,6 +621,38 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jsp.linalg.svd(np.ones((2, 2), dtype=np.float32))
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_mode={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode),
+       "shape": shape, "dtype": dtype, "mode": mode}
+      for shape in [(3, 4), (3, 3), (4, 3)]
+      for dtype in [np.float32]
+      for mode in ["full", "r", "economic"]))
+  def testScipyQrModes(self, shape, dtype, mode):
+    rng = jtu.rand_default(self.rng())
+    jsp_func = partial(jax.scipy.linalg.qr, mode=mode)
+    sp_func = partial(scipy.linalg.qr, mode=mode)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
+    self._CompileAndCheck(jsp_func, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_mode={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode),
+       "shape": shape, "dtype": dtype, "mode": mode}
+      for shape in [(3, 4), (3, 3), (4, 3)]
+      for dtype in [np.float32]
+      for mode in ["reduced", "r", "full", "complete"]))
+  def testNumpyQrModes(self, shape, dtype, mode):
+    rng = jtu.rand_default(self.rng())
+    jnp_func = partial(jax.numpy.linalg.qr, mode=mode)
+    np_func = partial(np.linalg.qr, mode=mode)
+    if mode == "full":
+      np_func = jtu.ignore_warning(category=DeprecationWarning, message="The 'full' option.*")(np_func)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_func, jnp_func, args_maker, rtol=1E-5, atol=1E-5)
+    self._CompileAndCheck(jnp_func, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),
        "shape": shape, "dtype": dtype, "full_matrices": full_matrices}
