@@ -39,6 +39,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src import source_info_util
 import jax._src.util as util
@@ -1206,6 +1207,43 @@ def xla_fallback_lowering(prim: core.Primitive):
   return fallback
 
 register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
+
+def emit_python_callback(platform, callback,
+                         operands: List[ir.Value],
+                         operand_avals: List[core.AbstractValue],
+                         result_avals: List[core.AbstractValue],
+                         has_side_effect: bool) -> Tuple[List[ir.Value], Any]:
+  """Creates an MHLO `CustomCallOp` that calls back to the provided function."""
+  if platform != "cpu":
+    raise ValueError('`EmitPythonCallback` not supported in non-CPU backends.')
+  backend = xb.get_backend(platform)
+  result_shapes = util.flatten(
+      [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
+  operand_shapes = util.flatten(
+      [xla.aval_to_xla_shapes(op_aval) for op_aval in operand_avals])
+  callback_descriptor, keepalive = backend.get_emit_python_callback_descriptor(
+      callback, operand_shapes, result_shapes)
+  descriptor_operand = ir_constant(
+      callback_descriptor, canonicalize_types=False)
+  callback_operands = [descriptor_operand, *operands]
+  result_types = util.flatten(
+      [aval_to_ir_types(aval) for aval in result_avals])
+  result_type = ir.TupleType.get_tuple(result_types)
+  result = mhlo.CustomCallOp(
+      [result_type],
+      callback_operands,
+      call_target_name=ir.StringAttr.get("xla_python_cpu_callback"),
+      has_side_effect=ir.BoolAttr.get(has_side_effect),
+      api_version=i32_attr(2),
+      called_computations=ir.ArrayAttr.get([]),
+      backend_config=ir.StringAttr.get(""),
+      operand_layouts=None,
+      result_layouts=None)
+  results = [
+      mhlo.GetTupleElementOp(result, i32_attr(i)).result
+      for i in range(len(result_types))
+  ]
+  return results, keepalive
 
 # Lax ops missing MLIR lowerings.
 # # TODO(b/203775215): these are missing from the cHLO dialect. Either add

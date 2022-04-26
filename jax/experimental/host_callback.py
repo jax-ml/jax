@@ -524,7 +524,6 @@ from jax._src.lib import pytree
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 
 import numpy as np
@@ -1149,7 +1148,6 @@ def _outside_call_lowering(
     return mlir.xla_fallback_lowering(outside_call_p)(ctx, *args,
         has_token=has_token, identity=identity,
         flat_results_aval=flat_results_aval, **params)
-  backend = xb.get_backend(platform)
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
   assert has_token
   current_token = args[-2]
@@ -1185,36 +1183,10 @@ def _outside_call_lowering(
       result_arrays = ()
     return (token,) + result_arrays
 
-  result_shapes = [
-      xla.aval_to_xla_shapes(res_aval)[0]
-      for res_aval in callback_flat_results_aval
-  ]
-  callback_operand_shapes = [
-      xla.aval_to_xla_shapes(op_aval)[0]
-      for op_aval in callback_operand_avals
-  ]
-  callback_descriptor, keep_alive = backend.get_emit_python_callback_descriptor(
-      wrapped_callback,
-      callback_operand_shapes,
-      result_shapes)
+  results, keep_alive = mlir.emit_python_callback(platform, wrapped_callback,
+      callback_operands, callback_operand_avals, callback_flat_results_aval,  # type: ignore[arg-type]
+      has_side_effect=True)
   _callback_handler_data.keep_alives.append(keep_alive)
-  descriptor_operand = mlir.ir_constant(callback_descriptor, canonicalize_types=False)
-  callback_operands = [descriptor_operand, *callback_operands]
-  result_types = util.flatten(
-      [mlir.aval_to_ir_types(aval) for aval in callback_flat_results_aval])
-  result_type = ir.TupleType.get_tuple(result_types)
-  result = mhlo.CustomCallOp([result_type], callback_operands,
-      call_target_name=ir.StringAttr.get("xla_python_cpu_callback"),
-      has_side_effect=ir.BoolAttr.get(True),
-      api_version=mlir.i32_attr(2),
-      called_computations=ir.ArrayAttr.get([]),
-      backend_config=ir.StringAttr.get(""),
-      operand_layouts=None,
-      result_layouts=None)
-  results = [
-    mhlo.GetTupleElementOp(result, mlir.i32_attr(i)).result
-    for i in range(len(result_types))
-  ]
   next_token, *results = results
   # We must put the two tokens at the end
   if identity:
