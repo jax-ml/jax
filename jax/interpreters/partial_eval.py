@@ -39,10 +39,10 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache)
 from jax.core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
-                      unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
-                      ConcreteArray, raise_to_shaped, Var, DropVar, Atom,
-                      JaxprEqn, Primitive, ShapedArray, DShapedArray,
-                      AbstractBInt, mapped_aval, unmapped_aval)
+                      ClosedJaxpr, new_jaxpr_eqn, ConcreteArray,
+                      raise_to_shaped, Var, DropVar, Atom, JaxprEqn, Primitive,
+                      ShapedArray, DShapedArray, AbstractBInt, mapped_aval,
+                      unmapped_aval)
 from jax._src import source_info_util
 from jax.config import config
 
@@ -125,7 +125,7 @@ class JaxprTrace(Trace):
   def new_const(self, val) -> JaxprTracer:
     if isinstance(val, Tracer) and val._trace.level == self.level:
       raise Exception
-    return JaxprTracer(self, PartialVal.known(val), unit)
+    return JaxprTracer(self, PartialVal.known(val), core.unit)
 
   def new_instantiated_literal(self, val) -> JaxprTracer:
     aval = get_aval(val)
@@ -721,7 +721,7 @@ def tracers_to_jaxpr(
   def getvar(t: JaxprTracer) -> Atom:
     var = t_to_var.get(id(t))
     if var is None:
-      aval = t.pval.get_aval() if not t.pval.is_known() else abstract_unit
+      aval = t.pval.get_aval() if not t.pval.is_known() else core.abstract_unit
       var = t_to_var[id(t)] = newvar(aval)
     return var
   sorted_tracers = toposort(out_tracers)
@@ -754,8 +754,8 @@ def tracers_to_jaxpr(
       consts[v] = recipe.val
     elif isinstance(recipe, Literal):
       t_to_var[id(t)] = recipe
-    elif recipe is unit:
-      t_to_var[id(t)] = unitvar
+    elif recipe is core.unit:
+      t_to_var[id(t)] = core.unitvar
     else:
       raise TypeError(recipe)
 
@@ -790,7 +790,7 @@ def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
 
 
 def _split_aval(unknown: bool, aval: AbstractValue) -> Tuple[AbstractValue, AbstractValue]:
-  return (abstract_unit, aval) if unknown else (aval, abstract_unit)
+  return (core.abstract_unit, aval) if unknown else (aval, core.abstract_unit)
 
 
 def partial_eval_jaxpr_nounits(
@@ -952,7 +952,7 @@ def _remat_partial_eval(trace, _, f, tracers, params):
     out_consts = core.eval_jaxpr(jaxpr_known, (), *in_consts)
     out_consts_ = iter(out_consts)
     # reconstruct known outs, inserting units
-    outs1 = [pval.get_known() if x.aval is abstract_unit else next(out_consts_)
+    outs1 = [pval.get_known() if x.aval is core.abstract_unit else next(out_consts_)
              for uk, pval, x in zip(out_unknowns, eval_out_pvals, jaxpr.outvars)
              if not uk]
     # form known outputs and collect residual tracers
@@ -1054,7 +1054,7 @@ def _partial_eval_jaxpr_custom(
     return x
 
   known_eqns, staged_eqns = [], []
-  write(False, True, unitvar)
+  write(False, True, core.unitvar)
   map(write, in_unknowns, [True] * len(in_unknowns), jaxpr.invars)
   for eqn in jaxpr.eqns:
     unks_in, inst_in = unzip2(map(read, eqn.invars))
@@ -1081,7 +1081,7 @@ def _partial_eval_jaxpr_custom(
 
   ins_known, _ = partition_list(in_unknowns, jaxpr.invars)
   outs_known_, _ = partition_list(out_unknowns, jaxpr.outvars)
-  outs_known = [x for x in outs_known_ if x.aval is not abstract_unit]
+  outs_known = [x for x in outs_known_ if x.aval is not core.abstract_unit]
   known_effects = core.join_effects(*(eqn.effects for eqn in known_eqns))
   jaxpr_known = Jaxpr((), ins_known, [*outs_known, *residuals], known_eqns,
                       known_effects)
@@ -1254,7 +1254,7 @@ def _dce_open_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False)
   if drop_outputs:
     new_outvars = [var for var, output in zip(jaxpr.outvars, outputs) if output]
   else:
-    new_outvars = [var if output else unitvar
+    new_outvars = [var if output else core.unitvar
                    for var, output in zip(jaxpr.outvars, outputs)]
 
   needed_vars = {v for v in new_outvars if type(v) is not Literal}
@@ -2139,7 +2139,7 @@ def _eval_jaxpr_padded(
   def write(v, val) -> None:
     env[v] = val
 
-  write(unitvar, unit)
+  write(core.unitvar, core.unit)
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
@@ -2219,7 +2219,8 @@ def _partial_eval_jaxpr(jaxpr, unknowns, instantiate):
 
   # For jaxpr_known we pass core.unit for the unknown inputs, and known
   # PartialVal for the known inputs.
-  in_avals = [abstract_unit if uk else a for a, uk in zip(jaxpr.in_avals, unknowns)]
+  in_avals = [core.abstract_unit if uk else a
+              for a, uk in zip(jaxpr.in_avals, unknowns)]
   jaxpr_1, out_avals, consts_1 = trace_to_jaxpr_dynamic(lu.wrap_init(fun), in_avals)
   (out_pvs_2, jaxpr_2, num_res), = cell
   assert len(jaxpr_2.constvars) == num_res
@@ -2232,7 +2233,7 @@ def _partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   jaxpr_2.invars = jaxpr_2.invars[num_res:] + jaxpr_2.invars[:num_res]
   for var, unknown in zip(jaxpr_2.invars[:len(unknowns)], unknowns):
     if not unknown:
-      var.aval = abstract_unit
+      var.aval = core.abstract_unit
 
   uk_out = [pv is not None for pv in out_pvs_2]
 

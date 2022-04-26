@@ -26,7 +26,6 @@ from jax._src.tree_util import (
 from jax._src.tree_util import _replace_nones
 from jax import linear_util as lu
 from jax._src.util import safe_map, WrapKwArgs, Hashable, Unhashable
-from jax.core import unit
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -136,19 +135,19 @@ class _HashableWithStrictTypeEquality:
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   dyn_argnums = _ensure_index_tuple(dyn_argnums)
-  fixed_args = [unit] * len(args)
-  for i, arg in enumerate(args):
-    if i in dyn_argnums: continue
-    if require_static_args_hashable:
+  if require_static_args_hashable:
+    fixed_args = []
+    for i, arg in enumerate(args):
+      if i in dyn_argnums: continue
       if not is_hashable(arg):
         raise ValueError(
             "Non-hashable static arguments are not supported, as this can lead "
             f"to unexpected cache-misses. Static argument (index {i}) of type "
             f"{type(arg)} for function {f.__name__} is non-hashable.")
-      fixed_args[i] = _HashableWithStrictTypeEquality(arg)
-    else:
-      fixed_args[i] = Unhashable(arg)
-
+      fixed_args.append(_HashableWithStrictTypeEquality(arg))
+  else:
+    fixed_args = [Unhashable(arg) for i, arg in enumerate(args)
+                  if i not in dyn_argnums]
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
@@ -160,10 +159,9 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
   dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
   dyn_args = tuple(args[i] for i in dyn_argnums)
 
-  fixed_args = [unit] * len(args)  # type: ignore
+  fixed_args = []
   for i in static_argnums:
-    # TODO(shoyer): set allow_invalid=True permanently after enabling
-    # static_argnames.
+    # TODO(shoyer): set allow_invalid=True permanently after static_argnames.
     if allow_invalid and i >= len(args):
       continue
     static_arg = args[i]
@@ -175,16 +173,19 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
           f"to unexpected cache-misses. Static argument (index {i}) of type "
           f"{type(static_arg)} for function {f.__name__} is non-hashable.")
     else:
-      fixed_args[i] = _HashableWithStrictTypeEquality(static_arg)  # type: ignore
+      fixed_args.append(_HashableWithStrictTypeEquality(static_arg))  # type: ignore
 
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
-
 @lu.transformation
 def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
-  args = [None if arg is unit else arg.val for arg in fixed_args]
+  sentinel = object()
+  args = [sentinel] * (len(fixed_args) + len(dyn_args))
   for i, arg in zip(dyn_argnums, dyn_args):
     args[i] = arg
+  fixed_args_ = iter(fixed_args)
+  args = [next(fixed_args_).val if x is sentinel else x for x in args]
+  assert next(fixed_args_, sentinel) is sentinel
   ans = yield args, kwargs
   yield ans
 
@@ -197,9 +198,7 @@ def argnames_partial_except(f: lu.WrappedFun, static_argnames: Tuple[str, ...],
 
   fixed_kwargs: Dict[str, Any] = {}
   for k, arg in kwargs.items():
-    if k in dyn_kwargs:
-      fixed_kwargs[k] = unit
-    else:
+    if k not in dyn_kwargs:
       try:
         hash(arg)
       except TypeError:
@@ -212,12 +211,9 @@ def argnames_partial_except(f: lu.WrappedFun, static_argnames: Tuple[str, ...],
 
   return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 
-
 @lu.transformation
 def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
-  kwargs = {k: None if arg is unit else arg.val
-            for k, arg in fixed_kwargs.val.items()}
-  kwargs.update(dyn_kwargs)
+  kwargs = dict({k: v.val for k, v in fixed_kwargs.val.items()}, **dyn_kwargs)
   ans = yield args, kwargs
   yield ans
 
