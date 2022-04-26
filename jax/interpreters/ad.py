@@ -79,6 +79,9 @@ def jvp_subtrace(main, primals, tangents):
   trace = JVPTrace(main, core.cur_sublevel())
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
+      if x._trace.level >= trace.level:
+        raise core.escaped_tracer_error(
+            x, f"Tracer from a higher level: {x} in trace {trace}")
       assert x._trace.level < trace.level
   in_tracers = [JVPTracer(trace, x, t) if type(t) is not Zero else x
                 for x, t in zip(primals, tangents)]
@@ -113,12 +116,10 @@ def linearize(traceable, *primals, **kwargs):
                     for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jvpfun_flat, in_pvals)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_nounits(jvpfun_flat, in_pvals)
   out_primals_pvals, out_tangents_pvals = tree_unflatten(out_tree(), out_pvals)
   assert all(out_primal_pval.is_known() for out_primal_pval in out_primals_pvals)
-  _, out_primals_consts = unzip2(out_primals_pvals)
-  jaxpr.invars = jaxpr.invars[len(primals):]
-  jaxpr.outvars = jaxpr.outvars[len(out_primals_pvals):]
+  out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
   if not has_aux:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts
   else:
@@ -131,7 +132,7 @@ def vjp(traceable, primals, has_aux=False, reduce_axes=()):
     out_primals, pvals, jaxpr, consts, aux = linearize(traceable, *primals, has_aux=True)
 
   def unbound_vjp(pvals, jaxpr, consts, *cts):
-    cts = tuple(map(ignore_consts, cts, pvals))
+    cts = tuple(ct for ct, pval in zip(cts, pvals) if not pval.is_known())
     dummy_args = [UndefinedPrimal(v.aval) for v in jaxpr.invars]
     arg_cts = backward_pass(jaxpr, reduce_axes, True, consts, dummy_args, cts)
     return map(instantiate_zeros, arg_cts)
@@ -143,15 +144,6 @@ def vjp(traceable, primals, has_aux=False, reduce_axes=()):
     return out_primals, vjp_
   else:
     return out_primals, vjp_, aux
-
-def ignore_consts(ct, pval):
-  aval, const = pval
-  if isinstance(aval, core.AbstractValue):
-    return ct
-  elif aval is None:
-    return core.unit
-  else:
-    raise TypeError(aval)
 
 def unpair_pval(pval):
   aval, const = pval

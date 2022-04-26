@@ -401,7 +401,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return 2 * x + y
 
     def g(x):  # x: i32
-      return jnp.sum(2. * f(3 * x, 4. * x.astype("float32")))
+      return jnp.sum(2. * f(3 * x, 4. * jnp.array(x, jnp.dtype("float32"))))
 
     grad_g = jax.grad(g, allow_int=True)
     x = 2

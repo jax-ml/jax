@@ -101,11 +101,6 @@ class PartialVal(tuple):
     else:
       return self[0]
 
-  def merge_with_known(self, val: core.Value) -> core.Value:
-    """Either the stored known value, or the given 'val'."""
-    known = self.get_known()
-    return known if known is not None else val
-
 
 class JaxprTrace(Trace):
 
@@ -545,7 +540,7 @@ class JaxprTracer(Tracer):
     pv, const = pval
     if isinstance(const, Tracer) and const._trace.level >= trace.level:
       raise core.escaped_tracer_error(
-          const, "Tracer from a higher level: {} in trace {}".format(const, trace))
+          const, f"Tracer from a higher level: {const} in trace {trace}")
     self._trace = trace
     self.pval = pval
     self.recipe = recipe

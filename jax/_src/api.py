@@ -2320,8 +2320,11 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
                          "the original primal values: "
                          f"got {tangent_aval} for primal aval {primal_aval}")
     tangents_out = eval_jaxpr(jaxpr, consts, *tangents)
-    return tuple(map(lambda out_pv, tan_out: out_pv.merge_with_known(tan_out),
-                     out_pvals, tangents_out))
+    tangents_out_ = iter(tangents_out)
+    full_out = [pval.get_known() if pval.is_known() else next(tangents_out_)
+                for pval in out_pvals]
+    assert next(tangents_out_, None) is None
+    return full_out
 
   return apply_flat_fun(fun, io_tree, *py_args)
 
