@@ -34,6 +34,7 @@ from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
 from jax._src.lax import lax as lax_internal
+from jax._src.lax import svd as lax_svd
 from jax._src.lib import lapack
 
 from jax._src.lib import cuda_linalg
@@ -202,6 +203,7 @@ def qr(x, full_matrices: bool = True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
   return q, r
 
+# TODO: Add `max_qdwh_iterations` to the function signature for TPU SVD.
 def svd(x, full_matrices=True, compute_uv=True):
   """Singular value decomposition.
 
@@ -1424,6 +1426,45 @@ def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
 
   return result
 
+def _svd_tpu(a, *, full_matrices, compute_uv):
+  batch_dims = a.shape[:-2]
+  if len(batch_dims) > 0:
+    batch_size = np.prod(batch_dims, dtype=np.int64)
+    a = lax.reshape(a, (batch_size,) + a.shape[-2:])
+    svd_batched_fn = api.vmap(partial(lax_svd.svd, full_matrices=full_matrices,
+                                      compute_uv=compute_uv))
+    if compute_uv:
+      u, s, vh = svd_batched_fn(a)
+      u = lax.reshape(u, batch_dims + u.shape[-2:])
+      s = lax.reshape(s, batch_dims + s.shape[-1:])
+      vh = lax.reshape(vh, batch_dims + vh.shape[-2:])
+      return [s, u, vh]
+    else:
+      s = svd_batched_fn(a)
+      s = lax.reshape(s, batch_dims + s.shape[-1:])
+      return [s]
+  else:
+    if compute_uv:
+      u, s, vh = lax_svd.svd(a, full_matrices=full_matrices,
+                             compute_uv=compute_uv)
+      return [s, u, vh]
+    else:
+      s = lax_svd.svd(a, full_matrices=full_matrices,
+                      compute_uv=compute_uv)
+      return [s]
+
+def _svd_tpu_lowering_rule(ctx, operand, *, full_matrices, compute_uv):
+  operand_aval, = ctx.avals_in
+  m, n = operand_aval.shape[-2:]
+  batch_dims = operand_aval.shape[:-2]
+
+  if m == 0 or n == 0:
+    return mlir.lower_fun(_empty_svd, multiple_results=True)(
+      ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
+  return mlir.lower_fun(_svd_tpu, multiple_results=True)(
+      ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args
   bd, = batch_dims
@@ -1441,7 +1482,7 @@ svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
-xla.register_translation(svd_p, _svd_translation_rule)
+# xla.register_translation(svd_p, _svd_translation_rule)
 
 mlir.register_lowering(
     svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
@@ -1452,6 +1493,7 @@ if solver_apis is not None:
     svd_p, partial(_svd_cpu_gpu_lowering, solver_apis.gesvd_mhlo),
     platform='gpu')
 
+mlir.register_lowering(svd_p, _svd_tpu_lowering_rule, platform='tpu')
 
 def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, m, n, ldb, t):
   return [sparse_apis.gtsv2_mhlo(dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
