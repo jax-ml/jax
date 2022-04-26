@@ -758,7 +758,7 @@ def _bcoo_dot_general_cuda_lowering(
     if rhs_ndim == 1:
       # Transforms a single-element array to a scalar.
       return [mhlo.ReshapeOp(
-          ir.RankedTensorType(
+          ir.RankedTensorType.get(
               [], ir.RankedTensorType(dot_product.type).element_type),
           dot_product).result]
     else:
