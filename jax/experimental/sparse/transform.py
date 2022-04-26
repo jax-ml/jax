@@ -70,6 +70,52 @@ from jax.experimental.sparse import BCOO
 
 sparse_rules : Dict[core.Primitive, Callable] = {}
 
+_zero_preserving_unary_primitives = [
+  lax.abs_p,
+  lax.asin_p,
+  lax.asinh_p,
+  lax.atan_p,
+  lax.atanh_p,
+  lax.bessel_i1e_p,
+  lax.expm1_p,
+  lax.log1p_p,
+  lax.neg_p,
+  lax.real_p,
+  lax.imag_p,
+  lax.sign_p,
+  lax.sin_p,
+  lax.sinh_p,
+  lax.sqrt_p,
+  lax.tan_p,
+  lax.tanh_p,
+  lax.convert_element_type_p
+]
+
+_densifying_primitives : List[core.Primitive] = [
+  lax.acos_p,
+  lax.acosh_p,
+  lax.bessel_i0e_p,
+  lax.cos_p,
+  lax.cosh_p,
+  lax.eq_p,
+  lax.exp_p,
+  lax.ge_p,
+  lax.gt_p,
+  lax.le_p,
+  lax.lt_p,
+  lax.log_p,
+  lax.ne_p,
+  lax.xor_p
+]
+
+def _raise_unimplemented_primitive(primitive):
+  if primitive in _densifying_primitives:
+    raise NotImplementedError(f"sparse rule for {primitive} is not implemented because it "
+                              "would result in dense output. If this is your intent, use "
+                              "sparse.todense() to convert your arguments to dense matrices.")
+  raise NotImplementedError(f"sparse rule for {primitive} is not implemented.")
+
+
 Array = Any
 ArrayOrSparse = Any
 
@@ -245,7 +291,7 @@ class SparseTrace(core.Trace):
     spvalues = [t._spvalue for t in tracers]
     if any(spvalue.is_sparse() for spvalue in spvalues):
       if primitive not in sparse_rules:
-        raise NotImplementedError(f"sparse rule for {primitive}")
+        _raise_unimplemented_primitive(primitive)
       out_spvalues = sparse_rules[primitive](spenv, *(t._spvalue for t in tracers), **params)
     else:
       out_bufs = primitive.bind(*(spenv.data(spvalue) for spvalue in spvalues), **params)
@@ -337,7 +383,7 @@ def eval_sparse(
 
     if any(val.is_sparse() for val in invals):
       if prim not in sparse_rules:
-        raise NotImplementedError(f"sparse rule for {prim}")
+        _raise_unimplemented_primitive(prim)
       out = sparse_rules[prim](spenv, *invals, **eqn.params)
     else:
       if prim is xla.xla_call_p:
@@ -425,10 +471,7 @@ def _zero_preserving_unary_op(prim):
 
 # TODO(jakevdp): some of these will give incorrect results when there are duplicated indices.
 #                how should we handle this?
-for _prim in [
-    lax.abs_p, lax.expm1_p, lax.log1p_p, lax.neg_p, lax.sign_p, lax.sin_p,
-    lax.sinh_p, lax.sqrt_p, lax.tan_p, lax.tanh_p, lax.convert_element_type_p
-  ]:
+for _prim in _zero_preserving_unary_primitives:
   sparse_rules[_prim] = _zero_preserving_unary_op(_prim)
 
 def _dot_general_sparse(spenv, *spvalues, dimension_numbers, precision, preferred_element_type):
