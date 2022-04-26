@@ -514,14 +514,18 @@ from jax import lax
 from jax.experimental import pjit
 from jax.interpreters import ad, xla, batching, masking, pxla
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
+from jax._src import lib as jaxlib
 from jax._src.lib import pytree
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import mhlo
 
 import numpy as np
 
@@ -1006,6 +1010,10 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
   need_callback_results_on_device = (not identity and
                                      len(non_empty_flat_results_aval) > 0)
   use_outfeed = _use_outfeed(ctx.platform)
+  # TODO(sharadmv): Delete non-outfeed path when jaxlib minimum version is
+  # bumped past 0.3.8.
+  assert use_outfeed or jaxlib.version < (0, 3, 8), (
+      'Should be using MLIR path for `CustomCall` lowering')
   send_infeed = use_outfeed and need_callback_results_on_device
   generated_infeed = False  # Keep track if we emitted an infeed op
   if use_outfeed:
@@ -1128,6 +1136,98 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
 
 xla.register_translation(outside_call_p, _outside_call_translation_rule)
 
+def _outside_call_lowering(
+    ctx: mlir.LoweringRuleContext, *args, has_token: bool, identity: bool,
+    flat_results_aval=(), **params):
+  """MLIR Lowering for `CustomCall`-based HCB."""
+  platform = ctx.module_context.platform
+  use_outfeed = _use_outfeed(platform)
+  if use_outfeed:
+    # Fall back to XLA path if we are using the outfeed
+    # TODO(sharadmv): update to use MLIR for this path as well and delete
+    #                 XLA lowering
+    return mlir.xla_fallback_lowering(outside_call_p)(ctx, *args,
+        has_token=has_token, identity=identity,
+        flat_results_aval=flat_results_aval, **params)
+  backend = xb.get_backend(platform)
+  # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
+  assert has_token
+  current_token = args[-2]
+  current_itoken = args[-1]
+  assert current_token.type == mhlo.TokenType.get(), "The last two arguments must be tokens"
+  assert current_itoken.type == mhlo.TokenType.get(), "The last two arguments must be tokens"
+
+  args_to_outfeed = args[:-2]
+  # TODO(necula): this is a weak attempt to get the device. This works
+  # inside pmap, but does not work when we just execute on a single device,
+  # because in such executions we always get replica_id == 0.
+  replica_id = mhlo.ReplicaIdOp()
+  callback_operands = [current_token, replica_id, *args_to_outfeed]
+  callback_operand_avals = [
+      core.abstract_token, core.ShapedArray((), np.uint32), *ctx.avals_in[:-2]]
+  if identity:
+    callback_flat_results_aval = [core.abstract_token]
+  else:
+    callback_flat_results_aval = [core.abstract_token, *flat_results_aval]
+
+  def wrapped_callback(*args):
+    token, replica_id, *arrays = args
+    result_arrays = _outside_call_run_callback(
+        arrays,
+        xb.local_devices()[replica_id],
+        send_infeed=False,
+        # The same parameters as outside_call_p
+        identity=identity,
+        flat_results_aval=flat_results_aval,
+        **params)
+    if identity:
+      # For identity, we do not pass the any results back to the device
+      result_arrays = ()
+    return (token,) + result_arrays
+
+  result_shapes = [
+      xla.aval_to_xla_shapes(res_aval)[0]
+      for res_aval in callback_flat_results_aval
+  ]
+  callback_operand_shapes = [
+      xla.aval_to_xla_shapes(op_aval)[0]
+      for op_aval in callback_operand_avals
+  ]
+  callback_descriptor, keep_alive = backend.get_emit_python_callback_descriptor(
+      wrapped_callback,
+      callback_operand_shapes,
+      result_shapes)
+  _callback_handler_data.keep_alives.append(keep_alive)
+  descriptor_operand = mlir.ir_constant(callback_descriptor, canonicalize_types=False)
+  callback_operands = [descriptor_operand, *callback_operands]
+  result_types = util.flatten(
+      [mlir.aval_to_ir_types(aval) for aval in callback_flat_results_aval])
+  result_type = ir.TupleType.get_tuple(result_types)
+  result = mhlo.CustomCallOp([result_type], callback_operands,
+      call_target_name=ir.StringAttr.get("xla_python_cpu_callback"),
+      has_side_effect=ir.BoolAttr.get(True),
+      api_version=mlir.i32_attr(2),
+      called_computations=ir.ArrayAttr.get([]),
+      backend_config=ir.StringAttr.get(""),
+      operand_layouts=None,
+      result_layouts=None)
+  results = [
+    mhlo.GetTupleElementOp(result, mlir.i32_attr(i)).result
+    for i in range(len(result_types))
+  ]
+  next_token, *results = results
+  # We must put the two tokens at the end
+  if identity:
+    results = list(args_to_outfeed)
+  next_itoken = current_itoken
+
+  assert identity or len(results) == len(flat_results_aval), (
+      f"got {len(results)} but expected {len(flat_results_aval)}. "
+      f"identity = {identity}")
+  return results + [next_token, next_itoken]
+
+if jaxlib.version >= (0, 3, 8):
+  mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="cpu")
 
 def _outside_call_run_callback(
     arrays, device, *,
