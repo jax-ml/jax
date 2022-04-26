@@ -671,8 +671,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertTrue(np.all(
         norm(np.eye(k) - np.matmul(np.conj(T(lq)), lq)) < 5))
 
-    if not full_matrices and m >= n:
-        jtu.check_jvp(jnp.linalg.qr, partial(jvp, jnp.linalg.qr), (a,), atol=3e-3)
+    if m == n or (m > n and not full_matrices):
+      qr = partial(jnp.linalg.qr, mode=mode)
+      jtu.check_jvp(qr, partial(jvp, qr), (a,), atol=3e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
