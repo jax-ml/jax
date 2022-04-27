@@ -24,6 +24,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     invalid values (e.g., NaN) will be returned for out-of-bounds indices. In
     previous versions of JAX, invalid indices were clamped into range. The
     previous behavior can be restored by passing `mode="clip"`.
+  * Scatter operations, such as `x.at[...].set(...)`, now have "drop" semantics.
+    This has no effect on the scatter operation itself, but it means that when
+    differentiated the gradient of a scatter will yield zero cotangents for
+    out-of-bounds indices. Previously out-of-bounds indices were clamped into
+    range for the gradient, which was not mathematically correct.
   * {func}`jax.numpy.take_along_axis` now raises a `TypeError` if its indices
     are not of an integer type, matching the behavior of
     {func}`numpy.take_along_axis`. Previously non-integer indices were silently

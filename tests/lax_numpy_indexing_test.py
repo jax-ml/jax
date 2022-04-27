@@ -1145,7 +1145,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
        "op": op, "mode": mode,
-  } for mode in MODES
+  } for mode in [None] + MODES
     for name, index_specs in (
       STATIC_INDEXING_TESTS if mode == "promise_in_bounds" else
       STATIC_INDEXING_TESTS + STATIC_INDEXING_OUT_OF_BOUNDS_TESTS)
@@ -1157,7 +1157,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                               indexer, op, mode):
     rng = jtu.rand_default(self.rng())
-    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, mode=mode)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, mode=mode,
+    unique_indices=True)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
     check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
@@ -1168,18 +1169,23 @@ class IndexedUpdateTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
        "shape": shape, "dtype": dtype, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
-       "op": op
-  } for name, index_specs in s(ADVANCED_INDEXING_TESTS_NO_REPEATS)
+       "op": op, "unique_indices": unique_indices,
+  } for unique_indices in s([False, True])
+    for name, index_specs in s(
+      ADVANCED_INDEXING_TESTS_NO_REPEATS if unique_indices
+      else ADVANCED_INDEXING_TESTS)
     for shape, indexer, update_shape in s(index_specs)
-    for op in s([UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE])
+    for op in s(
+      [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE] if unique_indices
+      else [UpdateOps.ADD])
     for dtype in s(float_dtypes)
     for update_shape in s(_broadcastable_shapes(update_shape))
     for update_dtype in s([dtype] if op == UpdateOps.ADD else float_dtypes))))
   def testAdvancedIndexingGrads(self, shape, dtype, update_shape, update_dtype,
-                                indexer, op):
+                                indexer, op, unique_indices):
     rng = jtu.rand_default(self.rng())
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y,
-                                           unique_indices=True)
+                                           unique_indices=unique_indices)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
     check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
