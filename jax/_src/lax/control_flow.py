@@ -1766,21 +1766,25 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   del jaxpr_known_
   # We use `fwds_known` below when forming the output of scanning jaxpr_known.
 
-  # Run the known part of the scan.
+  # Run the known part of the scan (if it has any outputs or effects).
   known_inputs = (list(jaxpr_known_consts) +
                   [t.pval.get_known() for t in tracers[num_consts:]
                    if t.pval.is_known()])
-  linear_known = [False] * len(known_inputs)  # conservative!
-  out_known = scan_p.bind(
-      *known_inputs, reverse=reverse, length=length, jaxpr=jaxpr_known,
-      num_consts=len(jaxpr_known_consts), num_carry=num_carry - sum(carry_uk),
-      linear=tuple(linear_known), unroll=unroll)
+  if not jaxpr_known.out_avals and not jaxpr_known.effects:
+    out_known = []
+  else:
+    linear_known = [False] * len(known_inputs)  # conservative!
+    out_known = scan_p.bind(
+        *known_inputs, reverse=reverse, length=length, jaxpr=jaxpr_known,
+        num_consts=len(jaxpr_known_consts), num_carry=num_carry - sum(carry_uk),
+        linear=tuple(linear_known), unroll=unroll)
+    del linear_known
   # Complete the known output by filling in forwarded values using fwds_known.
   out_known_iter = iter(out_known)
-  out_known = [next(out_known_iter) if f is None else _maybe_put(known_inputs[f])
-               for f in fwds_known]
+  out_known = [next(out_known_iter) if f is None
+               else _maybe_put(known_inputs[f]) for f in fwds_known]
   assert next(out_known_iter, None) is None
-  del known_inputs, out_known_iter, linear_known
+  del known_inputs, out_known_iter
 
   # Split known outputs from residuals.
   out_known, extensive_res = split_list(out_known, [len(out_uk) - sum(out_uk)])
