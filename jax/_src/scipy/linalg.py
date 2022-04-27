@@ -28,6 +28,11 @@ from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg as np_linalg
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
+_no_chkfinite_doc = textwrap.dedent("""
+Does not support the Scipy argument ``check_finite=True``,
+because compiled JAX code cannot perform checks of array values at runtime.
+""")
+_no_overwrite_and_chkfinite_doc = _no_chkfinite_doc + "\nDoes not support the Scipy argument ``overwrite_*=True``."
 
 @partial(jit, static_argnames=('lower',))
 def _cholesky(a, lower):
@@ -35,12 +40,14 @@ def _cholesky(a, lower):
   l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
   return l if lower else jnp.conj(_T(l))
 
-@_wraps(scipy.linalg.cholesky)
+@_wraps(scipy.linalg.cholesky,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return _cholesky(a, lower)
 
-@_wraps(scipy.linalg.cho_factor)
+@_wraps(scipy.linalg.cho_factor,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
   return (cholesky(a, lower=lower), lower)
 
@@ -54,7 +61,8 @@ def _cho_solve(c, b, lower):
                                   transpose_a=lower, conjugate_a=lower)
   return b
 
-@_wraps(scipy.linalg.cho_solve, update_doc=False)
+@_wraps(scipy.linalg.cho_solve, update_doc=False,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   c, lower = c_and_lower
@@ -66,13 +74,15 @@ def _svd(a, *, full_matrices, compute_uv):
   a, = _promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
-@_wraps(scipy.linalg.svd)
+@_wraps(scipy.linalg.svd,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite', 'lapack_driver'))
 def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
         check_finite=True, lapack_driver='gesdd'):
   del overwrite_a, check_finite, lapack_driver
   return _svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
-@_wraps(scipy.linalg.det)
+@_wraps(scipy.linalg.det,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def det(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return np_linalg.det(a)
@@ -96,7 +106,8 @@ def _eigh(a, b, lower, eigvals_only, eigvals, type):
   else:
     return w, v
 
-@_wraps(scipy.linalg.eigh)
+@_wraps(scipy.linalg.eigh,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'overwrite_b', 'check_finite'))
 def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
          overwrite_b=False, turbo=True, eigvals=None, type=1,
          check_finite=True):
@@ -116,13 +127,15 @@ def schur(a, output='real'):
       "Expected 'output' to be either 'real' or 'complex', got output={}.".format(output))
   return _schur(a, output)
 
-@_wraps(scipy.linalg.inv)
+@_wraps(scipy.linalg.inv,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def inv(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return np_linalg.inv(a)
 
 
-@_wraps(scipy.linalg.lu_factor)
+@_wraps(scipy.linalg.lu_factor,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 @partial(jit, static_argnames=('overwrite_a', 'check_finite'))
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
@@ -131,7 +144,8 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
   return lu, pivots
 
 
-@_wraps(scipy.linalg.lu_solve)
+@_wraps(scipy.linalg.lu_solve,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
 @partial(jit, static_argnames=('trans', 'overwrite_a', 'check_finite'))
 def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
@@ -156,7 +170,8 @@ def _lu(a, permute_l):
   else:
     return p, l, u
 
-@_wraps(scipy.linalg.lu, update_doc=False)
+@_wraps(scipy.linalg.lu, update_doc=False,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 @partial(jit, static_argnames=('permute_l', 'overwrite_a', 'check_finite'))
 def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
@@ -179,7 +194,8 @@ def _qr(a, mode, pivoting):
     return (r,)
   return q, r
 
-@_wraps(scipy.linalg.qr)
+@_wraps(scipy.linalg.qr,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
        check_finite=True):
   del overwrite_a, lwork, check_finite
@@ -210,7 +226,8 @@ def _solve(a, b, sym_pos, lower):
     return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 
-@_wraps(scipy.linalg.solve)
+@_wraps(scipy.linalg.solve,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'overwrite_b', 'debug', 'check_finite'))
 def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
           debug=False, check_finite=True):
   del overwrite_a, overwrite_b, debug, check_finite
@@ -242,7 +259,8 @@ def _solve_triangular(a, b, trans, lower, unit_diagonal):
   else:
     return out
 
-@_wraps(scipy.linalg.solve_triangular)
+@_wraps(scipy.linalg.solve_triangular,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'debug', 'check_finite'))
 def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
                      overwrite_b=False, debug=None, check_finite=True):
   del overwrite_b, debug, check_finite
@@ -657,12 +675,7 @@ def sqrtm(A, blocksize=1):
       raise NotImplementedError("Blocked version is not implemented yet.")
   return _sqrtm(A)
 
-_no_asarray_chkfinite_doc = textwrap.dedent("""
-Does not currently support the Scipy argument ``jax.numpy.asarray_chkfinite``,
-because `jax.numpy.asarray_chkfinite` does not exist at the moment.
-""")
-
-@_wraps(scipy.linalg.rsf2csf, lax_description=_no_asarray_chkfinite_doc)
+@_wraps(scipy.linalg.rsf2csf, lax_description=_no_chkfinite_doc)
 @partial(jit, static_argnames=('check_finite',))
 def rsf2csf(T, Z, check_finite=True):
   T = jnp.asarray(T)
