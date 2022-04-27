@@ -1866,11 +1866,15 @@ class BCOOTest(jtu.JaxTestCase):
     x = jnp.array(rng(shape, dtype))
     xsp = sparse.BCOO.fromdense(x, n_batch=n_batch, n_dense=n_dense)
 
+    self.assertEqual(xsp[None].n_batch, xsp.n_batch + 1)
     self.assertArraysEqual(xsp[None].todense(), x[None])
+
     if len(shape) >= 1:
+      self.assertEqual(xsp[:, None].n_batch, xsp.n_batch if xsp.n_batch < 1 else xsp.n_batch + 1)
       self.assertArraysEqual(xsp[:, None].todense(), x[:, None])
       self.assertArraysEqual(xsp[:, None, None].todense(), x[:, None, None])
     if len(shape) >= 2:
+      self.assertEqual(xsp[:, :, None].n_batch, xsp.n_batch if xsp.n_batch < 2 else xsp.n_batch + 1)
       self.assertArraysEqual(xsp[:, :, None].todense(), x[:, :, None])
       self.assertArraysEqual(xsp[:, None, :, None].todense(), x[:, None, :, None])
 

@@ -1501,7 +1501,9 @@ def _bcoo_broadcast_in_dim(data, indices, *, spinfo, shape, broadcast_dimensions
   if max(sparse_dims, default=0) > min(dense_dims, default=len(shape)):
     raise ValueError("Cannot mix sparse and dense dimensions during broadcast_in_dim")
 
-  new_n_batch = props.n_batch and 1 + max(broadcast_dimensions[:props.n_batch])
+  # All new dimensions preceding a sparse or dense dimension are batch dimensions:
+  new_n_batch = min(broadcast_dimensions[props.n_batch:], default=len(shape))
+  # TODO(jakevdp): Should new trailing dimensions be dense by default?
   new_n_dense = props.n_dense and len(shape) - min(broadcast_dimensions[-props.n_dense:])
   new_n_sparse = len(shape) - new_n_batch - new_n_dense
 
