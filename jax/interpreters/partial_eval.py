@@ -891,9 +891,10 @@ def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
   assert ([v.aval for v in jaxpr_known.invars] ==
           [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if not uk])
   # check jaxpr_known has out type corresponding to known outs of jaxpr plus res
-  assert ([v.aval for v in jaxpr_known.outvars] ==
-          [a for a, uk in zip(jaxpr.out_avals, out_unknowns) if not uk] +
-          res_avals)
+  # TODO(mattjj): enable weak type checking here
+  assert ([v.aval.strip_weak_type() for v in jaxpr_known.outvars] ==
+          [a.strip_weak_type() for a, uk in zip(jaxpr.out_avals, out_unknowns)
+           if not uk] + [a.strip_weak_type() for a in res_avals])
   # check jaxpr_unknown has input type corresponding to unknown inputs plus res
   assert ([v.aval for v in jaxpr_unknown.invars] ==
           res_avals + [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if uk])
