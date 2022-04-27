@@ -4341,7 +4341,7 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count[0], 2)  # eval_jaxpr on fwd, backward_pass on bwd
+    self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
 
 
 class JaxprTest(jtu.JaxTestCase):
