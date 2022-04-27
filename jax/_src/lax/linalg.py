@@ -1173,7 +1173,7 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   dx, = tangents
   q, r = qr_p.bind(x, full_matrices=False)
   *_, m, n = x.shape
-  if full_matrices or m < n:
+  if m < n or (full_matrices and m != n):
     raise NotImplementedError(
       "Unimplemented case of QR decomposition derivative")
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
