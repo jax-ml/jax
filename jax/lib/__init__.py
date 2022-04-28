@@ -14,6 +14,7 @@
 
 # flake8: noqa: F401
 from jax._src.lib import (
+  version_str as __version__,
   xla_client as xla_client,
   xla_extension as xla_extension,
 )
