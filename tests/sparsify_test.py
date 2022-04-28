@@ -283,6 +283,36 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(result_sparse, result_dense)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_shapes={shapes}_func={func}_nbatch={n_batch}",
+       "shapes": shapes, "func": func, "n_batch": n_batch}
+      for shapes, func, n_batch in [
+          ([(4,), (4,)], "concatenate", 0),
+          ([(4,), (4,)], "stack", 0),
+          ([(4,), (4,)], "hstack", 0),
+          ([(4,), (4,)], "vstack", 0),
+          ([(4,), (4,)], "concatenate", 1),
+          ([(4,), (4,)], "stack", 1),
+          ([(4,), (4,)], "hstack", 1),
+          ([(4,), (4,)], "vstack", 1),
+          ([(2, 4), (2, 4)], "stack", 0),
+          ([(2, 4), (3, 4)], "vstack", 0),
+          ([(2, 4), (2, 5)], "hstack", 0),
+          ([(2, 4), (3, 4)], "vstack", 1),
+          ([(2, 4), (2, 5)], "hstack", 1),
+          ([(2, 4), (3, 4)], "vstack", 2),
+          ([(2, 4), (2, 5)], "hstack", 2),
+          ([(2, 4), (4,), (3, 4)], "vstack", 0),
+          ([(1, 4), (4,), (1, 4)], "vstack", 0),
+      ]))
+  def testSparseConcatenate(self, shapes, func, n_batch):
+    f = self.sparsify(getattr(jnp, func))
+    rng = jtu.rand_some_zero(self.rng())
+    arrs = [rng(shape, 'int32') for shape in shapes]
+    sparrs = [BCOO.fromdense(arr, n_batch=n_batch) for arr in arrs]
+    self.assertArraysEqual(f(arrs), f(sparrs).todense())
+
+
   def testSparseWhileLoop(self):
     def cond_fun(params):
       i, A = params

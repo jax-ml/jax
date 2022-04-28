@@ -586,6 +586,13 @@ def _broadcast_in_dim_sparse(spenv, *spvalues, shape, broadcast_dimensions):
 
 sparse_rules[lax.broadcast_in_dim_p] = _broadcast_in_dim_sparse
 
+def _concatenate_sparse(spenv, *spvalues, dimension):
+  operands = spvalues_to_arrays(spenv, spvalues)
+  result = sparse.bcoo_concatenate(operands, dimension=dimension)
+  return arrays_to_spvalues(spenv, (result,))
+
+sparse_rules[lax.concatenate_p] = _concatenate_sparse
+
 def _squeeze_sparse(spenv, *spvalues, dimensions):
   arr, = spvalues
   dimensions = tuple(canonicalize_axis(dim, arr.ndim) for dim in dimensions)

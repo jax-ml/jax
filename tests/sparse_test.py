@@ -1878,6 +1878,26 @@ class BCOOTest(jtu.JaxTestCase):
       self.assertArraysEqual(xsp[:, :, None].todense(), x[:, :, None])
       self.assertArraysEqual(xsp[:, None, :, None].todense(), x[:, None, :, None])
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_n_batch={}_n_dense={}_dimension={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, dimension),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense, "dimension": dimension}
+       for shape in [ (3,), (3, 5), (3, 5, 4)]
+       for dtype in all_dtypes
+       for n_batch in range(len(shape) + 1)
+       for n_dense in range(len(shape) + 1 - n_batch)
+       for dimension in range(len(shape) - n_dense)))  # Concatenation of dense dimensions not implemented.
+  def test_bcoo_concatenate(self, shape, dtype, n_batch, n_dense, dimension):
+    rng = rand_sparse(self.rng())
+    operands_dense = [rng(shape, dtype) for i in range(3)]
+    operands_sparse = [sparse.BCOO.fromdense(op, n_batch=n_batch, n_dense=n_dense)
+                       for op in operands_dense]
+
+    mat_dense = lax.concatenate(operands_dense, dimension=dimension)
+    mat_sparse = sparse.bcoo_concatenate(operands_sparse, dimension=dimension)
+
+    self.assertArraysEqual(mat_sparse.todense(), mat_dense)
+
   def test_bcoo_vmap_shape(self, shape=(2, 3, 4, 5), dtype=np.float32):
     # This test checks that BCOO shape metadata interacts correctly with vmap.
     rng = rand_sparse(self.rng())
