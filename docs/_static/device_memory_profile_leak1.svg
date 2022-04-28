@@ -20,7 +20,7 @@
 <text text-anchor="start" x="24.5" y="-810.2" font-family="Times,serif" font-size="16.00">Type: space</text>
 <text text-anchor="start" x="24.5" y="-792.2" font-family="Times,serif" font-size="16.00">Showing nodes accounting for 5806.95kB, 99.79% of 5819.22kB total</text>
 <text text-anchor="start" x="24.5" y="-774.2" font-family="Times,serif" font-size="16.00">Dropped 25 nodes (cum &lt;= 29.10kB)</text>
-<text text-anchor="start" x="24.5" y="-737.2" font-family="Times,serif" font-size="16.00">See https://git.io/JfYMW for how to read the graph</text>
+<text text-anchor="start" x="24.5" y="-737.2" font-family="Times,serif" font-size="16.00">See https://github.com/google/pprof/blob/master/doc/README.md#interpreting-the-callgraph for how to read the graph</text>
 </g>
 <!-- N1 -->
 <g id="node1" class="node">

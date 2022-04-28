@@ -13,7 +13,7 @@ This directory contains a number of examples of using the
 
 You can also find usage examples in other projects:
 
-  * [Vision Transformer models converted to TensorFlow](https://git.io/Jz8pj) and integrated with TensorFlow Hub.
+  * [Vision Transformer models converted to TensorFlow](https://github.com/sayakpaul/ViT-jax2tf) and integrated with TensorFlow Hub.
 
 # Generating TensorFlow SavedModel
 
