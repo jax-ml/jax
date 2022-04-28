@@ -119,8 +119,6 @@ py_library(
         "pocketfft.py",
         "version.py",
     ],
-    # TODO(phawkins): drop visibility of this target.
-    visibility = ["//visibility:public"],
     deps = [":pocketfft_flatbuffers_py"],
 )
 
