@@ -2995,7 +2995,7 @@ mlir.register_lowering(squeeze_p, _squeeze_lower)
 
 
 
-def _shape_as_value(shape: core.Shape):
+def shape_as_value(shape: core.Shape):
   """Converts a shape that may contain Poly values into a JAX value."""
   if len(shape) == 0:
     return full((0,), np.array(0, np.int64))
