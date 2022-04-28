@@ -26,7 +26,7 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//visibility:public"])
+package(default_visibility = ["//:__subpackages__"])
 
 cc_library(
     name = "kernel_pybind11_helpers",
@@ -119,6 +119,8 @@ py_library(
         "pocketfft.py",
         "version.py",
     ],
+    # TODO(phawkins): drop visibility of this target.
+    visibility = ["//visibility:public"],
     deps = [":pocketfft_flatbuffers_py"],
 )
 
@@ -224,6 +226,7 @@ pybind_extension(
 cc_library(
     name = "cpu_kernels",
     srcs = ["cpu_kernels.cc"],
+    visibility = ["//visibility:public"],
     deps = [
         ":lapack_kernels",
         ":lapack_kernels_using_lapack",
@@ -243,6 +246,8 @@ py_library(
         "cusolver.py",
         "cusparse.py",
     ],
+    # TODO(phawkins): reconsider whether we want this target to be visible.
+    visibility = ["//visibility:public"],
     deps = [
         ":_cublas",
         ":_cuda_linalg",
@@ -718,6 +723,7 @@ pybind_extension(
 cc_library(
     name = "gpu_kernels",
     srcs = ["gpu_kernels.cc"],
+    visibility = ["//visibility:public"],
     deps = [
         ":cublas_kernels",
         ":cuda_lu_pivot_kernels",
