@@ -1867,6 +1867,25 @@ class BCOO(JAXSparse):
     self._indices_sorted = indices_sorted
     super().__init__(args, shape=shape)
 
+  def __repr__(self):
+    name = self.__class__.__name__
+    try:
+      nse = self.nse
+      n_batch = self.n_batch
+      n_dense = self.n_dense
+      dtype = self.dtype
+      shape = list(self.shape)
+    except:
+      repr_ = f"{name}(<invalid>)"
+    else:
+      extra = f", nse={nse}"
+      if n_batch: extra += f", n_batch={n_batch}"
+      if n_dense: extra += f", n_dense={n_dense}"
+      repr_ = f"{name}({dtype}{shape}{extra})"
+    if isinstance(self.data, core.Tracer):
+      repr_ = f"{type(self.data).__name__}[{repr_}]"
+    return repr_
+
   @classmethod
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32, n_dense=0, n_batch=0):
     """Create a BCOO array from a (dense) :class:`DeviceArray`."""

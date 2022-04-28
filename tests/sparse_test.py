@@ -652,6 +652,25 @@ class cuSparseTest(jtu.JaxTestCase):
 
 
 class BCOOTest(jtu.JaxTestCase):
+
+  def test_repr(self):
+    x = sparse.BCOO.fromdense(jnp.arange(5, dtype='float32'))
+    self.assertEqual(repr(x), "BCOO(float32[5], nse=4)")
+
+    y = sparse.BCOO.fromdense(jnp.arange(6, dtype='float32').reshape(2, 3), n_batch=1)
+    self.assertEqual(repr(y), "BCOO(float32[2, 3], nse=3, n_batch=1)")
+
+    y = sparse.BCOO.fromdense(jnp.arange(6, dtype='float32').reshape(2, 3), n_batch=1, n_dense=1)
+    self.assertEqual(repr(y), "BCOO(float32[2, 3], nse=1, n_batch=1, n_dense=1)")
+
+    M_invalid = sparse.BCOO(([], []), shape=(100,))
+    self.assertEqual(repr(M_invalid), "BCOO(<invalid>)")
+
+    @jit
+    def f(x):
+      self.assertEqual(repr(x), "DynamicJaxprTracer[BCOO(float32[5], nse=4)]")
+    f(x)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
@@ -2007,12 +2026,6 @@ class SparseGradTest(jtu.JaxTestCase):
 
 
 class SparseObjectTest(jtu.JaxTestCase):
-  def test_repr(self):
-    M = sparse.BCOO.fromdense(jnp.arange(5, dtype='float32'))
-    self.assertEqual(repr(M), "BCOO(float32[5], nse=4)")
-
-    M_invalid = sparse.BCOO(([], []), shape=(100,))
-    self.assertEqual(repr(M_invalid), "BCOO(<invalid>)")
 
   @parameterized.named_parameters(
     {"testcase_name": "_{}{}".format(cls.__name__, shape), "cls": cls, "shape": shape}
