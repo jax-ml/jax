@@ -1926,6 +1926,14 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(x.size, 8 * 267736 * 1024)
     self.assertEqual(type(x.size), int)
 
+  def test_axis_env_length(self):
+    f = lambda x: jax.pmap(g)(jnp.array([x]))[0]
+    def g(x):
+      assert len(jax.core.thread_local_state.trace_state.axis_env) == 1
+      return x
+    jax.grad(f)(3.)  # doesn't fail
+
+
 class CppPmapTest(PythonPmapTest):
 
   @property
