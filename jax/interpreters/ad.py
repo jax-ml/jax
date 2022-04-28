@@ -610,24 +610,30 @@ primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 
 def remat_transpose(params, call_jaxpr, primals_in, cotangents_in,
                     cotangent_in_avals, reduce_axes):
-  call_jaxpr = _close_jaxpr(call_jaxpr)
   unknowns = map(is_undefined_primal, primals_in)
-  primal_jaxpr, tangent_jaxpr, _ = \
-    pe.partial_eval_jaxpr(call_jaxpr, unknowns=unknowns, instantiate=True)  # type: ignore
-  args, in_tree_def = tree_flatten((primals_in, cotangents_in))
+  primal_jaxpr, tangent_jaxpr, _, _ = \
+      pe.partial_eval_jaxpr_nounits(_close_jaxpr(call_jaxpr), unknowns=unknowns,
+                                    instantiate=True)  # type: ignore
+  args, in_tree = tree_flatten((primals_in, cotangents_in))
   transpose = lu.hashable_partial(lu.wrap_init(_remat_transpose), primal_jaxpr,
                                   tangent_jaxpr, reduce_axes)
-  flat_transpose, out_tree = flatten_fun_nokwargs(transpose, in_tree_def)
+  flat_transpose, out_tree = flatten_fun_nokwargs(transpose, in_tree)
   flat_cotangents_out = pe.remat_call_p.bind(flat_transpose, *args, **params)
   return tree_unflatten(out_tree(), flat_cotangents_out)
 primitive_transposes[pe.remat_call_p] = remat_transpose
 
 def _remat_transpose(primal_jaxpr, tangent_jaxpr, reduce_axes,
-                     primals_in, cotangents_in):
-  res = core.jaxpr_as_fun(primal_jaxpr)(*primals_in)[len(cotangents_in):]
-  cotangents_out = backward_pass(tangent_jaxpr.jaxpr, reduce_axes, False, (),
-                                 (*primals_in, *res), cotangents_in)
-  return cotangents_out[:len(primals_in)]
+                     primals_tangents_in, cotangents_in):
+  primals_in  = [x for x in primals_tangents_in if not is_undefined_primal(x)]
+  tangents_in = [x for x in primals_tangents_in if     is_undefined_primal(x)]
+  res = core.jaxpr_as_fun(primal_jaxpr)(*primals_in)
+  cotangents_out_ = backward_pass(tangent_jaxpr.jaxpr, reduce_axes, False, (),
+                                  (*res, *tangents_in), cotangents_in)
+  cotangents_out = iter(cotangents_out_[len(res):])
+  outs = [next(cotangents_out) if is_undefined_primal(x) else Zero.from_value(x)
+          for x in primals_tangents_in]
+  assert next(cotangents_out, None) is None
+  return outs
 
 @weakref_lru_cache
 def _close_jaxpr(jaxpr: core.Jaxpr) -> core.ClosedJaxpr:
