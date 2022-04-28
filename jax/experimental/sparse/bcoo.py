@@ -20,6 +20,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from jax import core
 from jax import lax
 from jax import tree_util
@@ -79,6 +80,25 @@ def _bcoo_nse(mat, n_batch=0, n_dense=0):
   mask = mask.sum(list(range(n_batch, mask.ndim)))
   return mask.max()
 
+def _bcoo_set_nse(mat, nse):
+  """Return a copy of `mat` with the specified nse.
+  Note that if nse < mat.nse, this will potentially discard data.
+  """
+  nse = operator.index(nse)
+  assert nse >= 0
+  if mat.nse == nse:
+    return mat
+  if nse <= mat.nse:
+    data = mat.data[(*(slice(None) for i in range(mat.n_batch)), slice(nse))]
+    indices = mat.indices[..., :nse, :]
+  else:
+    data = jnp.zeros_like(mat.data, shape=(*mat.data.shape[:mat.n_batch], nse, *mat.data.shape[mat.n_batch + 1:]))
+    data = data.at[(*(slice(None) for i in range(mat.n_batch)), slice(mat.nse))].set(mat.data)
+    indices = jnp.zeros_like(mat.indices, shape=(*mat.indices.shape[:-2], nse, mat.indices.shape[-1]))
+    indices = indices.at[..., :mat.nse, :].set(mat.indices)
+    indices = indices.at[..., mat.nse:, :].set(jnp.array(mat.shape[mat.n_batch:mat.n_batch + mat.n_sparse]))
+  return BCOO((data, indices), shape=mat.shape, indices_sorted=mat._indices_sorted)
+
 # TODO(jakevdp) this can be problematic when used with autodiff; see
 # https://github.com/google/jax/issues/10163. Should this be a primitive?
 # Alternatively, maybe roll this into bcoo_sum_duplicates as an optional argument.
@@ -102,6 +122,7 @@ def _unbatch_bcoo(data, indices, shape):
   data = jnp.broadcast_to(data, shape[:n_batch] + data.shape[n_batch:])
   indices = jnp.broadcast_to(indices, shape[:n_batch] + indices.shape[n_batch:])
   batch_indices = jnp.mgrid[tuple(slice(None, d) for d in indices.shape[:n_batch + 1])][:-1]
+  batch_indices = batch_indices.astype(indices.dtype)
   batch_indices = batch_indices.reshape(n_batch, -1).T
   data = data.reshape(np.prod(data.shape[:n_batch + 1]), *data.shape[n_batch + 1:])
   indices = indices.reshape(np.prod(indices.shape[:n_batch + 1]), *indices.shape[n_batch + 1:])
@@ -1510,7 +1531,6 @@ def _bcoo_broadcast_in_dim(data, indices, *, spinfo, shape, broadcast_dimensions
   if np.prod(spinfo.shape[props.n_batch: props.n_batch + props.n_sparse]) != np.prod(shape[new_n_batch:new_n_batch + new_n_sparse]):
     raise NotImplementedError("Adding sparse dimensions with lengths != 1")
   nse = props.nse
-
   # batch & dense dimensions
   new_data = lax.broadcast_in_dim(data,
       shape=(*shape[:new_n_batch], nse, *shape[new_n_batch + new_n_sparse:]),
@@ -1524,6 +1544,76 @@ def _bcoo_broadcast_in_dim(data, indices, *, spinfo, shape, broadcast_dimensions
                    .at[..., jnp.array(sparse_dims, int) - new_n_batch].set(new_indices))
 
   return new_data, new_indices
+
+def bcoo_concatenate(operands, *, dimension):
+  """Sparse implementation of :func:`jax.lax.concatenate`
+
+  Args:
+    operands : Sequence of BCOO arrays to concatenate. The arrays must have equal
+      shapes, except in the `dimension` axis. Additionally, the arrays must have
+      have equivalent batch, sparse, and dense dimensions.
+    dimension : Positive integer specifying the dimension along which to concatenate
+      the arrays. The dimension must be among batch or sparse dimensions of the input;
+      concatenation along dense dimensions is not supported.
+
+  Returns:
+    A BCOO array containing the concatenation of the inputs.
+  """
+  dimension = operator.index(dimension)
+  if not all(isinstance(op, BCOO) for op in operands):
+    raise ValueError("bcoo_concatenate: expected operands to be a sequence of BCOO arrays. "
+                     f"Got {operands}")
+  # Validate inputs using lax.concatenate abstract evaluation.
+  out_aval = jax.eval_shape(
+    functools.partial(lax.concatenate, dimension=dimension),
+    [core.ShapedArray(op.shape, op.dtype) for op in operands])
+  if len(set(op.n_dense for op in operands)) > 1:
+    raise ValueError("bcoo_concatenate requires inputs to have matching nse dimensions.")
+
+  n_batches = set(op.n_batch for op in operands)
+  # Correct for the common case, where op[None, :] adds a single batch dimension and we
+  # need to align it in order to match the others & concatenate.
+  if len(n_batches) != 1 and max(n_batches) == 1:
+    if all(op.shape[0] == 1 for op in operands if op.n_batch == 0):
+      operands = [bcoo_add_batch_dim(op) if op.n_batch == 0 else op for op in operands]
+    elif all(op.shape[0] == 1 for op in operands if op.n_batch == 1):
+      operands = [op._unbatch() if op.n_batch == 1 else op for op in operands]
+    n_batches = set(op.n_batch for op in operands)
+
+  if len(n_batches) != 1:
+    raise ValueError("bcoo_concatenate requires inputs to have matching batch dimensions.")
+
+  n_batch, n_sparse = operands[0].n_batch, operands[0].n_sparse
+
+  index_batches = [op.indices.shape[:n_batch] for op in operands]
+  data_batches = [op.data.shape[:n_batch] for op in operands]
+  if dimension < n_batch:
+    index_batches = [s[:dimension] + s[dimension + 1:] for s in index_batches]
+    data_batches = [s[:dimension] + s[dimension + 1:] for s in data_batches]
+  if not (len(set(index_batches)) == len(set(data_batches)) == 1):
+    raise NotImplementedError("concatenation of arrays with broadcasted batch indices")
+
+  if dimension < n_batch:  # Concatenation along batch axes
+    # Ensure nse of operands match.
+    nses = set(op.nse for op in operands)
+    if len(nses) != 1:
+      nse = max(nses)
+      operands = [_bcoo_set_nse(op, nse) for op in operands]
+    new_indices = lax.concatenate([op.indices for op in operands], dimension=dimension)
+    new_data = lax.concatenate([op.data for op in operands], dimension=dimension)
+  elif dimension < n_batch + n_sparse:  # Concatenation along sparse axes
+    offsets = np.cumsum([0] + [op.shape[dimension] for op in operands[:-1]])
+    new_data = lax.concatenate([op.data for op in operands], dimension=n_batch)
+    new_indices = lax.concatenate([op.indices.at[..., dimension - n_batch].add(offset)
+                                   for op, offset in safe_zip(operands, offsets)],
+                                  dimension=n_batch)
+  else:  # Concatenation along dense axes
+    # TODO(jakevdp) should we implement this? In general it results in a wasteful
+    # representation because we cannot assume that the indices match.
+    raise NotImplementedError("Concatenation along dense dimensions.")
+
+  return BCOO((new_data, new_indices), shape=out_aval.shape)
+
 
 def _tuple_replace(tup, ind, val):
   return tuple(val if i == ind else t for i, t in enumerate(tup))

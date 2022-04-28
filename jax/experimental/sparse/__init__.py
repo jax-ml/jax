@@ -189,6 +189,7 @@ from jax.experimental.sparse.ad import (
 from jax.experimental.sparse.bcoo import (
     bcoo_add_batch_dim as bcoo_add_batch_dim,
     bcoo_broadcast_in_dim as bcoo_broadcast_in_dim,
+    bcoo_concatenate as bcoo_concatenate,
     bcoo_dot_general as bcoo_dot_general,
     bcoo_dot_general_p as bcoo_dot_general_p,
     bcoo_dot_general_sampled as bcoo_dot_general_sampled,
