@@ -24,7 +24,7 @@ import inspect
 import itertools
 import operator
 import os
-from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar, List
 
 import numpy as np
 
@@ -1980,6 +1980,32 @@ def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
   padded_jaxpr = core.ClosedJaxpr(*pe.pad_jaxpr(jaxpr.jaxpr, jaxpr.consts))
   return scan_p.bind(*args, jaxpr=padded_jaxpr, **params)
 
+def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
+                   ) -> Tuple[List[bool], core.JaxprEqn]:
+  num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
+  used_carry_out, used_extensive_out = split_list(used_outputs, [num_carry])
+  for i in range(1 + num_carry):
+    jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'].jaxpr,
+                                      used_carry_out + used_extensive_out)
+    used_consts, used_carry_in, used_extensive_in = \
+        split_list(used_inputs, [num_consts, num_carry])
+    if used_carry_in == used_carry_out:
+      break
+    else:
+      used_carry_out = _map(operator.or_, used_carry_out, used_carry_in)
+  else:
+    assert False, "Fixpoint not reached"
+
+  new_linear = [l for l, u in zip(eqn.params['linear'], used_inputs) if u]
+  new_params = dict(eqn.params, num_consts=sum(used_consts),
+                    num_carry=sum(used_carry_in), linear=tuple(new_linear),
+                    jaxpr=core.ClosedJaxpr(jaxpr, eqn.params['jaxpr'].consts))
+  new_eqn = pe.new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs) if used],
+                             [v for v, used in zip(eqn.outvars, used_outputs) if used],
+                             eqn.primitive, new_params, eqn.effects,
+                             eqn.source_info)
+  return used_inputs, new_eqn
+
 def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
                     jaxpr, linear, unroll):
   tc = partial(_typecheck_param, 'scan')
@@ -2049,7 +2075,7 @@ core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = \
     partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'scan')
 pe.padding_rules[scan_p] = _scan_padding_rule
-
+pe.dce_rules[scan_p] = _scan_dce_rule
 
 
 @api_boundary
