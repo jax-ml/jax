@@ -48,9 +48,10 @@ from jax.interpreters import batching
 from jax.interpreters import ad
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.util import (safe_map, safe_zip, HashableFunction,
-                           as_hashable_function, unzip2, distributed_debug_log,
-                           tuple_insert, moveaxis, split_list, wrap_name)
+from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2,
+                           as_hashable_function, distributed_debug_log,
+                           tuple_insert, moveaxis, split_list, wrap_name,
+                           merge_lists, partition_list)
 from jax import lax
 
 source_info_util.register_exclusion(__file__)
@@ -1126,121 +1127,91 @@ def restore_units(is_unit, vals):
 
 
 def _jaxpr_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params):
-  from jax.interpreters.partial_eval import (
-      PartialVal, JaxprTracer, _drop_vars, _dce_open_jaxpr,
-      convert_constvars_jaxpr, new_eqn_recipe)
   assert primitive is xmap_p
+  assert params['spmd_out_axes_thunk'] is params['spmd_in_axes'] is None
   in_axes = params['in_axes']
   donated_invars = params['donated_invars']
   global_axis_sizes = params['global_axis_sizes']
+  out_axes_thunk = params['out_axes_thunk']
 
-  in_pvals = [t.pval for t in tracers]
-  in_pvals = [pval if pval.is_known()
-              else PartialVal.unknown(_delete_aval_axes(pval[0], axes, global_axis_sizes))
-              for pval, axes in zip(in_pvals, in_axes)]
+  # Adjust input tracers' pvals for mapped axes, and unpack.
+  in_pvals = [t.pval if t.pval.is_known() else
+              pe.PartialVal.unknown(
+                  _delete_aval_axes(t.pval.get_aval(), axes, global_axis_sizes))
+              for t, axes in zip(tracers, in_axes)]
+  in_knowns, in_avals, in_consts = pe.partition_pvals(in_pvals)
 
-  const_axes_s = lu.Store()
-  def app(f, *args):
-    args_no_units, in_units = filter_units(args)
-    f, out_units = hide_units(f, tuple(in_units))
-    f, out_named_shapes = out_local_named_shapes(f, frozenset(global_axis_sizes))
-    out_axes_thunk = params['out_axes_thunk']
-    @as_hashable_function(closure=out_axes_thunk)
-    def new_out_axes_thunk():
-      out_axes = out_axes_thunk()
-      axes_units, const_units = split_list(out_units(), [len(out_axes)])
-      assert not any(const_units)
-      num_consts = len(const_units)
-      out_axes_no_units = [a for a, u in zip(out_axes, axes_units) if not u]
-      const_axes: Sequence[AxisNamePos]
-      if num_consts == 0:
-        const_axes = ()
-      else:
-        const_axes = [
-            AxisNamePos(zip(sort_named_shape, range(len(sort_named_shape))),
-                        user_repr=f'<internal: {sort_named_shape}>')
-            for named_shape in out_named_shapes()[-num_consts:]
-            # We sort here to make the iteration order deterministic
-            for sort_named_shape in [sorted(named_shape, key=str)]
-        ]
-      if not const_axes_s:  # NOTE: This can be called multiple times
-        const_axes_s.store(const_axes)
-      assert const_axes_s.val == const_axes
-      return (*out_axes_no_units, *const_axes)
-    pe_params = dict(
-        params,
-        in_axes=tuple(a for a, u in zip(in_axes, in_units) if not u),
-        donated_invars=tuple(a for a, u in zip(donated_invars, in_units) if not u),
-        out_axes_thunk=new_out_axes_thunk)
-    outs_no_units = primitive.bind(f, *args_no_units, **pe_params)
-    new_out_axes_thunk()  # Make sure it is called at least once to compute const_axes
-    return restore_units(out_units(), outs_no_units)
+  # Wrap f to perform partial evaluation, and plumb out aux data.
+  f = pe.trace_to_subjaxpr_nounits(f, self.main, False)
+  f, aux = pe.partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
+  # Also grab the local named shapes of the output (known and res).
+  f, out_named_shapes = out_local_named_shapes(f, frozenset(global_axis_sizes))
 
-  jaxpr, out_pvals, consts, env_tracers = self.partial_eval(
-      f, in_pvals, app, instantiate=False)
+  # Adjust params for knowns (donated_invars, in_axes, out_axes_thunk).
+  out_axes = None  # cache this to avoid calling out_axes_thunk() more than once
 
-  out_axes = params['out_axes_thunk']()
-  const_axes = const_axes_s.val
+  @as_hashable_function(closure=out_axes_thunk)
+  def new_out_axes_thunk():
+    nonlocal out_axes
+    out_axes = out_axes_thunk()
+    out_knowns, _, _, _ = aux()
+    _, out_axes_known = partition_list(out_knowns, out_axes)
+    return (*out_axes_known, *res_axes())
+  def res_axes():
+    _, _, jaxpr_unknown, _ = aux()
+    num_res = len(jaxpr_unknown.constvars)
+    res_named_shapes = out_named_shapes()[-num_res:] if num_res else []
+    sorted_named_shapes = [sorted(ns, key=str) for ns in res_named_shapes]
+    return [AxisNamePos(zip(named_shape, range(len(named_shape))),
+                        user_repr=f'<internal: {named_shape}>')
+            for named_shape in sorted_named_shapes]
+  known_params = dict(
+      params, in_axes=tuple(a for a, k in zip(in_axes, in_knowns) if k),
+      donated_invars=tuple(d for d, k in zip(donated_invars, in_knowns) if k),
+      out_axes_thunk=new_out_axes_thunk)
+
+  # Run the known part.
+  out = primitive.bind(f, *in_consts, **known_params)
+  out_knowns, out_avals, jaxpr_unknown, env = aux()
+  known_outvals, res = split_list(out, [len(out)-len(jaxpr_unknown.constvars)])
+  with core.extend_axis_env_nd(global_axis_sizes.items()):
+    jaxpr_unknown = pe.convert_constvars_jaxpr(jaxpr_unknown)
+
+  # Set up new params.
+  if out_axes is None:
+    out_axes = out_axes_thunk()  # new_out_axes_thunk may have set during bind
+  out_axes_unknown = [a for a, k in zip(out_axes, out_knowns) if not k]
+  unknown_params = dict(
+      params, call_jaxpr=jaxpr_unknown, out_axes=tuple(out_axes_unknown),
+      spmd_out_axes=None,
+      donated_invars=(*(False for _ in res),
+                      *(d for d, k in zip(donated_invars, in_knowns) if not k)),
+      in_axes=(*res_axes(), *(None for _ in env),
+               *(a for a, k in zip(in_axes, in_knowns) if not k)))
+  del unknown_params['out_axes_thunk']
+  del unknown_params['spmd_out_axes_thunk']
+  # Create input tracers for unknown part.
+  res_tracers = map(self.new_instantiated_const, res)
+  env_tracers = map(self.full_raise, env)
+  unknown_arg_tracers = [t for t in tracers if not t.pval.is_known()]
+  # Create output tracers for unknown part, adjusting avals.
   axis_resource_count = _get_axis_resource_count(
       params['axis_resources'], params['resource_env'],
       params['in_positional_semantics'])
   local_axis_sizes = {
-      axis: axis_resource_count[axis].to_local(params['out_positional_semantics'], global_size)
-      for axis, global_size in global_axis_sizes.items()
-  }
-  out_pvals = [pval if pval.is_known() else
-               PartialVal.unknown(_insert_aval_axes(pval[0], axes, local_axis_sizes))
-               for pval, axes in zip(out_pvals, out_axes)]
-
-  with core.extend_axis_env_nd(global_axis_sizes.items()):
-    # Skip known invars and outvars, and lift constants as regular invars
-    in_knowns = tuple(t.pval.is_known() for t in it.chain(env_tracers, tracers))
-    out_unknowns = tuple(not pval.is_known() for pval in out_pvals)
-    jaxpr = _drop_vars(jaxpr, in_knowns, (False,) * len(jaxpr.outvars))
-    jaxpr = _dce_open_jaxpr(jaxpr, out_unknowns, drop_outputs=True)
-    jaxpr = convert_constvars_jaxpr(jaxpr)
-
-  # Known tracers get propagated as if they were constants
-  known_tracers_out = [self.new_const(pval.get_known()) for pval in out_pvals
-                       if pval.is_known()]
-
-  # I'm not 100% if that's correct, but it is an assumption that
-  # JaxprTrace.process_call already makes.
-  if any(t.pval.is_known() for t in env_tracers):
-    raise AssertionError("Please open a bug report!")
-  # Unknown tracers need to have the jaxpr set up as their recipe
-  unknown_tracers_in = (*env_tracers, *(t for t in tracers if not t.pval.is_known()))
-  unknown_tracers_out = [JaxprTracer(self, pval, None) for pval in out_pvals
-                         if not pval.is_known()]
-  const_tracers = map(self.new_instantiated_const, consts)
-
-  # Set up new params
-  new_in_axes = (*const_axes,
-                 *(None for _ in env_tracers),
-                 *(axis for axis, t in zip(in_axes, tracers)
-                   if not t.pval.is_known()))
-  new_out_axes = tuple(axis for axis, pval in zip(out_axes, out_pvals)
-                        if not pval.is_known())
-
-  assert params['spmd_in_axes'] is None and params['spmd_out_axes_thunk'] is None
-  new_params = dict(
-      params,
-      call_jaxpr=jaxpr,
-      donated_invars=(*(False for _ in const_tracers),
-                      *(d for d, t in zip(donated_invars, tracers) if not t.pval.is_known())),
-      in_axes=new_in_axes,
-      out_axes=new_out_axes,
-      spmd_out_axes=None)
-  del new_params['out_axes_thunk']
-  del new_params['spmd_out_axes_thunk']
-
-  eqn = new_eqn_recipe((*const_tracers, *unknown_tracers_in),
-                       unknown_tracers_out,
-                       primitive, new_params, jaxpr.effects, source_info_util.current())
+      ax: axis_resource_count[ax].to_local(
+          params['out_positional_semantics'], global_size)
+      for ax, global_size in global_axis_sizes.items()}
+  out_pvals = [pe.PartialVal.unknown(_insert_aval_axes(a, ax, local_axis_sizes))
+               for a, ax in zip(out_avals, out_axes_unknown)]
+  unknown_tracers_out = [pe.JaxprTracer(self, pval, None) for pval in out_pvals]
+  # Build eqn to be staged out and attach it to unknown output tracers.
+  eqn = pe.new_eqn_recipe((*res_tracers, *env_tracers, *unknown_arg_tracers),
+                          unknown_tracers_out, primitive, unknown_params,
+                          jaxpr_unknown.effects, source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
-  return pe._zip_knowns(known_tracers_out, unknown_tracers_out, out_unknowns)
+  return merge_lists(out_knowns, unknown_tracers_out, known_outvals)
 pe.JaxprTrace.process_xmap = _jaxpr_trace_process_xmap
-
 
 def _batch_trace_update_spmd_axes(
     spmd_in_axes, spmd_out_axes_thunk,

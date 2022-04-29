@@ -376,19 +376,6 @@ class JaxprTrace(Trace):
   def _current_truncated_name_stack(self):
     return source_info_util.current_name_stack()[len(self.name_stack):]
 
-  def partial_eval(self, f: lu.WrappedFun, pvals: Sequence[PartialVal],
-                   app: Callable[[lu.WrappedFun, Tuple[core.Value, ...]], Tuple[core.Value]],
-                   instantiate: bool):
-    """Partially evaluate f on a sequence of PartialVals."""
-    in_avals, in_consts = unzip2(pvals)
-    f = trace_to_subjaxpr(f, self.main, instantiate)
-    f, aux = partial_eval_wrapper(f, tuple(in_avals))
-    out_flat, (out_avals, jaxpr, env) = app(f, *in_consts), aux()
-    out_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-    out_pvs = map(PartialVal, zip(out_avals, out_consts))
-    env_tracers = map(self.full_raise, env)
-    return jaxpr, out_pvs, consts, env_tracers
-
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
     tracers = map(self.instantiate_const_abstracted, tracers)
     in_avals, in_consts = unzip2(t.pval for t in tracers)  # in_consts are units
@@ -2208,31 +2195,3 @@ def _partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   in_avals_2 = [*in_avals_2, *res_avals]
 
   return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
-
-@weakref_lru_cache
-def _drop_vars(jaxpr: Jaxpr, drop_ins: Tuple[bool, ...], drop_outs: Tuple[bool, ...]):
-  return Jaxpr(jaxpr.constvars,
-               [v for v, d in zip(jaxpr.invars, drop_ins) if not d],
-               [v for v, d in zip(jaxpr.outvars, drop_outs) if not d],
-               jaxpr.eqns, jaxpr.effects)
-
-@weakref_lru_cache
-def _dce_open_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False) -> Jaxpr:
-  # This dead-code elimination is pretty rudimentary, and in particular doesn't
-  # nontrivially DCE through scan, call, or other higher-order primitives.
-  # TODO(mattjj): better DCE (i.e. use above dce_jaxpr)
-  if drop_outputs:
-    new_outvars = [var for var, output in zip(jaxpr.outvars, outputs) if output]
-  else:
-    new_outvars = [var if output else core.unitvar
-                   for var, output in zip(jaxpr.outvars, outputs)]
-
-  needed_vars = {v for v in new_outvars if type(v) is not Literal}
-  new_eqns = []
-  for eqn in jaxpr.eqns[::-1]:
-    if set(eqn.outvars) & needed_vars:
-      new_eqns.append(eqn)
-      needed_vars.update(v for v in eqn.invars if type(v) is not Literal)
-  new_eqns = new_eqns[::-1]
-  return Jaxpr(jaxpr.constvars, jaxpr.invars, new_outvars, new_eqns,
-               jaxpr.effects)
