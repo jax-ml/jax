@@ -1150,18 +1150,22 @@ def qr_impl(operand, full_matrices):
   return q, r
 
 def _qr_translation_rule(ctx, avals_in, avals_out, operand, *, full_matrices):
+  operand_aval, = avals_in
+  shape = operand_aval.shape
+  m, n = shape[-2:]
+  if m == 0 or n == 0:
+    return [_eye_like_xla(ctx.builder, avals_out[0]),
+            _zeros_like_xla(ctx.builder, avals_out[1])]
   return xops.QR(operand, full_matrices)
 
 def qr_abstract_eval(operand, full_matrices):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to QR decomposition must have ndims >= 2")
-    batch_dims = operand.shape[:-2]
-    m = operand.shape[-2]
-    n = operand.shape[-1]
+    *batch_dims, m, n = operand.shape
     k = m if full_matrices else min(m, n)
-    q = operand.update(shape=batch_dims + (m, k))
-    r = operand.update(shape=batch_dims + (k, n))
+    q = operand.update(shape=(*batch_dims, m, k))
+    r = operand.update(shape=(*batch_dims, k, n))
   else:
     q = operand
     r = operand
@@ -1193,6 +1197,13 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x = batching.moveaxis(x, bd, 0)
   return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
 
+def _empty_qr(a, *, full_matrices):
+  *batch_shape, m, n = a.shape
+  k = m if full_matrices else min(m, n)
+  q = jnp.broadcast_to(jnp.eye(m, k, dtype=a.dtype), (*batch_shape, m, k))
+  r = jnp.empty((*batch_shape, k, n), dtype=a.dtype)
+  return [q, r]
+
 def _qr_cpu_gpu_lowering(geqrf_impl, orgqr_impl, ctx, operand, *,
                          full_matrices):
   operand_aval, = ctx.avals_in
@@ -1200,6 +1211,11 @@ def _qr_cpu_gpu_lowering(geqrf_impl, orgqr_impl, ctx, operand, *,
   dims = operand_aval.shape
   m, n = dims[-2:]
   batch_dims = dims[:-2]
+
+  if m == 0 or n == 0:
+    return mlir.lower_fun(_empty_qr, multiple_results=True)(
+        ctx, operand, full_matrices=full_matrices)
+
   r, tau, info_geqrf = geqrf_impl(operand_aval.dtype, operand)
   if m < n:
     q = mhlo.SliceOp(r,
