@@ -353,11 +353,15 @@ def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr, **params):
     in_pvals = [pe.PartialVal.unknown(x.aval) if ad.is_undefined_primal(x) else
                 pe.PartialVal.known(x) for x in in_primals]
     primal_fun = lu.wrap_init(partial(core.eval_jaxpr, jaxpr, ()))
-    tangent_jaxpr, _, consts = pe.trace_to_jaxpr(primal_fun, in_pvals, False)
-    dummy_args = [ad.UndefinedPrimal(v.aval) for v in tangent_jaxpr.invars]
-    in_cts_ = ad.backward_pass(tangent_jaxpr, reduce_axes, False, consts, dummy_args,
-                               out_cts)
-    in_cts, cell.treedef = tree_flatten(in_cts_)
+    t_jaxpr, _, consts = pe.trace_to_jaxpr_nounits(primal_fun, in_pvals, False)
+    dummy_args = [ad.UndefinedPrimal(v.aval) for v in t_jaxpr.invars]
+    in_cts = ad.backward_pass(t_jaxpr, reduce_axes, False, consts, dummy_args,
+                              out_cts)
+    in_cts_ = iter(in_cts)
+    in_cts = [next(in_cts_) if ad.is_undefined_primal(x)
+              else ad_util.Zero(x.aval) for x in in_primals]
+    assert next(in_cts_, None) is None
+    in_cts, cell.treedef = tree_flatten(in_cts)
     return in_cts
 
   args, treedef = tree_flatten((in_primals, out_cts))
