@@ -143,6 +143,7 @@ from jax._src.random import (
   maxwell as maxwell,
   multivariate_normal as multivariate_normal,
   normal as normal,
+  orthogonal as orthogonal,
   pareto as pareto,
   permutation as permutation,
   poisson as poisson,

@@ -1033,6 +1033,28 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.logistic().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_n={}_shape={}"\
+       .format(n, jtu.format_shape_dtype_string(shape, dtype)),
+       "n": n,
+       "shape": shape,
+       "dtype": dtype}
+      for n in range(1, 5)
+      for shape in [(), (5,), (10, 5)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def testOrthogonal(self, n, shape, dtype):
+    key = self.seed_prng(0)
+    q = random.orthogonal(key, n, shape, dtype)
+    self.assertEqual(q.shape, (*shape, n, n))
+    self.assertEqual(q.dtype, dtype)
+    tol = 1e-2 if jtu.device_under_test() == "tpu" else None
+    with jax.numpy_rank_promotion('allow'):
+      self.assertAllClose(
+        jnp.einsum('...ij,...jk->...ik', q, jnp.conj(q).swapaxes(-2, -1)),
+        jnp.broadcast_to(jnp.eye(n, dtype=dtype), (*shape, n, n)),
+        atol=tol, rtol=tol,
+      )
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_b={}_dtype={}".format(b, np.dtype(dtype).name),
        "b": b, "dtype": dtype}
       for b in [0.1, 1., 10.]
