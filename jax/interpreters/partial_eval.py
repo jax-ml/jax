@@ -376,42 +376,45 @@ class JaxprTrace(Trace):
   def _current_truncated_name_stack(self):
     return source_info_util.current_name_stack()[len(self.name_stack):]
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+  def process_custom_jvp_call(self, prim, f, jvp, tracers):
+    # TODO(mattjj): after old remat is deleted, make this method trivial:
+    # https://github.com/google/jax/pull/9137/files#diff-440d9df723b313bb263bc7704103cad1dcc886ff6553aa78c30188b0b323b686R319-R323
+    # Because we instantiate all tracers, in_knowns is all False.
     tracers = map(self.instantiate_const_abstracted, tracers)
-    in_avals, in_consts = unzip2(t.pval for t in tracers)  # in_consts are units
-    fun = trace_to_subjaxpr(fun, self.main, True)
-    fun, aux = partial_eval_wrapper(fun, tuple(in_avals))
-    out_flat = prim.bind(fun, jvp, *in_consts)
-    out_avals, jaxpr, env = aux()
-    out_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-    out_pvals = map(PartialVal, zip(out_avals, out_consts))  # out_consts are units
-    env_tracers = map(self.full_raise, env)
-    out_tracers = [JaxprTracer(self, pval, None) for pval in out_pvals]
-    const_tracers = map(self.new_instantiated_const, consts)
-    in_tracers = (*const_tracers, *env_tracers, *tracers)
+    in_knowns, in_avals, () = partition_pvals([t.pval for t in tracers])
+    f = trace_to_subjaxpr_nounits(f, self.main, True)
+    f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
+    out_flat = prim.bind(f, jvp)
+    out_knowns, out_avals, jaxpr, env = aux()
+    out_consts, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
+    res_tracers = map(self.new_instantiated_const, res)
+    env_tracers =  map(self.full_raise, env)
+    out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
+                   for a in out_avals]
     closed_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(jaxpr), ())
 
     @_memoize
     def jvp_jaxpr_thunk():
-      jvp_ = trace_to_subjaxpr(jvp, self.main, True)
-      jvp_, aux = partial_eval_wrapper(jvp_, tuple(in_avals) * 2)
+      jvp_ = trace_to_subjaxpr_nounits(jvp, self.main, True)
+      jvp_, aux = partial_eval_wrapper_nounits(
+          jvp_, tuple(in_knowns) * 2, tuple(in_avals) * 2)
       with core.new_sublevel():
-        out_flat = jvp_.call_wrapped(*(in_consts * 2))  # in_consts are units
-      out_avals, jaxpr, env = aux()
-      _, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
+        out_flat = jvp_.call_wrapped()
+      out_knowns, out_avals, jaxpr, env = aux()
+      _, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
       converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
-      return converted_jaxpr, (*consts, *env)
+      return converted_jaxpr, (*res, *env)
 
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
-    eqn = new_eqn_recipe(in_tracers, out_tracers, prim.initial_style,
+    eqn = new_eqn_recipe((*res_tracers, *env_tracers, *tracers),
+                         out_tracers, prim.initial_style,
                          dict(fun_jaxpr=closed_jaxpr,
                               jvp_jaxpr_thunk=jvp_jaxpr_thunk,
-                              num_consts=len(consts) + len(env)),
-                         jaxpr.effects,
-                         source)
+                              num_consts=len(res)+len(env)),
+                         jaxpr.effects, source)
     for t in out_tracers: t.recipe = eqn
-    return out_tracers
+    return merge_lists(out_knowns, out_tracers, out_consts)
 
   def post_process_custom_jvp_call(self, out_tracers, _):
     # This path should only be reachable if we expose a partial eval API
@@ -437,43 +440,45 @@ class JaxprTrace(Trace):
       for t in out_tracers: t.recipe = eqn
       return out_tracers
 
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
+  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees):
+    # TODO(mattjj): after old remat is deleted, make this method trivial.
+    # Because we instantiate all tracers, in_knowns is all False.
     tracers = map(self.instantiate_const_abstracted, tracers)
-    in_avals, in_consts = unzip2(t.pval for t in tracers)  # in_consts are units
-    fun = trace_to_subjaxpr(fun, self.main, True)
-    fun, aux = partial_eval_wrapper(fun, tuple(in_avals))
-    out_flat = prim.bind(fun, fwd, bwd, *in_consts, out_trees=out_trees)
-    out_avals, jaxpr, env = aux()
-    out_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-    out_pvals = map(PartialVal, zip(out_avals, out_consts))  # out_consts are units
+    in_knowns, in_avals, () = partition_pvals([t.pval for t in tracers])
+    f = trace_to_subjaxpr_nounits(f, self.main, True)
+    f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
+    out_flat = prim.bind(f, fwd, bwd, out_trees=out_trees)
+    out_knowns, out_avals, jaxpr, env = aux()
+    out_consts, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
+    res_tracers = map(self.new_instantiated_const, res)
     env_tracers = map(self.full_raise, env)
-    out_tracers = [JaxprTracer(self, pval, None) for pval in out_pvals]
-    const_tracers = map(self.new_instantiated_const, consts)
-    in_tracers = (*const_tracers, *env_tracers, *tracers)
+    out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
+                   for a in out_avals]
     closed_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(jaxpr), ())
 
     @_memoize
     def fwd_jaxpr_thunk():
-      fwd_ = trace_to_subjaxpr(fwd, self.main, True)
-      fwd_, aux = partial_eval_wrapper(fwd_, tuple(in_avals))
+      fwd_ = trace_to_subjaxpr_nounits(fwd, self.main, True)
+      fwd_, aux = partial_eval_wrapper_nounits(
+          fwd_, tuple(in_knowns), tuple(in_avals))
       with core.new_sublevel():
-        out_flat = fwd_.call_wrapped(*in_consts)  # in_consts are units
-      out_avals, jaxpr, env = aux()
-      _, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
+        out_flat = fwd_.call_wrapped()
+      out_knowns, out_avals, jaxpr, env = aux()
+      _, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
       converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
-      return converted_jaxpr, (*consts, *env)
+      return converted_jaxpr, (*res, *env)
 
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
-    eqn = new_eqn_recipe(in_tracers, out_tracers, prim.initial_style,
+    eqn = new_eqn_recipe((*res_tracers, *env_tracers, *tracers),
+                         out_tracers, prim.initial_style,
                          dict(fun_jaxpr=closed_jaxpr,
                               fwd_jaxpr_thunk=fwd_jaxpr_thunk,
-                              num_consts=len(consts) + len(env),
+                              num_consts=len(res) + len(env),
                               bwd=bwd, out_trees=out_trees),
-                         jaxpr.effects,
-                         source)
+                         jaxpr.effects, source)
     for t in out_tracers: t.recipe = eqn
-    return out_tracers
+    return merge_lists(out_knowns, out_tracers, out_consts)
 
   def post_process_custom_vjp_call(self, out_tracers, _):
     # This path should only be reachable if we expose a partial eval API
@@ -2138,11 +2143,3 @@ def trace_to_subjaxpr(main: core.MainTrace, instantiate: Union[bool, Sequence[bo
   out_pvals = [t.pval for t in out_tracers]
   del trace, in_tracers, out_tracers
   yield jaxpr, (out_pvals, consts, env)
-
-@lu.transformation_with_aux
-def partial_eval_wrapper(pvs: Sequence[Optional[AbstractValue]], *consts):
-  py_args = map(PartialVal, zip(pvs, consts))
-  jaxpr, (out_pvals, consts, env) = yield (py_args,), {}
-  out_pvs, out_consts = unzip2(out_pvals)
-  out = tuple(out_consts) + tuple(consts)
-  yield out, (out_pvs, jaxpr, env)
