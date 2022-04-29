@@ -2079,7 +2079,8 @@ core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = \
     partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'scan')
 pe.padding_rules[scan_p] = _scan_padding_rule
-pe.dce_rules[scan_p] = _scan_dce_rule
+# TODO(mattjj): re-enable
+# pe.dce_rules[scan_p] = _scan_dce_rule
 
 
 @api_boundary
