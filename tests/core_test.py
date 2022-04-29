@@ -343,6 +343,19 @@ class CoreTest(jtu.JaxTestCase):
                                np.array([1], dtype=np.int32))),
         'ConcreteArray([1], dtype=int32)')
 
+  def test_dropvar_avals(self):
+    def f(x):
+      def body(c, _):
+        return c, None
+      (x1, x2), _ = jax.lax.scan(body, (x, x), None, length=1)
+      return [x2]
+
+    aval = core.ShapedArray((), jnp.dtype('int32'))
+    pval = pe.PartialVal.unknown(aval)
+    jaxpr, _, _ = pe.trace_to_jaxpr_nounits(lu.wrap_init(f), [pval], False)
+    dropvar, b = jaxpr.eqns[0].outvars
+    self.assertEqual(dropvar.aval, aval)
+
 
 class JaxprTypeChecks(jtu.JaxTestCase):
 
