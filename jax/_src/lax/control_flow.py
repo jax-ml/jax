@@ -1807,6 +1807,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                          [False] * len(extensive_res))
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
+  assert len(out_tracers) == len(jaxpr_unknown.out_avals)
   eqn = pe.new_eqn_recipe([*intensive_res, *unknown_inputs, *extensive_res],
                           out_tracers, scan_p,
                           dict(reverse=reverse, length=length, unroll=unroll,
@@ -1985,8 +1986,8 @@ def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   used_carry_out, used_extensive_out = split_list(used_outputs, [num_carry])
   for i in range(1 + num_carry):
-    jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'].jaxpr,
-                                      used_carry_out + used_extensive_out)
+    used_outputs = used_carry_out + used_extensive_out
+    jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'].jaxpr, used_outputs)
     used_consts, used_carry_in, used_extensive_in = \
         split_list(used_inputs, [num_consts, num_carry])
     if used_carry_in == used_carry_out:
@@ -2000,10 +2001,13 @@ def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
   new_params = dict(eqn.params, num_consts=sum(used_consts),
                     num_carry=sum(used_carry_in), linear=tuple(new_linear),
                     jaxpr=core.ClosedJaxpr(jaxpr, eqn.params['jaxpr'].consts))
-  new_eqn = pe.new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs) if used],
-                             [v for v, used in zip(eqn.outvars, used_outputs) if used],
+  new_eqn = pe.new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs)
+                              if used],
+                             [v for v, used in zip(eqn.outvars, used_outputs)
+                              if used],
                              eqn.primitive, new_params, eqn.effects,
                              eqn.source_info)
+  assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
   return used_inputs, new_eqn
 
 def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
