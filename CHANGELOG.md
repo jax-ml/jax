@@ -13,6 +13,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.3.7...main).
 * Changes
+  * {func}`jax.numpy.linalg.svd` on TPUs uses a qdwh-svd solver.
+  * {func}`jax.numpy.linalg.cond` on TPUs now accepts complex input.
+  * {func}`jax.numpy.linalg.pinv` on TPUs now accepts complex input.
+  * {func}`jax.numpy.linalg.matrix_rank` on TPUs now accepts complex input.
   * {func}`jax.scipy.cluster.vq.vq` has been added.
   * `jax.experimental.maps.mesh` has been deleted.
     Please use `jax.experimental.maps.Mesh`. Please see https://jax.readthedocs.io/en/latest/_autosummary/jax.experimental.maps.Mesh.html#jax.experimental.maps.Mesh

@@ -544,10 +544,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for hermitian in ([False, True] if m == n else [False])))
   @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian):
-    # TODO: enable after linking lax.svd to lax.linalg.svd
-    if (jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest("No complex SVD implementation")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(b + (m, n), dtype)]
 
@@ -744,11 +740,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types))
   @jtu.skip_on_devices("gpu")  # TODO(#2203): numerical errors
   def testCond(self, shape, pnorm, dtype):
-    # TODO: enable after linking lax.svd to lax.linalg.svd
-    if (jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest("No complex SVD implementation")
-
     def gen_mat():
       # arr_gen = jtu.rand_some_nan(self.rng())
       arr_gen = jtu.rand_default(self.rng())
@@ -855,10 +846,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types))
   @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testPinv(self, shape, dtype):
-    # TODO: enable after linking lax.svd to lax.linalg.svd
-    if (jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest("No complex SVD implementation")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
@@ -910,10 +897,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types))
   @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testMatrixRank(self, shape, dtype):
-    # TODO: enable after linking lax.svd to lax.linalg.svd
-    if (jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest("No complex SVD implementation")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()

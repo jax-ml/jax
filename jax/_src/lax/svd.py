@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-"""A JIT-compatible library for QDWH-based SVD decomposition.
+"""A JIT-compatible library for QDWH-based singular value decomposition.
 
 QDWH is short for QR-based dynamically weighted Halley iteration. The Halley
 iteration implemented through QR decmopositions is numerically stable and does
@@ -35,8 +35,7 @@ https://epubs.siam.org/doi/abs/10.1137/090774999
 
 import functools
 
-from typing import Sequence, Union
-
+from typing import Any, Sequence, Union
 import jax
 from jax import core
 from jax import lax
@@ -44,10 +43,10 @@ import jax.numpy as jnp
 
 
 @functools.partial(jax.jit, static_argnums=(1, 2, 3))
-def _svd(a: jnp.ndarray,
+def _svd(a: Any,
          hermitian: bool,
          compute_uv: bool,
-         max_iterations: int) -> Union[jnp.ndarray, Sequence[jnp.ndarray]]:
+         max_iterations: int) -> Union[Any, Sequence[Any]]:
   """Singular value decomposition for m x n matrix and m >= n.
 
   Args:
@@ -99,11 +98,11 @@ def _svd(a: jnp.ndarray,
 
 
 @functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
-def svd(a: jnp.ndarray,
+def svd(a: Any,
         full_matrices: bool,
         compute_uv: bool = True,
         hermitian: bool = False,
-        max_iterations: int = 10) -> Union[jnp.ndarray, Sequence[jnp.ndarray]]:
+        max_iterations: int = 10) -> Union[Any, Sequence[Any]]:
   """Singular value decomposition.
 
   Args:

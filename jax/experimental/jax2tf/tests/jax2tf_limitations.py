@@ -1071,9 +1071,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         # than O(\sqrt(eps)), which is likely a property of the SVD algorithms
         # in question; revisit with better understanding of the SVD algorithms.
         if x.dtype in [np.float32, np.complex64]:
-          slack_factor = 1E4
+          slack_factor = 2E4
         elif x.dtype in [np.float64, np.complex128]:
-          slack_factor = 1E9
+          slack_factor = 2E9
 
         np.testing.assert_array_less(angular_diff,
                                      slack_factor * error_bound)
@@ -1131,16 +1131,17 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.complex64, np.complex128],
             devices=("cpu", "gpu"),
             modes=("compiled",)),
+        Jax2TfLimitation(
+            "Large numerical discrepancy",
+            dtypes=[np.float16],
+            devices=("tpu"),
+            modes=("eager", "graph", "compiled"),
+            skip_comparison=True),
         missing_tf_kernel(dtypes=[dtypes.bfloat16], devices="tpu"),
         custom_numeric(
             tol=1e-4,
             dtypes=[np.float32, np.complex64],
             devices=("cpu", "gpu"),
-            modes=("eager", "graph", "compiled")),
-        custom_numeric(
-            tol=1e-2,
-            dtypes=[np.float16],
-            devices=("tpu"),
             modes=("eager", "graph", "compiled")),
         # TODO: this is very low tolerance for f64
         custom_numeric(
@@ -1149,9 +1150,18 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled")),
         custom_numeric(
+            tol=1e-4,
             description="custom numeric comparison when compute_uv on CPU/GPU",
             custom_assert=custom_assert,
             devices=("cpu", "gpu"),
+            modes=("eager", "graph", "compiled"),
+            enabled=(compute_uv == True)),
+        custom_numeric(
+            tol=1e-2,
+            description="custom numeric comparison when compute_uv on TPU",
+            dtypes=[np.float32, np.float64, np.complex64, np.complex128],
+            custom_assert=custom_assert,
+            devices=("tpu"),
             modes=("eager", "graph", "compiled"),
             enabled=(compute_uv == True)),
     ]

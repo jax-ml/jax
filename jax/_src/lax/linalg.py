@@ -34,6 +34,7 @@ from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
 from jax._src.lax import lax as lax_internal
+from jax._src.lax import svd as lax_svd
 from jax._src.lib import lapack
 
 from jax._src.lib import cuda_linalg
@@ -202,6 +203,7 @@ def qr(x, full_matrices: bool = True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
   return q, r
 
+# TODO: Add `max_qdwh_iterations` to the function signature for TPU SVD.
 def svd(x, full_matrices=True, compute_uv=True):
   """Singular value decomposition.
 
@@ -1295,32 +1297,6 @@ def _eye_like_xla(c, aval):
               xops.Iota(c, iota_shape, len(aval.shape) - 2))
   return xops.ConvertElementType(x, xla.dtype_to_primitive_type(aval.dtype))
 
-def _svd_translation_rule(ctx, avals_in, avals_out, operand, *, full_matrices,
-                          compute_uv):
-  operand_aval, = avals_in
-  shape = operand_aval.shape
-  m, n = shape[-2:]
-  if m == 0 or n == 0:
-    out = [_zeros_like_xla(ctx.builder, avals_out[0])]
-    if compute_uv:
-      out.append(_eye_like_xla(ctx.builder, avals_out[1]))
-      out.append(_eye_like_xla(ctx.builder, avals_out[2]))
-    return out
-
-  u, s, v = xops.SVD(operand)
-  permutation = list(range(len(shape)))
-  permutation[-1], permutation[-2] = permutation[-2], permutation[-1]
-  vt = xops.Transpose(v, permutation)
-  if not full_matrices and m != n:
-    u = xops.SliceInDim(u, 0, min(m, n), stride=1, dimno=len(shape) - 1)
-    vt = xops.SliceInDim(vt, 0, min(m, n), stride=1, dimno=len(shape) - 2)
-
-  if not compute_uv:
-    return [s]
-  else:
-    return [s, u, vt]
-
-
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
@@ -1440,6 +1416,31 @@ def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
 
   return result
 
+def _svd_tpu(a, *, full_matrices, compute_uv):
+  batch_dims = a.shape[:-2]
+
+  fn = partial(lax_svd.svd, full_matrices=full_matrices, compute_uv=compute_uv)
+  for _ in range(len(batch_dims)):
+    fn = api.vmap(fn)
+
+  if compute_uv:
+    u, s, vh = fn(a)
+    return [s, u, vh]
+  else:
+    s = fn(a)
+    return [s]
+
+def _svd_tpu_lowering_rule(ctx, operand, *, full_matrices, compute_uv):
+  operand_aval, = ctx.avals_in
+  m, n = operand_aval.shape[-2:]
+
+  if m == 0 or n == 0:
+    return mlir.lower_fun(_empty_svd, multiple_results=True)(
+      ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
+  return mlir.lower_fun(_svd_tpu, multiple_results=True)(
+      ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args
   bd, = batch_dims
@@ -1457,7 +1458,6 @@ svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
-xla.register_translation(svd_p, _svd_translation_rule)
 
 mlir.register_lowering(
     svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
@@ -1468,6 +1468,7 @@ if solver_apis is not None:
     svd_p, partial(_svd_cpu_gpu_lowering, solver_apis.gesvd_mhlo),
     platform='gpu')
 
+mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 
 def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, m, n, ldb, t):
   return [sparse_apis.gtsv2_mhlo(dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
