@@ -654,22 +654,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}_mode={}".format(
           jtu.format_shape_dtype_string(shape, dtype), mode),
        "shape": shape, "dtype": dtype, "mode": mode}
-      for shape in [(3, 4), (3, 3), (4, 3)]
-      for dtype in [np.float32]
-      for mode in ["full", "r", "economic"]))
-  def testScipyQrModes(self, shape, dtype, mode):
-    rng = jtu.rand_default(self.rng())
-    jsp_func = partial(jax.scipy.linalg.qr, mode=mode)
-    sp_func = partial(scipy.linalg.qr, mode=mode)
-    args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
-    self._CompileAndCheck(jsp_func, args_maker)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_mode={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), mode),
-       "shape": shape, "dtype": dtype, "mode": mode}
-      for shape in [(3, 4), (3, 3), (4, 3)]
+      for shape in [(0, 2), (2, 0), (3, 4), (3, 3), (4, 3)]
       for dtype in [np.float32]
       for mode in ["reduced", "r", "full", "complete"]))
   def testNumpyQrModes(self, shape, dtype, mode):
@@ -686,7 +671,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}_fullmatrices={}".format(
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),
        "shape": shape, "dtype": dtype, "full_matrices": full_matrices}
-      for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
+      for shape in [(0, 0), (2, 0), (0, 2), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
       for dtype in float_types + complex_types
       for full_matrices in [False, True]))
   def testQr(self, shape, dtype, full_matrices):
@@ -713,11 +698,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       n = np.linalg.norm(x, axis=(-2, -1))
-      return n / (max_rank * jnp.finfo(dtype).eps)
+      return n / (max(1, max_rank) * jnp.finfo(dtype).eps)
 
     def compare_orthogonal(q1, q2):
       # Q is unique up to sign, so normalize the sign first.
-      sum_of_ratios = np.sum(np.divide(q1, q2), axis=-2, keepdims=True)
+      ratio = np.divide(np.where(q2 == 0, 0, q1), np.where(q2 == 0, 1, q2))
+      sum_of_ratios = ratio.sum(axis=-2, keepdims=True)
       phases = np.divide(sum_of_ratios, np.abs(sum_of_ratios))
       q1 *= phases
       self.assertTrue(np.all(norm(q1 - q2) < 30))
@@ -1333,6 +1319,22 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     jsp_fun_triu = lambda a: jsp.linalg.expm(a, upper_triangular=True)
     self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu)
     self._CompileAndCheck(jsp_fun_triu, args_maker_triu)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_mode={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode),
+       "shape": shape, "dtype": dtype, "mode": mode}
+      # Skip empty shapes because scipy fails: https://github.com/scipy/scipy/issues/1532
+      for shape in [(3, 4), (3, 3), (4, 3)]
+      for dtype in [np.float32]
+      for mode in ["full", "r", "economic"]))
+  def testScipyQrModes(self, shape, dtype, mode):
+    rng = jtu.rand_default(self.rng())
+    jsp_func = partial(jax.scipy.linalg.qr, mode=mode)
+    sp_func = partial(scipy.linalg.qr, mode=mode)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
+    self._CompileAndCheck(jsp_func, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name":
