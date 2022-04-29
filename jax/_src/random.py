@@ -15,6 +15,7 @@
 
 from functools import partial
 from typing import Any, Optional, Sequence, Union
+from operator import index
 import warnings
 
 import numpy as np
@@ -1595,3 +1596,30 @@ def threefry_2x32(keypair, count):
   warnings.warn('jax.random.threefry_2x32 has moved to jax.prng.threefry_2x32 '
                 'and will be removed from `random` module.', FutureWarning)
   return prng.threefry_2x32(keypair, count)
+
+def orthogonal(
+  key: KeyArray,
+  n: int,
+  shape: Sequence[int] = (),
+  dtype: DTypeLikeFloat = dtypes.float_
+) -> jnp.ndarray:
+  """Sample uniformly from the orthogonal group O(n).
+
+  If the dtype is complex, sample uniformly from the unitary group U(n).
+
+  Args:
+    key: a PRNG key used as the random key.
+    n: an integer indicating the resulting dimension.
+    shape: optional, the batch dimensions of the result. Default ().
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array of shape `(*shape, n, n)` and specified dtype.
+  """
+  _check_shape("orthogonal", shape)
+  n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
+  z = normal(key, (*shape, n, n), dtype)
+  q, r = jnp.linalg.qr(z)
+  d = jnp.diagonal(r, 0, -2, -1)
+  return q * jnp.expand_dims(d / abs(d), -2)

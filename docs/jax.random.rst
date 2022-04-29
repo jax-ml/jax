@@ -33,6 +33,7 @@ List of Available Functions
     maxwell
     multivariate_normal
     normal
+    orthogonal
     pareto
     permutation
     poisson

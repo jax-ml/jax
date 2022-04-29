@@ -44,6 +44,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     is not of an integer type, matching the behavior of
     {func}`numpy.diag`. Previously non-integer `k` was silently
     cast to integers.
+  * Added {func}`jax.random.orthogonal`.
 * Deprecations
   * Many functions and objects available in {mod}`jax.test_util` are now deprecated and will raise a
     warning on import. This includes `cases_from_list`, `check_close`, `check_eq`, `device_under_test`,
