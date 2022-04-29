@@ -2504,7 +2504,12 @@ def mesh_sharding_specs(axis_sizes, axis_names, allow_uneven_axes=False):
     #       map to the same axis.
     for name, axis in sorted(aval_axes.items(), key=lambda x: x[1]):
       if not allow_uneven_axes:
-        assert aval_shape[axis] % axis_sizes[name] == 0, (axis_sizes[name], aval.shape[axis])
+        if aval_shape[axis] % axis_sizes[name] != 0:
+          raise ValueError(
+            f'The aval shape on dimension {axis} is {aval_shape[axis]} and '
+            f'the size of axis {name} is {axis_sizes[name]}. The aval shape % '
+            'axis size should be zero but got '
+            f'{aval_shape[axis] % axis_sizes[name]}')
       aval_shape[axis] //= axis_sizes[name]
       chunked = sharding[axis]
       if isinstance(chunked, NoSharding):
