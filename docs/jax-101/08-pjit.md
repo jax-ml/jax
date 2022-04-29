@@ -36,7 +36,7 @@ The core infrastructure that supports parallel model training is the XLA SPMD pa
 +++ {"id": "PNP-0AH-Bz48"}
 
 ## How it works:
-The partitioning over devices happens automatically based on the propagation of the input partitioning specified in `in_axis_resources` and the output partitioning specified in `out_axis_resources`. The resources specified in those two arguments must refer to `mesh axes`, as defined by the `jax.experimental.maps.mesh()` context manager. Note that the `mesh` definition at `pjit` application time is ignored, and the returned function will use the `mesh` definition available at each call site.
+The partitioning over devices happens automatically based on the propagation of the input partitioning specified in `in_axis_resources` and the output partitioning specified in `out_axis_resources`. The resources specified in those two arguments must refer to `mesh axes`, as defined by the `jax.experimental.maps.Mesh()` context manager. Note that the `Mesh` definition at `pjit` application time is ignored, and the returned function will use the `Mesh` definition available at each call site.
 
 Inputs to a pjit’d function will be automatically partitioned across devices if they’re not already correctly partitioned based on `in_axis_resources`. In some scenarios, ensuring that the inputs are already correctly pre-partitioned can increase performance. For example, if passing the output of one pjit’d function to another pjit’d function (or the same pjit’d function in a loop), make sure the relevant `out_axis_resources` match the corresponding `in_axis_resources`.
 
@@ -202,7 +202,7 @@ f = pjit(
   out_axis_resources=PartitionSpec('x', 'y'))
  
 # Sends data to accelerators based on partition_spec
-with maps.mesh(mesh.devices, mesh.axis_names):
+with maps.Mesh(mesh.devices, mesh.axis_names):
  data = f(input_data)
 ```
 
@@ -286,7 +286,7 @@ f = pjit(
   in_axis_resources=None,
   out_axis_resources=PartitionSpec('x', None))
  
-with maps.mesh(mesh.devices, mesh.axis_names):
+with maps.Mesh(mesh.devices, mesh.axis_names):
  data = f(input_data)
 
 data.device_buffers
@@ -321,7 +321,7 @@ f = pjit(
   in_axis_resources=None,
   out_axis_resources=PartitionSpec('y', None))
  
-with maps.mesh(mesh.devices, mesh.axis_names):
+with maps.Mesh(mesh.devices, mesh.axis_names):
  data = f(input_data)
 
 data.device_buffers
@@ -356,7 +356,7 @@ f = pjit(
   in_axis_resources=None,
   out_axis_resources=PartitionSpec(('x', 'y'), None))
  
-with maps.mesh(mesh.devices, mesh.axis_names):
+with maps.Mesh(mesh.devices, mesh.axis_names):
  data = f(input_data)
 
 data.device_buffers
@@ -391,7 +391,7 @@ f = pjit(
   in_axis_resources=None,
   out_axis_resources=PartitionSpec(None, 'y'))
  
-with maps.mesh(mesh.devices, mesh.axis_names):
+with maps.Mesh(mesh.devices, mesh.axis_names):
  data = f(input_data)
 
 data.device_buffers
@@ -499,7 +499,7 @@ f = pjit(
    out_axis_resources=PartitionSpec('x', 'y'))
 
 # Sends data to accelerators based on partition_spec
-with maps.mesh(mesh.devices, mesh.axis_names):
+with maps.Mesh(mesh.devices, mesh.axis_names):
  data = f(input_data)
 ```
 
