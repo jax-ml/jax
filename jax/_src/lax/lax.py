@@ -938,7 +938,6 @@ def reduce(operands: Any,
 
 @cache()
 def _reduction_jaxpr(computation, aval):
-  pval = pe.PartialVal.unknown(aval)
   @lu.wrap_init
   def comp(x, y):
     result = computation(x, y)
@@ -948,8 +947,12 @@ def _reduction_jaxpr(computation, aval):
           f"Reduction functions should only return an array.\n"
           f"Full return value: {result}")
     return (result,)
-  jaxpr, _, consts = pe.trace_to_jaxpr(comp, (pval, pval), instantiate=False)
-  return jaxpr, consts
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(comp, (aval, aval))
+  if any(isinstance(c, core.Tracer) for c in consts):
+    raise NotImplementedError(
+        "Reduction computations can't close over Tracers. Please open an issue "
+        "at https://github.com/google/jax.")
+  return jaxpr, tuple(consts)
 
 @cache()
 def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
@@ -958,6 +961,10 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   comp = lu.wrap_init(computation)
   flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
+  if any(isinstance(c, core.Tracer) for c in consts):
+    raise NotImplementedError(
+        "Reduction computations can't close over Tracers. Please open an issue "
+        "at https://github.com/google/jax.")
   return jaxpr, tuple(consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable,
