@@ -43,8 +43,6 @@ class ShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() not in ["tpu", "gpu"]:
-      raise SkipTest
     if jtu.device_under_test() == "gpu":
       os.environ["NCCL_LAUNCH_MODE"] = "PARALLEL"
 
@@ -278,11 +276,6 @@ class ShardedJitTest(jtu.JaxTestCase):
 # TODO(skye): add more error tests
 class ShardedJitErrorsTest(jtu.JaxTestCase):
 
-  def setUp(self):
-    super().setUp()
-    if jtu.device_under_test() not in ["tpu", "gpu"]:
-      raise SkipTest
-
   def testNotEnoughDevices(self):
     ndevices = jax.local_device_count()
 
@@ -331,8 +324,6 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() not in ["tpu", "gpu"]:
-      raise SkipTest
     if jtu.device_under_test() == "gpu":
       os.environ["NCCL_LAUNCH_MODE"] = "PARALLEL"
 
