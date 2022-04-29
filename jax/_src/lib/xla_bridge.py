@@ -220,6 +220,11 @@ register_backend_factory(
 if iree is not None:
   register_backend_factory("iree", iree.iree_client_factory, priority=-100)
 
+def is_known_platform(platform: str):
+  # A platform is valid if there is a registered factory for it. It does not
+  # matter if we were unable to initialize that platform; we only care that
+  # we've heard of it and it isn't, e.g., a typo.
+  return platform in _backend_factories.keys()
 
 def backends():
   global _backends
@@ -286,11 +291,8 @@ def _init_backend(platform):
   return backend
 
 
-def _get_backend_uncached(platform=None):
-  # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
-  # 'backend' values are handled
-  if not isinstance(platform, (type(None), str)):
-    return platform
+def _get_backend_uncached(platform: Optional[str] = None):
+  assert platform is None or isinstance(platform, str), platform
 
   bs = backends()
   platform = (platform or FLAGS.jax_xla_backend or FLAGS.jax_platform_name
