@@ -92,9 +92,6 @@ def _sharded_callable(
   jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(fun, global_abstract_args)
 
   platform = xb.get_backend().platform
-  if platform  not in ["tpu", "gpu"]:
-    # TODO(skye): fall back to regular jit?
-    raise ValueError(f"sharded_jit not supported for {platform}")
 
   nparts = pxla.reconcile_num_partitions(jaxpr, nparts)
   assert nparts is not None
