@@ -265,6 +265,15 @@ class TestPromotionTables(jtu.JaxTestCase):
     # This matches the behavior of np.result_type(None) => np.float_
     self.assertEqual(dtypes.result_type(None), dtypes.canonicalize_dtype(dtypes.float_))
 
+  def testResultTypeWeakFlag(self):
+    float_ = dtypes.canonicalize_dtype(dtypes.float_)
+    x_weak = jnp.array(1.)
+    x_strong = x_weak.astype(float_)
+    self.assertEqual(dtypes.result_type(x_weak), float_)
+    self.assertEqual(dtypes.result_type(x_weak, return_weak_type_flag=True), (float_, True))
+    self.assertEqual(dtypes.result_type(x_strong), float_)
+    self.assertEqual(dtypes.result_type(x_strong, return_weak_type_flag=True), (float_, False))
+
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")
   def testObservedPromotionTable(self):
