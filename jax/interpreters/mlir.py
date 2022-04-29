@@ -485,6 +485,8 @@ def lower_jaxpr_to_module(
 
   Handles the quirks of the argument/return value passing conventions of the
   runtime."""
+  if not xb.is_known_platform(platform):
+    raise ValueError(f"Unknown platform {platform}")
   input_output_aliases = None
   in_avals = jaxpr.in_avals
   if arg_shardings is not None:
