@@ -2135,3 +2135,5 @@ def trace_to_subjaxpr(main: core.MainTrace, instantiate: Union[bool, Sequence[bo
   out_pvals = [t.pval for t in out_tracers]
   del trace, in_tracers, out_tracers
   yield jaxpr, (out_pvals, consts, env)
+
+partial_eval_jaxpr: Callable
