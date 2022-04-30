@@ -31,7 +31,7 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=jnp.int_,
     key : random.PRNGKey to be passed to ``generator`` function.
     shape : tuple specifying the shape of the array to be generated.
     dtype : dtype of the array to be generated.
-    indices_dtype: dtype of the BCOO indicies.
+    indices_dtype: dtype of the BCOO indices.
     nse : number of specified elements in the matrix, or if 0 < nse < 1, a
       fraction of sparse dimensions to be specified (default: 0.2).
     n_batch : number of batch dimensions. must satisfy ``n_batch >= 0`` and

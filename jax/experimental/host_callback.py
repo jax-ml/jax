@@ -1316,7 +1316,7 @@ def _instantiate_zeros(tan, arg):
     tan: the tangent.
     arg: the argument for which we need to instantiate the tangent
 
-  Returns: tan if is is not ad.Zero, otherwise a 0 array of appropriate type
+  Returns: tan if type(tan) is not ad.Zero, otherwise a 0 array of appropriate type
     and shape
   """
   if type(tan) is not ad.Zero:

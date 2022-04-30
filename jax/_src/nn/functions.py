@@ -388,7 +388,7 @@ def _one_hot(x: Array, num_classes: int, *,
 
 def one_hot(x: Array, num_classes: int, *,
             dtype: Any = jnp.float_, axis: Union[int, AxisName] = -1) -> Array:
-  """One-hot encodes the given indicies.
+  """One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
   ``num_classes`` with the element at ``index`` set to one::
@@ -398,7 +398,7 @@ def one_hot(x: Array, num_classes: int, *,
                   [0., 1., 0.],
                   [0., 0., 1.]], dtype=float32)
 
-  Indicies outside the range [0, num_classes) will be encoded as zeros::
+  Indices outside the range [0, num_classes) will be encoded as zeros::
 
     >>> jax.nn.one_hot(jnp.array([-1, 3]), 3)
     DeviceArray([[0., 0., 0.],
