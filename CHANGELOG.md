@@ -8,10 +8,14 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
+## jax 0.3.9 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.8...main).
 
-## jax 0.3.8 (Unreleased)
-* [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.3.7...main).
+## jaxlib 0.3.8 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.7...main).
+
+## jax 0.3.8 (April 29 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.7...jax-v0.3.8).
 * Changes
   * {func}`jax.numpy.linalg.svd` on TPUs uses a qdwh-svd solver.
   * {func}`jax.numpy.linalg.cond` on TPUs now accepts complex input.
@@ -67,10 +71,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     such as device checking can be replaced through the use of public APIs such as {func}`jax.devices`.
     Many of the deprecated utilities will still exist in {mod}`jax._src.test_util`, but these are not
     public APIs and as such may be changed or removed without notice in future releases.
-
-## jaxlib 0.3.8 (Unreleased)
-* [GitHub
-  commits](https://github.com/google/jax/compare/jaxlib-v0.3.7...main).
 
 ## jax 0.3.7 (April 15, 2022)
 * [GitHub
