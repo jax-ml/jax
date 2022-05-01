@@ -915,7 +915,7 @@ def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
   assert ([v.aval.strip_weak_type() for v in jaxpr_known.outvars] ==
           [a.strip_weak_type() for a, uk in zip(jaxpr.out_avals, out_unknowns)
            if not uk] + [a.strip_weak_type() for a in res_avals])
-  # check jaxpr_unknown has input type corresponding to unknown inputs plus res
+  # check jaxpr_unknown has input type corresponding to res plus unknown inputs
   assert ([v.aval for v in jaxpr_unknown.invars] ==
           res_avals + [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if uk])
   # check jaxpr_unknown has output type corresponding to unknown outputs
@@ -1092,6 +1092,7 @@ def _partial_eval_jaxpr_custom_cached(
 
   known_eqns, staged_eqns = [], []
   map(write, in_unknowns, in_inst, jaxpr.invars)
+  map(partial(write, False, True), jaxpr.constvars)
   for eqn in jaxpr.eqns:
     unks_in, inst_in = unzip2(map(read, eqn.invars))
     rule = partial_eval_jaxpr_custom_rules.get(eqn.primitive)
@@ -1277,17 +1278,20 @@ dce_rules: Dict[Primitive, DCERule] = {}
 
 
 def dce_jaxpr_call_rule(used_outputs: List[bool], eqn: JaxprEqn
-                        ) -> Tuple[List[bool], JaxprEqn]:
+                        ) -> Tuple[List[bool], Optional[JaxprEqn]]:
   new_jaxpr, used_inputs = dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
   new_params = dict(eqn.params, call_jaxpr=new_jaxpr)
   update_params = call_param_updaters.get(eqn.primitive)
   if update_params:
     new_params = update_params(new_params, used_inputs, 0)
-  new_eqn = new_jaxpr_eqn(
-      [v for v, used in zip(eqn.invars, used_inputs) if used],
-      [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
-  return used_inputs, new_eqn
+  if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
+    return used_inputs, None
+  else:
+    new_eqn = new_jaxpr_eqn(
+        [v for v, used in zip(eqn.invars, used_inputs) if used],
+        [v for v, used in zip(eqn.outvars, used_outputs) if used],
+        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+    return used_inputs, new_eqn
 dce_rules[core.call_p] = dce_jaxpr_call_rule
 dce_rules[core.named_call_p] = dce_jaxpr_call_rule
 dce_rules[remat_call_p] = dce_jaxpr_call_rule

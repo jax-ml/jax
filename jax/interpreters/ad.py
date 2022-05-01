@@ -589,7 +589,11 @@ def traceable(num_primals, in_tree_def, *primals_and_tangents):
 
 
 def call_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
-  all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
+  if isinstance(call_jaxpr, core.ClosedJaxpr):
+    call_jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  else:
+    consts = ()
+  all_args, in_tree_def = tree_flatten((consts, args, ct))
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr,
                             reduce_axes, False)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
