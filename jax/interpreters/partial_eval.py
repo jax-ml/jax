@@ -1161,12 +1161,16 @@ def _jaxpr_forwarding(jaxpr: Jaxpr) -> List[Optional[int]]:
           for v in jaxpr.outvars]
 
 
-def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool]
+def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool],
+              instantiate: Union[bool, Sequence[bool]] = False,
               ) -> Tuple[Jaxpr, List[bool]]:
-  return _dce_jaxpr(jaxpr, tuple(used_outputs))
+  if type(instantiate) is bool:
+    instantiate = (instantiate,) * len(jaxpr.invars)
+  return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate))
 
 @weakref_lru_cache
-def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...]
+def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...],
+               instantiate: Tuple[bool, ...]
                ) -> Tuple[Jaxpr, List[bool]]:
   env: Dict[Var, bool] = {}
 
@@ -1177,26 +1181,23 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...]
     if type(x) is Var:
       env[x] = read(x) or b
 
+  def has_effects(e: JaxprEqn) -> bool:
+    return bool(e.effects) or core.primitive_uses_outfeed(e.primitive, e.params)
+
   new_eqns = []
   map(write, jaxpr.outvars, used_outputs)
   for eqn in jaxpr.eqns[::-1]:
     used_outs = map(read, eqn.outvars)
-    # If any outputs are used, then we need to keep a version of the eqn and
-    # potentially mark some inputs as used. Otherwise mark all inputs as unused.
-    if any(used_outs) or core.primitive_uses_outfeed(eqn.primitive, eqn.params):
-      # If there's a rule for modifying the eqn and computing used inputs, apply
-      # it. Otherwise, keep the eqn unmodified and mark all inputs as used.
-      rule = dce_rules.get(eqn.primitive)
-      if rule:
-        used_ins, new_eqn = rule(used_outs, eqn)
-      else:
-        used_ins = [True] * len(eqn.invars)
-        new_eqn = eqn
-      new_eqns.append(new_eqn)
-    else:
+    if not any(used_outs) and not has_effects(eqn):
       used_ins = [False] * len(eqn.invars)
+    else:
+      rule = dce_rules.get(eqn.primitive, _default_dce_rule)
+      used_ins, new_eqn = rule(used_outs, eqn)
+      if new_eqn is not None:
+        new_eqns.append(new_eqn)
     map(write, eqn.invars, used_ins)
   used_inputs = map(read, jaxpr.invars)
+  used_inputs = map(op.or_, instantiate, used_inputs)
 
   new_jaxpr = Jaxpr(jaxpr.constvars,
                     [v for v, b in zip(jaxpr.invars, used_inputs)   if b],
@@ -1206,7 +1207,13 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...]
 
   return new_jaxpr, used_inputs
 
-DCERule = Callable[[List[bool], JaxprEqn], Tuple[List[bool], JaxprEqn]]
+DCERule = Callable[[List[bool], JaxprEqn], Tuple[List[bool], Optional[JaxprEqn]]]
+
+def _default_dce_rule(
+    used_outs: List[bool], eqn: JaxprEqn
+  ) -> Tuple[List[bool], JaxprEqn]:
+  return [True] * len(eqn.invars), eqn
+
 dce_rules: Dict[Primitive, DCERule] = {}
 
 
@@ -1217,9 +1224,10 @@ def dce_jaxpr_call_rule(used_outputs: List[bool], eqn: JaxprEqn
   update_params = call_param_updaters.get(eqn.primitive)
   if update_params:
     new_params = update_params(new_params, used_inputs, 0)
-  new_eqn = new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs) if used],
-                          [v for v, used in zip(eqn.outvars, used_outputs) if used],
-                          eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+  new_eqn = new_jaxpr_eqn(
+      [v for v, used in zip(eqn.invars, used_inputs) if used],
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
   return used_inputs, new_eqn
 dce_rules[core.call_p] = dce_jaxpr_call_rule
 dce_rules[core.named_call_p] = dce_jaxpr_call_rule
