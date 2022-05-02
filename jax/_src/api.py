@@ -1512,7 +1512,7 @@ def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
       tree, leaf = treedef_children(tree)
       assert treedef_is_leaf(leaf)
     # TODO(mattjj,phawkins): add a way to inspect pytree kind more directly
-    if tree == tree_flatten((core.unit,) * tree.num_leaves)[1]:
+    if tree == tree_flatten((0,) * tree.num_leaves)[1]:
       lines1 = [f"arg {i} has shape {np.shape(x)} and axis {d} is to be mapped"
                 for i, (x, d) in enumerate(zip(vals, dims))]
       sizes = collections.defaultdict(list)

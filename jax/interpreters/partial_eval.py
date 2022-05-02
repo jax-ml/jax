@@ -62,9 +62,9 @@ class PartialVal(tuple):
   """Partial value: either a known value or an unknown (abstract) value.
 
   Represented as a pair `(aval_opt, const)` of one of two kinds:
-  * `(None, <Constant>)` indicates a known value, either a Python regular
-    value, or a Tracer.
-  * `(<AbstractValue>, *)` indicates an unknown value characterized by an
+  * `(None, <Constant>)` indicates a known value, where the constant is either a
+    Tracer or satisfies `core.valid_jaxtype(const)`;
+  * `(<AbstractValue>, None)` indicates an unknown value characterized by an
     abstract value.
   """
   def __new__(cls, xs: Tuple[Optional[AbstractValue], core.Value]):
@@ -72,10 +72,10 @@ class PartialVal(tuple):
     if config.jax_enable_checks:
       # type checks
       assert isinstance(pv, (AbstractValue, type(None))), xs
-      assert isinstance(const, core.Tracer) or type(const) is Zero or core.valid_jaxtype(const), xs
+      assert (const is None or isinstance(const, core.Tracer) or
+              core.valid_jaxtype(const)), const
       # invariant checks
-      if isinstance(pv, AbstractValue):
-        assert get_aval(const) == core.abstract_unit, xs
+      assert (pv is None) ^ (const is None)
     return tuple.__new__(cls, xs)
 
   @classmethod
@@ -84,7 +84,7 @@ class PartialVal(tuple):
 
   @classmethod
   def unknown(cls, aval: AbstractValue) -> PartialVal:
-    return PartialVal((aval, core.unit))
+    return PartialVal((aval, None))
 
   def is_known(self) -> bool:
     return self[0] is None
@@ -120,7 +120,7 @@ class JaxprTrace(Trace):
   def new_const(self, val) -> JaxprTracer:
     if isinstance(val, Tracer) and val._trace.level == self.level:
       raise Exception
-    return JaxprTracer(self, PartialVal.known(val), core.unit)
+    return JaxprTracer(self, PartialVal.known(val), None)
 
   def new_instantiated_literal(self, val) -> JaxprTracer:
     aval = get_aval(val)
@@ -742,8 +742,8 @@ def tracers_to_jaxpr(
       consts[v] = recipe.val
     elif isinstance(recipe, Literal):
       t_to_var[id(t)] = recipe
-    elif recipe is core.unit:
-      t_to_var[id(t)] = core.unitvar
+    elif recipe is None:
+      assert False
     else:
       raise TypeError(recipe)
 
