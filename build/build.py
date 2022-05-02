@@ -379,7 +379,7 @@ def main():
   # update the list in .bazelrc, which is used for wheel builds.
   parser.add_argument(
       "--cuda_compute_capabilities",
-      default="3.5,5.2,6.0,7.0,8.0",
+      default=None,
       help="A comma-separated list of CUDA compute capabilities to support.")
   parser.add_argument(
       "--rocm_amdgpu_targets",
@@ -459,7 +459,8 @@ def main():
       print("CUDA toolkit path: {}".format(cuda_toolkit_path))
     if cudnn_install_path:
       print("CUDNN library path: {}".format(cudnn_install_path))
-    print("CUDA compute capabilities: {}".format(args.cuda_compute_capabilities))
+    if args.cuda_compute_capabilities is not None:
+      print("CUDA compute capabilities: {}".format(args.cuda_compute_capabilities))
     if args.cuda_version:
       print("CUDA version: {}".format(args.cuda_version))
     if args.cudnn_version:
