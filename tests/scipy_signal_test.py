@@ -146,7 +146,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
           signal + noise, axis=axis, type=type, bp=bp) - trend
 
     if jtu.device_under_test() == 'tpu':
-      tol = {np.float32: 7e-3, np.float64: 1e-12}
+      tol = {np.float32: 3e-2, np.float64: 1e-12}
     else:
       tol = {np.float32: 1e-5, np.float64: 1e-12}
 
