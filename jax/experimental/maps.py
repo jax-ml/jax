@@ -1106,25 +1106,6 @@ def out_local_named_shapes(local_axes, *args, **kwargs):
   ans_axes = [frozenset(a.aval.named_shape) & local_axes for a in ans]
   yield ans, ans_axes
 
-@lu.transformation_with_aux
-def hide_units(unit_args, *args, **kwargs):
-  ans = yield restore_units(unit_args, args), kwargs
-  yield filter_units(ans)
-
-def filter_units(vals):
-  vals_no_units = [v for v in vals if v is not core.unit]
-  vals_is_unit = [v is core.unit for v in vals]
-  return vals_no_units, vals_is_unit
-
-def restore_units(is_unit, vals):
-  vals_it = iter(vals)
-  vals_with_units = [core.unit if u else next(vals_it) for u in is_unit]
-  try:
-    next(vals_it)
-    raise RuntimeError("Expected the iterator to be exhausted")
-  except StopIteration:
-    return vals_with_units
-
 
 def _jaxpr_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params):
   assert primitive is xmap_p
