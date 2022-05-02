@@ -21,7 +21,7 @@ repos:
     additional_dependencies: [types-requests==2.27.16, jaxlib==0.3.5]
 
 - repo: https://github.com/mwouts/jupytext
-  rev: v1.13.6
+  rev: v1.13.8
   hooks:
   - id: jupytext
     args: [--sync]
