@@ -613,6 +613,13 @@ def _squeeze_sparse(spenv, *spvalues, dimensions):
 
 sparse_rules[lax.squeeze_p] = _squeeze_sparse
 
+def _reshape_sparse(spenv, *spvalues, new_sizes, dimensions):
+  operand, = spvalues_to_arrays(spenv, spvalues)
+  result = sparse.bcoo_reshape(operand, new_sizes=new_sizes, dimensions=dimensions)
+  return arrays_to_spvalues(spenv, (result,))
+
+sparse_rules[lax.reshape_p] = _reshape_sparse
+
 def _sparsify_jaxpr(spenv, jaxpr, *spvalues):
   # TODO(jakevdp): currently this approach discards all information about
   #   shared data & indices when generating the sparsified jaxpr. The
@@ -736,6 +743,10 @@ def _sum(self, *args, **kwargs):
   """Sum array along axis."""
   return sparsify(lambda x: x.sum(*args, **kwargs))(self)
 
+def _reshape(self, *args, **kwargs):
+  """Sum array along axis."""
+  return sparsify(lambda x: x.reshape(*args, **kwargs))(self)
+
 def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
                            mode=None, fill_value=None):
   # mirrors lax_numpy._rewriting_take.
@@ -751,6 +762,7 @@ def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=Fa
 _swap_args = lambda f: lambda a, b: f(b, a)
 
 _bcoo_methods = {
+  'reshape': _reshape,
   'sum': _sum,
   "__neg__": sparsify(jnp.negative),
   "__pos__": sparsify(jnp.positive),

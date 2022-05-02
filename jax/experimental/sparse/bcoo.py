@@ -1615,6 +1615,63 @@ def bcoo_concatenate(operands, *, dimension):
   return BCOO((new_data, new_indices), shape=out_aval.shape)
 
 
+def bcoo_reshape(mat, *, new_sizes, dimensions):
+  """Sparse implementation of {func}`jax.lax.reshape`.
+
+  Args:
+  operand: BCOO array to be reshaped.
+  new_sizes: sequence of integers specifying the resulting shape. The size
+    of the final array must match the size of the input. This must be specified
+    such that batch, sparse, and dense dimensions do not mix.
+  dimensions: optional sequence of integers specifying the permutation order of
+    the input shape. If specified, the length must match ``operand.shape``.
+    Additionally, dimensions must only permute among like dimensions of mat:
+    batch, sparse, and dense dimensions cannot be permuted.
+
+  Returns:
+    out: reshaped array.
+  """
+  if mat.n_dense:
+    # TODO(jakevdp): implement reshape of dense dimensions.
+    raise NotImplementedError("bcoo_reshape for matrices with dense dimensions.")
+
+  if mat.n_batch:
+    batch_size = np.prod(mat.shape[:mat.n_batch])
+    cuml_shape = np.cumprod(new_sizes)
+    if batch_size not in cuml_shape:
+      raise ValueError("bcoo_reshape: new shape cannot mix batch and sparse dimensions; "
+                      f"got shape={mat.shape} new_shape={new_sizes} with n_batch={mat.n_batch}")
+    ind = cuml_shape.searchsorted(batch_size, side='right')
+  else:
+    ind = 0
+  batch_sizes, sparse_sizes = new_sizes[:ind], new_sizes[ind:]
+  batch_perm, sparse_perm, _ = _validate_permutation(mat.data, mat.indices, dimensions or tuple(range(mat.ndim)), mat.shape)
+
+  if (mat.indices.shape[:mat.n_batch] != mat.data.shape[:mat.n_batch] != mat.shape[:mat.n_batch]):
+    # TODO(jakevdp) implement this case via broadcast_in_dim
+    raise NotImplementedError("reshape of arrays with broadacsted batch dimensions.")
+
+  # Reshape batch dimensions: this is accomplished via a standard reshape.
+  data = lax.reshape(
+    mat.data, new_sizes=(*batch_sizes, *mat.data.shape[mat.n_batch:]),
+    dimensions=(*batch_perm, *range(mat.n_batch, mat.data.ndim)))
+  indices = lax.reshape(
+    mat.indices, new_sizes=(*batch_sizes, *mat.indices.shape[mat.n_batch:]),
+    dimensions=(*batch_perm, *range(mat.n_batch, mat.indices.ndim)))
+
+  # Reshape the sparse dimensions: this is accomplished by re-indexing.
+  index_cols = tuple(indices[..., i] for i in sparse_perm)
+  sparse_shape = tuple(mat.shape[mat.n_batch + i] for i in sparse_perm)
+  flat_indices = jnp.ravel_multi_index(index_cols, dims=sparse_shape, mode='clip')
+  new_index_cols = jnp.unravel_index(flat_indices, sparse_sizes)
+  new_indices = jnp.concatenate([col[..., None] for col in new_index_cols], axis=-1)
+  with jax.numpy_rank_promotion('allow'):
+    oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:])).any(-1)
+  new_indices = new_indices.at[oob_indices].set(jnp.array(sparse_sizes))
+
+  return BCOO((data, new_indices), shape=new_sizes)
+
+
 def _tuple_replace(tup, ind, val):
   return tuple(val if i == ind else t for i, t in enumerate(tup))
 

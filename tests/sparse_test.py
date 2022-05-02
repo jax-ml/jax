@@ -1761,6 +1761,14 @@ class BCOOTest(jtu.JaxTestCase):
     tol = {np.float32: 1E-6, np.float64: 1E-14}
     self.assertAllClose(result_dense, result_sparse, atol=tol, rtol=tol)
 
+  def test_bcoo_reshape_error(self):
+    x = sparse.BCOO.fromdense(jnp.ones((2, 2, 3)), n_batch=1)
+    with self.assertRaisesRegex(ValueError, ".*cannot mix batch and sparse dimensions.*"):
+      x.reshape(3, 2, 2)
+    y = sparse.BCOO((x.data[:1], x.indices), shape=x.shape)
+    with self.assertRaisesRegex(NotImplementedError, "reshape of arrays with broadacsted batch dimensions."):
+      y.reshape(2, 3, 2)
+
   @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(

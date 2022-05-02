@@ -201,6 +201,7 @@ from jax.experimental.sparse.bcoo import (
     bcoo_multiply_dense as bcoo_multiply_dense,
     bcoo_multiply_sparse as bcoo_multiply_sparse,
     bcoo_reduce_sum as bcoo_reduce_sum,
+    bcoo_reshape as bcoo_reshape,
     bcoo_sort_indices as bcoo_sort_indices,
     bcoo_sort_indices_p as bcoo_sort_indices_p,
     bcoo_spdot_general_p as bcoo_spdot_general_p,
