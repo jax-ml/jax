@@ -635,17 +635,22 @@ class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
     self._npy_value = None
 
 
+def _one_replica_buffer_indices(indices: Tuple[Index, ...]):
+  """Returns a set of buffer-indices containing one complete copy of the array."""
+  one_replica_indices = []
+  seen_index_hashes = set()
+  for i, index in enumerate(indices):
+    hashed_index = _hashable_index(index)
+    if hashed_index not in seen_index_hashes:
+      one_replica_indices.append(i)
+      seen_index_hashes.add(hashed_index)
+  return one_replica_indices
+
+
 def _sda_one_replica_buffer_indices(self):
   """Indices of buffers containing one complete copy of the array data."""
   if self._one_replica_buffer_indices is None:
-    one_replica_indices = []
-    seen_index_hashes = set()
-    for i, index in enumerate(self.indices):
-      hashed_index = _hashable_index(index)
-      if hashed_index not in seen_index_hashes:
-        one_replica_indices.append(i)
-        seen_index_hashes.add(hashed_index)
-    self._one_replica_buffer_indices = one_replica_indices
+    self._one_replica_buffer_indices = _one_replica_buffer_indices(self.indices)
   return self._one_replica_buffer_indices
 
 
@@ -729,10 +734,8 @@ else:
   ShardedDeviceArray = _ShardedDeviceArray
 
 
-
 def _hashable_index(idx):
-  return tree_map(lambda x: (x.start, x.stop) if type(x) == slice else x,
-                  idx)
+  return tree_map(lambda x: (x.start, x.stop) if type(x) == slice else x, idx)
 
 # The fast path is handled directly in shard_args().
 # TODO(skye): is there a simpler way to rewrite this using sharding_spec?
