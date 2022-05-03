@@ -4221,7 +4221,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     (5, (2, 1, 3)),
     (0, ()),
     (np.array([0, 1, 2]), (2, 2)),
-    (np.array([[[0, 1], [2, 3]]]), (2, 2)))
+    (np.array([[[0, 1], [2, 3]]]), (2, 2)),
+    # regression test for https://github.com/google/jax/issues/10540
+    (np.arange(5), (201_996, 201_996)),  # prod(shape) overflows int32.
+  )
   def testUnravelIndex(self, flat_index, shape):
     args_maker = lambda: (flat_index, shape)
     np_fun = jtu.with_jax_dtype_defaults(np.unravel_index, use_defaults=not hasattr(flat_index, 'dtype'))
