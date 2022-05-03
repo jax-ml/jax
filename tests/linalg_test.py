@@ -41,6 +41,8 @@ T = lambda x: np.swapaxes(x, -1, -2)
 float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 
+jaxlib_version = tuple(map(int, jax.lib.__version__.split('.')))
+
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
@@ -718,6 +720,19 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if m == n or (m > n and not full_matrices):
       qr = partial(jnp.linalg.qr, mode=mode)
       jtu.check_jvp(qr, partial(jvp, qr), (a,), atol=3e-3)
+
+  @unittest.skipIf(jaxlib_version < (0, 3, 8), "test requires jaxlib>=0.3.8")
+  @jtu.skip_on_devices("tpu")
+  def testQrInvalidDtypeCPU(self, shape=(5, 6), dtype=np.float16):
+    # Regression test for https://github.com/google/jax/issues/10530
+    rng = jtu.rand_default(self.rng())
+    arr = rng(shape, dtype)
+    if jtu.device_under_test() == 'cpu':
+      err, msg = NotImplementedError, "Unsupported dtype float16"
+    else:
+      err, msg = ValueError, r"Unsupported dtype dtype\('float16'\)"
+    with self.assertRaisesRegex(err, msg):
+      jnp.linalg.qr(arr)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(

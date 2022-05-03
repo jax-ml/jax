@@ -1607,18 +1607,19 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
 
-  if sort_eig_vals:
-    T, vs, _sdim, info = lapack.gees_mhlo(
-        operand,
-        jobvs=compute_schur_vectors,
-        sort=sort_eig_vals,
-        select=select_callable)
-  else:
-    T, vs, info = lapack.gees_mhlo(
-        operand,
-        jobvs=compute_schur_vectors,
-        sort=sort_eig_vals,
-        select=select_callable)
+  # TODO(jakevdp): remove this try/except when minimum jaxlib >= 0.3.8
+  try:
+    gees_result = lapack.gees_mhlo(operand_aval.dtype, operand,
+                                   jobvs=compute_schur_vectors,
+                                   sort=sort_eig_vals,
+                                   select=select_callable)
+  except TypeError:  # API for jaxlib <= 0.3.7
+    gees_result = lapack.gees_mhlo(operand,  # pytype: disable=missing-parameter
+                                   jobvs=compute_schur_vectors,
+                                   sort=sort_eig_vals,
+                                   select=select_callable)
+  # Number of return values depends on value of sort_eig_vals.
+  T, vs, *_, info = gees_result
 
   ok = mlir.compare_mhlo(
       info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),

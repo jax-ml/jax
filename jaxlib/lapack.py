@@ -672,7 +672,7 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
 
 # # gees : Schur factorization
 
-def gees_mhlo(a, jobvs=True, sort=False, select=None):
+def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
   a_type = ir.RankedTensorType(a.type)
   etype = a_type.element_type
   dims = a_type.shape
@@ -695,10 +695,19 @@ def gees_mhlo(a, jobvs=True, sort=False, select=None):
   jobvs = ord('V' if jobvs else 'N')
   sort = ord('S' if sort else 'N')
 
-  if not ir.ComplexType.isinstance(etype):
-    fn = "lapack_sgees" if etype == ir.F32Type.get() else "lapack_dgees"
-    schurvecs_type = etype
-    workspaces = [ir.RankedTensorType.get(dims, schurvecs_type)]
+  if dtype == np.float32:
+    fn = "lapack_sgees"
+  elif dtype == np.float64:
+    fn = "lapack_dgees"
+  elif dtype == np.complex64:
+    fn = "lapack_cgees"
+  elif dtype == np.complex128:
+    fn = "lapack_zgees"
+  else:
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
+
+  if not np.issubdtype(dtype, np.complexfloating):
+    workspaces = [ir.RankedTensorType.get(dims, etype)]
     workspace_layouts = [layout]
     eigvals = [ir.RankedTensorType.get(batch_dims + (n,), etype)] * 2
     eigvals_layouts = [
@@ -706,11 +715,8 @@ def gees_mhlo(a, jobvs=True, sort=False, select=None):
                                     type=ir.IndexType.get())
     ] * 2
   else:
-    fn = ("lapack_cgees" if etype == ir.ComplexType.get(ir.F32Type.get())
-          else "lapack_zgees")
-    schurvecs_type = etype
     workspaces = [
-        ir.RankedTensorType.get(dims, schurvecs_type),
+        ir.RankedTensorType.get(dims, etype),
         ir.RankedTensorType.get([n], ir.ComplexType(etype).element_type),
     ]
     workspace_layouts = [
@@ -729,7 +735,7 @@ def gees_mhlo(a, jobvs=True, sort=False, select=None):
                                               type=ir.IndexType.get())
   out = mhlo.CustomCallOp(
       [ir.TupleType.get_tuple(workspaces + eigvals + [
-        ir.RankedTensorType.get(dims, schurvecs_type),
+        ir.RankedTensorType.get(dims, etype),
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
       ])],
