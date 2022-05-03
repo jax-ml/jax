@@ -47,6 +47,7 @@ def normal(stddev=1e-2, dtype=jnp.float_):
 def truncated_normal(stddev=1e-2, lower=-2, upper=2, dtype=jnp.float_):
   def init(key, shape, dtype=dtype):
     dtype = dtypes.canonicalize_dtype(dtype)
+    stddev = jnp.sqrt(variance) / jnp.array(.87962566103423978, dtype)
     return random.truncated_normal(key, lower, upper, shape, dtype) * stddev
   return init
 
