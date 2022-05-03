@@ -8,11 +8,16 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.9 (Unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.8...main).
+## jax 0.3.10 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.9...main).
 
 ## jaxlib 0.3.8 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.7...main).
+
+## jax 0.3.9 (May 2, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.8...jax-v0.3.9).
+* Changes
+  * Added support for fully asynchronous checkpointing for GlobalDeviceArray.
 
 ## jax 0.3.8 (April 29 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.7...jax-v0.3.8).
