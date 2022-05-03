@@ -2387,7 +2387,9 @@ tf_impl_with_avals[ad_checkpoint.remat_p] = \
                     multiple_results=True,
                     extra_name_stack="checkpoint")
 
-tf_impl[lax_control_flow.optimization_barrier_p] = tfxla.optimization_barrier
+# TODO: Remove once tensorflow is 2.10.0 everywhere.
+if hasattr(tfxla, 'optimization_barrier'):
+  tf_impl[lax_control_flow.optimization_barrier_p] = tfxla.optimization_barrier
 
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted
