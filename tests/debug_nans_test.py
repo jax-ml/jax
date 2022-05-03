@@ -144,7 +144,6 @@ class DebugNaNsTest(jtu.JaxTestCase):
           ans.block_until_ready()
 
   @jtu.ignore_warning(message=".*is an experimental.*")
-  @jtu.skip_on_devices("cpu", "gpu")
   def testPjit(self):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")

@@ -212,8 +212,6 @@ class XMapTestCase(jtu.BufferDonationTestCase):
 # A mixin that enables SPMD lowering tests
 class SPMDTestMixin:
   def setUp(self):
-    if jtu.device_under_test() not in ['tpu', 'gpu']:
-      raise SkipTest
     super().setUp()
     jtu.set_spmd_lowering_flag(True)
 
@@ -223,8 +221,6 @@ class SPMDTestMixin:
 
 class ManualSPMDTestMixin:
   def setUp(self):
-    if jtu.device_under_test() not in ['tpu', 'gpu']:
-      raise SkipTest
     if not hasattr(xla_client.OpSharding.Type, "MANUAL"):
       raise SkipTest
     super().setUp()

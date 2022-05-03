@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -190,8 +189,6 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
   def test_pjit_inherits_effects(self):
-    if jax.default_backend() not in {'gpu', 'tpu'}:
-      raise unittest.SkipTest("pjit only supports GPU and TPU backends")
     def f(x):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='bar')
