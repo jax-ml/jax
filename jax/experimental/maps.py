@@ -1351,7 +1351,6 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
                                    tokens_in=ctx.tokens_in,
                                    tokens_out=ctx.tokens_out),
           in_node)[0]
-    if v.aval is not core.abstract_unit else in_node
     for v, aval, in_node, arg_in_axes
     in zip(call_jaxpr.invars, ctx.avals_in, in_nodes, mesh_in_axes))
 
@@ -1378,7 +1377,6 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
                                        avals_out=None,
                                        tokens_in=ctx.tokens_in,
                                        tokens_out=ctx.tokens_out), tiled_out)[0]
-      if v.aval is not core.abstract_unit else tiled_out
       for v, vectorized_outvar, tiled_out, ans_out_axes
       in zip(call_jaxpr.outvars, vectorized_jaxpr.outvars, tiled_outs,
              mesh_out_axes)]

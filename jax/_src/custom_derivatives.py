@@ -955,7 +955,7 @@ def _maybe_perturbed(x: Any) -> bool:
     # If x is a DynamicJaxprTracer then we're staging out; differentiation could
     # happen later, but some types always have trivial tangents.
     vspace = x.aval.at_least_vspace()
-    return not (vspace is core.abstract_unit or vspace is core.abstract_token or
+    return not (vspace is core.abstract_token or
                 getattr(vspace, 'dtype', None) is dtypes.float0)
   elif not isinstance(x, ad.JVPTracer):
     # If x is not a JVPTracer, recursively check its contents.

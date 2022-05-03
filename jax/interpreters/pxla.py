@@ -338,8 +338,6 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
 
 
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
-shard_arg_handlers[core.Unit] = \
-    lambda x, devices, _: device_put(core.unit, devices, replicate=True)  # type: ignore  # has-type
 def _shard_array(x, devices, indices):
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
@@ -389,7 +387,6 @@ def shard_aval(size, axis: int, aval):
   except KeyError as err:
     raise TypeError(f"No shard_aval handler for type: {type(aval)}") from err
 shard_aval_handlers: Dict[Type[core.AbstractValue], Callable[[int, int, Any], Any]] = {}
-shard_aval_handlers[core.AbstractUnit] = lambda size, axis, x: x
 def _shard_abstract_array(size, axis: int, x):
   try:
     if x.shape[axis] != size:
@@ -469,7 +466,6 @@ def local_aval_to_result_handler(
 
 PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
 local_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
-local_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 def sda_array_result_handler(aval: ShapedArray, sharding_spec, indices):
   return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
                                                 indices)
@@ -502,7 +498,6 @@ def global_aval_to_result_handler(
         "No pxla_result_handler for type: {}".format(type(aval))) from err
 
 global_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
-global_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 
 ### lazy device-memory persistence and result handling
 
@@ -1178,7 +1173,6 @@ class PmapExecutable(stages.Executable):
     input_sharding_specs = [
         _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
                             parts.local_num_partitions, arg_parts, aval, in_axis)
-        if aval is not core.abstract_unit else None
         for aval, arg_parts, in_axis in safe_zip(
             shards.sharded_avals, local_arg_parts_, pci.in_axes)]
     input_indices = [spec_to_indices(aval.shape, spec)
@@ -1204,7 +1198,6 @@ class PmapExecutable(stages.Executable):
     out_specs = [
         _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
                             parts.local_num_partitions, out_parts, aval, out_axis)
-        if aval is not core.abstract_unit else None
         for out_parts, aval, out_axis in safe_zip(
             local_out_parts, local_out_avals, pci.out_axes)]
     handle_outs = local_avals_to_results_handler(out_specs, local_unmapped_avals)
@@ -1357,8 +1350,6 @@ def get_num_partitions(*partitions):
 
 def get_global_aval(local_aval, global_parts: PartitionsOrReplicated,
                     local_parts: PartitionsOrReplicated):
-  if local_aval is core.abstract_unit:
-    return local_aval
   if global_parts is None:
     return local_aval
   assert local_parts is not None
@@ -1370,8 +1361,6 @@ def get_global_aval(local_aval, global_parts: PartitionsOrReplicated,
 
 def get_local_aval(global_aval, global_parts: PartitionsOrReplicated,
                    local_parts: PartitionsOrReplicated):
-  if global_aval is core.abstract_unit:
-    return global_aval
   if global_parts is None:
     return global_aval
   assert local_parts is not None
@@ -1426,7 +1415,6 @@ def local_avals_to_results_handler(
     local_out_specs: Sequence[Optional[ShardingSpec]],
     unmapped_local_out_avals: Sequence[Optional[ShapedArray]]):
   out_indices = [spec_to_indices(aval.shape, spec)
-                 if aval is not core.abstract_unit else None
                  for aval, spec in safe_zip(unmapped_local_out_avals, local_out_specs)]  # pytype: disable=attribute-error
   handlers = [
       local_aval_to_result_handler(aval, spec, idcs)
@@ -1443,7 +1431,6 @@ def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
     global_out_specs = [global_sharding_spec(aval, oa)
                         for aval, oa in safe_zip(global_out_avals, out_axes)]
     global_out_indices = [spec_to_indices(aval.shape, spec)
-                   if aval is not core.abstract_unit else None
                    for aval, spec in safe_zip(global_out_avals, global_out_specs)]
     out_axis_resources = [array_mapping_to_axis_resources(o) for o in out_axes]
     handlers = [
@@ -1607,9 +1594,7 @@ def _unravel_index_mhlo(axis_env):
       mhlo.DivOp(mhlo.ReplicaIdOp().result, div).result, mod).result
 
 def _mhlo_shard(aval, axis_env, xs, in_axis):
-  if aval is core.abstract_unit:
-    return xs
-  elif aval is core.abstract_token:
+  if aval is core.abstract_token:
     return xs
   elif isinstance(aval, core.ShapedArray):
     x, = xs
@@ -1635,9 +1620,7 @@ def _mhlo_shard(aval, axis_env, xs, in_axis):
 
 # TODO(b/110096942): more efficient gather
 def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
-  if aval is core.abstract_unit:
-    return xs
-  elif aval is core.abstract_token:
+  if aval is core.abstract_token:
     return xs
   elif isinstance(aval, core.ShapedArray):
     x, = xs
@@ -1960,8 +1943,6 @@ _old_env = _ThreadLocalOldEnv()
 
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
-  if aval is core.abstract_unit:
-    return aval
   assert isinstance(aval, ShapedArray)
   shape = list(aval.shape)
   named_shape = dict(aval.named_shape)
@@ -1973,8 +1954,6 @@ def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   return aval.update(shape=tuple(shape), named_shape=named_shape)
 
 def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
-  if aval is core.abstract_unit:
-    return aval
   assert isinstance(aval, ShapedArray)
   shape = list(aval.shape)
   named_shape = dict(aval.named_shape)
@@ -2222,7 +2201,6 @@ def lower_mesh_computation(
     else:
       global_sharding_spec = mesh_sharding_specs(global_axis_sizes, mesh.axis_names)
       in_partitions = [global_sharding_spec(aval, aval_in_axes).sharding_proto()
-                       if aval is not core.abstract_unit else None
                        for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)]
       out_partitions = [global_sharding_spec(aval, aval_out_axes).sharding_proto()
                         for aval, aval_out_axes in safe_zip(global_out_avals, out_axes)]
@@ -2307,8 +2285,7 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_global):
       aval = global_mesh._global_to_local(axis, gaval)
       mesh = global_mesh.local_mesh
 
-    spec = (mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, axis)
-            if aval is not core.abstract_unit else None)
+    spec = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, axis)
     # We special case this logic to support fully replicated values because
     # the mesh is global mesh and the indices returned by `spec_to_indices` will
     # represent index for each device in the global mesh. But here we want

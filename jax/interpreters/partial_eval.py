@@ -520,7 +520,7 @@ def abstract_eval_fun(fun, *avals, debug_info=None, **params):
 
 
 JaxprTracerRecipe = Union['JaxprEqnRecipe', 'LambdaBinding', 'FreeVar',
-                          'ConstVar', Literal, core.Unit]
+                          'ConstVar', Literal]
 
 class JaxprTracer(Tracer):
   __slots__ = ['pval', 'recipe']
@@ -709,8 +709,8 @@ def tracers_to_jaxpr(
   def getvar(t: JaxprTracer) -> Atom:
     var = t_to_var.get(id(t))
     if var is None:
-      aval = t.pval.get_aval() if not t.pval.is_known() else core.abstract_unit
-      var = t_to_var[id(t)] = newvar(aval)
+      assert not t.pval.is_known()
+      var = t_to_var[id(t)] = newvar(t.pval.get_aval())
     return var
   sorted_tracers = toposort(out_tracers)
   invars = map(getvar, in_tracers)
@@ -775,10 +775,6 @@ def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
                           effects=jaxpr.effects)
   config.jax_enable_checks and core.check_jaxpr(converted_jaxpr)
   return converted_jaxpr
-
-
-def _split_aval(unknown: bool, aval: AbstractValue) -> Tuple[AbstractValue, AbstractValue]:
-  return (core.abstract_unit, aval) if unknown else (aval, core.abstract_unit)
 
 
 def partial_eval_jaxpr_nounits(
@@ -1044,7 +1040,6 @@ def _partial_eval_jaxpr_custom(
     return x
 
   known_eqns, staged_eqns = [], []
-  write(False, True, core.unitvar)
   map(write, in_unknowns, [True] * len(in_unknowns), jaxpr.invars)
   for eqn in jaxpr.eqns:
     unks_in, inst_in = unzip2(map(read, eqn.invars))
@@ -1070,8 +1065,7 @@ def _partial_eval_jaxpr_custom(
   assert all(type(v) is Var for v in residuals), residuals
 
   ins_known, _ = partition_list(in_unknowns, jaxpr.invars)
-  outs_known_, _ = partition_list(out_unknowns, jaxpr.outvars)
-  outs_known = [x for x in outs_known_ if x.aval is not core.abstract_unit]
+  outs_known, _ = partition_list(out_unknowns, jaxpr.outvars)
   known_effects = core.join_effects(*(eqn.effects for eqn in known_eqns))
   jaxpr_known = Jaxpr((), ins_known, [*outs_known, *residuals], known_eqns,
                       known_effects)
@@ -1122,11 +1116,7 @@ def call_partial_eval_custom_rule(
   jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
       _partial_eval_jaxpr_custom(jaxpr, unks_in, saveable)
   ins_known, _ = partition_list(unks_in, eqn.invars)
-  # by convention, _partial_eval_jaxpr_custom drops units on known outputs
-  known_units_out = [v.aval is core.abstract_unit for v in jaxpr.outvars]
-  dropped_outs_known = map(op.or_, unks_out, known_units_out)
-  kept_outs_known = [not d for d in dropped_outs_known]
-  out_binders_known, _ = partition_list(dropped_outs_known, eqn.outvars)
+  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   kept_outs_staged = inst_out
   newvar = core.gensym([jaxpr_known, jaxpr_staged])
@@ -1134,7 +1124,8 @@ def call_partial_eval_custom_rule(
   params_known = {**eqn.params, jaxpr_param_name: jaxpr_known}
   params_staged = {**eqn.params, jaxpr_param_name: jaxpr_staged}
   params_known, params_staged = params_updater(
-      unks_in, kept_outs_known, kept_outs_staged, num_res, params_known, params_staged)
+      unks_in, map(op.not_, unks_out), kept_outs_staged, num_res, params_known,
+      params_staged)
   eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                             eqn.primitive, params_known, jaxpr_known.effects, eqn.source_info)
   eqn_staged = new_jaxpr_eqn([*residuals, *eqn.invars], out_binders_staged,
@@ -2085,7 +2076,6 @@ def _eval_jaxpr_padded(
   def write(v, val) -> None:
     env[v] = val
 
-  write(core.unitvar, core.unit)
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:

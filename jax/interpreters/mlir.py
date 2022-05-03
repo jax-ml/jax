@@ -141,7 +141,6 @@ def aval_to_ir_types(aval: core.AbstractValue) -> Sequence[ir.Type]:
   except KeyError as err:
     raise TypeError(f"No ir_type_handler for aval type: {type(aval)}") from err
 
-ir_type_handlers[core.AbstractUnit] = lambda _: ()
 ir_type_handlers[core.AbstractBInt] = _bint_ir_types
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.ConcreteArray] = _array_ir_types
@@ -201,7 +200,6 @@ def ir_constant(val: Any, canonicalize_types: bool = True) -> ir.Value:
                     f"multiple IR values {values}")
   return values[0]
 
-register_constant_handler(core.Unit, lambda val, canonicalize_types: ())
 
 def _numpy_array_constant(x: np.ndarray, canonicalize_types
                          ) -> Sequence[ir.Value]:
@@ -540,7 +538,6 @@ def lower_jaxpr_to_module(
     # This may or may not be a reasonable assumption.
     ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
         f"{module_name}.{next(_module_unique_id)}")
-    # TODO(phawkins): represent units with zero buffers at the runtime level.
     unlowerable_effects = {eff for eff in jaxpr.effects
                            if eff not in lowerable_effects}
     if unlowerable_effects:
@@ -548,7 +545,6 @@ def lower_jaxpr_to_module(
           f'Cannot lower jaxpr with unlowerable effects: {unlowerable_effects}')
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, effects, public=True, create_tokens=True,
-        replace_units_with_dummy=True,
         replace_tokens_with_dummy=True, replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)
@@ -654,7 +650,6 @@ def lower_jaxpr_to_fun(
     *,
     create_tokens: bool = False,
     public: bool = False,
-    replace_units_with_dummy: bool = False,
     replace_tokens_with_dummy: bool = False,
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
@@ -675,8 +670,6 @@ def lower_jaxpr_to_fun(
       that will be created in or used by the lowered function.
     create_tokens: if true, the MHLO will create tokens and ignore dummy input tokens.
     public: if true, the function's visibility is set to "public".
-    replace_units_with_dummy: if true, unit arguments/return values are
-      replaced with bool arrays of size [0].
     replace_tokens_with_dummy: if true, token arguments/return values are
       replaced with bool arrays of size [0].
     replicated_args: if present, annotates arguments as replicated.
@@ -692,9 +685,7 @@ def lower_jaxpr_to_fun(
   Returns the name of the function.
   """
   def aval_to_types(aval):
-    if replace_units_with_dummy and aval is core.abstract_unit:
-      aval = core.ShapedArray((), np.dtype(np.bool_))
-    elif replace_tokens_with_dummy and aval is core.abstract_token:
+    if replace_tokens_with_dummy and aval is core.abstract_token:
       aval = core.ShapedArray((), np.dtype(np.bool_))
     return aval_to_ir_types(aval)
 
@@ -800,9 +791,7 @@ def lower_jaxpr_to_fun(
       tokens_in = TokenSet(zip(effects, token_args))
     args: List[List[ir.Value]] = []
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
-      if replace_units_with_dummy and aval is core.abstract_unit:
-        args.append([])
-      elif replace_tokens_with_dummy and aval is core.abstract_token:
+      if replace_tokens_with_dummy and aval is core.abstract_token:
         args.append(mhlo.CreateTokenOp(mhlo.TokenType.get()).results)
       else:
         args.append(arg)
@@ -819,9 +808,7 @@ def lower_jaxpr_to_fun(
       for token in tokens_out.tokens():
         outs.append(token)
     for aval, out in zip(jaxpr.out_avals, out_vals):
-      if replace_units_with_dummy and aval is core.abstract_unit:
-        outs.append(ir_constants(np.zeros((), np.bool_)))
-      elif replace_tokens_with_dummy and aval is core.abstract_token:
+      if replace_tokens_with_dummy and aval is core.abstract_token:
         outs.append(ir_constants(np.zeros((), np.bool_)))
       else:
         outs.append(out)
@@ -894,7 +881,6 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   assert len(args) == len(jaxpr.invars), (jaxpr, args)
   assert len(consts) == len(jaxpr.constvars), (jaxpr, consts)
   assert all(isinstance(v, ir.Value) for vs in consts for v in vs), consts
-  write(core.unitvar, ())
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:

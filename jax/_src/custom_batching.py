@@ -104,8 +104,6 @@ def check_vmap_rule_trees(rule, original_out_tree, out_tree, out_batched_tree):
 
 # Like batching.bdim_at_front, but doesn't broadcast if not mapped
 def maybe_bdim_at_front(x, bdim):
-  if core.get_aval(x) is core.abstract_unit:
-    return core.unit
   if bdim is not_mapped:
     return x
   else:

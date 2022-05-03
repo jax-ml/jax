@@ -301,40 +301,35 @@ class CoreTest(jtu.JaxTestCase):
 
   def test_comparing_var(self):
     newsym = core.gensym()
-    a = newsym(core.abstract_unit)
-    b = newsym(core.abstract_unit)
-    c = newsym(core.abstract_unit)
+    a = newsym(core.ShapedArray((), np.dtype('int32')))
+    b = newsym(core.ShapedArray((), np.dtype('int32')))
+    c = newsym(core.ShapedArray((), np.dtype('int32')))
     assert a < b < c
     assert c > b > a
     assert a != b and b != c and a != c
 
   def test_var_ordering(self):
     newsym = core.gensym()
-    a = newsym(core.abstract_unit)
-    b = newsym(core.abstract_unit)
-    c = newsym(core.abstract_unit)
+    a = newsym(core.ShapedArray((), np.dtype('int32')))
+    b = newsym(core.ShapedArray((), np.dtype('int32')))
+    c = newsym(core.ShapedArray((), np.dtype('int32')))
     for ordering in it.permutations([a, b, c]):
       assert sorted(list(ordering)) == [a, b, c]
 
   def test_var_compared_by_identity(self):
-    a1 = core.gensym()(core.abstract_unit)
-    a2 = core.gensym()(core.abstract_unit)
+    a1 = core.gensym()(core.ShapedArray((), np.dtype('int32')))
+    a2 = core.gensym()(core.ShapedArray((), np.dtype('int32')))
     assert str(a1) == str(a2)
     assert a1 != a2
 
   def test_var_tree_flatten(self):
     newsym = core.gensym()
+    aval = core.ShapedArray((), np.dtype('int32'))
     a, b, c, d = (
-        newsym(core.abstract_unit), newsym(core.abstract_unit),
-        newsym(core.abstract_unit), newsym(core.abstract_unit))
+        newsym(aval), newsym(aval),
+        newsym(aval), newsym(aval))
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
-
-  def test_device_put_unit(self):
-    def f(x, y):
-      return x, 2 * y
-    args_maker = lambda: (core.unit, 1)
-    self._CompileAndCheck(f, args_maker)
 
   def test_concrete_array_string_representation(self):
     # https://github.com/google/jax/issues/5364

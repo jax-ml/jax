@@ -111,8 +111,7 @@ def _is_tfval(v: TfVal) -> bool:
 
 # The implementation rules for primitives. The rule will be called with the
 # arguments (TfVal) and must return TfVal (or a sequence thereof,
-# if primitive.multiple_results). The vast majority of primitives do not need
-# to worry about core.unit inputs or results. The exception are primarily the
+# if primitive.multiple_results). The exception are primarily the
 # control-flow primitives.
 tf_impl: Dict[core.Primitive, Callable[..., Any]] = {}
 
@@ -585,8 +584,7 @@ def _interpret_subtrace(main: core.MainTrace,
   in_tracers = tuple(
       TensorFlowTracer(trace, val, aval)
       for val, aval in zip(in_vals, in_avals))
-  # The outs may be core.unit, see comment in TensorFlowTrace.pure.
-  outs = yield in_tracers, {}  # type: Sequence[Union[TfVal, core.Unit]]
+  outs = yield in_tracers, {}  # type: Sequence[TfVal]
   out_tracers: Iterable[TensorFlowTracer] = (
       map(trace.full_raise, outs))  # type: ignore
   out_vals_with_avals: Sequence[Tuple[TfVal, core.ShapedArray]] = (
@@ -598,7 +596,7 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal,
                      extra_name_stack: Optional[str]) -> Sequence[TfVal]:
   """Evaluates a Jaxpr with tf.Tensor arguments.
 
-  The output is a sequence of TfVal (no `core.unit`), suitable for use with TF.
+  The output is a sequence of TfVal, suitable for use with TF.
   """
   fun: lu.WrappedFun = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   out_with_avals = _interpret_fun(fun, args, jaxpr.in_avals, extra_name_stack)
@@ -696,12 +694,11 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
 class TensorFlowTracer(core.Tracer):
   """Tracer class that boxes a TF value and a JAX abstract value.
 
-  In addition to the TF value we carry the JAX abstract value because there are
-  two cases when it cannot be recovered from the value: (a) when the abstract
-  value is core.abstract_unit, in which case the value is tf.nan; (b) when we
-  are converting with polymorphic shapes, in which case the shape of the value
-  may have dimensions set to `None`, which the JAX abstract value may contain
-  more precise information.
+  In addition to the TF value we carry the JAX abstract value because there is
+  one case when it cannot be recovered from the value: when we are converting
+  with polymorphic shapes, in which case the shape of the value may have
+  dimensions set to `None`, which the JAX abstract value may contain more
+  precise information.
 
   When the value has a partially-known shape, the dimensions marked as `None`
   must correspond to non-constant dimensions in the abstract value.
@@ -716,10 +713,6 @@ class TensorFlowTracer(core.Tracer):
                aval: core.AbstractValue):
     self._trace = trace
     self._aval = aval
-    if aval is core.abstract_unit:
-      self.val = val
-      return
-
     if isinstance(val, (tf.Tensor, tf.Variable)):
       val_shape = val.shape
 
@@ -776,25 +769,13 @@ class TensorFlowTrace(core.Trace):
   those will introduce their own MainTrace, and any operations involving those
   will be done on those traces, i.e., not a concern for TFT.
   """
-  def pure(self, val: Union[TfVal, core.Unit]) -> TensorFlowTracer:
+  def pure(self, val: TfVal) -> TensorFlowTracer:
     """Lifts a non-Tracer into the TensorFlowTracer.
 
     This function may be called by way of trace.full_raise.
-
-    The value may be a core.unit. During JAX transformations we sometimes
-    produce a Jaxpr that has arguments of abstract value core.abstract_unit
-    and results equal to core.unit. These are arguments and results that are
-    not used in the computation.
-
-    In TF world, we represent core.unit as NaN. This is safe, as these values
-    should never be used.
     """
-    if val is core.unit:
-      return TensorFlowTracer(self, tf.constant(np.nan, tf.float32),
-                              core.abstract_unit)
-    else:
-      tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val, memoize_constants=True)
-      return TensorFlowTracer(
+    tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val, memoize_constants=True)
+    return TensorFlowTracer(
         self, val, core.ShapedArray(tf_val.shape, jax_dtype,
                                     weak_type=dtypes.is_weakly_typed(val)))
 
@@ -2343,7 +2324,6 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
   # Initial computation of batched condition
   init_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *init_carry,
                                   extra_name_stack="while/body_pred")
-  assert init_pred_b is not core.unit
 
   def new_cond_tf_func(pred_b: TfVal, *carry: TfVal) -> TfVal:
     pred = tf.reduce_any(pred_b, axis=list(range(len(pred_b.shape))))

@@ -78,8 +78,6 @@ def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
-# unit representation
-def _make_unit_shape(_): return (xc.Shape.array_shape(np.dtype('bool'), ()),)
 def _make_array_shape(a: ShapedArray) -> Sequence[XlaShape]:
   if a.dtype is dtypes.float0:
     return (xc.Shape.array_shape(np.dtype('bool'), a.shape),)
@@ -224,7 +222,6 @@ def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[XlaShape]:
 
 xla_shape_handlers: Dict[Type[core.AbstractValue],
                          Callable[[Any], Sequence[XlaShape]]] = {
-    core.AbstractUnit: _make_unit_shape,
     ShapedArray: _make_array_shape,
     ConcreteArray: _make_array_shape,
 }
@@ -253,7 +250,7 @@ def _canonicalize_python_scalar_dtype(typ, x):
   return np.asarray(
       x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
 
-canonicalize_dtype_handlers: Dict[Any, Callable] = {core.Unit: identity}
+canonicalize_dtype_handlers: Dict[Any, Callable] = {}
 for t in device_array.device_array_types:
   canonicalize_dtype_handlers[t] = lambda x: x
 canonicalize_dtype_handlers.update(
@@ -276,9 +273,7 @@ def abstractify(x) -> core.AbstractValue:
 def _make_abstract_python_scalar(typ, val):
   return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val), weak_type=True)
 
-pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {
-    core.Unit: lambda _: core.abstract_unit,
-}
+pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {}
 for t in device_array.device_array_types:
   pytype_aval_mappings[t] = operator.attrgetter('aval')
 pytype_aval_mappings[core.Token] = lambda _: core.abstract_token

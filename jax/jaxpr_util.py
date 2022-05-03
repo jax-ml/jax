@@ -75,13 +75,12 @@ def var_defs_and_refs(jaxpr: core.Jaxpr):
   refs: Dict[core.Var, List[MaybeEqn]] = {}
 
   def read(a: core.Atom, eqn: MaybeEqn):
-    if a is not core.unitvar and not isinstance(a, core.Literal):
+    if not isinstance(a, core.Literal):
       assert a in defs, a
       assert a in refs, a
       refs[a].append(eqn)
 
   def write(v: core.Var, eqn: MaybeEqn):
-    assert v is not core.unitvar
     assert v not in defs, v
     assert v not in refs, v
     if not isinstance(v, core.DropVar):

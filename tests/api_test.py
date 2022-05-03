@@ -4330,21 +4330,6 @@ class RematTest(jtu.JaxTestCase):
 
     _ = jax.grad(f)(3.)  # doesn't crash
 
-  @parameterized.named_parameters(
-      {"testcase_name": f"{suffix}", "remat": remat}
-      for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
-          ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
-      ])
-  def test_unit_dropvar_consistency_regression(self, remat):
-    @partial(remat, policy=lambda *_, **__: False)
-    def f(u, x):
-      x, _ = jax.jit(lambda x: (x, u))(x)
-      return x
-
-    _ = api.linearize(partial(f, core.unit), 3.)
-
   def test_linearize_caching(self):
     # https://github.com/google/jax/issues/9661
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
@@ -4514,12 +4499,6 @@ class JaxprTest(jtu.JaxTestCase):
     cet = partial(lax.convert_element_type, new_dtype='float16')
     jaxpr = api.make_jaxpr(lambda: cet(3.))()
     self.assertLen(jaxpr.eqns, 0)
-
-  def test_pretty_print_unitvar(self):
-    jaxpr = api.make_jaxpr(lambda: None)()
-    jaxpr.jaxpr.outvars = [core.unitvar]
-    self.assertIn('in (*,)', str(jaxpr))
-    self.assertNotIn('in (a,)', str(jaxpr))
 
   def test_dce_jaxpr_scan(self):
     raise unittest.SkipTest()  # TODO(mattjj)

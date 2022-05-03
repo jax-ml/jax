@@ -471,8 +471,6 @@ def aval_to_num_buffers(aval: core.AbstractValue) -> int:
   except KeyError as err:
     raise TypeError(f"No num_buffers handler for type: {type(aval)}") from err
 
-# TODO(phawkins): use zero buffers to represent a unit.
-num_buffers_handlers[core.AbstractUnit] = lambda _: 1
 num_buffers_handlers[core.AbstractToken] = lambda _: 1
 num_buffers_handlers[core.ShapedArray] = lambda _: 1
 num_buffers_handlers[core.ConcreteArray] = lambda _: 1
@@ -568,7 +566,6 @@ def dynamic_array_result_handler(sticky_device: Optional[Device],
 result_handlers: Dict[
     Type[core.AbstractValue],
     Callable[[Optional[Device], Any], ResultHandler]] = {}
-result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
 result_handlers[core.AbstractToken] = lambda _, __: lambda _: core.token
 result_handlers[core.ShapedArray] = array_result_handler
 result_handlers[core.DShapedArray] = dynamic_array_result_handler
@@ -649,7 +646,7 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
                      _: List[core.Effect], kept_var_idx, *args):
-  env = {core.unitvar: core.unit}
+  env: Dict[core.Var, Any]  = {}
   pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
   map(env.setdefault, jaxpr.invars, pruned_args)
   map(env.setdefault, jaxpr.constvars, consts)
@@ -887,11 +884,6 @@ def _device_put_array(x, device: Optional[Device]):
 def _device_put_scalar(x, device):
   return _device_put_array(dtypes.coerce_to_array(x), device)
 
-def _device_put_unit(_, device):
-  backend = xb.get_device_backend(device)
-  return (backend.buffer_from_pyval(np.zeros((), dtype=np.dtype(np.bool_)),
-                                    device),)
-
 def _device_put_token(_, device):
   backend = xb.get_device_backend(device)
   return (backend.buffer_from_pyval(np.zeros((), dtype=np.dtype(np.bool_)),
@@ -902,7 +894,6 @@ _scalar_types = dtypes.python_scalar_dtypes.keys()
 device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]], Tuple[Any]]] = {}
 device_put_handlers.update((t, _device_put_array) for t in array_types)
 device_put_handlers.update((t, _device_put_scalar) for t in _scalar_types)
-device_put_handlers[core.Unit] = _device_put_unit
 device_put_handlers[core.Token] = _device_put_token
 
 
