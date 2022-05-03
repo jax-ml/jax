@@ -251,7 +251,8 @@ def create_device_mesh(
   if devices is None:
     devices = jax.devices()
   if np.prod(mesh_shape) != len(devices):
-    raise ValueError('Number of devices must equal the product of mesh_shape')
+    raise ValueError(f'Number of devices {len(devices)} must equal the product '
+                     f'of mesh_shape {mesh_shape}')
   device_kind = devices[-1].device_kind
   if device_kind in (_TPU_V2, _TPU_V3):
     if len(devices) == 8:
