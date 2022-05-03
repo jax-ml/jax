@@ -473,8 +473,11 @@ def sharded_aval(aval: core.ShapedArray,
     sharded_shape.append((aval.shape[i] + partitions - 1) // partitions)
   return aval.update(tuple(sharded_shape))
 
+
 def lower_jaxpr_to_module(
-    module_name: str, jaxpr: core.ClosedJaxpr, platform: str,
+    module_name: str, jaxpr: core.ClosedJaxpr,
+    effects: List[core.Effect],
+    platform: str,
     axis_context: AxisContext,
     name_stack: NameStack, donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
@@ -504,6 +507,8 @@ def lower_jaxpr_to_module(
   if platform in platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(
         in_avals, out_avals, donated_args)
+  if any(eff not in lowerable_effects for eff in jaxpr.effects):
+    raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
   if any(donated_args):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args)
@@ -528,7 +533,6 @@ def lower_jaxpr_to_module(
     if unlowerable_effects:
       raise ValueError(
           f'Cannot lower jaxpr with unlowerable effects: {unlowerable_effects}')
-    effects = [eff for eff in jaxpr.effects if eff in core.ordered_effects]
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, effects, public=True, create_tokens=True,
         replace_units_with_dummy=True,
@@ -623,6 +627,12 @@ class TokenSet:
         new_tokens.append(self._tokens[eff])
     return TokenSet(zip(self.effects(), new_tokens))
 
+def dummy_token_type() -> Sequence[ir.Type]:
+  return aval_to_ir_types(core.ShapedArray((0,), np.bool_))
+
+def dummy_token() -> Sequence[ir.Value]:
+  return ir_constants(np.zeros(0, np.bool_))
+
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
@@ -650,6 +660,7 @@ def lower_jaxpr_to_fun(
     jaxpr: the jaxpr to lower.
     effects: a sequence of `core.Effect`s corresponding to an ordering of tokens
       that will be created in or used by the lowered function.
+    create_tokens: if true, the MHLO will create tokens and ignore dummy input tokens.
     public: if true, the function's visibility is set to "public".
     replace_units_with_dummy: if true, unit arguments/return values are
       replaced with bool arrays of size [0].
@@ -676,10 +687,10 @@ def lower_jaxpr_to_fun(
 
   input_types = map(aval_to_types, jaxpr.in_avals)
   output_types = map(aval_to_types, jaxpr.out_avals)
+  num_tokens = len(effects)
   if create_tokens:
     # If we create the tokens they won't be inputs to the MLIR function.
-    num_tokens = 0
-    token_types = []
+    token_types = [dummy_token_type() for _ in effects]
   else:
     # If we aren't creating tokens they will be the initial inputs to the
     # MLIR function.
@@ -789,9 +800,8 @@ def lower_jaxpr_to_fun(
                                          *args)
     outs = []
     if create_tokens:
-      # If we created the tokens in this function, we are done with them and can
-      # ignore `tokens_out`.
-      pass
+      for _ in effects:
+        outs.append(dummy_token())
     else:
       for token in tokens_out.tokens():
         outs.append(token)
