@@ -14,7 +14,6 @@
 """Tests for serialization and deserialization of GDA."""
 
 import pathlib
-import unittest
 
 from absl.testing import absltest
 import jax
@@ -24,25 +23,15 @@ from jax.config import config
 from jax.experimental import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.gda_serialization import serialization
-from jax.experimental.maps import Mesh
 import numpy as np
 
 config.parse_flags_with_absl()
 
 
-def create_global_mesh(mesh_shape, axis_names):
-  size = util.prod(mesh_shape)
-  if len(jax.devices()) < size:
-    raise unittest.SkipTest(f'Test requires {size} local devices')
-  mesh_devices = np.array(jax.devices()[:size]).reshape(mesh_shape)
-  global_mesh = Mesh(mesh_devices, axis_names)
-  return global_mesh
-
-
 class CheckpointTest(jtu.JaxTestCase):
 
   def test_checkpointing(self):
-    global_mesh = create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     num = util.prod(global_input_shape)
@@ -66,7 +55,7 @@ class CheckpointTest(jtu.JaxTestCase):
     # Third GDA
     def cb3(index):
       return np.array([])
-    global_mesh1d = create_global_mesh((8,), ('x',))
+    global_mesh1d = jtu.create_global_mesh((8,), ('x',))
     gda3 = GlobalDeviceArray.from_callback((0,), global_mesh1d, P(None), cb3)
     ckpt_dir3 = pathlib.Path(self.create_tempdir('third').full_path)
 
@@ -101,7 +90,7 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertEqual(m3.dtype, np.float32)
 
   def test_checkpointing_with_bigger_shape(self):
-    global_mesh = create_global_mesh((2, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     num = util.prod(global_input_shape)
 
@@ -119,7 +108,7 @@ class CheckpointTest(jtu.JaxTestCase):
     serialization.run_serialization([gda1], tspecs)
 
     m1, = serialization.run_deserialization(
-        [create_global_mesh((4, 2), ('x', 'y'))],
+        [jtu.create_global_mesh((4, 2), ('x', 'y'))],
         [P('x', 'y')],
         tspecs,
         [(12, 2)],
@@ -139,6 +128,47 @@ class CheckpointTest(jtu.JaxTestCase):
 
     for l in m1.local_shards:
       self.assertArraysEqual(l.data.to_py(), expected_data[l.device.id])
+
+  def test_async_checkpointing(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    num = util.prod(global_input_shape)
+
+    # First GDA
+    global_input_data1 = np.arange(num).reshape(global_input_shape)
+    def cb1(index):
+      return global_input_data1[index]
+    gda1 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                           mesh_axes, cb1)
+    temp_ckpt_dir1 = pathlib.Path(self.create_tempdir('temp_first').full_path)
+    ckpt_dir1 = str(temp_ckpt_dir1).replace('temp_first', 'first')
+
+    s_tspecs = jax.tree_map(serialization.get_tensorstore_spec, [str(temp_ckpt_dir1)])
+
+    manager = serialization.GlobalAsyncCheckpointManager(
+        temp_checkpoint_dir=temp_ckpt_dir1, final_checkpoint_dir=ckpt_dir1)
+    manager.serialize([gda1], s_tspecs)
+    manager.wait_until_finished()
+
+    d_tspecs = jax.tree_map(serialization.get_tensorstore_spec, [str(ckpt_dir1)])
+    m1, = manager.deserialize([global_mesh], [mesh_axes], d_tspecs)
+    self.assertArraysEqual(m1.local_shards[0].data.to_py(),
+                           np.array([[0], [2]]))
+    self.assertArraysEqual(m1.local_shards[1].data.to_py(),
+                           np.array([[1], [3]]))
+    self.assertEqual(m1.local_shards[0].data.shape, (2, 1))
+    self.assertEqual(m1.dtype, np.int32)
+
+    # Will throw `file already exists` error when `tf.io.gfile.rename`.
+    # `wait_until_finished` will raise the error.
+    with self.assertRaises(Exception):
+      ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
+      manager1 = serialization.GlobalAsyncCheckpointManager(
+          temp_checkpoint_dir=temp_ckpt_dir1, final_checkpoint_dir=ckpt_dir1)
+      manager1.serialize([gda1], s_tspecs, temp_checkpoint_dir=temp_ckpt_dir1,
+                         final_checkpoint_dir=ckpt_dir1)
+      manager1.wait_until_finished()
 
   def test_spec_has_metadata(self):
     spec = {
