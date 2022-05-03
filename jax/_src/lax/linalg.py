@@ -950,17 +950,12 @@ def _lu_blocked(a, block_size=128):
 
 def _lu_python(x):
   """Default LU decomposition in Python, where no better version exists."""
-  m, n = x.shape[-2:]
   batch_dims = x.shape[:-2]
-  if len(batch_dims) > 0:
-    batch_size = np.prod(batch_dims, dtype=np.int64)
-    lu, pivot, perm = api.vmap(_lu_blocked)(lax.reshape(x, (batch_size, m, n)))
-    lu = lax.reshape(lu, batch_dims + (m, n))
-    pivot = lax.reshape(pivot, batch_dims + (min(m, n),))
-    perm = lax.reshape(perm, batch_dims + (m,))
-  else:
-    lu, pivot, perm = _lu_blocked(x)
-  return lu, pivot, perm
+  fn = _lu_blocked
+  for _ in range(len(batch_dims)):
+    fn = api.vmap(fn)
+
+  return fn(x)
 
 def _lu_impl(operand):
   lu, pivot, perm = xla.apply_primitive(lu_p, operand)
