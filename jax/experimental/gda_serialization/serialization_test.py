@@ -146,9 +146,9 @@ class CheckpointTest(jtu.JaxTestCase):
 
     s_tspecs = jax.tree_map(serialization.get_tensorstore_spec, [str(temp_ckpt_dir1)])
 
-    manager = serialization.GlobalAsyncCheckpointManager(
-        temp_checkpoint_dir=temp_ckpt_dir1, final_checkpoint_dir=ckpt_dir1)
-    manager.serialize([gda1], s_tspecs)
+    manager = serialization.GlobalAsyncCheckpointManager()
+    manager.serialize([gda1], s_tspecs, temp_checkpoint_dir=temp_ckpt_dir1,
+                      final_checkpoint_dir=ckpt_dir1)
     manager.wait_until_finished()
 
     d_tspecs = jax.tree_map(serialization.get_tensorstore_spec, [str(ckpt_dir1)])
@@ -164,8 +164,7 @@ class CheckpointTest(jtu.JaxTestCase):
     # `wait_until_finished` will raise the error.
     with self.assertRaises(Exception):
       ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
-      manager1 = serialization.GlobalAsyncCheckpointManager(
-          temp_checkpoint_dir=temp_ckpt_dir1, final_checkpoint_dir=ckpt_dir1)
+      manager1 = serialization.GlobalAsyncCheckpointManager()
       manager1.serialize([gda1], s_tspecs, temp_checkpoint_dir=temp_ckpt_dir1,
                          final_checkpoint_dir=ckpt_dir1)
       manager1.wait_until_finished()
