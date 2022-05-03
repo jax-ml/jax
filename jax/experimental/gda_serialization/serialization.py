@@ -213,12 +213,14 @@ class GlobalAsyncCheckpointManager:
 
   while ...:
     if step % num_steps_between_checkpoints == 0:
-      manager.serialize(train_state)
+      manager.serialize(train_state, temp_checkpoint_dir=...,
+                        final_checkpoint_dir=...)
       train_state = train_step(train_state, input)
       # This is a non-blocking call.
       manager.check_for_errors()
 
-  manager.serialize(train_state)
+  manager.serialize(train_state, temp_checkpoint_dir=...,
+                    final_checkpoint_dir=...)
   # Wait before the end of the program for the checkpoint to finish. This is a
   # blocking call.
   manager.wait_until_finished()
