@@ -4094,19 +4094,6 @@ def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
   del shape, dtype, algorithm
   return (key.weak_type, False)
 
-RandomAlgorithm = xops.RandomAlgorithm
-RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
-
-def rng_algorithm(algorithm: RandomAlgorithm):
-  if algorithm == RandomAlgorithm.RNG_THREE_FRY:
-    return mhlo.RngAlgorithmAttr.get("THREE_FRY")
-  elif algorithm == RandomAlgorithm.RNG_PHILOX:
-    return mhlo.RngAlgorithmAttr.get("PHILOX")
-  elif algorithm == RandomAlgorithm.RNG_DEFAULT:
-    return mhlo.RngAlgorithmAttr.get("DEFAULT")
-  else:
-    assert False
-
 def _rng_bit_generator_lowering(
     ctx, key, *, shape, dtype, algorithm):
   key_type = ir.RankedTensorType(key.type)
@@ -4133,15 +4120,11 @@ def _rng_bit_generator_lowering(
     key = mhlo.BitcastConvertOp(
         ir.RankedTensorType.get([2], u64_type),
         mhlo.ReshapeOp(ir.RankedTensorType.get([2, 2], u32_type), key)).result
-
-  algorithm_attr = rng_algorithm(algorithm) if jax._src.lib.mlir_api_version >= 13 \
-  else mlir.i32_attr(algorithm)
   out_key, out_vals = mhlo.RngBitGeneratorOp(
       key.type,
       ir.RankedTensorType.get(shape, rbg_etype),
-      algorithm_attr, key).results
-
-
+      mlir.i32_attr(algorithm),
+      key).results
   if key_etype == u32_type:
     out_key = mhlo.ReshapeOp(
         ir.RankedTensorType.get([4], u32_type),
@@ -4169,6 +4152,8 @@ rng_bit_generator_p.def_abstract_eval(
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 
+RandomAlgorithm = xops.RandomAlgorithm
+RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
 
 def _array_copy(arr):
   return copy_p.bind(arr)
