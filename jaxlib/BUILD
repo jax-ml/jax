@@ -244,8 +244,6 @@ py_library(
         "cusolver.py",
         "cusparse.py",
     ],
-    # TODO(phawkins): reconsider whether we want this target to be visible.
-    visibility = ["//visibility:public"],
     deps = [
         ":_cublas",
         ":_cuda_linalg",
