@@ -1619,13 +1619,15 @@ def _mhlo_shard(aval, axis_env, xs, in_axis):
     idxs.insert(in_axis, _unravel_index_mhlo(axis_env))
     dims_unsqueezed = dims.copy()
     dims_unsqueezed.insert(in_axis, 1)
+    if jax._src.lib.mlir_api_version < 13:
+      dynamic_slice_result = mhlo.DynamicSliceOp(
+          mlir.aval_to_ir_type(aval.update(shape=dims_unsqueezed)),
+          x, idxs, mlir.dense_int_elements(dims_unsqueezed)).result
+    else:
+      dynamic_slice_result = mhlo.DynamicSliceOp(
+          x, idxs, mlir.dense_int_elements(dims_unsqueezed)).result
     return [
-      mhlo.ReshapeOp(
-        mlir.aval_to_ir_type(aval),
-        mhlo.DynamicSliceOp(
-            mlir.aval_to_ir_type(aval.update(shape=dims_unsqueezed)),
-            x, idxs, mlir.dense_int_elements(dims_unsqueezed)).result
-      ).result
+      mhlo.ReshapeOp(mlir.aval_to_ir_type(aval), dynamic_slice_result).result
     ]
   else:
     raise TypeError(aval)
