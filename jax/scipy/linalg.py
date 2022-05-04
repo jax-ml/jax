@@ -41,3 +41,7 @@ from jax._src.scipy.linalg import (
 from jax._src.lax.polar import (
   polar_unitary as polar_unitary,
 )
+
+from jax._src.third_party.scipy.linalg import (
+  funm as funm,
+)

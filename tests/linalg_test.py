@@ -1481,6 +1481,28 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       self._CompileAndCheck(jsp.linalg.rsf2csf, args_maker)
 
   @parameterized.named_parameters(
+        jtu.cases_from_list({
+            "testcase_name":
+            "_shape={}_disp={}".format(jtu.format_shape_dtype_string(shape, dtype), disp),
+            "shape": shape, "dtype": dtype, "disp": disp
+        } for shape in [(1, 1), (5, 5), (20, 20), (50, 50)]
+          for dtype in float_types + complex_types
+          for disp in [True, False]))
+  # funm uses jax.scipy.linalg.schur which is implemented for a CPU
+  # backend only, so tests on GPU and TPU backends are skipped here
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testFunm(self, shape, dtype, disp):
+      def func(x):
+        return x**-2.718
+      rng = jtu.rand_default(self.rng())
+      args_maker = lambda: [rng(shape, dtype)]
+      jnp_fun = lambda arr: jsp.linalg.funm(arr, func, disp=disp)
+      scp_fun = lambda arr: osp.linalg.funm(arr, func, disp=disp)
+      self._CheckAgainstNumpy(jnp_fun, scp_fun, args_maker, check_dtypes=False,
+                              tol={np.complex64: 1e-5, np.complex128: 1e-6})
+      self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(
     jtu.cases_from_list({
         "testcase_name":
         "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
