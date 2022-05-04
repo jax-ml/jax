@@ -207,7 +207,6 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
       primal_env[v] = val
 
   primal_env: Dict[Any, Any] = {}
-  write_primal(core.unitvar, core.unit)
   map(write_primal, jaxpr.constvars, consts)
   # FIXME: invars can contain both primal and tangent values, and this line
   #        forces primal_in to contain UndefinedPrimals for tangent values!
@@ -574,7 +573,7 @@ def instantiate_zeros(tangent):
 # to instantiate zero abstract units with a different aval
 def instantiate_zeros_aval(aval, tangent):
   if type(tangent) is Zero:
-    assert type(tangent.aval) is core.AbstractUnit or tangent.aval == aval
+    assert tangent.aval == aval
     return zeros_like_aval(aval)
   else:
     return tangent

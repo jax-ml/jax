@@ -383,7 +383,6 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
     env[v] = val
 
   env: Dict[Var, Any] = {}
-  write(unitvar, unit)
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
@@ -1044,17 +1043,6 @@ class Bot(AbstractValue): pass
 
 bot = Bot()
 
-class AbstractUnit(AbstractValue):
-  def at_least_vspace(self): return self
-  def join(self, other):
-    if config.jax_enable_checks:
-      assert other is abstract_unit, other
-    return self
-  def _eq(self, self_traced, other): return get_aval(other) is self
-  def str_short(self, short_dtypes=False): return '*'
-
-abstract_unit = AbstractUnit()
-
 class AbstractBInt(AbstractValue):
   __slots__ = ['bound']
   bound: int
@@ -1116,22 +1104,6 @@ def get_aval(x):
 
 pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
 
-
-class Unit:
-  def __repr__(self): return '*'
-unit: Unit = Unit()
-literalable_types.add(Unit)
-
-class UnitVar(Var):
-  count = -1
-  suffix = ''
-  def __init__(self): pass
-  @property
-  def aval(self): return abstract_unit
-  def __repr__(self): return '*'
-unitvar = UnitVar()
-
-pytype_aval_mappings[Unit] = lambda _: abstract_unit
 
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
@@ -1450,7 +1422,6 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
   raise TypeError(type(aval))
 
 raise_to_shaped_mappings : Dict[type, Callable] = {
-  AbstractUnit: lambda aval, _: aval,
   AbstractBInt: lambda aval, _: aval,
   AbstractToken: lambda aval, _: aval,
   Bot: lambda aval, _: aval,
@@ -1959,9 +1930,6 @@ def unmapped_aval(size: int, axis_name, axis: Optional[int], aval: AbstractValue
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
-def _map_unit(*_) -> AbstractUnit:
-  return abstract_unit
-
 def _map_shaped_array(size: int, axis: Optional[int], aval: ShapedArray
                       ) -> ShapedArray:
   assert axis is None or aval.shape[axis] == size
@@ -1995,7 +1963,6 @@ def _unmap_dshaped_array(
 
 AvalMapHandlerPair = Tuple[Callable, Callable]
 aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
-    AbstractUnit: (_map_unit, _map_unit),
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
     ConcreteArray: (_map_shaped_array, _unmap_shaped_array),
@@ -2099,7 +2066,6 @@ class DuplicateAxisNameError(Exception):
 
 def subst_axis_names_var(v: Var, subst: AxisSubst, var_map: Dict[Var, Var]) -> Var:
   # Var identity is load-bearing, so we can't have duplicates!
-  if v is unitvar: return v
   if isinstance(v, DropVar): return v
   assert v not in var_map
   if not hasattr(v.aval, 'named_shape'):
@@ -2128,7 +2094,7 @@ def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst
   if isinstance(jaxpr, ClosedJaxpr):
     consts = jaxpr.consts
     jaxpr = jaxpr.jaxpr
-  var_map: Dict[Var, Var] = {unitvar: unitvar}
+  var_map: Dict[Var, Var] = {}
   invars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.invars]
   constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]
   eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]
@@ -2264,7 +2230,6 @@ def _check_jaxpr(
 
   env : Dict[Var, AbstractValue] = {}
 
-  write(unitvar, abstract_unit)
   map(write, jaxpr.constvars, [v.aval for v in jaxpr.constvars])
   map(write, jaxpr.invars, in_avals)
 
@@ -2385,8 +2350,7 @@ class JaxprPpContext:
   var_ids: DefaultDict[Var, int]
 
   def __init__(self):
-    self.var_ids = collections.defaultdict(
-        it.count().__next__, {unitvar: -1})
+    self.var_ids = collections.defaultdict(it.count().__next__, {})
 
 
 def pp_var(v: Var, context: JaxprPpContext) -> str:
@@ -2527,3 +2491,7 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int, context: JaxprPpContext,
 extract_call_jaxpr: Callable
 eval_jaxpr_eqn: Callable
 initial_to_final_param_rules: Dict
+unit: Any
+abstract_unit: AbstractValue
+unitvar: Var
+UnitVar: Type

@@ -28,13 +28,9 @@ Array = Any
 map = safe_map
 
 jaxval_adders: Dict[type, Callable] = {}
-jaxval_adders[core.Unit] = lambda _, __: core.unit
 
 def add_jaxvals(x, y):
-  if core.get_aval(x) is core.abstract_unit is core.get_aval(y):
-    return core.unit
-  else:
-    return add_jaxvals_p.bind(x, y)
+  return add_jaxvals_p.bind(x, y)
 
 add_jaxvals_p: Primitive = Primitive('add_any')
 add_any_p = add_jaxvals_p
@@ -53,7 +49,6 @@ def zeros_like_aval(aval):
   return aval_zeros_likers[type(aval)](aval)
 
 aval_zeros_likers: Dict[Type[core.AbstractValue], Array] = {}
-aval_zeros_likers[core.AbstractUnit] = lambda _: core.unit
 
 def zeros_like_jaxval(val):
   return zeros_like_p.bind(val)

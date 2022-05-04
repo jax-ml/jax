@@ -58,11 +58,8 @@ def _avals_to_results_handler(nrep, npart, partitions, out_avals):
   return handler
 
 def _aval_to_result_handler(npart, parts, aval):
-  if aval is not core.abstract_unit:
-    spec = pxla.partitioned_sharding_spec(npart, parts, aval)
-    indices = pxla.spec_to_indices(aval.shape, spec)
-  else:
-    spec = indices = None
+  spec = pxla.partitioned_sharding_spec(npart, parts, aval)
+  indices = pxla.spec_to_indices(aval.shape, spec)
   return pxla.local_aval_to_result_handler(aval, spec, indices)
 
 

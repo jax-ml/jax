@@ -549,9 +549,7 @@ pe.partial_eval_jaxpr_custom_rules[while_p] = \
 def _pred_bcast_select_mhlo(
     pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
     ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
-  if x_y_aval is core.abstract_unit:
-    return []
-  elif x_y_aval is core.abstract_token:
+  if x_y_aval is core.abstract_token:
     x, = xs
     y, = ys
     return [mhlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
@@ -895,8 +893,8 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
     index, *ops = [
         batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims)]
 
-    in_batched  = [a is not core.abstract_unit for a in branches[0].in_avals]
-    out_batched = [a is not core.abstract_unit for a in branches[0].out_avals]
+    in_batched  = [True] * len(branches[0].in_avals)
+    out_batched = [True] * len(branches[0].out_avals)
 
     branches_batched = [
         batching.batch_jaxpr(
@@ -908,11 +906,9 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
       # Perform a select on the inputs for safety of reverse-mode autodiff; see
       # https://github.com/google/jax/issues/1052
       predicate = lax.eq(index, lax._const(index, i))
-      ops_ = [_bcast_select(predicate, x, lax.stop_gradient(x))
-              if x is not core.unit else x for x in ops]
+      ops_ = [_bcast_select(predicate, x, lax.stop_gradient(x)) for x in ops]
       branch_outs.append(core.jaxpr_as_fun(jaxpr)(*ops_))
-    out = [_bcast_select_n(index, *outs) if outs[0] is not core.unit else outs[0]
-           for outs in zip(*branch_outs)]
+    out = [_bcast_select_n(index, *outs) for outs in zip(*branch_outs)]
     return out, [0 if b else None for b in out_batched]
   else:
     ops_bat = [d is not batching.not_mapped for d in op_dims]
@@ -1380,8 +1376,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
       xs_slice = [_index_array(i, core.get_aval(x), x) for x in xs_flat]
       carry, y = f(carry, tree_unflatten(xs_tree, xs_slice))
       ys.append(y)
-    stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
-                            else jax.numpy.stack((y, *ys)))
+    stack = lambda *ys: jax.numpy.stack(ys)
     stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
@@ -1547,66 +1542,39 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   return (*carry, *ys)
 
 def _stack(aval, vals):
-  if aval is core.abstract_unit:
-    return core.unit
-  else:
-    vals = [lax.expand_dims(x, (0,)) for x in vals]
-    return lax.concatenate(vals, 0)
+  vals = [lax.expand_dims(x, (0,)) for x in vals]
+  return lax.concatenate(vals, 0)
 
 def _concatenate(aval, x1, x2):
-  if aval is core.abstract_unit:
-    return core.unit
-  else:
-    return lax.concatenate([x1, x2], 0)
+  return lax.concatenate([x1, x2], 0)
 
 def _split_leading_dim(i, aval, x):
-  if aval is core.abstract_unit:
-    return (core.unit, core.unit)
-  else:
-    assert x.ndim >= 1
-    return (slicing.slice_in_dim(x, 0, i),
-            slicing.slice_in_dim(x, i, x.shape[0]))
+  assert x.ndim >= 1
+  return (slicing.slice_in_dim(x, 0, i),
+          slicing.slice_in_dim(x, i, x.shape[0]))
 
 def _dynamic_index_array(i, aval, x):
-  if aval is core.abstract_unit:
-    return core.unit
-  else:
-    return slicing.dynamic_index_in_dim(x, i, keepdims=False)
+  return slicing.dynamic_index_in_dim(x, i, keepdims=False)
 
 def _index_array(i, aval, x):
-  if aval is core.abstract_unit:
-    return core.unit
-  else:
-    return slicing.index_in_dim(x, i, keepdims=False)
+  return slicing.index_in_dim(x, i, keepdims=False)
 
 def _empty_array(sz, aval):
-  if aval is core.abstract_unit:
-    return core.unit
-  else:
-    return lax.full((sz,) + aval.shape, 0, aval.dtype)
+  return lax.full((sz,) + aval.shape, 0, aval.dtype)
 
 def _update_array(i, aval, xs, x):
-  if aval is core.abstract_unit:
-    return core.unit
-  else:
-    return slicing.dynamic_update_index_in_dim(xs, x, i, 0)
+  return slicing.dynamic_update_index_in_dim(xs, x, i, 0)
 
 def _partition_leading(sz0, sz1, aval, x):
-  if aval is core.abstract_unit:
-    return core.unit
-  else:
-    assert x.ndim >= 1
-    assert x.shape[0] == sz0 * sz1
-    return lax.reshape(x, (sz0, sz1, *x.shape[1:]))
+  assert x.ndim >= 1
+  assert x.shape[0] == sz0 * sz1
+  return lax.reshape(x, (sz0, sz1, *x.shape[1:]))
 
 def _combine_leading(sz0, sz1, aval, x):
-  if aval is core.abstract_unit:
-    return core.unit
-  else:
-    assert x.ndim >= 2
-    assert x.shape[0] == sz0
-    assert x.shape[1] == sz1
-    return lax.collapse(x, 0, 2)
+  assert x.ndim >= 2
+  assert x.shape[0] == sz0
+  assert x.shape[1] == sz1
+  return lax.collapse(x, 0, 2)
 
 def _prepend_dim_to_aval(sz, aval):
   return core.unmapped_aval(sz, core.no_axis_name, 0, aval)
@@ -2886,8 +2854,6 @@ def _dummy_remat_result(aval: core.AbstractValue):
   """A result that will be discarded"""
   if aval is core.abstract_token:
     return lax.create_token()
-  elif aval is core.abstract_unit:
-    return core.unit
   else:
     return lax.broadcast(np.array(0, dtype=aval.dtype), aval.shape)  # type: ignore
 

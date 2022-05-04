@@ -148,10 +148,6 @@ class SparsifyEnv:
       raise RuntimeError("Internal: requested indices from spvalue with indices_ref=None")
     return self._buffers[spvalue.indices_ref]
 
-  def unit(self):
-    """Add a new unit representation to the sparsify environment."""
-    return SparsifyValue((), None, None)
-
   def dense(self, data):
     """Add a new dense array to the sparsify environment."""
     return SparsifyValue(np.shape(data), self._push(data), None)
@@ -186,9 +182,6 @@ class SparsifyValue(NamedTuple):
   def is_sparse(self):
     return self.indices_ref is not None
 
-  def is_unit(self):
-    return self.data_ref is None
-
 
 _is_bcoo = lambda arg: isinstance(arg, BCOO)
 _is_spvalue = lambda arg: isinstance(arg, SparsifyValue)
@@ -202,8 +195,6 @@ def arrays_to_spvalues(
   def array_to_spvalue(arg):
     if isinstance(arg, BCOO):
       return spenv.sparse(arg.shape, arg.data, arg.indices)
-    elif core.get_aval(arg) is core.abstract_unit:
-      return spenv.unit()
     else:
       return spenv.dense(arg)
   return tree_map(array_to_spvalue, args, is_leaf=_is_bcoo)
@@ -218,8 +209,6 @@ def spvalues_to_arrays(
     if spvalue.is_sparse():
       assert spvalue.indices_ref is not None
       return BCOO((spenv.data(spvalue), spenv.indices(spvalue)), shape=spvalue.shape)
-    elif spvalue.is_unit():
-      return core.unit
     else:
       return spenv.data(spvalue)
   return tree_map(spvalue_to_array, spvalues, is_leaf=_is_spvalue)
@@ -231,11 +220,8 @@ def spvalues_to_avals(
     ) -> Any:
   """Convert a pytree of spvalues to an equivalent pytree of abstract values."""
   def spvalue_to_aval(spvalue):
-    if spvalue.is_unit():
-      return core.abstract_unit
-    else:
-      data = spenv.data(spvalue)
-      return core.ShapedArray(spvalue.shape, data.dtype, data.aval.weak_type)
+    data = spenv.data(spvalue)
+    return core.ShapedArray(spvalue.shape, data.dtype, data.aval.weak_type)
   return tree_map(spvalue_to_aval, spvalues, is_leaf=_is_spvalue)
 
 
@@ -372,8 +358,6 @@ def eval_sparse(
     assert a is not None
     env[var] = a
 
-  # TODO: handle unitvar at all?
-  #write_buffer(core.unitvar, core.unit)
   safe_map(write_buffer, jaxpr.constvars, consts)
   safe_map(write, jaxpr.invars, spvalues)
 
