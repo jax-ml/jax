@@ -195,7 +195,6 @@ def eval_jaxpr(jaxpr, consts, *args):
     env[var] = val
 
   # Bind args and consts to environment
-  write(core.unitvar, core.unit)
   safe_map(write, jaxpr.invars, args)
   safe_map(write, jaxpr.constvars, consts)
 
@@ -289,7 +288,6 @@ def inverse_jaxpr(jaxpr, consts, *args):
   def write(var, val):
     env[var] = val
   # Args now correspond to Jaxpr outvars
-  write(core.unitvar, core.unit)
   safe_map(write, jaxpr.outvars, args)
   safe_map(write, jaxpr.constvars, consts)
 
