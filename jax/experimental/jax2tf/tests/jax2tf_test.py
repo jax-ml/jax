@@ -37,6 +37,9 @@ import jax._src.lib.xla_bridge
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
+# pylint: disable=g-direct-tensorflow-import
+from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
+# pylint: enable=g-direct-tensorflow-import
 
 config.parse_flags_with_absl()
 
@@ -1144,4 +1147,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     )
 
 if __name__ == "__main__":
+  # TODO: Remove once tensorflow is 2.10.0 everywhere.
+  if not hasattr(tfxla, 'optimization_barrier'):
+    jax.config.update('jax_remat_opt_barrier', False)
   absltest.main(testLoader=jtu.JaxTestLoader())
