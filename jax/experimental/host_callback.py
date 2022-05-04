@@ -1500,7 +1500,7 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
   if not has_input_token and not core.jaxpr_uses_outfeed(jaxpr):
     return jaxpr
 
-  mk_new_var = core.gensym([jaxpr])
+  mk_new_var = core.gensym()
 
   eqns: List[core.JaxprEqn] = []
   # store the incoming tokens

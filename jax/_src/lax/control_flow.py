@@ -98,7 +98,7 @@ def _initial_style_jaxprs_with_common_consts(
       unzip3(_initial_style_open_jaxpr(fun, in_tree, in_avals, primitive_name)
              for fun in funs)
 
-  newvar = core.gensym(jaxprs, suffix='_')
+  newvar = core.gensym(suffix='_')
   all_const_avals = [[raise_to_shaped(core.get_aval(c)) for c in consts]
                      for consts in all_consts]
   unused_const_vars = [[newvar(aval) for aval in const_avals]
@@ -451,7 +451,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
       [body_nconsts, num_carry], [len(bconst_dot), len(init_dot)],
       [num_carry], [len(init_dot)])
 
-  newvar = core.gensym([cond_jaxpr.jaxpr])
+  newvar = core.gensym()
   invars_aug = (
       cond_jaxpr.jaxpr.invars + [newvar(core.get_aval(x)) for x in init_dot])
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
@@ -1147,7 +1147,7 @@ def _join_cond_outputs(jaxprs, all_res_avals, res_aval_indices_per_jaxpr,
 # that it does not read.
 def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
                                       res_aval_indices_per_jaxpr):
-  newvar = core.gensym([j.jaxpr for j in jaxprs], suffix='_')
+  newvar = core.gensym(suffix='_')
   all_res_vars = _map(newvar, all_res_avals)
 
   def augment_jaxpr(jaxpr, res_indices):

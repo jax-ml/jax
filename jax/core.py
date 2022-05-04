@@ -200,9 +200,6 @@ class JaxprEqn(NamedTuple):
   effects: Effects
   source_info: source_info_util.SourceInfo
 
-  def __repr__(self):
-    return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
-
   def replace(self, *args, **kwargs):
     return self._replace(*args, **kwargs)
 
@@ -213,27 +210,18 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None)
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
 
-@total_ordering
 class Var:
   # TODO(frostig,mattjj): We don't override __eq__ or __hash__, so comparison is
   # by object id, but pretty printing might collide.
-  count: int
   suffix: str
   aval: AbstractValue
 
-  def __init__(self, count: int, suffix: str, aval: AbstractValue):
-    self.count = count
+  def __init__(self, suffix: str, aval: AbstractValue):
     self.suffix = suffix
     self.aval = raise_to_shaped(aval)
 
-  def __lt__(self, other):
-    if not isinstance(other, Var):
-      return NotImplemented
-    else:
-      return (self.count, self.suffix) < (other.count, other.suffix)
-
   def __repr__(self):
-    return _encode_digits_alphabetic(self.count) + self.suffix
+    return f'Var(id={id(self)}){self.suffix}:{self.aval.str_short()}'
 
 def _encode_digits_alphabetic(n):
   if n == -1:
@@ -244,25 +232,8 @@ def _encode_digits_alphabetic(n):
     s = chr(97 + i % 26) + s
   return s
 
-def _jaxpr_vars(jaxpr):
-  return it.chain(
-      jaxpr.invars, jaxpr.constvars,
-      (v for eqn in jaxpr.eqns for v in eqn.outvars))
-
-def gensym(jaxprs: Optional[Sequence[Jaxpr]] = None,
-           suffix: str = '') -> Callable[[AbstractValue], Var]:
-  """Produce distinct variables, printed with the optional suffix.
-
-  If `jaxprs` is provided, the variables produced will be distinct from those in
-  any of the given jaxprs.
-  """
-  if jaxprs is None:
-    start = 0
-  else:
-    all_vars = it.chain.from_iterable(_jaxpr_vars(j) for j in jaxprs)
-    start = 1 + max((v.count for v in all_vars), default=-1)
-  counter = it.count(start=start)
-  return lambda aval: Var(next(counter), suffix, aval)
+def gensym(suffix: str = '') -> Callable[[AbstractValue], Var]:
+  return functools.partial(Var, suffix)
 
 # In a jaxpr, `dropvar` can appear in place of a bound variable to indicate that
 # the assignment is dropped, i.e. that an expression's output value will never
@@ -270,7 +241,7 @@ def gensym(jaxprs: Optional[Sequence[Jaxpr]] = None,
 # treat it as a special case of one. Its `aval` is similarly inexact.
 class DropVar(Var):
   def __init__(self, aval: AbstractValue):
-    super().__init__(-1, '', aval)
+    super().__init__('', aval)
   def __repr__(self): return '_'
 
 class Literal:
@@ -2075,7 +2046,7 @@ def subst_axis_names_var(v: Var, subst: AxisSubst, var_map: Dict[Var, Var]) -> V
   named_shape = {name: axis_frame(name).size for name in names}
   if len(named_shape) != len(names):
     raise DuplicateAxisNameError(v)
-  new_v = Var(v.count, v.suffix, v.aval.update(named_shape=named_shape))
+  new_v = Var(v.suffix, v.aval.update(named_shape=named_shape))
   var_map[v] = new_v
   return new_v
 
