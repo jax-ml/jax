@@ -2524,6 +2524,4 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int, context: JaxprPpContext,
 
 # TODO(mattjj,frostig): remove these stubs, which are a temporary hack for
 # google-internal type checking
-extract_call_jaxpr: Callable
-eval_jaxpr_eqn: Callable
 initial_to_final_param_rules: Dict
