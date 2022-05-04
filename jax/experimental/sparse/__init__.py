@@ -24,7 +24,8 @@ Batched-coordinate (BCOO) sparse matrices
 -----------------------------------------
 The main high-level sparse object currently available in JAX is the :class:`BCOO`,
 or *batched coordinate* sparse array, which offers a compressed storage format compatible
-with JAX functions.
+with JAX transformations, in particular JIT (e.g. :func:`jax.jit`), batching
+(e.g. :func:`jax.vmap`) and autodiff (e.g. :func:`jax.grad`).
 
 Here is an example of creating a sparse array from a dense array:
 

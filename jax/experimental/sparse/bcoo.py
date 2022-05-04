@@ -1619,14 +1619,14 @@ def bcoo_reshape(mat, *, new_sizes, dimensions):
   """Sparse implementation of {func}`jax.lax.reshape`.
 
   Args:
-  operand: BCOO array to be reshaped.
-  new_sizes: sequence of integers specifying the resulting shape. The size
-    of the final array must match the size of the input. This must be specified
-    such that batch, sparse, and dense dimensions do not mix.
-  dimensions: optional sequence of integers specifying the permutation order of
-    the input shape. If specified, the length must match ``operand.shape``.
-    Additionally, dimensions must only permute among like dimensions of mat:
-    batch, sparse, and dense dimensions cannot be permuted.
+    operand: BCOO array to be reshaped.
+    new_sizes: sequence of integers specifying the resulting shape. The size
+      of the final array must match the size of the input. This must be specified
+      such that batch, sparse, and dense dimensions do not mix.
+    dimensions: optional sequence of integers specifying the permutation order of
+      the input shape. If specified, the length must match ``operand.shape``.
+      Additionally, dimensions must only permute among like dimensions of mat:
+      batch, sparse, and dense dimensions cannot be permuted.
 
   Returns:
     out: reshaped array.
