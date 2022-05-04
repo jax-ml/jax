@@ -815,7 +815,7 @@ def xla_computation(fun: Callable,
         out_parts_flat = tuple(flatten_axes(
             "xla_computation out_parts", out_tree(), out_parts))
       effects = list(jaxpr.effects)
-      m = mlir.lower_jaxpr_to_module(
+      m, _ = mlir.lower_jaxpr_to_module(
           f"xla_computation_{fun_name}",
           core.ClosedJaxpr(jaxpr, consts),
           effects=effects,

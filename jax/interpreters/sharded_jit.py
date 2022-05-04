@@ -141,7 +141,7 @@ def _sharded_callable(
 
   axis_env = xla.AxisEnv(nrep, (), ())
   effects = list(jaxpr.effects)
-  module = mlir.lower_jaxpr_to_module(
+  module, _ = mlir.lower_jaxpr_to_module(
       "spjit_{}".format(fun.__name__),
       core.ClosedJaxpr(jaxpr, consts),
       effects,

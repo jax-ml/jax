@@ -290,7 +290,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
     return XlaComputation(
         name, None, True, None, None, jaxpr=jaxpr, consts=consts, device=device,
         in_avals=abstract_args, out_avals=out_avals, effects=jaxpr.effects,
-        kept_var_idx=kept_var_idx)
+        kept_var_idx=kept_var_idx, keepalive=None)
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -326,14 +326,14 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module_name = f"jit_{fun.__name__}"
   effects = [eff for eff in closed_jaxpr.effects if eff in core.ordered_effects]
-  module = mlir.lower_jaxpr_to_module(
+  module, keepalive = mlir.lower_jaxpr_to_module(
       module_name, closed_jaxpr, effects, backend.platform,
       mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
   return XlaComputation(
       name, module, False, donated_invars, which_explicit, nreps=nreps,
       device=device, backend=backend, tuple_args=tuple_args,
       in_avals=abstract_args, out_avals=out_avals, effects=effects,
-      kept_var_idx=kept_var_idx)
+      kept_var_idx=kept_var_idx, keepalive=keepalive)
 
 
 def _backend_supports_unbounded_dynamic_shapes(backend: Backend) -> bool:
@@ -761,11 +761,15 @@ def compile_or_get_cached(backend, computation, compile_options):
 
 
 class XlaCompiledComputation(stages.Executable):
-  def __init__(self, xla_executable, in_avals, kept_var_idx, unsafe_call):
+  def __init__(self, xla_executable, in_avals, kept_var_idx, unsafe_call,
+               keepalive: Any):
     self._xla_executable = xla_executable
     self.in_avals = in_avals
     self._kept_var_idx = kept_var_idx
     self.unsafe_call = unsafe_call
+    # Only the `unsafe_call` function is cached, so to avoid the `keepalive`
+    # being garbage collected we attach it to `unsafe_call`.
+    self.unsafe_call.keepalive = keepalive
 
   @staticmethod
   def from_xla_computation(
@@ -779,7 +783,8 @@ class XlaCompiledComputation(stages.Executable):
       in_avals: Sequence[core.AbstractValue],
       out_avals: Sequence[core.AbstractValue],
       effects: List[core.Effect],
-      kept_var_idx: Set[int]) -> XlaCompiledComputation:
+      kept_var_idx: Set[int],
+      keepalive: Optional[Any]) -> XlaCompiledComputation:
     sticky_device = device
     input_handler = _input_handler(backend, explicit_args, in_avals)
     result_handlers = map(partial(aval_to_result_handler, sticky_device),
@@ -800,7 +805,8 @@ class XlaCompiledComputation(stages.Executable):
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,
                           result_handlers, effects, kept_var_idx)
-    return XlaCompiledComputation(compiled, in_avals, kept_var_idx, unsafe_call)
+    return XlaCompiledComputation(compiled, in_avals, kept_var_idx, unsafe_call,
+                                  keepalive)
 
   def is_trivial(self):
     return self._xla_executable == None
@@ -814,11 +820,13 @@ class XlaCompiledComputation(stages.Executable):
 
   @staticmethod
   def from_trivial_jaxpr(jaxpr, consts, device, in_avals, out_avals, effects,
-                         kept_var_idx) -> XlaCompiledComputation:
+      kept_var_idx, keepalive: Optional[Any]) -> XlaCompiledComputation:
+    assert keepalive is None
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
     unsafe_call = partial(_execute_trivial, jaxpr, device, consts,
                           out_avals, result_handlers, effects, kept_var_idx)
-    return XlaCompiledComputation(None, in_avals, kept_var_idx, unsafe_call)
+    return XlaCompiledComputation(None, in_avals, kept_var_idx, unsafe_call,
+                                  keepalive)
 
   # -- stages.Executable protocol
 
