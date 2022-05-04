@@ -134,7 +134,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
   @jtu.skip_on_devices("tpu", "gpu")
-  def test_can_print_inside_while_loop(self, ordered):
+  def test_can_print_inside_while_loop_body(self, ordered):
     def f(x):
       def _cond(x):
         return x < 10
@@ -150,6 +150,36 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       x: 7
       x: 8
       x: 9
+      """))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_can_print_inside_while_loop_cond(self, ordered):
+    def f(x):
+      def _cond(x):
+        debug_print("x: {x}", x=x, ordered=ordered)
+        return x < 10
+      def _body(x):
+        return x + 1
+      return lax.while_loop(_cond, _body, x)
+    with capture_stdout() as output:
+      f(5)
+    self.assertEqual(output(), _format_multiline("""
+      x: 5
+      x: 6
+      x: 7
+      x: 8
+      x: 9
+      x: 10
+      """))
+
+    with capture_stdout() as output:
+      f(10)
+    # Should run the cond once
+    self.assertEqual(output(), _format_multiline("""
+      x: 10
       """))
 
 if jaxlib.version < (0, 3, 8):

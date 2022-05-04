@@ -577,10 +577,52 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
                     body_nconsts):
   pred_aval = cond_jaxpr.out_avals[0]
   batched = bool(pred_aval.shape)
-  if cond_jaxpr.effects:
-    # TODO(sharadmv): enable effects in cond
-    raise NotImplementedError(
-        '`while_loop` with effects in `cond` not supported.')
+  cond_ordered_effects = [eff for eff in cond_jaxpr.effects if eff in
+                          core.ordered_effects]
+  if cond_ordered_effects:
+    # For a while loop with ordered effects in the cond, we need a special
+    # lowering. Fundamentally, we'd like to rewrite a while loop that looks like
+    # this:
+    # ```
+    # while cond(x):
+    #   x = body(x)
+    # ```
+    # into something that looks like this:
+    # ```
+    # while True:
+    #   token, pred = cond(token, x)
+    #   if not pred:
+    #     break
+    #   token, x = body(token, x)
+    # ```
+    # Unfortunately, with an MHLO while we can't (1) return multiple values
+    # from a `cond` and (2) can't break a while loop. We thus adopt the
+    # following rewrite strategy:
+    # ```
+    # def new_cond(pred, token, x):
+    #   return pred
+    # token, pred = cond(token, x)
+    # while new_cond(pred, token, x):
+    #   token, x = body(token, x)
+    #   token, pred = cond(token, x)
+    # ```
+    def cond(args):
+      return core.eval_jaxpr(cond_jaxpr.jaxpr, cond_jaxpr.consts, *args)[0]
+    def body(args):
+      return tuple(core.eval_jaxpr(body_jaxpr.jaxpr, body_jaxpr.consts, *args))
+    def new_cond(pred_args):
+      pred, _ = pred_args
+      return pred
+    def new_body(pred_args):
+      _, args  = pred_args
+      args = body(args)
+      pred = cond(args)
+      return pred, args
+    def fun(*args):
+      pred = cond(args)
+      _, out = while_loop(new_cond, new_body, (pred, args))
+      return out
+    return mlir.lower_fun(fun)(ctx, *args)
 
   loop_carry_types = _map(mlir.aval_to_ir_types, ctx.avals_in)
   body_effects = [eff for eff in body_jaxpr.effects

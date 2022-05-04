@@ -654,6 +654,16 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
       return lax.while_loop(cond_fun, body_fun, x)
     f(2)
 
+  def test_allowed_effect_in_cond_body(self):
+    def f(x):
+      def cond_fun(x):
+        effect_p.bind(effect='while')
+        return False
+      def body_fun(x):
+        return x
+      return lax.while_loop(cond_fun, body_fun, x)
+    f(2)
+
   def test_allowed_ordered_effect_in_while_body(self):
     def f(x):
       def cond_fun(x):
