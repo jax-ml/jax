@@ -207,7 +207,7 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
                          ) -> Sequence[ir.Value]:
   if canonicalize_types:
     x = np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
-  ir_type = ir.RankedTensorType.get(x.shape, dtype_to_ir_type(x.dtype))
+  element_type = dtype_to_ir_type(x.dtype)
   shape = x.shape
   if x.dtype == np.bool_:
     nelems = x.size
@@ -219,8 +219,8 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
   elif x.dtype == dtypes.bfloat16:
     x = x.view(np.uint16)
   x = np.ascontiguousarray(x)
-  attr = ir.DenseElementsAttr.get(x, type=ir_type.element_type, shape=shape)
-  return (mhlo.ConstOp(ir_type, attr).result,)
+  attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
+  return (mhlo.ConstOp(attr).result,)
 
 
 def _ndarray_constant_handler(val: np.ndarray, canonicalize_types

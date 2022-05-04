@@ -160,9 +160,8 @@ def pocketfft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
     raise ValueError(f"Unknown output type {out_dtype}")
 
   if 0 in a_type.shape or 0 in out_shape:
-    zero = mhlo.ConstOp(ir.RankedTensorType.get([], out_type),
-                        ir.DenseElementsAttr.get(np.array(0, dtype=out_dtype),
-                                                 type=out_type))
+    zero = mhlo.ConstOp(
+        ir.DenseElementsAttr.get(np.array(0, dtype=out_dtype), type=out_type))
     if jax._src.lib.mlir_api_version < 9:
       return mhlo.BroadcastOp(
           ir.RankedTensorType.get(out_shape, out_type),
@@ -175,7 +174,6 @@ def pocketfft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
 
   u8_type = ir.IntegerType.get_unsigned(8)
   descriptor = mhlo.ConstOp(
-      ir.RankedTensorType.get([len(descriptor_bytes)], u8_type),
       ir.DenseElementsAttr.get(np.frombuffer(descriptor_bytes, dtype=np.uint8),
                                type=u8_type))
   layout = ir.DenseIntElementsAttr.get(np.arange(n - 1, -1, -1),
