@@ -34,7 +34,12 @@ import jax.numpy as jnp
 
 @tree_util.register_pytree_node_class
 class CSR(JAXSparse):
-  """Experimental CSR matrix implemented in JAX; API subject to change."""
+  """Experimental CSR matrix implemented in JAX.
+
+  Note: this class has minimal compatibility with JAX transforms such as
+  grad and autodiff, and offers very little functionality. In general you
+  should prefer :class:`jax.experimental.sparse.BCOO`.
+  """
   data: jnp.ndarray
   indices: jnp.ndarray
   indptr: jnp.ndarray

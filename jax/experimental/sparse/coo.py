@@ -44,7 +44,12 @@ class COOInfo(NamedTuple):
 
 @tree_util.register_pytree_node_class
 class COO(JAXSparse):
-  """Experimental COO matrix implemented in JAX; API subject to change."""
+  """Experimental COO matrix implemented in JAX.
+
+  Note: this class has minimal compatibility with JAX transforms such as
+  grad and autodiff, and offers very little functionality. In general you
+  should prefer :class:`jax.experimental.sparse.BCOO`.
+  """
   data: jnp.ndarray
   row: jnp.ndarray
   col: jnp.ndarray
