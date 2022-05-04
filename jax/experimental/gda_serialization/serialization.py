@@ -227,7 +227,7 @@ class GlobalAsyncCheckpointManager:
   ```
   """
 
-  def __init__(self, timeout_secs=300):
+  def __init__(self, timeout_secs=600):
     self._timeout_secs = timeout_secs
 
     self._commit_futures = None
@@ -304,12 +304,14 @@ class GlobalAsyncCheckpointManager:
     lockfiles_dir = os.path.join(temp_checkpoint_dir, 'lockfiles')
     tf.io.gfile.mkdir(lockfiles_dir)
 
+    write_count = 0
     for p in range(jax.process_count()):
       with tf.io.gfile.GFile(
           os.path.join(lockfiles_dir, f'lockfile_{p}'), mode='w') as f:
         f.write('File to track if all chunks have been written.')
+      write_count += 1
 
-    if len(tf.io.gfile.listdir(lockfiles_dir)) != jax.process_count():
+    if write_count != jax.process_count():
       raise ValueError("Process 0 couldn't write all the lockfiles.")
 
     logging.info('Lock files for all processes have been written by process 0.')
