@@ -4216,22 +4216,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     else:
       self._CompileAndCheck(jnp_fun, args_maker)
 
-  @parameterized.parameters(
-    (0, (2, 1, 3)),
-    (5, (2, 1, 3)),
-    (0, ()),
-    (np.array([0, 1, 2]), (2, 2)),
-    (np.array([[[0, 1], [2, 3]]]), (2, 2)))
-  def testUnravelIndex(self, flat_index, shape):
-    args_maker = lambda: (flat_index, shape)
-    np_fun = jtu.with_jax_dtype_defaults(np.unravel_index, use_defaults=not hasattr(flat_index, 'dtype'))
-    self._CheckAgainstNumpy(np_fun, jnp.unravel_index, args_maker)
-    self._CompileAndCheck(jnp.unravel_index, args_maker)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_idx={}".format(shape,
+        jtu.format_shape_dtype_string(idx_shape, dtype)),
+       "shape": shape, "idx_shape": idx_shape, "dtype": dtype}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in int_dtypes
+      for idx_shape in all_shapes))
+  def testUnravelIndex(self, shape, idx_shape, dtype):
+    size = prod(shape)
+    rng = jtu.rand_int(self.rng(), low=-((2 * size) // 3), high=(2 * size) // 3)
 
-  def testUnravelIndexOOB(self):
-    self.assertEqual(jnp.unravel_index(2, (2,)), (1,))
-    self.assertEqual(jnp.unravel_index(-2, (2, 1, 3,)), (1, 0, 1))
-    self.assertEqual(jnp.unravel_index(-3, (2,)), (0,))
+    def np_fun(index, shape):
+      # Adjust out-of-bounds behavior to match jax's documented behavior.
+      index = np.clip(index, -size, size - 1)
+      index = np.where(index < 0, index + size, index)
+      return np.unravel_index(index, shape)
+    jnp_fun = jnp.unravel_index
+    args_maker = lambda: [rng(idx_shape, dtype), shape]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testAstype(self):
     rng = self.rng()
