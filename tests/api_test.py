@@ -864,6 +864,25 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f = self.jit(lambda x: x).lower(1.).compile()
     self.assertIsNotNone(f.compiler_ir())
 
+  def test_jit_lower_no_prunning(self):
+    compiled = self.jit(lambda x, y: x + y).lower(1., 2.).compile()
+    self.assertEqual(compiled._executable._kept_var_idx, {0, 1})
+    self.assertLen(compiled._executable.in_avals, 2)
+
+    compiled = self.jit(lambda x, y: x).lower(1., 2.).compile()
+    self.assertEqual(compiled._executable._kept_var_idx, {0})
+    self.assertLen(compiled._executable.in_avals, 1)
+
+    compiled = self.jit(lambda x, y: x, keep_unused=True).lower(
+        1., 2.).compile()
+    self.assertEqual(compiled._executable._kept_var_idx, {0, 1})
+    self.assertLen(compiled._executable.in_avals, 2)
+    # Also works with jax.jit
+    jitted_f = self.jit(lambda x, y: x, keep_unused=True)
+    with jtu.count_device_put() as count:
+      _ = jitted_f(1, 2)
+    self.assertEqual(count[0], 1)
+
   def test_jit_lower_compile_executable(self):
     f = self.jit(lambda x: x + 4).lower(1.).compile()
     self.assertIsNotNone(f.runtime_executable())
@@ -5556,9 +5575,9 @@ class CustomJVPTest(jtu.JaxTestCase):
     from jax._src.custom_derivatives import _maybe_perturbed
     def f(x):
       def g(y, _):
-          z = y * x
-          self.assertTrue(_maybe_perturbed(z))
-          return y, None
+        z = y * x
+        self.assertTrue(_maybe_perturbed(z))
+        return y, None
       g(1, None)
       return lax.scan(g, 1, xs=None, length=1)[0]
 

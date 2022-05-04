@@ -235,6 +235,7 @@ def jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
+    keep_unused: bool = False,
     abstracted_axes: Optional[Any] = None,
   ) -> stages.Wrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
@@ -293,6 +294,10 @@ def jit(
     inline: Specify whether this function should be inlined into enclosing
       jaxprs (rather than being represented as an application of the xla_call
       primitive with its own subjaxpr). Default False.
+    keep_unused: If `False` (the default), arguments that JAX determines to be
+      unused by `fun` *may* be dropped from resulting compiled XLA executables.
+      Such arguments will not be transferred to the device nor provided to the
+      underlying executable. If `True`, unused arguments will not be pruned.
 
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation.
@@ -329,10 +334,10 @@ def jit(
   """
   if FLAGS.experimental_cpp_jit and not config.jax_dynamic_shapes:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
-                    donate_argnums, inline)
+                    donate_argnums, inline, keep_unused)
   else:
     return _python_jit(fun, static_argnums, static_argnames, device, backend,
-                       donate_argnums, inline, abstracted_axes)
+                       donate_argnums, inline, keep_unused, abstracted_axes)
 
 
 def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
@@ -364,6 +369,7 @@ def _python_jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
+    keep_unused: bool = False,
     abstracted_axes: Optional[PytreeOfAbstractedAxesSpec] = None,
   ) -> stages.Wrapped:
   _check_callable(fun)
@@ -391,11 +397,12 @@ def _python_jit(
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
-        donated_invars=donated_invars, inline=inline)
+        donated_invars=donated_invars, inline=inline,
+        keep_unused=keep_unused)
     return tree_unflatten(out_tree(), out_flat)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
-                              backend, donate_argnums, inline)
+                              backend, donate_argnums, inline, keep_unused)
   return f_jitted
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
@@ -429,6 +436,7 @@ def _cpp_jit(
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
     inline: bool = False,
+    keep_unused: bool = False,
   ) -> stages.Wrapped:
   # An implementation of `jit` that tries to do as much as possible in C++.
   # The goal of this function is to speed up the time it takes to process the
@@ -465,7 +473,7 @@ def _cpp_jit(
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
-        donated_invars=donated_invars, inline=inline)
+        donated_invars=donated_invars, inline=inline, keep_unused=keep_unused)
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 
@@ -527,13 +535,13 @@ def _cpp_jit(
   f_jitted = wraps(fun)(cpp_jitted_f)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
-                              backend, donate_argnums, inline)
+                              backend, donate_argnums, inline, keep_unused)
 
   return f_jitted
 
 
 def _jit_lower(fun, static_argnums, static_argnames, device, backend,
-               donate_argnums, inline):
+               donate_argnums, inline,  keep_unused: bool):
   """Make a ``lower`` method for jitted functions."""
   # If the function we returned from ``jit`` were a class instance,
   # this might naturally be a method, with ``fun`` as a ``self`` and
@@ -570,6 +578,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
       arg_specs = []
     computation = dispatch.lower_xla_callable(flat_fun, device, backend, name,
                                               donated_invars, True,
+                                              keep_unused,
                                               *arg_specs_and_device)
     return stages.Lowered.from_flat_info(
         computation, in_tree, arg_specs, donate_argnums, out_tree())

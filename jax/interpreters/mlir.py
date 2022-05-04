@@ -1002,8 +1002,8 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
 
 def _xla_call_lower(ctx, *args,
                     backend=None, name, call_jaxpr, donated_invars, inline=None,
-                    device=None):
-  del device, donated_invars, inline  # Ignored.
+                    device=None, keep_unused=None):
+  del device, donated_invars, inline, keep_unused  # Ignored.
   out_nodes, tokens = _call_lowering(
       name, util.wrap_name(name, "jit"), call_jaxpr, backend,
       ctx.module_context, ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args)

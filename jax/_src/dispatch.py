@@ -146,7 +146,7 @@ def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
     else:
       return out,
   compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), device, None,
-                                    prim.name, donated_invars, *arg_specs)
+                                    prim.name, donated_invars, False, *arg_specs)
   if not prim.multiple_results:
     return lambda *args, **kw: compiled(*args, **kw)[0]
   else:
@@ -174,13 +174,13 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
 # JIT execution
 
 def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
-                   donated_invars, inline):
+                   donated_invars, inline, keep_unused: bool):
   del inline  # Only used at tracing time
   arg_specs = unsafe_map(arg_spec, args)
   if fun.in_type is not None:
     arg_specs = [(None, *xs) for _, *xs in arg_specs]
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
-                               *arg_specs)
+                               keep_unused, *arg_specs)
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -226,9 +226,9 @@ xla.xla_call_p.def_impl(_xla_call_impl)
 
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
-                           donated_invars, *arg_specs):
+                           donated_invars, keep_unused, *arg_specs):
   return lower_xla_callable(fun, device, backend, name, donated_invars, False,
-                            *arg_specs).compile().unsafe_call
+                            keep_unused, *arg_specs).compile().unsafe_call
 
 _xla_callable = lu.cache(_xla_callable_uncached)
 
@@ -247,7 +247,18 @@ def log_elapsed_time(fmt: str):
 
 @profiler.annotate_function
 def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
-                       donated_invars, always_lower: bool, *arg_specs):
+                       donated_invars, always_lower: bool, keep_unused: bool,
+                       *arg_specs):
+  """Lower into XLA.
+
+  Args:
+    always_lower: If `True`, even trivial programs (not doing any computation
+      such as lambda x: x) will be lowered into an XLA program.
+    keep_unused: If `False` (the default), arguments that JAX determines to be
+      unused by `fun` *may* be dropped from resulting compiled XLA executables.
+      Such arguments will not be transferred to the device nor provided to the
+      underlying executable. If `True`, unused arguments will not be pruned.
+  """
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
@@ -263,7 +274,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
   # TODO(mattjj): handle argument pruning w/ dynamic shapes
-  if fun.in_type is None:
+  if fun.in_type is None and not keep_unused:
     jaxpr, kept_const_idx, kept_var_idx = _prune_unused_inputs(jaxpr)
     consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
     abstract_args, arg_devices = util.unzip2(
