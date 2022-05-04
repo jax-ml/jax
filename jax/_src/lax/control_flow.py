@@ -24,7 +24,7 @@ import inspect
 import itertools
 import operator
 import os
-from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar, List
+from typing import Any, Callable, Optional, Sequence, Set, Tuple, TypeVar, List
 
 import numpy as np
 
@@ -65,6 +65,8 @@ _reduce = functools.reduce
 T = TypeVar('T')
 Array = Any
 BooleanNumeric = Any  # A bool, or a Boolean array.
+
+allowed_effects: Set[core.Effect] = set()
 
 @cache()
 def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
@@ -321,8 +323,11 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   _check_tree_and_avals("body_fun output and input",
                         body_tree, body_jaxpr.out_avals,
                         in_tree_children[0], init_avals)
-  if cond_jaxpr.effects or body_jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `while`.')
+  effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+  disallowed_effects = effects - allowed_effects
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `while`: {disallowed_effects}')
   outs = while_p.bind(*cond_consts, *body_consts, *init_vals,
                       cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
@@ -330,9 +335,11 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
 def _while_loop_abstract_eval(*args, cond_jaxpr, body_jaxpr, **kwargs):
   del args, kwargs
-  if cond_jaxpr.effects or body_jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `while_loop`.')
   joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+  disallowed_effects = joined_effects - allowed_effects
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `while`: {disallowed_effects}')
   return _map(raise_to_shaped, body_jaxpr.out_avals), joined_effects
 
 
@@ -572,9 +579,20 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
                     body_nconsts):
   pred_aval = cond_jaxpr.out_avals[0]
   batched = bool(pred_aval.shape)
+  if cond_jaxpr.effects:
+    # TODO(sharadmv): enable effects in cond
+    raise NotImplementedError(
+        '`while_loop` with effects in `cond` not supported.')
 
   loop_carry_types = _map(mlir.aval_to_ir_types, ctx.avals_in)
+  body_effects = [eff for eff in body_jaxpr.effects
+                  if eff in core.ordered_effects]
+  num_tokens = len(body_effects)
+  tokens = [ctx.tokens_in.get(eff) for eff in body_effects]
+  token_types = [mlir.token_type() for _ in tokens]
+  loop_carry_types = [*token_types, *loop_carry_types]
   flat_loop_carry_types = util.flatten(loop_carry_types)
+  args = [*tokens, *args]
 
   flat_args = mlir.flatten_lowering_ir_args(args)
   while_op = mhlo.WhileOp(flat_loop_carry_types, flat_args)
@@ -582,13 +600,13 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   # Loop condition
   cond_block = while_op.regions[0].blocks.append(*flat_loop_carry_types)
   name_stack = extend_name_stack(ctx.module_context.name_stack, 'while')
-  if cond_jaxpr.effects:
-    raise NotImplementedError('`while_loop` with effects in `cond` not supported.')
   with ir.InsertionPoint(cond_block):
     flat_cond_args = [
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
     cond_args = util.unflatten(flat_cond_args, _map(len, loop_carry_types))
+    # Remove tokens from cond args
+    cond_args = cond_args[num_tokens:]
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
     cond_ctx = ctx.module_context.replace(
         name_stack=xla.extend_name_stack(name_stack, 'cond'))
@@ -618,14 +636,15 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
         body_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
     body_args = util.unflatten(flat_body_args, _map(len, loop_carry_types))
+    # Tokens are at the front of the args list to the while loop
+    token_args, body_args = util.split_list(body_args, [num_tokens])
+    tokens_in = mlir.TokenSet(zip(body_effects, token_args))
     x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
     body_ctx = ctx.module_context.replace(
         name_stack=xla.extend_name_stack(name_stack, 'body'))
-    if body_jaxpr.effects:
-      raise NotImplementedError('`while_loop` with effects in `body` not supported.')
-    new_z, _ = mlir.jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr, mlir.TokenSet(),
-                                  _map(mlir.ir_constants, body_jaxpr.consts),
-                                  *(y + z))
+    new_z, tokens_out = mlir.jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr,
+        tokens_in, _map(mlir.ir_constants, body_jaxpr.consts), *(y + z))
+    out_tokens = [tokens_out.get(eff) for eff in body_effects]
     if batched:
       body_pred_ctx = ctx.module_context.replace(
           name_stack=xla.extend_name_stack(name_stack,
@@ -637,10 +656,13 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           partial(_pred_bcast_select_mhlo, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
 
-    mhlo.ReturnOp([*util.flatten(x), *util.flatten(y), *util.flatten(new_z)])
+    mhlo.ReturnOp([*util.flatten(out_tokens), *util.flatten(x),
+                   *util.flatten(y), *util.flatten(new_z)])
 
   outputs = util.unflatten(while_op.results, _map(len, loop_carry_types))
-  _, _, z = util.split_list(outputs, [cond_nconsts, body_nconsts])
+  tokens, _, _, z = util.split_list(outputs, [num_tokens, cond_nconsts, body_nconsts])
+  if tokens:
+    ctx.set_tokens_out(mlir.TokenSet(zip(body_effects, tokens)))
   return z
 
 mlir.register_lowering(while_p, _while_lowering)
@@ -1419,8 +1441,10 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
                         # Extract the subtree and avals for the first element of the return tuple
                         out_tree_children[0], carry_avals_out,
                         init_tree, carry_avals)
-  if jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `scan`.')
+  disallowed_effects = jaxpr.effects - allowed_effects
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `scan`: {disallowed_effects}')
 
   out = scan_p.bind(*consts, *in_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
@@ -1613,11 +1637,9 @@ def _prepend_dim_to_aval(sz, aval):
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll):
-  if jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `scan`.')
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
-  return carry_avals + ys_avals, core.no_effects
+  return carry_avals + ys_avals, jaxpr.effects
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
               linear, unroll):
@@ -2053,7 +2075,7 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
     raise core.JaxprTypeError(
       f'scan jaxpr takes input sequence types\n{_avals_short(x_avals_jaxpr)},\n'
       f'called with sequence of type\n{_avals_short(x_avals)}')
-  return None, core.no_effects
+  return None, jaxpr.effects
 
 def scan_bind(*args, **params):
   if config.jax_enable_checks:

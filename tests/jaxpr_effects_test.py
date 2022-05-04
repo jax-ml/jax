@@ -31,6 +31,7 @@ from jax._src import lib as jaxlib
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.lax import control_flow as lcf
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -45,8 +46,17 @@ def _(*, effect):
 mlir.lowerable_effects.add('foo')
 mlir.lowerable_effects.add('foo2')
 mlir.lowerable_effects.add('bar')
+mlir.lowerable_effects.add('while')
+mlir.lowerable_effects.add('while1')
+mlir.lowerable_effects.add('while2')
 core.ordered_effects.add('foo')
 core.ordered_effects.add('foo2')
+core.ordered_effects.add('while1')
+core.ordered_effects.add('while2')
+
+lcf.allowed_effects.add('while')
+lcf.allowed_effects.add('while1')
+lcf.allowed_effects.add('while2')
 
 
 def trivial_effect_lowering(ctx, *, effect):
@@ -257,24 +267,27 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
-  def test_should_pass_tokens_into_ordered_effect(self):
-
-    def _effect_lowering(ctx, *, effect):
-      self.assertListEqual(list(ctx.tokens_in.effects()), ['foo'])
-      ctx.set_tokens_out(ctx.tokens_in)
-      return []
-    mlir.register_lowering(effect_p, _effect_lowering)
-
   def setUp(self):
     super().setUp()
     self.old_x64 = config.jax_enable_x64
     config.update('jax_enable_x64', False)
+    self._old_lowering = mlir._lowerings[effect_p]
+    def _effect_lowering(ctx, *, effect):
+      if effect in core.ordered_effects:
+        expected_effects = [effect]
+      else:
+        expected_effects = []
+      self.assertListEqual(list(ctx.tokens_in.effects()), expected_effects)
+      ctx.set_tokens_out(ctx.tokens_in)
+      return []
+    mlir.register_lowering(effect_p, _effect_lowering)
     dispatch.runtime_tokens.clear()
 
   def tearDown(self):
     super().tearDown()
     dispatch.runtime_tokens.clear()
     config.update('jax_enable_x64', self.old_x64)
+    mlir.register_lowering(effect_p, self._old_lowering)
 
   def test_cannot_lower_unlowerable_effect(self):
     @jax.jit
@@ -631,6 +644,37 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
       jax.make_jaxpr(f2)(2.)
 
+  def test_allowed_effect_in_while_body(self):
+    def f(x):
+      def cond_fun(x):
+        return False
+      def body_fun(x):
+        effect_p.bind(effect='while')
+        return x
+      return lax.while_loop(cond_fun, body_fun, x)
+    f(2)
+
+  def test_allowed_ordered_effect_in_while_body(self):
+    def f(x):
+      def cond_fun(x):
+        return False
+      def body_fun(x):
+        effect_p.bind(effect='while1')
+        return x
+      return lax.while_loop(cond_fun, body_fun, x)
+    f(2)
+
+  def test_multiple_allowed_ordered_effect_in_while_body(self):
+    def f(x):
+      def cond_fun(x):
+        return False
+      def body_fun(x):
+        effect_p.bind(effect='while1')
+        effect_p.bind(effect='while2')
+        return x
+      return lax.while_loop(cond_fun, body_fun, x)
+    f(2)
+
   def test_effects_disallowed_in_while(self):
     def f1(x):
       def cond_fun(x):
@@ -653,6 +697,31 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
       jax.make_jaxpr(f2)(2.)
+
+  def test_allowed_effect_in_scan(self):
+    def f(x):
+      def body_fun(carry, x):
+        effect_p.bind(effect='while')
+        return carry, x
+      return lax.scan(body_fun, x, jnp.arange(5))
+    f(2)
+
+  def test_allowed_ordered_effect_in_scan(self):
+    def f(x):
+      def body_fun(carry, x):
+        effect_p.bind(effect='while1')
+        return carry, x
+      return lax.scan(body_fun, x, jnp.arange(5))
+    f(2)
+
+  def test_multiple_allowed_ordered_effect_in_scan(self):
+    def f(x):
+      def body_fun(carry, x):
+        effect_p.bind(effect='while1')
+        effect_p.bind(effect='while2')
+        return carry, x
+      return lax.scan(body_fun, x, jnp.arange(5))
+    f(2)
 
   def test_effects_disallowed_in_scan(self):
 

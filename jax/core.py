@@ -2285,10 +2285,13 @@ def _check_jaxpr(
       else:
         out_avals, effects = check_eqn(prim, in_avals, eqn.params)
       if eqn.effects != effects:
-        raise JaxprTypeError("Inferred effects do not match equation effects.")
+        raise JaxprTypeError("Inferred effects do not match equation effects. "
+                             f"Equation effects: {eqn.effects}. "
+                             f"Jaxpr effects: {effects}")
       if not eqn.effects.issubset(jaxpr.effects):
         raise JaxprTypeError("Equation effects are not subset of Jaxpr effects. "
-                             f"Equation effects: {eqn.effects}. Jaxpr effects: {jaxpr.effects}")
+                             f"Equation effects: {eqn.effects}. "
+                             f"Jaxpr effects: {jaxpr.effects}")
       map(write, eqn.outvars, out_avals)
     except JaxprTypeError as e:
       ctx, settings = ctx_factory()
