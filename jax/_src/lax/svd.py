@@ -42,11 +42,30 @@ from jax import lax
 import jax.numpy as jnp
 
 
+@functools.partial(jax.jit, static_argnums=(1, 2))
+def _zero_svd(a: Any,
+              full_matrices: bool,
+              compute_uv: bool = True) -> Union[Any, Sequence[Any]]:
+  """SVD on matrix of all zeros."""
+  m, n = a.shape
+  k = min(m, n)
+  s = jnp.zeros(shape=(k,), dtype=a.real.dtype)
+  if compute_uv:
+    if full_matrices:
+      u = jnp.eye(m, m, dtype=a.dtype)
+      vh = jnp.eye(n, n, dtype=a.dtype)
+    else:
+      u = jnp.eye(m, k, dtype=a.dtype)
+      vh = jnp.eye(k, n, dtype=a.dtype)
+    return (u, s, vh)
+  else:
+    return s
+
+
 @functools.partial(jax.jit, static_argnums=(1, 2, 3))
-def _svd(a: Any,
-         hermitian: bool,
-         compute_uv: bool,
-         max_iterations: int) -> Union[Any, Sequence[Any]]:
+def _svd_tall_and_square_input(
+    a: Any, hermitian: bool, compute_uv: bool, max_iterations: int
+) -> Union[Any, Sequence[Any]]:
   """Singular value decomposition for m x n matrix and m >= n.
 
   Args:
@@ -98,11 +117,11 @@ def _svd(a: Any,
 
 
 @functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
-def svd(a: Any,
-        full_matrices: bool,
-        compute_uv: bool = True,
-        hermitian: bool = False,
-        max_iterations: int = 10) -> Union[Any, Sequence[Any]]:
+def _qdwh_svd(a: Any,
+              full_matrices: bool,
+              compute_uv: bool = True,
+              hermitian: bool = False,
+              max_iterations: int = 10) -> Union[Any, Sequence[Any]]:
   """Singular value decomposition.
 
   Args:
@@ -121,15 +140,6 @@ def svd(a: Any,
     depend on the value of `full_matrices`. For `compute_uv=False`,
     only `s` is returned.
   """
-
-  hermitian = core.concrete_or_error(
-      bool, hermitian, 'The `hermitian` argument must be statically '
-      'specified to use `qdwh` within JAX transformations.')
-
-  max_iterations = core.concrete_or_error(
-      int, max_iterations, 'The `max_iterations` argument must be statically '
-      'specified to use `qdwh` within JAX transformations.')
-
   m, n = a.shape
 
   is_flip = False
@@ -153,9 +163,10 @@ def svd(a: Any,
       reduce_to_square = True
 
   if not compute_uv:
-    return _svd(a, hermitian, compute_uv, max_iterations)
+    return _svd_tall_and_square_input(a, hermitian, compute_uv, max_iterations)
 
-  u_out, s_out, v_out = _svd(a, hermitian, compute_uv, max_iterations)
+  u_out, s_out, v_out = _svd_tall_and_square_input(
+      a, hermitian, compute_uv, max_iterations)
 
   if reduce_to_square:
     u_out = q @ u_out
@@ -167,3 +178,53 @@ def svd(a: Any,
     return(v_out, s_out, u_out.T.conj())
 
   return (u_out, s_out, v_out.T.conj())
+
+
+@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
+def svd(a: Any,
+        full_matrices: bool,
+        compute_uv: bool = True,
+        hermitian: bool = False,
+        max_iterations: int = 10) -> Union[Any, Sequence[Any]]:
+  """Singular value decomposition.
+
+  Args:
+    a: A matrix of shape `m x n`.
+    full_matrices: If True, `u` and `vh` have the shapes `m x m` and `n x n`,
+      respectively. If False, the shapes are `m x k` and `k x n`, respectively,
+      where `k = min(m, n)`.
+    compute_uv: Whether to compute also `u` and `v` in addition to `s`.
+    hermitian: True if `a` is Hermitian.
+    max_iterations: The predefined maximum number of iterations of QDWH.
+
+  Returns:
+    A 3-tuple (`u`, `s`, `vh`), where `u` and `vh` are unitary matrices,
+    `s` is vector of length `k` containing the singular values in the
+    non-increasing order, and `k = min(m, n)`. The shapes of `u` and `vh`
+    depend on the value of `full_matrices`. For `compute_uv=False`,
+    only `s` is returned.
+  """
+  full_matrices = core.concrete_or_error(
+      bool, full_matrices, 'The `full_matrices` argument must be statically '
+      'specified to use `svd` within JAX transformations.')
+
+  compute_uv = core.concrete_or_error(
+      bool, compute_uv, 'The `compute_uv` argument must be statically '
+      'specified to use `svd` within JAX transformations.')
+
+  hermitian = core.concrete_or_error(
+      bool, hermitian, 'The `hermitian` argument must be statically '
+      'specified to use `qdwh` within JAX transformations.')
+
+  max_iterations = core.concrete_or_error(
+      int, max_iterations, 'The `max_iterations` argument must be statically '
+      'specified to use `qdwh` within JAX transformations.')
+
+  return jax.lax.cond(jnp.all(a == 0),
+                      functools.partial(_zero_svd, full_matrices=full_matrices,
+                                        compute_uv=compute_uv),
+                      functools.partial(_qdwh_svd, full_matrices=full_matrices,
+                                        compute_uv=compute_uv,
+                                        hermitian=hermitian,
+                                        max_iterations=max_iterations),
+                      operand=(a))
