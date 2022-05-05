@@ -42,6 +42,7 @@ from jax._src.util import (prod, new_name_stack, safe_zip, safe_map,
 from jax._src.util import extend_name_stack as extend_name_stack  # noqa: F401
 from jax._src.util import wrap_name as wrap_name  # noqa: F401
 
+from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
@@ -337,7 +338,10 @@ def xla_destructure(c, ans):
 def check_backend_matches(inner_backend, outer_backend):
   # For nested calls, the outermost call sets the backend for all inner calls;
   # it's an error if the inner call has a conflicting explicit backend spec.
-  if inner_backend and inner_backend != outer_backend:
+  if inner_backend is None:
+    return
+  if (inner_backend != outer_backend and
+      outer_backend not in xb.expand_platform_alias(inner_backend)):
     raise ValueError(
         f"Outer-jit backend specification {outer_backend} must match explicit "
         f"inner-jit backend specification {inner_backend}.")
@@ -491,9 +495,16 @@ def register_collective_primitive(prim: core.Primitive):
 
 def register_translation(prim: core.Primitive, rule: TranslationRule, *,
                          platform: Optional[str] = None) -> None:
-  ts = (_translations if platform is None
-        else _backend_specific_translations[platform])
-  ts[prim] = rule
+  if platform is None:
+    _translations[prim] = rule
+  else:
+    # For backward compatibility reasons, we allow rules to be registered
+    # under "gpu" even though the platforms are now called "cuda" and "rocm".
+    # TODO(phawkins): fix up users to specify either "cuda" or "rocm" and remove
+    # this expansion.
+    for p in xb.expand_platform_alias(platform):
+      _backend_specific_translations[p][prim] = rule
+
 
 # As a temporary backward compatibility measure, we use an adapter class to
 # convert from the old styles of translation rules to the newer ones.
@@ -506,7 +517,9 @@ class _TranslationRuleAdapter:
     self._wrap_fn = wrap_fn
 
   def __setitem__(self, key: core.Primitive, value: Callable):
-    self._translations[key] = self._wrap_fn(key, value)
+    wrapped = self._wrap_fn(key, value)
+    for translations in self._translations:
+      translations[key] = wrapped
 
 
 def _wrap_old_translation(prim: core.Primitive, f: Callable) -> TranslationRule:
@@ -524,12 +537,14 @@ def _wrap_old_translation(prim: core.Primitive, f: Callable) -> TranslationRule:
 
 
 translations : _TranslationRuleAdapter
-translations = _TranslationRuleAdapter(_translations, _wrap_old_translation)
+translations = _TranslationRuleAdapter([_translations], _wrap_old_translation)
 
 class _BackendSpecificTranslationsAdapter(defaultdict):
   def __missing__(self, key):
+    translation_tables = [_backend_specific_translations[p]
+                          for p in xb.expand_platform_alias(key)]
     ret = self[key] = _TranslationRuleAdapter(
-        _backend_specific_translations[key], _wrap_old_translation)
+        translation_tables, _wrap_old_translation)
     return ret
 
 backend_specific_translations: Dict[str, _TranslationRuleAdapter]

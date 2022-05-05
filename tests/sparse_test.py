@@ -514,15 +514,15 @@ class cuSparseTest(jtu.JaxTestCase):
       if cuda_version is None or cuda_version < 11000:
         self.assertFalse(sparse_apis and sparse_apis.is_supported)
         self.assertNotIn(sparse.csr_todense_p,
-                         mlir._platform_specific_lowerings["gpu"])
+                         mlir._platform_specific_lowerings["cuda"])
       else:
         self.assertTrue(sparse_apis and sparse_apis.is_supported)
         self.assertIn(sparse.csr_todense_p,
-                      mlir._platform_specific_lowerings["gpu"])
+                      mlir._platform_specific_lowerings["cuda"])
     else:
       self.assertTrue(sparse_apis and sparse_apis.is_supported)
       self.assertIn(sparse.csr_todense_p,
-                    mlir._platform_specific_lowerings["gpu"])
+                    mlir._platform_specific_lowerings["rocm"])
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(

@@ -54,7 +54,7 @@ def from_dlpack(dlpack):
   """
   cpu_backend = xla_bridge.get_backend("cpu")
   try:
-    gpu_backend = xla_bridge.get_backend("gpu")
+    gpu_backend = xla_bridge.get_backend("cuda")
   except RuntimeError:
     gpu_backend = None
   buf = xla_client._xla.dlpack_managed_tensor_to_buffer(

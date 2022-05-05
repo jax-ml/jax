@@ -572,8 +572,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        f"Outer-jit backend specification {jtu.device_under_test()} must match "
-        f"explicit inner-jit backend specification cpu."):
+        "Outer-jit backend specification .* must match explicit inner-jit "
+        "backend specification cpu."):
       f(1.)
 
   def test_omnistaging(self):

@@ -19,7 +19,6 @@ and provide some automatic type mapping logic for converting between Numpy and
 XLA. There are also a handful of related casting utilities.
 """
 
-
 from functools import partial, lru_cache
 import os
 import threading
@@ -212,19 +211,73 @@ register_backend_factory('cpu',
                          priority=0)
 register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
-register_backend_factory('gpu', xla_client.make_gpu_client,
-                         priority=200)
+
+if xla_client._version >= 65:
+  register_backend_factory(
+      'cuda', partial(xla_client.make_gpu_client, platform_name='cuda'),
+      priority=200)
+  register_backend_factory(
+      'rocm', partial(xla_client.make_gpu_client, platform_name='rocm'),
+      priority=200)
+else:
+  register_backend_factory('gpu', xla_client.make_gpu_client,
+                           priority=200)
+
 register_backend_factory(
   'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
 
 if iree is not None:
   register_backend_factory("iree", iree.iree_client_factory, priority=-100)
 
+_platform_aliases = {
+  "cuda": "gpu",
+  "rocm": "gpu",
+}
+
+_alias_to_platforms: Dict[str, List[str]] = {}
+for _platform, _alias in _platform_aliases.items():
+  _alias_to_platforms.setdefault(_alias, []).append(_platform)
+
+
 def is_known_platform(platform: str):
   # A platform is valid if there is a registered factory for it. It does not
   # matter if we were unable to initialize that platform; we only care that
   # we've heard of it and it isn't, e.g., a typo.
-  return platform in _backend_factories.keys()
+  return (platform in _backend_factories.keys() or
+          platform in _platform_aliases.keys())
+
+
+def canonicalize_platform(platform: str) -> str:
+  """Replaces platform aliases with their concrete equivalent.
+
+  In particular, replaces "gpu" with either "cuda" or "rocm", depending on which
+  hardware is actually present. We want to distinguish "cuda" and "rocm" for
+  purposes such as MHLO lowering rules, but in many cases we don't want to
+  force users to care.
+  """
+  platforms = _alias_to_platforms.get(platform, None)
+  if platforms is None:
+    return platform
+
+  b = backends()
+  for p in platforms:
+    if p in b.keys():
+      return p
+  raise RuntimeError(f"Unknown backend: '{platform}' requested, but no "
+                     f"platforms that are instances of {platform} are present. "
+                     "Platforms present are: " + ",".join(b.keys()))
+
+
+def expand_platform_alias(platform: str) -> List[str]:
+  """Expands, e.g., "gpu" to ["cuda", "rocm"].
+
+  This is used for convenience reasons: we expect cuda and rocm to act similarly
+  in many respects since they share most of the same code.
+  """
+  return _alias_to_platforms.get(platform, [platform])
+
+def is_gpu(platform):
+  return platform in ("cuda", "rocm")
 
 def backends():
   global _backends
@@ -236,7 +289,11 @@ def backends():
       return _backends
 
     if FLAGS.jax_platforms:
-      platforms = FLAGS.jax_platforms.split(",")
+      jax_platforms = FLAGS.jax_platforms.split(",")
+      platforms = list(jax_platforms)
+      # Allow platform aliases in the list of platforms.
+      for platform in jax_platforms:
+        platforms.extend(expand_platform_alias(platform))
       priorities = range(len(platforms), 0, -1)
       platforms_and_priorites = zip(platforms, priorities)
     else:
@@ -248,7 +305,17 @@ def backends():
     for platform, priority in platforms_and_priorites:
       try:
         backend = _init_backend(platform)
-        _backends[platform] = backend
+
+        if platform == "gpu" and xla_client._version <= 64:
+          # TODO(phawkins): remove this special handling when jaxlib v0.3.11
+          # is the minimum.
+          if "rocm" in backend.platform_version:
+            _backends["rocm"] = backend
+          else:
+            _backends["cuda"] = backend
+        else:
+          _backends[platform] = backend
+
         if priority > default_priority:
           _default_backend = backend
           default_priority = priority
@@ -297,10 +364,12 @@ def _get_backend_uncached(platform=None):
   if not isinstance(platform, (type(None), str)):
     return platform
 
-  bs = backends()
   platform = (platform or FLAGS.jax_xla_backend or FLAGS.jax_platform_name
               or None)
+
+  bs = backends()
   if platform is not None:
+    platform = canonicalize_platform(platform)
     backend = bs.get(platform, None)
     if backend is None:
       if platform in _backends_errors:

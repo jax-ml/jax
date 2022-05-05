@@ -537,7 +537,7 @@ def _inline_host_callback() -> bool:
 
 
 def _use_outfeed(platform: str) -> bool:
-  return (platform in ("tpu", "gpu") or FLAGS.jax_host_callback_outfeed)
+  return (platform in ("tpu", "gpu", "cuda", "rocm") or FLAGS.jax_host_callback_outfeed)
 
 xops = xla_client._xla.ops
 
@@ -1936,7 +1936,7 @@ def _initialize_outfeed_receiver(
 
     # By default, all devices on all supported backends.
     clients = [backend for name, backend in xb.backends().items()
-               if name in ("cpu", "gpu", "tpu")]
+               if name in ("cpu", "cuda", "rocm", "tpu")]
     devices = list(
         itertools.chain(*[backend.local_devices() for backend in clients]))
     _callback_handler_data.clients = clients  # type: ignore[assignment]

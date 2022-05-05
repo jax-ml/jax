@@ -931,8 +931,8 @@ def _all_to_all_lowering(ctx, x, *,
   if len(replica_groups[0]) == 1:
     return [x]
   elif ((ctx.module_context.platform == "tpu") or
-        ((ctx.module_context.platform == "gpu") and (split_axis == 0) and
-        (concat_axis == 0))):
+        ((ctx.module_context.platform in ("cuda", "rocm"))
+         and (split_axis == 0) and (concat_axis == 0))):
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
@@ -1149,7 +1149,8 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   x_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   if (ctx.module_context.platform == 'tpu' or
-      ctx.module_context.platform == 'gpu' and all_gather_dimension == 0):
+      ctx.module_context.platform in ('cuda', 'rocm')
+      and all_gather_dimension == 0):
     if not tiled:
       new_shape = list(x_aval.shape)
       new_shape.insert(all_gather_dimension, 1)
@@ -1274,7 +1275,7 @@ def _reduce_scatter_via_reducer(x, *, reducer, scatter_dimension, axis_name,
 def _reduce_scatter_lowering(prim, reducer, ctx, x,
                              *, scatter_dimension, axis_name,
                              axis_index_groups, axis_size, tiled):
-  if ctx.module_context.platform in ("tpu", "gpu"):
+  if ctx.module_context.platform in ("tpu", "cuda", "rocm"):
     x_aval, = ctx.avals_in
     aval_out, = ctx.avals_out
     scalar_aval = x_aval.update(shape=())

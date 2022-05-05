@@ -438,9 +438,15 @@ _platform_specific_lowerings = collections.defaultdict(dict)
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
                       platform: Optional[str] = None):
-  ts = (_lowerings if platform is None
-        else _platform_specific_lowerings[platform])
-  ts[prim] = rule
+  if platform is None:
+    _lowerings[prim] = rule
+  else:
+    # For backward compatibility reasons, we allow rules to be registered
+    # under "gpu" even though the platforms are now called "cuda" and "rocm".
+    # TODO(phawkins): fix up users to specify either "cuda" or "rocm" and remove
+    # this expansion.
+    for p in xb.expand_platform_alias(platform):
+      _platform_specific_lowerings[p][prim] = rule
 
 
 def _unwrap_singleton_ir_values(x): return x[0] if len(x) == 1 else x
@@ -496,7 +502,9 @@ def lower_jaxpr_to_module(
   """Lowers a top-level jaxpr to an MHLO module.
 
   Handles the quirks of the argument/return value passing conventions of the
-  runtime."""
+  runtime.
+  """
+  platform = xb.canonicalize_platform(platform)
   if not xb.is_known_platform(platform):
     raise ValueError(f"Unknown platform {platform}")
   input_output_aliases = None
@@ -512,7 +520,7 @@ def lower_jaxpr_to_module(
         sharded_aval(out_aval, out_sharding)
         for out_aval, out_sharding in zip(out_avals, result_shardings)
     ]
-  platforms_with_donation = ("gpu", "tpu")
+  platforms_with_donation = ("cuda", "rocm", "tpu")
   if platform in platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(
         in_avals, out_avals, donated_args)
@@ -859,6 +867,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
 
   Assumes that an MLIR context, location, and insertion point are set.
   """
+  assert ctx.platform != "gpu"
   def read(v: core.Var) -> Sequence[ir.Value]:
     if type(v) is core.Literal:
       return ir_constants(v.val, canonicalize_types=True)
