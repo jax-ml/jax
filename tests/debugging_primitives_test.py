@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import functools
 import io
 import textwrap
 from unittest import mock
@@ -27,6 +28,7 @@ from jax._src import debugging
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -87,6 +89,53 @@ class DebugPrintTest(jtu.JaxTestCase):
       f(2)
     self.assertEqual(output(), "x: 2\n")
 
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_can_stage_out_ordered_print_with_pytree(self):
+    @jax.jit
+    def f(x):
+      struct = dict(foo=x)
+      debug_print('x: {}', struct, ordered=True)
+    with capture_stdout() as output:
+      f(np.array(2, np.int32))
+    self.assertEqual(output(), f"x: {str(dict(foo=np.array(2, np.int32)))}\n")
+
+class DebugPrintTransformationTest(jtu.JaxTestCase):
+
+  def test_debug_print_batching(self):
+    @jax.vmap
+    def f(x):
+      debug_print('hello: {}', x)
+    with capture_stdout() as output:
+      f(jnp.arange(2))
+    self.assertEqual(output(), "hello: 0\nhello: 1\n")
+
+  def test_debug_print_batching_with_diff_axes(self):
+    @functools.partial(jax.vmap, in_axes=(0, 1))
+    def f(x, y):
+      debug_print('hello: {} {}', x, y)
+    with capture_stdout() as output:
+      f(jnp.arange(2), jnp.arange(2)[None])
+    self.assertEqual(output(), "hello: 0 [0]\nhello: 1 [1]\n")
+
+  def tested_debug_print_with_nested_vmap(self):
+    def f(x):
+      debug_print('hello: {}', x)
+    # Call with
+    # [[0, 1],
+    #  [2, 3],
+    #  [4, 5]]
+    with capture_stdout() as output:
+      # Should print over 0-axis then 1-axis
+      jax.vmap(jax.vmap(f))(jnp.arange(6).reshape((3, 2)))
+    self.assertEqual(
+        output(),
+        "hello: 0\nhello: 2\nhello: 4\nhello: 1\nhello: 3\nhello: 5\n")
+    with capture_stdout() as output:
+      # Should print over 1-axis then 0-axis
+      jax.vmap(jax.vmap(f, in_axes=0), in_axes=1)(jnp.arange(6).reshape((3, 2)))
+    self.assertEqual(
+        output(),
+        "hello: 0\nhello: 1\nhello: 2\nhello: 3\nhello: 4\nhello: 5\n")
 
 class DebugPrintControlFlowTest(jtu.JaxTestCase):
 
