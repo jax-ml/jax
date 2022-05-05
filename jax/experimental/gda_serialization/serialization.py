@@ -280,7 +280,7 @@ class GlobalAsyncCheckpointManager:
                                  'finishing the serialization.')
             # Mark as done when no lockfiles exist.
             if no_lockfiles_exists(all_lockfile_paths):
-              tf.io.gfile.remove(lockfiles_dir)
+              tf.io.gfile.rmtree(lockfiles_dir)
               logging.info('Lockfiles directory removed.')
 
               logging.info('Renaming %s to %s', temp_checkpoint_dir, final_checkpoint_dir)
