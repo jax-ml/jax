@@ -789,8 +789,11 @@ def switch(index, branches: Sequence[Callable], *operands,
     _check_tree_and_avals(f"branch 0 and {i + 1} outputs",
                           out_trees[0], jaxprs[0].out_avals,
                           out_tree, jaxpr.out_avals)
-  if any(b.effects for b in jaxprs):
-    raise NotImplementedError('Effects not supported in `switch`.')
+  joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
+  disallowed_effects = joined_effects - allowed_effects
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `switch`: {disallowed_effects}')
 
   linear = (False,) * (len(consts) + len(ops))
   out = cond_p.bind(
@@ -877,8 +880,11 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   _check_tree_and_avals("true_fun and false_fun output",
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
-  if any(b.effects for b in jaxprs):
-    raise NotImplementedError('Effects not supported in `cond`.')
+  joined_effects = core.join_effects(true_jaxpr.effects, false_jaxpr.effects)
+  disallowed_effects = joined_effects - allowed_effects
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `cond`: {disallowed_effects}')
 
   index = lax.convert_element_type(pred, np.int32)
 
@@ -927,8 +933,11 @@ def _cond_with_per_branch_args(pred,
                (true_operand, false_operand))
 
 def _cond_abstract_eval(*args, branches, **kwargs):
-  if any(b.effects for b in branches):
-    raise NotImplementedError('Effects not supported in `cond`.')
+  joined_effects = core.join_effects(*(b.effects for b in branches))
+  disallowed_effects = joined_effects - allowed_effects
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `cond`: {disallowed_effects}')
   joined_effects = core.join_effects(*(b.effects for b in branches))
   return _map(raise_to_shaped, branches[0].out_avals), joined_effects
 
@@ -1222,8 +1231,11 @@ def _cond_typecheck(*avals, branches, linear):
   jaxpr0 = branches[0]
   jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
   jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
-  if any(b.effects for b in branches):
-    raise NotImplementedError('Effects not supported in `cond`.')
+  joined_effects = core.join_effects(*(b.effects for b in branches))
+  disallowed_effects = joined_effects - allowed_effects
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `cond`: {disallowed_effects}')
 
   for i, jaxpr in enumerate(branches[1:]):
     if len(jaxpr0.in_avals) != len(jaxpr.in_avals):
@@ -1287,7 +1299,14 @@ pe.partial_eval_jaxpr_custom_rules[cond_p] = \
 
 def _cond_lowering(ctx, index, *args, branches, linear):
   del linear  # Unused.
-  output_types = _map(mlir.aval_to_ir_types, ctx.avals_out)
+  joined_effects = core.join_effects(*(branch.effects for branch in branches))
+  ordered_effects = [eff for eff in joined_effects
+                     if eff in core.ordered_effects]
+  num_tokens = len(ordered_effects)
+  tokens_in = ctx.tokens_in.subset(ordered_effects)
+  output_token_types = [mlir.token_type() for _ in ordered_effects]
+  output_types = [
+      *output_token_types, *_map(mlir.aval_to_ir_types, ctx.avals_out)]
   flat_output_types = util.flatten(output_types)
 
   # mhlo.CaseOp takes a single argument 'index' and the corresponding blocks
@@ -1301,17 +1320,20 @@ def _cond_lowering(ctx, index, *args, branches, linear):
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
-      if jaxpr.effects:
-        raise NotImplementedError('Cannot lower effectful `cond`.')
       sub_ctx = ctx.module_context.replace(
           name_stack=xla.extend_name_stack(name_stack, f'branch_{i}_fun'))
-      out_vals, _ = mlir.jaxpr_subcomp(
-          sub_ctx, jaxpr.jaxpr, mlir.TokenSet(),
+      out_vals, tokens_out = mlir.jaxpr_subcomp(
+          sub_ctx, jaxpr.jaxpr, tokens_in,
           _map(mlir.ir_constants, jaxpr.consts),
           *_map(mlir.wrap_singleton_ir_values, args))
+      out_tokens = [tokens_out.get(eff) for eff in ordered_effects]
+      out_vals = [*out_tokens, *out_vals]
       mhlo.ReturnOp(util.flatten(out_vals))
 
-  return util.unflatten(case_op.results, _map(len, output_types))
+  tokens_and_outputs = util.unflatten(case_op.results, _map(len, output_types))
+  tokens, outputs = util.split_list(tokens_and_outputs, [num_tokens])
+  ctx.set_tokens_out(mlir.TokenSet(zip(ordered_effects, tokens)))
+  return outputs
 
 mlir.register_lowering(cond_p, _cond_lowering)
 

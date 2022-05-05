@@ -255,6 +255,62 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       x: 10
       """))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_can_print_inside_cond(self, ordered):
+    def f(x):
+      def true_fun(x):
+        debug_print("true: {}", x, ordered=ordered)
+        return x
+      def false_fun(x):
+        debug_print("false: {}", x, ordered=ordered)
+        return x
+      return lax.cond(x < 5, true_fun, false_fun, x)
+    with capture_stdout() as output:
+      f(5)
+    self.assertEqual(output(), _format_multiline("""
+      false: 5
+      """))
+    with capture_stdout() as output:
+      f(4)
+    self.assertEqual(output(), _format_multiline("""
+      true: 4
+      """))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_can_print_inside_switch(self, ordered):
+    def f(x):
+      def b1(x):
+        debug_print("b1: {}", x, ordered=ordered)
+        return x
+      def b2(x):
+        debug_print("b2: {}", x, ordered=ordered)
+        return x
+      def b3(x):
+        debug_print("b3: {}", x, ordered=ordered)
+        return x
+      return lax.switch(x, (b1, b2, b3), x)
+    with capture_stdout() as output:
+      f(0)
+    self.assertEqual(output(), _format_multiline("""
+      b1: 0
+      """))
+    with capture_stdout() as output:
+      f(1)
+    self.assertEqual(output(), _format_multiline("""
+      b2: 1
+      """))
+    with capture_stdout() as output:
+      f(2)
+    self.assertEqual(output(), _format_multiline("""
+      b3: 2
+      """))
+
 if jaxlib.version < (0, 3, 8):
   # No lowering for `emit_python_callback` in older jaxlibs.
   del DebugPrintTest

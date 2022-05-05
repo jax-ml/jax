@@ -633,6 +633,41 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
       jax.make_jaxpr(f1)(2.)
 
+  def test_allowed_effect_in_cond(self):
+    def f(x):
+      def true_fun(x):
+        effect_p.bind(effect='while')
+        return x
+      def false_fun(x):
+        effect_p.bind(effect='while')
+        return x
+      return lax.cond(x, true_fun, false_fun, x)
+    f(2)
+
+  def test_allowed_ordered_effect_in_cond(self):
+    def f(x):
+      def true_fun(x):
+        effect_p.bind(effect='while1')
+        return x
+      def false_fun(x):
+        effect_p.bind(effect='while1')
+        return x
+      return lax.cond(x, true_fun, false_fun, x)
+    f(2)
+
+  def test_multiple_allowed_ordered_effect_in_cond(self):
+    def f(x):
+      def true_fun(x):
+        effect_p.bind(effect='while1')
+        effect_p.bind(effect='while2')
+        return x
+      def false_fun(x):
+        effect_p.bind(effect='while1')
+        effect_p.bind(effect='while2')
+        return x
+      return lax.cond(x, true_fun, false_fun, x)
+    f(2)
+
     def f2(x):
       def true_fun(x):
         return x
