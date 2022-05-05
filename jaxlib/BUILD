@@ -114,6 +114,7 @@ cc_library(
 py_library(
     name = "jaxlib",
     srcs = [
+        "gpu_prng.py",
         "init.py",
         "lapack.py",
         "pocketfft.py",
@@ -240,7 +241,6 @@ py_library(
     name = "gpu_support",
     srcs = [
         "cuda_linalg.py",
-        "cuda_prng.py",
         "cusolver.py",
         "cusparse.py",
     ],
@@ -257,7 +257,6 @@ py_library(
     name = "hip_gpu_support",
     srcs = [
         "hip_linalg.py",
-        "hip_prng.py",
         "hipsolver.py",
         "hipsparse.py",
     ],

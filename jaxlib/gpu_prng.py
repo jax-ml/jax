@@ -14,6 +14,7 @@
 
 
 import functools
+from functools import partial
 import itertools
 import operator
 
@@ -29,12 +30,19 @@ try:
   for _name, _value in _cuda_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
-  pass
+  _cuda_prng = None
+
+try:
+  from . import _hip_prng
+  for _name, _value in _hip_prng.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+except ImportError:
+  _hip_prng = None
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def threefry2x32_lowering(keys, data):
+def _threefry2x32_lowering(prng, platform, keys, data):
   """ThreeFry2x32 kernel for GPU."""
   assert len(keys) == 2, keys
   assert len(data) == 2, data
@@ -47,14 +55,14 @@ def threefry2x32_lowering(keys, data):
     assert x.type == typ, (x.type, typ)
   ndims = len(dims)
 
-  opaque = _cuda_prng.cuda_threefry2x32_descriptor(_prod(dims))
+  opaque = prng.threefry2x32_descriptor(_prod(dims))
   layout = ir.DenseIntElementsAttr.get(np.arange(ndims - 1, -1, -1),
                                        type=ir.IndexType.get())
   i32_type = ir.IntegerType.get_signless(32)
   tup = mhlo.CustomCallOp(
       [ir.TupleType.get_tuple([typ, typ])],
       [keys[0], keys[1], data[0], data[1]],
-      call_target_name = ir.StringAttr.get("cuda_threefry2x32"),
+      call_target_name = ir.StringAttr.get(f"{platform}_threefry2x32"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -65,3 +73,6 @@ def threefry2x32_lowering(keys, data):
     mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, i)).result
     for i in range(2)
   ]
+
+cuda_threefry2x32 = partial(_threefry2x32_lowering, _cuda_prng, "cuda")
+rocm_threefry2x32 = partial(_threefry2x32_lowering, _hip_prng, "rocm")

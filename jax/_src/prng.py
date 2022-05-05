@@ -30,14 +30,18 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.api import jit, vmap
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import cuda_prng
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.numpy.lax_numpy import (
     _canonicalize_tuple_index, _eliminate_deprecated_list_indexing,
     _expand_bool_indices, _register_stackable)
-from jax._src.lib import hip_prng
 import jax._src.pretty_printer as pp
 from jax._src.util import canonicalize_axis, prod
+
+# TODO(phawkins): make gpu_prng unconditional after jaxlib >= 0.3.11
+# becomes the minimum; remove cuda_prng and hip_prng.
+from jax._src.lib import gpu_prng
+from jax._src.lib import cuda_prng
+from jax._src.lib import hip_prng
 
 
 UINT_DTYPES = {
@@ -382,7 +386,7 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   return tuple(x)
 
 
-def _threefry2x32_gpu_lowering(ctx, k1, k2, x1, x2):
+def _threefry2x32_gpu_lowering(threefry2x32_lowering, ctx, k1, k2, x1, x2):
   aval_out, _ = ctx.avals_out
   k1_aval, k2_aval, x1_aval, x2_aval = ctx.avals_in
   rank = len(aval_out.shape)
@@ -393,14 +397,9 @@ def _threefry2x32_gpu_lowering(ctx, k1, k2, x1, x2):
     return mhlo.BroadcastInDimOp(
         mlir.aval_to_ir_type(aval_out), x,
         mlir.dense_int_elements(range(rank - len(aval.shape), rank))).result
-  if cuda_prng:
-    return cuda_prng.threefry2x32_lowering(
-            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)))
-  else:
-    return hip_prng.threefry2x32_lowering(
-            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)))
+  return threefry2x32_lowering(
+          (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+          (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)))
 
 
 threefry2x32_p = core.Primitive("threefry2x32")
@@ -415,9 +414,27 @@ mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=True),
     multiple_results=True), platform='cpu')
 
-if cuda_prng or hip_prng:
-  mlir.register_lowering(threefry2x32_p, _threefry2x32_gpu_lowering,
-                         platform='gpu')
+if gpu_prng:
+  mlir.register_lowering(
+      threefry2x32_p,
+      partial(_threefry2x32_gpu_lowering, gpu_prng.cuda_threefry2x32),
+      platform='cuda')
+  mlir.register_lowering(
+      threefry2x32_p,
+      partial(_threefry2x32_gpu_lowering, gpu_prng.rocm_threefry2x32),
+      platform='rocm')
+
+if cuda_prng:
+  mlir.register_lowering(
+      threefry2x32_p,
+      partial(_threefry2x32_gpu_lowering, cuda_prng.threefry2x32_lowering),
+      platform='cuda')
+if hip_prng:
+  mlir.register_lowering(
+      threefry2x32_p,
+      partial(_threefry2x32_gpu_lowering, hip_prng.threefry2x32_lowering),
+      platform='rocm')
+
 
 @partial(jit, inline=True)
 def threefry_2x32(keypair, count):

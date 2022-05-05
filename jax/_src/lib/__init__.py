@@ -22,7 +22,7 @@ import warnings
 from typing import Optional, Tuple
 
 __all__ = [
-  'cuda_linalg', 'cuda_prng', 'cusolver', 'hip_linalg', 'hip_prng',
+  'cuda_linalg', 'cuda_prng', 'cusolver', 'gpu_prng', 'hip_linalg', 'hip_prng',
   'hipsolver','jaxlib', 'lapack', 'pocketfft', 'pytree',
    'tpu_driver_client', 'version', 'xla_client', 'xla_extension',
 ]
@@ -152,6 +152,13 @@ try:
   import jaxlib.hip_prng as hip_prng  # pytype: disable=import-error
 except ImportError:
   hip_prng = None
+
+# TODO(phawkins): make gpu_prng unconditional after jaxlib >= 0.3.11
+# becomes the minimum; remove cuda_prng and hip_prng.
+try:
+  import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error
+except ImportError:
+  gpu_prng = None
 
 try:
   import jaxlib.cuda_linalg as cuda_linalg  # pytype: disable=import-error

@@ -191,6 +191,7 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_pocketfft.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft.py"))
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/gpu_prng.py"))
   if r.Rlocation("__main__/jaxlib/_cusolver.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cusolver.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cublas.so"))
@@ -218,11 +219,9 @@ def prepare_wheel(sources_path):
               dst_dir=libdevice_dir)
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver.py"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_linalg.py"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng.py"))
   if r.Rlocation("__main__/jaxlib/hipsolver.py") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/hipsolver.py"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/hip_linalg.py"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/hip_prng.py"))
   if r.Rlocation("__main__/jaxlib/_cusparse.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cusparse.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse.py"))

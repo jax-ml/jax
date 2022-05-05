@@ -33,7 +33,7 @@ pybind11::dict Registrations() {
 
 PYBIND11_MODULE(_hip_prng, m) {
   m.def("registrations", &Registrations);
-  m.def("hip_threefry2x32_descriptor", [](std::int64_t n) {
+  m.def("threefry2x32_descriptor", [](std::int64_t n) {
     std::string result = BuildHipThreeFry2x32Descriptor(n);
     return pybind11::bytes(result);
   });
