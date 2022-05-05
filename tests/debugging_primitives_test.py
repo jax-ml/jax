@@ -137,6 +137,30 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
         output(),
         "hello: 0\nhello: 1\nhello: 2\nhello: 3\nhello: 4\nhello: 5\n")
 
+  def test_debug_print_jvp_rule(self):
+    def f(x):
+      debug_print('should never be called: {}', x)
+    with self.assertRaisesRegex(
+        ValueError, "JVP doesn't support debugging callbacks"):
+      jax.jvp(f, (1.,), (1.,))
+
+  def test_debug_print_vjp_rule(self):
+    def f(x):
+      debug_print('should never be called: {}', x)
+    with self.assertRaisesRegex(
+        ValueError, "JVP doesn't support debugging callbacks"):
+      jax.vjp(f, 1.)
+
+  def test_debug_print_transpose_rule(self):
+    def f(x):
+      debug_print('should never be called: {}', x)
+      return x
+    with capture_stdout() as output:
+      jax.linear_transpose(f, 1.)(1.)
+    # `debug_print` should be dropped by `partial_eval` because of no
+    # output data-dependence.
+    self.assertEqual(output(), "")
+
 class DebugPrintControlFlowTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
