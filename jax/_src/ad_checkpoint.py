@@ -305,6 +305,7 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
   policy = params['policy'] or (lambda *_, **__: False)
   # unzip into jaxpr_known and jaxpr_unknown
   in_unknowns = [not t.is_known() for t in tracers]
+  # TODO(mattjj): use cached version of pe.partial_eval_jaxpr_custom
   jaxpr_known, jaxpr_unknown, out_unknowns, out_inst, _ = \
       pe._partial_eval_jaxpr_custom(jaxpr, in_unknowns, policy)
   jaxpr_known, in_used_known = pe.dce_jaxpr(jaxpr_known, [True] * len(jaxpr_known.outvars))
@@ -374,11 +375,10 @@ ad.reducing_transposes[remat_p] = remat_transpose
 
 def remat_vmap(axis_size, axis_name, main_type, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
-  in_batched = [d is not batching.not_mapped for d in dims]
   jaxpr_ = core.ClosedJaxpr(jaxpr, ())
-  jaxpr_batched_, out_batched = batching.batch_jaxpr(
-      jaxpr_, axis_size, in_batched, instantiate=False, axis_name=axis_name,
-      main_type=main_type)
+  jaxpr_batched_, out_batched = batching.batch_jaxpr_axes(
+      jaxpr_, axis_size, dims, [batching.zero_if_mapped] * len(jaxpr.outvars),
+      axis_name=axis_name, main_type=main_type)
   jaxpr_batched, consts = jaxpr_batched_.jaxpr, jaxpr_batched_.consts
   out_dims = [0 if b else None for b in out_batched]
   return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
