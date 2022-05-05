@@ -2939,12 +2939,18 @@ batching.primitive_batchers[pad_p] = _pad_batch_rule
 masking.masking_rules[pad_p] = _pad_masking_rule
 
 def _pad_lower(ctx, x, padding_value, *, padding_config):
-  aval_out, = ctx.avals_out
   low, high, interior = util.unzip3(padding_config)
-  return mhlo.PadOp(mlir.aval_to_ir_type(aval_out), x, padding_value,
-                    mlir.dense_int_elements(low),
-                    mlir.dense_int_elements(high),
-                    mlir.dense_int_elements(interior)).results
+  if jax._src.lib.mlir_api_version < 15:
+    aval_out, = ctx.avals_out
+    return mhlo.PadOp(mlir.aval_to_ir_type(aval_out), x, padding_value,
+                      mlir.dense_int_elements(low),
+                      mlir.dense_int_elements(high),
+                      mlir.dense_int_elements(interior)).results
+  else:
+    return mhlo.PadOp(x, padding_value,
+                      mlir.dense_int_elements(low),
+                      mlir.dense_int_elements(high),
+                      mlir.dense_int_elements(interior)).results
 mlir.register_lowering(pad_p, _pad_lower)
 
 

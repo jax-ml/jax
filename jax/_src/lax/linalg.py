@@ -18,6 +18,7 @@ from functools import partial
 
 import numpy as np
 
+import jax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.vectorize import vectorize
 from jax._src import ad_util
@@ -1227,11 +1228,18 @@ def _qr_cpu_gpu_lowering(geqrf_impl, orgqr_impl, ctx, operand, *,
                      mlir.dense_int_elements(list(batch_dims) + [n, n]),
                      mlir.dense_int_elements([1] * len(dims))).result
   else:
-    q = mhlo.PadOp(mlir.aval_to_ir_type(q_aval), r,
-                   mlir.ir_constant(np.array(0, dtype=operand_aval.dtype)),
-                   mlir.dense_int_elements([0] * len(dims)),
-                   mlir.dense_int_elements([0] * (len(dims) - 1) + [m - n]),
-                   mlir.dense_int_elements([0] * len(dims))).result
+    if jax._src.lib.mlir_api_version < 15:
+      q = mhlo.PadOp(mlir.aval_to_ir_type(q_aval), r,
+                     mlir.ir_constant(np.array(0, dtype=operand_aval.dtype)),
+                     mlir.dense_int_elements([0] * len(dims)),
+                     mlir.dense_int_elements([0] * (len(dims) - 1) + [m - n]),
+                     mlir.dense_int_elements([0] * len(dims))).result
+    else:
+      q = mhlo.PadOp(r,
+                     mlir.ir_constant(np.array(0, dtype=operand_aval.dtype)),
+                     mlir.dense_int_elements([0] * len(dims)),
+                     mlir.dense_int_elements([0] * (len(dims) - 1) + [m - n]),
+                     mlir.dense_int_elements([0] * len(dims))).result
     q, info_orgqr = orgqr_impl(operand_aval.dtype, q, tau)
   if info_geqrf is not None:
     zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
