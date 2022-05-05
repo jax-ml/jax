@@ -188,7 +188,7 @@ from jax.experimental.sparse.ad import (
     value_and_grad as value_and_grad,
 )
 from jax.experimental.sparse.bcoo import (
-    bcoo_add_batch_dim as bcoo_add_batch_dim,
+    bcoo_add_batch_dim,  # TODO(jakevdp) remove this function
     bcoo_broadcast_in_dim as bcoo_broadcast_in_dim,
     bcoo_concatenate as bcoo_concatenate,
     bcoo_dot_general as bcoo_dot_general,
@@ -201,6 +201,7 @@ from jax.experimental.sparse.bcoo import (
     bcoo_fromdense_p as bcoo_fromdense_p,
     bcoo_multiply_dense as bcoo_multiply_dense,
     bcoo_multiply_sparse as bcoo_multiply_sparse,
+    bcoo_update_layout as bcoo_update_layout,
     bcoo_reduce_sum as bcoo_reduce_sum,
     bcoo_reshape as bcoo_reshape,
     bcoo_sort_indices as bcoo_sort_indices,
@@ -223,6 +224,8 @@ from jax.experimental.sparse.api import (
 
 from jax.experimental.sparse.util import (
     CuSparseEfficiencyWarning as CuSparseEfficiencyWarning,
+    SparseEfficiencyError as SparseEfficiencyError,
+    SparseEfficiencyWarning as SparseEfficiencyWarning,
 )
 
 from jax.experimental.sparse.coo import (

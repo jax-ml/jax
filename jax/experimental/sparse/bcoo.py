@@ -27,7 +27,7 @@ from jax import tree_util
 from jax import vmap
 from jax.config import config
 from jax.experimental.sparse._base import JAXSparse
-from jax.experimental.sparse.util import _safe_asarray, CuSparseEfficiencyWarning
+from jax.experimental.sparse.util import _safe_asarray, CuSparseEfficiencyWarning, SparseEfficiencyError, SparseEfficiencyWarning
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
@@ -116,17 +116,8 @@ def bcoo_eliminate_zeros(mat, nse=None):
   return bcoo_sum_duplicates(BCOO((data, indices), shape=shape), nse=nse)
 
 def _unbatch_bcoo(data, indices, shape):
-  n_batch = _validate_bcoo(data, indices, shape).n_batch
-  if n_batch == 0:
-    return data, indices
-  data = jnp.broadcast_to(data, shape[:n_batch] + data.shape[n_batch:])
-  indices = jnp.broadcast_to(indices, shape[:n_batch] + indices.shape[n_batch:])
-  batch_indices = jnp.mgrid[tuple(slice(None, d) for d in indices.shape[:n_batch + 1])][:-1]
-  batch_indices = batch_indices.astype(indices.dtype)
-  batch_indices = batch_indices.reshape(n_batch, -1).T
-  data = data.reshape(np.prod(data.shape[:n_batch + 1]), *data.shape[n_batch + 1:])
-  indices = indices.reshape(np.prod(indices.shape[:n_batch + 1]), *indices.shape[n_batch + 1:])
-  return data, jnp.hstack([batch_indices, indices])
+  mat = bcoo_update_layout(BCOO((data, indices), shape=shape), n_batch=0)
+  return mat.data, mat.indices
 
 
 class BCOOProperties(NamedTuple):
@@ -1453,6 +1444,142 @@ mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_mhlo)
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
 
+def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error'):
+  """Update the storage layout of a BCOO matrix.
+
+  In general, increasing ``mat.n_batch`` or ``mat.n_dense`` will lead to very inefficient
+  storage, with many explicitly-stored zeros, unless the new batch or dense dimensions have
+  size 0 or 1. In such cases, ``bcoo_update_layout`` will raise a :class:`SparseEfficiencyError`.
+  This can be silenced by specifying the ``on_inefficient`` argument.
+
+  Args:
+    mat : BCOO array
+    n_batch : optional(int) the number of batch dimensions in the output matrix. If None,
+      then n_batch = mat.n_batch.
+    n_dense : optional(int) the number of dense dimensions in the output matrix. If None,
+      then n_dense = mat.n_dense.
+    on_inefficient : optional(string), one of ``['error', 'warn', None]``. Specify the
+      behavior in case of an inefficient reconfiguration. This is defined as a reconfiguration
+      where the size of the resulting representation is much larger than the size of the
+      input representation.
+
+  Returns:
+    mat_out : BCOO array
+      A BCOO array representing the same sparse array as the input, with the specified
+      layout. ``mat_out.todense()`` will match ``mat.todense()`` up to appropriate precision.
+  """
+  # TODO(jakevdp): allow specification of nse?
+  # TODO(jakevdp): there is room for some improvements here:
+  # - we could probably do better in the case of converting a dense dim to
+  #   a batch dim or vice-versa. Worth adding that special case?
+  # - we could work to preserve broadcasted batch dimensions when possible.
+  # - if indices are known to be unique, we can convert them to batch/dense
+  #   dimensions more efficiently.
+  n_batch = mat.n_batch if n_batch is None else operator.index(n_batch)
+  n_dense = mat.n_dense if n_dense is None else operator.index(n_dense)
+
+  if (n_batch, n_dense) == (mat.n_batch, mat.n_dense):
+    return mat
+
+  n_sparse = mat.ndim - n_batch - n_dense
+  if on_inefficient not in ['error', 'warn', None]:
+    raise ValueError("on_inefficent={on_inefficient!r}; expected one of ['error', 'warn', None].")
+
+  if n_batch < 0:
+    raise ValueError(f"n_batch must be non-negative; got {n_batch}")
+  if n_dense < 0:
+    raise ValueError(f"n_dense must be non-negative; got {n_dense}")
+  if n_sparse < 0:
+    raise ValueError(f"sum of n_batch={n_batch} and n_dense={n_dense} "
+                     f"cannot be larger than mat.ndim={mat.ndim}.")
+
+  def _maybe_err_or_warn(msg):
+    if on_inefficient == 'error':
+      msg += (" To disable this error, set the on_inefficient argument "
+              "of bcoo_update_layout to 'warn' or None.")
+      raise SparseEfficiencyError(msg)
+    elif on_inefficient == 'warn':
+      msg += (" To disable this warning, set the on_inefficient argument "
+              "of bcoo_update_layout to None.")
+      warnings.warn(msg, category=SparseEfficiencyWarning)
+
+  # TODO(jakevdp): are efficiency warnings necessary when nse is 0 or 1?
+  if (n_dense > mat.n_dense and
+      any(d > 1 for d in mat.shape[-n_dense:mat.ndim - mat.n_dense])):
+    _maybe_err_or_warn(f"For matrix of shape {mat.shape}, increasing n_dense from "
+                       f"{mat.n_dense} to {n_dense} results in inefficient storage.")
+  if n_batch > mat.n_batch and any(d > 1 for d in mat.shape[mat.n_batch:n_batch]):
+    _maybe_err_or_warn(f"For matrix of shape {mat.shape}, increasing n_batch from "
+                       f"{mat.n_batch} to {n_batch} results in inefficient storage.")
+
+  new_data, new_indices = mat.data, mat.indices
+  shape = mat.shape
+  current_n_batch = mat.n_batch
+  current_n_dense = mat.n_dense
+
+  if n_dense < current_n_dense:
+    n = current_n_dense - n_dense
+    def _update(d, i):
+      new_d = d.reshape(np.prod(d.shape[:n]), *d.shape[n:])
+      meshes = jnp.meshgrid(*(jnp.arange(s, dtype=i.dtype) for s in d.shape[:n]),
+                            indexing='ij')
+      new_i = jnp.column_stack([jnp.broadcast_to(i, (new_d.shape[0], i.size)),
+                                *map(jnp.ravel, meshes)])
+      return new_d, new_i
+    for _ in range(current_n_batch + 1):
+      _update = broadcasting_vmap(_update)
+    new_data, new_indices = _update(new_data, new_indices)
+    new_data = new_data.reshape(*new_data.shape[:current_n_batch],
+                                np.prod(new_data.shape[current_n_batch:current_n_batch + 2]),
+                                *new_data.shape[current_n_batch + 2:])
+    new_indices = new_indices.reshape(*new_indices.shape[:current_n_batch],
+                                      np.prod(new_indices.shape[current_n_batch: current_n_batch + 2]),
+                                      *new_indices.shape[current_n_batch + 2:])
+    current_n_dense = n_dense
+
+  if n_batch < current_n_batch:
+    n = current_n_batch - n_batch
+    def _update(d, i):
+      nse = i.shape[-2]
+      new_d = d.reshape(np.prod(d.shape[:n + 1]), *d.shape[n + 1:])
+      meshes = jnp.meshgrid(*(jnp.arange(d, dtype=i.dtype) for d in (*i.shape[:n], nse)),
+                            indexing='ij')
+      new_i = i.reshape(np.prod(i.shape[:n + 1]), *i.shape[n + 1:])
+      new_i = jnp.column_stack((*(m.ravel() for m in meshes[:-1]), new_i))
+      return new_d, new_i
+    for _ in range(n_batch):
+      _update = broadcasting_vmap(_update)
+    new_data, new_indices = _update(new_data, new_indices)
+    current_n_batch = n_batch
+
+  if n_dense > current_n_dense:
+    n = n_dense - current_n_dense
+    def _update(d, i):
+      new_d = jnp.zeros_like(d, shape=shape[-n_dense:]).at[tuple(i[-n:])].set(d)
+      new_i = i[:-n]
+      return new_d, new_i
+    for _ in range(current_n_batch + 1):
+      _update = broadcasting_vmap(_update)
+    new_data, new_indices = _update(new_data, new_indices)
+    current_n_dense = n_dense
+
+  if n_batch > current_n_batch:
+    n = n_batch - current_n_batch
+    def _update(d, i):
+      nse = i.shape[-2]
+      idx = tuple(i[:, j] for j in range(n)) + (jnp.arange(nse),)
+      new_i_shape = (*shape[current_n_batch:n_batch], nse, i.shape[-1] - n)
+      new_i = jnp.broadcast_to(i[:, n:], new_i_shape)
+      new_d_shape = (*shape[current_n_batch:n_batch], nse, *d.shape[d.ndim - n_dense:])
+      new_d = jnp.zeros_like(d, shape=new_d_shape).at[idx].set(d)
+      return new_d, new_i
+    for _ in range(current_n_batch):
+      _update = broadcasting_vmap(_update)
+    new_data, new_indices = _update(new_data, new_indices)
+    current_n_batch = n_batch
+
+  return BCOO((new_data, new_indices), shape=shape)
+
 
 def bcoo_add_batch_dim(M):
   """Convert a sparse dimension to a batch dimension
@@ -1468,27 +1595,8 @@ def bcoo_add_batch_dim(M):
   Returns:
     M2: BCOO matrix with n_batch = M.n_batch + 1 and n_sparse = M.n_sparse - 1
   """
-  # TODO(jakevdp): allow user-specified nse?
-  if M.n_sparse == 0:
-    raise ValueError("Cannot add a batch dimension to a matrix with n_sparse=0")
-  f = _add_batch_dim
-  for _ in range(M.n_batch):
-    f = vmap(f)
-  return f(M)
-
-def _add_batch_dim(M):
-  assert M.n_batch == 0
-  assert M.n_sparse > 0
-  data = jnp.zeros_like(M.data, shape=(M.shape[0], *M.data.shape))
-  data = data.at[M.indices[:, 0], jnp.arange(M.nse)].set(M.data)
-  indices_shape = (M.shape[0], M.nse, M.n_sparse - 1)
-  if M.n_sparse > 1:
-    fill_value = jnp.array(M.shape[M.n_batch + 1: M.n_batch + M.n_sparse])
-    indices = jnp.full_like(M.indices, shape=indices_shape, fill_value=fill_value)
-    indices = indices.at[M.indices[:, 0], jnp.arange(M.nse)].set(M.indices[:, 1:])
-  else:
-    indices = jnp.empty_like(M.indices, shape=indices_shape)
-  return BCOO((data, indices), shape=M.shape)
+  warnings.warn("bcoo_add_batch_dim is deprecated; use bcoo_update_layout instead", DeprecationWarning)
+  return bcoo_update_layout(M, n_batch=M.n_batch + 1, on_inefficient=None)
 
 
 def bcoo_broadcast_in_dim(mat, *, shape, broadcast_dimensions):
@@ -1575,9 +1683,9 @@ def bcoo_concatenate(operands, *, dimension):
   # need to align it in order to match the others & concatenate.
   if len(n_batches) != 1 and max(n_batches) == 1:
     if all(op.shape[0] == 1 for op in operands if op.n_batch == 0):
-      operands = [bcoo_add_batch_dim(op) if op.n_batch == 0 else op for op in operands]
+      operands = [bcoo_update_layout(op, n_batch=1) if op.n_batch == 0 else op for op in operands]
     elif all(op.shape[0] == 1 for op in operands if op.n_batch == 1):
-      operands = [op._unbatch() if op.n_batch == 1 else op for op in operands]
+      operands = [bcoo_update_layout(op, n_batch=0) if op.n_batch == 1 else op for op in operands]
     n_batches = set(op.n_batch for op in operands)
 
   if len(n_batches) != 1:
@@ -1973,10 +2081,6 @@ class BCOO(JAXSparse):
     data = jnp.zeros((*batch_shape, nse, *dense_shape), dtype)
     indices = jnp.full((*batch_shape, nse, n_sparse), jnp.array(sparse_shape), index_dtype)
     return cls((data, indices), shape=shape, indices_sorted=True)
-
-  def _unbatch(self):
-    """Return an unbatched representation of the BCOO matrix."""
-    return BCOO(_unbatch_bcoo(self.data, self.indices, self.shape), shape=self.shape)
 
   def _dedupe(self):
     warnings.warn("_dedupe() is deprecated. Use sum_duplicates() instead.", FutureWarning)

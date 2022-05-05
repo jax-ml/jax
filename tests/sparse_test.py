@@ -72,7 +72,6 @@ class BcooDotGeneralProperties(NamedTuple):
       jtu.format_shape_dtype_string(self.rhs_shape, self.dtype),
       self.n_batch, self.n_dense, self.dimension_numbers)
 
-
 def _iter_subsets(s):
   return itertools.chain.from_iterable(itertools.combinations(s, n) for n in range(len(s) + 1))
 
@@ -1948,35 +1947,49 @@ class BCOOTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)))
-  def test_bcoo_unbatch(self, shape, dtype, n_batch, n_dense):
+      for n_batch in range(len(shape))
+      for n_dense in range(len(shape) - n_batch)))
+  def test_bcoo_add_batch_dim(self, shape, dtype, n_batch, n_dense):
+    # TODO(jakevdp): remove this test in favor of bcoo_update_layout
     rng_sparse = rand_sparse(self.rng())
     M1 = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
-    M2 = M1._unbatch()
-    self.assertEqual(M2.n_batch, 0)
+    with jtu.ignore_warning(category=DeprecationWarning):
+      M2 = sparse.bcoo_add_batch_dim(M1)
+    self.assertEqual(M2.n_batch, M1.n_batch + 1)
     self.assertEqual(M1.n_dense, M2.n_dense)
     self.assertEqual(M1.shape, M2.shape)
     self.assertEqual(M1.dtype, M2.dtype)
     self.assertArraysEqual(M1.todense(), M2.todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
-        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
-       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      {"testcase_name": "_{}_nbatch={}->{}_ndense={}->{}".format(
+        jtu.format_shape_dtype_string(shape, dtype),
+        n_batch, n_batch_out, n_dense, n_dense_out),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense,
+       "n_batch_out": n_batch_out, "n_dense_out": n_dense_out}
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
-      for n_batch in range(len(shape))
-      for n_dense in range(len(shape) - n_batch)))
-  def test_bcoo_add_batch_dim(self, shape, dtype, n_batch, n_dense):
-    rng_sparse = rand_sparse(self.rng())
-    M1 = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
-    M2 = sparse.bcoo_add_batch_dim(M1)
-    self.assertEqual(M2.n_batch, M1.n_batch + 1)
-    self.assertEqual(M1.n_dense, M2.n_dense)
-    self.assertEqual(M1.shape, M2.shape)
-    self.assertEqual(M1.dtype, M2.dtype)
-    self.assertArraysEqual(M1.todense(), M2.todense())
+      for dtype in jtu.dtypes.integer
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)
+      for n_batch_out in range(len(shape) + 1)
+      for n_dense_out in range(len(shape) + 1 - n_batch_out)))
+  def test_bcoo_update_layout(self, shape, dtype, n_batch, n_batch_out, n_dense, n_dense_out):
+    rng = rand_sparse(self.rng())
+    mat = sparse.BCOO.fromdense(rng(shape, dtype), n_batch=n_batch, n_dense=n_dense)
+    kwds = dict(n_batch=n_batch_out, n_dense=n_dense_out)
+    # TODO(jakevdp): in case of length-0 or length-1 shapes errors/warnings will not be raised.
+    if n_dense_out > n_dense or n_batch_out > n_batch:
+      with self.assertRaises(sparse.SparseEfficiencyError):
+        sparse.bcoo_update_layout(mat, **kwds)
+      with self.assertRaises(sparse.SparseEfficiencyError):
+        sparse.bcoo_update_layout(mat, **kwds, on_inefficient='error')
+      with self.assertWarns(sparse.SparseEfficiencyWarning):
+        sparse.bcoo_update_layout(mat, **kwds, on_inefficient='warn')
+      kwds['on_inefficient'] = None
+    mat_new = sparse.bcoo_update_layout(mat, **kwds)
+    self.assertEqual(mat_new.n_batch, n_batch_out)
+    self.assertEqual(mat_new.n_dense, n_dense_out)
+    self.assertArraysEqual(mat.todense(), mat_new.todense())
 
   def test_bcoo_bad_fillvals(self):
     # Extra values have 100 rather than zero. This lets us check that logic is
