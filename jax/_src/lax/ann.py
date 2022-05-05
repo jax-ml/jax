@@ -101,10 +101,10 @@ def approx_max_k(operand: Array,
       recall. This option is useful when the given ``operand`` is only a subset
       of the overall computation in SPMD or distributed pipelines, where the
       true input size cannot be deferred by the operand shape.
-    aggregate_to_topk : When true, aggregates approximate results to top-k. When
-      false, returns the approximate results. The number of the approximate
-      results is implementation defined and is greater equals to the specified
-      ``k``.
+    aggregate_to_topk : When true, aggregates approximate results to the top-k
+      in sorted order. When false, returns the approximate results unsorted. In
+      this case, the number of the approximate results is implementation defined
+      and is greater or equal to the specified ``k``.
 
   Returns:
     Tuple of two arrays. The arrays are the max ``k`` values and the
@@ -160,10 +160,10 @@ def approx_min_k(operand: Array,
       recall. This option is useful when the given operand is only a subset of
       the overall computation in SPMD or distributed pipelines, where the true
       input size cannot be deferred by the ``operand`` shape.
-    aggregate_to_topk: When true, aggregates approximate results to top-k. When
-      false, returns the approximate results. The number of the approximate
-      results is implementation defined and is greater equals to the specified
-      ``k``.
+    aggregate_to_topk : When true, aggregates approximate results to the top-k
+      in sorted order. When false, returns the approximate results unsorted. In
+      this case, the number of the approximate results is implementation defined
+      and is greater or equal to the specified ``k``.
 
   Returns:
     Tuple of two arrays. The arrays are the least ``k`` values and the
