@@ -3638,6 +3638,24 @@ class RematTest(jtu.JaxTestCase):
           ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
+  def test_remat_vmap_not_leading_dim(self, remat):
+    @remat
+    def g(x):
+      return lax.sin(lax.sin(x))
+
+    x = np.arange(3 * 5.).reshape(3, 5)
+
+    ans = api.vmap(g, 1, 0)(x)
+    expected = np.sin(np.sin(x)).T
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
+      ])
   def test_remat_higher_order_autodiff(self, remat):
     def f(x):
       return lax.cos(lax.sin(x))
