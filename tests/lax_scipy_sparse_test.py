@@ -64,6 +64,15 @@ def rand_sym_pos_def(rng, shape, dtype):
   return matrix @ matrix.T.conj()
 
 
+class CustomOperator:
+  def __init__(self, A):
+    self.A = A
+    self.shape = self.A.shape
+
+  def __matmul__(self, x):
+    return self.A @ x
+
+
 class LaxBackedScipyTests(jtu.JaxTestCase):
 
   def _fetch_preconditioner(self, preconditioner, A, rng=None):
@@ -163,6 +172,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertEqual(expected.keys(), actual.keys())
     self.assertAlmostEqual(expected["a"], actual["a"], places=6)
     self.assertAlmostEqual(expected["b"], actual["b"], places=6)
+
+  @jtu.skip_on_devices('tpu')
+  def test_cg_matmul(self):
+    A = CustomOperator(2 * jnp.eye(3))
+    b = jnp.arange(9.0).reshape(3, 3)
+    expected = b / 2
+    actual, _ = jax.scipy.sparse.linalg.cg(A, b)
+    self.assertAllClose(expected, actual)
 
   def test_cg_errors(self):
     A = lambda x: x
@@ -313,6 +330,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     x, _ = jax.scipy.sparse.linalg.bicgstab(lambda x: x, 1.0)
     self.assertTrue(dtypes.is_weakly_typed(x))
 
+  @jtu.skip_on_devices('tpu')
+  def test_bicgstab_matmul(self):
+    A = CustomOperator(2 * jnp.eye(3))
+    b = jnp.arange(9.0).reshape(3, 3)
+    expected = b / 2
+    actual, _ = jax.scipy.sparse.linalg.bicgstab(A, b)
+    self.assertAllClose(expected, actual)
+
   # GMRES
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -435,6 +460,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertEqual(expected.keys(), actual.keys())
     self.assertAlmostEqual(expected["a"], actual["a"], places=5)
     self.assertAlmostEqual(expected["b"], actual["b"], places=5)
+
+  @jtu.skip_on_devices('tpu')
+  def test_gmres_matmul(self):
+    A = CustomOperator(2 * jnp.eye(3))
+    b = jnp.arange(9.0).reshape(3, 3)
+    expected = b / 2
+    actual, _ = jax.scipy.sparse.linalg.gmres(A, b)
+    self.assertAllClose(expected, actual)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

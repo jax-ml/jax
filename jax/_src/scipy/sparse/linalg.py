@@ -92,8 +92,12 @@ def _normalize_matvec(f):
       raise ValueError(
           f'linear operator must be a square matrix, but has shape: {f.shape}')
     return partial(_dot, f)
+  elif hasattr(f, '__matmul__'):
+    if hasattr(f, 'shape') and len(f.shape) != 2 or f.shape[0] != f.shape[1]:
+      raise ValueError(
+          f'linear operator must be a square matrix, but has shape: {f.shape}')
+    return partial(operator.matmul, f)
   else:
-    # TODO(shoyer): handle sparse arrays?
     raise TypeError(
         f'linear operator must be either a function or ndarray: {f}')
 
@@ -241,10 +245,10 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Parameters
   ----------
-  A: ndarray or function
+  A: ndarray, function, or matmul-compatible object
       2D array or function that calculates the linear map (matrix-vector
-      product) ``Ax`` when called like ``A(x)``. ``A`` must represent a
-      hermitian, positive definite matrix, and must return array(s) with the
+      product) ``Ax`` when called like ``A(x)`` or ``A @ x``. ``A`` must represent
+      a hermitian, positive definite matrix, and must return array(s) with the
       same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
@@ -269,7 +273,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   maxiter : integer
       Maximum number of iterations.  Iteration will stop after maxiter
       steps even if the specified tolerance has not been achieved.
-  M : ndarray or function
+  M : ndarray, function, or matmul-compatible object
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
@@ -592,10 +596,10 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
 
   Parameters
   ----------
-  A: ndarray or function
+  A: ndarray, function, or matmul-compatible object
       2D array or function that calculates the linear map (matrix-vector
-      product) ``Ax`` when called like ``A(x)``. ``A`` must return array(s) with
-      the same structure and shape as its argument.
+      product) ``Ax`` when called like ``A(x)`` or ``A @ x``. ``A``
+      must return array(s) with the same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
       stored as an array or Python container of array(s) with any shape.
@@ -631,7 +635,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       starting from the solution found at the last iteration. If GMRES
       halts or is very slow, decreasing this parameter may help.
       Default is infinite.
-  M : ndarray or function
+  M : ndarray, function, or matmul-compatible object
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
@@ -709,11 +713,11 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Parameters
   ----------
-  A: ndarray or function
+  A: ndarray, function, or matmul-compatible object
       2D array or function that calculates the linear map (matrix-vector
-      product) ``Ax`` when called like ``A(x)``. ``A`` can represent any general
-      (nonsymmetric) linear operator, and function must return array(s) with the
-      same structure and shape as its argument.
+      product) ``Ax`` when called like ``A(x)`` or ``A @ x``. ``A`` can represent
+      any general (nonsymmetric) linear operator, and function must return array(s)
+      with the same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
       stored as an array or Python container of array(s) with any shape.
@@ -737,7 +741,7 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   maxiter : integer
       Maximum number of iterations.  Iteration will stop after maxiter
       steps even if the specified tolerance has not been achieved.
-  M : ndarray or function
+  M : ndarray, function, or matmul-compatible object
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
