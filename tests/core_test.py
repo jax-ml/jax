@@ -32,8 +32,10 @@ from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, tree_reduce,
                            tree_leaves)
+from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 
+from jax._src import util
 from jax._src import test_util as jtu
 from jax._src.abstract_arrays import make_shaped_array
 from jax._src.lax import lax as lax_internal
@@ -46,6 +48,13 @@ __ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 
 def call(f, *args):
   return jit(f)(*args)
+
+@util.curry
+def core_call(f, *args):
+  args, in_tree = tree_flatten(args)
+  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+  out = core.call_p.bind(f, *args)
+  return tree_unflatten(out_tree(), out)
 
 def simple_fun(x, y):
   return jnp.sin(x * y)
@@ -135,6 +144,9 @@ for ts in test_specs_base:
   test_specs.append(CallSpec(partial(jvp, ts.fun), (ts.args, ts.args)))
   test_specs.append(CallSpec(jit(ts.fun), ts.args))
   test_specs.append(CallSpec(jit(jit(ts.fun)), ts.args))
+  test_specs.append(CallSpec(core_call(ts.fun), ts.args))
+  test_specs.append(CallSpec(core_call(jit(ts.fun)), ts.args))
+  test_specs.append(CallSpec(core_call(core_call(ts.fun)), ts.args))
   test_specs.append(CallSpec(partial(jvp_unlinearized, ts.fun),
                              (ts.args, ts.args)))
 
