@@ -20,8 +20,13 @@ from jax import core
 from jax._src import dtypes
 import jax.numpy as jnp
 
+class SparseEfficiencyError(ValueError):
+  pass
 
-class CuSparseEfficiencyWarning(UserWarning):
+class SparseEfficiencyWarning(UserWarning):
+  pass
+
+class CuSparseEfficiencyWarning(SparseEfficiencyWarning):
   pass
 
 #--------------------------------------------------------------------
