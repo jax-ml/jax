@@ -23,12 +23,15 @@ from jax import tree_util
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
+from jax._src.lax import control_flow as lcf
 
 DebugEffect = enum.Enum('DebugEffect', ['PRINT', 'ORDERED_PRINT'])
 
 core.ordered_effects.add(DebugEffect.ORDERED_PRINT)
 mlir.lowerable_effects.add(DebugEffect.PRINT)
 mlir.lowerable_effects.add(DebugEffect.ORDERED_PRINT)
+lcf.allowed_effects.add(DebugEffect.PRINT)
+lcf.allowed_effects.add(DebugEffect.ORDERED_PRINT)
 
 # `debug_callback_p` is the main primitive for staging out Python callbacks.
 debug_callback_p = core.Primitive('debug_callback')

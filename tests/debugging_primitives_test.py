@@ -13,17 +13,20 @@
 # limitations under the License.
 import contextlib
 import io
-import unittest
+import textwrap
 from unittest import mock
 
 from typing import Callable, Generator
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
+from jax import lax
 from jax.config import config
 from jax._src import debugging
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
+import jax.numpy as jnp
 
 config.parse_flags_with_absl()
 
@@ -35,6 +38,9 @@ def capture_stdout() -> Generator[Callable[[], str], None, None]:
     def _read() -> str:
       return fp.getvalue()
     yield _read
+
+def _format_multiline(text):
+  return textwrap.dedent(text).lstrip()
 
 class DebugPrintTest(jtu.JaxTestCase):
 
@@ -65,9 +71,6 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_can_stage_out_debug_print(self):
-    if jaxlib.version < (0, 3, 8):
-      raise unittest.SkipTest(
-          "`emit_python_callback` only supported in jaxlib >= 0.3.8")
     @jax.jit
     def f(x):
       debug_print('x: {x}', x=x)
@@ -77,9 +80,6 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
   def test_can_stage_out_ordered_print(self):
-    if jaxlib.version < (0, 3, 8):
-      raise unittest.SkipTest(
-          "`emit_python_callback` only supported in jaxlib >= 0.3.8")
     @jax.jit
     def f(x):
       debug_print('x: {x}', x=x, ordered=True)
@@ -88,9 +88,74 @@ class DebugPrintTest(jtu.JaxTestCase):
     self.assertEqual(output(), "x: 2\n")
 
 
+class DebugPrintControlFlowTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_can_print_inside_scan(self, ordered):
+    def f(xs):
+      def _body(carry, x):
+        debug_print("carry: {carry}", carry=carry, ordered=ordered)
+        debug_print("x: {x}", x=x, ordered=ordered)
+        return carry + 1, x + 1
+      return lax.scan(_body, 2, xs)
+    with capture_stdout() as output:
+      f(jnp.arange(2))
+    self.assertEqual(output(), _format_multiline("""
+      carry: 2
+      x: 0
+      carry: 3
+      x: 1
+      """))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_can_print_inside_for_loop(self, ordered):
+    def f(x):
+      def _body(i, x):
+        debug_print("x: {x}", x=x, ordered=ordered)
+        return x + 1
+      return lax.fori_loop(0, 5, _body, x)
+    with capture_stdout() as output:
+      f(2)
+    self.assertEqual(output(), _format_multiline("""
+      x: 2
+      x: 3
+      x: 4
+      x: 5
+      x: 6
+      """))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_can_print_inside_while_loop(self, ordered):
+    def f(x):
+      def _cond(x):
+        return x < 10
+      def _body(x):
+        debug_print("x: {x}", x=x, ordered=ordered)
+        return x + 1
+      return lax.while_loop(_cond, _body, x)
+    with capture_stdout() as output:
+      f(5)
+    self.assertEqual(output(), _format_multiline("""
+      x: 5
+      x: 6
+      x: 7
+      x: 8
+      x: 9
+      """))
+
 if jaxlib.version < (0, 3, 8):
   # No lowering for `emit_python_callback` in older jaxlibs.
   del DebugPrintTest
+  del DebugPrintControlFlowTest
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
