@@ -120,7 +120,12 @@ py_library(
         "pocketfft.py",
         "version.py",
     ],
-    deps = [":pocketfft_flatbuffers_py"],
+    deps = [
+        ":_lapack",
+        ":_pocketfft",
+        ":cpu_feature_guard",
+        ":pocketfft_flatbuffers_py",
+    ],
 )
 
 exports_files([
