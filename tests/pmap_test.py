@@ -117,7 +117,12 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   def testDeviceBufferToArray(self):
     sda = self.pmap(lambda x: x)(jnp.ones((jax.device_count(), 2)))
-    buf = sda.device_buffers[-1]
+
+    # Changed in https://github.com/google/jax/pull/10584 not to access
+    # sda.device_buffers, which isn't supported, and instead ensure fast slices
+    # of the arrays returned by pmap are set up correctly.
+    # buf = sda.device_buffers[-1]
+    buf = sda[-1]
 
     view = jnp.array(buf, copy=False)
     self.assertArraysEqual(sda[-1], view)
