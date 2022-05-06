@@ -73,7 +73,8 @@ def _qdwh(x, is_symmetric, max_iterations):
   # norm(x, 2) such that `alpha >= norm(x, 2)` and `beta` is a lower bound for
   # the smallest singular value of x.
   eps = jnp.finfo(x.dtype).eps
-  alpha = jnp.sqrt(jnp.linalg.norm(x, ord=1) * jnp.linalg.norm(x, ord=jnp.inf))
+  alpha = (jnp.sqrt(jnp.linalg.norm(x, ord=1)) *
+           jnp.sqrt(jnp.linalg.norm(x, ord=jnp.inf)))
   l = eps
 
   u = x / alpha
@@ -181,6 +182,6 @@ def qdwh(x, is_symmetric, max_iterations=10):
                        'the tolerance {}.'.format(relative_diff, tol))
 
   with jax.default_matmul_precision('float32'):
-     u, h, num_iters, is_converged = _qdwh(x, is_symmetric, max_iterations)
+    u, h, num_iters, is_converged = _qdwh(x, is_symmetric, max_iterations)
 
   return u, h, num_iters, is_converged
