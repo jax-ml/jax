@@ -18,11 +18,12 @@ cusparse wrappers for performing sparse matrix computations in JAX
 from functools import partial
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
 
 import numpy as np
 
 from jaxlib import xla_client
+
+from .mhlo_helpers import custom_call
 
 try:
   from .cuda import _cusparse
@@ -77,28 +78,18 @@ def _csr_todense_mhlo(platform, gpu_sparse, data, indices, indptr, *, shape,
   buffer_size, opaque = gpu_sparse.build_csr_todense_descriptor(
       data_dtype, index_dtype, rows, cols, nnz)
 
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_csr_todense",
+      [
           ir.RankedTensorType.get(shape, data_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [data, indices, indptr],
-      call_target_name=ir.StringAttr.get(f"{platform}sparse_csr_todense"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 3),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([1, 0]),
-                                      type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
+      backend_config=opaque,
+      operand_layouts=[[0]] * 3,
+      result_layouts=[[1, 0], [0]])
+  return out[0]
 
 cuda_csr_todense = partial(_csr_todense_mhlo, "cu", _cusparse)
 rocm_csr_todense = partial(_csr_todense_mhlo, "hip", _hipsparse)
@@ -113,32 +104,20 @@ def _csr_fromdense_mhlo(platform, gpu_sparse, mat, *, nnz, index_dtype,
   buffer_size, opaque = gpu_sparse.build_csr_fromdense_descriptor(
       data_dtype, index_dtype, rows, cols, nnz)
 
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_csr_fromdense",
+      [
           ir.RankedTensorType.get([nnz], mat_type.element_type),
           ir.RankedTensorType.get([nnz], index_type),
           ir.RankedTensorType.get([rows + 1], index_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [mat],
-      call_target_name=ir.StringAttr.get(f"{platform}sparse_csr_fromdense"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([1, 0]),
-                                      type=ir.IndexType.get()),
-      ]),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 4))
-  return [
-      mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-      for i in range(3)
-  ]
+      backend_config=opaque,
+      operand_layouts=[[1, 0]],
+      result_layouts=[[0]] * 4)
+  return out[:3]
 
 cuda_csr_fromdense = partial(_csr_fromdense_mhlo, "cu", _cusparse)
 rocm_csr_fromdense = partial(_csr_fromdense_mhlo, "hip", _hipsparse)
@@ -160,26 +139,18 @@ def _csr_matvec_mhlo(platform, gpu_sparse, data, indices, indptr, x, *, shape,
       rows, cols, nnz, transpose)
   out_size = cols if transpose else rows
 
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_csr_matvec",
+      [
           ir.RankedTensorType.get([out_size], compute_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [data, indices, indptr, x],
-      call_target_name=ir.StringAttr.get(f"{platform}sparse_csr_matvec"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 4),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 2))
-  return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
+      backend_config=opaque,
+      operand_layouts=[[0]] * 4,
+      result_layouts=[[0]] * 2)
+  return out[0]
 
 cuda_csr_matvec = partial(_csr_matvec_mhlo, "cu", _cusparse)
 rocm_csr_matvec = partial(_csr_matvec_mhlo, "hip", _hipsparse)
@@ -203,31 +174,18 @@ def _csr_matmat_mhlo(platform, gpu_sparse, data, indices, indptr, B, *, shape,
       rows, cols, Ccols, nnz, transpose)
   out_size = cols if transpose else rows
 
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_csr_matmat",
+      [
           ir.RankedTensorType.get([out_size, Ccols], compute_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [data, indices, indptr, B],
-      call_target_name=ir.StringAttr.get(f"{platform}sparse_csr_matmat"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([1, 0]),
-                                      type=ir.IndexType.get()),
-      ]),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([1, 0]), type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
+      backend_config=opaque,
+      operand_layouts=[[0], [0], [0], [1, 0]],
+      result_layouts=[[1, 0], [0]])
+  return out[0]
 
 cuda_csr_matmat = partial(_csr_matmat_mhlo, "cu", _cusparse)
 rocm_csr_matmat = partial(_csr_matmat_mhlo, "hip", _hipsparse)
@@ -242,28 +200,18 @@ def _coo_todense_mhlo(platform, gpu_sparse, data, row, col, *, shape,
   buffer_size, opaque = gpu_sparse.build_coo_todense_descriptor(
       data_dtype, index_dtype, rows, cols, nnz)
 
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_coo_todense",
+      [
           ir.RankedTensorType.get(shape, data_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [data, row, col],
-      call_target_name=ir.StringAttr.get(f"{platform}sparse_coo_todense"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 3),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([1, 0]),
-                                      type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
+      backend_config=opaque,
+      operand_layouts=[[0]] * 3,
+      result_layouts=[[1, 0], [0]])
+  return out[0]
 
 cuda_coo_todense = partial(_coo_todense_mhlo, "cu", _cusparse)
 rocm_coo_todense = partial(_coo_todense_mhlo, "hip", _hipsparse)
@@ -278,32 +226,20 @@ def _coo_fromdense_mhlo(platform, gpu_sparse, mat, *, nnz, data_dtype,
   buffer_size, opaque = gpu_sparse.build_coo_fromdense_descriptor(
       data_dtype, index_dtype, rows, cols, nnz)
 
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_coo_fromdense",
+      [
           ir.RankedTensorType.get([nnz], mat_type.element_type),
           ir.RankedTensorType.get([nnz], index_type),
           ir.RankedTensorType.get([nnz], index_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [mat],
-      call_target_name=ir.StringAttr.get(f"{platform}sparse_coo_fromdense"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([1, 0]),
-                                      type=ir.IndexType.get()),
-      ]),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 4))
-  return [
-      mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-      for i in range(3)
-  ]
+      backend_config=opaque,
+      operand_layouts=[[1, 0]],
+      result_layouts=[[0]] * 4)
+  return out[:3]
 
 cuda_coo_fromdense = partial(_coo_fromdense_mhlo, "cu", _cusparse)
 rocm_coo_fromdense = partial(_coo_fromdense_mhlo, "hip", _hipsparse)
@@ -325,26 +261,18 @@ def _coo_matvec_mhlo(platform, gpu_sparse, data, row, col, x, *, shape,
       rows, cols, nnz, transpose)
   out_size = cols if transpose else rows
 
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_coo_matvec",
+      [
           ir.RankedTensorType.get([out_size], compute_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [data, row, col, x],
-      call_target_name=ir.StringAttr.get(f"{platform}sparse_coo_matvec"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 4),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 2))
-  return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
+      backend_config=opaque,
+      operand_layouts=[[0]] * 4,
+      result_layouts=[[0]] * 2)
+  return out[0]
 
 cuda_coo_matvec = partial(_coo_matvec_mhlo, "cu", _cusparse)
 rocm_coo_matvec = partial(_coo_matvec_mhlo, "hip", _hipsparse)
@@ -368,32 +296,18 @@ def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
       rows, cols, Ccols, nnz, transpose)
   out_size = cols if transpose else rows
 
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_coo_matmat",
+      [
           ir.RankedTensorType.get([out_size, Ccols], compute_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [data, row, col, B],
-      call_target_name=ir.StringAttr.get(f"{platform}sparse_coo_matmat"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([1, 0]),
-                                      type=ir.IndexType.get()),
-      ]),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([1, 0]),
-                                      type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
+      backend_config=opaque,
+      operand_layouts=[[0], [0], [0], [1, 0]],
+      result_layouts=[[1, 0], [0]])
+  return out[0]
 
 cuda_coo_matmat = partial(_coo_matmat_mhlo, "cu", _cusparse)
 rocm_coo_matmat = partial(_coo_matmat_mhlo, "hip", _hipsparse)
@@ -406,33 +320,19 @@ def _gtsv2_mhlo(platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t):
     buffer_size = gpu_sparse.gtsv2_f32_buffer_size(m, n, ldb)
   else:
     buffer_size = gpu_sparse.gtsv2_f64_buffer_size(m, n, ldb)
-  i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}sparse_gtsv2_" + ("f32" if f32 else "f64"),
+      [
           ir.RankedTensorType.get(
               [ldb, n], ir.F32Type.get() if f32 else ir.F64Type.get()),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [dl, d, du, B],
-      call_target_name = ir.StringAttr.get(
-          f"{platform}sparse_gtsv2_" + ("f32" if f32 else "f64")),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(
-          gpu_sparse.build_gtsv2_descriptor(m, n, ldb)),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ] * 3 + [
-          ir.DenseIntElementsAttr.get(np.array([1, 0]), type=ir.IndexType.get())
-      ]),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([1, 0]),
-                                      type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
+      backend_config=gpu_sparse.build_gtsv2_descriptor(m, n, ldb),
+      operand_layouts=[[0]] * 3 + [[1, 0]],
+      result_layouts=[[1, 0], [0]])
+  return out[0]
 
 cuda_gtsv2 = partial(_gtsv2_mhlo, "cu", _cusparse)
 rocm_gtsv2 = partial(_gtsv2_mhlo, "hip", _hipsparse)

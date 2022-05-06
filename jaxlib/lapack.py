@@ -21,7 +21,9 @@ import jaxlib.mlir.dialects.mhlo as mhlo
 import numpy as np
 from jaxlib import xla_client
 
+from .mhlo_helpers import custom_call
 from . import _lapack
+
 for _name, _value in _lapack.registrations().items():
   xla_client.register_custom_call_target(_name, _value, platform="cpu")
 
@@ -48,6 +50,7 @@ else:
     typ = ir.RankedTensorType.get([], ir.IntegerType.get_signless(32))
     return mhlo.ConstOp(
         typ, ir.DenseElementsAttr.get(np.array(x, dtype=np.int32))).result
+
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.
 
@@ -86,24 +89,17 @@ def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
 
   if conj_a and not trans_a:
     raise NotImplementedError("Conjugation without transposition not supported")
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
-  return mhlo.CustomCallOp(
+  scalar_layout = []
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  return custom_call(
+      fn,
       [b.type],
       [_mhlo_s32(int(left_side)), _mhlo_s32(int(lower)),
        _mhlo_s32((2 if conj_a else 1) if trans_a else 0), _mhlo_s32(int(diag)),
        _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(num_b),
        alpha, a, b],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 8 + [layout] * 2),
-      result_layouts=ir.ArrayAttr.get([layout])).result
+      operand_layouts=[scalar_layout] * 8 + [layout] * 2,
+      result_layouts=[layout])
 
 
 # # ?getrf: LU decomposition
@@ -129,36 +125,23 @@ def getrf_mhlo(dtype, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  scalar_layout = []
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  return custom_call(
+      fn,
+      [
         a.type,
         ir.RankedTensorType.get(batch_dims + (min(m, n),), i32_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
-      ])],
+      ],
       [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), a],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 3 + [layout]),
-      result_layouts=ir.ArrayAttr.get([
+      operand_layouts=[scalar_layout] * 3 + [layout],
+      result_layouts=[
         layout,
-        ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                    type=ir.IndexType.get()),
-      ]))
-  return [
-    mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-    for i in range(3)
-  ]
+        tuple(range(num_bd, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+      ])
 
 
 # # ?geqrf: QR decomposition
@@ -189,38 +172,26 @@ def geqrf_mhlo(dtype, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  scalar_layout = []
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      fn,
+      [
         a.type,
         ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
-      ])],
+      ],
       [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(lwork), a],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 4 + [layout]),
-      result_layouts=ir.ArrayAttr.get([
+      operand_layouts=[scalar_layout] * 4 + [layout],
+      result_layouts=[
         layout,
-        ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return [
-    mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-    for i in range(3)
-  ]
+        tuple(range(num_bd, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+        [0],
+      ])
+  return out[:3]
 
 
 # # ?orgqr: product of elementary Householder reflectors:
@@ -255,40 +226,28 @@ def orgqr_mhlo(dtype, a, tau):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  scalar_layout = []
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      fn,
+      [
         a.type,
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
-      ])],
+      ],
       [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(k),
        _mhlo_s32(lwork), a, tau],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 5 + [
-          layout,
-          ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                type=ir.IndexType.get()),
-      ]),
-      result_layouts=ir.ArrayAttr.get([
+      operand_layouts=[scalar_layout] * 5 + [
         layout,
-        ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return [
-    mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-    for i in range(2)
-  ]
+        tuple(range(num_bd, -1, -1)),
+      ],
+      result_layouts=[
+        layout,
+        tuple(range(num_bd - 1, -1, -1)),
+        [0],
+      ])
+  return out[:2]
 
 
 # ?potrf: Cholesky decomposition
@@ -315,31 +274,17 @@ def potrf_mhlo(dtype, a, lower=False):
   for d in batch_dims:
     b *= d
 
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
-  i32_type = ir.IntegerType.get_signless(32)
-  info_layout = ir.DenseIntElementsAttr.get(
-      np.array(range(num_bd - 1, -1, -1)), type=ir.IndexType.get())
-  tup = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
-          a.type,
-          ir.RankedTensorType.get(batch_dims, i32_type),
-      ])],
+  scalar_layout = []
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  info_layout = tuple(range(num_bd - 1, -1, -1))
+  out = custom_call(
+      fn,
+      [a.type,
+       ir.RankedTensorType.get(batch_dims, ir.IntegerType.get_signless(32))],
       [_mhlo_s32(int(lower)), _mhlo_s32(b), _mhlo_s32(n), a],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 3 + [layout]),
-      result_layouts=ir.ArrayAttr.get([layout, info_layout])).result
-  return [
-    mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, 0)).result,
-    mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, 1)).result,
-  ]
+      operand_layouts=[scalar_layout] * 3 + [layout],
+      result_layouts=[layout, info_layout])
+  return out[:2]
 
 
 
@@ -365,10 +310,7 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
         ir.RankedTensorType.get([_lapack.gesdd_iwork_size(m, n)], i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
     ]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [[0], [0]]
   elif dtype == np.float64:
     fn = b"lapack_dgesdd"
     singular_vals_type = ir.F64Type.get()
@@ -377,10 +319,7 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
         ir.RankedTensorType.get([_lapack.gesdd_iwork_size(m, n)], i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
     ]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [[0], [0]]
   elif dtype == np.complex64:
     fn = b"lapack_cgesdd"
     singular_vals_type = ir.F32Type.get()
@@ -392,11 +331,7 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
             ir.F32Type.get()),
         ir.RankedTensorType.get([lwork], a_type.element_type),
     ]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [[0], [0], [0]]
   elif dtype == np.complex128:
     fn = b"lapack_zgesdd"
     singular_vals_type = ir.F64Type.get()
@@ -408,21 +343,15 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
             ir.F64Type.get()),
         ir.RankedTensorType.get([lwork], a_type.element_type),
     ]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [[0], [0], [0]]
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  scalar_layout = []
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  out = custom_call(
+      fn,
+      [
           a.type,
           ir.RankedTensorType.get(batch_dims + (min(m, n),), singular_vals_type),
           ir.RankedTensorType.get(
@@ -432,29 +361,18 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
             batch_dims + (n if full_matrices else min(m, n), n),
             a_type.element_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
-      ] + workspace)],
+      ] + workspace,
       [_mhlo_s32(int(full_matrices)), _mhlo_s32(int(compute_uv)), _mhlo_s32(b),
        _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(lwork), a],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 6 + [layout]),
-      result_layouts=ir.ArrayAttr.get([
+      operand_layouts=[scalar_layout] * 6 + [layout],
+      result_layouts=[
           layout,
-          ir.DenseIntElementsAttr.get(
-              np.array((num_bd,) + tuple(range(num_bd - 1, -1, -1))),
-              type=ir.IndexType.get()),
+          (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
           layout,
           layout,
-          ir.DenseIntElementsAttr.get(np.array(range(num_bd - 1, -1, -1)),
-                                      type=ir.IndexType.get()),
-      ] + workspace_layouts))
-  return [
-      mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-      for i in range(1, 5)
-  ]
+          tuple(range(num_bd - 1, -1, -1)),
+      ] + workspace_layouts)
+  return out[1:5]
 
 
 # # syevd: Symmetric eigendecomposition
@@ -481,10 +399,7 @@ def syevd_mhlo(dtype, a, lower=False):
                                 a_type.element_type),
         ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
     ]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [[0], [0]]
   elif dtype == np.float64:
     fn = b"lapack_dsyevd"
     eigvals_type = ir.F64Type.get()
@@ -493,10 +408,7 @@ def syevd_mhlo(dtype, a, lower=False):
                                 a_type.element_type),
         ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
     ]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [[0], [0]]
   elif dtype == np.complex64:
     fn = b"lapack_cheevd"
     eigvals_type = ir.F32Type.get()
@@ -506,11 +418,7 @@ def syevd_mhlo(dtype, a, lower=False):
         ir.RankedTensorType.get([_lapack.heevd_rwork_size(n)], eigvals_type),
         ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
     ]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [[0], [0], [0]]
   elif dtype == np.complex128:
     fn = b"lapack_zheevd"
     eigvals_type = ir.F64Type.get()
@@ -520,43 +428,27 @@ def syevd_mhlo(dtype, a, lower=False):
         ir.RankedTensorType.get([_lapack.heevd_rwork_size(n)], eigvals_type),
         ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
     ]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [[0], [0], [0]]
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  scalar_layout = []
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  out = custom_call(
+      fn,
+      [
           a.type,
           ir.RankedTensorType.get(batch_dims + (n,), eigvals_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
-      ] + workspace)],
+      ] + workspace,
       [_mhlo_s32(1 if lower else 0), _mhlo_s32(b), _mhlo_s32(n), a],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 3 + [layout]),
-      result_layouts=ir.ArrayAttr.get([
+      operand_layouts=[scalar_layout] * 3 + [layout],
+      result_layouts=[
           layout,
-          ir.DenseIntElementsAttr.get(np.array(range(num_bd, -1, -1)),
-                                      type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array(range(num_bd - 1, -1, -1)),
-                                      type=ir.IndexType.get()),
-      ] + workspace_layouts))
-  return [
-      mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-      for i in range(3)
-  ]
+          tuple(range(num_bd, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
+      ] + workspace_layouts)
+  return out[:3]
 
 
 # # geev: Nonsymmetric eigendecomposition
@@ -571,9 +463,7 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
   b = 1
   for d in batch_dims:
     b *= d
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
   jobvl_c = ord('V' if jobvl else 'N')
   jobvr_c = ord('V' if jobvr else 'N')
@@ -585,15 +475,10 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
     workspaces = [ir.RankedTensorType.get([n, n], ir.F32Type.get()),
                   ir.RankedTensorType.get([n, n], ir.F32Type.get()),
                   ir.RankedTensorType.get([n, n], ir.F32Type.get())]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0, 1]), type=ir.IndexType.get())
-    ] * 3
+    workspace_layouts = [[0, 1]] * 3
     eigvals = [ir.RankedTensorType.get(batch_dims + (n,), ir.F32Type.get()),
                ir.RankedTensorType.get(batch_dims + (n,), ir.F32Type.get())]
-    eigvals_layouts = [
-      ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                  type=ir.IndexType.get())
-    ] * 2
+    eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
   elif dtype == np.float64:
     fn = b"lapack_dgeev"
     real = True
@@ -601,15 +486,10 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
     workspaces = [ir.RankedTensorType.get([n, n], ir.F64Type.get()),
                   ir.RankedTensorType.get([n, n], ir.F64Type.get()),
                   ir.RankedTensorType.get([n, n], ir.F64Type.get())]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0, 1]), type=ir.IndexType.get())
-    ] * 3
+    workspace_layouts = [[0, 1]] * 3
     eigvals = [ir.RankedTensorType.get(batch_dims + (n,), ir.F64Type.get()),
                ir.RankedTensorType.get(batch_dims + (n,), ir.F64Type.get())]
-    eigvals_layouts = [
-      ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                  type=ir.IndexType.get())
-    ] * 2
+    eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
   elif dtype == np.complex64:
     fn = b"lapack_cgeev"
     real = False
@@ -617,16 +497,10 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
     workspaces = [ir.RankedTensorType.get([n, n],
                                           ir.ComplexType.get(ir.F32Type.get())),
                   ir.RankedTensorType.get([2 * n], ir.F32Type.get())]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0, 1]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get())
-    ]
+    workspace_layouts = [[0, 1], [0]]
     eigvals = [ir.RankedTensorType.get(batch_dims + (n,),
                                        ir.ComplexType.get(ir.F32Type.get()))]
-    eigvals_layouts = [
-      ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                  type=ir.IndexType.get())
-    ]
+    eigvals_layouts = [tuple(range(num_bd, -1, -1))]
   elif dtype == np.complex128:
     fn = b"lapack_zgeev"
     real = False
@@ -634,52 +508,32 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
     workspaces = [ir.RankedTensorType.get([n, n],
                                           ir.ComplexType.get(ir.F64Type.get())),
                   ir.RankedTensorType.get([2 * n], ir.F64Type.get())]
-    workspace_layouts = [
-      ir.DenseIntElementsAttr.get(np.array([0, 1]), type=ir.IndexType.get()),
-      ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get())
-    ]
+    workspace_layouts = [[0, 1], [0]]
     eigvals = [ir.RankedTensorType.get(batch_dims + (n,),
                                        ir.ComplexType.get(ir.F64Type.get()))]
-    eigvals_layouts = [
-      ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                  type=ir.IndexType.get())
-    ]
+    eigvals_layouts = [tuple(range(num_bd, -1, -1))]
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
   i32_type = ir.IntegerType.get_signless(32)
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  info_layout = ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                            type=ir.IndexType.get())
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple(workspaces + eigvals + [
+  scalar_layout = []
+  info_layout = tuple(range(num_bd - 1, -1, -1))
+  out = custom_call(
+      fn,
+      workspaces + eigvals + [
         ir.RankedTensorType.get(dims, eigvecs_type),
         ir.RankedTensorType.get(dims, eigvecs_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
-      ])],
+      ],
       [_mhlo_s32(b), _mhlo_s32(n), _mhlo_u8(jobvl_c), _mhlo_u8(jobvr_c), a],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 4 + [layout]),
-      result_layouts=ir.ArrayAttr.get(
-          workspace_layouts + eigvals_layouts + [layout] * 2 + [info_layout])
-  ).result
-  i32_attr = lambda i: ir.IntegerAttr.get(i32_type, i)
+      operand_layouts=[scalar_layout] * 4 + [layout],
+      result_layouts=(workspace_layouts + eigvals_layouts + [layout] * 2 +
+                      [info_layout])
+  )
   if real:
-    return (mhlo.ComplexOp(mhlo.GetTupleElementOp(out, i32_attr(3)),
-                           mhlo.GetTupleElementOp(out, i32_attr(4))).result,
-            mhlo.GetTupleElementOp(out, i32_attr(5)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(6)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(7)).result)
+    return (mhlo.ComplexOp(out[3], out[4]).result, out[5], out[6], out[7])
   else:
-    return (mhlo.GetTupleElementOp(out, i32_attr(2)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(3)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(4)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(5)).result)
+    return out[2:6]
 
 # # gees : Schur factorization
 
@@ -695,9 +549,7 @@ def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
   b = 1
   for d in batch_dims:
     b *= d
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
   if sort:
     raise NotImplementedError(
@@ -721,64 +573,42 @@ def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
     workspaces = [ir.RankedTensorType.get(dims, etype)]
     workspace_layouts = [layout]
     eigvals = [ir.RankedTensorType.get(batch_dims + (n,), etype)] * 2
-    eigvals_layouts = [
-        ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                    type=ir.IndexType.get())
-    ] * 2
+    eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
   else:
     workspaces = [
         ir.RankedTensorType.get(dims, etype),
         ir.RankedTensorType.get([n], ir.ComplexType(etype).element_type),
     ]
-    workspace_layouts = [
-        layout,
-        ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-    ]
+    workspace_layouts = [layout, [0]]
     eigvals = [ir.RankedTensorType.get(batch_dims + (n,), etype)]
-    eigvals_layouts = [
-        ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                    type=ir.IndexType.get())
-    ]
+    eigvals_layouts = [tuple(range(num_bd, -1, -1))]
 
   i32_type = ir.IntegerType.get_signless(32)
 
-  scalar_layout = ir.DenseIntElementsAttr.get(np.zeros((0,), np.int64),
-                                              type=ir.IndexType.get())
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple(workspaces + eigvals + [
+  scalar_layout = []
+  out = custom_call(
+      fn,
+      workspaces + eigvals + [
         ir.RankedTensorType.get(dims, etype),
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
-      ])],
-      [
-          _mhlo_s32(b),
-          _mhlo_s32(n),
-          _mhlo_u8(np.uint8(jobvs)),
-          _mhlo_u8(np.uint8(sort)),
-          # TODO: figure out how to put the callable select function here
-          a
       ],
-      call_target_name = ir.StringAttr.get(fn),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([scalar_layout] * 4 + [layout]),
-      result_layouts=ir.ArrayAttr.get(workspace_layouts + eigvals_layouts + [
-          layout,
-          ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                      type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                      type=ir.IndexType.get()),
-      ])
+      [
+        _mhlo_s32(b),
+        _mhlo_s32(n),
+        _mhlo_u8(np.uint8(jobvs)),
+        _mhlo_u8(np.uint8(sort)),
+        # TODO: figure out how to put the callable select function here
+        a
+      ],
+      operand_layouts=[scalar_layout] * 4 + [layout],
+      result_layouts=workspace_layouts + eigvals_layouts + [
+        layout,
+        tuple(range(num_bd - 1, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+      ]
   )
-  i32_attr = lambda i: ir.IntegerAttr.get(i32_type, i)
   if sort == ord('S'):
-    return (mhlo.GetTupleElementOp(out, i32_attr(0)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(3)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(4)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(5)).result)
+    return (out[0], out[3], out[4], out[5])
   else:
-    return (mhlo.GetTupleElementOp(out, i32_attr(0)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(3)).result,
-            mhlo.GetTupleElementOp(out, i32_attr(5)).result)
+    return (out[0], out[3], out[5])

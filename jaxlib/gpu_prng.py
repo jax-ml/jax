@@ -19,11 +19,10 @@ import itertools
 import operator
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
-
-import numpy as np
 
 from jaxlib import xla_client
+
+from .mhlo_helpers import custom_call
 
 try:
   from .cuda import _cuda_prng
@@ -56,23 +55,14 @@ def _threefry2x32_lowering(prng, platform, keys, data):
   ndims = len(dims)
 
   opaque = prng.threefry2x32_descriptor(_prod(dims))
-  layout = ir.DenseIntElementsAttr.get(np.arange(ndims - 1, -1, -1),
-                                       type=ir.IndexType.get())
-  i32_type = ir.IntegerType.get_signless(32)
-  tup = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([typ, typ])],
+  layout = tuple(range(ndims - 1, -1, -1))
+  return custom_call(
+      f"{platform}_threefry2x32",
+      [typ, typ],
       [keys[0], keys[1], data[0], data[1]],
-      call_target_name = ir.StringAttr.get(f"{platform}_threefry2x32"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([layout] * 4),
-      result_layouts=ir.ArrayAttr.get([layout] * 2)).result
-  return [
-    mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, i)).result
-    for i in range(2)
-  ]
+      backend_config=opaque,
+      operand_layouts=[layout] * 4,
+      result_layouts=[layout] * 2)
 
 cuda_threefry2x32 = partial(_threefry2x32_lowering, _cuda_prng, "cuda")
 rocm_threefry2x32 = partial(_threefry2x32_lowering, _hip_prng, "rocm")

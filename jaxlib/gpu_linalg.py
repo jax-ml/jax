@@ -17,9 +17,8 @@ from functools import partial
 import operator
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
 
-import numpy as np
+from .mhlo_helpers import custom_call
 
 from jaxlib import xla_client
 
@@ -53,23 +52,18 @@ def _lu_pivots_to_permutation_mhlo(platform, gpu_linalg, pivots, *, permutation_
 
   opaque = gpu_linalg.lu_pivots_to_permutation_descriptor(
       batch_size, pivot_size, permutation_size)
-  pivots_layout = ir.DenseIntElementsAttr.get(np.arange(len(dims) - 1, -1, -1),
-                                              type=ir.IndexType.get())
+  pivots_layout = tuple(range(len(dims) - 1, -1, -1))
   permutations_layout = pivots_layout
   permutations_dims = list(dims)
   permutations_dims[-1] = permutation_size
   permutations_type = ir.RankedTensorType.get(permutations_dims, i32_type)
-  return mhlo.CustomCallOp(
+  return custom_call(
+      f"{platform}_lu_pivots_to_permutation",
       [permutations_type],
       [pivots],
-      call_target_name = ir.StringAttr.get(
-          f"{platform}_lu_pivots_to_permutation"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([pivots_layout]),
-      result_layouts=ir.ArrayAttr.get([permutations_layout])).result
+      backend_config=opaque,
+      operand_layouts=[pivots_layout],
+      result_layouts=[permutations_layout])
 
 cuda_lu_pivots_to_permutation = partial(
     _lu_pivots_to_permutation_mhlo, "cuda", _cuda_linalg)

@@ -24,6 +24,8 @@ import numpy as np
 
 from jaxlib import xla_client
 
+from .mhlo_helpers import custom_call
+
 try:
   from .cuda import _cublas
   for _name, _value in _cublas.registrations().items():
@@ -87,24 +89,17 @@ def _trsm_mhlo(platform, gpu_blas, dtype, a, b, left_side=False, lower=False,
 
   lwork, opaque = gpu_blas.build_trsm_batched_descriptor(
     np.dtype(dtype), batch, m, n, left_side, lower, trans_a, conj_a, diag)
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   work_type = ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8))
-  work_layout = ir.DenseIntElementsAttr.get(np.array([0]),
-                                            type=ir.IndexType.get())
-  i32_type = ir.IntegerType.get_signless(32)
-  tup = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([b_type, work_type, work_type])],
+  work_layout = [0]
+  out = custom_call(
+      f"{platform}blas_trsm_batched",
+      [b_type, work_type, work_type],
       [a, b],
-      call_target_name = ir.StringAttr.get(f"{platform}blas_trsm_batched"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([layout] * 2),
-      result_layouts=ir.ArrayAttr.get([layout, work_layout, work_layout])).result
-  return mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, 0)).result
+      backend_config=opaque,
+      operand_layouts=[layout] * 2,
+      result_layouts=[layout, work_layout, work_layout])
+  return out[0]
 
 cuda_trsm = partial(_trsm_mhlo, "cu", _cublas)
 rocm_trsm = partial(_trsm_mhlo, "hip", _hipblas)
@@ -123,33 +118,23 @@ def _potrf_mhlo(platform, gpu_solver, dtype, a, lower):
   lwork, opaque = gpu_solver.build_potrf_descriptor(
       np.dtype(dtype), lower, batch, n)
 
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
-  info_layout = ir.DenseIntElementsAttr.get(
-      np.array(range(num_bd - 1, -1, -1)), type=ir.IndexType.get())
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  info_layout = tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
   info_type = ir.RankedTensorType.get(batch_dims, i32_type)
-  work_layout = ir.DenseIntElementsAttr.get(np.array([0]),
-                                            type=ir.IndexType.get())
-  tup = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  work_layout = [0]
+  out = custom_call(
+      f"{platform}solver_potrf",
+      [
         a.type,
         info_type,
         ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
-      ])],
+      ],
       [a],
-      call_target_name = ir.StringAttr.get(f"{platform}solver_potrf"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([layout]),
-      result_layouts=ir.ArrayAttr.get([layout, info_layout, work_layout])).result
-  return [
-    mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, 0)).result,
-    mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, 1)).result,
-  ]
+      backend_config=opaque,
+      operand_layouts=[layout],
+      result_layouts=[layout, info_layout, work_layout])
+  return out[:2]
 
 cuda_potrf = partial(_potrf_mhlo, "cu", _cusolver)
 rocm_potrf = partial(_potrf_mhlo, "hip", _hipsolver)
@@ -176,37 +161,26 @@ def _getrf_mhlo(platform, gpu_blas, gpu_solver, dtype, a):
     workspace = ir.RankedTensorType.get([lwork], a_type.element_type)
     kernel = f"{platform}solver_getrf"
 
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      kernel,
+      [
         a.type,
         ir.RankedTensorType.get(batch_dims + (min(m, n),), i32_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
         workspace,
-      ])],
+      ],
       [a],
-      call_target_name = ir.StringAttr.get(kernel),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([layout]),
-      result_layouts=ir.ArrayAttr.get([
+      backend_config=opaque,
+      operand_layouts=[layout],
+      result_layouts=[
         layout,
-        ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.array([0]),
-                                    type=ir.IndexType.get()),
-      ]))
-  return [
-    mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-    for i in range(3)
-  ]
+        tuple(range(num_bd, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+        [0],
+      ])
+  return out[:3]
 
 cuda_getrf = partial(_getrf_mhlo, "cu", _cublas, _cusolver)
 rocm_getrf = partial(_getrf_mhlo, "hip", _hipblas, _hipsolver)
@@ -225,36 +199,26 @@ def _geqrf_mhlo(platform, gpu_solver, dtype, a):
   lwork, opaque = gpu_solver.build_geqrf_descriptor(
       np.dtype(dtype), batch, m, n)
 
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}solver_geqrf",
+      [
         a.type,
         ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
-      ])],
+      ],
       [a],
-      call_target_name = ir.StringAttr.get(f"{platform}solver_geqrf"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([layout]),
-      result_layouts=ir.ArrayAttr.get([
+      backend_config=opaque,
+      operand_layouts=[layout],
+      result_layouts=[
         layout,
-        ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return [
-    mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-    for i in range(3)
-  ]
+        tuple(range(num_bd, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+        [0],
+      ])
+  return out[:3]
 
 cuda_geqrf = partial(_geqrf_mhlo, "cu", _cusolver)
 rocm_geqrf = partial(_geqrf_mhlo, "hip", _hipsolver)
@@ -277,37 +241,27 @@ def _orgqr_mhlo(platform, gpu_solver, dtype, a, tau):
   lwork, opaque = gpu_solver.build_orgqr_descriptor(
       np.dtype(dtype), batch, m, n, k)
 
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      f"{platform}solver_orgqr",
+      [
         a.type,
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
-      ])],
+      ],
       [a, tau],
-      call_target_name = ir.StringAttr.get(f"{platform}solver_orgqr"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
+      backend_config=opaque,
+      operand_layouts=[
           layout,
-          ir.DenseIntElementsAttr.get(np.arange(num_bd, -1, -1),
-                                type=ir.IndexType.get()),
-      ]),
-      result_layouts=ir.ArrayAttr.get([
+          tuple(range(num_bd, -1, -1)),
+      ],
+      result_layouts=[
         layout,
-        ir.DenseIntElementsAttr.get(np.arange(num_bd - 1, -1, -1),
-                                    type=ir.IndexType.get()),
-        ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return [
-    mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-    for i in range(2)
-  ]
+        tuple(range(num_bd - 1, -1, -1)),
+        [0],
+      ])
+  return out[:2]
 
 cuda_orgqr = partial(_orgqr_mhlo, "cu", _cusolver)
 rocm_orgqr = partial(_orgqr_mhlo, "hip", _hipsolver)
@@ -340,36 +294,25 @@ def _syevd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
   else:
     eigvals_type = a_type.element_type
 
-  layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
   i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
-      [ir.TupleType.get_tuple([
+  out = custom_call(
+      kernel,
+      [
           a.type,
           ir.RankedTensorType.get(batch_dims + (n,), eigvals_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
           ir.RankedTensorType.get([lwork], a_type.element_type),
-      ])],
+      ],
       [a],
-      call_target_name = ir.StringAttr.get(kernel),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([layout]),
-      result_layouts=ir.ArrayAttr.get([
+      backend_config=opaque,
+      operand_layouts=[layout],
+      result_layouts=[
           layout,
-          ir.DenseIntElementsAttr.get(np.array(range(num_bd, -1, -1)),
-                                      type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array(range(num_bd - 1, -1, -1)),
-                                      type=ir.IndexType.get()),
-          ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-      ]))
-  return [
-      mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-      for i in range(3)
-  ]
+          tuple(range(num_bd, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
+          [0],
+      ])
+  return out[:3]
 
 cuda_syevd = partial(_syevd_mhlo, "cu", _cusolver, True)
 rocm_syevd = partial(_syevd_mhlo, "hip", _hipsolver, False)
@@ -390,12 +333,8 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
   else:
     singular_vals_type = a_type.element_type
 
-  scalar_layout = ir.DenseIntElementsAttr.get(
-    np.array(tuple(range(num_bd - 1, -1, -1))),
-    type=ir.IndexType.get())
-  vector_layout = ir.DenseIntElementsAttr.get(
-    np.array((num_bd,) + tuple(range(num_bd - 1, -1, -1))),
-    type=ir.IndexType.get())
+  scalar_layout = tuple(range(num_bd - 1, -1, -1))
+  vector_layout = (num_bd,) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
 
   if have_jacobi_solver and m < 32 and n < 32:
@@ -404,11 +343,10 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
     lwork, opaque = gpu_solver.build_gesvdj_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, 1 if econ else 0)
     k = min(m, n)
-    matrix_layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
-    out = mhlo.CustomCallOp(
-        [ir.TupleType.get_tuple([
+    matrix_layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+    _, s, u, v, info, _ = custom_call(
+        f"{platform}solver_gesvdj",
+        [
           a.type,
           ir.RankedTensorType.get(batch_dims + (min(m, n),), singular_vals_type),
           ir.RankedTensorType.get(batch_dims + (m, k if econ else m),
@@ -417,26 +355,18 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
                                   a_type.element_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
           ir.RankedTensorType.get([lwork], a_type.element_type),
-        ])],
+        ],
         [a],
-        call_target_name = ir.StringAttr.get(f"{platform}solver_gesvdj"),
-        has_side_effect=ir.BoolAttr.get(False),
-        backend_config=ir.StringAttr.get(opaque),
-        api_version=ir.IntegerAttr.get(i32_type, 2),
-        called_computations=ir.ArrayAttr.get([]),
-        operand_layouts=ir.ArrayAttr.get([matrix_layout]),
-        result_layouts=ir.ArrayAttr.get([
+        backend_config=opaque,
+        operand_layouts=[matrix_layout],
+        result_layouts=[
             matrix_layout,
             vector_layout,
             matrix_layout,
             matrix_layout,
             scalar_layout,
-            ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-        ]))
-    s = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 1)).result
-    u = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 2)).result
-    v = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 3))
-    info = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 4)).result
+            [0],
+        ])
     vt = mhlo.TransposeOp(
         v,
         ir.DenseIntElementsAttr.get(np.array(tuple(range(num_bd)) + (num_bd + 1, num_bd)))).result
@@ -457,72 +387,54 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
     lwork, opaque = gpu_solver.build_gesvd_descriptor(
         np.dtype(dtype), b, n, m, compute_uv, full_matrices)
     k = n if full_matrices else m
-    matrix_layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd + 1, num_bd) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
-    out = mhlo.CustomCallOp(
-        [ir.TupleType.get_tuple([
+    matrix_layout = (num_bd + 1, num_bd) + tuple(range(num_bd - 1, -1, -1))
+    _, s, vt, u, info, _ = custom_call(
+        f"{platform}solver_gesvd",
+        [
           a.type,
           ir.RankedTensorType.get(batch_dims + (min(m, n),), singular_vals_type),
           ir.RankedTensorType.get(batch_dims + (k, n), a_type.element_type),
           ir.RankedTensorType.get(batch_dims + (m, m), a_type.element_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
           ir.RankedTensorType.get([lwork], a_type.element_type),
-        ])],
+        ],
         [a],
-        call_target_name = ir.StringAttr.get(f"{platform}solver_gesvd"),
-        has_side_effect=ir.BoolAttr.get(False),
-        backend_config=ir.StringAttr.get(opaque),
-        api_version=ir.IntegerAttr.get(i32_type, 2),
-        called_computations=ir.ArrayAttr.get([]),
-        operand_layouts=ir.ArrayAttr.get([matrix_layout]),
-        result_layouts=ir.ArrayAttr.get([
-            matrix_layout,
-            vector_layout,
-            matrix_layout,
-            matrix_layout,
-            scalar_layout,
-            ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-        ]))
-    s = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 1)).result
-    vt = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 2)).result
-    u = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 3)).result
-    info = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 4)).result
+        backend_config=opaque,
+        operand_layouts=[matrix_layout],
+        result_layouts=[
+          matrix_layout,
+          vector_layout,
+          matrix_layout,
+          matrix_layout,
+          scalar_layout,
+          [0],
+        ])
   else:
     lwork, opaque = gpu_solver.build_gesvd_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, full_matrices)
     k = m if full_matrices else n
-    matrix_layout = ir.DenseIntElementsAttr.get(
-      np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      type=ir.IndexType.get())
-    out = mhlo.CustomCallOp(
-        [ir.TupleType.get_tuple([
+    matrix_layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+    _, s, u, vt, info, _ = custom_call(
+        f"{platform}solver_gesvd",
+        [
           a.type,
           ir.RankedTensorType.get(batch_dims + (min(m, n),), singular_vals_type),
           ir.RankedTensorType.get(batch_dims + (m, k), a_type.element_type),
           ir.RankedTensorType.get(batch_dims + (n, n), a_type.element_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
           ir.RankedTensorType.get([lwork], a_type.element_type),
-        ])],
+        ],
         [a],
-        call_target_name = ir.StringAttr.get(f"{platform}solver_gesvd"),
-        has_side_effect=ir.BoolAttr.get(False),
-        backend_config=ir.StringAttr.get(opaque),
-        api_version=ir.IntegerAttr.get(i32_type, 2),
-        called_computations=ir.ArrayAttr.get([]),
-        operand_layouts=ir.ArrayAttr.get([matrix_layout]),
-        result_layouts=ir.ArrayAttr.get([
-            matrix_layout,
-            vector_layout,
-            matrix_layout,
-            matrix_layout,
-            scalar_layout,
-            ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
-        ]))
-    s = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 1)).result
-    u = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 2)).result
-    vt = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 3)).result
-    info = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 4)).result
+        backend_config=opaque,
+        operand_layouts=[matrix_layout],
+        result_layouts=[
+          matrix_layout,
+          vector_layout,
+          matrix_layout,
+          matrix_layout,
+          scalar_layout,
+          [0],
+        ])
   return s, u, vt, info
 
 cuda_gesvd = partial(_gesvd_mhlo, "cu", _cusolver, True)

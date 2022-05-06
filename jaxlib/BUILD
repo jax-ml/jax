@@ -78,6 +78,7 @@ py_library(
         "gpu_sparse.py",
         "init.py",
         "lapack.py",
+        "mhlo_helpers.py",
         "pocketfft.py",
         "version.py",
     ],
@@ -85,7 +86,15 @@ py_library(
         ":_lapack",
         ":_pocketfft",
         ":cpu_feature_guard",
+        ":mhlo_helpers",
         ":pocketfft_flatbuffers_py",
+    ],
+)
+
+py_library(
+    name = "mhlo_helpers",
+    srcs = [
+        "mhlo_helpers.py",
     ],
 )
 
@@ -127,7 +136,10 @@ cc_library(
 py_library(
     name = "lapack",
     srcs = ["lapack.py"],
-    deps = ["//third_party/py/numpy"],
+    deps = [
+        ":mhlo_helpers",
+        "//third_party/py/numpy",
+    ],
 )
 
 pybind_extension(

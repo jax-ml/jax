@@ -21,6 +21,7 @@ import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.mhlo as mhlo
 
 
+from .mhlo_helpers import custom_call
 from . import _pocketfft
 from . import pocketfft_flatbuffers_py_generated as pd
 import numpy as np
@@ -187,19 +188,10 @@ def pocketfft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
         ir.RankedTensorType.get([len(descriptor_bytes)], u8_type),
         ir.DenseElementsAttr.get(np.frombuffer(descriptor_bytes, dtype=np.uint8),
                                  type=u8_type))
-  layout = ir.DenseIntElementsAttr.get(np.arange(n - 1, -1, -1),
-                                       type=ir.IndexType.get())
-  return mhlo.CustomCallOp(
+  layout = tuple(range(n - 1, -1, -1))
+  return custom_call(
+      "pocketfft",
       [ir.RankedTensorType.get(out_shape, out_type)],
       [descriptor, a],
-      call_target_name = ir.StringAttr.get("pocketfft"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(""),
-      api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 2),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(np.array([0], np.int64),
-                                      type=ir.IndexType.get()),
-          layout,
-      ]),
-      result_layouts=ir.ArrayAttr.get([layout])).result
+      operand_layouts=[[0], layout],
+      result_layouts=[layout])
