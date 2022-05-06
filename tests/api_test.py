@@ -4519,6 +4519,7 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 0)
 
 
+@unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
 class DCETest(jtu.JaxTestCase):
 
   def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: List[bool],

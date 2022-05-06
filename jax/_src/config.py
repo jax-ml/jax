@@ -734,6 +734,12 @@ config.define_bool_state(
     default=(lib.version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
+# TODO(mattjj): remove after May 19 2022, NeurIPS submission deadline
+config.define_bool_state(
+    name='after_neurips',
+    default=False,
+    help='Gate changes until after NeurIPS 2022 deadline.')
+
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:
   """Indicates that the current context is an explicit device_put*() call."""
