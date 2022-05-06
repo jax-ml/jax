@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/hip/hip_lu_pivot_kernels.h"
+#include "jaxlib/rocm/hip_lu_pivot_kernels.h"
 
 #include <array>
 #include <iostream>
