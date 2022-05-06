@@ -371,25 +371,6 @@ class LaxTest(jtu.JaxTestCase):
     numpy_op = lambda *args: lax_reference.concatenate(args, dim)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dim={}_baseshape=[{}]_dtype={}".format(
-          dim, ",".join(str(d) for d in base_shape), np.dtype(dtype).name),
-       "dim": dim, "base_shape": base_shape, "dtype": dtype}
-      for dtype in default_dtypes
-      for base_shape in [(-1,), (3, -1), (2, -1, 4)]
-      for dim in range(len(base_shape))))
-  def testConcatenateDynamicShape(self, dim, base_shape, dtype):
-    aval1 = core.ShapedArray(base_shape, dtype)
-    expected_shape = list(base_shape)
-    expected_shape[dim] = -1 if expected_shape[dim] == -1 else expected_shape[dim] * 2
-    expected_shape = tuple(expected_shape)
-
-    def f(x, y):
-      return lax.concatenate((x, y), dim)
-    out = jax.eval_shape(f, aval1, aval1)
-    self.assertEqual(out.shape, expected_shape)
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}".format(

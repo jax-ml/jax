@@ -2806,8 +2806,7 @@ def _concatenate_shape_rule(*operands, **kwargs):
     shapes = [operand.shape for operand in operands]
     raise TypeError(msg.format(dimension, ", ".join(map(str, shapes))))
 
-  dims = [o.shape[dimension] for o in operands]
-  concat_size = -1 if -1 in dims else sum(dims)
+  concat_size = sum(o.shape[dimension] for o in operands)
   ex_shape = operands[0].shape
   return ex_shape[:dimension] + (concat_size,) + ex_shape[dimension+1:]
 
