@@ -2037,30 +2037,38 @@ def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
 
 def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
                    ) -> Tuple[List[bool], core.JaxprEqn]:
+  if not config.after_neurips:
+    return [True] * len(eqn.params['jaxpr'].in_avals), eqn
+  jaxpr = eqn.params['jaxpr']
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
+  num_xs = len(jaxpr.in_avals) - num_consts - num_carry
   used_carry_out, used_extensive_out = split_list(used_outputs, [num_carry])
   for i in range(1 + num_carry):
     used_outputs = used_carry_out + used_extensive_out
-    jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'].jaxpr, used_outputs)
+    jaxpr_dce, used_inputs = pe.dce_jaxpr(
+        jaxpr.jaxpr, used_outputs,
+        instantiate=[False] * num_consts + used_carry_out + [False] * num_xs)
     used_consts, used_carry_in, used_extensive_in = \
         split_list(used_inputs, [num_consts, num_carry])
-    if used_carry_in == used_carry_out:
+    if list(used_carry_in) == list(used_carry_out):
       break
     else:
       used_carry_out = _map(operator.or_, used_carry_out, used_carry_in)
   else:
     assert False, "Fixpoint not reached"
+  core.check_jaxpr(jaxpr.jaxpr)
 
   new_linear = [l for l, u in zip(eqn.params['linear'], used_inputs) if u]
   new_params = dict(eqn.params, num_consts=sum(used_consts),
                     num_carry=sum(used_carry_in), linear=tuple(new_linear),
-                    jaxpr=core.ClosedJaxpr(jaxpr, eqn.params['jaxpr'].consts))
+                    jaxpr=core.ClosedJaxpr(jaxpr_dce, jaxpr.consts))
   new_eqn = pe.new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs)
                               if used],
                              [v for v, used in zip(eqn.outvars, used_outputs)
                               if used],
                              eqn.primitive, new_params, eqn.effects,
                              eqn.source_info)
+  assert len(new_eqn.invars ) == len(new_params['jaxpr'].in_avals )
   assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
   return used_inputs, new_eqn
 
@@ -2133,8 +2141,7 @@ core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = \
     partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'scan')
 pe.padding_rules[scan_p] = _scan_padding_rule
-# TODO(mattjj): re-enable
-# pe.dce_rules[scan_p] = _scan_dce_rule
+pe.dce_rules[scan_p] = _scan_dce_rule
 
 
 @api_boundary
