@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/hipsolver_kernels.h"
+#include "jaxlib/hip/hipsolver_kernels.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/handle_pool.h"
-#include "jaxlib/hip_gpu_kernel_helpers.h"
+#include "jaxlib/hip/hip_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
 #include "rocm/include/hip/hip_runtime_api.h"
 #include "rocm/include/hipsolver.h"

@@ -1,4 +1,4 @@
-/* Copyright 2019 Google LLC
+/* Copyright 2021 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cuda_prng_kernels.h"
+#include "jaxlib/hip/hip_prng_kernels.h"
 
 #include <array>
 #include <cstddef>
@@ -21,12 +21,10 @@ limitations under the License.
 namespace jax {
 namespace {
 
-__global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
-                                   const std::uint32_t* key1,
-                                   const std::uint32_t* data0,
-                                   const std::uint32_t* data1,
-                                   std::uint32_t* out0, std::uint32_t* out1,
-                                   std::int64_t n) {
+__global__ void
+ThreeFry2x32Kernel(const std::uint32_t* key0, const std::uint32_t* key1,
+                   const std::uint32_t* data0, const std::uint32_t* data1,
+                   std::uint32_t* out0, std::uint32_t* out1, std::int64_t n) {
   for (std::int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < n;
        idx += blockDim.x * gridDim.x) {
     // Rotation distances specified by the Threefry2x32 algorithm.
@@ -96,7 +94,7 @@ __global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
 
 }  // namespace
 
-void LaunchThreeFry2x32Kernel(cudaStream_t stream, void** buffers,
+void LaunchThreeFry2x32Kernel(hipStream_t stream, void** buffers,
                               ThreeFry2x32Descriptor descriptor) {
   std::array<const std::uint32_t*, 2> keys;
   keys[0] = reinterpret_cast<const std::uint32_t*>(buffers[0]);

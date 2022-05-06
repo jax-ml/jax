@@ -13,35 +13,35 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-
-#include "jaxlib/cuda_gpu_kernel_helpers.h"
-#include "jaxlib/cuda_lu_pivot_kernels.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
 #include "include/pybind11/pybind11.h"
+#include "jaxlib/hip/hip_gpu_kernel_helpers.h"
+#include "jaxlib/hip/hip_lu_pivot_kernels.h"
+#include "jaxlib/kernel_pybind11_helpers.h"
 
 namespace jax {
 namespace {
 
-std::string BuildCudaLuPivotsToPermutationDescriptor(
-    std::int64_t batch_size, std::int32_t pivot_size,
-    std::int32_t permutation_size) {
+std::string
+BuildHipLuPivotsToPermutationDescriptor(std::int64_t batch_size,
+                                        std::int32_t pivot_size,
+                                        std::int32_t permutation_size) {
   return PackDescriptorAsString(LuPivotsToPermutationDescriptor{
       batch_size, pivot_size, permutation_size});
 }
 
 pybind11::dict Registrations() {
   pybind11::dict dict;
-  dict["cuda_lu_pivots_to_permutation"] =
-      EncapsulateFunction(CudaLuPivotsToPermutation);
+  dict["hip_lu_pivots_to_permutation"] =
+      EncapsulateFunction(HipLuPivotsToPermutation);
   return dict;
 }
 
-PYBIND11_MODULE(_cuda_linalg, m) {
+PYBIND11_MODULE(_hip_linalg, m) {
   m.def("registrations", &Registrations);
   m.def("lu_pivots_to_permutation_descriptor",
         [](std::int64_t batch_size, std::int32_t pivot_size,
            std::int32_t permutation_size) {
-          std::string result = BuildCudaLuPivotsToPermutationDescriptor(
+          std::string result = BuildHipLuPivotsToPermutationDescriptor(
               batch_size, pivot_size, permutation_size);
           return pybind11::bytes(result);
         });

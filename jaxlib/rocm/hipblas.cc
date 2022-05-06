@@ -1,4 +1,4 @@
-/* Copyright 2019 Google LLC
+/* Copyright 2021 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,14 +20,13 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
-#include "third_party/gpus/cuda/include/cublas_v2.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "jaxlib/cublas_kernels.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
+#include "jaxlib/hip/hipblas_kernels.h"
+#include "jaxlib/kernel_pybind11_helpers.h"
+#include "rocm/include/hip/hip_runtime_api.h"
+#include "rocm/include/hipblas.h"
 
 namespace jax {
 namespace {
@@ -35,13 +34,13 @@ namespace {
 namespace py = pybind11;
 
 // Converts a NumPy dtype to a Type.
-CublasType DtypeToCublasType(const py::dtype& np_type) {
+HipblasType DtypeToHipblasType(const py::dtype& np_type) {
   static auto* types =
-      new absl::flat_hash_map<std::pair<char, int>, CublasType>({
-          {{'f', 4}, CublasType::F32},
-          {{'f', 8}, CublasType::F64},
-          {{'c', 8}, CublasType::C64},
-          {{'c', 16}, CublasType::C128},
+      new absl::flat_hash_map<std::pair<char, int>, HipblasType>({
+          {{'f', 4}, HipblasType::F32},
+          {{'f', 8}, HipblasType::F64},
+          {{'c', 8}, HipblasType::C64},
+          {{'c', 16}, HipblasType::C128},
       });
   auto it = types->find({np_type.kind(), np_type.itemsize()});
   if (it == types->end()) {
@@ -52,38 +51,39 @@ CublasType DtypeToCublasType(const py::dtype& np_type) {
 }
 
 // Returns the descriptor for a TrsmBatched operation.
-std::pair<size_t, py::bytes> BuildTrsmBatchedDescriptor(
-    const py::dtype& dtype, int batch, int m, int n, bool left_side, bool lower,
-    bool trans_a, bool conj_a, bool unit_diagonal) {
+std::pair<size_t, py::bytes>
+BuildTrsmBatchedDescriptor(const py::dtype& dtype, int batch, int m, int n,
+                           bool left_side, bool lower, bool trans_a,
+                           bool conj_a, bool unit_diagonal) {
   size_t size = batch * sizeof(void*);
   TrsmBatchedDescriptor desc;
-  desc.type = DtypeToCublasType(dtype);
+  desc.type = DtypeToHipblasType(dtype);
   desc.batch = batch;
   desc.m = m;
   desc.n = n;
-  desc.side = left_side ? CUBLAS_SIDE_LEFT : CUBLAS_SIDE_RIGHT;
-  desc.uplo = lower ? CUBLAS_FILL_MODE_LOWER : CUBLAS_FILL_MODE_UPPER;
-  desc.trans = trans_a ? (conj_a ? CUBLAS_OP_C : CUBLAS_OP_T) : CUBLAS_OP_N;
-  desc.diag = unit_diagonal ? CUBLAS_DIAG_UNIT : CUBLAS_DIAG_NON_UNIT;
+  desc.side = left_side ? HIPBLAS_SIDE_LEFT : HIPBLAS_SIDE_RIGHT;
+  desc.uplo = lower ? HIPBLAS_FILL_MODE_LOWER : HIPBLAS_FILL_MODE_UPPER;
+  desc.trans = trans_a ? (conj_a ? HIPBLAS_OP_C : HIPBLAS_OP_T) : HIPBLAS_OP_N;
+  desc.diag = unit_diagonal ? HIPBLAS_DIAG_UNIT : HIPBLAS_DIAG_NON_UNIT;
   return {size, PackDescriptor(desc)};
 }
 
 // Returns the descriptor for a GetrfBatched operation.
 std::pair<size_t, py::bytes> BuildGetrfBatchedDescriptor(const py::dtype& dtype,
                                                          int b, int n) {
-  CublasType type = DtypeToCublasType(dtype);
+  HipblasType type = DtypeToHipblasType(dtype);
   size_t size = b * sizeof(void*);
   return {size, PackDescriptor(GetrfBatchedDescriptor{type, b, n})};
 }
 
 py::dict Registrations() {
   py::dict dict;
-  dict["cublas_trsm_batched"] = EncapsulateFunction(TrsmBatched);
-  dict["cublas_getrf_batched"] = EncapsulateFunction(GetrfBatched);
+  dict["hipblas_trsm_batched"] = EncapsulateFunction(TrsmBatched);
+  dict["hipblas_getrf_batched"] = EncapsulateFunction(GetrfBatched);
   return dict;
 }
 
-PYBIND11_MODULE(_cublas, m) {
+PYBIND11_MODULE(_hipblas, m) {
   m.def("registrations", &Registrations);
   m.def("build_trsm_batched_descriptor", &BuildTrsmBatchedDescriptor);
   m.def("build_getrf_batched_descriptor", &BuildGetrfBatchedDescriptor);

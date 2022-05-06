@@ -25,14 +25,14 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from . import _cublas
+  from .cuda import _cublas
   for _name, _value in _cublas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   _cublas = None
 
 try:
-  from . import _cusolver
+  from .cuda import _cusolver
   for _name, _value in _cusolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
@@ -40,14 +40,14 @@ except ImportError:
 
 
 try:
-  from . import _hipblas
+  from .rocm import _hipblas
   for _name, _value in _hipblas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:
   _hipblas = None
 
 try:
-  from . import _hipsolver
+  from .rocm import _hipsolver
   for _name, _value in _hipsolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:

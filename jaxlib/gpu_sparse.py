@@ -25,7 +25,7 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from . import _cusparse
+  from .cuda import _cusparse
 except ImportError:
   _cusparse = None
 else:
@@ -33,7 +33,7 @@ else:
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 
 try:
-  from . import _hipsparse
+  from .rocm import _hipsparse
 except ImportError:
   _hipsparse = None
 else:

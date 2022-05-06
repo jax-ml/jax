@@ -41,20 +41,10 @@ py_binary(
     ]) + if_not_windows([
         "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
     ]) + if_cuda([
-        "//jaxlib:gpu_support",
-        "//jaxlib:_cublas",
-        "//jaxlib:_cusolver",
-        "//jaxlib:_cusparse",
-        "//jaxlib:_cuda_linalg",
-        "//jaxlib:_cuda_prng",
+        "//jaxlib/cuda:cuda_gpu_support",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
-        "//jaxlib:hip_gpu_support",
-        "//jaxlib:_hipblas",
-        "//jaxlib:_hipsolver",
-        "//jaxlib:_hipsparse",
-        "//jaxlib:_hip_linalg",
-        "//jaxlib:_hip_prng",
+        "//jaxlib/rocm:rocm_gpu_support",
     ]),
     deps = ["@bazel_tools//tools/python/runfiles"],
 )

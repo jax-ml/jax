@@ -24,14 +24,14 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from . import _cuda_linalg
+  from .cuda import _cuda_linalg
   for _name, _value in _cuda_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   _cuda_linalg = None
 
 try:
-  from . import _hip_linalg
+  from .rocm import _hip_linalg
   for _name, _value in _hip_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:

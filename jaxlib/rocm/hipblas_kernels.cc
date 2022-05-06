@@ -1,4 +1,4 @@
-/* Copyright 2019 Google LLC
+/* Copyright 2021 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cublas_kernels.h"
+#include "jaxlib/hip/hipblas_kernels.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -23,31 +23,31 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
-#include "third_party/gpus/cuda/include/cublas_v2.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/handle_pool.h"
+#include "jaxlib/hip/hip_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
+#include "rocm/include/hip/hip_runtime_api.h"
+#include "rocm/include/hipblas.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
-using BlasHandlePool = HandlePool<cublasHandle_t, cudaStream_t>;
+
+using BlasHandlePool = HandlePool<hipblasHandle_t, hipStream_t>;
 
 template <>
-/*static*/ absl::StatusOr<BlasHandlePool::Handle> BlasHandlePool::Borrow(
-    cudaStream_t stream) {
+/*static*/ absl::StatusOr<BlasHandlePool::Handle>
+BlasHandlePool::Borrow(hipStream_t stream) {
   BlasHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
-  cublasHandle_t handle;
+  hipblasHandle_t handle;
   if (pool->handles_[stream].empty()) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasCreate(&handle)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasCreate(&handle)));
   } else {
     handle = pool->handles_[stream].back();
     pool->handles_[stream].pop_back();
   }
   if (stream) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasSetStream(handle, stream)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasSetStream(handle, stream)));
   }
   return Handle(pool, handle, stream);
 }
@@ -56,16 +56,16 @@ namespace {
 
 // Converts a NumPy dtype to a CublasType.
 
-int SizeOfCublasType(CublasType type) {
+int SizeOfHipblasType(HipblasType type) {
   switch (type) {
-    case CublasType::F32:
+    case HipblasType::F32:
       return sizeof(float);
-    case CublasType::F64:
+    case HipblasType::F64:
       return sizeof(double);
-    case CublasType::C64:
-      return sizeof(cuComplex);
-    case CublasType::C128:
-      return sizeof(cuDoubleComplex);
+    case HipblasType::C64:
+      return sizeof(hipComplex);
+    case HipblasType::C128:
+      return sizeof(hipDoubleComplex);
   }
 }
 
@@ -73,7 +73,7 @@ int SizeOfCublasType(CublasType type) {
 
 // Batched triangular solve: trsmbatched
 
-static absl::Status TrsmBatched_(cudaStream_t stream, void** buffers,
+static absl::Status TrsmBatched_(hipStream_t stream, void** buffers,
                                  const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<TrsmBatchedDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -82,63 +82,63 @@ static absl::Status TrsmBatched_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
   if (buffers[2] != buffers[1]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-        buffers[2], buffers[1], SizeOfCublasType(d.type) * d.batch * d.m * d.n,
-        cudaMemcpyDeviceToDevice, stream)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[2], buffers[1], SizeOfHipblasType(d.type) * d.batch * d.m * d.n,
+        hipMemcpyDeviceToDevice, stream)));
   }
-  const int lda = d.side == CUBLAS_SIDE_LEFT ? d.m : d.n;
+  const int lda = d.side == HIPBLAS_SIDE_LEFT ? d.m : d.n;
   const int ldb = d.m;
   auto a_batch_host = MakeBatchPointers(stream, buffers[0], buffers[3], d.batch,
-                                        SizeOfCublasType(d.type) * lda * lda);
+                                        SizeOfHipblasType(d.type) * lda * lda);
   JAX_RETURN_IF_ERROR(a_batch_host.status());
   auto b_batch_host = MakeBatchPointers(stream, buffers[2], buffers[4], d.batch,
-                                        SizeOfCublasType(d.type) * d.m * d.n);
+                                        SizeOfHipblasType(d.type) * d.m * d.n);
   JAX_RETURN_IF_ERROR(b_batch_host.status());
   // TODO(phawkins): ideally we would not need to synchronize here, but to
   // avoid it we need a way to keep the host-side buffer alive until the copy
   // completes.
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaStreamSynchronize(stream)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipStreamSynchronize(stream)));
   switch (d.type) {
-    case CublasType::F32: {
+    case HipblasType::F32: {
       float** a_batch_ptrs = static_cast<float**>(buffers[3]);
       float** b_batch_ptrs = static_cast<float**>(buffers[4]);
+      // TODO(reza): is the following statement correct for rocm?
       // NOTE(phawkins): if alpha is in GPU memory, cuBlas seems to segfault.
       const float alpha = 1.0f;
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasStrsmBatched(
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasStrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
-          const_cast<const float**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
-          d.batch)));
+          const_cast<float**>(a_batch_ptrs), lda, b_batch_ptrs, ldb, d.batch)));
       break;
     }
-    case CublasType::F64: {
+    case HipblasType::F64: {
       double** a_batch_ptrs = static_cast<double**>(buffers[3]);
       double** b_batch_ptrs = static_cast<double**>(buffers[4]);
       const double alpha = 1.0;
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasDtrsmBatched(
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasDtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
-          const_cast<const double**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
+          const_cast<double**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
           d.batch)));
       break;
     }
-    case CublasType::C64: {
-      cuComplex** a_batch_ptrs = static_cast<cuComplex**>(buffers[3]);
-      cuComplex** b_batch_ptrs = static_cast<cuComplex**>(buffers[4]);
-      const cuComplex alpha = make_cuComplex(1.0f, 0.0f);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasCtrsmBatched(
+    case HipblasType::C64: {
+      hipblasComplex** a_batch_ptrs = static_cast<hipblasComplex**>(buffers[3]);
+      hipblasComplex** b_batch_ptrs = static_cast<hipblasComplex**>(buffers[4]);
+      const hipblasComplex alpha = hipblasComplex(1.0f, 0.0f);
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasCtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
-          const_cast<const cuComplex**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
+          const_cast<hipblasComplex**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
           d.batch)));
       break;
     }
-    case CublasType::C128: {
-      cuDoubleComplex** a_batch_ptrs =
-          static_cast<cuDoubleComplex**>(buffers[3]);
-      cuDoubleComplex** b_batch_ptrs =
-          static_cast<cuDoubleComplex**>(buffers[4]);
-      const cuDoubleComplex alpha = make_cuDoubleComplex(1.0f, 0.0f);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasZtrsmBatched(
+    case HipblasType::C128: {
+      hipblasDoubleComplex** a_batch_ptrs =
+          static_cast<hipblasDoubleComplex**>(buffers[3]);
+      hipblasDoubleComplex** b_batch_ptrs =
+          static_cast<hipblasDoubleComplex**>(buffers[4]);
+      const hipblasDoubleComplex alpha = hipblasDoubleComplex(1.0f, 0.0f);
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasZtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
-          const_cast<const cuDoubleComplex**>(a_batch_ptrs), lda, b_batch_ptrs,
+          const_cast<hipblasDoubleComplex**>(a_batch_ptrs), lda, b_batch_ptrs,
           ldb, d.batch)));
       break;
     }
@@ -146,7 +146,7 @@ static absl::Status TrsmBatched_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
+void TrsmBatched(hipStream_t stream, void** buffers, const char* opaque,
                  size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = TrsmBatched_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -157,7 +157,7 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
 
 // Batched LU decomposition: getrfbatched
 
-static absl::Status GetrfBatched_(cudaStream_t stream, void** buffers,
+static absl::Status GetrfBatched_(hipStream_t stream, void** buffers,
                                   const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GetrfBatchedDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -166,42 +166,43 @@ static absl::Status GetrfBatched_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
   if (buffers[0] != buffers[1]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-        buffers[1], buffers[0], SizeOfCublasType(d.type) * d.batch * d.n * d.n,
-        cudaMemcpyDeviceToDevice, stream)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[1], buffers[0], SizeOfHipblasType(d.type) * d.batch * d.n * d.n,
+        hipMemcpyDeviceToDevice, stream)));
   }
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
   auto a_ptrs_host = MakeBatchPointers(stream, buffers[1], buffers[4], d.batch,
-                                       SizeOfCublasType(d.type) * d.n * d.n);
+                                       SizeOfHipblasType(d.type) * d.n * d.n);
   JAX_RETURN_IF_ERROR(a_ptrs_host.status());
   // TODO(phawkins): ideally we would not need to synchronize here, but to
   // avoid it we need a way to keep the host-side buffer alive until the copy
   // completes.
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaStreamSynchronize(stream)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipStreamSynchronize(stream)));
   switch (d.type) {
-    case CublasType::F32: {
+    case HipblasType::F32: {
       float** batch_ptrs = static_cast<float**>(buffers[4]);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasSgetrfBatched(
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasSgetrfBatched(
           handle.get(), d.n, batch_ptrs, d.n, ipiv, info, d.batch)));
       break;
     }
-    case CublasType::F64: {
+    case HipblasType::F64: {
       double** batch_ptrs = static_cast<double**>(buffers[4]);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasDgetrfBatched(
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasDgetrfBatched(
           handle.get(), d.n, batch_ptrs, d.n, ipiv, info, d.batch)));
       break;
     }
-    case CublasType::C64: {
-      cuComplex** batch_ptrs = static_cast<cuComplex**>(buffers[4]);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasCgetrfBatched(
+    case HipblasType::C64: {
+      hipblasComplex** batch_ptrs = static_cast<hipblasComplex**>(buffers[4]);
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasCgetrfBatched(
           handle.get(), d.n, batch_ptrs, d.n, ipiv, info, d.batch)));
       break;
     }
-    case CublasType::C128: {
-      cuDoubleComplex** batch_ptrs = static_cast<cuDoubleComplex**>(buffers[4]);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cublasZgetrfBatched(
+    case HipblasType::C128: {
+      hipblasDoubleComplex** batch_ptrs =
+          static_cast<hipblasDoubleComplex**>(buffers[4]);
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipblasZgetrfBatched(
           handle.get(), d.n, batch_ptrs, d.n, ipiv, info, d.batch)));
       break;
     }
@@ -209,7 +210,7 @@ static absl::Status GetrfBatched_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
+void GetrfBatched(hipStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = GetrfBatched_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cusolver_kernels.h"
+#include "jaxlib/cuda/cusolver_kernels.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -27,7 +27,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
-#include "jaxlib/cuda_gpu_kernel_helpers.h"
+#include "jaxlib/cuda/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_helpers.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"

@@ -16,11 +16,11 @@ limitations under the License.
 // This file is not used by JAX itself, but exists to assist with running
 // JAX-generated HLO code from outside of JAX.
 
-#include "jaxlib/cublas_kernels.h"
-#include "jaxlib/cuda_lu_pivot_kernels.h"
-#include "jaxlib/cuda_prng_kernels.h"
-#include "jaxlib/cusolver_kernels.h"
-#include "jaxlib/cusparse_kernels.h"
+#include "jaxlib/cuda/cublas_kernels.h"
+#include "jaxlib/cuda/cuda_lu_pivot_kernels.h"
+#include "jaxlib/cuda/cuda_prng_kernels.h"
+#include "jaxlib/cuda/cusolver_kernels.h"
+#include "jaxlib/cuda/cusparse_kernels.h"
 #include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
 
 namespace jax {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cuda_lu_pivot_kernels.h"
+#include "jaxlib/hip/hip_lu_pivot_kernels.h"
 
 #include <array>
 #include <iostream>
@@ -58,7 +58,7 @@ __global__ void LuPivotsToPermutationKernel(
 }  // namespace
 
 void LaunchLuPivotsToPermutationKernel(
-    cudaStream_t stream, void** buffers,
+    hipStream_t stream, void** buffers,
     LuPivotsToPermutationDescriptor descriptor) {
   const std::int32_t* pivots =
       reinterpret_cast<const std::int32_t*>(buffers[0]);

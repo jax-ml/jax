@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cuda_gpu_kernel_helpers.h"
+#include "jaxlib/cuda/cuda_gpu_kernel_helpers.h"
 
 #include <stdexcept>
 
