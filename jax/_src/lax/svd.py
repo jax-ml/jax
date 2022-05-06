@@ -153,12 +153,13 @@ def svd(a: Any,
       reduce_to_square = True
 
   if not compute_uv:
-    return _svd(a, hermitian, compute_uv, max_iterations)
+    with jax.default_matmul_precision('float32'):
+      return _svd(a, hermitian, compute_uv, max_iterations)
 
-  u_out, s_out, v_out = _svd(a, hermitian, compute_uv, max_iterations)
-
-  if reduce_to_square:
-    u_out = q @ u_out
+  with jax.default_matmul_precision('float32'):
+    u_out, s_out, v_out = _svd(a, hermitian, compute_uv, max_iterations)
+    if reduce_to_square:
+      u_out = q @ u_out
 
   if full_matrices:
     u_out = jnp.hstack((u_out, u_out_null))
