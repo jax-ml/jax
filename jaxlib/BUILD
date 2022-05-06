@@ -86,15 +86,7 @@ py_library(
         ":_lapack",
         ":_pocketfft",
         ":cpu_feature_guard",
-        ":mhlo_helpers",
         ":pocketfft_flatbuffers_py",
-    ],
-)
-
-py_library(
-    name = "mhlo_helpers",
-    srcs = [
-        "mhlo_helpers.py",
     ],
 )
 
@@ -131,15 +123,6 @@ cc_library(
     srcs = ["lapack_kernels_using_lapack.cc"],
     deps = [":lapack_kernels"],
     alwayslink = 1,
-)
-
-py_library(
-    name = "lapack",
-    srcs = ["lapack.py"],
-    deps = [
-        ":mhlo_helpers",
-        "//third_party/py/numpy",
-    ],
 )
 
 pybind_extension(
