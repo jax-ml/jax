@@ -13,7 +13,9 @@
 # limitations under the License.
 
 """BCOO (Bached coordinate format) matrix object and associated primitives."""
+
 import functools
+from functools import partial
 import operator
 from typing import Any, NamedTuple, Sequence, Tuple
 import warnings
@@ -43,6 +45,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.numpy.setops import _unique
 
+from jax._src.lib import gpu_sparse
 from jax._src.lib import sparse_apis
 
 Dtype = Any
@@ -719,8 +722,8 @@ def _collapse_mhlo(x, start, end):
       ir.RankedTensorType.get(shape, x_type.element_type), x).result
 
 def _bcoo_dot_general_cuda_lowering(
-    ctx, lhs_data, lhs_indices, rhs, *, dimension_numbers,
-    lhs_spinfo: BCOOInfo):
+    coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
+    *, dimension_numbers, lhs_spinfo: BCOOInfo):
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
   props = _validate_bcoo_indices(lhs_indices_aval, lhs_spinfo.shape)
@@ -742,12 +745,11 @@ def _bcoo_dot_general_cuda_lowering(
                                  np.complex128]
   assert lhs_data_aval.dtype == rhs_aval.dtype
   assert lhs_indices_aval.dtype == np.int32
-  assert sparse_apis is not None
 
   if rhs_ndim == 1:
-    bcoo_dot_general_fn = sparse_apis.coo_matvec_mhlo
+    bcoo_dot_general_fn = coo_matvec_lowering
   elif rhs_ndim == 2:
-    bcoo_dot_general_fn = sparse_apis.coo_matmat_mhlo
+    bcoo_dot_general_fn = coo_matmat_lowering
     if rhs_contract[0] == 1:
       rhs = mhlo.TransposeOp(
           rhs, permutation=mlir.dense_int_elements([1, 0])).result
@@ -804,6 +806,7 @@ def _bcoo_dot_general_cuda_lowering(
     raise ValueError(f"lhs has to be 1d or 2d; get {props.n_sparse}d.")
 
 def _bcoo_dot_general_gpu_lowering(
+    coo_matvec_lowering, coo_matmat_lowering,
     ctx, lhs_data, lhs_indices, rhs, *, dimension_numbers,
     lhs_spinfo: BCOOInfo):
 
@@ -843,7 +846,7 @@ def _bcoo_dot_general_gpu_lowering(
         dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
     return _bcoo_dot_general_cuda_lowering(
-      ctx, lhs_data, lhs_indices, rhs,
+      coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
 def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: BCOOInfo):
@@ -914,9 +917,26 @@ batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 
 mlir.register_lowering(
     bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
+
+if gpu_sparse:
+  if gpu_sparse.cuda_is_supported:
+    mlir.register_lowering(bcoo_dot_general_p,
+                           partial(_bcoo_dot_general_gpu_lowering,
+                                   gpu_sparse.cuda_coo_matvec,
+                                   gpu_sparse.cuda_coo_matmat),
+                           platform='cuda')
+  if gpu_sparse.rocm_is_supported:
+    mlir.register_lowering(bcoo_dot_general_p,
+                           partial(_bcoo_dot_general_gpu_lowering,
+                                   gpu_sparse.rocm_coo_matvec,
+                                   gpu_sparse.rocm_coo_matmat),
+                           platform='rocm')
+
 if sparse_apis and sparse_apis.is_supported:
   mlir.register_lowering(bcoo_dot_general_p,
-                         _bcoo_dot_general_gpu_lowering,
+                         partial(_bcoo_dot_general_gpu_lowering,
+                                 sparse_apis.coo_matvec_mhlo,
+                                 sparse_apis.coo_matmat_mhlo),
                          platform='gpu')
 
 #----------------------------------------------------------------------

@@ -22,7 +22,8 @@ import warnings
 from typing import Optional, Tuple
 
 __all__ = [
-  'cuda_linalg', 'cuda_prng', 'cusolver', 'gpu_prng', 'hip_linalg', 'hip_prng',
+  'cuda_linalg', 'cuda_prng', 'cusolver', 'gpu_linalg', 'gpu_prng',
+  'gpu_sparse', 'hip_linalg', 'hip_prng',
   'hipsolver','jaxlib', 'lapack', 'pocketfft', 'pytree',
    'tpu_driver_client', 'version', 'xla_client', 'xla_extension',
 ]
@@ -120,6 +121,9 @@ pytree = xla_client._xla.pytree
 jax_jit = xla_client._xla.jax_jit
 pmap_lib = xla_client._xla.pmap_lib
 
+# TODO(phawkins): make gpu_... unconditional after jaxlib >= 0.3.11
+# becomes the minimum; remove cuda_... and hip_....
+
 try:
   import jaxlib.cusolver as cusolver  # pytype: disable=import-error
 except ImportError:
@@ -131,6 +135,11 @@ except ImportError:
   hipsolver = None
 
 try:
+  import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
+except ImportError:
+  gpu_solver = None
+
+try:
   import jaxlib.cusparse as cusparse  # pytype: disable=import-error
 except ImportError:
   cusparse = None
@@ -139,6 +148,11 @@ try:
   import jaxlib.hipsparse as hipsparse  # pytype: disable=import-error
 except ImportError:
   hipsparse = None
+
+try:
+  import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
+except ImportError:
+  gpu_sparse = None
 
 sparse_apis = cusparse or hipsparse or None
 solver_apis = cusolver or hipsolver or None
@@ -153,8 +167,6 @@ try:
 except ImportError:
   hip_prng = None
 
-# TODO(phawkins): make gpu_prng unconditional after jaxlib >= 0.3.11
-# becomes the minimum; remove cuda_prng and hip_prng.
 try:
   import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error
 except ImportError:
@@ -169,6 +181,11 @@ try:
   import jaxlib.hip_linalg as hip_linalg  # pytype: disable=import-error
 except ImportError:
   hip_linalg = None
+
+try:
+  import jaxlib.cuda_linalg as gpu_linalg  # pytype: disable=import-error
+except ImportError:
+  gpu_linalg = None
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version

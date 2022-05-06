@@ -38,7 +38,7 @@ pybind11::dict Registrations() {
 
 PYBIND11_MODULE(_hip_linalg, m) {
   m.def("registrations", &Registrations);
-  m.def("hip_lu_pivots_to_permutation_descriptor",
+  m.def("lu_pivots_to_permutation_descriptor",
         [](std::int64_t batch_size, std::int32_t pivot_size,
            std::int32_t permutation_size) {
           std::string result = BuildHipLuPivotsToPermutationDescriptor(

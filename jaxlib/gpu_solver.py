@@ -14,6 +14,7 @@
 
 
 import functools
+from functools import partial
 import operator
 
 import jaxlib.mlir.ir as ir
@@ -28,14 +29,29 @@ try:
   for _name, _value in _cublas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
-  pass
+  _cublas = None
 
 try:
   from . import _cusolver
   for _name, _value in _cusolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
-  pass
+  _cusolver = None
+
+
+try:
+  from . import _hipblas
+  for _name, _value in _hipblas.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+except ImportError:
+  _hipblas = None
+
+try:
+  from . import _hipsolver
+  for _name, _value in _hipsolver.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+except ImportError:
+  _hipsolver = None
 
 
 def _real_type(dtype):
@@ -45,8 +61,8 @@ def _real_type(dtype):
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def trsm_mhlo(dtype, a, b, left_side=False, lower=False, trans_a=False,
-              conj_a=False, diag=False):
+def _trsm_mhlo(platform, gpu_blas, dtype, a, b, left_side=False, lower=False,
+               trans_a=False, conj_a=False, diag=False):
   """Batched triangular solve.
 
   XLA implements unbatched triangular solve directly, so we need only implement
@@ -69,7 +85,7 @@ def trsm_mhlo(dtype, a, b, left_side=False, lower=False, trans_a=False,
   if conj_a and not trans_a:
     raise NotImplementedError("Conjugation without transposition not supported")
 
-  lwork, opaque = _cublas.build_trsm_batched_descriptor(
+  lwork, opaque = gpu_blas.build_trsm_batched_descriptor(
     np.dtype(dtype), batch, m, n, left_side, lower, trans_a, conj_a, diag)
   layout = ir.DenseIntElementsAttr.get(
       np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
@@ -81,7 +97,7 @@ def trsm_mhlo(dtype, a, b, left_side=False, lower=False, trans_a=False,
   tup = mhlo.CustomCallOp(
       [ir.TupleType.get_tuple([b_type, work_type, work_type])],
       [a, b],
-      call_target_name = ir.StringAttr.get("cublas_trsm_batched"),
+      call_target_name = ir.StringAttr.get(f"{platform}blas_trsm_batched"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -90,8 +106,11 @@ def trsm_mhlo(dtype, a, b, left_side=False, lower=False, trans_a=False,
       result_layouts=ir.ArrayAttr.get([layout, work_layout, work_layout])).result
   return mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, 0)).result
 
+cuda_trsm = partial(_trsm_mhlo, "cu", _cublas)
+rocm_trsm = partial(_trsm_mhlo, "hip", _hipblas)
 
-def potrf_mhlo(dtype, a, lower):
+
+def _potrf_mhlo(platform, gpu_solver, dtype, a, lower):
   """Cholesky decomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -101,7 +120,7 @@ def potrf_mhlo(dtype, a, lower):
   num_bd = len(batch_dims)
   batch = _prod(batch_dims)
 
-  lwork, opaque = _cusolver.build_potrf_descriptor(
+  lwork, opaque = gpu_solver.build_potrf_descriptor(
       np.dtype(dtype), lower, batch, n)
 
   layout = ir.DenseIntElementsAttr.get(
@@ -120,7 +139,7 @@ def potrf_mhlo(dtype, a, lower):
         ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
       ])],
       [a],
-      call_target_name = ir.StringAttr.get("cusolver_potrf"),
+      call_target_name = ir.StringAttr.get(f"{platform}solver_potrf"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 2),
@@ -132,8 +151,11 @@ def potrf_mhlo(dtype, a, lower):
     mhlo.GetTupleElementOp(tup, ir.IntegerAttr.get(i32_type, 1)).result,
   ]
 
+cuda_potrf = partial(_potrf_mhlo, "cu", _cusolver)
+rocm_potrf = partial(_potrf_mhlo, "hip", _hipsolver)
 
-def getrf_mhlo(dtype, a):
+
+def _getrf_mhlo(platform, gpu_blas, gpu_solver, dtype, a):
   """LU decomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -144,15 +166,15 @@ def getrf_mhlo(dtype, a):
   batch = _prod(batch_dims)
 
   if batch > 1 and m == n and m // batch <= 128:
-    lwork, opaque = _cublas.build_getrf_batched_descriptor(
+    lwork, opaque = gpu_blas.build_getrf_batched_descriptor(
       np.dtype(dtype), batch, m)
     workspace = ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8))
-    kernel = "cublas_getrf_batched"
+    kernel = f"{platform}blas_getrf_batched"
   else:
-    lwork, opaque = _cusolver.build_getrf_descriptor(
+    lwork, opaque = gpu_solver.build_getrf_descriptor(
         np.dtype(dtype), batch, m, n)
     workspace = ir.RankedTensorType.get([lwork], a_type.element_type)
-    kernel = "cusolver_getrf"
+    kernel = f"{platform}solver_getrf"
 
   layout = ir.DenseIntElementsAttr.get(
       np.array((num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
@@ -186,8 +208,11 @@ def getrf_mhlo(dtype, a):
     for i in range(3)
   ]
 
+cuda_getrf = partial(_getrf_mhlo, "cu", _cublas, _cusolver)
+rocm_getrf = partial(_getrf_mhlo, "hip", _hipblas, _hipsolver)
 
-def geqrf_mhlo(dtype, a):
+
+def _geqrf_mhlo(platform, gpu_solver, dtype, a):
   """QR decomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -197,7 +222,7 @@ def geqrf_mhlo(dtype, a):
   num_bd = len(batch_dims)
   batch = _prod(batch_dims)
 
-  lwork, opaque = _cusolver.build_geqrf_descriptor(
+  lwork, opaque = gpu_solver.build_geqrf_descriptor(
       np.dtype(dtype), batch, m, n)
 
   layout = ir.DenseIntElementsAttr.get(
@@ -212,7 +237,7 @@ def geqrf_mhlo(dtype, a):
         ir.RankedTensorType.get([lwork], a_type.element_type),
       ])],
       [a],
-      call_target_name = ir.StringAttr.get(b"cusolver_geqrf"),
+      call_target_name = ir.StringAttr.get(f"{platform}solver_geqrf"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -231,8 +256,11 @@ def geqrf_mhlo(dtype, a):
     for i in range(3)
   ]
 
+cuda_geqrf = partial(_geqrf_mhlo, "cu", _cusolver)
+rocm_geqrf = partial(_geqrf_mhlo, "hip", _hipsolver)
 
-def orgqr_mhlo(dtype, a, tau):
+
+def _orgqr_mhlo(platform, gpu_solver, dtype, a, tau):
   """Product of elementary Householder reflections."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -246,7 +274,7 @@ def orgqr_mhlo(dtype, a, tau):
   assert tau_dims[:-1] == dims[:-2]
   k = tau_dims[-1]
 
-  lwork, opaque = _cusolver.build_orgqr_descriptor(
+  lwork, opaque = gpu_solver.build_orgqr_descriptor(
       np.dtype(dtype), batch, m, n, k)
 
   layout = ir.DenseIntElementsAttr.get(
@@ -260,7 +288,7 @@ def orgqr_mhlo(dtype, a, tau):
         ir.RankedTensorType.get([lwork], a_type.element_type),
       ])],
       [a, tau],
-      call_target_name = ir.StringAttr.get(b"cusolver_orgqr"),
+      call_target_name = ir.StringAttr.get(f"{platform}solver_orgqr"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -281,8 +309,12 @@ def orgqr_mhlo(dtype, a, tau):
     for i in range(2)
   ]
 
+cuda_orgqr = partial(_orgqr_mhlo, "cu", _cusolver)
+rocm_orgqr = partial(_orgqr_mhlo, "hip", _hipsolver)
 
-def syevd_mhlo(dtype, a, lower=False):
+
+def _syevd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
+                lower=False):
   """Symmetric (Hermitian) eigendecomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -294,13 +326,13 @@ def syevd_mhlo(dtype, a, lower=False):
   batch = _prod(batch_dims)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
-  if n <= 32:
-    kernel = b"cusolver_syevj"
-    lwork, opaque = _cusolver.build_syevj_descriptor(
+  if have_jacobi_solver and n <= 32:
+    kernel = f"{platform}solver_syevj"
+    lwork, opaque = gpu_solver.build_syevj_descriptor(
         np.dtype(dtype), lower, batch, n)
   else:
-    kernel = b"cusolver_syevd"
-    lwork, opaque = _cusolver.build_syevd_descriptor(
+    kernel = f"{platform}solver_syevd"
+    lwork, opaque = gpu_solver.build_syevd_descriptor(
         np.dtype(dtype), lower, batch, n)
 
   if ir.ComplexType.isinstance(a_type.element_type):
@@ -339,8 +371,12 @@ def syevd_mhlo(dtype, a, lower=False):
       for i in range(3)
   ]
 
+cuda_syevd = partial(_syevd_mhlo, "cu", _cusolver, True)
+rocm_syevd = partial(_syevd_mhlo, "hip", _hipsolver, False)
 
-def gesvd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
+
+def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
+                full_matrices=True, compute_uv=True):
   """Singular value decomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -362,10 +398,10 @@ def gesvd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
     type=ir.IndexType.get())
   i32_type = ir.IntegerType.get_signless(32)
 
-  if m < 32 and n < 32:
+  if have_jacobi_solver and m < 32 and n < 32:
     # The batched kernel doesn't support "econ" mode.
     econ = not full_matrices and b == 1
-    lwork, opaque = _cusolver.build_gesvdj_descriptor(
+    lwork, opaque = gpu_solver.build_gesvdj_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, 1 if econ else 0)
     k = min(m, n)
     matrix_layout = ir.DenseIntElementsAttr.get(
@@ -383,7 +419,7 @@ def gesvd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
           ir.RankedTensorType.get([lwork], a_type.element_type),
         ])],
         [a],
-        call_target_name = ir.StringAttr.get("cusolver_gesvdj"),
+        call_target_name = ir.StringAttr.get(f"{platform}solver_gesvdj"),
         has_side_effect=ir.BoolAttr.get(False),
         backend_config=ir.StringAttr.get(opaque),
         api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -418,7 +454,7 @@ def gesvd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
           ir.DenseIntElementsAttr.get(np.array(batch_dims + (min(m, n), n))),
           ir.DenseIntElementsAttr.get(np.ones([len(dims)], np.int64))).result
   elif m < n:
-    lwork, opaque = _cusolver.build_gesvd_descriptor(
+    lwork, opaque = gpu_solver.build_gesvd_descriptor(
         np.dtype(dtype), b, n, m, compute_uv, full_matrices)
     k = n if full_matrices else m
     matrix_layout = ir.DenseIntElementsAttr.get(
@@ -434,7 +470,7 @@ def gesvd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
           ir.RankedTensorType.get([lwork], a_type.element_type),
         ])],
         [a],
-        call_target_name = ir.StringAttr.get("cusolver_gesvd"),
+        call_target_name = ir.StringAttr.get(f"{platform}solver_gesvd"),
         has_side_effect=ir.BoolAttr.get(False),
         backend_config=ir.StringAttr.get(opaque),
         api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -453,7 +489,7 @@ def gesvd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
     u = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 3)).result
     info = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 4)).result
   else:
-    lwork, opaque = _cusolver.build_gesvd_descriptor(
+    lwork, opaque = gpu_solver.build_gesvd_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, full_matrices)
     k = m if full_matrices else n
     matrix_layout = ir.DenseIntElementsAttr.get(
@@ -469,7 +505,7 @@ def gesvd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
           ir.RankedTensorType.get([lwork], a_type.element_type),
         ])],
         [a],
-        call_target_name = ir.StringAttr.get("cusolver_gesvd"),
+        call_target_name = ir.StringAttr.get(f"{platform}solver_gesvd"),
         has_side_effect=ir.BoolAttr.get(False),
         backend_config=ir.StringAttr.get(opaque),
         api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -488,3 +524,6 @@ def gesvd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
     vt = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 3)).result
     info = mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 4)).result
   return s, u, vt, info
+
+cuda_gesvd = partial(_gesvd_mhlo, "cu", _cusolver, True)
+rocm_gesvd = partial(_gesvd_mhlo, "hip", _hipsolver, False)

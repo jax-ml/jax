@@ -33,6 +33,7 @@ from jax.experimental.sparse import coo as sparse_coo
 from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse.bcoo import BCOOInfo
 from jax import lax
+from jax._src.lib import gpu_sparse
 from jax._src.lib import sparse_apis
 from jax._src.lib import xla_bridge
 from jax import jit
@@ -56,7 +57,11 @@ MATMUL_TOL = {
   np.complex128: 1E-10,
 }
 
-GPU_LOWERING_ENABLED = (sparse_apis and sparse_apis.is_supported)
+if gpu_sparse:
+  GPU_LOWERING_ENABLED = gpu_sparse and (gpu_sparse.cuda_is_supported or
+                                         gpu_sparse.rocm_is_supported)
+else:
+  GPU_LOWERING_ENABLED = (sparse_apis and sparse_apis.is_supported)
 
 class BcooDotGeneralProperties(NamedTuple):
   lhs_shape: Tuple[int]
@@ -511,15 +516,24 @@ class cuSparseTest(jtu.JaxTestCase):
       cuda_version = None if version == "<unknown>" else int(
           version.split()[-1])
       if cuda_version is None or cuda_version < 11000:
-        self.assertFalse(sparse_apis and sparse_apis.is_supported)
+        if gpu_sparse:
+          self.assertFalse(gpu_sparse and gpu_sparse.cuda_is_supported)
+        else:
+          self.assertFalse(sparse_apis and sparse_apis.is_supported)
         self.assertNotIn(sparse.csr_todense_p,
                          mlir._platform_specific_lowerings["cuda"])
       else:
-        self.assertTrue(sparse_apis and sparse_apis.is_supported)
+        if gpu_sparse:
+          self.assertTrue(gpu_sparse and gpu_sparse.cuda_is_supported)
+        else:
+          self.assertTrue(sparse_apis and sparse_apis.is_supported)
         self.assertIn(sparse.csr_todense_p,
                       mlir._platform_specific_lowerings["cuda"])
     else:
-      self.assertTrue(sparse_apis and sparse_apis.is_supported)
+      if gpu_sparse:
+        self.assertTrue(gpu_sparse and gpu_sparse.rocm_is_supported)
+      else:
+        self.assertTrue(sparse_apis and sparse_apis.is_supported)
       self.assertIn(sparse.csr_todense_p,
                     mlir._platform_specific_lowerings["rocm"])
 

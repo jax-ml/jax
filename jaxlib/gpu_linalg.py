@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+from functools import partial
 import operator
 
 import jaxlib.mlir.ir as ir
@@ -27,12 +28,19 @@ try:
   for _name, _value in _cuda_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
-  pass
+  _cuda_linalg = None
+
+try:
+  from . import _hip_linalg
+  for _name, _value in _hip_linalg.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+except ImportError:
+  _hip_linalg = None
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def lu_pivots_to_permutation_mhlo(pivots, *, permutation_size):
+def _lu_pivots_to_permutation_mhlo(platform, gpu_linalg, pivots, *, permutation_size):
   """Kernel for the transformation of pivots to permutations on GPU."""
   typ = ir.RankedTensorType(pivots.type)
   dims = typ.shape
@@ -43,7 +51,7 @@ def lu_pivots_to_permutation_mhlo(pivots, *, permutation_size):
   batch_size = _prod(dims[:-1])
   pivot_size = dims[-1]
 
-  opaque = _cuda_linalg.cuda_lu_pivots_to_permutation_descriptor(
+  opaque = gpu_linalg.lu_pivots_to_permutation_descriptor(
       batch_size, pivot_size, permutation_size)
   pivots_layout = ir.DenseIntElementsAttr.get(np.arange(len(dims) - 1, -1, -1),
                                               type=ir.IndexType.get())
@@ -54,10 +62,16 @@ def lu_pivots_to_permutation_mhlo(pivots, *, permutation_size):
   return mhlo.CustomCallOp(
       [permutations_type],
       [pivots],
-      call_target_name = ir.StringAttr.get("cuda_lu_pivots_to_permutation"),
+      call_target_name = ir.StringAttr.get(
+          f"{platform}_lu_pivots_to_permutation"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
       called_computations=ir.ArrayAttr.get([]),
       operand_layouts=ir.ArrayAttr.get([pivots_layout]),
       result_layouts=ir.ArrayAttr.get([permutations_layout])).result
+
+cuda_lu_pivots_to_permutation = partial(
+    _lu_pivots_to_permutation_mhlo, "cuda", _cuda_linalg)
+rocm_lu_pivots_to_permutation = partial(
+    _lu_pivots_to_permutation_mhlo, "rocm", _hip_linalg)

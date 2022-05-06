@@ -15,6 +15,8 @@
 cusparse wrappers for performing sparse matrix computations in JAX
 """
 
+from functools import partial
+
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.mhlo as mhlo
 
@@ -30,8 +32,17 @@ else:
   for _name, _value in _cusparse.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 
+try:
+  from . import _hipsparse
+except ImportError:
+  _hipsparse = None
+else:
+  for _name, _value in _hipsparse.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 
-is_supported : bool = _cusparse and _cusparse.cusparse_supported
+
+cuda_is_supported : bool = _cusparse and _cusparse.cusparse_supported
+rocm_is_supported : bool = _hipsparse and _hipsparse.hipsparse_supported
 
 
 def _validate_csr_mhlo(data, indices, indptr, shape):
@@ -57,12 +68,13 @@ def _validate_coo_mhlo(data, row, col, shape):
   return data_type.element_type, row_type.element_type, nnz
 
 
-def csr_todense_mhlo(data, indices, indptr, *, shape, data_dtype, index_dtype):
+def _csr_todense_mhlo(platform, gpu_sparse, data, indices, indptr, *, shape,
+                      data_dtype, index_dtype):
   """CSR to dense matrix."""
   data_type, index_type, nnz = _validate_csr_mhlo(data, indices, indptr, shape)
   rows, cols = shape
 
-  buffer_size, opaque = _cusparse.build_csr_todense_descriptor(
+  buffer_size, opaque = gpu_sparse.build_csr_todense_descriptor(
       data_dtype, index_dtype, rows, cols, nnz)
 
   i32_type = ir.IntegerType.get_signless(32)
@@ -73,7 +85,7 @@ def csr_todense_mhlo(data, indices, indptr, *, shape, data_dtype, index_dtype):
                                   ir.IntegerType.get_signless(8)),
       ])],
       [data, indices, indptr],
-      call_target_name=ir.StringAttr.get("cusparse_csr_todense"),
+      call_target_name=ir.StringAttr.get(f"{platform}sparse_csr_todense"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -88,13 +100,17 @@ def csr_todense_mhlo(data, indices, indptr, *, shape, data_dtype, index_dtype):
       ]))
   return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
 
+cuda_csr_todense = partial(_csr_todense_mhlo, "cu", _cusparse)
+rocm_csr_todense = partial(_csr_todense_mhlo, "hip", _hipsparse)
 
-def csr_fromdense_mhlo(mat, *, nnz, index_dtype, data_dtype, index_type):
+
+def _csr_fromdense_mhlo(platform, gpu_sparse, mat, *, nnz, index_dtype,
+                        data_dtype, index_type):
   """CSR from dense matrix."""
   mat_type = ir.RankedTensorType(mat.type)
   rows, cols = mat_type.shape
 
-  buffer_size, opaque = _cusparse.build_csr_fromdense_descriptor(
+  buffer_size, opaque = gpu_sparse.build_csr_fromdense_descriptor(
       data_dtype, index_dtype, rows, cols, nnz)
 
   i32_type = ir.IntegerType.get_signless(32)
@@ -107,7 +123,7 @@ def csr_fromdense_mhlo(mat, *, nnz, index_dtype, data_dtype, index_type):
                                   ir.IntegerType.get_signless(8)),
       ])],
       [mat],
-      call_target_name=ir.StringAttr.get("cusparse_csr_fromdense"),
+      call_target_name=ir.StringAttr.get(f"{platform}sparse_csr_fromdense"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -124,10 +140,13 @@ def csr_fromdense_mhlo(mat, *, nnz, index_dtype, data_dtype, index_type):
       for i in range(3)
   ]
 
+cuda_csr_fromdense = partial(_csr_fromdense_mhlo, "cu", _cusparse)
+rocm_csr_fromdense = partial(_csr_fromdense_mhlo, "hip", _hipsparse)
 
-def csr_matvec_mhlo(data, indices, indptr, x, *, shape, transpose=False,
-                    compute_dtype=None, compute_type=None, data_dtype,
-                    index_dtype, x_dtype):
+
+def _csr_matvec_mhlo(platform, gpu_sparse, data, indices, indptr, x, *, shape,
+                     transpose=False, compute_dtype=None, compute_type=None,
+                     data_dtype, index_dtype, x_dtype):
   """CSR matrix/vector multiply."""
   data_type, index_type, nnz = _validate_csr_mhlo(data, indices, indptr, shape)
   rows, cols = shape
@@ -136,7 +155,7 @@ def csr_matvec_mhlo(data, indices, indptr, x, *, shape, transpose=False,
     compute_dtype = data_dtype
     compute_type = data_type
 
-  buffer_size, opaque = _cusparse.build_csr_matvec_descriptor(
+  buffer_size, opaque = gpu_sparse.build_csr_matvec_descriptor(
       data_dtype, x_dtype, compute_dtype, index_dtype,
       rows, cols, nnz, transpose)
   out_size = cols if transpose else rows
@@ -149,7 +168,7 @@ def csr_matvec_mhlo(data, indices, indptr, x, *, shape, transpose=False,
                                   ir.IntegerType.get_signless(8)),
       ])],
       [data, indices, indptr, x],
-      call_target_name=ir.StringAttr.get("cusparse_csr_matvec"),
+      call_target_name=ir.StringAttr.get(f"{platform}sparse_csr_matvec"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -162,10 +181,13 @@ def csr_matvec_mhlo(data, indices, indptr, x, *, shape, transpose=False,
       ] * 2))
   return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
 
+cuda_csr_matvec = partial(_csr_matvec_mhlo, "cu", _cusparse)
+rocm_csr_matvec = partial(_csr_matvec_mhlo, "hip", _hipsparse)
 
-def csr_matmat_mhlo(data, indices, indptr, B, *, shape, transpose=False,
-                    compute_dtype=None, compute_type=None, index_dtype,
-                    data_dtype, B_dtype):
+
+def _csr_matmat_mhlo(platform, gpu_sparse, data, indices, indptr, B, *, shape,
+                     transpose=False, compute_dtype=None, compute_type=None,
+                     index_dtype, data_dtype, B_dtype):
   """CSR from dense matrix."""
   data_type, index_type, nnz = _validate_csr_mhlo(data, indices, indptr, shape)
   rows, cols = shape
@@ -176,7 +198,7 @@ def csr_matmat_mhlo(data, indices, indptr, B, *, shape, transpose=False,
     compute_dtype = data_dtype
     compute_type = data_type
 
-  buffer_size, opaque = _cusparse.build_csr_matmat_descriptor(
+  buffer_size, opaque = gpu_sparse.build_csr_matmat_descriptor(
       data_dtype, B_dtype, compute_dtype, index_dtype,
       rows, cols, Ccols, nnz, transpose)
   out_size = cols if transpose else rows
@@ -189,7 +211,7 @@ def csr_matmat_mhlo(data, indices, indptr, B, *, shape, transpose=False,
                                   ir.IntegerType.get_signless(8)),
       ])],
       [data, indices, indptr, B],
-      call_target_name=ir.StringAttr.get("cusparse_csr_matmat"),
+      call_target_name=ir.StringAttr.get(f"{platform}sparse_csr_matmat"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -207,13 +229,17 @@ def csr_matmat_mhlo(data, indices, indptr, B, *, shape, transpose=False,
       ]))
   return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
 
+cuda_csr_matmat = partial(_csr_matmat_mhlo, "cu", _cusparse)
+rocm_csr_matmat = partial(_csr_matmat_mhlo, "hip", _hipsparse)
 
-def coo_todense_mhlo(data, row, col, *, shape, data_dtype, index_dtype):
+
+def _coo_todense_mhlo(platform, gpu_sparse, data, row, col, *, shape,
+                      data_dtype, index_dtype):
   """COO to dense matrix."""
   data_type, _, nnz = _validate_coo_mhlo(data, row, col, shape)
   rows, cols = shape
 
-  buffer_size, opaque = _cusparse.build_coo_todense_descriptor(
+  buffer_size, opaque = gpu_sparse.build_coo_todense_descriptor(
       data_dtype, index_dtype, rows, cols, nnz)
 
   i32_type = ir.IntegerType.get_signless(32)
@@ -224,7 +250,7 @@ def coo_todense_mhlo(data, row, col, *, shape, data_dtype, index_dtype):
                                   ir.IntegerType.get_signless(8)),
       ])],
       [data, row, col],
-      call_target_name=ir.StringAttr.get("cusparse_coo_todense"),
+      call_target_name=ir.StringAttr.get(f"{platform}sparse_coo_todense"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -239,14 +265,17 @@ def coo_todense_mhlo(data, row, col, *, shape, data_dtype, index_dtype):
       ]))
   return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
 
+cuda_coo_todense = partial(_coo_todense_mhlo, "cu", _cusparse)
+rocm_coo_todense = partial(_coo_todense_mhlo, "hip", _hipsparse)
 
-def coo_fromdense_mhlo(mat, *, nnz, data_dtype, index_dtype,
-                       index_type):
+
+def _coo_fromdense_mhlo(platform, gpu_sparse, mat, *, nnz, data_dtype,
+                        index_dtype, index_type):
   """COO from dense matrix."""
   mat_type = ir.RankedTensorType(mat.type)
   rows, cols = mat_type.shape
 
-  buffer_size, opaque = _cusparse.build_coo_fromdense_descriptor(
+  buffer_size, opaque = gpu_sparse.build_coo_fromdense_descriptor(
       data_dtype, index_dtype, rows, cols, nnz)
 
   i32_type = ir.IntegerType.get_signless(32)
@@ -259,7 +288,7 @@ def coo_fromdense_mhlo(mat, *, nnz, data_dtype, index_dtype,
                                   ir.IntegerType.get_signless(8)),
       ])],
       [mat],
-      call_target_name=ir.StringAttr.get("cusparse_coo_fromdense"),
+      call_target_name=ir.StringAttr.get(f"{platform}sparse_coo_fromdense"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -276,10 +305,13 @@ def coo_fromdense_mhlo(mat, *, nnz, data_dtype, index_dtype,
       for i in range(3)
   ]
 
+cuda_coo_fromdense = partial(_coo_fromdense_mhlo, "cu", _cusparse)
+rocm_coo_fromdense = partial(_coo_fromdense_mhlo, "hip", _hipsparse)
 
-def coo_matvec_mhlo(data, row, col, x, *, shape, transpose=False,
-                    compute_dtype=None,
-                    compute_type=None, index_dtype, data_dtype, x_dtype):
+
+def _coo_matvec_mhlo(platform, gpu_sparse, data, row, col, x, *, shape,
+                     transpose=False, compute_dtype=None, compute_type=None,
+                     index_dtype, data_dtype, x_dtype):
   """COO matrix/vector multiply."""
   data_type, index_type, nnz = _validate_coo_mhlo(data, row, col, shape)
   rows, cols = shape
@@ -288,7 +320,7 @@ def coo_matvec_mhlo(data, row, col, x, *, shape, transpose=False,
     compute_dtype = data_dtype
     compute_type = data_type
 
-  buffer_size, opaque = _cusparse.build_coo_matvec_descriptor(
+  buffer_size, opaque = gpu_sparse.build_coo_matvec_descriptor(
       data_dtype, x_dtype, compute_dtype, index_dtype,
       rows, cols, nnz, transpose)
   out_size = cols if transpose else rows
@@ -301,7 +333,7 @@ def coo_matvec_mhlo(data, row, col, x, *, shape, transpose=False,
                                   ir.IntegerType.get_signless(8)),
       ])],
       [data, row, col, x],
-      call_target_name=ir.StringAttr.get("cusparse_coo_matvec"),
+      call_target_name=ir.StringAttr.get(f"{platform}sparse_coo_matvec"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -314,10 +346,13 @@ def coo_matvec_mhlo(data, row, col, x, *, shape, transpose=False,
       ] * 2))
   return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
 
+cuda_coo_matvec = partial(_coo_matvec_mhlo, "cu", _cusparse)
+rocm_coo_matvec = partial(_coo_matvec_mhlo, "hip", _hipsparse)
 
-def coo_matmat_mhlo(data, row, col, B, *, shape, transpose=False,
-                    compute_dtype=None, compute_type=None, x_dtype,
-                    data_dtype, index_dtype):
+
+def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
+                     transpose=False, compute_dtype=None, compute_type=None,
+                     x_dtype, data_dtype, index_dtype):
   """COO from dense matrix."""
   data_type, index_type, nnz = _validate_coo_mhlo(data, row, col, shape)
   rows, cols = shape
@@ -328,7 +363,7 @@ def coo_matmat_mhlo(data, row, col, B, *, shape, transpose=False,
     compute_dtype = data_dtype
     compute_type = data_type
 
-  buffer_size, opaque = _cusparse.build_coo_matmat_descriptor(
+  buffer_size, opaque = gpu_sparse.build_coo_matmat_descriptor(
       data_dtype, x_dtype, compute_dtype, index_dtype,
       rows, cols, Ccols, nnz, transpose)
   out_size = cols if transpose else rows
@@ -341,7 +376,7 @@ def coo_matmat_mhlo(data, row, col, B, *, shape, transpose=False,
                                   ir.IntegerType.get_signless(8)),
       ])],
       [data, row, col, B],
-      call_target_name=ir.StringAttr.get("cusparse_coo_matmat"),
+      call_target_name=ir.StringAttr.get(f"{platform}sparse_coo_matmat"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -360,14 +395,17 @@ def coo_matmat_mhlo(data, row, col, B, *, shape, transpose=False,
       ]))
   return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
 
+cuda_coo_matmat = partial(_coo_matmat_mhlo, "cu", _cusparse)
+rocm_coo_matmat = partial(_coo_matmat_mhlo, "hip", _hipsparse)
 
-def gtsv2_mhlo(dl, d, du, B, *, m, n, ldb, t):
+
+def _gtsv2_mhlo(platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t):
   """Calls `cusparse<t>gtsv2(dl, d, du, B, m, n, ldb)`."""
   f32 = (t == np.float32)
   if f32:
-    buffer_size = _cusparse.gtsv2_f32_buffer_size(m, n, ldb)
+    buffer_size = gpu_sparse.gtsv2_f32_buffer_size(m, n, ldb)
   else:
-    buffer_size = _cusparse.gtsv2_f64_buffer_size(m, n, ldb)
+    buffer_size = gpu_sparse.gtsv2_f64_buffer_size(m, n, ldb)
   i32_type = ir.IntegerType.get_signless(32)
   out = mhlo.CustomCallOp(
       [ir.TupleType.get_tuple([
@@ -378,10 +416,10 @@ def gtsv2_mhlo(dl, d, du, B, *, m, n, ldb, t):
       ])],
       [dl, d, du, B],
       call_target_name = ir.StringAttr.get(
-          "cusparse_gtsv2_" + ("f32" if f32 else "f64")),
+          f"{platform}sparse_gtsv2_" + ("f32" if f32 else "f64")),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(
-          _cusparse.build_gtsv2_descriptor(m, n, ldb)),
+          gpu_sparse.build_gtsv2_descriptor(m, n, ldb)),
       api_version=ir.IntegerAttr.get(i32_type, 2),
       called_computations=ir.ArrayAttr.get([]),
       operand_layouts=ir.ArrayAttr.get([
@@ -395,3 +433,6 @@ def gtsv2_mhlo(dl, d, du, B, *, m, n, ldb, t):
           ir.DenseIntElementsAttr.get(np.array([0]), type=ir.IndexType.get()),
       ]))
   return mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, 0)).result
+
+cuda_gtsv2 = partial(_gtsv2_mhlo, "cu", _cusparse)
+rocm_gtsv2 = partial(_gtsv2_mhlo, "hip", _hipsparse)
