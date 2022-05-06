@@ -27,6 +27,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax import dtypes
 from jax import stages
 from jax.errors import JAXTypeError
 from jax import lax
@@ -827,7 +828,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    aval = jax.ShapedArray(shape, jnp.int64)
+    aval = jax.ShapedArray(shape, dtypes.canonicalize_dtype(jnp.int64))
     x = jnp.arange(np.prod(shape)).reshape(shape)
     exe = f.lower(aval, x, _global_avals=True).compile()
     self.assertIsInstance(exe, stages.Compiled)
