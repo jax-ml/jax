@@ -2750,7 +2750,7 @@ def _register_checkpoint_pytrees():
   jax.tree_util.register_pytree_node(
       dict_wrapper,
       lambda s: (tuple(s.values()), tuple(s.keys())),
-      lambda k, xs: dict(zip(k, xs)))
+      lambda k, xs: dict_wrapper(zip(k, xs)))
 
 
 _register_checkpoint_pytrees()

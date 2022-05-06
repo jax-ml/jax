@@ -640,6 +640,26 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertLen(jax.tree_leaves(m.b), 2)
     self.assertLen(jax.tree_leaves(m.c), 2)
 
+  def test_issue_10586(self):
+
+    class JaxModule(tf.Module):
+      def __init__(self):
+        self._params = {'w': tf.Variable(tf.ones([784, 10]), name='w'),
+                        'b': tf.Variable(tf.ones([10]), name='b')}
+
+      def __call__(self, x):
+        return jax2tf.convert(lambda p, x: x @ p['w'] + p['b'])(self._params, x)
+
+    net = JaxModule()
+    images = tf.ones([1, 784])
+
+    with tf.GradientTape() as tape:
+      loss = tf.reduce_sum(net(images))
+    params = tape.watched_variables()
+    grads = tape.gradient(loss, params)
+    for var, grad in zip(params, grads):
+      self.assertEqual(var.shape, grad.shape, msg=var.name)
+
   def test_custom_jvp(self):
     """Conversion of function with custom JVP"""
 
