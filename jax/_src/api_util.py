@@ -318,7 +318,8 @@ def _dtype(x):
 
 def shaped_abstractify(x):
   try:
-    return core.raise_to_shaped(core.get_aval(x))
+    return core.raise_to_shaped(
+      x if isinstance(x, core.AbstractValue) else core.get_aval(x))
   except TypeError:
     pass
 
