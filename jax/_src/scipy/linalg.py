@@ -148,7 +148,7 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
 
 @_wraps(scipy.linalg.lu_solve,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
-@partial(jit, static_argnames=('trans', 'overwrite_a', 'check_finite'))
+@partial(jit, static_argnames=('trans', 'overwrite_b', 'check_finite'))
 def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   lu, pivots = lu_and_piv
