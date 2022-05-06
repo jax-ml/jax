@@ -3416,6 +3416,12 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
+  try:
+    idx, ndim = operator.index(index), operator.index(axis_size)
+  except TypeError:
+    pass
+  else:
+    return idx + ndim if idx < 0 else idx
   if issubdtype(_dtype(index), np.unsignedinteger):
     return index
   if core.is_constant_dim(axis_size):
@@ -3530,7 +3536,6 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
-  arr = asarray(arr)
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
   if (jax.config.jax_dynamic_shapes and type(idx) is slice and idx.step is None
@@ -3550,7 +3555,7 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
             unique_indices, mode, fill_value):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
+  indexer = _index_to_gather(arr.shape, idx)  # shared with _scatter_update
   y = arr
 
   if fill_value is not None:
@@ -3579,7 +3584,10 @@ def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
     y = lax.rev(y, indexer.reversed_y_dims)
 
   # This adds np.newaxis/None dimensions.
-  return expand_dims(y, indexer.newaxis_dims)
+  if indexer.newaxis_dims:
+    y = lax.expand_dims(y, indexer.newaxis_dims)
+
+  return y
 
 _Indexer = collections.namedtuple("_Indexer", [
   # The expected shape of the slice output.
@@ -3646,8 +3654,17 @@ def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
       idx.append(s)
   return treedef.unflatten(idx)
 
-def _int(aval):
-  return not aval.shape and issubdtype(aval.dtype, integer)
+def _is_basic_int_index(x):
+  if isinstance(x, core.Tracer):
+    aval = x.aval
+    return (isinstance(aval, ShapedArray) and not aval.shape
+            and issubdtype(aval.dtype, integer))
+  try:
+    operator.index(x)
+  except TypeError:
+    return False
+  else:
+    return not isinstance(x, (bool, np.bool_))
 
 def _index_to_gather(x_shape, idx, normalize_indices=True):
   # Remove ellipses and add trailing slice(None)s.
@@ -3689,7 +3706,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
   collapsed_slice_dims = []
   start_index_map = []
 
-  use_64bit_index = _any([not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape])
+  use_64bit_index = _any(not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape)
   index_dtype = int64 if use_64bit_index else int32
 
   # Gather indices.
@@ -3725,8 +3742,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       ndim = len(shape)
 
       start_dim = len(gather_indices_shape)
-      gather_indices += ((lax.convert_element_type(a, index_dtype), start_dim)
-                         for a in advanced_indexes)
+      gather_indices += ((a, start_dim) for a in advanced_indexes)
       gather_indices_shape += shape
 
       start_index_map.extend(x_advanced_axes)
@@ -3741,17 +3757,12 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       gather_slice_shape.append(1)
       continue
 
-    try:
-      abstract_i = core.get_aval(i)
-    except TypeError:
-      abstract_i = None
     # Handle basic int indexes.
-    if isinstance(abstract_i, (ConcreteArray, ShapedArray)) and _int(abstract_i):
+    if _is_basic_int_index(i):
       if core.symbolic_equal_dim(x_shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
-      i = lax.convert_element_type(i, index_dtype)
       gather_indices.append((i, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
@@ -3808,8 +3819,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
         if needs_rev:
           reversed_y_dims.append(collapsed_y_axis)
         if stride == 1:
-          i = lax.convert_element_type(start, index_dtype)
-          gather_indices.append((i, len(gather_indices_shape)))
+          gather_indices.append((start, len(gather_indices_shape)))
           slice_shape.append(limit - start)
           gather_slice_shape.append(limit - start)
           offset_dims.append(collapsed_y_axis)
@@ -3829,6 +3839,10 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
         y_axis += 1
         x_axis += 1
     else:
+      try:
+        abstract_i = core.get_aval(i)
+      except TypeError:
+        abstract_i = None
       if (abstract_i is not None and
           not (issubdtype(abstract_i.dtype, integer) or issubdtype(abstract_i.dtype, bool_))):
         msg = ("Indexer must have integer or boolean type, got indexer "
@@ -3842,14 +3856,18 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     gather_indices_array = np.zeros((0,), dtype=index_dtype)
   elif len(gather_indices) == 1:
     g, _ = gather_indices[0]
-    gather_indices_array = lax.expand_dims(g, (g.ndim,))
+    try:
+      gather_indices_array = np.array([operator.index(g)], dtype=index_dtype)
+    except TypeError:
+      gather_indices_array = lax.expand_dims(lax.convert_element_type(g, index_dtype), (g.ndim,))
   else:
     last_dim = len(gather_indices_shape)
     gather_indices_shape.append(1)
     gather_indices_array = lax.concatenate([
-      lax.broadcast_in_dim(g, gather_indices_shape, tuple(range(i, i + g.ndim)))
-      for g, i in gather_indices],
-      last_dim)
+      lax.broadcast_in_dim(
+        lax.convert_element_type(g, index_dtype), gather_indices_shape, tuple(range(i, i + _ndim(g))))
+        for g, i in gather_indices],
+    last_dim)
 
   dnums = lax.GatherDimensionNumbers(
     offset_dims = tuple(offset_dims),
@@ -3877,6 +3895,8 @@ def _eliminate_deprecated_list_indexing(idx):
   # non-tuple sequence containing slice objects, [Ellipses, or newaxis
   # objects]". Detects this and raises a TypeError.
   if not isinstance(idx, tuple):
+    if isinstance(idx, (int, slice)):
+      return (idx,)
     if isinstance(idx, Sequence) and not isinstance(idx, (ndarray, np.ndarray)):
       # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
       # others are converted to arrays, based on a set of somewhat convoluted heuristics
@@ -3896,13 +3916,11 @@ def _eliminate_deprecated_list_indexing(idx):
   return idx
 
 def _is_boolean_index(i):
-  try:
-    abstract_i = core.get_aval(i)
-  except TypeError:
-    abstract_i = None
-  return (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_)
-          or isinstance(i, list) and i and _all(_is_scalar(e)
-          and issubdtype(_dtype(e), np.bool_) for e in i))
+  if isinstance(i, core.Tracer):
+    i = i.aval
+  return (isinstance(i, bool) or getattr(i, "dtype", None) == np.bool_ or
+          isinstance(i, list) and i and _all(_is_scalar(e)
+          and _dtype(e) == np.bool_ for e in i))
 
 def _expand_bool_indices(idx, shape):
   """Converts concrete bool indexes into advanced integer indexes."""
@@ -3916,11 +3934,11 @@ def _expand_bool_indices(idx, shape):
                       if e is not None and e is not Ellipsis)
   ellipsis_offset = 0
   for dim_number, i in enumerate(idx):
-    try:
-      abstract_i = core.get_aval(i)
-    except TypeError:
-      abstract_i = None
     if _is_boolean_index(i):
+      try:
+        abstract_i = core.get_aval(i)
+      except TypeError:
+        abstract_i = None
       if isinstance(i, list):
         i = array(i)
         abstract_i = core.get_aval(i)
@@ -3959,7 +3977,7 @@ def _is_advanced_int_indexer(idx):
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
   if _all(e is None or e is Ellipsis or isinstance(e, slice)
-          or _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
+          or _is_basic_int_index(e) for e in idx):
     return False
   return _all(e is None or e is Ellipsis or isinstance(e, slice)
               or _is_int_arraylike(e) for e in idx)
