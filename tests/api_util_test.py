@@ -14,17 +14,92 @@
 """Tests for jax.api_util."""
 
 import itertools as it
+from typing import Tuple
 from absl.testing import absltest
 from absl.testing import parameterized
 from jax._src import api_util
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-
 from jax.config import config
+import math
 config.parse_flags_with_absl()
 
 
 class ApiUtilTest(jtu.JaxTestCase):
+
+  def assertArgTuplesEqual(self,
+                           tuple1: Tuple[Tuple[int, ...], Tuple[str, ...]],
+                           tuple2:  Tuple[Tuple[int, ...], Tuple[str, ...]]):
+    """
+    Asserts that elements and count of argnums and argnames for each of the
+    two tuples are the same.
+    """
+    self.assertLen(tuple1, 2)
+    self.assertLen(tuple2, 2)
+    self.assertCountEqual(tuple1[0], tuple2[0])
+    self.assertCountEqual(tuple1[1], tuple2[1])
+
+  @parameterized.parameters(
+    (None, None, (), ()),  # Empty
+    (0, None, (0,), ("a",)),  # Integer input
+    (None, "a", (0,), ("a",)),  # String input
+    ((0, 1, 2), None, (0, 1, 2), ("a", "b", "c")),  # argnums -> argnames,
+    (None, ("a", "b", "c"), (0, 1, 2), ("a", "b", "c")),  # argnames -> argnums,
+    ((0, 2), None, (0, 2), ("a", "c")),  # Partial argnums -> argnames
+    (None, ("a", "c"), (0, 2), ("a", "c")),  # Partial argnames -> argnums
+    ((2, 1, 0), None, (2, 1, 0), ("a", "b", "c")),  # Unordered argnums
+    (None, ("c", "b", "a"), (0, 1, 2), ("c", "b", "a")),  # Unordered argnames
+    ((0,), ("b",), (0, 1), ("a", "b")),  # Mixed
+  )
+  def test_infer_argnums_and_argnames(self, argnums, argnames, expected_argnums, expected_argnames):
+    def f(a, /, b, *, c):
+      ...
+
+    self.assertArgTuplesEqual(
+      (expected_argnums, expected_argnames),
+      api_util.infer_argnums_and_argnames(f, argnums, argnames)
+    )
+
+  def test_infer_argnums_and_argnames_invalid_sig(self):
+    f = math.log  # See: https://github.com/python/cpython/issues/73485
+
+    self.assertArgTuplesEqual(
+      (
+        (),
+        ("base",)
+      ),
+      api_util.infer_argnums_and_argnames(f, None, ("base"))
+    )
+
+    self.assertArgTuplesEqual(
+      (
+        (0,),
+        ()
+      ),
+      api_util.infer_argnums_and_argnames(f, (0,), None)
+    )
+
+  def test_infer_argnums_and_argnames_var_args(self):
+    def g(x, y, *args):
+      ...
+
+    argnums, argnames = api_util.infer_argnums_and_argnames(
+        g, argnums=(1, 2), argnames=None)
+
+    self.assertArgTuplesEqual(
+      (argnums, argnames),
+      ((1, 2), ("y",)),
+    )
+
+    def h(x, y, **kwargs):
+      ...
+
+    argnums, argnames = api_util.infer_argnums_and_argnames(
+        h, argnums=None, argnames=('foo', 'bar'))
+    self.assertArgTuplesEqual(
+      (argnums, argnames),
+      ((), ("foo", "bar"))
+    )
 
   def test_donation_vector(self):
     params = {"a": jnp.ones([]), "b": jnp.ones([])}
