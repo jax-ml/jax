@@ -23,7 +23,7 @@ limitations under the License.
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
-#include "jaxlib/hip/hipblas_kernels.h"
+#include "jaxlib/rocm/hipblas_kernels.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "rocm/include/hip/hip_runtime_api.h"
 #include "rocm/include/hipblas.h"

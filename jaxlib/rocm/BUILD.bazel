@@ -49,7 +49,7 @@ cc_library(
     srcs = ["hipblas_kernels.cc"],
     hdrs = ["hipblas_kernels.h"],
     deps = [
-        ":handle_pool",
+        "//jaxlib:handle_pool",
         ":hip_gpu_kernel_helpers",
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/algorithm:container",
@@ -90,7 +90,7 @@ cc_library(
     srcs = ["hipsolver_kernels.cc"],
     hdrs = ["hipsolver_kernels.h"],
     deps = [
-        ":handle_pool",
+        "//jaxlib:handle_pool",
         ":hip_gpu_kernel_helpers",
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/status",
@@ -128,7 +128,7 @@ cc_library(
     srcs = ["hipsparse_kernels.cc"],
     hdrs = ["hipsparse_kernels.h"],
     deps = [
-        ":handle_pool",
+        "//jaxlib:handle_pool",
         ":hip_gpu_kernel_helpers",
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/status",
