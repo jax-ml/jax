@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import operator as op
 from typing import Callable, Optional, List, Tuple
 import types
 
@@ -29,7 +30,7 @@ from jax._src import source_info_util
 from jax._src.api_util import flatten_fun
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
-                           safe_zip)
+                           safe_zip, merge_lists)
 
 source_info_util.register_exclusion(__file__)
 
@@ -302,43 +303,46 @@ ad.primitive_jvps[remat_p] = remat_jvp
 
 def remat_partial_eval(trace, *tracers, jaxpr, **params):
   assert not jaxpr.constvars
-  policy = params['policy'] or (lambda *_, **__: False)
-  # unzip into jaxpr_known and jaxpr_unknown
+  policy = params['policy'] or nothing_saveable
   in_unknowns = [not t.is_known() for t in tracers]
-  # TODO(mattjj): use cached version of pe.partial_eval_jaxpr_custom
-  jaxpr_known, jaxpr_unknown, out_unknowns, out_inst, _ = \
-      pe._partial_eval_jaxpr_custom(jaxpr, in_unknowns, policy)
-  jaxpr_known, in_used_known = pe.dce_jaxpr(jaxpr_known, [True] * len(jaxpr_known.outvars))
-  _, used_outs_unknown = partition_list(out_inst, out_unknowns)
-  jaxpr_unknown, in_used_unknown = pe.dce_jaxpr(jaxpr_unknown, used_outs_unknown)
+  jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res = \
+      pe.partial_eval_jaxpr_custom(
+          jaxpr, in_unknowns, [True] * len(in_unknowns), False, False, policy)
+
+  # DCE jaxpr_staged, keeping only instantiated outputs which are unknown
+  _, out_inst_unknown = partition_list(out_inst, out_unknowns)
+  jaxpr_unknown, in_used_staged = pe.dce_jaxpr(jaxpr_staged, out_inst_unknown)
+  used_res, in_used_staged = split_list(in_used_staged, [num_res])
+
+  # DCE jaxpr_known, keeping all known outputs but discarding dce'd res
+  out_used_known = [True] * (len(out_unknowns) - sum(out_unknowns)) + used_res
+  jaxpr_known, in_used_known = pe.dce_jaxpr(jaxpr_known, out_used_known)
+  num_res = sum(used_res)
 
   # compute known outputs and residuals (hoisted out of remat primitive)
   _, in_consts_ = unzip2(t.pval for t in tracers if t.pval.is_known())
   _, in_consts = partition_list(in_used_known, in_consts_)
   out_consts = core.eval_jaxpr(jaxpr_known, (), *in_consts)
-  out_consts_ = iter(out_consts)
-  # form known outputs and collect residual tracers
-  out_known_tracers = [
-      pe.JaxprTracer(trace, pe.PartialVal.known(next(out_consts_)), None)
-      for uk in out_unknowns if not uk]
-  residuals = list(out_consts_)
+  out_knowns, residuals = split_list(out_consts, [len(out_consts)-num_res])
 
   # set up unknown outputs with a recipe to call remat
   res_tracers = map(trace.new_instantiated_const, residuals)
-  in_jaxpr_tracers = [*res_tracers, *map(trace.instantiate_const, tracers)]
-  _, in_jaxpr_tracers = partition_list(in_used_unknown, in_jaxpr_tracers)
+  _, tracers_staged = partition_list(in_used_staged, tracers)
+  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)
   out_jaxpr_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(x.aval), None)
                        for x in jaxpr_unknown.outvars]
   new_params = dict(params, jaxpr=jaxpr_unknown, differentiated=True)
   recipe = pe.new_eqn_recipe(in_jaxpr_tracers, out_jaxpr_tracers, remat_p,
-                             new_params, jaxpr_unknown.effects, source_info_util.current())
+                             new_params, jaxpr_unknown.effects,
+                             source_info_util.current())
   for t in out_jaxpr_tracers: t.recipe = recipe
 
   # zip together known and unknown outputs
-  return pe._zip_knowns(out_known_tracers, out_jaxpr_tracers, out_unknowns)
+  return merge_lists(out_unknowns, out_knowns, out_jaxpr_tracers)
 pe.custom_partial_eval_rules[remat_p] = remat_partial_eval
 
-def remat_partial_eval_custom_params_updater(_, __, ___, ____, params_known, params_staged):
+def remat_partial_eval_custom_params_updater(*args):
+  *_, params_known, params_staged = args
   return params_known, dict(params_staged, differentiated=True)
 pe.partial_eval_jaxpr_custom_rules[remat_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr',

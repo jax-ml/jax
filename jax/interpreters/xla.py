@@ -433,16 +433,17 @@ ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
 def _xla_call_partial_eval_custom_params_updater(
-    unks_in: Sequence[bool],
+    unks_in: Sequence[bool], inst_in: Sequence[bool],
     kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
     num_res: int, params_known: dict, params_staged: dict
   ) -> Tuple[dict, dict]:
   # pruned inputs to jaxpr_known according to unks_in, so prune donated_invars
-  donated_invars_known, _ = partition_list(unks_in, params_known['donated_invars'])
-  new_params_known = dict(params_known, donated_invars=tuple(donated_invars_known))
+  donated_known, _ = partition_list(unks_in, params_known['donated_invars'])
+  new_params_known = dict(params_known, donated_invars=tuple(donated_known))
   # added num_res new inputs to jaxpr_staged, so extend donated_invars
-  donated_invars_staged = [*([False] * num_res), *params_staged['donated_invars']]
-  new_params_staged = dict(params_staged, donated_invars=tuple(donated_invars_staged))
+  _, donated_staged_ = partition_list(inst_in, params_staged['donated_invars'])
+  donated_staged = [False] * num_res + donated_staged_
+  new_params_staged = dict(params_staged, donated_invars=tuple(donated_staged))
   return new_params_known, new_params_staged
 pe.partial_eval_jaxpr_custom_rules[xla_call_p] = \
     partial(pe.call_partial_eval_custom_rule, 'call_jaxpr',

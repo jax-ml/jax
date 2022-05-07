@@ -4007,17 +4007,20 @@ class RematTest(jtu.JaxTestCase):
     self.assertNotIn('conditional', c.as_hlo_text())
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_{policy_name}", "policy": policy,
-       "in_jaxpr2": in_jaxpr2, "not_in_jaxpr2": not_in_jaxpr2}
+      {"testcase_name": f"_{policy_name}_{remat_name}", "remat": remat,
+       "policy": policy, "in_jaxpr2": in_jaxpr2, "not_in_jaxpr2": not_in_jaxpr2}
+      for remat_name, remat in [
+          ('old_remat', api.remat),
+          ('new_remat', new_checkpoint),
+      ]
       for policy_name, policy, in_jaxpr2, not_in_jaxpr2 in [
           ('save_anything', lambda *_, **__: True, [], [' sin ', ' cos ']),
           ('save_nothing',  lambda *_, **__: False, [' sin ', ' cos '], []),
           ('save_sin',  lambda p, *_, **__: str(p) == 'sin', [' cos '], [' sin ']),
       ])
-  def test_remat_custom_policy(self, policy, in_jaxpr2, not_in_jaxpr2):
+  def test_remat_custom_policy(self, remat, policy, in_jaxpr2, not_in_jaxpr2):
     for square in [lambda x: x * x, api.jit(lambda x: x * x)]:
-      f = api.remat(lambda x: jnp.sin(square(jnp.sin(x))),
-                    policy=policy)
+      f = remat(lambda x: jnp.sin(square(jnp.sin(x))), policy=policy)
       y, f_lin = api.linearize(f, 1.)
       ydot = f_lin(2.)
       jaxpr_text = str(f_lin.func.args[0])
@@ -4031,18 +4034,30 @@ class RematTest(jtu.JaxTestCase):
       self.assertAllClose(ydot, ydot_expected)
       jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
 
-  def test_remat_custom_policy_save_cos(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{remat_name}", "remat": remat}
+      for remat_name, remat in [
+          ('old_remat', api.remat),
+          ('new_remat', new_checkpoint),
+      ])
+  def test_remat_custom_policy_save_cos(self, remat):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
-    f = api.remat(lambda x: jnp.sin(jnp.sin(x)),  # different function
-                  policy=save_cos)
+    f = remat(lambda x: jnp.sin(jnp.sin(x)),  # different function
+              policy=save_cos)
     _, f_lin = api.linearize(f, 1.)
     jaxpr_text = str(f_lin.func.args[0])
     self.assertNotIn(' sin ', jaxpr_text)
     self.assertNotIn(' cos ', jaxpr_text)
     jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
 
-  def test_remat_checkpoint_dots(self):
-    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{remat_name}", "remat": remat}
+      for remat_name, remat in [
+          ('old_remat', api.remat),
+          ('new_remat', new_checkpoint),
+      ])
+  def test_remat_checkpoint_dots(self, remat):
+    @partial(remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
       x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x)
@@ -4058,8 +4073,14 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' dot_'), 6)
     jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
 
-  def test_remat_checkpoint_dots_with_no_batch_dims(self):
-    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{remat_name}", "remat": remat}
+      for remat_name, remat in [
+          ('old_remat', api.remat),
+          ('new_remat', new_checkpoint),
+      ])
+  def test_remat_checkpoint_dots_with_no_batch_dims(self, remat):
+    @partial(remat, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)
     def f(x):
       x = jnp.einsum('ij,jk->ik', x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x)
@@ -4075,8 +4096,14 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' dot_general'), 6)
     jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
 
-  def test_remat_checkpoint_dots_with_no_batch_dims2(self):
-    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{remat_name}", "remat": remat}
+      for remat_name, remat in [
+          ('old_remat', api.remat),
+          ('new_remat', new_checkpoint),
+      ])
+  def test_remat_checkpoint_dots_with_no_batch_dims2(self, remat):
+    @partial(remat, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)
     def f(x):
       x = jnp.einsum('nij,njk->nik', x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x)
@@ -4092,9 +4119,15 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' dot_general'), 9)
     jtu.check_grads(f, (jnp.ones((3, 2, 2)),), order=2, modes=['fwd', 'rev'])
 
-  def test_remat_checkpoint_dots_jit(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{remat_name}", "remat": remat}
+      for remat_name, remat in [
+          ('old_remat', api.remat),
+          ('new_remat', new_checkpoint),
+      ])
+  def test_remat_checkpoint_dots_jit(self, remat):
     @api.jit
-    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    @partial(remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
       x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x * 1e-3)
@@ -4196,11 +4229,17 @@ class RematTest(jtu.JaxTestCase):
       return lax.scan(lambda x, _: (f(x), None), x, None, length=2)[0]
     jtu.check_grads(g, (3.,), order=2, modes=['rev'])
 
-  def test_remat_dropvar_policy(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{remat_name}", "remat": remat}
+      for remat_name, remat in [
+          ('old_remat', api.remat),
+          ('new_remat', new_checkpoint),
+      ])
+  def test_remat_dropvar_policy(self, remat):
     def f(x):
       return x, x
 
-    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    @partial(remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def g(x):
       x = api.grad(lambda x: f(x)[0])(x)
       return x
