@@ -1688,10 +1688,6 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
                     "unimplemented",
                     devices=("cpu", "gpu"),
                     dtypes=[np.float16, dtypes.bfloat16]),
-                Limitation(
-                    "complex not implemented. Works in JAX for CPU and GPU with custom kernels",
-                    devices="tpu",
-                    dtypes=[np.complex64, np.complex128])
             ],
             shape=shape,
             dtype=dtype,
@@ -2621,18 +2617,6 @@ def _make_dot_general_harness(name,
       dimension_numbers=dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
-      jax_unimplemented=[
-          Limitation(
-              "preferred_element_type=c128 not implemented",
-              devices="tpu",
-              dtypes=np.complex64,
-              enabled=(preferred_element_type in [np.complex128])),
-          Limitation(
-              "preferred_element_type=i64 not implemented",
-              devices="tpu",
-              dtypes=(np.int8, np.int16, np.int32),
-              enabled=(preferred_element_type in [np.int64])),
-      ],
   )
 
 
@@ -2794,11 +2778,6 @@ def _make_conv_harness(name,
         preferred_element_type=preferred_element_type,
         enable_xla=enable_xla,
         jax_unimplemented=[
-            Limitation(
-                "preferred_element_type=i64 not implemented",
-                devices="tpu",
-                dtypes=(np.int8, np.int16, np.int32),
-                enabled=(preferred_element_type in [np.int64])),
             # b/183565702 - no integer convolutions for GPU
             Limitation(
                 "preferred_element_type not implemented for integers",
@@ -2806,16 +2785,6 @@ def _make_conv_harness(name,
                 dtypes=(np.int8, np.int16, np.int32),
                 enabled=(preferred_element_type in [np.int16, np.int32,
                                                     np.int64])),
-            Limitation(
-                "preferred_element_type=f64 not implemented",
-                devices="tpu",
-                dtypes=(np.float16, jnp.bfloat16, np.float32),
-                enabled=(preferred_element_type in [np.float64])),
-            Limitation(
-                "preferred_element_type=c128 not implemented",
-                devices="tpu",
-                dtypes=np.complex64,
-                enabled=(preferred_element_type in [np.complex128])),
         ],
     )
 

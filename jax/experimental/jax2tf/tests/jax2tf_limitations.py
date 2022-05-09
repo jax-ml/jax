@@ -1138,6 +1138,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             modes=("eager", "graph", "compiled"),
             skip_comparison=True),
         missing_tf_kernel(dtypes=[dtypes.bfloat16], devices="tpu"),
+        missing_tf_kernel(dtypes=[np.complex64, np.complex128],
+                          modes=("compiled", "graph"),
+                          devices="tpu"),
         custom_numeric(
             tol=1e-4,
             dtypes=[np.float32, np.complex64],
