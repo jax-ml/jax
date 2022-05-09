@@ -558,21 +558,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def erf(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
-    ]
+    return []
 
   @classmethod
   def erfc(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
-    ]
+    return []
 
   @classmethod
   def erf_inv(cls, harness: primitive_harness.Harness):
@@ -615,8 +605,15 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         Jax2TfLimitation(
             "TF function not compileable",
             devices=("cpu", "gpu"),
-            dtypes=[np.float64, np.complex128],
+            dtypes=[np.float64],
             modes="compiled"),
+        Jax2TfLimitation(
+            "TF function not compileable for IFFT and IRFFT",
+            devices=("cpu", "gpu"),
+            dtypes=[np.complex128],
+            modes="compiled",
+            enabled=(str(harness.params["fft_type"]) in ["FftType.IFFT",
+                                                         "FftType.IRFFT"])),
         # TODO: very high tolerance
         custom_numeric(tol=1e-3, modes=("eager", "graph", "compiled")),
     ]
@@ -732,13 +729,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def integer_pow(cls, harness: primitive_harness.Harness):
     y = harness.params["y"]
     return [
-        missing_tf_kernel(
-            dtypes=[
-                np.int8, np.int16, np.uint8, np.uint16, np.uint32, np.uint64
-            ],
-            modes="graph",
-            enabled=(y not in [0, 1]),  # These are special-cased
-            devices=("cpu", "gpu")),
         # TODO: on TPU, for f16, we get different results with eager mode
         # than with compiled mode.
         Jax2TfLimitation(
@@ -1211,7 +1201,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def triangular_solve(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(dtypes=[dtypes.bfloat16]),
+        missing_tf_kernel(
+            dtypes=[dtypes.bfloat16],
+            devices=("gpu", "cpu"),
+            modes=("eager", "graph")),
         missing_tf_kernel(
             dtypes=[np.float16],
             devices=("gpu", "cpu"),
