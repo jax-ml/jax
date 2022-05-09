@@ -184,6 +184,25 @@ class SvdTest(jtu.JaxTestCase):
         actual_diff = jnp.diff(actual_s, append=0)
         np.testing.assert_array_less(actual_diff, np.zeros_like(actual_diff))
 
+  @parameterized.named_parameters([
+      {'testcase_name': f'_m={m}_by_n={n}_full_matrices={full_matrices}_'  # pylint:disable=g-complex-comprehension
+                        f'compute_uv={compute_uv}_dtype={dtype}',
+       'm': m, 'n': n, 'full_matrices': full_matrices,  # pylint:disable=undefined-variable
+       'compute_uv': compute_uv, 'dtype': dtype}  # pylint:disable=undefined-variable
+      for m, n in zip([2, 4, 8], [4, 4, 6])
+      for full_matrices in [True, False]
+      for compute_uv in [True, False]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+  ])
+  def testSvdOnZero(self, m, n, full_matrices, compute_uv, dtype):
+    """Tests SVD on matrix of all zeros."""
+    osp_fun = functools.partial(osp_linalg.svd, full_matrices=full_matrices,
+                                compute_uv=compute_uv)
+    lax_fun = functools.partial(svd.svd, full_matrices=full_matrices,
+                                compute_uv=compute_uv)
+    args_maker_svd = lambda: [jnp.zeros((m, n), dtype=dtype)]
+    self._CheckAgainstNumpy(osp_fun, lax_fun, args_maker_svd)
+    self._CompileAndCheck(lax_fun, args_maker_svd)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
