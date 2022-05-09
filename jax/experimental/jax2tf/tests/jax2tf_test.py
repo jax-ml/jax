@@ -22,6 +22,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from collections import OrderedDict
+import os
 
 import jax
 from jax import ad_checkpoint
@@ -291,6 +292,60 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(5., tape.gradient(uv["two"], x))
     self.assertAllClose(4., tape.gradient(uv["two"], y))
 
+  def test_custom_pytree_readme(self):
+    # Code examples from README.md
+    class CustomPair:
+      def __init__(self, a, b):
+        self.a = a
+        self.b = b
+
+    jax.tree_util.register_pytree_node(CustomPair,
+                                       lambda x: ((x.a, x.b), None),
+                                       lambda _, ab: CustomPair(*ab))
+    def f_jax(pair: CustomPair):
+      return np.float32(2.) * pair.a + np.float32(3.) * pair.b
+    f_tf = jax2tf.convert(f_jax)
+
+    x = CustomPair(np.float32(4.), np.float32(5.))
+    res_jax = f_jax(x)
+    # TF execution works as long as JAX can flatten the arguments and results
+    res_tf = f_tf(x)
+    self.assertAllClose(res_jax, res_tf.numpy())
+    res_tf_2 = tf.function(f_tf, autograph=False, jit_compile=True)(x)
+    self.assertAllClose(res_jax, res_tf_2)
+
+    # wrapped TF function to use only standard containers
+    def f_tf_wrapped(a, b):
+      return f_tf(CustomPair(a, b))
+
+    # Try to put into SavedModel
+    my_model = tf.Module()
+    # Save a function that can take scalar inputs.
+    my_model.f = tf.function(f_tf_wrapped, autograph=False,
+                             input_signature=[tf.TensorSpec([], tf.float32),
+                                              tf.TensorSpec([], tf.float32)])
+    model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(my_model)))
+    tf.saved_model.save(my_model, model_dir,
+                        options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
+
+    # Restoring (note: the restored model does *not* require JAX to run, just XLA).
+    restored_model = tf.saved_model.load(model_dir)
+    def restored_f(pair: CustomPair):
+      return restored_model.f(pair.a, pair.b)
+
+    res_tf_3 = restored_f(x)
+    self.assertAllClose(res_jax, res_tf_3)
+    grad_jax = jax.grad(f_jax)(x)
+
+    x_v = [tf.Variable(x.a), tf.Variable(x.b)]
+    with tf.GradientTape() as tape:
+      res = f_tf_wrapped(*x_v)
+
+      grad_tf = tape.gradient(res, x_v)
+    self.assertAllClose(grad_jax.a, grad_tf[0])
+    self.assertAllClose(grad_jax.b, grad_tf[1])
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"function={with_function}",
          with_function=with_function)
@@ -306,7 +361,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
     default_float_type = jax2tf.dtype_of_val(4.)
-    inputs = OrderedDict()
     x = tf.Variable([4.], dtype=default_float_type)
     y = tf.Variable([4., 5.], dtype=default_float_type)
     inputs = OrderedDict()
