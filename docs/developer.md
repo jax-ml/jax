@@ -276,24 +276,25 @@ For making smaller changes to the text content of the notebooks, it is easiest t
 ### Syncing notebooks
 
 After editing either the ipynb or md versions of the notebooks, you can sync the two versions
-using [jupytext](https://jupytext.readthedocs.io/) by running:
+using [jupytext](https://jupytext.readthedocs.io/) by running `jupytext --sync` on the updated
+notebooks; for example:
 
 ```
-jupytext --sync docs/notebooks/*
+pip install jupytext==1.13.8
+jupytext --sync docs/notebooks/quickstart.ipynb
 ```
 
-Be sure to use the version of jupytext specified in
+The jupytext version should match that specified in
 [.pre-commit-config.yaml](https://github.com/google/jax/blob/main/.pre-commit-config.yaml).
 
-Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the correct jupytext version:
+To check that the markdown and ipynb files are properly synced, you may use the
+[pre-commit](https://pre-commit.com/) framework to perform the same check used
+by the github CI:
 
 ```
+git add docs -u  # pre-commit runs on files in git staging.
 pre-commit run jupytext
 ```
-
-See the pre-commit framework documentation for information on how to set your local git
-environment to execute this automatically.
 
 ### Creating new notebooks
 
