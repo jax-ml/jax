@@ -65,4 +65,4 @@ def _threefry2x32_lowering(prng, platform, keys, data):
       result_layouts=[layout] * 2)
 
 cuda_threefry2x32 = partial(_threefry2x32_lowering, _cuda_prng, "cuda")
-rocm_threefry2x32 = partial(_threefry2x32_lowering, _hip_prng, "rocm")
+rocm_threefry2x32 = partial(_threefry2x32_lowering, _hip_prng, "hip")
