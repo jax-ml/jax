@@ -1,5 +1,11 @@
 name: CI
 
+# We test all supported Python versions as follows:
+# - 3.7  : Documentation build
+# - 3.8  : Part of Matrix
+# - 3.9  : Part of Matrix with NumPy dispatch
+# - 3.10 : Part of Matrix
+
 on:
   # Trigger the workflow on push or pull request,
   # but only for the main branch
@@ -35,18 +41,25 @@ jobs:
       matrix:
         include:
           - name-prefix: "with 3.8"
-            python-version: 3.8
+            python-version: "3.8"
             os: ubuntu-latest
             enable-x64: 0
             package-overrides: "none"
             num_generated_cases: 1
             use-latest-jaxlib: false
           - name-prefix: "with numpy-dispatch"
-            python-version: 3.9
+            python-version: "3.9"
             os: ubuntu-latest
             enable-x64: 1
             # Test experimental NumPy dispatch
             package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
+            num_generated_cases: 1
+            use-latest-jaxlib: false
+          - name-prefix: "with 3.10"
+            python-version: "3.10"
+            os: ubuntu-latest
+            enable-x64: 0
+            package-overrides: "none"
             num_generated_cases: 1
             use-latest-jaxlib: false
     steps:
