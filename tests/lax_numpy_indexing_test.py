@@ -871,6 +871,10 @@ class IndexingTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
 
+    jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+
   def testIndexingEmptyDimension(self):
     # Issue 2671: XLA error when indexing into dimension of size 0
     x = jnp.ones((2, 0))
