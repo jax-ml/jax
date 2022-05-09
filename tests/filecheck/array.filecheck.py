@@ -95,7 +95,7 @@ def main(_):
       partial(lax.squeeze, dimensions=(1,)))
 
   # CHECK-LABEL: TEST: top_k int32[2,7]
-  # CHECK: xla_fallback_top_k
+  # CHECK: chlo.top_k
   # CHECK: tensor<2x7xi32>
   print_ir(np.empty([2, 7], np.int32))(partial(lax.top_k, k=7))
 

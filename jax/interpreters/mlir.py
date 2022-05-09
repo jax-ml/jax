@@ -1280,7 +1280,3 @@ def emit_python_callback(platform, callback,
 # # CHLO doesn't have a legalization for bf16 (b/203774470)
 # lax.erf_p,
 # lax.erfc_p,
-
-# # Not present in cHLO or mHLO (b/203798239), although we could just emit the
-# # lowered pattern ourselves.
-# lax.top_k_p,
