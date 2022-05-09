@@ -76,13 +76,11 @@ More detailed information can be found in the
 | eig | TF error: function not compilable | all | cpu | compiled |
 | eigh | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu | compiled, eager, graph |
 | eigh | TF error: op not defined for dtype | bfloat16 | tpu | compiled, eager, graph |
-| erf | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
-| erfc | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| fft | TF error: TF function not compileable | complex128, float64 | cpu, gpu | compiled |
+| fft | TF error: TF function not compileable | float64 | cpu, gpu | compiled |
+| fft | TF error: TF function not compileable for IFFT and IRFFT | complex128 | cpu, gpu | compiled |
 | igamma | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | igammac | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
-| integer_pow | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu | graph |
 | lgamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | lu | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | nextafter | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
@@ -103,7 +101,7 @@ More detailed information can be found in the
 | svd | TF error: op not defined for dtype | bfloat16 | tpu | compiled, eager, graph |
 | svd | TF error: op not defined for dtype | complex | tpu | compiled, graph |
 | triangular_solve | TF test skipped: Not implemented in JAX: unimplemented | float16 | gpu | compiled, eager, graph |
-| triangular_solve | TF error: op not defined for dtype | bfloat16 | cpu, gpu, tpu | compiled, eager, graph |
+| triangular_solve | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | triangular_solve | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
 
 ## Generated summary of primitives with known numerical discrepancies in Tensorflow
