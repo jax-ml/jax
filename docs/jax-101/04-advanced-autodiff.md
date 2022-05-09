@@ -35,7 +35,7 @@ We illustrate this in the single-variable case:
 
 The derivative of $f(x) = x^3 + 2x^2 - 3x + 1$ can be computed as:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: Kqsbj98UTVdi
 
 import jax
@@ -60,7 +60,7 @@ $$
 
 Computing any of these in JAX is as easy as chaining the `grad` function:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 5X3yQqLgimqH
 
 d2fdx = jax.grad(dfdx)
@@ -83,7 +83,7 @@ $$
 
 Using JAX:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: tJkIp9wFjxL3
 :outputId: 581ecf87-2d20-4c83-9443-5befc1baf51d
 
@@ -101,7 +101,7 @@ $$(\mathbf{H}f)_{i,j} = \frac{\partial^2 f}{\partial_i\partial_j}.$$
 
 The Hessian of a real-valued function of several variables, $f: \mathbb R^n\to\mathbb R$, can be identified with the Jacobian of its gradient. JAX provides two transformations for computing the Jacobian of a function, `jax.jacfwd` and `jax.jacrev`, corresponding to forward- and reverse-mode autodiff. They give the same answer, but one can be more efficient than the other in different circumstances – see the [video about autodiff](https://www.youtube.com/watch?v=wG_nF1awSSY) linked above for an explanation.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: ILhkef1rOB6_
 
 def hessian(f):
@@ -114,7 +114,7 @@ Let's double check this is correct on the dot-product $f: \mathbf{x} \mapsto \ma
 
 if $i=j$, $\frac{\partial^2 f}{\partial_i\partial_j}(\mathbf{x}) = 2$. Otherwise, $\frac{\partial^2 f}{\partial_i\partial_j}(\mathbf{x}) = 0$.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: Xm3A0QdWRdJl
 :outputId: e1e8cba9-b567-439b-b8fc-34b21497e67f
 
@@ -155,7 +155,7 @@ Auto-diff enables automatic computation of the gradient of a function with respe
 
 Consider for instance the TD(0) ([temporal difference](https://en.wikipedia.org/wiki/Temporal_difference_learning)) reinforcement learning update. This is used to learn to estimate the *value* of a state in an environment from experience of interacting with the environment. Let's assume the value estimate $v_{\theta}(s_{t-1}$) in a state $s_{t-1}$ is parameterised by a linear function.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: fjLqbCb6SiOm
 
 # Value function and initial parameters
@@ -167,7 +167,7 @@ theta = jnp.array([0.1, -0.1, 0.])
 
 Consider a transition from a state $s_{t-1}$ to a state $s_t$ during which we observed the reward $r_t$
 
-```{code-cell}
+```{code-cell} ipython3
 :id: T6cRPau6tCSE
 
 # An example transition.
@@ -196,7 +196,7 @@ if the dependency of the target $r_t + v_{\theta}(s_t)$ on the parameter $\theta
 
 How can we implement this in JAX? If we write the pseudo loss naively we get:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: uMcFny2xuOwz
 :outputId: 79c10af9-10b8-4e18-9753-a53918b9d72d
 
@@ -217,7 +217,7 @@ But `td_update` will **not** compute a TD(0) update, because the gradient comput
 
 We can use `jax.lax.stop_gradient` to force JAX to ignore the dependency of the target on $\theta$:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: WCeq7trKPS4V
 :outputId: 0f38d754-a871-4c47-8e3a-a961418a24cc
 
@@ -242,7 +242,7 @@ The `jax.lax.stop_gradient` may also be useful in other settings, for instance i
 
 The straight-through estimator is a trick for defining a 'gradient' of a function that is otherwise non-differentiable. Given a non-differentiable function $f : \mathbb{R}^n \to \mathbb{R}^n$ that is used as part of a larger function that we wish to find a gradient of, we simply pretend during the backward pass that $f$ is the identity function. This can be implemented neatly using `jax.lax.stop_gradient`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: hdORJENmVHvX
 :outputId: f0839541-46a4-45a9-fce7-ead08f20046b
 
@@ -276,7 +276,7 @@ In JAX we can define the code to compute the gradient per-sample in an easy but 
 
 Just combine the `jit`, `vmap` and `grad` transformations together:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: tFLyd9ifw4GG
 :outputId: bf3ad4a3-102d-47a6-ece0-f4a8c9e5d434
 
@@ -296,7 +296,7 @@ Let's walk through this one transformation at a time.
 
 First, we apply `jax.grad` to `td_loss` to obtain a function that computes the gradient of the loss w.r.t. the parameters on single (unbatched) inputs:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: rPO67QQrY5Bk
 :outputId: fbb45b98-2dbf-4865-e6e5-87dc3eef5560
 
@@ -313,7 +313,7 @@ This function computes one row of the array above.
 
 Then, we vectorise this function using `jax.vmap`. This adds a batch dimension to all inputs and outputs. Now, given a batch of inputs, we produce a batch of outputs -- each output in the batch corresponds to the gradient for the corresponding member of the input batch.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 5agbNKavaNDM
 :outputId: ab081012-88ab-4904-a367-68e9f81445f0
 
@@ -327,7 +327,7 @@ almost_perex_grads(batched_theta, batched_s_tm1, batched_r_t, batched_s_t)
 
 This isn't quite what we want, because we have to manually feed this function a batch of `theta`s, whereas we actually want to use a single `theta`. We fix this by adding `in_axes` to the `jax.vmap`, specifying theta as `None`, and the other args as `0`. This makes the resulting function add an extra axis only to the other arguments, leaving `theta` unbatched, as we want:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: S6kd5MujbGrr
 :outputId: d3d731ef-3f7d-4a0a-ce91-7df57627ddbd
 
@@ -340,7 +340,7 @@ inefficient_perex_grads(theta, batched_s_tm1, batched_r_t, batched_s_t)
 
 Almost there! This does what we want, but is slower than it has to be. Now, we wrap the whole thing in a `jax.jit` to get the compiled, efficient version of the same function:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: Fvr709FcbrSW
 :outputId: 627db899-5620-4bed-8d34-cd1364d3d187
 
@@ -349,7 +349,7 @@ perex_grads = jax.jit(inefficient_perex_grads)
 perex_grads(theta, batched_s_tm1, batched_r_t, batched_s_t)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 :id: FH42yzbHcNs2
 :outputId: c8e52f93-615a-4ce7-d8ab-fb6215995a39
 

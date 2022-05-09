@@ -29,7 +29,7 @@ In the previous section, we discussed that JAX allows us to transform Python fun
 
 We can show a representation of the jaxpr of a function by using `jax.make_jaxpr`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: P9Xj77Wx3Z2P
 :outputId: 5a0597eb-86c9-4762-ce10-2811debbc732
 
@@ -59,7 +59,7 @@ When tracing, JAX wraps each argument by a *tracer* object. These tracers then r
 
 Note: the Python `print()` function is not pure: the text output is a side-effect of the function. Therefore, any `print()` calls will only happen during tracing, and will not appear in the jaxpr:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: JxV2p7e2RawC
 :outputId: 9dfe8a56-e553-4640-a04e-5405aea7832d
 
@@ -82,7 +82,7 @@ The fact that the Python code runs at least once is strictly an implementation d
 
 A key thing to understand is that jaxpr captures the function as executed on the parameters given to it. For example, if we have a conditional, jaxpr will only know about the branch we take:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: hn0CuphEZKZm
 :outputId: 99dae727-d2be-4577-831c-e1e14af5890a
 
@@ -106,7 +106,7 @@ Let's look at an example of computing a *Scaled Exponential Linear Unit*
 ([SELU](https://proceedings.neurips.cc/paper/6698-self-normalizing-neural-networks.pdf)), an
 operation commonly used in deep learning:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: JAXFYtlRvD6p
 :outputId: e94d7dc2-a9a1-4ac2-fd3f-152e3f6d141b
 
@@ -126,7 +126,7 @@ The code above is sending one operation at a time to the accelerator. This limit
 
 Naturally, what we want to do is give the XLA compiler as much code as possible, so it can fully optimize it. For this purpose, JAX provides the `jax.jit` transformation, which will JIT compile a JAX-compatible function. The example below shows how to use JIT to speed up the previous function.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: nJVEwPcH6bQX
 :outputId: 289eb2f7-a5ce-4cec-f652-5c4e5b0b86cf
 
@@ -156,7 +156,7 @@ Here's what just happened:
 
 After going through the example above, you might be wondering whether we should simply apply `jax.jit` to every function. To understand why this is not the case, and when we should/shouldn't apply `jit`, let's first check some cases where JIT doesn't work.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: GO1Mwd_3_W6g
 :outputId: a6fcf6d1-7bd6-4bb7-99c3-2a5a827183e2
 :tags: [raises-exception]
@@ -173,7 +173,7 @@ f_jit = jax.jit(f)
 f_jit(10)  # Should raise an error. 
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 :id: LHlipkIMFUhi
 :outputId: 54935882-a180-45c0-ad03-9dfb5e3baa97
 :tags: [raises-exception]
@@ -202,7 +202,7 @@ In `jax.grad`, the constraints are more relaxed, so you can do more. If you comp
 
 One way to deal with this problem is to rewrite the code to avoid conditionals on value. Another is to use special [control flow operators](https://jax.readthedocs.io/en/latest/jax.lax.html#control-flow-operators) like `jax.lax.cond`. However, sometimes that is impossible. In that case, you can consider jitting only part of the function. For example, if the most computationally expensive part of the function is inside the loop, we can JIT just that inner part (though make sure to check the next section on caching to avoid shooting yourself in the foot):
 
-```{code-cell}
+```{code-cell} ipython3
 :id: OeR8hF-NHAML
 :outputId: d47fd6b2-8bbd-4939-a794-0b80183d3179
 
@@ -225,7 +225,7 @@ g_inner_jitted(10, 20)
 
 If we really need to JIT a function that has a condition on the value of an input, we can tell JAX to help itself to a less abstract tracer for a particular input by specifying `static_argnums` or `static_argnames`. The cost of this is that the resulting jaxpr is less flexible, so JAX will have to re-compile the function for every new value of the specified static input. It is only a good strategy if the function is guaranteed to get limited different values.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 2yQmQTDNAenY
 :outputId: c48f07b8-c3f9-4d2a-9dfd-663838a52511
 
@@ -233,7 +233,7 @@ f_jit_correct = jax.jit(f, static_argnums=0)
 print(f_jit_correct(10))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 :id: R4SXUEu-M-u1
 :outputId: 9e712e14-4e81-4744-dcf2-a10f470d9121
 
@@ -243,7 +243,7 @@ print(g_jit_correct(10, 20))
 
 To specify such arguments when using `jit` as a decorator, a common pattern is to use python's `functools.partial`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 2X5rR4jkIO
 :outputId: 81-4744-dc2e4-4e10f470f2-a19e71d9121
 
@@ -265,7 +265,7 @@ print(g_jit_decorated(10, 20))
 
 In many of the the examples above, jitting is not worth it:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: uMOqsNnqYApD
 :outputId: 2d6c5122-43ad-4257-e56b-e77c889131c2
 
@@ -294,7 +294,7 @@ If I specify `static_argnums`, then the cached code will be used only for the sa
 
 Avoid calling `jax.jit` inside loops. For most cases, JAX will be able to use the compiled, cached function in subsequent calls to `jax.jit`. However, because the cache relies on the hash of the function, it becomes problematic when equivalent functions are redefined. This will cause unnecessary compilation each time in the loop:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 6MDSXCfmSZVZ
 :outputId: a035d0b7-6a4d-4a9e-c6b4-7521970829fc
 

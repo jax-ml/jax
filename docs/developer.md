@@ -244,7 +244,7 @@ sphinx-build -b html docs docs/build/html -j auto
 This can take a long time because it executes many of the notebooks in the documentation source;
 if you'd prefer to build the docs without executing the notebooks, you can run:
 ```
-sphinx-build -b html -D jupyter_execute_notebooks=off docs docs/build/html -j auto
+sphinx-build -b html -D nb_execution_mode=off docs docs/build/html -j auto
 ```
 You can then see the generated documentation in `docs/build/html/index.html`.
 
