@@ -649,7 +649,7 @@ def _select_n_taylor_rule(primal_in, series_in, **params):
 jet_rules[lax.select_n_p] = _select_n_taylor_rule
 
 def _lax_max_taylor_rule(primal_in, series_in):
-    x, y = primal_in
+    x, y = jnp.broadcast_arrays(*primal_in)
 
     xgy = x > y   # greater than mask
     xey = x == y  # equal to mask
@@ -661,7 +661,7 @@ def _lax_max_taylor_rule(primal_in, series_in):
         max_i = lax.select(xey, (x_i + y_i)/2, max_i)
         return max_i
 
-    series_out = [select_max_and_avg_eq(*terms_in) for terms_in in zip(*series_in)]
+    series_out = [select_max_and_avg_eq(*jnp.broadcast_arrays(*terms_in)) for terms_in in zip(*series_in)]
     return primal_out, series_out
 jet_rules[lax.max_p] = _lax_max_taylor_rule
 
