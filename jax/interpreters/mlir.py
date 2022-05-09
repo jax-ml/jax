@@ -1047,10 +1047,18 @@ register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
 
 
-def compare_mhlo(x, y, direction, type):
+def compare_mhlo(x, y, direction: str, comparison_type: Optional[str] = None):
   """Creates mhlo.CompareOp."""
+  if comparison_type is None:
+    elem_type = ir.RankedTensorType(x.type).element_type
+    if ir.IntegerType.isinstance(elem_type):
+      comparison_type = ("UNSIGNED" if ir.IntegerType.is_unsigned(elem_type)
+                         else "SIGNED")
+    else:
+      comparison_type = "FLOAT"
+
   return mhlo.CompareOp(x, y, mhlo.ComparisonDirectionAttr.get(direction),
-                        mhlo.ComparisonTypeAttr.get(type))
+                        mhlo.ComparisonTypeAttr.get(comparison_type))
 
 def _minmax_mhlo(op, cmp, x, y):
   """Min/max that compares complex values lexicographically as pairs."""
