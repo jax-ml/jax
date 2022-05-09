@@ -60,6 +60,7 @@ def cloud_tpu_init():
   # pylint: disable=import-outside-toplevel
   # pytype: disable=import-error
   import requests
+  import time
   # pytype: enable=import-error
   # pylint: enable=import-outside-toplevel
 
@@ -68,11 +69,22 @@ def cloud_tpu_init():
       'GCE_METADATA_IP', 'metadata.google.internal')
 
   def get_metadata(key):
-    return requests.get(
-        f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
-        headers={
-            'Metadata-Flavor': 'Google'
-        }).text
+    retry_count = 0
+    retrySeconds = 0.500
+    api_resp = None
+
+    while retry_count < 6:
+      api_resp = requests.get(
+          f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
+          headers={'Metadata-Flavor': 'Google'})
+      if api_resp.status == 200:
+        break
+      retry_count += 1
+      time.sleep(retrySeconds)
+
+    if api_resp is None:
+      raise RuntimeError(f"Getting metadata['{key}'] failed for 6 tries")
+    return api_resp.text
 
   worker_id = get_metadata('agent-worker-number')
   accelerator_type = get_metadata('accelerator-type')
