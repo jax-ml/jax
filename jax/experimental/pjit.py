@@ -1063,7 +1063,7 @@ def get_aval_sharding_proto(aval: core.AbstractValue,
                             allow_uneven_axes: bool = False) -> xc.OpSharding:
   array_mapping = get_array_mapping(axis_resources)
   sharding_spec = pxla.mesh_sharding_specs(
-      mesh.shape, mesh.axis_names, allow_uneven_axes=True)(aval, array_mapping)
+      mesh.shape, mesh.axis_names, allow_uneven_axes=allow_uneven_axes)(aval, array_mapping)
   special_axes = {}
   if axis_ctx is not None:
     axis_names = mesh.axis_names
