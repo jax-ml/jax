@@ -16,6 +16,7 @@
 from collections import namedtuple
 from functools import partial
 import gc
+import itertools as it
 import operator
 
 import numpy as np
@@ -29,7 +30,8 @@ from jax import numpy as jnp
 from jax import linear_util as lu
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
-from jax.tree_util import tree_flatten, tree_unflatten, tree_map, tree_reduce
+from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, tree_reduce,
+                           tree_leaves)
 from jax.interpreters import partial_eval as pe
 
 from jax._src import test_util as jtu
@@ -297,6 +299,38 @@ class CoreTest(jtu.JaxTestCase):
     finally:
       gc.set_debug(debug)
 
+  def test_comparing_var(self):
+    newsym = core.gensym()
+    a = newsym(core.ShapedArray((), np.dtype('int32')))
+    b = newsym(core.ShapedArray((), np.dtype('int32')))
+    c = newsym(core.ShapedArray((), np.dtype('int32')))
+    assert a < b < c
+    assert c > b > a
+    assert a != b and b != c and a != c
+
+  def test_var_ordering(self):
+    newsym = core.gensym()
+    a = newsym(core.ShapedArray((), np.dtype('int32')))
+    b = newsym(core.ShapedArray((), np.dtype('int32')))
+    c = newsym(core.ShapedArray((), np.dtype('int32')))
+    for ordering in it.permutations([a, b, c]):
+      assert sorted(list(ordering)) == [a, b, c]
+
+  def test_var_compared_by_identity(self):
+    a1 = core.gensym()(core.ShapedArray((), np.dtype('int32')))
+    a2 = core.gensym()(core.ShapedArray((), np.dtype('int32')))
+    assert str(a1) == str(a2)
+    assert a1 != a2
+
+  def test_var_tree_flatten(self):
+    newsym = core.gensym()
+    aval = core.ShapedArray((), np.dtype('int32'))
+    a, b, c, d = (
+        newsym(aval), newsym(aval),
+        newsym(aval), newsym(aval))
+    syms = {c: d, a: b}
+    assert 'bd' == ''.join(map(str, tree_leaves(syms)))
+
   def test_concrete_array_string_representation(self):
     # https://github.com/google/jax/issues/5364
     self.assertEqual(
@@ -457,7 +491,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
   def test_jaxpr_undefined_eqn_invar(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
     cos = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cos')
-    cos.invars[0] = core.gensym(suffix='_test')(cos.invars[0].aval)
+    cos.invars[0] = core.gensym([jaxpr], suffix='_test')(cos.invars[0].aval)
     self.assertRaisesRegex(
         core.JaxprTypeError,
         r"Variable '.+_test' not defined\n\nin equation:",

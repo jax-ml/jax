@@ -618,7 +618,7 @@ def ignore_errors_jaxpr(jaxpr, error):
   payload_aval = core.raise_to_shaped(core.get_aval(error.payload))
   consts = jaxpr.consts
   jaxpr = jaxpr.jaxpr
-  new_vars = core.gensym()
+  new_vars = core.gensym([jaxpr])
   new_invars = (new_vars(err_aval), new_vars(code_aval),
                 new_vars(payload_aval), *jaxpr.invars)
   new_jaxpr = jaxpr.replace(invars=new_invars)

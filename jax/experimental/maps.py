@@ -1833,7 +1833,7 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
     return jaxpr.map_jaxpr(rec)
   assert isinstance(jaxpr, core.Jaxpr)
   if gen_fresh_name is None:
-    gen_fresh_name = core.gensym()
+    gen_fresh_name = core.gensym([jaxpr])
   new_eqns = []
   for eqn in jaxpr.eqns:
     new_jaxpr_params = core.traverse_jaxpr_params(rec, eqn.params)
