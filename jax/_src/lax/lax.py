@@ -3896,7 +3896,12 @@ top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(xla.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
-xla.register_translation(top_k_p, _top_k_translation_rule)
+if jax._src.lib.mlir_api_version >= 16:
+  def _top_k_lower(ctx, operand, k):
+    return chlo.TopKOp(operand, mlir.i64_attr(k)).results
+  mlir.register_lowering(top_k_p, _top_k_lower)
+else:
+  xla.register_translation(top_k_p, _top_k_translation_rule)
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
