@@ -3425,6 +3425,8 @@ def _normalize_index(index, axis_size):
   if issubdtype(_dtype(index), np.unsignedinteger):
     return index
   if core.is_constant_dim(axis_size):
+    if isinstance(index, np.ndarray):
+      return np.where(index < 0, index + axis_size, index)
     axis_size_val = _lax_const(index, axis_size)
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
@@ -3689,13 +3691,15 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
   if _is_advanced_int_indexer(idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
-      (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if isscalar(e) or isinstance(e, (Sequence, ndarray, np.ndarray)))
+      (np.asarray(e) if isinstance(e, np.ndarray) else asarray(e), i, j)
+      for j, (i, e) in enumerate(idx_no_nones)
+      if isscalar(e) or isinstance(e, (np.ndarray, Sequence, ndarray)))
     if normalize_indices:
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                         for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
     advanced_axes_are_contiguous = np.all(np.diff(idx_advanced_axes) == 1)
+    advanced_indexes_are_const = _all(isinstance(e, np.ndarray) for e in advanced_indexes)
 
   x_axis = 0  # Current axis in x.
   y_axis = 0  # Current axis in y, before collapsing. See below.
@@ -3737,7 +3741,8 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     if (advanced_indexes is not None and
         (advanced_axes_are_contiguous and idx_pos == idx_advanced_axes[0] or
          not advanced_axes_are_contiguous and idx_pos == 0)):
-      advanced_indexes = broadcast_arrays(*advanced_indexes)
+      _broadcast = np.broadcast_arrays if advanced_indexes_are_const else broadcast_arrays
+      advanced_indexes = _broadcast(*advanced_indexes)
       shape = advanced_indexes[0].shape
       ndim = len(shape)
 
@@ -3859,7 +3864,10 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     try:
       gather_indices_array = np.array([operator.index(g)], dtype=index_dtype)
     except TypeError:
-      gather_indices_array = lax.expand_dims(lax.convert_element_type(g, index_dtype), (g.ndim,))
+      if isinstance(g, np.ndarray):
+        gather_indices_array = np.expand_dims(g.astype(index_dtype), -1)
+      else:
+        gather_indices_array = lax.expand_dims(lax.convert_element_type(g, index_dtype), (g.ndim,))
   else:
     last_dim = len(gather_indices_shape)
     gather_indices_shape.append(1)

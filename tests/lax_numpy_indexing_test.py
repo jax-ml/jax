@@ -878,8 +878,13 @@ class IndexingTest(jtu.JaxTestCase):
         ("int", int), ("np.array", np.array), ("jnp.array", jnp.array),
         ("slice_up_to", slice), ("slice_from", lambda s: slice(s, None))))
   def testConstantIndexing(self, idx, idx_type):
+    self._testConstantIndexing(idx_type(idx))
+
+  def testConstantNumpyArrayIndexing(self):
+    self._testConstantIndexing(np.array([1, 2, 3]))
+
+  def _testConstantIndexing(self, idx):
     x = jnp.arange(10)
-    idx = idx_type(idx)
     jaxpr = jax.make_jaxpr(lambda: x[idx])()
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.gather_p)
