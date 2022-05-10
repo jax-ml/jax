@@ -738,6 +738,7 @@ config.define_bool_state(
 config.define_bool_state(
     name='after_neurips',
     default=False,
+    upgrade=True,
     help='Gate changes until after NeurIPS 2022 deadline.')
 
 @contextlib.contextmanager
