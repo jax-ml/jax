@@ -120,7 +120,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for axis in [0, -1]
       for type in ['constant', 'linear']
       for bp in [0, [0, 2]]))
-  @jtu.skip_on_devices("rocm")  # will be fixed in rocm-5.1
   def testDetrend(self, shape, dtype, axis, type, bp):
     signal = np.random.normal(loc=2, size=shape)
 
@@ -171,7 +170,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for detrend in ['constant', 'linear', False]
       for boundary in [None, 'even', 'odd', 'zeros']
       for padded in [True, False]))
-  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm 5.1
   def testStftAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                            noverlap, nfft, detrend, boundary, padded,
                            timeaxis):
@@ -223,7 +221,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for detrend in ['constant', 'linear', False]
       for scaling in ['density', 'spectrum']
       for average in ['mean']))
-  @jtu.skip_on_devices("rocm")  # will be fixed in next ROCm version
   def testCsdAgainstNumpy(
       self, *, xshape, yshape, dtype, fs, window, nperseg, noverlap, nfft,
       detrend, scaling, timeaxis, average):
@@ -274,7 +271,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for detrend in ['constant', 'linear', False]
       for scaling in ['density', 'spectrum']
       for average in ['mean']))
-  @jtu.skip_on_devices("rocm")  # will be fixed in next rocm release
   def testCsdWithSameParamAgainstNumpy(
       self, *, shape, dtype, fs, window, nperseg, noverlap, nfft,
       detrend, scaling, timeaxis, average):
@@ -332,7 +328,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for return_onesided in [True, False]
       for scaling in ['density', 'spectrum']
       for average in ['mean', 'median']))
-  @jtu.skip_on_devices("rocm")  # will be fixed in next ROCm release
   def testWelchAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                             noverlap, nfft, detrend, return_onesided,
                             scaling, timeaxis, average):
@@ -423,7 +418,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
       for onesided in [False, True]
       for boundary in [False, True]))
-  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm 5.1
   def testIstftAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                             noverlap, nfft, onesided, boundary,
                             timeaxis, freqaxis):

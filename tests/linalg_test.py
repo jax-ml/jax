@@ -871,7 +871,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       # TODO(phawkins): 1e-1 seems like a very loose tolerance.
       jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
 
-  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testPinvGradIssue2792(self):
     def f(p):
       a = jnp.array([[0., 0.],[-p, 1.]], jnp.float32) * 1 / (1 + p**2)
@@ -910,7 +909,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
       for dtype in float_types + complex_types))
-  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testMatrixRank(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -958,7 +956,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       ]
       for rcond in [-1, None, 0.5]
       for dtype in float_types + complex_types))
-  @jtu.skip_on_devices("tpu","rocm")  # SVD not implemented on TPU. will be fixed in ROCm-5.1
   def testLstsq(self, lhs_shape, rhs_shape, dtype, rcond):
     rng = jtu.rand_default(self.rng())
     np_fun = partial(np.linalg.lstsq, rcond=rcond)

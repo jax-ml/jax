@@ -1100,7 +1100,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dim in [1, 3, 5]
       for dtype in float_dtypes
       for method in ['svd', 'eigh', 'cholesky']))
-  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testMultivariateNormal(self, dim, dtype, method):
     r = self.rng()
     mean = r.randn(dim)
@@ -1138,7 +1137,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       for cov_batch_size in [(), (3,), (2, 3)]
       for shape in [(), (1,), (5,)]
       for method in ['cholesky', 'svd', 'eigh']))
-  @jtu.skip_on_devices("rocm")  # will be solved in rocm-5.1
   def testMultivariateNormalShapes(self, dim, mean_batch_size, cov_batch_size,
                                    shape, method):
     r = self.rng()
