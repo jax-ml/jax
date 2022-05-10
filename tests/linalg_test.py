@@ -41,7 +41,7 @@ T = lambda x: np.swapaxes(x, -1, -2)
 float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 
-jaxlib_version = tuple(map(int, jax.lib.__version__.split('.')))
+jaxlib_version = jax._src.lib.version
 
 
 class NumpyLinalgTest(jtu.JaxTestCase):
