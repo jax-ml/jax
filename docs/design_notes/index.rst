@@ -9,3 +9,4 @@ Design Notes
    omnistaging
    prng
    type_promotion
+   sequencing_effects
