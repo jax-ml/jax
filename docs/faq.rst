@@ -364,7 +364,7 @@ device.
 Jitted functions behave like any other primitive operations—they will follow the 
 data and will show errors if invoked on data committed on more than one device.
 
-``jnp.device_put(jnp.zeros(...), jax.devices()[1])`` or similar will actually create the
+``jax.device_put(jnp.zeros(...), jax.devices()[1])`` or similar will actually create the
 array of zeros on ``jax.devices()[1]``, instead of creating the array on the default
 device then moving it. This is thanks to some laziness in array creation, which holds
 for all the constant creation operations (``ones``, ``full``, ``eye``, etc).
