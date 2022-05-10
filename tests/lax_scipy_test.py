@@ -322,7 +322,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       {"testcase_name": "_{}_lmax={}".format(
         jtu.format_shape_dtype_string(shape, dtype), l_max),
        "l_max": l_max, "shape": shape, "dtype": dtype}
-       for l_max in [1, 2, 3]
+       for l_max in [1, 2, 3, 6]
        for shape in [(5,), (10,)]
        for dtype in float_dtypes))
   def testLpmn(self, l_max, shape, dtype):
@@ -336,8 +336,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
       return np.dstack(vals), np.dstack(derivs)
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-6, atol=1e-6)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=1E-6, atol=1E-6)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-5,
+                            atol=3e-3)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=1E-5, atol=3e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_lmax={}".format(

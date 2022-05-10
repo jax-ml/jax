@@ -769,7 +769,7 @@ def _gen_derivatives(p: jnp.ndarray,
     if num_l > 2:
       l_vec = jnp.arange(2, num_l - 1)
       p_p2 = p[2, 2:num_l - 1, :]
-      coeff = 1.0 / ((l_vec + 2) * (l_vec + 1) * l_vec)
+      coeff = 1.0 / ((l_vec + 2) * (l_vec + 1) * l_vec * (l_vec - 1))
       update_p_p2 = jnp.einsum('i,ij->ij', coeff, p_p2)
       p_mm2_lm1 = p_mm2_lm1.at[0, 3:num_l, :].set(update_p_p2)
 
