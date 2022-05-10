@@ -1048,16 +1048,17 @@ def lower_parallel_callable(
   tuple_args = should_tuple_args(shards)
   module_name = f"pmap_{fun.__name__}"
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    effects = list(closed_jaxpr.effects)
-    # TODO(sharadmv): attach keepalive to computation
+    if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
+      raise ValueError("Ordered effects not supported in `pmap`.")
     module, keepalive = mlir.lower_jaxpr_to_module(
-        module_name, closed_jaxpr, effects, backend.platform, mlir.ReplicaAxisContext(axis_env),
-        name_stack, donated_invars, replicated_args=replicated_args,
+        module_name, closed_jaxpr, [], backend.platform,
+        mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars,
+        replicated_args=replicated_args,
         arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
         result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
-    del keepalive
   return PmapComputation(module, pci=pci, replicas=replicas, parts=parts,
-                         shards=shards, tuple_args=tuple_args)
+                         shards=shards, tuple_args=tuple_args,
+                         keepalive=keepalive)
 
 
 class PmapComputation(stages.Computation):
@@ -1107,7 +1108,8 @@ class PmapExecutable(stages.Executable):
                replicas: ReplicaInfo,
                parts: 'PartitionInfo',
                shards: ShardInfo,
-               tuple_args: bool):
+               tuple_args: bool,
+               keepalive: Any):
     devices = pci.devices
     if devices is None:
       if shards.num_global_shards > xb.device_count(pci.backend):
@@ -1215,7 +1217,8 @@ class PmapExecutable(stages.Executable):
           pci.backend, xla_computation, compile_options)
     handle_args = InputsHandler(
         compiled.local_devices(), input_sharding_specs, input_indices)
-    execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args, handle_outs)
+    execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args,
+                                    handle_outs, keepalive)
     fingerprint = getattr(compiled, "fingerprint", None)
 
     return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
@@ -1552,14 +1555,16 @@ def partitioned_sharding_spec(num_partitions: int,
 
 class ExecuteReplicated:
   """The logic to shard inputs, execute a replicated model, returning outputs."""
-  __slots__ = ['xla_executable', 'backend', 'in_handler', 'out_handler']
+  __slots__ = ['xla_executable', 'backend', 'in_handler', 'out_handler',
+               'keepalive']
 
   def __init__(self, xla_executable, backend, in_handler: InputsHandler,
-               out_handler: ResultsHandler):
+               out_handler: ResultsHandler, keepalive: Any):
     self.xla_executable = xla_executable
     self.backend = backend
     self.in_handler = in_handler
     self.out_handler = out_handler
+    self.keepalive = keepalive
 
   @profiler.annotate_function
   def __call__(self, *args):
@@ -2219,19 +2224,19 @@ def lower_mesh_computation(
   module: Union[str, xc.XlaComputation]
   module_name = f"{api_name}_{fun_name}"
   with core.extend_axis_env_nd(mesh.shape.items()):
-    effects = list(closed_jaxpr.effects)
-    # TODO(sharadmv): attach keepalive to computation
+    if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
+      raise ValueError("Ordered effects not supported in mesh computations.")
     module, keepalive = mlir.lower_jaxpr_to_module(
-        module_name, closed_jaxpr, effects, backend.platform, axis_ctx, name_stack,
+        module_name, closed_jaxpr, [], backend.platform, axis_ctx, name_stack,
         donated_invars, replicated_args=replicated_args,
         arg_shardings=in_partitions, result_shardings=out_partitions)
-    del keepalive
 
   return MeshComputation(
       str(name_stack), module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,
       global_out_avals=global_out_avals, in_axes=in_axes, out_axes=out_axes,
       spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_global=in_is_global,
-      auto_spmd_lowering=auto_spmd_lowering)
+      auto_spmd_lowering=auto_spmd_lowering,
+      keepalive=keepalive)
 
 
 class MeshComputation(stages.Computation):
@@ -2337,7 +2342,8 @@ class MeshExecutable(stages.Executable):
                in_is_global: Sequence[bool],
                auto_spmd_lowering: bool,
                _allow_propagation_to_outputs: bool,
-               _allow_compile_replicated: bool) -> 'MeshExecutable':
+               _allow_compile_replicated: bool,
+               keepalive: Any) -> 'MeshExecutable':
     assert not mesh.empty
     backend = xb.get_device_backend(mesh.devices.flat[0])
 
@@ -2383,7 +2389,8 @@ class MeshExecutable(stages.Executable):
         global_in_avals, mesh, in_axes, in_is_global)
       handle_outs = global_avals_to_results_handler(global_out_avals, out_axes, mesh)  # type: ignore  # arg-type
       handle_args = InputsHandler(xla_executable.local_devices(), input_specs, input_indices)
-      unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args, handle_outs)
+      unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
+                                      handle_outs, keepalive)
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
                           in_axes, out_axes, auto_spmd_lowering)

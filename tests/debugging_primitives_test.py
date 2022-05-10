@@ -44,6 +44,17 @@ def capture_stdout() -> Generator[Callable[[], str], None, None]:
 def _format_multiline(text):
   return textwrap.dedent(text).lstrip()
 
+prev_xla_flags = None
+
+def setUpModule():
+  global prev_xla_flags
+  # This will control the CPU devices. On TPU we always have 2 devices
+  prev_xla_flags = jtu.set_host_platform_device_count(2)
+
+# Reset to previous configuration in case other test modules will be run.
+def tearDownModule():
+  prev_xla_flags()
+
 class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("tpu", "gpu")
@@ -311,10 +322,34 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       b3: 2
       """))
 
+class DebugPrintParallelTest(jtu.JaxTestCase):
+
+  @jtu.skip_on_devices("tpu", "gpu", "cpu")
+  def test_ordered_print_not_supported_in_pmap(self):
+
+    @jax.pmap
+    def f(x):
+      debug_print("{}", x, ordered=True)
+    with self.assertRaisesRegex(
+        ValueError, "Ordered effects not supported in `pmap`."):
+      f(jnp.arange(jax.local_device_count()))
+
+  # TODO(sharadmv): Enable test on CPU when we have output tokens to block on
+  @jtu.skip_on_devices("tpu", "gpu", "cpu")
+  def test_unordered_print_works_in_pmap(self):
+
+    @jax.pmap
+    def f(x):
+      debug_print("{}", x, ordered=False)
+    with capture_stdout() as output:
+      f(jnp.arange(jax.local_device_count()))
+    self.assertSetEqual(set("0\n1\n".split("\n")), set(output().split("\n")))
+
 if jaxlib.version < (0, 3, 8):
   # No lowering for `emit_python_callback` in older jaxlibs.
   del DebugPrintTest
   del DebugPrintControlFlowTest
+  del DebugPrintParallelTest
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
