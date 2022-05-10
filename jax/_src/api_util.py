@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import operator
 from functools import partial
-from typing import Any, Dict, Iterable, Tuple, Union, Optional
+from typing import Any, Callable, Dict, Iterable, Mapping, Tuple, Union, Optional
 
 import numpy as np
 
@@ -132,6 +133,45 @@ class _HashableWithStrictTypeEquality:
   def __eq__(self, other):
     return type(self.val) is type(other.val) and self.val == other.val
 
+
+_VARIABLE_PARAMETERS = (
+  inspect.Parameter.VAR_POSITIONAL,
+  inspect.Parameter.VAR_KEYWORD,
+)
+def infer_argnums_and_argnames(
+    fun: Callable,
+    argnums: Union[int, Iterable[int], None],
+    argnames: Union[str, Iterable[str], None],
+  ) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
+  """Infer missing argnums and argnames for a function with inspect."""
+  argnums = _ensure_index_tuple(argnums) if argnums is not None else ()
+  argnames = _ensure_str_tuple(argnames) if argnames is not None else ()
+
+  try:
+    signature = inspect.signature(fun)
+  except ValueError:
+    # In rare cases, inspect can fail, e.g., on some builtin Python functions.
+    # In these cases, don't infer any parameters.
+    return argnums, argnames
+
+  parameters = signature.parameters
+
+  # Resolve argnums from argnames
+  additional_argnums = tuple(
+    i for i, (k, param) in enumerate(parameters.items())
+    if param.kind not in _VARIABLE_PARAMETERS and k in argnames
+  )
+
+  # Resolve argnames from argnums
+  additional_argnames = tuple(
+    k for i, (k, param) in enumerate(parameters.items())
+    if param.kind not in _VARIABLE_PARAMETERS and i in argnums
+  )
+
+  argnums = tuple(set(argnums + additional_argnums))
+  argnames = tuple(set(argnames + additional_argnames))
+
+  return argnums, argnames
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   dyn_argnums = _ensure_index_tuple(dyn_argnums)

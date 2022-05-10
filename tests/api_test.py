@@ -623,46 +623,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     actual = jit_add(x, 1)
     self.assertArraysEqual(expected, actual)
 
-  def test__infer_argnums_and_argnames(self):
-    def f(x, y=1):
-      pass
-
-    argnums, argnames = api._infer_argnums_and_argnames(
-        f, argnums=None, argnames=None)
-    assert argnums == ()
-    assert argnames == ()
-
-    argnums, argnames = api._infer_argnums_and_argnames(
-        f, argnums=0, argnames=None)
-    assert argnums == (0,)
-    assert argnames == ('x',)
-
-    argnums, argnames = api._infer_argnums_and_argnames(
-        f, argnums=None, argnames='y')
-    assert argnums == (1,)
-    assert argnames == ('y',)
-
-    argnums, argnames = api._infer_argnums_and_argnames(
-        f, argnums=0, argnames='y')  # no validation
-    assert argnums == (0,)
-    assert argnames == ('y',)
-
-    def g(x, y, *args):
-      pass
-
-    argnums, argnames = api._infer_argnums_and_argnames(
-        g, argnums=(1, 2), argnames=None)
-    assert argnums == (1, 2)
-    assert argnames == ('y',)
-
-    def h(x, y, **kwargs):
-      pass
-
-    argnums, argnames = api._infer_argnums_and_argnames(
-        h, argnums=None, argnames=('foo', 'bar'))
-    assert argnums == ()
-    assert argnames == ('foo', 'bar')
-
   def test_jit_with_static_argnames(self):
 
     def f(x):
@@ -694,26 +654,20 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       assert isinstance(y, core.Tracer) == y_is_tracer
       return 1
 
-    # If both static_argnums and static_argnames are provided, they are allowed
-    # to disagree and `jit` will respect the user's choices.
     f_nums = self.jit(f, static_argnums=1, static_argnames=())
     x_is_tracer, y_is_tracer = True, False
     assert f_nums(2, 'foo') == 1
-    x_is_tracer, y_is_tracer = True, True
     assert f_nums(1, y=2) == 1
 
     f_names = self.jit(f, static_argnums=(), static_argnames='y')
-    x_is_tracer, y_is_tracer = True, True
-    assert f_names(2, 3) == 1
     x_is_tracer, y_is_tracer = True, False
+    assert f_names(2, 3) == 1
     assert f_names(1, y='foo') == 1
 
     f_mixed = self.jit(f, static_argnums=(1,), static_argnames='x')
-    x_is_tracer, y_is_tracer = True, False
+    x_is_tracer, y_is_tracer = False, False
     assert f_mixed(2, 'foo') == 1
-    x_is_tracer, y_is_tracer = True, True
     assert f_mixed(1, y=3) == 1
-    x_is_tracer, y_is_tracer = False, True
     assert f_mixed(x='foo', y=3) == 1
 
   # TODO(zhangqiaorjc): Test pruning constants after DCE pass prunes primitive
