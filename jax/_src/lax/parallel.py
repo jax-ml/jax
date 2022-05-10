@@ -23,6 +23,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from jax import core
 from jax import tree_util
 from jax.core import ShapedArray, AxisName, raise_to_shaped
@@ -720,7 +721,12 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
       _replica_groups(ctx.module_context.axis_env, named_axes,
                       axis_index_groups))
   def all_reduce(x_dtype, x):
-    op = mhlo.AllReduceOp(x, replica_groups=replica_groups, channel_handle=None)
+    if jax._src.lib.mlir_api_version >= 17:
+      op = mhlo.AllReduceOp(
+          x.type, x, replica_groups=replica_groups, channel_handle=None)
+    else:
+      op = mhlo.AllReduceOp(
+          x, replica_groups=replica_groups, channel_handle=None)
     scalar_aval = core.ShapedArray((), x_dtype)
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
@@ -741,8 +747,12 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
     # special case because it's not currently handled by XLA:GPU
     if prim is lax.add_p and dtypes.issubdtype(aval.dtype, np.complexfloating):
       real_dtype = np.finfo(aval.dtype).dtype
-      outs.append(mhlo.ComplexOp(all_reduce(real_dtype, mhlo.RealOp(x)),
-                                 all_reduce(real_dtype, mhlo.ImagOp(x))).result)
+      outs.append(
+          mhlo.ComplexOp(
+              all_reduce(real_dtype,
+                         mhlo.RealOp(x).result),
+              all_reduce(real_dtype,
+                         mhlo.ImagOp(x).result)).result)
     else:
       outs.append(all_reduce(aval.dtype, x))
   return outs
@@ -1252,13 +1262,13 @@ def _reduce_scatter_via_reducer(x, *, reducer, scatter_dimension, axis_name,
   index = _index_in_group(axis_name, axis_index_groups)
   scatter_dim_input_size = x.shape[scatter_dimension]
   if tiled and scatter_dim_input_size % axis_size != 0:
-      raise ValueError(f"tiled reduce_scatter operand scatter dimension size "
-                       f"{scatter_dim_input_size} must be divisible by "
-                       f"shard count {axis_size}")
+    raise ValueError(f"tiled reduce_scatter operand scatter dimension size "
+                     f"{scatter_dim_input_size} must be divisible by "
+                     f"shard count {axis_size}")
   elif not tiled and scatter_dim_input_size != axis_size:
-      raise ValueError(f"reduce_scatter operand scatter dimension size "
-                       f"{scatter_dim_input_size} must match shard count"
-                       f"{axis_size}")
+    raise ValueError(f"reduce_scatter operand scatter dimension size "
+                     f"{scatter_dim_input_size} must match shard count"
+                     f"{axis_size}")
   scatter_dim_output_size = scatter_dim_input_size // axis_size
 
   outs = reducer(x, axis_name=axis_name, axis_index_groups=axis_index_groups)
