@@ -3424,8 +3424,7 @@ def _reduce_lower(ctx, *values, computation, jaxpr, consts, dimensions):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
-  op = mhlo.ReduceOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-                     operands, init_values, mlir.dense_int_elements(dimensions))
+  op = mhlo.ReduceOp(operands, init_values, mlir.dense_int_elements(dimensions))
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
