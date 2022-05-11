@@ -3486,6 +3486,19 @@ class APITest(jtu.JaxTestCase):
       finally:
         FLAGS.jax_numpy_rank_promotion = allow_promotion
 
+  def test_grad_negative_argnums(self):
+    def f(x, y):
+      return x.sum() * y.sum()
+
+    x = jax.random.normal(jax.random.PRNGKey(0), (16, 16))
+    y = jax.random.normal(jax.random.PRNGKey(1), (16, 16))
+    g = jax.grad(f, argnums=-1)
+    g(x, y)  # doesn't crash
+
+  def test_jit_negative_static_argnums(self):
+    g = jax.jit(lambda x, y: x * y, static_argnums=-1)
+    g(1, 2)  # doesn't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
