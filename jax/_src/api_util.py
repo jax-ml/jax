@@ -14,7 +14,7 @@
 
 import operator
 from functools import partial
-from typing import Any, Dict, Iterable, Tuple, Union, Optional
+from typing import Any, Dict, Iterable, Tuple, Sequence, Union, Optional
 
 import numpy as np
 
@@ -135,6 +135,7 @@ class _HashableWithStrictTypeEquality:
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   dyn_argnums = _ensure_index_tuple(dyn_argnums)
+  dyn_argnums = _ensure_inbounds(False, len(args), dyn_argnums)
   if require_static_args_hashable:
     fixed_args = []
     for i, arg in enumerate(args):
@@ -151,11 +152,25 @@ def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
+def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
+                     ) -> Tuple[int, ...]:
+  result = []
+  for i in argnums:
+    if i >= num_args and allow_invalid: continue
+    if not -num_args <= i < num_args:
+      raise ValueError(
+          "Positional argument indices, e.g. for `static_argnums`, must have "
+          "value greater than or equal to -len(args) and less than len(args), "
+          f"but got value {i} for len(args) == {num_args}.")
+    result.append(i % num_args)
+  return tuple(result)
+
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
                            args: Tuple[Any], *, allow_invalid: bool):
   """Version of ``argnums_partial`` that checks hashability of static_argnums."""
   if not static_argnums:
     return f, args
+  static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
   dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
   dyn_args = tuple(args[i] for i in dyn_argnums)
 
