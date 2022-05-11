@@ -53,7 +53,6 @@ class SvdTest(jtu.JaxTestCase):
       for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])
       for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)
       for full_matrices in [True, False]))
-  @jtu.skip_on_devices("rocm")  # will be fixed on rocm-5.1
   def testSvdWithRectangularInput(self, m, n, log_cond, full_matrices):
     """Tests SVD with rectangular input."""
     with jax.default_matmul_precision('float32'):
@@ -122,7 +121,6 @@ class SvdTest(jtu.JaxTestCase):
           'm': m, 'r': r, 'log_cond': log_cond}
       for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])
       for log_cond in np.linspace(1, 3, 3)))
-  @jtu.skip_on_devices("rocm")  # will be fixed on rocm-5.1
   def testSvdWithOnRankDeficientInput(self, m, r, log_cond):
     """Tests SVD with rank-deficient input."""
     with jax.default_matmul_precision('float32'):
@@ -149,7 +147,6 @@ class SvdTest(jtu.JaxTestCase):
       for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])
       for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)
       for full_matrices in [True, False]))
-  @jtu.skip_on_devices("rocm")  # will be fixed on rocm-5.1
   def testSingularValues(self, m, n, log_cond, full_matrices):
     """Tests singular values."""
     with jax.default_matmul_precision('float32'):

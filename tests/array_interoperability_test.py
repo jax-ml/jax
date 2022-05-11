@@ -75,6 +75,7 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in dlpack_dtypes
      for take_ownership in [False, True]
      for gpu in [False, True]))
+  @jtu.skip_on_devices("rocm") # relevant dlpack protocol is N/A for ROCm ATM
   def testJaxRoundTrip(self, shape, dtype, take_ownership, gpu):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
