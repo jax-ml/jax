@@ -249,8 +249,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       check_right_eigenvectors(aH, wC, vl)
 
     a, = args_maker()
-    results = lax.linalg.eig(a, compute_left_eigenvectors,
-                             compute_right_eigenvectors)
+    results = lax.linalg.eig(
+        a, compute_left_eigenvectors=compute_left_eigenvectors,
+        compute_right_eigenvectors=compute_right_eigenvectors)
     w = results[0]
 
     if compute_left_eigenvectors:

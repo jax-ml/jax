@@ -61,7 +61,7 @@ def svd(a, full_matrices: bool = True, compute_uv: bool = True,
     else:
       return lax.rev(lax.sort(s, dimension=-1), dimensions=[s.ndim-1])
 
-  return lax_linalg.svd(a, full_matrices, compute_uv)
+  return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
 
 @_wraps(np.linalg.matrix_power)
@@ -484,7 +484,7 @@ def qr(a, mode="reduced"):
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
   a, = _promote_dtypes_inexact(jnp.asarray(a))
-  q, r = lax_linalg.qr(a, full_matrices)
+  q, r = lax_linalg.qr(a, full_matrices=full_matrices)
   if mode == "r":
     return r
   return q, r

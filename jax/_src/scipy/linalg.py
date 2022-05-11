@@ -72,7 +72,7 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
 @partial(jit, static_argnames=('full_matrices', 'compute_uv'))
 def _svd(a, *, full_matrices, compute_uv):
   a, = _promote_dtypes_inexact(jnp.asarray(a))
-  return lax_linalg.svd(a, full_matrices, compute_uv)
+  return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
 @_wraps(scipy.linalg.svd,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite', 'lapack_driver'))
@@ -189,7 +189,7 @@ def _qr(a, mode, pivoting):
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
   a, = _promote_dtypes_inexact(jnp.asarray(a))
-  q, r = lax_linalg.qr(a, full_matrices)
+  q, r = lax_linalg.qr(a, full_matrices=full_matrices)
   if mode == "r":
     return (r,)
   return q, r
