@@ -593,7 +593,7 @@ def call_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr,
                             reduce_axes, False)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-  if not config.jax_experimental_name_stack:
+  if 'name' in params and not config.jax_experimental_name_stack:
     params = dict(params, name=wrap_name(params['name'], 'transpose'))
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
