@@ -201,5 +201,32 @@ class SvdTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, lax_fun, args_maker_svd)
     self._CompileAndCheck(lax_fun, args_maker_svd)
 
+
+  @parameterized.named_parameters([
+      {'testcase_name': f'_m={m}_by_n={n}_r={r}_c={c}_dtype={dtype}',
+       'm': m, 'n': n, 'r': r, 'c': c, 'dtype': dtype}
+      for m, n, r, c in zip([2, 4, 8], [4, 4, 6], [1, 0, 1], [1, 0, 1])
+      for dtype in jtu.dtypes.floating
+  ])
+  def testSvdOnTinyElement(self, m, n, r, c, dtype):
+    """Tests SVD on matrix of zeros and close-to-zero entries."""
+    a = jnp.zeros((m, n), dtype=dtype)
+    tiny_element = jnp.finfo(a).tiny
+    a = a.at[r, c].set(tiny_element)
+
+    @jax.jit
+    def lax_fun(a):
+      return svd.svd(a, full_matrices=False, compute_uv=False, hermitian=False)
+
+    actual_s = lax_fun(a)
+
+    k = min(m, n)
+    expected_s = np.zeros((k,), dtype=dtype)
+    expected_s[0] = tiny_element
+
+    self.assertAllClose(expected_s, jnp.real(actual_s), rtol=_SVD_RTOL,
+                        atol=1E-6)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
