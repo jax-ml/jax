@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
 from setuptools import setup
 import os
 
@@ -30,9 +29,6 @@ if cuda_version and cudnn_version:
 nightly = os.environ.get('JAXLIB_NIGHTLY')
 if nightly:
   project_name = 'jaxlib-nightly'
-  # Version as `X.Y.Z.dev20220510`
-  datestring = datetime.datetime.now().strftime('%Y%m%d')
-  __version__ = f'{__version__}.dev{datestring}'
 
 setup(
     name=project_name,

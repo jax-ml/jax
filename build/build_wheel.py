@@ -18,10 +18,13 @@
 # Most users should not run this script directly; use build.py instead.
 
 import argparse
+import datetime
 import functools
 import glob
 import os
+import pathlib
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -274,6 +277,22 @@ def prepare_wheel(sources_path):
     patch_copy_tpu_client_py(jaxlib_dir)
 
 
+def edit_jaxlib_version(sources_path):
+  version_regex = re.compile(r'__version__ = \"(.*)\"')
+
+  version_file = pathlib.Path(sources_path) / "jaxlib" / "version.py"
+  content = version_file.read_text()
+
+  version_num = version_regex.search(content).group(1)
+
+  datestring = datetime.datetime.now().strftime('%Y%m%d')
+  nightly_version = f'{version_num}.dev{datestring}'
+
+  content = content.replace(f'__version__ = "{version_num}"',
+                            f'__version__ = "{nightly_version}"')
+  version_file.write_text(content)
+
+
 def build_wheel(sources_path, output_path, cpu):
   """Builds a wheel in `output_path` using the source tree in `sources_path`."""
   platform_name, cpu_name = {
@@ -288,6 +307,8 @@ def build_wheel(sources_path, output_path, cpu):
                     f"{sys.version_info.minor}")
   platform_tag_arg = f"--plat-name={platform_name}_{cpu_name}"
   cwd = os.getcwd()
+  if os.environ.get('JAXLIB_NIGHTLY'):
+    edit_jaxlib_version(sources_path)
   os.chdir(sources_path)
   subprocess.run([sys.executable, "setup.py", "bdist_wheel",
                  python_tag_arg, platform_tag_arg], check=True)
