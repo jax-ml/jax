@@ -95,8 +95,9 @@ def eig(x, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
   return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
                     compute_right_eigenvectors=compute_right_eigenvectors)
 
-def eigh(x, lower: bool = True, symmetrize_input: bool = True):
-  """Eigendecomposition of a Hermitian matrix.
+def eigh(x, lower: bool = True, symmetrize_input: bool = True,
+         sort_eigenvalues: bool = True, ):
+  r"""Eigendecomposition of a Hermitian matrix.
 
   Computes the eigenvectors and eigenvalues of a complex Hermitian or real
   symmetric square matrix.
@@ -109,7 +110,10 @@ def eigh(x, lower: bool = True, symmetrize_input: bool = True):
       triangle given by ``lower`` is accessed; the other triangle is ignored and
       not accessed.
     symmetrize_input: If ``True``, the matrix is symmetrized before the
-      eigendecomposition by computing :math:`\\frac{1}{2}(x + x^H)`.
+      eigendecomposition by computing :math:`\frac{1}{2}(x + x^H)`.
+    sort_eigenvalues: If ``True``, the eigenvalues will be sorted in ascending
+      order. If ``False`` the eigenvalues are returned in an
+      implementation-defined order.
 
   Returns:
     A tuple ``(v, w)``.
@@ -123,7 +127,7 @@ def eigh(x, lower: bool = True, symmetrize_input: bool = True):
   """
   if symmetrize_input:
     x = symmetrize(x)
-  v, w = eigh_p.bind(x, lower=lower)
+  v, w = eigh_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues)
   return v, w
 
 
@@ -515,17 +519,19 @@ ad.primitive_jvps[eig_p] = eig_jvp_rule
 
 # Symmetric/Hermitian eigendecomposition
 
-def eigh_impl(operand, lower):
-  v, w = xla.apply_primitive(eigh_p, operand, lower=lower)
+def _eigh_impl(operand, *, lower, sort_eigenvalues):
+  v, w = xla.apply_primitive(eigh_p, operand, lower=lower,
+                             sort_eigenvalues=sort_eigenvalues)
   return v, w
 
-def _eigh_translation_rule(ctx, avals_in, avals_out, operand, *, lower):
+def _eigh_translation_rule(ctx, avals_in, avals_out, operand, *, lower,
+                           sort_eigenvalues):
   operand_aval, = avals_in
   if operand_aval.shape[-1] == 0:
     return [operand, xops.Real(xops.Reshape(operand, operand_aval.shape[:-1]))]
-  return xops.Eigh(operand, lower=lower)
+  return xops.Eigh(operand, lower=lower, sort_eigenvalues=sort_eigenvalues)
 
-def eigh_abstract_eval(operand, lower):
+def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError(
@@ -541,7 +547,9 @@ def eigh_abstract_eval(operand, lower):
     v, w = operand, operand
   return v, w
 
-def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower):
+def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
+                           sort_eigenvalues):
+  del sort_eigenvalues  # The CPU/GPU implementations always sort.
   operand_aval, = ctx.avals_in
   v_aval, w_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
@@ -562,7 +570,7 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower):
       w, _nan_like_mhlo(w_aval))
   return [v, w]
 
-def eigh_jvp_rule(primals, tangents, lower):
+def _eigh_jvp_rule(primals, tangents, *, lower, sort_eigenvalues):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
   # This is classic nondegenerate perurbation theory, but also see
   # https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
@@ -574,7 +582,8 @@ def eigh_jvp_rule(primals, tangents, lower):
   a, = primals
   a_dot, = tangents
 
-  v, w_real = eigh_p.bind(symmetrize(a), lower=lower)
+  v, w_real = eigh_p.bind(symmetrize(a), lower=lower,
+                          sort_eigenvalues=sort_eigenvalues)
 
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w_real.astype(a.dtype)
@@ -589,19 +598,19 @@ def eigh_jvp_rule(primals, tangents, lower):
   dw = jnp.real(jnp.diagonal(vdag_adot_v, axis1=-2, axis2=-1))
   return (v, w_real), (dv, dw)
 
-def eigh_batching_rule(batched_args, batch_dims, lower):
+def _eigh_batching_rule(batched_args, batch_dims, *, lower, sort_eigenvalues):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return eigh_p.bind(x, lower=lower), (0, 0)
+  return eigh_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues), (0, 0)
 
 eigh_p = Primitive('eigh')
 eigh_p.multiple_results = True
-eigh_p.def_impl(eigh_impl)
-eigh_p.def_abstract_eval(eigh_abstract_eval)
+eigh_p.def_impl(_eigh_impl)
+eigh_p.def_abstract_eval(_eigh_abstract_eval)
 xla.register_translation(eigh_p, _eigh_translation_rule)
-ad.primitive_jvps[eigh_p] = eigh_jvp_rule
-batching.primitive_batchers[eigh_p] = eigh_batching_rule
+ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
+batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
 mlir.register_lowering(
     eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),

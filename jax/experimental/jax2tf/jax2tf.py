@@ -2519,7 +2519,9 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
 tf_impl[lax.linalg.eig_p] = _eig
 
 
-def _eigh(operand: TfVal, lower: bool, _in_avals, _out_aval):
+def _eigh(operand: TfVal, lower: bool, sort_eigenvalues: bool, _in_avals,
+          _out_aval):
+  del sort_eigenvalues
   if operand.shape[-1] == 0:
     v, w = operand, tf.reshape(operand, _eval_shape(_in_avals[0].shape[:-1]))
   else:

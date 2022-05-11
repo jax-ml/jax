@@ -10,6 +10,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.10...main).
+* Changes
+  * {func}`jax.lax.eigh` now accepts an optional `sort_eigenvalues` argument
+    that allows users to opt out of eigenvalue sorting on TPU.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).

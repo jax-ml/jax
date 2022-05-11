@@ -321,12 +321,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         np.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_n={}_lower={}".format(
-           jtu.format_shape_dtype_string((n,n), dtype), lower),
+      {"testcase_name": "_n={}_lower={}_sort_eigenvalues={}".format(
+          jtu.format_shape_dtype_string((n,n), dtype), lower,
+          sort_eigenvalues),
        "n": n, "dtype": dtype, "lower": lower}
       for n in [0, 4, 5, 50]
       for dtype in float_types + complex_types
-      for lower in [True, False]))
+      for lower in [True, False]
+      for sort_eigenvalues in [True, False]))
   def testEigh(self, n, dtype, lower):
     rng = jtu.rand_default(self.rng())
     tol = 1e-3
@@ -1565,8 +1567,40 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
 
 class LaxLinalgTest(jtu.JaxTestCase):
+  """Tests for lax.linalg primitives."""
 
-  def run_test(self, alpha, beta):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_n={}_lower={}_sort_eigenvalues={}".format(
+          jtu.format_shape_dtype_string((n,n), dtype), lower,
+          sort_eigenvalues),
+       "n": n, "dtype": dtype, "lower": lower,
+       "sort_eigenvalues": sort_eigenvalues}
+      for n in [0, 4, 5, 50]
+      for dtype in float_types + complex_types
+      for lower in [True, False]
+      for sort_eigenvalues in [True, False]))
+  def testEigh(self, n, dtype, lower, sort_eigenvalues):
+    rng = jtu.rand_default(self.rng())
+    tol = 1e-3
+    args_maker = lambda: [rng((n, n), dtype)]
+
+    a, = args_maker()
+    a = (a + np.conj(a.T)) / 2
+    v, w = lax.linalg.eigh(np.tril(a) if lower else np.triu(a),
+                           lower=lower, symmetrize_input=False,
+                           sort_eigenvalues=sort_eigenvalues)
+    w = np.asarray(w)
+    v = np.asarray(v)
+    self.assertLessEqual(
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
+    self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
+                         tol * np.linalg.norm(a))
+
+    w_expected, v_expected = np.linalg.eigh(np.asarray(a))
+    self.assertAllClose(w_expected, w if sort_eigenvalues else np.sort(w),
+                        rtol=1e-4)
+
+  def run_eigh_tridiagonal_test(self, alpha, beta):
     n = alpha.shape[-1]
     # scipy.linalg.eigh_tridiagonal doesn't support complex inputs, so for
     # this we call the slower numpy.linalg.eigh.
@@ -1592,7 +1626,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
     for a, b in [[2, -1], [1, 0], [0, 1], [-1e10, 1e10], [-1e-10, 1e-10]]:
       alpha = a * np.ones([n], dtype=dtype)
       beta = b * np.ones([n - 1], dtype=dtype)
-      self.run_test(alpha, beta)
+      self.run_eigh_tridiagonal_test(alpha, beta)
 
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name": f"_n={n}_dtype={dtype.__name__}",
@@ -1602,7 +1636,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def testRandomUniform(self, n, dtype):
     alpha = jtu.rand_uniform(self.rng())((n,), dtype)
     beta = jtu.rand_uniform(self.rng())((n - 1,), dtype)
-    self.run_test(alpha, beta)
+    self.run_eigh_tridiagonal_test(alpha, beta)
 
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name": f"_dtype={dtype.__name__}",
