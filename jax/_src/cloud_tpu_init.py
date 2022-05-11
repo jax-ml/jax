@@ -77,7 +77,7 @@ def cloud_tpu_init():
       api_resp = requests.get(
           f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
           headers={'Metadata-Flavor': 'Google'})
-      if api_resp.status == 200:
+      if api_resp.status_code == 200:
         break
       retry_count += 1
       time.sleep(retrySeconds)
