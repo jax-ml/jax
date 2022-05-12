@@ -92,7 +92,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
 
     def unique_hash(h: primitive_harness.Harness, l: primitive_harness.Limitation):
       return (h.group_name, l.description, l.devices,
-              tuple([np.dtype(d).name for d in l.dtypes]))
+              tuple(np.dtype(d).name for d in l.dtypes))
 
     unique_limitations: Dict[Any, Tuple[primitive_harness.Harness,
                                         primitive_harness.Limitation]] = {}

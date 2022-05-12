@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -1225,7 +1224,7 @@ def _lu_solve_core(lu, permutation, b, trans):
                          transpose_a=True, conjugate_a=conj)
     x = x[jnp.argsort(permutation), :]
   else:
-    raise ValueError("'trans' value must be 0, 1, or 2, got {}".format(trans))
+    raise ValueError(f"'trans' value must be 0, 1, or 2, got {trans}")
   return lax.reshape(x, b.shape)
 
 

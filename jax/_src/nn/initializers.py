@@ -221,7 +221,7 @@ def variance_scaling(scale, mode: str, distribution: str,
     elif mode == "fan_avg": denominator = (fan_in + fan_out) / 2
     else:
       raise ValueError(
-        "invalid mode for variance scaling initializer: {}".format(mode))
+        f"invalid mode for variance scaling initializer: {mode}")
     variance = jnp.array(scale / denominator, dtype=dtype)
 
     if distribution == "truncated_normal":
@@ -241,7 +241,7 @@ def variance_scaling(scale, mode: str, distribution: str,
       else:
         return _complex_uniform(key, shape, dtype) * jnp.sqrt(variance)
     else:
-      raise ValueError("invalid distribution for variance scaling initializer: {}".format(distribution))
+      raise ValueError(f"invalid distribution for variance scaling initializer: {distribution}")
 
   return init
 

@@ -97,8 +97,8 @@ class NdimageTest(jtu.JaxTestCase):
                 else _fixed_ref_map_coordinates)
     osp_op = lambda x, c: impl_fun(x, c, order=order, mode=mode, cval=cval)
     if dtype in float_dtypes:
-      epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
-                     for d in [dtype, coords_dtype]])
+      epsilon = max(dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
+                     for d in [dtype, coords_dtype])
       self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=100*epsilon)
     else:
       self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=0)
@@ -119,7 +119,7 @@ class NdimageTest(jtu.JaxTestCase):
                   lsp_ndimage.map_coordinates.__doc__)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_order={}".format(np.dtype(dtype), order),
+      {"testcase_name": f"_{np.dtype(dtype)}_order={order}",
        "dtype": dtype, "order": order}
       for dtype in float_dtypes + int_dtypes
       for order in [0, 1]))

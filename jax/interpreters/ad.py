@@ -255,7 +255,7 @@ class UndefinedPrimal:
   def __init__(self, aval):
     self.aval = aval
   def __repr__(self):
-    return 'UndefinedPrimal({})'.format(self.aval)
+    return f'UndefinedPrimal({self.aval})'
 
 def is_undefined_primal(x):
   return type(x) is UndefinedPrimal

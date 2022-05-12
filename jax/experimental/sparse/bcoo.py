@@ -1696,10 +1696,10 @@ def bcoo_concatenate(operands, *, dimension):
   out_aval = jax.eval_shape(
     functools.partial(lax.concatenate, dimension=dimension),
     [core.ShapedArray(op.shape, op.dtype) for op in operands])
-  if len(set(op.n_dense for op in operands)) > 1:
+  if len({op.n_dense for op in operands}) > 1:
     raise ValueError("bcoo_concatenate requires inputs to have matching nse dimensions.")
 
-  n_batches = set(op.n_batch for op in operands)
+  n_batches = {op.n_batch for op in operands}
   # Correct for the common case, where op[None, :] adds a single batch dimension and we
   # need to align it in order to match the others & concatenate.
   if len(n_batches) != 1 and max(n_batches) == 1:
@@ -1707,7 +1707,7 @@ def bcoo_concatenate(operands, *, dimension):
       operands = [bcoo_update_layout(op, n_batch=1) if op.n_batch == 0 else op for op in operands]
     elif all(op.shape[0] == 1 for op in operands if op.n_batch == 1):
       operands = [bcoo_update_layout(op, n_batch=0) if op.n_batch == 1 else op for op in operands]
-    n_batches = set(op.n_batch for op in operands)
+    n_batches = {op.n_batch for op in operands}
 
   if len(n_batches) != 1:
     raise ValueError("bcoo_concatenate requires inputs to have matching batch dimensions.")
@@ -1724,7 +1724,7 @@ def bcoo_concatenate(operands, *, dimension):
 
   if dimension < n_batch:  # Concatenation along batch axes
     # Ensure nse of operands match.
-    nses = set(op.nse for op in operands)
+    nses = {op.nse for op in operands}
     if len(nses) != 1:
       nse = max(nses)
       operands = [_bcoo_set_nse(op, nse) for op in operands]

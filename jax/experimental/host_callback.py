@@ -835,7 +835,7 @@ def _print_tap_func(
 
 
 def _values_to_avals(vals) -> Sequence[core.ShapedArray]:
-  return tuple([core.raise_to_shaped(core.get_aval(v)) for v in vals])
+  return tuple(core.raise_to_shaped(core.get_aval(v)) for v in vals)
 
 ### The id_tap_dep primitive
 # The id_tap_dep_p primitive is used to create a dependency of the result of
@@ -1118,8 +1118,8 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
         operand_layouts=None,
         has_side_effects=True)
     _callback_handler_data.keep_alives.append(keep_alive)
-    next_token, *results = [xops.GetTupleElement(token_and_results_op, i)
-                            for i in range(len(callback_flat_results_aval))]
+    next_token, *results = (xops.GetTupleElement(token_and_results_op, i)
+                            for i in range(len(callback_flat_results_aval)))
     # We must put the two tokens at the end
     if identity:
       results = list(args_to_outfeed)

@@ -28,7 +28,7 @@ config.parse_flags_with_absl()
 
 class CallbackTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': '_value={}'.format(value), 'value': value}
+      {'testcase_name': f'_value={value}', 'value': value}
       for value in [jnp.inf, jnp.nan]))
   def testFindByValueFound(self, value):
     def f(x):
@@ -41,7 +41,7 @@ class CallbackTest(jtu.JaxTestCase):
       find_by_value(f, value)(jnp.array([1.0, 2.0, 3.0]))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': '_value={}'.format(value), 'value': value}
+      {'testcase_name': f'_value={value}', 'value': value}
       for value in [jnp.inf, jnp.nan]))
   def testFindByValueFoundJIT(self, value):
     def f(x):
@@ -56,7 +56,7 @@ class CallbackTest(jtu.JaxTestCase):
       find_by_value(f, value)(jnp.array([1.0, 2.0, 3.0]))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': '_value={}'.format(value), 'value': value}
+      {'testcase_name': f'_value={value}', 'value': value}
       for value in [jnp.inf, jnp.nan]))
   def testFindByValueNotFound(self, value):
     def f(x):

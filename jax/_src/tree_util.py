@@ -352,13 +352,13 @@ class Partial(functools.partial):
     if isinstance(func, functools.partial):
       original_func = func
       func = _HashableCallableShim(original_func)
-      out = super(Partial, klass).__new__(klass, func, *args, **kw)
+      out = super().__new__(klass, func, *args, **kw)
       func.func = original_func.func
       func.args = original_func.args
       func.keywords = original_func.keywords
       return out
     else:
-      return super(Partial, klass).__new__(klass, func, *args, **kw)
+      return super().__new__(klass, func, *args, **kw)
 
 
 register_pytree_node(

@@ -63,7 +63,7 @@ class QdwhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {    # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}'.format(m, n, log_cond),
+          'testcase_name': f'_m={m}_by_n={n}_log_cond={log_cond}',
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([8, 10, 20], [6, 10, 18])
       for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
@@ -89,7 +89,7 @@ class QdwhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {    # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}'.format(m, n, log_cond),
+          'testcase_name': f'_m={m}_by_n={n}_log_cond={log_cond}',
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([8, 10, 20], [6, 10, 18])
       for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))

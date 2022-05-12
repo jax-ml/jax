@@ -92,7 +92,7 @@ if __name__ == "__main__":
     approx_dist = lambda x, params: jnp.exp(diag_gaussian_logpdf(x, *params))
 
     def callback(params, t):
-        print("Iteration {} lower bound {}".format(t, objective(params, t)))
+        print(f"Iteration {t} lower bound {objective(params, t)}")
 
         plt.cla()
         X, Y, Z = mesh_eval(target_dist, x_limits, y_limits, 1)

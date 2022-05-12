@@ -76,9 +76,9 @@ def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
   # The type: ignore is to ignore the type returned by `spec_to_indices`.
-  return dict(
-      (d, i)
-      for d, i in safe_zip(global_mesh.devices.flat, indices))  # type: ignore
+  return {
+      d: i
+      for d, i in safe_zip(global_mesh.devices.flat, indices)}  # type: ignore
 
 
 @_convert_list_args_to_tuple
@@ -389,7 +389,7 @@ class GlobalDeviceArray:
     # multiple accesses should be cheap.
     global_indices_rid = get_shard_indices_replica_ids(
         self._global_shape, self._global_mesh, self.mesh_axes)
-    device_to_buffer = dict((db.device(), db) for db in self._device_buffers)
+    device_to_buffer = {db.device(): db for db in self._device_buffers}
     global_shards = []
     for device, (index, rid) in global_indices_rid.items():
       local_shard = device.process_index == self._current_process

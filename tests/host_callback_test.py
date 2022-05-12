@@ -50,7 +50,7 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-class _TestingOutputStream(object):
+class _TestingOutputStream:
   """Use as `output_stream` for tests."""
 
   def __init__(self):

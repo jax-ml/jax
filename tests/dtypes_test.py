@@ -85,12 +85,12 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertEqual(dtypes.canonicalize_dtype(in_dtype), expected_dtype)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_type={}".format(type.__name__), "type": type}
-    for type in python_scalar_types)
-  def testDefaultTypes(self, type):
-    expected_dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type])
+    {"testcase_name": f"_type={type_.__name__}", "type_": type_}
+    for type_ in python_scalar_types)
+  def testDefaultTypes(self, type_):
+    expected_dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type_])
     for f in [jnp.array, jax.jit(jnp.array), jax.jit(lambda x: x)]:
-      y = f(type(0))
+      y = f(type_(0))
       self.assertTrue(isinstance(y, jnp.ndarray), msg=(f, y))
       self.assertEqual(y.dtype, expected_dtype, msg=(f, y))
 
@@ -99,7 +99,7 @@ class DtypesTest(jtu.JaxTestCase):
       dtypes.canonicalize_dtype("nonsense")
 
   @parameterized.named_parameters(
-    {"testcase_name": "_swap={}_jit={}".format(swap, jit),
+    {"testcase_name": f"_swap={swap}_jit={jit}",
      "swap": swap, "jit": jit}
     for swap in [False, True] for jit in [False, True])
   @jtu.ignore_warning(category=UserWarning,
@@ -244,14 +244,14 @@ class DtypesTest(jtu.JaxTestCase):
 class TestPromotionTables(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-    {"testcase_name": "_jaxtype={}".format(jaxtype),
+    {"testcase_name": f"_jaxtype={jaxtype}",
      "jaxtype": jaxtype}
      for jaxtype in dtypes._jax_types)
   def testJaxTypeFromType(self, jaxtype):
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_jaxtype={}".format(jaxtype),
+    {"testcase_name": f"_jaxtype={jaxtype}",
      "jaxtype": jaxtype}
      for jaxtype in dtypes._jax_types)
   def testJaxTypeFromVal(self, jaxtype):
@@ -379,7 +379,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     self._CompileAndCheck(f, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+    {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}",
      "dtype": dtype, "weak_type": weak_type}
     for dtype in all_dtypes
     for weak_type in [True, False]
@@ -395,7 +395,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     self.assertEqual(dtypes.result_type(x), expected)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+    {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}",
      "dtype": dtype, "weak_type": weak_type}
     for dtype in all_dtypes
     for weak_type in [True, False]
@@ -408,7 +408,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+    {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}",
      "dtype": dtype, "weak_type": weak_type}
     for dtype in all_dtypes
     for weak_type in [True, False]

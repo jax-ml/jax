@@ -751,7 +751,7 @@ def _reshape(a, *args, order="C"):
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
-    raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
+    raise ValueError(f"Unexpected value for 'order' argument: {order}.")
 
 def _transpose(a, *args):
   if not args:
@@ -1860,7 +1860,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     else:
       return array(np.asarray(view), dtype, copy, ndmin=ndmin)
 
-    raise TypeError("Unexpected input type for array: {}".format(type(object)))
+    raise TypeError(f"Unexpected input type for array: {type(object)}")
 
   out = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
   if ndmin > ndim(out):
@@ -2986,7 +2986,7 @@ def _einsum(operands: Sequence,
     assert len(names) == len(result_names) == len(set(names))
     assert set(names) == set(result_names)
     if names != result_names:
-      perm = tuple([names.index(name) for name in result_names])
+      perm = tuple(names.index(name) for name in result_names)
       operand = lax.transpose(operand, perm)
     operands.append(operand)  # used in next iteration
 
@@ -3385,7 +3385,7 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   elif mode == "clip":
     gather_mode = lax.GatherScatterMode.CLIP
   else:
-    raise ValueError("Invalid mode '{}' for np.take".format(mode))
+    raise ValueError(f"Invalid mode '{mode}' for np.take")
 
   index_dims = len(shape(indices))
   slice_sizes = list(shape(a))
@@ -4213,7 +4213,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   elif isinstance(axis, tuple):
     keepdim = list(shape(a))
     nd = ndim(a)
-    axis = tuple([_canonicalize_axis(ax, nd) for ax in axis])
+    axis = tuple(_canonicalize_axis(ax, nd) for ax in axis)
     if len(set(axis)) != len(axis):
         raise ValueError('repeated axis')
     for ax in axis:
@@ -4235,7 +4235,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   q_shape = shape(q)
   q_ndim = ndim(q)
   if q_ndim > 1:
-    raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
+    raise ValueError(f"q must be have rank <= 1, got shape {shape(q)}")
 
   a_shape = shape(a)
 
@@ -4961,7 +4961,7 @@ def _set_shaped_array_attributes(shaped_array):
   # ShapedArray avals by following the forwarding conventions for Tracer.
   # Forward operators using a single-underscore-prefix naming convention:
   for operator_name, function in _operators.items():
-    setattr(shaped_array, "_{}".format(operator_name), staticmethod(function))
+    setattr(shaped_array, f"_{operator_name}", staticmethod(function))
   # Forward methods and properties using core.{aval_method, aval_property}:
   for method_name in _nondiff_methods + _diff_methods:
     setattr(shaped_array, method_name, core.aval_method(globals()[method_name]))
@@ -4995,7 +4995,7 @@ def _set_device_array_base_attributes(device_array):
   # Forward operators, methods, and properties on DeviceArray to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
   for operator_name, function in _operators.items():
-    setattr(device_array, "__{}__".format(operator_name), function)
+    setattr(device_array, f"__{operator_name}__", function)
   for method_name in _nondiff_methods + _diff_methods:
     setattr(device_array, method_name, globals()[method_name])
   # TODO(jakevdp): remove tile method after August 2022

@@ -50,7 +50,7 @@ class ExamplesTest(parameterized.TestCase):
     self.rng = np.random.default_rng(zlib.adler32(self.__class__.__name__.encode()))
 
   @parameterized.named_parameters(
-      {"testcase_name": "_input_shape={}".format(input_shape),
+      {"testcase_name": f"_input_shape={input_shape}",
        "input_shape": input_shape}
       for input_shape in [(2, 20, 25, 2)])
   @unittest.skipIf(config.x64_enabled, "skip in x64 mode")
@@ -59,7 +59,7 @@ class ExamplesTest(parameterized.TestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_input_shape={}".format(input_shape),
+      {"testcase_name": f"_input_shape={input_shape}",
        "input_shape": input_shape}
       for input_shape in [(2, 20, 25, 3)])
   @unittest.skipIf(config.x64_enabled, "skip in x64 mode")

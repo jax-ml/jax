@@ -678,7 +678,7 @@ def _allreduce_abstract_eval(*args, axes, axis_index_groups):
   pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
   named_shapes = [arg.named_shape for arg in args]
   if axis_index_groups is None:
-    named_axes = set(axis for axis in axes if not isinstance(axis, int))
+    named_axes = {axis for axis in axes if not isinstance(axis, int)}
     named_shapes = [{name: size for name, size in arg.named_shape.items()
                      if name not in named_axes} for arg in args]
   else:

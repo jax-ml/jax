@@ -240,7 +240,7 @@ def dtypes_to_str(dtype_list: Sequence[DType], empty_means_all=False) -> str:
   if not dtype_list and empty_means_all:
     return "all"
 
-  names = set([np.dtype(dt).name for dt in dtype_list])
+  names = {np.dtype(dt).name for dt in dtype_list}
   signed = {"int8", "int16", "int32", "int64"}
   if all([t in names for t in signed]):
     names = (names - signed) | {"signed"}
@@ -2240,7 +2240,7 @@ def _make_select_and_scatter_add_harness(name,
       padding=padding)
 
 
-for dtype in set(jtu.dtypes.all) - set([np.complex64, np.complex128]):
+for dtype in set(jtu.dtypes.all) - {np.complex64, np.complex128}:
   _make_select_and_scatter_add_harness("dtypes", dtype=dtype)
 
 # Validate different reduction primitives
@@ -2264,8 +2264,8 @@ _make_select_and_scatter_add_harness(
 _make_select_and_scatter_add_harness("window_strides", window_strides=(1, 2, 3))
 
 # Validate dtypes on TPU
-for dtype in set(jtu.dtypes.all) - set(
-    [np.bool_, np.complex64, np.complex128, np.int8, np.uint8]):
+for dtype in set(jtu.dtypes.all) - {
+    np.bool_, np.complex64, np.complex128, np.int8, np.uint8}:
   for window_strides, window_dimensions, nb_inactive_dims in [((1, 2, 1),
                                                                (1, 3, 1), 2)]:
     _make_select_and_scatter_add_harness(

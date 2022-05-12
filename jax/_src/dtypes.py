@@ -92,7 +92,7 @@ def scalar_type_of(x):
   elif np.issubdtype(typ, np.complexfloating):
     return complex
   else:
-    raise TypeError("Invalid scalar value {}".format(x))
+    raise TypeError(f"Invalid scalar value {x}")
 
 
 def _scalar_type_to_dtype(typ: type, value: Any = None):

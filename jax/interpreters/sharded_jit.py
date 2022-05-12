@@ -142,7 +142,7 @@ def _sharded_callable(
   ordered_effects = [eff for eff in jaxpr.effects
                      if eff in core.ordered_effects]
   module, _ = mlir.lower_jaxpr_to_module(
-      "spjit_{}".format(fun.__name__),
+      f"spjit_{fun.__name__}",
       core.ClosedJaxpr(jaxpr, consts),
       unordered_effects, ordered_effects,
       platform=platform,

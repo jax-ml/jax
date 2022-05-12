@@ -705,7 +705,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
           x, callback=log_value, effect='unordered_log', out_avals=[])
       return x + 1
     f(jnp.arange(2)).block_until_ready()
-    self.assertSetEqual(set([0, 1]), log)
+    self.assertSetEqual({0, 1}, log)
 
 class ControlFlowEffectsTest(jtu.JaxTestCase):
 

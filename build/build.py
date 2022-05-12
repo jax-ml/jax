@@ -135,7 +135,7 @@ def download_and_verify_bazel():
 
   if not os.access(package.file, os.X_OK):
     uri = (package.base_uri or BAZEL_BASE_URI) + package.file
-    sys.stdout.write("Downloading bazel from: {}\n".format(uri))
+    sys.stdout.write(f"Downloading bazel from: {uri}\n")
 
     def progress(block_count, block_size, total_size):
       if total_size <= 0:
@@ -291,7 +291,7 @@ def _parse_string_as_bool(s):
   elif lower == "false":
     return False
   else:
-    raise ValueError("Expected either 'true' or 'false'; got {}".format(s))
+    raise ValueError(f"Expected either 'true' or 'false'; got {s}")
 
 
 def add_boolean_argument(parser, name, default=False, help_str=None):
@@ -438,17 +438,17 @@ def main():
   print(f"Bazel version: {bazel_version}")
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
-  print("Python binary path: {}".format(python_bin_path))
+  print(f"Python binary path: {python_bin_path}")
   python_version = get_python_version(python_bin_path)
   print("Python version: {}".format(".".join(map(str, python_version))))
   check_python_version(python_version)
 
   numpy_version = check_numpy_version(python_bin_path)
-  print("NumPy version: {}".format(numpy_version))
+  print(f"NumPy version: {numpy_version}")
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
-  print("Target CPU: {}".format(wheel_cpu))
-  print("Target CPU features: {}".format(args.target_cpu_features))
+  print(f"Target CPU: {wheel_cpu}")
+  print(f"Target CPU features: {args.target_cpu_features}")
 
   cuda_toolkit_path = args.cuda_path
   cudnn_install_path = args.cudnn_path
@@ -456,15 +456,15 @@ def main():
   print("CUDA enabled: {}".format("yes" if args.enable_cuda else "no"))
   if args.enable_cuda:
     if cuda_toolkit_path:
-      print("CUDA toolkit path: {}".format(cuda_toolkit_path))
+      print(f"CUDA toolkit path: {cuda_toolkit_path}")
     if cudnn_install_path:
-      print("CUDNN library path: {}".format(cudnn_install_path))
+      print(f"CUDNN library path: {cudnn_install_path}")
     if args.cuda_compute_capabilities is not None:
-      print("CUDA compute capabilities: {}".format(args.cuda_compute_capabilities))
+      print(f"CUDA compute capabilities: {args.cuda_compute_capabilities}")
     if args.cuda_version:
-      print("CUDA version: {}".format(args.cuda_version))
+      print(f"CUDA version: {args.cuda_version}")
     if args.cudnn_version:
-      print("CUDNN version: {}".format(args.cudnn_version))
+      print(f"CUDNN version: {args.cudnn_version}")
     print("NCCL enabled: {}".format("yes" if args.enable_nccl else "no"))
 
   print("TPU enabled: {}".format("yes" if args.enable_tpu else "no"))
@@ -472,8 +472,8 @@ def main():
   print("ROCm enabled: {}".format("yes" if args.enable_rocm else "no"))
   if args.enable_rocm:
     if rocm_toolkit_path:
-      print("ROCm toolkit path: {}".format(rocm_toolkit_path))
-    print("ROCm amdgpu targets: {}".format(args.rocm_amdgpu_targets))
+      print(f"ROCm toolkit path: {rocm_toolkit_path}")
+    print(f"ROCm amdgpu targets: {args.rocm_amdgpu_targets}")
 
   write_bazelrc(
       python_bin_path=python_bin_path,

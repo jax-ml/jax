@@ -28,7 +28,7 @@ config.parse_flags_with_absl()
 class VectorizeTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
+      {"testcase_name": f"_leftshape={left_shape}_rightshape={right_shape}",
        "left_shape": left_shape, "right_shape": right_shape, "result_shape": result_shape}
       for left_shape, right_shape, result_shape in [
           ((2, 3), (3, 4), (2, 4)),
@@ -42,7 +42,7 @@ class VectorizeTest(jtu.JaxTestCase):
                             jnp.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
+      {"testcase_name": f"_leftshape={left_shape}_rightshape={right_shape}",
        "left_shape": left_shape, "right_shape": right_shape, "result_shape": result_shape}
       for left_shape, right_shape, result_shape in [
           ((2, 3), (3,), (2,)),
@@ -56,7 +56,7 @@ class VectorizeTest(jtu.JaxTestCase):
                             jnp.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
+      {"testcase_name": f"_leftshape={left_shape}_rightshape={right_shape}",
        "left_shape": left_shape, "right_shape": right_shape, "result_shape": result_shape}
       for left_shape, right_shape, result_shape in [
           ((3,), (3,), ()),
@@ -69,7 +69,7 @@ class VectorizeTest(jtu.JaxTestCase):
                             jnp.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(shape),
+      {"testcase_name": f"_shape={shape}",
        "shape": shape, "result_shape": result_shape}
       for shape, result_shape in [
           ((3,), ()),
@@ -89,7 +89,7 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertEqual(magnitude(inputs).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(shape),
+      {"testcase_name": f"_shape={shape}",
        "shape": shape, "result_shape": result_shape}
       for shape, result_shape in [
           ((3,), ()),
@@ -101,7 +101,7 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertEqual(mean(jnp.zeros(shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(shape),
+      {"testcase_name": f"_shape={shape}",
        "shape": shape, "result_shape": result_shape}
       for shape, result_shape in [
           ((), (2,)),

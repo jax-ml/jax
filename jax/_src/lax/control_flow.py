@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -967,8 +966,8 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
     # for the select we broadcast the input operands for simplicity and leave
     # optimizations to XLA.
     # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
-    index, *ops = [
-        batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims)]
+    index, *ops = (
+        batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims))
 
     in_batched  = [True] * len(branches[0].in_avals)
     out_batched = [True] * len(branches[0].out_avals)
@@ -1272,7 +1271,7 @@ def _cond_typecheck(*avals, branches, linear):
     raise core.JaxprTypeError(
       f'cond branches take input types {jaxpr0_in_avals_str}, '
       f'called with operands of type {_avals_short(op_avals)}')
-  if any((b.effects != branches[0].effects for b in branches[1:])):
+  if any(b.effects != branches[0].effects for b in branches[1:]):
     raise core.JaxprTypeError(
       f'cond branches must have matching effect types: '
       f'{[b.effects for b in branches]}')
@@ -2873,7 +2872,7 @@ def cummin(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
 def _cumred_shape_rule(x, *, axis: int, reverse: bool):
   if axis < 0 or axis >= x.ndim:
     raise ValueError(
-        "axis {} is out of bounds for array of shape {}".format(axis, x.shape))
+        f"axis {axis} is out of bounds for array of shape {x.shape}")
   return x.shape
 
 def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):

@@ -47,7 +47,7 @@ def _maybe_jit(jit_type, func, *args, **kwargs):
 
 class X64ContextTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_jit={}".format(jit), "jit": jit}
+      {"testcase_name": f"_jit={jit}", "jit": jit}
       for jit in ["python", "cpp", None]))
   def test_make_array(self, jit):
     func = _maybe_jit(jit, lambda: jnp.array(np.float64(0)))
@@ -60,7 +60,7 @@ class X64ContextTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list({
-          "testcase_name": "_jit={}_f_{}".format(jit, f.__name__),
+          "testcase_name": f"_jit={jit}_f_{f.__name__}",
           "jit": jit,
           "enable_or_disable": f
       } for jit in ["python", "cpp", None] for f in [enable_x64, disable_x64]))
@@ -81,7 +81,7 @@ class X64ContextTests(jtu.JaxTestCase):
 
   @unittest.skipIf(jtu.device_under_test() != "cpu", "Test presumes CPU precision")
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_jit={}".format(jit), "jit": jit}
+      {"testcase_name": f"_jit={jit}", "jit": jit}
       for jit in ["python", "cpp", None]))
   def test_near_singular_inverse(self, jit):
     rng = jtu.rand_default(self.rng())
@@ -102,7 +102,7 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertTrue(jnp.all(~jnp.isfinite(result_32)))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_jit={}".format(jit), "jit": jit}
+      {"testcase_name": f"_jit={jit}", "jit": jit}
       for jit in ["python", "cpp", None]))
   def test_while_loop(self, jit):
     @partial(_maybe_jit, jit)

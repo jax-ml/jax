@@ -294,9 +294,9 @@ class Literal:
 
   def __repr__(self):
     if hasattr(self, 'hash'):
-      return '{}'.format(self.val)
+      return f'{self.val}'
     else:
-      return 'Literal(val={})'.format(self.val)
+      return f'Literal(val={self.val})'
 
 literalable_types: Set[type] = set()
 
@@ -315,7 +315,7 @@ class Primitive:
     self.name = name
 
   def __repr__(self):
-    return '{}'.format(self.name)
+    return f'{self.name}'
 
   def bind(self, *args, **params):
     assert (not config.jax_enable_checks or
@@ -619,7 +619,7 @@ class Tracer:
       attr = getattr(self.aval, name)
     except KeyError as err:
       raise AttributeError(
-          "{} has no attribute {}".format(self.__class__.__name__, name)
+          f"{self.__class__.__name__} has no attribute {name}"
       ) from err
     else:
       t = type(attr)
@@ -637,7 +637,7 @@ class Tracer:
     if contents:
       base = pp.group(pp.nest(2, pp.concat([
         base, pp.text(' with'), pp.brk(), pp.join(pp.brk(), [
-          pp.text('{} = '.format(name)) + pp_payload
+          pp.text(f'{name} = ') + pp_payload
           for name, pp_payload in contents])
       ])))
     return base
@@ -705,7 +705,7 @@ class MainTrace:
     self.payload = payload
 
   def __repr__(self) -> str:
-    return "MainTrace({},{})".format(self.level, self.trace_type.__name__)
+    return f"MainTrace({self.level},{self.trace_type.__name__})"
 
   def __hash__(self) -> int:
     return hash((self.level, self.trace_type))
@@ -1017,7 +1017,7 @@ class AbstractValue:
 
   def __repr__(self):
     try:
-      kv_pairs = ('{}={}'.format(k, v) for k, v in self.__dict__.items())
+      kv_pairs = (f'{k}={v}' for k, v in self.__dict__.items())
       return '{}({})'.format(self.__class__.__name__, ','.join(kv_pairs))
     except AttributeError:
       return self.__class__.__name__
@@ -1403,7 +1403,7 @@ class AbstractToken(AbstractValue):
 abstract_token: AbstractToken = AbstractToken()
 
 # Concrete token object
-class Token(object): pass
+class Token: pass
 token: Token = Token()
 pytype_aval_mappings[Token] = lambda _: abstract_token
 

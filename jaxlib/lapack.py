@@ -85,7 +85,7 @@ def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
   elif dtype == np.complex128:
     fn = "blas_ztrsm"
   else:
-    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
 
   if conj_a and not trans_a:
     raise NotImplementedError("Conjugation without transposition not supported")
@@ -123,7 +123,7 @@ def getrf_mhlo(dtype, a):
   elif dtype == np.complex128:
     fn = b"lapack_zgetrf"
   else:
-    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
@@ -170,7 +170,7 @@ def geqrf_mhlo(dtype, a):
     fn = b"lapack_zgeqrf"
     lwork = _lapack.lapack_zgeqrf_workspace(m, n)
   else:
-    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
@@ -224,7 +224,7 @@ def orgqr_mhlo(dtype, a, tau):
     fn = b"lapack_zungqr"
     lwork = _lapack.lapack_zungqr_workspace(m, n, k)
   else:
-    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
@@ -257,7 +257,7 @@ def potrf_mhlo(dtype, a, lower=False):
   dims = a_type.shape
   m, n = dims[-2:]
   if m != n:
-    raise ValueError("potrf expects a square matrix, got {}".format(a_type))
+    raise ValueError(f"potrf expects a square matrix, got {a_type}")
   if dtype == np.float32:
     fn = b"lapack_spotrf"
   elif dtype == np.float64:
@@ -267,7 +267,7 @@ def potrf_mhlo(dtype, a, lower=False):
   elif dtype == np.complex128:
     fn = b"lapack_zpotrf"
   else:
-    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
   b = 1
@@ -345,7 +345,7 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
     ]
     workspace_layouts = [[0], [0], [0]]
   else:
-    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
@@ -430,7 +430,7 @@ def syevd_mhlo(dtype, a, lower=False):
     ]
     workspace_layouts = [[0], [0], [0]]
   else:
-    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
@@ -513,7 +513,7 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
                                        ir.ComplexType.get(ir.F64Type.get()))]
     eigvals_layouts = [tuple(range(num_bd, -1, -1))]
   else:
-    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
 
   i32_type = ir.IntegerType.get_signless(32)
   scalar_layout = []

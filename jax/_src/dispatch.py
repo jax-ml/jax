@@ -545,7 +545,7 @@ def _input_handler(backend: Backend,
         if args[i] != args[j].shape[k]:
           raise Exception("inconsistent argument axis sizes for type")
     if needs_padding:
-      args = tuple([pad(x) if pad else x for x, pad in zip(args, padders)])
+      args = tuple(pad(x) if pad else x for x, pad in zip(args, padders))
     return args
   return elaborate_and_pad
 

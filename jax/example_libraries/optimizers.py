@@ -574,7 +574,7 @@ def clip_grads(grad_tree, max_norm):
 
 ### serialization utilities
 
-class JoinPoint(object):
+class JoinPoint:
   """Marks the boundary between two joined (nested) pytrees."""
   def __init__(self, subtree):
     self.subtree = subtree

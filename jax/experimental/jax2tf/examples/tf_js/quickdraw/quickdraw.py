@@ -129,12 +129,12 @@ def train(train_ds, test_ds, classes):
 
     if FLAGS.run_eval_on_train:
       train_acc = accuracy(predict, optimizer.target, train_ds)
-      print("Training set accuracy {}".format(train_acc))
+      print(f"Training set accuracy {train_acc}")
 
     test_acc = accuracy(predict, optimizer.target, test_ds)
-    print("Test set accuracy {}".format(test_acc))
+    print(f"Test set accuracy {test_acc}")
     epoch_time = time.time() - start_time
-    print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
+    print(f"Epoch {epoch} in {epoch_time:0.2f} sec")
 
   return optimizer.target
 

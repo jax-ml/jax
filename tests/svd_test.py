@@ -101,7 +101,7 @@ class SvdTest(jtu.JaxTestCase):
             expected_s, jnp.real(actual_s), rtol=_SVD_RTOL, atol=1E-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': '_m={}_by_n={}'.format(m, n), 'm': m, 'n': n}
+      {'testcase_name': f'_m={m}_by_n={n}', 'm': m, 'n': n}
       for m, n in zip([50, 6], [3, 60])))
   def testSvdWithSkinnyTallInput(self, m, n):
     """Tests SVD with skinny and tall input."""
@@ -117,7 +117,7 @@ class SvdTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {   # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_r={}_log_cond={}'.format(m, r, log_cond),
+          'testcase_name': f'_m={m}_r={r}_log_cond={log_cond}',
           'm': m, 'r': r, 'log_cond': log_cond}
       for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])
       for log_cond in np.linspace(1, 3, 3)))

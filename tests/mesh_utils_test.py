@@ -90,13 +90,13 @@ def _validate_mocked_process_indices(devices, one_device_per_chip):
       # 8 devices per process
       assert len(local_devices) == 8, local_devices
     # All devices have same z coord
-    assert len(set(d.coords[2] for d in local_devices)) == 1, local_devices
+    assert len({d.coords[2] for d in local_devices}) == 1, local_devices
     # All devices in a 2x2 subgrid
     min_coords = min(d.coords for d in local_devices)
     expected = set()
     for x, y in [(0,0), (0,1), (1,0), (1,1)]:
       expected.add((min_coords[0] + x, min_coords[1] + y, min_coords[2]))
-    assert set(d.coords for d in local_devices) == expected, local_devices
+    assert {d.coords for d in local_devices} == expected, local_devices
 
 
 def mock_2x2_devices():

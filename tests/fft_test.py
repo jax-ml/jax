@@ -167,7 +167,7 @@ class FftTest(jtu.JaxTestCase):
     self.assertAllClose(matrix, matrix2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_real={}".format(inverse, real),
+      {"testcase_name": f"_inverse={inverse}_real={real}",
        "inverse": inverse, "real": real}
       for inverse in [False, True]
       for real in [False, True]))
@@ -186,7 +186,7 @@ class FftTest(jtu.JaxTestCase):
         lambda: func(rng([2, 3, 4, 5], dtype=np.float64), axes=None))
     self.assertRaisesRegex(
         ValueError,
-        "jax.numpy.fft.{} does not support repeated axes. Got axes \\[1, 1\\].".format(name),
+        f"jax.numpy.fft.{name} does not support repeated axes. Got axes \\[1, 1\\].",
         lambda: func(rng([2, 3], dtype=np.float64), axes=[1, 1]))
     self.assertRaises(
         ValueError, lambda: func(rng([2, 3], dtype=np.float64), axes=[2]))
@@ -230,7 +230,7 @@ class FftTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_real={}_hermitian={}".format(inverse, real, hermitian),
+      {"testcase_name": f"_inverse={inverse}_real={real}_hermitian={hermitian}",
        "inverse": inverse, "real": real, "hermitian": hermitian}
       for inverse in [False, True]
       for real in [False, True]
@@ -292,7 +292,7 @@ class FftTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_real={}".format(inverse, real),
+      {"testcase_name": f"_inverse={inverse}_real={real}",
        "inverse": inverse, "real": real}
       for inverse in [False, True]
       for real in [False, True]))
@@ -346,7 +346,7 @@ class FftTest(jtu.JaxTestCase):
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_n={}".format(n),
+    {"testcase_name": f"_n={n}",
      "n": n}
     for n in [[0,1,2]]))
   def testFftfreqErrors(self, n):
@@ -389,7 +389,7 @@ class FftTest(jtu.JaxTestCase):
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_n={}".format(n),
+    {"testcase_name": f"_n={n}",
      "n": n}
     for n in [[0, 1, 2]]))
   def testRfftfreqErrors(self, n):

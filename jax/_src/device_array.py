@@ -212,7 +212,7 @@ for device_array in [DeviceArray]:
     sep = ' '
     if last_line_len + len(dtype_str) + 1 > line_width:
       sep = ' ' * len(prefix)
-    return "{}{},{}{}".format(prefix, s, sep, dtype_str)
+    return f"{prefix}{s},{sep}{dtype_str}"
 
   setattr(device_array, "__repr__", __repr__)
 
@@ -298,7 +298,7 @@ for device_array in [DeviceArray]:
 # pylint: enable=protected-access
 
 
-class DeletedBuffer(object): pass
+class DeletedBuffer: pass
 deleted_buffer = DeletedBuffer()
 
 

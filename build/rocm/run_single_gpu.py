@@ -29,8 +29,7 @@ def run_shell_command(cmd, shell=False, env_vars={}):
   env = {**env, **env_vars}
   result = subprocess.run(cmd,
                           shell=shell,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE,
+                          capture_output=True,
                           env=env)
   if result.returncode != 0:
     print("FAILED - {}".format(" ".join(cmd)))

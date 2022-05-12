@@ -152,7 +152,7 @@ class _AxisConcat(abc.ABC):
           params = list(map(int, vec))
         except ValueError as err:
           raise ValueError(
-            "could not understand directive {!r}".format(directive)
+            f"could not understand directive {directive!r}"
           ) from err
 
     axis, ndmin, trans1d, matrix = params
