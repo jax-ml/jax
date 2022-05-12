@@ -184,6 +184,7 @@ html_static_path = ['_static']
 
 # -- Options for myst ----------------------------------------------
 myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
+myst_enable_extensions = ['dollarmath']
 nb_execution_mode = "force"
 nb_execution_allow_errors = False
 
