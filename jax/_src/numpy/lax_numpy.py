@@ -3775,11 +3775,16 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
           if stop is None or (not isinstance(stop, core.Tracer) and
               core.greater_equal_dim(stop, x_shape[x_axis])):
             stop = None
+        elif core.symbolic_equal_dim(step, -1):
+          step = -1
       except (TypeError, core.InconclusiveDimensionOperation):
         pass
 
-      # Handle slice(None)
-      if start is None and stop is None and step is None:
+      # Handle slice(None) and slice(None, None, -1)
+      if start is None and stop is None and (
+          step is None or isinstance(step, int) and step == -1):
+        if step == -1:
+          reversed_y_dims.append(collapsed_y_axis)
         slice_shape.append(x_shape[x_axis])
         gather_slice_shape.append(x_shape[x_axis])
         offset_dims.append(collapsed_y_axis)
