@@ -45,12 +45,12 @@ def _check_symmetry(x: jnp.ndarray) -> bool:
   m, n = x.shape
   eps = jnp.finfo(x.dtype).eps
   tol = 50.0 * eps
-  is_symmetric = False
+  is_hermitian = False
   if m == n:
     if np.linalg.norm(x - x.T.conj()) / np.linalg.norm(x) < tol:
-      is_symmetric = True
+      is_hermitian = True
 
-  return is_symmetric
+  return is_hermitian
 
 def _compute_relative_diff(actual, expected):
   """Computes relative difference between two matrices."""
@@ -75,11 +75,11 @@ class QdwhTest(jtu.JaxTestCase):
     cond = 10**log_cond
     s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
     a = (u * s) @ v
-    is_symmetric = _check_symmetry(a)
+    is_hermitian = _check_symmetry(a)
     max_iterations = 2
 
     _, _, actual_num_iterations, is_converged = qdwh.qdwh(
-        a, is_symmetric, max_iterations)
+        a, is_hermitian, max_iterations)
 
     with self.subTest('Number of iterations.'):
       self.assertEqual(max_iterations, actual_num_iterations)
@@ -102,10 +102,10 @@ class QdwhTest(jtu.JaxTestCase):
     cond = 10**log_cond
     s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
     a = (u * s) @ v
-    is_symmetric = _check_symmetry(a)
+    is_hermitian = _check_symmetry(a)
     max_iterations = 10
 
-    actual_u, actual_h, _, _ = qdwh.qdwh(a, is_symmetric, max_iterations)
+    actual_u, actual_h, _, _ = qdwh.qdwh(a, is_hermitian, max_iterations)
     expected_u, expected_h = osp_linalg.polar(a)
 
     # Sets the test tolerance.
@@ -145,12 +145,12 @@ class QdwhTest(jtu.JaxTestCase):
     cond = 10**log_cond
     s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
     a = (u * s) @ v
-    is_symmetric = _check_symmetry(a)
+    is_hermitian = _check_symmetry(a)
     max_iterations = 10
 
     def lsp_linalg_fn(a):
       u, h, _, _ = qdwh.qdwh(
-          a, is_symmetric=is_symmetric, max_iterations=max_iterations)
+          a, is_hermitian=is_hermitian, max_iterations=max_iterations)
       return u, h
 
     args_maker = lambda: [a]
@@ -185,9 +185,9 @@ class QdwhTest(jtu.JaxTestCase):
     s = jnp.expand_dims(s.at[-1].set(0), range(u.ndim - 1))
     a = (u * s) @ v
 
-    is_symmetric = _check_symmetry(a)
+    is_hermitian = _check_symmetry(a)
     max_iterations = 15
-    actual_u, actual_h, _, _ = qdwh.qdwh(a, is_symmetric, max_iterations)
+    actual_u, actual_h, _, _ = qdwh.qdwh(a, is_hermitian, max_iterations)
     _, expected_h = osp_linalg.polar(a)
 
     # Sets the test tolerance.
@@ -221,13 +221,13 @@ class QdwhTest(jtu.JaxTestCase):
     tiny_elem = jnp.finfo(a).tiny
     a = a.at[r, c].set(tiny_elem)
 
-    is_symmetric = _check_symmetry(a)
+    is_hermitian = _check_symmetry(a)
     max_iterations = 10
 
     @jax.jit
     def lsp_linalg_fn(a):
       u, h, _, _ = qdwh.qdwh(
-          a, is_symmetric=is_symmetric, max_iterations=max_iterations)
+          a, is_hermitian=is_hermitian, max_iterations=max_iterations)
       return u, h
 
     actual_u, actual_h = lsp_linalg_fn(a)
