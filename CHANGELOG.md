@@ -13,11 +13,14 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Changes
   * {func}`jax.lax.eigh` now accepts an optional `sort_eigenvalues` argument
     that allows users to opt out of eigenvalue sorting on TPU.
+* Deprecations
   * Non-array arguments to functions in {mod}`jax.lax.linalg` are now marked
     keyword-only. As a backward-compatibility step passing keyword-only
     arguments positionally yields a warning, but in a future JAX release passing
     keyword-only arguments positionally will fail.
     However, most users should prefer to use {mod}`jax.numpy.linalg` instead.
+  * {func}`jax.scipy.linalg.polar_unitary`, which was a JAX extension to the
+    scipy API, is deprecated. Use {func}`jax.scipy.linalg.polar` instead.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).

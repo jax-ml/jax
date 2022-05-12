@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import lax
+from jax._src.lax import qdwh
 
 
 def _similarity_transform(
@@ -141,7 +142,7 @@ def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
     return X.at[jnp.diag_indices(X.shape[0])].set(vals)
 
   H_shift = _fill_diagonal(H, H.diagonal() - split_point)
-  U, _ = jsp.linalg.polar_unitary(H_shift)
+  U, _, _, _ = qdwh.qdwh(H_shift, is_hermitian=True)
   P = -0.5 * _fill_diagonal(U, U.diagonal() - 1.)
   rank = jnp.round(jnp.trace(P)).astype(jnp.int32)
   rank = int(rank)

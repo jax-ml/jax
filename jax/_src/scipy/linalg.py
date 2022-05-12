@@ -18,11 +18,13 @@ from functools import partial
 import numpy as np
 import scipy.linalg
 import textwrap
+import warnings
 
+import jax
 from jax import jit, vmap, jvp
 from jax import lax
 from jax._src.lax import linalg as lax_linalg
-from jax._src.lax import polar as lax_polar
+from jax._src.lax import qdwh
 from jax._src.numpy.util import _wraps, _promote_dtypes_inexact
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg as np_linalg
@@ -619,11 +621,102 @@ def eigh_tridiagonal(d, e, *, eigvals_only=False, select='a',
   _, _, mid, _ = lax.while_loop(cond, body, (0, lower, mid, upper))
   return mid
 
-@_wraps(scipy.linalg.polar)
-def polar(a, side='right', method='qdwh', eps=None, maxiter=50):
-   unitary, posdef, _ = lax_polar.polar(a, side=side, method=method, eps=eps,
-                                        maxiter=maxiter)
-   return unitary, posdef
+@partial(jit, static_argnames=('side'))
+@jax.default_matmul_precision("float32")
+def polar(a, side='right', *, eps=None, max_iterations=None):
+  r"""Computes the polar decomposition.
+
+  Given the :math:`m \times n` matrix :math:`a`, returns the factors of the polar
+  decomposition :math:`u` (also :math:`m \times n`) and :math:`p` such that
+  :math:`a = up` (if side is ``"right"``; :math:`p` is :math:`n \times n`) or
+  :math:`a = pu` (if side is ``"left"``; :math:`p` is :math:`m \times m`),
+  where :math:`p` is positive semidefinite.  If :math:`a` is nonsingular,
+  :math:`p` is positive definite and the
+  decomposition is unique. :math:`u` has orthonormal columns unless
+  :math:`n > m`, in which case it has orthonormal rows.
+
+  Writing the SVD of :math:`a` as
+  :math:`a = u_\mathit{svd} \cdot s_\mathit{svd} \cdot v^h_\mathit{svd}`, we
+  have :math:`u = u_\mathit{svd} \cdot v^h_\mathit{svd}`. Thus the unitary
+  factor :math:`u` can be constructed as the application of the sign function to
+  the singular values of :math:`a`; or, if :math:`a` is Hermitian, the
+  eigenvalues.
+
+  Several methods exist to compute the polar decomposition. Currently two
+  are supported:
+
+  * ``method="svd"``:
+
+    Computes the SVD of :math:`a` and then forms
+    :math:`u = u_\mathit{svd} \cdot v^h_\mathit{svd}`.
+
+  * ``method="qdwh"``:
+
+    Applies the `QDWH`_ (QR-based Dynamically Weighted Halley) algorithm.
+
+  Args:
+    a: The :math:`m \times n` input matrix.
+    side: Determines whether a right or left polar decomposition is computed.
+      If ``side`` is ``"right"`` then :math:`a = up`. If ``side`` is ``"left"``
+      then :math:`a = pu`. The default is ``"right"``.
+    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
+    eps: The final result will satisfy
+      :math:`x_k - x_k-1 < x_k (4\epsilon)^{\frac{1}{3}}`, where :math:`x_k` are
+      the QDWH iterates. Ignored if ``method`` is not ``"qdwh"``.
+    max_iterations: Iterations will terminate after this many steps even if the
+      above is unsatisfied.  Ignored if ``method`` is not ``"qdwh"``.
+
+  Returns:
+    A ``(unitary, posdef)`` tuple, where ``unitary`` is the unitary factor
+    (:math:`m \times n`), and ``posdef`` is the positive-semidefinite factor.
+    ``posdef`` is either :math:`n \times n` or :math:`m \times m` depending on
+    whether ``side`` is ``"right"`` or ``"left"``, respectively.
+
+  .. _QDWH: https://epubs.siam.org/doi/abs/10.1137/090774999
+  """
+  a = jnp.asarray(a)
+  if a.ndim != 2:
+    raise ValueError('The input `a` must be a 2-D array.')
+
+  if side not in ['right', 'left']:
+    raise ValueError("The argument `side` must be either 'right' or 'left'.")
+
+  m, n = a.shape
+  if m >= n:
+    if side == 'left':
+      u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
+      unitary = u_svd @ vh_svd
+      posdef = (u_svd * s_svd[None, :]) @ (u_svd.T.conj())
+    else:
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+  else:
+    if side == 'left':
+      a = a.T.conj()
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      posdef = posdef.T.conj()
+      unitary = unitary.T.conj()
+    else:
+      u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
+      unitary = u_svd @ vh_svd
+      posdef = (vh_svd.T.conj() * s_svd[None, :]) @ vh_svd
+
+  return unitary, posdef
+
+
+def polar_unitary(a, *, method="qdwh", eps=None, max_iterations=None):
+  """ Computes the unitary factor u in the polar decomposition ``a = u p``
+  (or ``a = p u``).
+
+  .. warning::
+    This function is deprecated. Use :func:`jax.scipy.linalg.polar` instead.
+  """
+  # TODO(phawkins): delete this function after 2022/8/11.
+  warnings.warn("jax.scipy.linalg.polar_unitary is deprecated. Call "
+                "jax.scipy.linalg.polar instead.",
+                DeprecationWarning)
+  unitary, _ = polar(a, eps, max_iterations)
+  return unitary
+
 
 @jit
 def _sqrtm_triu(T):

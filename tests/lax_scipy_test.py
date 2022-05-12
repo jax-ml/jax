@@ -470,16 +470,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       {'testcase_name':
         '_shape={}'
         '_n_zero_sv={}_degeneracy={}_geometric_spectrum={}'
-        '_max_sv={}_method={}_side={}'
+        '_max_sv={}_side={}'
         '_nonzero_condition_number={}_seed={}'.format(
           jtu.format_shape_dtype_string(
             shape, jnp.dtype(dtype).name).replace(" ", ""),
           n_zero_sv, degeneracy, geometric_spectrum, max_sv,
-          method, side, nonzero_condition_number, seed
+          side, nonzero_condition_number, seed
         ),
         'n_zero_sv': n_zero_sv, 'degeneracy': degeneracy,
         'geometric_spectrum': geometric_spectrum,
-        'max_sv': max_sv, 'shape': shape, 'method': method,
+        'max_sv': max_sv, 'shape': shape,
         'side': side, 'nonzero_condition_number': nonzero_condition_number,
         'dtype': dtype, 'seed': seed}
       for n_zero_sv in n_zero_svs
@@ -487,37 +487,37 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for geometric_spectrum in geometric_spectra
       for max_sv in max_svs
       for shape in polar_shapes
-      for method in methods
+      # for method in methods
       for side in sides
       for nonzero_condition_number in nonzero_condition_numbers
-      for dtype in jtu.dtypes.floating
+      for dtype in jtu.dtypes.inexact
       for seed in seeds))
   @jtu.skip_on_devices("gpu")  # Fails on A100.
   def testPolar(
-    self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
+    self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape,
       side, nonzero_condition_number, dtype, seed):
     """ Tests jax.scipy.linalg.polar."""
     if jtu.device_under_test() != "cpu":
       if jnp.dtype(dtype).name in ("bfloat16", "float16"):
         raise unittest.SkipTest("Skip half precision off CPU.")
-      if method == "svd":
-        raise unittest.SkipTest("Can't use SVD mode on TPU/GPU.")
+      # if method == "svd":
+      #   raise unittest.SkipTest("Can't use SVD mode on TPU/GPU.")
 
     matrix, _ = _initialize_polar_test(self.rng(),
       shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
       nonzero_condition_number, dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
-        NotImplementedError, jsp.linalg.polar, matrix, method=method,
+        NotImplementedError, jsp.linalg.polar, matrix,
         side=side)
       return
 
-    unitary, posdef = jsp.linalg.polar(matrix, method=method, side=side)
+    unitary, posdef = jsp.linalg.polar(matrix, side=side)
     if shape[0] >= shape[1]:
       should_be_eye = np.matmul(unitary.conj().T, unitary)
     else:
       should_be_eye = np.matmul(unitary, unitary.conj().T)
-    tol = 10 * jnp.finfo(matrix.dtype).eps
+    tol = 500 * jnp.finfo(matrix.dtype).eps
     eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
       self.assertAllClose(
