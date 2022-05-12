@@ -62,6 +62,7 @@ XlaOp = xc.XlaOp
 XlaShape = xc.Shape
 XlaBuilder = xc.XlaBuilder
 XlaExecutable = xc.Executable
+XlaRuntimeError = xc.XlaRuntimeError
 
 # apply_primitive is defined in jax._src.dispatch.
 apply_primitive: Callable
