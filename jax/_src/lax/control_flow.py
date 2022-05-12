@@ -726,9 +726,9 @@ def switch(index, branches: Sequence[Callable], *operands,
 
   Has the semantics of the following Python::
 
-    def switch(index, branches, operand):
+    def switch(index, branches, *operands):
       index = clamp(0, index, len(branches) - 1)
-      return branches[index](operand)
+      return branches[index](*operands)
 
   Args:
     index: Integer scalar type, indicating which branch function to apply.
