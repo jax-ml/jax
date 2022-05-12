@@ -823,7 +823,7 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
         # TODO(necula): check even in graph mode, by embedding the checks in
         # the graph.
         msg = (f"Dimension variable {var} must have integer value >= 1. "  # type: ignore
-               f"Found value {int(_is_known_constant(dim_expr)) / factor_var} when solving "
+               f"Found value {int(_is_known_constant(dim_expr)) / factor_var} when solving "  # type: ignore
                f"{eqn.poly} == {eqn.dim_expr}.{_shapeenv_to_str()}")
         raise ValueError(msg)
       var_value_int = _is_known_constant(var_value)
