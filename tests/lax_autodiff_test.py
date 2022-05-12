@@ -708,6 +708,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for shape, dims, strides, padding, base_dilation, window_dilation in (
         itertools.chain(
           itertools.product(
+            [()],
+            [()],
+            [()],
+            ["VALID", "SAME", ()],
+            [None, ()],
+            [None, ()]
+          ),
+          itertools.product(
             [(4, 6)],
             [(2, 1), (1, 2)],
             [(1, 1), (2, 1), (1, 2)],
