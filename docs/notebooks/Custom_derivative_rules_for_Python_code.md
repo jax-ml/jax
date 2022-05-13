@@ -570,7 +570,8 @@ A limitation to this approach is that the argument `f` can't close over any valu
 
 ### Use `jax.custom_jvp` to define forward-mode (and, indirectly, reverse-mode) rules
 
-Here's a canonical basic example of using `jax.custom_jvp`:
+Here's a canonical basic example of using `jax.custom_jvp`, where the comments use
+[Haskell-like type signatures](https://wiki.haskell.org/Type_signature):
 
 ```{code-cell} ipython3
 :id: nVkhbIFAOGZk

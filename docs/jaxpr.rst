@@ -352,7 +352,8 @@ constructed with the :py:func:`jax.lax.scan` function::
 
   lax.scan(body_fun: (C -> A -> (C, B)), init_carry: C, in_arr: Array[A]) -> (C, Array[B])
 
-Here ``C`` is the type of the scan carry, ``A`` is the element type of the
+This is written in terms of a `Haskell Type Signature`_:
+``C`` is the type of the scan carry, ``A`` is the element type of the
 input array(s), and ``B`` is the element type of the output array(s).
 
 For the example consider the function ``func11`` below
@@ -474,3 +475,5 @@ parameter. The value of this parameter is a Jaxpr with 2 input variables.
 The parameter ``in_axes`` specifies which of the input variables should be
 mapped and which should be broadcast. In our example, the value of ``extra``
 is broadcast and the value of ``arr`` is mapped.
+
+.. _Haskell Type Signature: https://wiki.haskell.org/Type_signature
