@@ -28,8 +28,6 @@
 # This encoding is assumed by various parts of the system, e.g. generating
 # replica groups for collective operations.
 
-from __future__ import annotations
-
 from contextlib import contextmanager, ContextDecorator
 from collections import defaultdict, OrderedDict
 import dataclasses
