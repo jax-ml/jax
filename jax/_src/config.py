@@ -476,7 +476,7 @@ flags.DEFINE_integer(
 
 flags.DEFINE_bool(
     'jax_pprint_use_color',
-    bool_env('JAX_PPRINT_USE_COLOR', False),
+    bool_env('JAX_PPRINT_USE_COLOR', True),
     help='Enable jaxpr pretty-printing with colorful syntax highlighting.'
 )
 
