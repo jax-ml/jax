@@ -498,6 +498,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
            ".*while trying to hash an object of type "
            "<class 'numpy\\.ndarray'>, 1. The error was:\nTypeError: "
            "unhashable type: 'numpy\\.ndarray'")
+    # Typo was fixed in newer jaxlib
+    if jax._src.lib.xla_extension_version < 66:
+      msg = msg.replace('occurred', 'occured')
 
     with self.assertRaisesRegex(ValueError, msg):
       jitted_f(1, np.asarray(1))
