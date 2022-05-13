@@ -113,9 +113,10 @@ def _hash_computation(hash_obj, xla_computation):
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  assert len(dir(compile_options_obj)) == 31,(f"Unexpected number of CompileOption fields: "
-                                              f"{len(dir(compile_options_obj))}. This likely: means that an extra "
-                                              f"field was added, and this function needs to be updated.")
+  assert len(dir(compile_options_obj)) == 32, (
+      f"Unexpected number of CompileOption fields: "
+      f"{len(dir(compile_options_obj))}. This likely: means that an extra "
+      f"field was added, and this function needs to be updated.")
 
   if compile_options_obj.argument_layouts is not None:
     map(lambda shape: hash_obj.update(shape.to_serialized_proto()),
@@ -125,6 +126,7 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   _hash_bool(hash_obj, compile_options_obj.tuple_arguments)
   _hash_int(hash_obj, compile_options_obj.num_replicas)
   _hash_int(hash_obj, compile_options_obj.num_partitions)
+  _hash_int(hash_obj, compile_options_obj.profile_version)
   if compile_options_obj.device_assignment is not None:
     hash_obj.update(compile_options_obj.device_assignment.serialize())
 
