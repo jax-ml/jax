@@ -14,6 +14,7 @@
 
 
 from functools import partial
+import operator
 from typing import Any, Optional, Sequence, Union
 from operator import index
 import warnings
@@ -397,7 +398,7 @@ def permutation(key: KeyArray,
   if not np.ndim(x):
     if not np.issubdtype(lax.dtype(x), np.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
-    r = core.concrete_or_error(int, x, 'argument x of jax.random.permutation()')
+    r = core.concrete_or_error(operator.index, x, 'argument x of jax.random.permutation()')
     return _shuffle(key, jnp.arange(r), axis)
   if independent or np.ndim(x) == 1:
     return _shuffle(key, x, axis)
@@ -471,11 +472,11 @@ def choice(key: KeyArray,
                     f"got {shape}")
   _check_arraylike("choice", a)
   if np.ndim(a) == 0:
-    a = core.concrete_or_error(int, a, "The error occurred in jax.random.choice()")
+    a = core.concrete_or_error(operator.index, a, "The error occurred in jax.random.choice()")
   else:
     a = jnp.asarray(a)
   axis = canonicalize_axis(axis, np.ndim(a) or 1)
-  n_inputs = int(a) if np.ndim(a) == 0 else a.shape[axis]  # type: ignore[arg-type]
+  n_inputs = operator.index(a) if np.ndim(a) == 0 else a.shape[axis]  # type: ignore[arg-type]
   n_draws = prod(shape)
   if n_draws == 0:
     return jnp.zeros(shape, dtype=lax.dtype(a))

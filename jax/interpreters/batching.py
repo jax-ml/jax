@@ -638,7 +638,7 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
   operand, = batched_args
   bdim, = batch_dims
   axes = tuple(np.where(np.less(axes, bdim), axes, np.add(axes, 1)))
-  bdim_out = int(list(np.delete(np.arange(operand.ndim), axes)).index(bdim))
+  bdim_out = list(np.delete(np.arange(operand.ndim), axes)).index(bdim)
   if 'input_shape' in params:
     params = dict(params, input_shape=operand.shape)
   return prim.bind(operand, axes=axes, **params), bdim_out

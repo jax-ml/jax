@@ -109,7 +109,7 @@ Also, it works best on rcond <= 10e-3 values.
 @partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x, y, deg, rcond=None, full=False, w=None, cov=False):
   _check_arraylike("polyfit", x, y)
-  deg = core.concrete_or_error(int, deg, "deg must be int")
+  deg = core.concrete_or_error(operator.index, deg, "deg must be int")
   order = deg + 1
   # check arguments
   if deg < 0:

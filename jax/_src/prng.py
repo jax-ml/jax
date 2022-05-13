@@ -14,6 +14,7 @@
 
 
 from functools import partial
+import operator
 from typing import Callable, Iterator, NamedTuple, Sequence
 import warnings
 
@@ -471,7 +472,7 @@ def threefry_2x32(keypair, count):
 
 
 def threefry_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
-  return _threefry_split(key, int(num))  # type: ignore
+  return _threefry_split(key, operator.index(num))  # type: ignore
 
 @partial(jit, static_argnums=(1,), inline=True)
 def _threefry_split(key, num) -> jnp.ndarray:

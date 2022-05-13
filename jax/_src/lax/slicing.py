@@ -14,6 +14,7 @@
 
 import enum
 from functools import partial
+import operator
 from typing import Any, Callable, NamedTuple, Optional, Sequence, Union
 import weakref
 
@@ -645,10 +646,10 @@ def slice_in_dim(operand: Array, start_index: Optional[int],
   if limit_index_int < 0:
     limit_index_int = limit_index_int + len_axis
 
-  axis = int(axis)
+  axis = operator.index(axis)
   start_indices[axis] = start_index_int
   limit_indices[axis] = limit_index_int
-  strides[axis] = int(stride)
+  strides[axis] = operator.index(stride)
 
   return slice(operand, start_indices, limit_indices, strides)
 
@@ -656,7 +657,7 @@ def slice_in_dim(operand: Array, start_index: Optional[int],
 def index_in_dim(operand: Array, index: int, axis: int = 0,
                  keepdims: bool = True) -> Array:
   """Convenience wrapper around slice to perform int indexing."""
-  index, axis = core._canonicalize_dimension(index), int(axis)
+  index, axis = core._canonicalize_dimension(index), operator.index(axis)
   axis_size = operand.shape[axis]
   wrapped_index = index + axis_size if index < 0 else index
   if not 0 <= wrapped_index < axis_size:
@@ -675,7 +676,7 @@ def dynamic_slice_in_dim(operand: Array, start_index: Array,
   start_indices = [lax._zero(start_index)] * operand.ndim
   slice_sizes = list(operand.shape)
 
-  axis = int(axis)
+  axis = operator.index(axis)
   start_indices[axis] = start_index
   slice_sizes[axis] = core._canonicalize_dimension(slice_size)
   return dynamic_slice(operand, start_indices, slice_sizes)
@@ -696,7 +697,7 @@ def dynamic_update_slice_in_dim(operand: Array, update: Array,
   """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
      in a single ``axis``.
   """
-  axis = int(axis)
+  axis = operator.index(axis)
   start_indices = [lax._zero(start_index)] * lax._ndim(operand)
   start_indices[axis] = start_index
   return dynamic_update_slice(operand, update, start_indices)
@@ -707,7 +708,7 @@ def dynamic_update_index_in_dim(operand: Array, update: Array, index: Array,
   """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
      of size 1 in a single ``axis``.
   """
-  axis = int(axis)
+  axis = operator.index(axis)
   if lax._ndim(update) != lax._ndim(operand):
     assert lax._ndim(update) + 1 == lax._ndim(operand)
     update = lax.expand_dims(update, (axis,))
