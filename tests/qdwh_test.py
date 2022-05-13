@@ -79,7 +79,7 @@ class QdwhTest(jtu.JaxTestCase):
     max_iterations = 2
 
     _, _, actual_num_iterations, is_converged = qdwh.qdwh(
-        a, is_hermitian, max_iterations)
+        a, is_hermitian=is_hermitian, max_iterations=max_iterations)
 
     with self.subTest('Number of iterations.'):
       self.assertEqual(max_iterations, actual_num_iterations)
@@ -105,7 +105,8 @@ class QdwhTest(jtu.JaxTestCase):
     is_hermitian = _check_symmetry(a)
     max_iterations = 10
 
-    actual_u, actual_h, _, _ = qdwh.qdwh(a, is_hermitian, max_iterations)
+    actual_u, actual_h, _, _ = qdwh.qdwh(a, is_hermitian=is_hermitian,
+                                         max_iterations=max_iterations)
     expected_u, expected_h = osp_linalg.polar(a)
 
     # Sets the test tolerance.
@@ -132,12 +133,13 @@ class QdwhTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {  # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}'.format(
-              m, n, log_cond),
-          'm': m, 'n': n, 'log_cond': log_cond}
+          'testcase_name': '_m={}_by_n={}_log_cond={}_padding={}'.format(
+              m, n, log_cond, padding),
+          'm': m, 'n': n, 'log_cond': log_cond, 'padding': padding}
       for m, n in zip([6, 8], [6, 4])
+      for padding in (None, (3, 2))
       for log_cond in np.linspace(1, 4, 4)))
-  def testQdwhWithRandomMatrix(self, m, n, log_cond):
+  def testQdwhWithRandomMatrix(self, m, n, log_cond, padding):
     """Tests qdwh with random input."""
     rng = jtu.rand_uniform(self.rng(), low=0.3, high=0.9)
     a = rng((m, n), _QDWH_TEST_DTYPE)
@@ -149,8 +151,15 @@ class QdwhTest(jtu.JaxTestCase):
     max_iterations = 10
 
     def lsp_linalg_fn(a):
+      if padding is not None:
+        pm, pn = padding
+        a = jnp.pad(a, [(0, pm), (0, pn)], constant_values=jnp.nan)
       u, h, _, _ = qdwh.qdwh(
-          a, is_hermitian=is_hermitian, max_iterations=max_iterations)
+          a, is_hermitian=is_hermitian, max_iterations=max_iterations,
+          dynamic_shape=(m, n) if padding else None)
+      if padding is not None:
+        u = u[:m, :n]
+        h = h[:n, :n]
       return u, h
 
     args_maker = lambda: [a]
@@ -187,7 +196,8 @@ class QdwhTest(jtu.JaxTestCase):
 
     is_hermitian = _check_symmetry(a)
     max_iterations = 15
-    actual_u, actual_h, _, _ = qdwh.qdwh(a, is_hermitian, max_iterations)
+    actual_u, actual_h, _, _ = qdwh.qdwh(a, is_hermitian=is_hermitian,
+                                         max_iterations=max_iterations)
     _, expected_h = osp_linalg.polar(a)
 
     # Sets the test tolerance.
