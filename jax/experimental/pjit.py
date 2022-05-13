@@ -647,8 +647,20 @@ def _pjit_call_impl(*args, jaxpr,
       resource_env, donated_invars, name, in_is_global).compile()
   if compiled._auto_spmd_lowering:
     pxla._check_gda_xla_sharding_match(args, compiled._in_axes)
-  distributed_debug_log(("Running pjit'd function", name),
-                        ("mesh", resource_env.physical_mesh))
+  if config.jax_distributed_debug:
+    # Defensively only perform fingerprint logic if debug logging is enabled
+    # NOTE(skyewm): I didn't benchmark this
+    fingerprint = None
+    if hasattr(compiled.runtime_executable(), "fingerprint"):
+      fingerprint = compiled.runtime_executable().fingerprint
+    if fingerprint is not None:
+      fingerprint = fingerprint.hex()
+    distributed_debug_log(("Running pjit'd function", name),
+                          ("mesh", resource_env.physical_mesh),
+                          ("in_axis_resources", in_axis_resources),
+                          ("out_axis_resources", out_axis_resources),
+                          ("abstract args", list(map(xla.abstractify, args))),
+                          ("fingerprint", fingerprint))
   return compiled.unsafe_call(*args)
 pjit_p.def_impl(_pjit_call_impl)
 
