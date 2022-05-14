@@ -17,7 +17,7 @@ import collections
 from collections import namedtuple
 from contextlib import contextmanager
 import functools
-from functools import partialmethod, total_ordering
+from functools import partial, partialmethod, total_ordering
 import gc
 import itertools as it
 import operator
@@ -207,8 +207,6 @@ class JaxprEqn(NamedTuple):
     return self._replace(*args, **kwargs)
 
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
-  if primitive.call_primitive:
-    assert len(outvars) == len(params["call_jaxpr"].outvars)
   source_info = source_info or source_info_util.new_source_info()
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
@@ -1822,6 +1820,17 @@ named_call_p: CallPrimitive = CallPrimitive('named_call')
 named_call_p.def_impl(call_impl)
 
 
+class ClosedCallPrimitive(CallPrimitive):
+  def get_bind_params(self, params):
+    new_params = dict(params)
+    jaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
+    return [subfun], new_params
+
+closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
+closed_call_p.def_impl(call_impl)
+
+
 outfeed_primitives: Set[Primitive] = set()
 def jaxpr_uses_outfeed(jaxpr: Jaxpr) -> bool:
   """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
@@ -2168,6 +2177,12 @@ def typematch(aval1: AbstractValue, aval2: AbstractValue) -> bool:
 class JaxprTypeError(TypeError): pass
 
 custom_typechecks: Dict[Primitive, Callable] = {}
+
+def _check_closed_call(*in_avals, call_jaxpr):
+  if list(in_avals) != list(call_jaxpr.in_avals):
+    raise JaxprTypeError("Closed call in_avals mismatch")
+  return call_jaxpr.out_avals, call_jaxpr.effects
+custom_typechecks[closed_call_p] = _check_closed_call
 
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.

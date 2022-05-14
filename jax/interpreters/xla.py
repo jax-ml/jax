@@ -560,7 +560,3 @@ def lower_fun(fun: Callable, *, multiple_results: bool, backend=None,
                        "Add an MLIR (MHLO) lowering via jax.interpreters.mlir "
                        "instead.")
   return f
-
-
-ad.primitive_transposes[core.named_call_p] = partial(ad.call_transpose,
-                                                     core.named_call_p)

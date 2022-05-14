@@ -983,6 +983,7 @@ tf_not_yet_impl = [
     "reduce_precision",
     "schur",
     "name",
+    "closed_call",
     "unreachable",
     "bint",
     "getslice",

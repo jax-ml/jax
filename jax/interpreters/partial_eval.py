@@ -222,15 +222,17 @@ class JaxprTrace(Trace):
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
     # Adjust parameters (e.g. donated_invars) for the staged-out call's args.
     num_new_args = len(const_tracers) + len(env_tracers)
-    staged_params = update_params(params, map(op.not_, in_knowns), num_new_args)
-    staged_params = dict(staged_params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
+    staged_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
+    staged_params = update_params(staged_params, map(op.not_, in_knowns),
+                                  num_new_args)
     # The outputs of the staged-out call are Tracers with the new eqn as recipe.
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
     eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),
-                         out_tracers, primitive, staged_params, jaxpr.effects, source)
+                         out_tracers, primitive, staged_params, jaxpr.effects,
+                         source)
     for t in out_tracers: t.recipe = eqn
     return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -511,6 +513,12 @@ custom_partial_eval_rules: Dict[Primitive, Callable] = {}
 call_partial_eval_rules: Dict[Primitive, Callable] = {}
 call_param_updaters: Dict[Primitive, Callable] = {}
 
+def _closed_call_param_updater(params, _, __):
+  jaxpr = params.get('call_jaxpr')
+  if jaxpr is None: return params
+  assert type(jaxpr) is core.Jaxpr
+  return dict(params, call_jaxpr=core.ClosedJaxpr(jaxpr, ()))
+call_param_updaters[core.closed_call_p] = _closed_call_param_updater
 
 def abstract_eval_fun(fun, *avals, debug_info=None, **params):
   _, avals_out, _ = trace_to_jaxpr_dynamic(
@@ -666,8 +674,6 @@ def new_eqn_recipe(in_tracers: Sequence[JaxprTracer],
   # TODO(necula): move these checks to core.check_jaxpr, and call in more places
   if primitive.call_primitive or primitive.map_primitive:
     assert "call_jaxpr" in params
-    # assert len(invars) == len(params["call_jaxpr"].invars)  # TODO constvars?
-    assert len(out_tracers) == len(params["call_jaxpr"].outvars)
     assert ("donated_invars" not in params or
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   if primitive.map_primitive:
@@ -1253,6 +1259,20 @@ dce_rules[core.call_p] = dce_jaxpr_call_rule
 dce_rules[core.named_call_p] = dce_jaxpr_call_rule
 dce_rules[remat_call_p] = dce_jaxpr_call_rule
 
+
+def dce_jaxpr_closed_call_rule(used_outputs: List[bool], eqn: JaxprEqn
+                               ) -> Tuple[List[bool], JaxprEqn]:
+  # TODO(mattjj): de-duplicate with above rule?
+  jaxpr_ = eqn.params['call_jaxpr']
+  jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
+  new_jaxpr, used_inputs = dce_jaxpr(jaxpr, used_outputs)
+  new_params = dict(eqn.params, call_jaxpr=core.ClosedJaxpr(new_jaxpr, consts))
+  new_eqn = new_jaxpr_eqn(
+      [v for v, used in zip(eqn.invars, used_inputs) if used],
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+  return used_inputs, new_eqn
+dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
 def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
                           ) -> ClosedJaxpr:
