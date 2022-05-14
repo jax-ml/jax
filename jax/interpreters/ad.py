@@ -605,6 +605,16 @@ def call_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
   out_flat = primitive.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
+primitive_transposes[core.named_call_p] = \
+    partial(call_transpose, core.named_call_p)
+
+
+def _closed_call_transpose(params, jaxpr, args, ct, cts_in_avals, reduce_axes):
+  jaxpr_, consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
+  return call_transpose(core.closed_call_p, params, jaxpr_, (*consts, *args),
+                        ct, cts_in_avals, reduce_axes)
+primitive_transposes[core.closed_call_p] = _closed_call_transpose
 
 
 def remat_transpose(params, call_jaxpr, primals_in, cotangents_in,

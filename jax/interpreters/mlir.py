@@ -986,13 +986,13 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 
 def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
                    avals_out, tokens_in, *args):
+  if isinstance(call_jaxpr, core.Jaxpr):
+    call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
   xla.check_backend_matches(backend, ctx.platform)
   output_types = map(aval_to_ir_types, avals_out)
   flat_output_types = util.flatten(output_types)
   effects = tokens_in.effects()
-  symbol_name = lower_jaxpr_to_fun(ctx, fn_name,
-                                   core.ClosedJaxpr(call_jaxpr, ()),
-                                   effects).name.value
+  symbol_name = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects).name.value
   args = [*tokens_in.tokens(), *args]
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(symbol_name),
@@ -1024,6 +1024,8 @@ def _named_call_lowering(ctx, *args, name, backend=None,
 
 register_lowering(core.named_call_p, _named_call_lowering)
 register_lowering(core.call_p, partial(_named_call_lowering, name="core_call"))
+register_lowering(core.closed_call_p,
+                  partial(_named_call_lowering, name="core_closed_call"))
 
 
 def full_like_aval(value, aval: core.ShapedArray) -> ir.Value:

@@ -56,6 +56,13 @@ def core_call(f, *args):
   out = core.call_p.bind(f, *args)
   return tree_unflatten(out_tree(), out)
 
+@util.curry
+def core_closed_call(f, *args):
+  args, in_tree = tree_flatten(args)
+  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+  out = core.closed_call_p.bind(f, *args)
+  return tree_unflatten(out_tree(), out)
+
 def simple_fun(x, y):
   return jnp.sin(x * y)
 
@@ -147,6 +154,9 @@ for ts in test_specs_base:
   test_specs.append(CallSpec(core_call(ts.fun), ts.args))
   test_specs.append(CallSpec(core_call(jit(ts.fun)), ts.args))
   test_specs.append(CallSpec(core_call(core_call(ts.fun)), ts.args))
+  test_specs.append(CallSpec(core_closed_call(ts.fun), ts.args))
+  test_specs.append(CallSpec(core_closed_call(jit(ts.fun)), ts.args))
+  test_specs.append(CallSpec(core_closed_call(core_closed_call(ts.fun)), ts.args))
   test_specs.append(CallSpec(partial(jvp_unlinearized, ts.fun),
                              (ts.args, ts.args)))
 
