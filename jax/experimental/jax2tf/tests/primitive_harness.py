@@ -1272,7 +1272,7 @@ def _make_scatter_harness(name,
 # Validate dtypes
 for dtype in jtu.dtypes.all:
   for f_lax in [
-      lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min
+      lax.scatter, lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min
   ]:
     _make_scatter_harness("dtypes", dtype=dtype, f_lax=f_lax)
 
