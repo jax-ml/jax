@@ -27,7 +27,6 @@ from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import lax_numpy as jnp
 
-
 Array = Any
 if sys.version_info >= (3, 10):
     from types import EllipsisType
@@ -38,6 +37,13 @@ Index = Union[SingleIndex, Tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
 Numeric = Union[Array, Scalar]
 
+scatter_to_dense_mapping = {
+  lax.scatter: lambda x,y: y,
+  lax.scatter_add: lax.add,
+  lax.scatter_mul: lax.mul,
+  lax.scatter_min: lax.min,
+  lax.scatter_max: lax.max,
+}
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
                     unique_indices, mode=None, normalize_indices=True):
@@ -106,11 +112,16 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     inserted_window_dims=indexer.dnums.collapsed_slice_dims,
     scatter_dims_to_operand_dims=indexer.dnums.start_index_map
   )
-  out = scatter_op(
-    x, indexer.gather_indices, y, dnums,
-    indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
-    unique_indices=indexer.unique_indices or unique_indices,
-    mode=mode)
+
+  strides = (len(indexer.gather_indices.shape) != 1)
+  if (not strides) & ((mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS) or (mode == None)):
+    out = jnp._lower_gather_scatter(x, indexer, y, scatter_to_dense_mapping[scatter_op])
+  else:
+    out = scatter_op(
+      x, indexer.gather_indices, y, dnums,
+      indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
+      unique_indices=indexer.unique_indices or unique_indices,
+      mode=mode)
   return lax_internal._convert_element_type(out, dtype, weak_type)
 
 
