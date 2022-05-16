@@ -347,6 +347,9 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
         f"jitted function has donate_argnums={donate_argnums} but "
         f"was called with only {len(args)} positional arguments.")
 
+  sig = inspect.signature(fun)
+  ba = sig.bind(*args, **kwargs)
+  args, kwargs = ba.args, ba.kwargs
   f = lu.wrap_init(fun)
   f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
   f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
