@@ -1060,6 +1060,13 @@ class LaxTest(jtu.JaxTestCase):
     c = lax.conv_general_dilated(a[None, None], b[None, None], (1,1), [(0,0),(0,0)], (1,1))
     self.assertAllClose(c, 9 * jnp.ones((1, 1, 26, 26)))
 
+  def testConvInvalidPadding(self):
+    x = jnp.ones((1, 10, 10, 5), dtype=jnp.bfloat16)
+    with self.assertRaisesRegex(ValueError,
+                                r"padding argument.*, got \(3, 3\)"):
+      jax.lax.conv_general_dilated_patches(x, (5, 5), window_strides=(1, 1),
+                                           padding=(3, 3))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_precision={}".format(
           jtu.format_shape_dtype_string(lhs_shape, dtype),

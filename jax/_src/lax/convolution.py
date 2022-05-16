@@ -14,6 +14,7 @@
 
 import builtins
 from functools import partial
+import operator
 from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -141,6 +142,15 @@ def conv_general_dilated(
     padding = lax.padtype_to_pads(
         np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,  # type: ignore[index]
         window_strides, padding)
+  else:
+    try:
+      padding = tuple((operator.index(lo), operator.index(hi))
+                      for lo, hi in padding)
+    except (ValueError, TypeError) as e:
+      raise ValueError(
+        "padding argument to conv_general_dilated should be a string or a "
+        f"sequence of (low, high) pairs, got {padding}") from e
+
   preferred_element_type = (
       None if preferred_element_type is None else
       dtypes.canonicalize_dtype(np.dtype(preferred_element_type)))
