@@ -1465,11 +1465,12 @@ mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_mhlo)
 # BCOO functions that maybe should be primitives?
 
 def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error'):
-  """Update the storage layout of a BCOO matrix.
+  """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
 
-  In general, increasing ``mat.n_batch`` or ``mat.n_dense`` will lead to very inefficient
-  storage, with many explicitly-stored zeros, unless the new batch or dense dimensions have
-  size 0 or 1. In such cases, ``bcoo_update_layout`` will raise a :class:`SparseEfficiencyError`.
+  In many cases this can be done without introducing undue storage overhead. However,
+  increasing ``mat.n_batch`` or ``mat.n_dense`` will lead to very inefficient storage,
+  with many explicitly-stored zeros, unless the new batch or dense dimensions have size
+  0 or 1. In such cases, ``bcoo_update_layout`` will raise a :class:`SparseEfficiencyError`.
   This can be silenced by specifying the ``on_inefficient`` argument.
 
   Args:
@@ -2105,6 +2106,32 @@ class BCOO(JAXSparse):
   def _dedupe(self):
     warnings.warn("_dedupe() is deprecated. Use sum_duplicates() instead.", FutureWarning)
     return self.sum_duplicates(nse=self.nse)
+
+  def update_layout(self, *, n_batch=None, n_dense=None, on_inefficient='error'):
+    """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
+
+    In many cases this can be done without introducing undue storage overhead. However,
+    increasing ``mat.n_batch`` or ``mat.n_dense`` will lead to very inefficient storage,
+    with many explicitly-stored zeros, unless the new batch or dense dimensions have size
+    0 or 1. In such cases, ``update_layout`` will raise a :class:`SparseEfficiencyError`.
+    This can be silenced by specifying the ``on_inefficient`` argument.
+
+    Args:
+      n_batch : optional(int) the number of batch dimensions in the output matrix. If None,
+        then n_batch = mat.n_batch.
+      n_dense : optional(int) the number of dense dimensions in the output matrix. If None,
+        then n_dense = mat.n_dense.
+      on_inefficient : optional(string), one of ``['error', 'warn', None]``. Specify the
+        behavior in case of an inefficient reconfiguration. This is defined as a reconfiguration
+        where the size of the resulting representation is much larger than the size of the
+        input representation.
+
+    Returns:
+      mat_out : BCOO array
+        A BCOO array representing the same sparse array as the input, with the specified
+        layout. ``mat_out.todense()`` will match ``mat.todense()`` up to appropriate precision.
+    """
+    return bcoo_update_layout(self, n_batch=n_batch, n_dense=n_dense, on_inefficient=on_inefficient)
 
   def sum_duplicates(self, nse=None, remove_zeros=True):
     """Return a copy of the array with duplicate indices summed.

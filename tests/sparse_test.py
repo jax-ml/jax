@@ -2004,6 +2004,15 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertEqual(mat_new.n_dense, n_dense_out)
     self.assertArraysEqual(mat.todense(), mat_new.todense())
 
+  def test_bcoo_update_layout_method(self, shape=(2, 3, 4)):
+    # simple test to make sure update_layout method properly forwards.
+    rng = rand_sparse(self.rng())
+    mat = sparse.BCOO.fromdense(rng((2, 3, 4), 'float32'), n_batch=1, n_dense=1)
+    mat_new = mat.update_layout(n_batch=0, n_dense=0)
+    self.assertEqual(mat_new.n_batch, 0)
+    self.assertEqual(mat_new.n_dense, 0)
+    self.assertArraysEqual(mat.todense(), mat_new.todense())
+
   def test_bcoo_bad_fillvals(self):
     # Extra values have 100 rather than zero. This lets us check that logic is
     # properly ignoring these indices.
