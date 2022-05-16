@@ -70,6 +70,19 @@ py_extension(
     ],
 )
 
+py_extension(
+    name = "_mlirTransforms",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/Transforms/Transforms.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPITransformsHeaders",
+        "@pybind11",
+    ],
+)
+
 ##---------------------------------------------------------------------------##
 # MHLO Extensions
 ##---------------------------------------------------------------------------##
@@ -108,6 +121,7 @@ cc_library(
     deps = [
         "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
         "@llvm-project//mlir:CAPISparseTensorObjects",
+        "@llvm-project//mlir:CAPITransformsObjects",
         "@org_tensorflow//tensorflow/compiler/mlir/hlo:CAPIObjects",
     ],
 )
