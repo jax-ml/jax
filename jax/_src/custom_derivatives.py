@@ -1220,7 +1220,7 @@ def custom_vjp_by_custom_transpose(fun, fwd, bwd, nondiff_argnums):
     *nondiff_args, primals, tangents = args
 
     outs, residuals = fwd(*nondiff_args, *primals)
-    tan_fn = custom_transpose(disallow_jvp)
+    tan_fn = custom_transpose(disallow_jvp, with_outs=True)
 
     @tan_fn.def_transpose
     def bwd_with_outs(res_and_outs, g):

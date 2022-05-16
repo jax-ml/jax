@@ -6830,8 +6830,10 @@ class _custom_transpose:
 # an option of inferring output types.
 def custom_transpose(example_out):
   if isinstance(example_out, Callable):
+    return api.custom_transpose(example_out)
     out_type = core.get_aval(0.).at_least_vspace()
     return _custom_transpose(out_type, example_out)
+  return api.custom_transpose
   return partial(
       _custom_transpose,
       tree_util.tree_map(

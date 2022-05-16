@@ -298,18 +298,28 @@ class BatchTrace(Trace):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims)
                   if d is not not_mapped}
-    call_bat, _ = batch_subtrace(call, self.main, in_dims)
+    call_bat, out_dims = batch_subtrace(call, self.main, in_dims)
     res_tree = params['res_tree']
-    in_res_tree, _ = treedef_children(res_tree)
+    out_avals = params.pop('out_avals')
     res_dims, lin_dims = split_list(in_dims, [res_tree.num_leaves])
-    _, out_dims = split_list(res_dims, [in_res_tree.num_leaves])
+    if out_avals is None:
+      in_res_tree, _ = treedef_children(res_tree)
+      _, out_res_dims = split_list(res_dims, [in_res_tree.num_leaves])
+      transpose_in_dims = res_dims + out_res_dims
+      out_dims = lambda: out_res_dims
+      out_avals_new = out_avals
+    else:
+      transpose_in_dims = lambda: res_dims + list(out_dims())
+      out_avals_new = lambda: [
+          core.unmapped_aval(axis_size, self.axis_name, dst, ty)
+          for dst, ty in zip(out_dims(), out_avals())]
     transpose_bat = batch_custom_transpose_rule(
         transpose, self.axis_name, axis_size,
-        res_dims + out_dims, lin_dims, self.main.trace_type)
-    out_vals = prim.bind(
-        call_bat, *in_vals, transpose=transpose_bat, **params)
+        transpose_in_dims, lin_dims, self.main.trace_type)
+    out_vals = prim.bind(call_bat, *in_vals, transpose=transpose_bat,
+                         out_avals=out_avals_new, **params)
     src = source_info_util.current()
-    return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
+    return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims())]
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)

@@ -58,8 +58,13 @@ def transformation_with_aux(
   out_thunk = lambda: out_store.val
   return fun.wrap(gen, gen_static_args, out_store), out_thunk
 
-flatten_fun_nokwargs = transformation_with_aux(
-    api_util.flatten_fun_nokwargs.args[0])  # type: ignore[has-type]
+@transformation_with_aux
+def flatten_fun_producing_avals_nokwargs(in_tree, *args_flat):
+  py_args = tree_unflatten(in_tree, args_flat)
+  ans = yield py_args, {}
+  outs, out_tree = tree_flatten(ans)
+  out_avals = map(core.get_aval, outs)
+  yield outs, (out_tree, out_avals)
 
 
 ### api
@@ -68,10 +73,12 @@ flatten_fun_nokwargs = transformation_with_aux(
 class custom_transpose:
   fun: Callable
   transpose: Optional[Callable] = None
+  with_outs: bool
 
-  def __init__(self, fun: Callable):
+  def __init__(self, fun: Callable, with_outs: bool = False):
     functools.update_wrapper(self, fun)
     self.fun = fun  # type: ignore[assignment]
+    self.with_outs = with_outs
 
   __getattr__ = custom_api_util.forward_attr
 
@@ -84,21 +91,27 @@ class custom_transpose:
     res_args_flat, res_tree = tree_flatten(res_arg)
     lin_args_flat, lin_tree = tree_flatten(lin_arg)
     args_flat, in_tree = tree_flatten((res_arg, lin_arg))
-    _, out_tree = treedef_children(res_tree)
 
-    # TODO(frostig,mattjj): check that out_tree{,2} match
-    flat_fun, out_tree2 = flatten_fun_nokwargs(
+    flat_fun, out_tree_and_avals = flatten_fun_producing_avals_nokwargs(
         lu.wrap_init(self.fun), in_tree)
+    out_tree = lambda: out_tree_and_avals()[0]
+    out_avals = lambda: out_tree_and_avals()[1]
+
+    if self.with_outs:
+      _, out_tree = treedef_children(res_tree)
+      out_avals = None
 
     lin_avals = [core.raise_to_shaped(core.get_aval(x)) for x in lin_args_flat]
     flat_transpose = flatten_transpose(
         lu.wrap_init(self.transpose), res_tree, lin_tree, out_tree, lin_avals)
-
     out_flat = custom_transpose_p.bind(flat_fun, *args_flat,
                                        transpose=flat_transpose,
                                        lin_tree=lin_tree,
                                        res_tree=res_tree,
-                                       out_tree=out_tree)
+                                       out_tree=out_tree,
+                                       out_avals=out_avals)
+    if not self.with_outs:
+      out_tree = out_tree()
     return tree_unflatten(out_tree, out_flat)
 
 
@@ -197,6 +210,7 @@ def check_aval_and_make_zero(zero, x, aval):
 
 @lu.transformation
 def flatten_transpose(res_tree, lin_tree, out_tree, lin_avals_flat, *args_flat):
+  out_tree = out_tree() if callable(out_tree) else out_tree
   assert len(args_flat) == res_tree.num_leaves + out_tree.num_leaves
   res_args_flat, out_args_flat = util.split_list(
       args_flat, [res_tree.num_leaves])
@@ -248,9 +262,7 @@ def custom_transpose_typecheck(*avals, **params):
   return None, core.no_effects
 
 
-def custom_transpose_transpose_rule(
-    cts, *args, res_tree, lin_tree, out_tree, **params):
-
+def custom_transpose_transpose_rule(cts, *args, res_tree, lin_tree, **params):
   if 'transpose_jaxpr_thunk' in params:
     assert 'call_jaxpr' in params
     transpose = make_transpose_from_thunk(

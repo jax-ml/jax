@@ -426,9 +426,7 @@ class JaxprTrace(Trace):
 
   def process_custom_transpose(self, prim, call, tracers, **params):
     res_tree = params['res_tree']
-    res_tree_in, _ = treedef_children(res_tree)
     res_ts, lin_ts = split_list(tracers, [res_tree.num_leaves])
-    _, res_ts_out = split_list(res_ts, [res_tree_in.num_leaves])
     assert all(t.is_known() for t in res_ts)
     lin_all_known = all(t.is_known() for t in lin_ts)
     if lin_all_known:
@@ -436,10 +434,16 @@ class JaxprTrace(Trace):
       lin_cvals = [t.pval[1] for t in lin_ts]
       return prim.bind(call, *res_cvals, *lin_cvals, **params)
     else:
-      out_types = [core.get_aval(t).at_least_vspace() for t in res_ts_out]
+      if params['out_avals'] is None:
+        res_tree_in, _ = treedef_children(res_tree)
+        _, res_ts_out = split_list(res_ts, [res_tree_in.num_leaves])
+        out_avals = [core.get_aval(t) for t in res_ts_out]
+      else:
+        call.call_wrapped(*tracers)
+        out_avals = params['out_avals']()
       out_tracers = [
-          JaxprTracer(self, PartialVal.unknown(aval), None)
-          for aval in out_types]
+          JaxprTracer(self, PartialVal.unknown(aval.at_least_vspace()), None)
+          for aval in out_avals]
       in_tracers = map(self.instantiate_const, tracers)
       new_params = dict(params, call=call)
       eqn = new_eqn_recipe(in_tracers, out_tracers, prim, new_params,
@@ -1706,30 +1710,33 @@ class DynamicJaxprTrace(core.Trace):
     assert False  # unreachable
 
   def process_custom_transpose(self, prim, call, tracers, transpose,
-                               lin_tree, res_tree, out_tree):
-    in_res_tree, out_res_tree = treedef_children(res_tree)
+                               lin_tree, res_tree, out_tree, out_avals):
+    if out_avals is None:
+      in_res_tree, out_res_tree = treedef_children(res_tree)
 
-    tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
-    _, tracers_res_out = split_list(tracers_res, [in_res_tree.num_leaves])
-    out_avals_lin = [t.aval.at_least_vspace() for t in tracers_res_out]
+      tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
+      _, tracers_res_out = split_list(tracers_res, [in_res_tree.num_leaves])
+      out_avals_lin = [t.aval.at_least_vspace() for t in tracers_res_out]
 
-    in_avals_transpose = [*[t.aval for t in tracers_res], *out_avals_lin]
+      in_avals_transpose = [*[t.aval for t in tracers_res], *out_avals_lin]
+    else:
+      in_avals_transpose = None #out_avals()
 
     with core.new_sublevel():
-      call_jaxpr, out_avals, call_consts = trace_to_subjaxpr_dynamic(
+      call_jaxpr, call_out_avals, call_consts = trace_to_subjaxpr_dynamic(
           call, self.main, [t.aval for t in tracers])
     closed_call_jaxpr = core.ClosedJaxpr(
         convert_constvars_jaxpr(call_jaxpr), ())
 
-    transpose_flat = transpose
+    # TODO(frostig): check out_avals and call_out_avals correspond?
 
     main_ = ref(self.main)
     # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
     transpose_jaxpr_thunk = _memoize(
         lambda: trace_to_subjaxpr_dynamic(
-            transpose_flat, main_(), in_avals_transpose)[::2])
+            transpose, main_(), in_avals_transpose or call_out_avals)[::2])
 
-    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    out_tracers = [DynamicJaxprTracer(self, a) for a in call_out_avals]
     invars = map(self.getvar, tracers)
     constvars = map(self.getvar, map(self.instantiate_const, call_consts))
     outvars = map(self.makevar, out_tracers)
@@ -1737,7 +1744,7 @@ class DynamicJaxprTrace(core.Trace):
                         dict(call_jaxpr=closed_call_jaxpr,
                              transpose_jaxpr_thunk=transpose_jaxpr_thunk,
                              res_tree=res_tree, lin_tree=lin_tree,
-                             out_tree=out_tree),
+                             out_tree=out_tree, out_avals=out_avals),
                         closed_call_jaxpr.effects,
                         source_info_util.current())
     self.frame.add_eqn(eqn)
