@@ -208,7 +208,7 @@ def orgqr_mhlo(dtype, a, tau):
     b *= d
 
   tau_dims = ir.RankedTensorType(tau.type).shape
-  assert tau_dims[:-1] == dims[:-2]
+  assert tau_dims[:-1] == dims[:-2], (tau.type, a.type)
   k = tau_dims[-1]
 
   if dtype == np.float32:

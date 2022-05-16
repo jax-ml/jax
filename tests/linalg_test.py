@@ -657,7 +657,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "mode": mode}
       for shape in [(0, 2), (2, 0), (3, 4), (3, 3), (4, 3)]
       for dtype in [np.float32]
-      for mode in ["reduced", "r", "full", "complete"]))
+      for mode in ["reduced", "r", "full", "complete", "raw"]))
   def testNumpyQrModes(self, shape, dtype, mode):
     rng = jtu.rand_default(self.rng())
     jnp_func = partial(jax.numpy.linalg.qr, mode=mode)
@@ -665,7 +665,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if mode == "full":
       np_func = jtu.ignore_warning(category=DeprecationWarning, message="The 'full' option.*")(np_func)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_func, jnp_func, args_maker, rtol=1E-5, atol=1E-5)
+    self._CheckAgainstNumpy(np_func, jnp_func, args_maker, rtol=1e-5, atol=1e-5,
+                            check_dtypes=(mode != "raw"))
     self._CompileAndCheck(jnp_func, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(

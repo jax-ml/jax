@@ -1011,6 +1011,8 @@ tf_not_yet_impl = [
     "all_gather",
     "lu_pivots_to_permutation",
     "xla_pmap",
+    "geqrf",
+    "orgqr",
 ]
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
