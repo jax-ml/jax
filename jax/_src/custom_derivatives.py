@@ -781,8 +781,8 @@ def custom_gradient(fun):
   and the VJP (gradient) function. See
   https://www.tensorflow.org/api_docs/python/tf/custom_gradient.
 
-  If the mathematical function to be differentiated has type signature ``a ->
-  b``, then the Python callable ``fun`` should have signature
+  If the mathematical function to be differentiated has Haskell-like signature
+  ``a -> b``, then the Python callable ``fun`` should have the signature
   ``a -> (b, CT b --o CT a)`` where we use ``CT x`` to denote a cotangent type
   for ``x`` and the ``--o`` arrow to denote a linear function. See the example
   below. That is, ``fun`` should return a pair where the first element
@@ -1001,7 +1001,7 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
                 linear_args):
   """Call a linear function, with a custom implementation for its transpose.
 
-  The type signatures of ``fun`` and ``fun_transpose`` are:
+  The `Haskell-like type signatures`_ of ``fun`` and ``fun_transpose`` are:
 
   .. code-block:: haskell
 
@@ -1081,6 +1081,7 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   Returns:
     The call result, i.e. ``fun(residual_args, linear_args)``.
 
+  .. _Haskell-like type signatures: https://wiki.haskell.org/Type_signature
   """
   operands_res, res_tree = tree_flatten(residual_args)
   operands_lin, lin_tree = tree_flatten(linear_args)

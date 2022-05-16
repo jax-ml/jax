@@ -153,7 +153,7 @@ def _fori_scan_body_fun(body_fun):
 def fori_loop(lower, upper, body_fun, init_val):
   """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
 
-  The type signature in brief is
+  The `Haskell-like type signature`_ in brief is
 
   .. code-block:: haskell
 
@@ -191,6 +191,8 @@ def fori_loop(lower, upper, body_fun, init_val):
 
   Returns:
     Loop value from the final iteration, of type ``a``.
+
+  .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
   if not callable(body_fun):
     raise TypeError("lax.fori_loop: body_fun argument should be callable.")
@@ -235,7 +237,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
                init_val: T) -> T:
   """Call ``body_fun`` repeatedly in a loop while ``cond_fun`` is True.
 
-  The type signature in brief is
+  The `Haskell-like type signature`_ in brief is
 
   .. code-block:: haskell
 
@@ -275,6 +277,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   Returns:
     The output from the final iteration of body_fun, of type ``a``.
+
+  .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
   if not (callable(body_fun) and callable(cond_fun)):
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
@@ -1354,7 +1358,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
          unroll: int = 1) -> Tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
-  The type signature in brief is
+  The `Haskell-like type signature`_ in brief is
 
   .. code-block:: haskell
 
@@ -1422,6 +1426,8 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     A pair of type ``(c, [b])`` where the first element represents the final
     loop carry value and the second element represents the stacked outputs of
     the second output of ``f`` when scanned over the leading axis of the inputs.
+
+  .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
   if not callable(f):
     raise TypeError("lax.scan: f argument should be a callable.")

@@ -378,7 +378,8 @@ y, u = jvp(f, (W,), (v,))
 
 +++ {"id": "m1VJgJYQGfCK"}
 
-In terms of Haskell-like type signatures, we could write
+In terms of [Haskell-like type signatures](https://wiki.haskell.org/Type_signature),
+we could write
 
 ```haskell
 jvp :: (a -> b) -> a -> T a -> (b, T b)
@@ -451,7 +452,8 @@ v = vjp_fun(u)
 
 +++ {"id": "oVOZexCEkvv3"}
 
-In terms of Haskell-like type signatures, we could write
+In terms of [Haskell-like type signatures](https://wiki.haskell.org/Type_signature),
+we could write
 
 ```haskell
 vjp :: (a -> b) -> a -> (b, CT b -> CT a)
