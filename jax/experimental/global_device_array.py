@@ -563,6 +563,21 @@ class GlobalDeviceArray:
     return cls(global_shape, global_mesh, mesh_axes, dbs,
                _gda_fast_path_args=_GdaFastPathArgs(global_indices_rid, local_devices))
 
+  @classmethod
+  def from_array(cls, global_mesh: pxla.Mesh, mesh_axes: MeshAxes,
+                 data: ArrayLike):
+    """Constructs a GlobalDeviceArray from global array ``data``.
+
+    Args:
+      global_mesh : The global mesh representing devices, potentially across
+        multiple processes.
+      mesh_axes : See the ``mesh_axes`` parameter of GlobalDeviceArray.
+      data : Any array-like object, e.g. a ``numpy.ndarray``, whose value is the
+        same in every process.
+    """
+    return cls.from_callback(
+        data.shape, global_mesh, mesh_axes, lambda idx: data[idx])
+
 
 core.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
     x.shape, x.dtype)
