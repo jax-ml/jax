@@ -905,7 +905,7 @@ def _scatter(
   strides = (len(scatter_indices.shape) != 1)
   if (not strides) & ((mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS) or (mode == None)):
     return jax2tf._convert_jax_impl(_expand_scatter, multiple_results=False)(operand, scatter_indices, updates, update_fn=update_fn, dnums=gather_dimension_numbers, _in_avals=_in_avals, _out_aval=_out_aval)
-
+  raise _xla_disabled_error("scatter", "Only scatters which correspond to a contiguous slice are supported")
 tf_impl_no_xla[lax.scatter_p] = _scatter
 tf_impl_no_xla[lax.scatter_min_p] = _scatter
 tf_impl_no_xla[lax.scatter_max_p] = _scatter
