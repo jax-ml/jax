@@ -44,6 +44,16 @@ scatter_to_dense_mapping = {
   lax.scatter_min: lax.min,
   lax.scatter_max: lax.max,
 }
+def _lower_scatter(arr, indexer, update, op):
+  # gather subarray which scatter op updates
+  subarr, start_indices, fwd, inv = jnp._gather_subarray(arr, indexer)
+  # reshape update to match subarr
+  update = lax.expand_dims(update, indexer.dnums.collapsed_slice_dims)
+  update = fwd(update)
+  # calc new values to emplace back
+  updated_subarr = op(subarr, update)
+  # emplace back
+  return inv(lax.dynamic_update_slice(fwd(arr), updated_subarr, start_indices))
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
                     unique_indices, mode=None, normalize_indices=True):
@@ -115,7 +125,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
 
   strides = (len(indexer.gather_indices.shape) != 1)
   if (not strides) & ((mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS) or (mode == None)):
-    out = jnp._lower_gather_scatter(x, indexer, y, scatter_to_dense_mapping[scatter_op])
+    out = _lower_scatter(x, indexer, y, scatter_to_dense_mapping[scatter_op])
   else:
     out = scatter_op(
       x, indexer.gather_indices, y, dnums,

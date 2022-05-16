@@ -3563,23 +3563,14 @@ def get_slice_indices(start_indices: tuple, gather_slice_shape: tuple, array_sha
   start_indices, limit_indices = [tuple(map(_add, indices, bounds_shift)) for indices in [start_indices, limit_indices]]
   return start_indices, limit_indices
 
-def _lower_gather_scatter(arr, indexer, update=None, op=None):
+def _gather_subarray(arr, indexer):
   """
-  Implementation covers cases of an unbatched, unstrided gather/scatter op
-
-  If just arr and indexer are specified a gather is performed. It an update and
-  op are specified a scatter is performed.
-
   To simplify construction of indices, we shift the dimensions which are
   indexed to the front. Where the indices are static we use a slice in
   preference to dynamic slice.
-
-  After extracting the subarray the indexing refers to in gather, we return this
-  ater collapsing singleton dimensions. In scatter, we use the update and subarray
-  to produce the updated subarray which we emplace back in the array.
   """
   fwd = partial(shift_axes_forward, axes=indexer.dnums.start_index_map)
-  bwd = partial(fwd, inverse=True)
+  inv = partial(fwd, inverse=True)
   # Move axes we want to index in to the front to simplify implementation
   arr = fwd(arr)
   gather_slice_shape = shift_axes_forward_tuple(indexer.gather_slice_shape, indexer.dnums.start_index_map)
@@ -3593,27 +3584,17 @@ def _lower_gather_scatter(arr, indexer, update=None, op=None):
     # Resolve static indices DeviceArray->tuple
     start_indices = tuple(map(int, start_indices))
     start_indices, limit_indices = get_slice_indices(start_indices, gather_slice_shape, arr.shape)
-    subarr = jax.lax.slice(arr, start_indices, limit_indices)
+    subarr = lax.slice(arr, start_indices, limit_indices)
   else:
     # dynamic slice
-    subarr = jax.lax.dynamic_slice(arr, start_indices, gather_slice_shape)
+    subarr = lax.dynamic_slice(arr, start_indices, gather_slice_shape)
+  return subarr, start_indices, fwd, inv
 
-  if not ((update == op == None) or ((update != None) & (op != None))):
-    raise ValueError("Function called incorrectly. Either both op and update must be specified, or neither. Scatter is when update and op are set, Gather is when neither are set")
-
-  if (update == op == None):
-    # Gather, we return the subarray, with empty dimensions collapsed
-    y = subarr
-    y = bwd(y)
-    y = y.squeeze(indexer.dnums.collapsed_slice_dims)
-  else:
-    # Scatter, we reshape the update to match subarr then calculate the update, then emplace into original array
-    update = jax.lax.expand_dims(update, indexer.dnums.collapsed_slice_dims)
-    update =  fwd(update)
-    updated_subarr = op(subarr, update)
-    y = jax.lax.dynamic_update_slice(arr, updated_subarr, start_indices)
-    y = bwd(y)
-  return y
+def _lower_gather(arr, indexer):
+  """Implementation covers cases of an unbatched, unstrided gather"""
+  subarr, _, _, inv = _gather_subarray(arr, indexer)
+  y = inv(subarr)
+  return y.squeeze(indexer.dnums.collapsed_slice_dims)
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
@@ -3641,7 +3622,7 @@ def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
   if not core.is_empty_shape(indexer.gather_indices.shape):
     strides = (len(indexer.gather_indices.shape) != 1)
     if (not strides) & ((mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS) or (mode == None)) & (fill_value == None):
-      y = _lower_gather_scatter(y, indexer)
+      y = _lower_gather(y, indexer)
     else:
       y = lax.gather(
         y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
