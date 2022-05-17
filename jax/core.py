@@ -603,6 +603,14 @@ class Tracer:
   def __oct__(self): return self.aval._oct(self)
   def __float__(self): return self.aval._float(self)
   def __complex__(self): return self.aval._complex(self)
+  def __copy__(self): return self.aval._copy(self)
+  def __deepcopy__(self, memo): return self.aval._deepcopy(self, memo)
+
+  # raises a useful error on attempts to pickle a Tracer.
+  def __reduce__(self):
+    raise ConcretizationTypeError(
+      self, ("The error occurred in the __reduce__ method, which may "
+             "indicate an attempt to serialize/pickle a traced value."))
 
   # raises the better error message from ShapedArray
   def __setitem__(self, idx, val): return self.aval._setitem(self, idx, val)
@@ -649,12 +657,6 @@ class Tracer:
       return [(name, getattr(self, name)) for name in self.__slots__]
     except AttributeError:
       return ()
-
-  def __copy__(self):
-    return self
-
-  def __deepcopy__(self, unused_memo):
-    return self
 
   def _origin_msg(self) -> str:
     return ""

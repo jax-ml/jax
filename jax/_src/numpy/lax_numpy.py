@@ -4572,9 +4572,18 @@ def _operator_round(number, ndigits=None):
   # If `ndigits` is None, for a builtin float round(7.5) returns an integer.
   return out.astype(int) if ndigits is None else out
 
+def _copy(self):
+  return self.copy()
+
+def _deepcopy(self, memo):
+  del memo  # unused
+  return self.copy()
+
 _operators = {
     "getitem": _rewriting_take,
     "setitem": _unimplemented_setitem,
+    "copy": _copy,
+    "deepcopy": _deepcopy,
     "neg": negative,
     "pos": positive,
     "eq": _defer_to_unrecognized_arg(equal),

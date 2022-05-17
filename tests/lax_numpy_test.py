@@ -14,6 +14,7 @@
 
 
 import collections
+import copy
 import functools
 from functools import partial
 import inspect
@@ -3828,10 +3829,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": f"_dtype={np.dtype(dtype)}_func={func}",
        "dtype": dtype, "func": func}
       for dtype in all_dtypes
-      for func in ["array", "copy"]))
+      for func in ["array", "copy", "copy.copy", "copy.deepcopy"]))
   def testArrayCopy(self, dtype, func):
     x = jnp.ones(10, dtype=dtype)
-    copy_func = getattr(jnp, func)
+    if func == "copy.deepcopy":
+      copy_func = copy.deepcopy
+    elif func == "copy.copy":
+      copy_func = copy.copy
+    else:
+      copy_func = getattr(jnp, func)
 
     x_view = jnp.asarray(x)
     x_view_jit = jax.jit(jnp.asarray)(x)
