@@ -792,10 +792,128 @@ def _dynamic_update_slice(operand, update, *start_indices,
 
 tf_impl_no_xla[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
-tf_impl_no_xla[lax.scatter_p] = _unimplemented("scatter")
-tf_impl_no_xla[lax.scatter_min_p] = _unimplemented("scatter min")
-tf_impl_no_xla[lax.scatter_max_p] = _unimplemented("scatter max")
-tf_impl_no_xla[lax.scatter_mul_p] = _unimplemented("scatter mul")
-tf_impl_no_xla[lax.scatter_add_p] = _unimplemented("scatter add")
+
+def shift_axes_forward(operand, axes: tuple, inverse: bool=False,
+                       forward: bool=True):
+  """Shifts the tuple of axes to the front of an array"""
+  other_axes = tuple([i for i in range(len(operand.shape)) if i not in axes])
+  fwd_order = axes + other_axes if forward else other_axes + axes
+  order = fwd_order if not inverse else tf.math.invert_permutation(fwd_order)
+  return tf.transpose(operand, order)
+
+def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
+  def error(msg):
+    suffix = ("See source code for the precise conditions under which "
+              "scatter_(update/add/multiply/min/max) ops can be converted without XLA.")
+    return _xla_disabled_error("scatter_(update/add/multiply/min/max)", f"{msg} - {suffix}")
+
+  def _sparse_scatter(
+    operand,
+    scatter_indices,
+    updates,
+    update_jaxpr,
+    update_consts,
+    dimension_numbers,
+    indices_are_sorted: bool,
+    unique_indices: bool,
+    mode,
+    _in_avals: Sequence[core.ShapedArray],
+    _out_aval: core.ShapedArray):
+    """
+    Implementation of scatter specialised to indexing from the
+    front axes. This covers unique indices and non-unique indices
+    of single depth.
+
+    Note on unique indices: `tf.tensor_scatter_nd_update` interprets
+    indices thusly: every axis except the final one encodes a batch
+    dimension, the final axis encoding the actual indices to scatter in to.
+    It enforces, at least one, batch dimension so we add an empty
+    dimension to indices and updates if lacking.
+
+    Note on non-unique indices: There is no tf op for non single depth
+    indexing. But if indexing is single depth, this can be viewed as a
+    segment op.
+    """
+    # Infer unique indices from lack of batch dimension
+    unique_indices = unique_indices or (len(scatter_indices.shape) == 1)
+    if unique_indices:
+      suboperand = tf.gather_nd(operand, scatter_indices)
+      updated_suboperand = update_op(suboperand, updates)
+      # add a batch dim if none exist
+      if len(scatter_indices.shape) == 1:
+        scatter_indices = scatter_indices[None]
+        updated_suboperand = updated_suboperand[None]
+      y = tf.tensor_scatter_nd_update(operand, scatter_indices, updated_suboperand)
+    else:
+      if (scatter_indices.shape[-1] == 1) and (unsorted_segment_op != None):
+        # If only indexing into the first dimension, it's a segment op
+        operand_update = unsorted_segment_op(updates, tf.squeeze(scatter_indices, -1), operand.shape[0])
+        y = update_op(operand, operand_update)
+      else:
+        raise error("Scatter supports unique indices. Scatter also supports non-unique indices with indexing into only one dimension for (add, mul, min, max)")
+    return y
+
+  def sparse_scatter(
+    operand,
+    scatter_indices,
+    updates,
+    update_jaxpr,
+    update_consts,
+    dimension_numbers,
+    indices_are_sorted: bool,
+    unique_indices: bool,
+    mode,
+    _in_avals: Sequence[core.ShapedArray],
+    _out_aval: core.ShapedArray):
+    """
+    Wrapper around the scatter function.
+    The underlying tf ops `tf.tensor_scatter_nd_update` and
+    `tf.math.unsorted_segment_*` index from the front dimensions.
+    `tf.math.unsorted_segment_*` indexs to a depth 1 from the front.
+    `tf.tensor_scatter_nd_update` indexs from the front dimensions onwards
+    , with no ability to skip a dimension. This function
+    shifts the axes to be indexed to the front then calls a front-specific
+    implementation, then inverse-shifts the output.
+
+    scatter_dims_to_operand_dims: dimensions which the scatter indexes in to.
+      We shift these to the front to match tf syntax. All other dims are batch
+    update_window_dims: dimensions which are not batch dimensions. We shift
+      these to the back as the remaining dimensions are batch dimensions.
+    """
+    ud = dimension_numbers.update_window_dims
+    wd = dimension_numbers.inserted_window_dims
+    sd = dimension_numbers.scatter_dims_to_operand_dims
+    dtype = operand.dtype # assume updates has same dtype as operand
+    if dtype in [tf.bool, tf.complex64]:
+      raise error(f"Scatter does not support operands of type {dtype}")
+    if not (wd == sd):
+      raise error("Complex scatters are not supported")
+    if not (mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS):
+      raise error("Only scatter mode `PROMISE_IN_BOUNDS` is supported")
+    # Shift axes to the front to match tf syntax, inverse afterwards
+    fwd = partial(shift_axes_forward, axes=sd)
+    inv = partial(fwd, inverse=True)
+    # shift update value axes to the back, so batch are at the front
+    updates_shifted = shift_axes_forward(updates, axes=ud, forward=False)
+    return inv(_sparse_scatter(
+      fwd(operand),
+      scatter_indices,
+      updates_shifted,
+      update_jaxpr,
+      update_consts,
+      dimension_numbers,
+      indices_are_sorted,
+      unique_indices,
+      mode,
+      _in_avals,
+      _out_aval,
+    ))
+  return sparse_scatter
+
+tf_impl_no_xla[lax.scatter_p] = convert_scatter_jax_to_tf(lambda x,y: y) # just replace with the update
+tf_impl_no_xla[lax.scatter_add_p] = convert_scatter_jax_to_tf(tf.add,      tf.math.unsorted_segment_sum)
+tf_impl_no_xla[lax.scatter_mul_p] = convert_scatter_jax_to_tf(tf.multiply, tf.math.unsorted_segment_prod)
+tf_impl_no_xla[lax.scatter_min_p] = convert_scatter_jax_to_tf(tf.minimum,  tf.math.unsorted_segment_min)
+tf_impl_no_xla[lax.scatter_max_p] = convert_scatter_jax_to_tf(tf.maximum,  tf.math.unsorted_segment_max)
 
 tf_impl_no_xla[lax.sort_p] = _unimplemented("sort")
