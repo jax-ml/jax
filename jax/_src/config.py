@@ -571,7 +571,13 @@ log_compiles = config.define_bool_state(
 parallel_functions_output_gda = config.define_bool_state(
     name='jax_parallel_functions_output_gda',
     default=False,
-    help='If True, pjit will output GSDAs.')
+    help='If True, pjit will output GDAs.')
+
+jax_array = config.define_bool_state(
+    name='jax_array',
+    default=False,
+    help=('If True, new pjit behavior will be enabled and `jax.Array` will be '
+          'used.'))
 
 
 distributed_debug = config.define_bool_state(
