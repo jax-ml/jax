@@ -2318,8 +2318,10 @@ def check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
-  if call_jaxpr.effects:
-    raise JaxprTypeError(f"Map primitive {prim} mapping an effectful function")
+  ordered_effects_ = call_jaxpr.effects & ordered_effects
+  if ordered_effects_:
+    raise JaxprTypeError(
+        f"Map primitive {prim} mapping ordered effects: {ordered_effects_}")
   if "axis_size" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]

@@ -137,11 +137,14 @@ def _sharded_callable(
               fun.__name__, nparts, global_abstract_args)
 
   axis_env = xla.AxisEnv(nrep, (), ())
-  effects = list(jaxpr.effects)
+  unordered_effects = [eff for eff in jaxpr.effects
+                       if eff not in core.ordered_effects]
+  ordered_effects = [eff for eff in jaxpr.effects
+                     if eff in core.ordered_effects]
   module, _ = mlir.lower_jaxpr_to_module(
       "spjit_{}".format(fun.__name__),
       core.ClosedJaxpr(jaxpr, consts),
-      effects,
+      unordered_effects, ordered_effects,
       platform=platform,
       axis_context=mlir.ReplicaAxisContext(axis_env),
       name_stack=new_name_stack(wrap_name(name, "sharded_jit")),

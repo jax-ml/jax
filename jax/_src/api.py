@@ -485,6 +485,7 @@ def _cpp_jit(
     execute: Optional[functools.partial] = (
         dispatch._xla_callable.most_recent_entry())
     # TODO(sharadmv): Enable fast path for effectful jaxprs
+    # TODO(sharadmv): Clean up usage of `execute.args`
     use_fastpath = (
         # This is if we have already executed this code-path (most-recent entry
         # has been reset to None). Thus, we do not support the fast-path.
@@ -492,13 +493,15 @@ def _cpp_jit(
         execute.func is dispatch._execute_compiled and  # not trivial, not pmap
         # No effects in computation
         not execute.args[5] and
+        not execute.args[6] and
         # Not supported: ShardedDeviceArray
         all(device_array.type_is_device_array(x) for x in out_flat) and
         # Not supported: dynamic shapes
         not jax.config.jax_dynamic_shapes)
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
-      _, xla_executable, _, _, result_handlers, _, kept_var_idx = execute.args
+      (_, xla_executable,
+       _, _, result_handlers, _, _, kept_var_idx) = execute.args
       sticky_device = None
       avals = []
       lazy_exprs = [None] * len(result_handlers)
@@ -823,11 +826,15 @@ def xla_computation(fun: Callable,
       else:
         out_parts_flat = tuple(flatten_axes(
             "xla_computation out_parts", out_tree(), out_parts))
-      effects = list(jaxpr.effects)
+      unordered_effects = [eff for eff in jaxpr.effects
+                           if eff not in core.ordered_effects]
+      ordered_effects = [eff for eff in jaxpr.effects
+                         if eff in core.ordered_effects]
       m, _ = mlir.lower_jaxpr_to_module(
           f"xla_computation_{fun_name}",
           core.ClosedJaxpr(jaxpr, consts),
-          effects=effects,
+          unordered_effects=unordered_effects,
+          ordered_effects=ordered_effects,
           platform=backend,
           axis_context=mlir.ReplicaAxisContext(axis_env_),
           name_stack=new_name_stack(wrap_name(fun_name, "xla_computation")),
@@ -2034,6 +2041,8 @@ def _cpp_pmap(
         execute is not None and
         # We don't support JAX extension backends.
         isinstance(execute[0], pxla.ExecuteReplicated) and
+        # TODO(sharadmv): Enable effects in replicated computation
+        not execute[0].has_unordered_effects and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(isinstance(x, device_array.DeviceArray) for x in out_flat))
@@ -3137,6 +3146,9 @@ def named_call(
 
   return named_call_f
 
+def effects_barrier():
+  """Waits until existing functions have completed any side-effects."""
+  dispatch.runtime_tokens.block_until_ready()
 
 def block_until_ready(x):
   """

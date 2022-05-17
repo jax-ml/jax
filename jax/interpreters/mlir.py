@@ -493,7 +493,8 @@ def sharded_aval(aval: core.ShapedArray,
 
 def lower_jaxpr_to_module(
     module_name: str, jaxpr: core.ClosedJaxpr,
-    effects: List[core.Effect],
+    unordered_effects: List[core.Effect],
+    ordered_effects: List[core.Effect],
     platform: str,
     axis_context: AxisContext,
     name_stack: NameStack, donated_args: Sequence[bool],
@@ -554,8 +555,10 @@ def lower_jaxpr_to_module(
       raise ValueError(
           f'Cannot lower jaxpr with unlowerable effects: {unlowerable_effects}')
     lower_jaxpr_to_fun(
-        ctx, "main", jaxpr, effects, public=True, create_tokens=True,
-        replace_tokens_with_dummy=True, replicated_args=replicated_args,
+        ctx, "main", jaxpr, ordered_effects, public=True, create_tokens=True,
+        replace_tokens_with_dummy=True,
+        num_output_tokens=1 if unordered_effects else 0,
+        replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)
 
@@ -665,7 +668,8 @@ def lower_jaxpr_to_fun(
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     use_sharding_annotations: bool = True,
-    input_output_aliases: Optional[Sequence[Optional[int]]] = None
+    input_output_aliases: Optional[Sequence[Optional[int]]] = None,
+    num_output_tokens: int = 0,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -705,13 +709,15 @@ def lower_jaxpr_to_fun(
   if create_tokens:
     # If we create the tokens they won't be inputs to the MLIR function.
     token_types = [dummy_token_type() for _ in effects]
+    output_token_types = [dummy_token_type() for _ in range(num_output_tokens)]
   else:
     # If we aren't creating tokens they will be the initial inputs to the
     # MLIR function.
+    output_token_types = []
     num_tokens = len(effects)
     token_types = [token_type() for _ in effects]
   input_types = [*token_types, *input_types]
-  output_types = [*token_types, *output_types]
+  output_types = [*output_token_types, *token_types, *output_types]
   if input_output_aliases:
     token_input_output_aliases = [None] * num_tokens
     input_output_aliases = [*token_input_output_aliases, *input_output_aliases]
@@ -719,7 +725,7 @@ def lower_jaxpr_to_fun(
     token_shardings = [None] * num_tokens
     arg_shardings = [*token_shardings, *arg_shardings]
   if result_shardings:
-    token_shardings = [None] * num_tokens
+    token_shardings = [None] * (num_tokens + num_output_tokens)
     result_shardings = [*token_shardings, *result_shardings]
   if replicated_args:
     token_replicated_args = [False] * num_tokens
@@ -812,6 +818,8 @@ def lower_jaxpr_to_fun(
                                          *args)
     outs = []
     if create_tokens:
+      for _ in range(num_output_tokens):
+        outs.append(dummy_token())
       for _ in effects:
         outs.append(dummy_token())
     else:

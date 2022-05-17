@@ -57,6 +57,7 @@ from jax._src.config import (
 from .core import eval_context as ensure_compile_time_eval
 from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
+  effects_barrier,
   block_until_ready,
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,

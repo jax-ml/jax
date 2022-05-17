@@ -14,6 +14,7 @@
 import functools
 import threading
 import unittest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -247,7 +248,9 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='bar')
       return x
-    with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
+    with self.assertRaisesRegex(
+        ValueError,
+        "Ordered effects not supported for map primitives: {'foo'}"):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
   def test_xmap_inherits_effects(self):
@@ -444,14 +447,15 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     mhlo = f.lower(1.).compiler_ir(dialect='mhlo')
     input_types = mhlo.body.operations[0].type.inputs
-    # First argument should be dummy token
     self.assertLen(list(input_types), 1)
     self.assertEqual(str(input_types[0]), 'tensor<f32>')
 
-    # First output should be dummy token
+    # First output should be output token
     result_types = mhlo.body.operations[0].type.results
-    self.assertLen(list(result_types), 1)
-    self.assertEqual(str(result_types[0]), 'tensor<f32>')
+    self.assertLen(list(result_types), 2)
+    self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
+    self.assertLen(list(result_types), 2)
+    self.assertEqual(str(result_types[1]), 'tensor<f32>')
 
   def test_lowered_jaxpr_with_ordered_effects_takes_in_dummy_inputs(self):
     @jax.jit
@@ -501,6 +505,32 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       effect_p.bind(effect='bar')
       return x + 1.
     self.assertEqual(f(2.), 3.)
+
+  def test_cant_jit_and_pmap_function_with_unordered_effects(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices.")
+    @jax.jit
+    @jax.pmap
+    def f(x):
+      effect_p.bind(effect='bar')
+      return x + 1
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Cannot execute replicated computation with effects."):
+      with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        f(jnp.arange(jax.device_count()))
+
+  def test_cant_jit_and_pmap_function_with_ordered_effects(self):
+    @jax.jit
+    @jax.pmap
+    def f(x):
+      effect_p.bind(effect='foo')
+      return x + 1.
+    with self.assertRaisesRegex(
+        ValueError,
+        "Ordered effects not supported for map primitives: {'foo'}"):
+      f(jnp.arange(jax.device_count()))
 
   def test_runtime_tokens_should_update_after_running_effectful_function(self):
     @jax.jit

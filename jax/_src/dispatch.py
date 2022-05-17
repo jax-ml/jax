@@ -106,9 +106,11 @@ RuntimeToken = Any
 
 class RuntimeTokenSet(threading.local):
   tokens: Dict[core.Effect, Tuple[RuntimeToken, Device]]
+  output_tokens: Dict[Device, RuntimeToken]
 
   def __init__(self):
     self.tokens = {}
+    self.output_tokens = {}
 
   def get_token(self, eff: core.Effect, device: Device) -> RuntimeToken:
     if eff not in self.tokens:
@@ -122,11 +124,22 @@ class RuntimeTokenSet(threading.local):
   def update_token(self, eff: core.Effect, token: RuntimeToken):
     self.tokens[eff] = token, self.tokens[eff][1]
 
+  def set_output_token(self, device: Device, token: RuntimeToken):
+    # We're free to clobber the previous output token because on each
+    # device we have a total ordering of computations. Only the token
+    # from the latest computation matters. If this weren't the case
+    # we'd need to store a set of output tokens.
+    self.output_tokens[device] = token
+
   def clear(self):
     self.tokens = {}
+    self.output_tokens = {}
 
   def block_until_ready(self):
-    [t[0].block_until_ready() for t, _ in self.tokens.values()]
+    for t, _ in self.tokens.values():
+      t[0].block_until_ready()
+    for t in self.output_tokens.values():
+      t[0].block_until_ready()
 
 runtime_tokens: RuntimeTokenSet = RuntimeTokenSet()
 
@@ -300,7 +313,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   if not jaxpr.eqns and not always_lower:
     return XlaComputation(
         name, None, True, None, None, jaxpr=jaxpr, consts=consts, device=device,
-        in_avals=abstract_args, out_avals=out_avals, effects=jaxpr.effects,
+        in_avals=abstract_args, out_avals=out_avals,
+        has_unordered_effects=False, ordered_effects=[],
         kept_var_idx=kept_var_idx, keepalive=None)
 
   if not _on_exit:
@@ -336,15 +350,20 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   name_stack = util.new_name_stack(util.wrap_name(name, 'jit'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module_name = f"jit_{fun.__name__}"
-  effects = [eff for eff in closed_jaxpr.effects if eff in core.ordered_effects]
+  unordered_effects = [eff for eff in closed_jaxpr.effects
+                       if eff not in core.ordered_effects]
+  ordered_effects = [eff for eff in closed_jaxpr.effects
+                     if eff in core.ordered_effects]
   module, keepalive = mlir.lower_jaxpr_to_module(
-      module_name, closed_jaxpr, effects, backend.platform,
+      module_name, closed_jaxpr, unordered_effects, ordered_effects, backend.platform,
       mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
   return XlaComputation(
       name, module, False, donated_invars, which_explicit, nreps=nreps,
       device=device, backend=backend, tuple_args=tuple_args,
-      in_avals=abstract_args, out_avals=out_avals, effects=effects,
-      kept_var_idx=kept_var_idx, keepalive=keepalive)
+      in_avals=abstract_args, out_avals=out_avals,
+      has_unordered_effects=bool(unordered_effects),
+      ordered_effects=ordered_effects, kept_var_idx=kept_var_idx,
+      keepalive=keepalive)
 
 
 def _backend_supports_unbounded_dynamic_shapes(backend: Backend) -> bool:
@@ -588,13 +607,18 @@ def _check_special(name, xla_shape, buf):
     if config.jax_debug_infs and np.any(np.isinf(buf.to_py())):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
-def _add_tokens(effects: List[core.Effect], device, input_bufs):
-  tokens = [runtime_tokens.get_token(eff, device) for eff in effects]
+def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
+                device: Device, input_bufs):
+  tokens = [runtime_tokens.get_token(eff, device) for eff in ordered_effects]
   tokens_flat = flatten(tokens)
   input_bufs = [*tokens_flat, *input_bufs]
   def _remove_tokens(output_bufs):
-    token_bufs, output_bufs = util.split_list(output_bufs, [len(effects)])
-    for eff, token_buf in zip(effects, token_bufs):
+    token_bufs, output_bufs = util.split_list(
+        output_bufs, [has_unordered_effects + len(ordered_effects)])
+    if has_unordered_effects:
+      output_token_buf, *token_bufs = token_bufs
+      runtime_tokens.set_output_token(device, output_token_buf)
+    for eff, token_buf in zip(ordered_effects, token_bufs):
       runtime_tokens.update_token(eff, token_buf)
     return output_bufs
   return input_bufs, _remove_tokens
@@ -604,20 +628,22 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
                       input_handler: Optional[Callable],
                       output_buffer_counts: Optional[Sequence[int]],
                       result_handlers,
-                      effects: List[core.Effect],
+                      has_unordered_effects: bool,
+                      ordered_effects: List[core.Effect],
                       kept_var_idx, *args):
   device, = compiled.local_devices()
   args = input_handler(args) if input_handler else args
   input_bufs_flat = flatten(device_put(x, device) for i, x in enumerate(args)
                             if i in kept_var_idx)
-  if effects:
-    input_bufs_flat, token_handler = _add_tokens(effects, device, input_bufs_flat)
+  if has_unordered_effects or ordered_effects:
+    input_bufs_flat, token_handler = _add_tokens(
+        has_unordered_effects, ordered_effects, device, input_bufs_flat)
   out_bufs_flat = compiled.execute(input_bufs_flat)
   check_special(name, out_bufs_flat)
   if output_buffer_counts is None:
     return (result_handlers[0](*out_bufs_flat),)
   out_bufs = unflatten(out_bufs_flat, output_buffer_counts)
-  if effects:
+  if ordered_effects or has_unordered_effects:
     out_bufs = token_handler(out_bufs)
   return tuple(h(*bs) for h, bs in unsafe_zip(result_handlers, out_bufs))
 
@@ -626,10 +652,13 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
                         input_handler: Optional[Callable],
                         output_buffer_counts: Optional[Sequence[int]],
                         result_handlers,
-                        effects: List[core.Effect],
+                        has_unordered_effects: bool,
+                        ordered_effects: List[core.Effect],
                         kept_var_idx, *args):
-  if effects:
-    raise NotImplementedError('Cannot execute replicated computation with effects.')
+  if has_unordered_effects or ordered_effects:
+    # TODO(sharadmv): support jit-of-pmap with effects
+    raise NotImplementedError(
+        "Cannot execute replicated computation with effects.")
   if input_handler: raise NotImplementedError  # TODO(mattjj, dougalm)
   input_bufs = [flatten(device_put(x, device) for i, x in enumerate(args)
                         if i in kept_var_idx)
@@ -645,7 +674,8 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
 
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
-                     _: List[core.Effect], kept_var_idx, *args):
+                     has_unordered_effects: bool,
+                     ordered_effects: List[core.Effect], kept_var_idx, *args):
   env: Dict[core.Var, Any]  = {}
   pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
   map(env.setdefault, jaxpr.invars, pruned_args)
@@ -790,7 +820,8 @@ class XlaCompiledComputation(stages.Executable):
       tuple_args: bool,
       in_avals: Sequence[core.AbstractValue],
       out_avals: Sequence[core.AbstractValue],
-      effects: List[core.Effect],
+      has_unordered_effects: bool,
+      ordered_effects: List[core.Effect],
       kept_var_idx: Set[int],
       keepalive: Optional[Any]) -> XlaCompiledComputation:
     sticky_device = device
@@ -806,13 +837,15 @@ class XlaCompiledComputation(stages.Executable):
       compiled = compile_or_get_cached(backend, xla_computation, options)
     buffer_counts = (None if len(out_avals) == 1 and not config.jax_dynamic_shapes
                      else [aval_to_num_buffers(aval) for aval in out_avals])
-    if effects:
+    if ordered_effects or has_unordered_effects:
+      num_output_tokens = len(ordered_effects) + has_unordered_effects
       if buffer_counts is None:
         buffer_counts = [1]
-      buffer_counts = ([1] * len(effects)) + buffer_counts
+      buffer_counts = ([1] * num_output_tokens) + buffer_counts
     execute = _execute_compiled if nreps == 1 else _execute_replicated
-    unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,
-                          result_handlers, effects, kept_var_idx)
+    unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,  # type: ignore  # noqa: F811
+                          result_handlers, has_unordered_effects,
+                          ordered_effects, kept_var_idx)
     return XlaCompiledComputation(compiled, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 
@@ -827,12 +860,14 @@ class XlaCompiledComputation(stages.Executable):
     return self._xla_executable
 
   @staticmethod
-  def from_trivial_jaxpr(jaxpr, consts, device, in_avals, out_avals, effects,
-      kept_var_idx, keepalive: Optional[Any]) -> XlaCompiledComputation:
+  def from_trivial_jaxpr(jaxpr, consts, device, in_avals, out_avals,
+      has_unordered_effects, ordered_effects, kept_var_idx,
+      keepalive: Optional[Any]) -> XlaCompiledComputation:
     assert keepalive is None
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
     unsafe_call = partial(_execute_trivial, jaxpr, device, consts,
-                          out_avals, result_handlers, effects, kept_var_idx)
+                          out_avals, result_handlers, has_unordered_effects,
+                          ordered_effects, kept_var_idx)
     return XlaCompiledComputation(None, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 

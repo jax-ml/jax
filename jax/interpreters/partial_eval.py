@@ -1619,8 +1619,10 @@ class DynamicJaxprTrace(core.Trace):
       with core.new_sublevel():
         jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
             f, self.main, reduced_in_avals)
-      if jaxpr.effects:
-        raise NotImplementedError('Effects not supported for map primitives.')
+      ordered_effects = jaxpr.effects & core.ordered_effects
+      if ordered_effects:
+        raise ValueError("Ordered effects not supported for "
+                         f"map primitives: {ordered_effects}")
       out_axes = params['out_axes_thunk']()
       out_avals = [core.unmapped_aval(axis_size, axis_name, out_axis, a)
                   if out_axis is not None else a
