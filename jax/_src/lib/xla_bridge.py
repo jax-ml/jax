@@ -219,19 +219,21 @@ register_backend_factory('cpu',
 register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
 
-if xla_client._version >= 65:
-  register_backend_factory(
-      'cuda', partial(xla_client.make_gpu_client, platform_name='cuda'),
-      priority=200)
-  register_backend_factory(
-      'rocm', partial(xla_client.make_gpu_client, platform_name='rocm'),
-      priority=200)
-else:
-  register_backend_factory('gpu', xla_client.make_gpu_client,
-                           priority=200)
+if hasattr(xla_client, "make_gpu_client"):
+  if xla_client._version >= 65:
+    register_backend_factory(
+        'cuda', partial(xla_client.make_gpu_client, platform_name='cuda'),
+        priority=200)
+    register_backend_factory(
+        'rocm', partial(xla_client.make_gpu_client, platform_name='rocm'),
+        priority=200)
+  else:
+    register_backend_factory('gpu', xla_client.make_gpu_client,
+                             priority=200)
 
-register_backend_factory(
-  'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
+if hasattr(xla_client, "make_tpu_client"):
+  register_backend_factory(
+    'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
 
 if iree is not None:
   register_backend_factory("iree", iree.iree_client_factory, priority=-100)
