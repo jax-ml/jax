@@ -176,18 +176,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype}
+       "_shape={}_method={}".format(
+               jtu.format_shape_dtype_string(shape, dtype), method),
+       "shape": shape, "dtype": dtype, "method": method}
       for shape in [(0, 0), (1, 1), (3, 3), (4, 4), (10, 10), (200, 200),
                     (2, 2, 2), (2, 3, 3), (3, 2, 2)]
-      for dtype in float_types + complex_types))
-  def testSlogdet(self, shape, dtype):
+      for dtype in float_types + complex_types
+      for method in (["lu"] if jnp.issubdtype(dtype, jnp.complexfloating)
+                     else ["lu", "qr"])
+      ))
+  def testSlogdet(self, shape, dtype, method):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-
-    self._CheckAgainstNumpy(np.linalg.slogdet, jnp.linalg.slogdet, args_maker,
+    slogdet = partial(jnp.linalg.slogdet, method=method)
+    self._CheckAgainstNumpy(np.linalg.slogdet, slogdet, args_maker,
                             tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.slogdet, args_maker)
+    self._CompileAndCheck(slogdet, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

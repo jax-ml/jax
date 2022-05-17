@@ -10,6 +10,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.14 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...main).
+* Changes
+  * {func}`jax.numpy.linalg.slogdet` now accepts an optional `method` argument
+    that allows selection between an LU-decomposition based implementation and
+    an implementation based on QR decomposition.
+  * {func}`jax.numpy.linalg.qr` now supports `mode="raw"`.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).

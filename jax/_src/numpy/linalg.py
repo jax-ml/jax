@@ -18,7 +18,7 @@ from functools import partial
 import numpy as np
 import textwrap
 import operator
-from typing import Tuple, Union, cast
+from typing import Optional, Tuple, Union, cast
 
 from jax import jit, custom_jvp
 from jax import lax
@@ -117,15 +117,8 @@ def matrix_rank(M, tol=None):
 
 
 @custom_jvp
-@_wraps(np.linalg.slogdet)
-@jit
-def slogdet(a):
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+def _slogdet_lu(a):
   dtype = lax.dtype(a)
-  a_shape = jnp.shape(a)
-  if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
-    msg = "Argument to slogdet() must have shape [..., n, n], got {}"
-    raise ValueError(msg.format(a_shape))
   lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   is_zero = jnp.any(diag == jnp.array(0, dtype=dtype), axis=-1)
@@ -144,7 +137,50 @@ def slogdet(a):
       jnp.sum(jnp.log(jnp.abs(diag)), axis=-1))
   return sign, jnp.real(logdet)
 
-@slogdet.defjvp
+@custom_jvp
+def _slogdet_qr(a):
+  # Implementation of slogdet using QR decomposition. One reason we might prefer
+  # QR decomposition is that it is more amenable to a fast batched
+  # implementation on TPU because of the lack of row pivoting.
+  if jnp.issubdtype(lax.dtype(a), jnp.complexfloating):
+    raise NotImplementedError("slogdet method='qr' not implemented for complex "
+                              "inputs")
+  n = a.shape[-1]
+  a, taus = lax_linalg.geqrf(a)
+  # The determinant of a triangular matrix is the product of its diagonal
+  # elements. We are working in log space, so we compute the magnitude as the
+  # the trace of the log-absolute values, and we compute the sign separately.
+  log_abs_det = jnp.trace(jnp.log(jnp.abs(a)), axis1=-2, axis2=-1)
+  sign_diag = jnp.prod(jnp.sign(jnp.diagonal(a, axis1=-2, axis2=-1)), axis=-1)
+  # The determinant of a Householder reflector is -1. So whenever we actually
+  # made a reflection (tau != 0), multiply the result by -1.
+  sign_taus = jnp.prod(jnp.where(taus[..., :(n-1)] != 0, -1, 1), axis=-1)
+  return sign_diag * sign_taus, log_abs_det
+
+@_wraps(
+    np.linalg.slogdet,
+    extra_params=textwrap.dedent("""
+      method: string, optional
+        One of ``lu`` or ``qr``, specifying whether the determinant should be
+        computed using an LU decomposition or a QR decomposition. Defaults to
+        LU decomposition if ``None``.
+    """))
+@partial(jit, static_argnames=('method',))
+def slogdet(a, *, method: Optional[str] = None):
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a_shape = jnp.shape(a)
+  if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
+    msg = "Argument to slogdet() must have shape [..., n, n], got {}"
+    raise ValueError(msg.format(a_shape))
+
+  if method is None or method == "lu":
+    return _slogdet_lu(a)
+  elif method == "qr":
+    return _slogdet_qr(a)
+  else:
+    raise ValueError(f"Unknown slogdet method '{method}'. Supported methods "
+                     "are 'lu' (`None`), and 'qr'.")
+
 def _slogdet_jvp(primals, tangents):
   x, = primals
   g, = tangents
@@ -157,6 +193,8 @@ def _slogdet_jvp(primals, tangents):
     sign_dot = jnp.zeros_like(sign)
   return (sign, ans), (sign_dot, ans_dot)
 
+_slogdet_lu.defjvp(_slogdet_jvp)
+_slogdet_qr.defjvp(_slogdet_jvp)
 
 def _cofactor_solve(a, b):
   """Equivalent to det(a)*solve(a, b) for nonsingular mat.
