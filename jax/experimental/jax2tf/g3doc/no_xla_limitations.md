@@ -33,7 +33,7 @@ For a detailed description of these XLA ops, please see the
 | XlaConv | `lax.conv_general_dilated` | [Partial](#xlaconv) |
 | XlaGather | `lax.gather` | [Partial](#xlagather) |
 | XlaReduceWindow | `lax.reduce_window_sum_p`, `lax.reduce_window_min_p`, `lax.reduce_window_max_p`, and `lax.reduce_window_p` | [Partial](#xlareducewindow) |
-| XlaScatter | `lax.scatter_p`, `lax.scatter_min_p`, `lax.scatter_max_p`, `lax.scatter_mul_p`, `lax.scatter_add_p` | Unsupported |
+| XlaScatter | `lax.scatter_p`, `lax.scatter_min_p`, `lax.scatter_max_p`, `lax.scatter_mul_p`, `lax.scatter_add_p` | [Partial](#xlascatter) |
 | XlaSelectAndScatter | `lax.select_and_scatter_add_p` | Unsupported |
 | XlaReduce | `lax.reduce`, `lax.argmin`, `lax.argmax` | Unsupported |
 | XlaVariadicSort | `lax.sort` | Unsupported |
@@ -153,3 +153,14 @@ We support these ops with the following limitations:
 * `padding` should either be `VALID` or `SAME`.
 
 `lax.reduce_window_min_p` and `lax.reduce_window` are currently not supported.
+
+### XlaScatter
+
+This op is called by `lax.scatter`, `lax.scatter_min`, `lax.scatter_max`, 
+`lax.scatter_mul` and `lax.scatter_add`. 
+
+We support all these ops for unique indices.
+
+There are a few more limitations:
+* the GatherScatterMode must be PROMISE_IN_BOUNDS.
+* dtypes `np.bool` and `jnp.complex*` are not supported.

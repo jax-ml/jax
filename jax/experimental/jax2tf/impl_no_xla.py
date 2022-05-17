@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from jax import core
 from jax import lax
+from jax import linear_util as lu
 from jax._src.lax import slicing as lax_slicing
 from jax._src import dtypes
 from jax._src import util
@@ -698,8 +699,84 @@ def _gather_with_batch_dims(args: GatherArgs):
   result = tf.squeeze(result, axis=1)
   return result
 
+invert_permutation = lambda seq: sorted(range(len(seq)), key=seq.__getitem__)
+def _get_order_with_axes_shift_forward(ndim: int, axes: tuple, inverse: bool=False, forward: bool=True):
+  other_axes = tuple([i for i in range(ndim) if i not in axes])
+  fwd_order = axes + other_axes if forward else other_axes + axes
+  order = fwd_order if not inverse else invert_permutation(fwd_order)
+  return order
 
-def _gather(operand, start_indices, *, dimension_numbers,
+def shift_axes_forward(operand: core.Tracer, axes: tuple, inverse: bool=False,
+                       forward: bool=True):
+  """Shifts the tuple of axes to the front of array"""
+  order = _get_order_with_axes_shift_forward(len(operand.shape), axes, inverse, forward)
+  return lax.transpose(operand, order)
+
+def shift_axes_forward_tuple(operand: tuple, axes: tuple, inverse: bool=False,
+                       forward: bool=True):
+  """Shifts the tuple of axes to the front of tuple"""
+  order = _get_order_with_axes_shift_forward(len(operand), axes, inverse, forward)
+  return [operand[k] for k in order]
+
+def get_slice_indices(start_indices: tuple, gather_slice_shape: tuple, array_shape: tuple):
+  """
+  Calculates the slice shapes for PROMISE_IN_BOUNDS
+  """
+  # inbuilt python functions like min are overwritten by np.min so we explicitly define
+  _add = lambda x, y: x + y
+  _min = lambda x, y: x if x < y else y
+  _max = lambda x, y: x if x > y else y
+  # shift if start_indices are lower-out-of-bounds
+  start_indices = tuple(map(lambda i: _max(0, i), start_indices))
+  # calculate limit_indices
+  limit_indices = tuple(map(_add, start_indices, gather_slice_shape))
+  # shift if limit_indices are upper-out-of-bounds
+  bounds_shift = tuple(map(lambda x, y: _min(0, x-y), array_shape, limit_indices))
+  start_indices, limit_indices = [tuple(map(_add, indices, bounds_shift)) for indices in [start_indices, limit_indices]]
+  return start_indices, limit_indices
+
+def _is_slice_element_none_or_constant(elt):
+  """Return True if elt is a constant or None."""
+  if elt is None: return True
+  try:
+    return type(core.get_aval(elt)) is core.ConcreteArray
+  except TypeError:
+    return False
+
+def _gather_subarray(arr, gather_indices, gather_slice_shape, dnums):
+  """
+  To simplify construction of indices, we shift the dimensions which are
+  indexed to the front. Where the indices are static we use a slice in
+  preference to dynamic slice.
+  """
+  fwd = partial(shift_axes_forward, axes=dnums.start_index_map)
+  inv = partial(fwd, inverse=True)
+  # Move axes we want to index in to the front to simplify implementation
+  arr = fwd(arr)
+  gather_slice_shape = shift_axes_forward_tuple(gather_slice_shape, dnums.start_index_map)
+  # Now the axes beings indexed in to are at the front, building the start indices is simple
+  n_dim = len(arr.shape)
+  n_dim_indexed = len(gather_indices)
+  start_indices = lax.concatenate([gather_indices, lax.full((n_dim-n_dim_indexed,), 0, dtype=gather_indices.dtype)], 0)
+
+  static_indices = _is_slice_element_none_or_constant(start_indices)
+  if static_indices:
+    # Resolve static indices DeviceArray->tuple
+    start_indices = tuple(map(int, start_indices))
+    start_indices, limit_indices = get_slice_indices(start_indices, gather_slice_shape, arr.shape)
+    subarr = lax.slice(arr, start_indices, limit_indices)
+  else:
+    # dynamic slice
+    subarr = lax.dynamic_slice(arr, start_indices, gather_slice_shape)
+  return subarr, start_indices, fwd, inv
+
+def _expand_gather(arr, start_indices, slice_sizes, dnums):
+  """Implementation covers cases of an unbatched, unstrided gather"""
+  subarr, _, _, inv = _gather_subarray(arr, start_indices, slice_sizes, dnums)
+  y = inv(subarr)
+  return y.squeeze(dnums.collapsed_slice_dims)
+
+def _gather(operand, start_indices, *extra_args, dimension_numbers,
             slice_sizes: core.Shape, indices_are_sorted, unique_indices, mode,
             fill_value, _in_avals: Sequence[core.ShapedArray],
             _out_aval: core.ShapedArray):
@@ -723,6 +800,9 @@ def _gather(operand, start_indices, *, dimension_numbers,
       op_shape=_in_avals[0].shape,
       start_indices_shape=_in_avals[1].shape,
       out_aval=_out_aval)
+  strides = (len(start_indices.shape) != 1)
+  if (not strides) & ((mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS) or (mode == None)) & (fill_value == None):
+    return jax2tf._convert_jax_impl(_expand_gather, multiple_results=False)(operand, start_indices, slice_sizes=slice_sizes, dnums=dimension_numbers, _in_avals=_in_avals, _out_aval=_out_aval)
 
   errors = []
 
@@ -792,10 +872,44 @@ def _dynamic_update_slice(operand, update, *start_indices,
 
 tf_impl_no_xla[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
-tf_impl_no_xla[lax.scatter_p] = _unimplemented("scatter")
-tf_impl_no_xla[lax.scatter_min_p] = _unimplemented("scatter min")
-tf_impl_no_xla[lax.scatter_max_p] = _unimplemented("scatter max")
-tf_impl_no_xla[lax.scatter_mul_p] = _unimplemented("scatter mul")
-tf_impl_no_xla[lax.scatter_add_p] = _unimplemented("scatter add")
+def _expand_scatter(arr, start_indices, update, update_fn, dnums):
+  update = lax.expand_dims(update, dnums.collapsed_slice_dims)
+  # gather subarray which scatter op updates
+  subarr, start_indices, fwd, inv = _gather_subarray(arr, start_indices, update.shape, dnums)
+  # reshape update to match subarr
+  update = fwd(update)
+  # calc new values to emplace back
+  updated_subarr = update_fn(subarr, update)
+  # emplace back
+  return inv(lax.dynamic_update_slice(fwd(arr), updated_subarr, start_indices))
+
+def _scatter(
+  operand,
+  scatter_indices,
+  updates,
+  update_jaxpr,
+  update_consts,
+  dimension_numbers,
+  indices_are_sorted: bool,
+  unique_indices: bool,
+  mode,
+  _in_avals: Sequence[core.ShapedArray],
+  _out_aval: core.ShapedArray):
+  gather_dimension_numbers = lax.GatherDimensionNumbers(
+    offset_dims=dimension_numbers.update_window_dims,
+    collapsed_slice_dims=dimension_numbers.inserted_window_dims,
+    start_index_map=dimension_numbers.scatter_dims_to_operand_dims,
+  )
+  closed_jaxpr = core.ClosedJaxpr(update_jaxpr, update_consts)
+  update_fn = lambda *args: lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr)).f(*args)[0]
+  strides = (len(scatter_indices.shape) != 1)
+  if (not strides) & ((mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS) or (mode == None)):
+    return jax2tf._convert_jax_impl(_expand_scatter, multiple_results=False)(operand, scatter_indices, updates, update_fn=update_fn, dnums=gather_dimension_numbers, _in_avals=_in_avals, _out_aval=_out_aval)
+  raise _xla_disabled_error("scatter", "Only scatters which correspond to a contiguous slice are supported")
+tf_impl_no_xla[lax.scatter_p] = _scatter
+tf_impl_no_xla[lax.scatter_min_p] = _scatter
+tf_impl_no_xla[lax.scatter_max_p] = _scatter
+tf_impl_no_xla[lax.scatter_mul_p] = _scatter
+tf_impl_no_xla[lax.scatter_add_p] = _scatter
 
 tf_impl_no_xla[lax.sort_p] = _unimplemented("sort")
