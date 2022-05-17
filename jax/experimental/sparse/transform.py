@@ -514,15 +514,18 @@ def _add_sparse(spenv, *spvalues):
       out_data = lax.concatenate([spenv.data(X), spenv.data(Y)], dimension=spenv.indices(X).ndim - 2)
       out_spvalue = spenv.sparse(X.shape, out_data, out_indices)
   else:
-    raise NotImplementedError("Addition between sparse and dense matrix.")
+    raise NotImplementedError("Addition between sparse and dense array.")
 
   return (out_spvalue,)
 
 sparse_rules[lax.add_p] = _add_sparse
 
 def _sub_sparse(spenv, *spvalues):
-  lhs, rhs = spvalues
-  return _add_sparse(spenv, lhs, *sparse_rules[lax.neg_p](spenv, rhs))
+  X, Y = spvalues
+  if X.is_sparse() and Y.is_sparse():
+    return _add_sparse(spenv, X, *sparse_rules[lax.neg_p](spenv, Y))
+  else:
+    raise NotImplementedError("Subtraction between sparse and dense array.")
 
 sparse_rules[lax.sub_p] = _sub_sparse
 
