@@ -182,6 +182,10 @@ def fori_loop(lower, upper, body_fun, init_val):
   structure with a fixed structure and arrays with fixed shape and dtype at the
   leaves).
 
+  .. note::
+    :py:func:`fori_loop` compiles ``body_fun``, so while it can be combined with
+    :py:func:`jit`, it's usually unnecessary.
+
   Args:
     lower: an integer representing the loop index lower bound (inclusive)
     upper: an integer representing the loop index upper bound (exclusive)
@@ -266,6 +270,10 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   Another difference from using Python-native loop constructs is that
   ``while_loop`` is not reverse-mode differentiable because XLA computations
   require static bounds on memory requirements.
+
+  .. note::
+    :py:func:`while_loop` compiles ``cond_fun`` and ``body_fun``, so while it
+    can be combined with :py:func:`jit`, it's usually unnecessary.
 
   Args:
     cond_fun: function of type ``a -> Bool``.
@@ -1397,6 +1405,10 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
   ``c`` in the type signature above represents an array with a fixed shape and
   dtype (or a nested tuple/list/dict container data structure with a fixed
   structure and arrays with fixed shape and dtype at the leaves).
+
+  .. note::
+    :py:func:`scan` compiles ``f``, so while it can be combined with
+    :py:func:`jit`, it's usually unnecessary.
 
   Args:
     f: a Python function to be scanned of type ``c -> a -> (c, b)``, meaning
