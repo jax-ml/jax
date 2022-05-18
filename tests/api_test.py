@@ -5817,6 +5817,24 @@ class CustomJVPTest(jtu.JaxTestCase):
       self.assertEmpty(aux_args)
     f()
 
+  def test_sinc_constant_function_batching(self):
+    # https://github.com/google/jax/pull/10756
+    batch_data = jnp.arange(15.).reshape(5, 3)
+
+    @jax.vmap
+    def f(x):
+      return jax.lax.map(jnp.sinc, x)
+    g = lambda param: f(param * batch_data).sum()
+
+    @jax.vmap
+    def f_ref(x):
+      return jnp.stack([jnp.sinc(x_) for x_ in x])
+    g_ref = lambda param: f_ref(param * batch_data).sum()
+
+    grad     = jax.grad(g    )(0.1)  # doesn't crash
+    grad_ref = jax.grad(g_ref)(0.1)
+    self.assertAllClose(grad, grad_ref, check_dtypes=False)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
