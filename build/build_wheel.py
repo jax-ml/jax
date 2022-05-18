@@ -61,6 +61,9 @@ def _is_windows():
   return sys.platform.startswith("win32")
 
 
+pyext = "pyd" if _is_windows() else "so"
+
+
 def _copy_so(src_file, dst_dir, dst_filename=None):
   src_filename = os.path.basename(src_file)
   if not dst_filename:
@@ -188,11 +191,11 @@ def prepare_wheel(sources_path):
   copy_file(r.Rlocation("__main__/jaxlib/setup.cfg"), dst_dir=sources_path)
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/init.py"),
                  dst_filename="__init__.py")
-  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cpu_feature_guard.so"))
+  copy_to_jaxlib(r.Rlocation(f"__main__/jaxlib/cpu_feature_guard.{pyext}"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/lapack.py"))
-  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_lapack.so"))
+  copy_to_jaxlib(r.Rlocation(f"__main__/jaxlib/_lapack.{pyext}"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/mhlo_helpers.py"))
-  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_pocketfft.so"))
+  copy_to_jaxlib(r.Rlocation(f"__main__/jaxlib/_pocketfft.{pyext}"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/gpu_prng.py"))
@@ -200,8 +203,6 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/gpu_solver.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/gpu_sparse.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/version.py"))
-
-  pyext = "pyd" if _is_windows() else "so"
 
   cuda_dir = os.path.join(jaxlib_dir, "cuda")
   if r.Rlocation(f"__main__/jaxlib/cuda/_cusolver.{pyext}") is not None:
