@@ -192,7 +192,7 @@ def ir_constants(val: Any,
       return out
   if hasattr(val, '__jax_array__'):
     return ir_constants(val.__jax_array__(), canonicalize_types)
-  raise TypeError("No constant handler for type: {}".format(type(val)))
+  raise TypeError(f"No constant handler for type: {type(val)}")
 
 def ir_constant(val: Any, canonicalize_types: bool = True) -> ir.Value:
   """Convenience wrapper around ir_constants for singleton values."""
@@ -345,7 +345,7 @@ class SPMDAxisContext:
     # know what they are...
     return xla.AxisEnv(nreps=1, names=(), sizes=())
 
-  def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> 'SPMDAxisContext':
+  def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> SPMDAxisContext:
     return SPMDAxisContext(self.mesh, self.manual_axes | axes)
 
 

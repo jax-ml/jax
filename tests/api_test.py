@@ -722,7 +722,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   # TODO(zhangqiaorjc): Test pruning constants after DCE pass prunes primitive
   # applications.
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_num_args={}".format(num_args),
+    {"testcase_name": f"_num_args={num_args}",
      "num_args": num_args}
     for num_args in [2, 3, 4]))
   def test_jit_with_pruned_args(self, num_args):
@@ -1528,7 +1528,7 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       TypeError,
       "Type of cotangent input to vjp pullback.*is not the expected tangent type",
-      lambda: pullback((np.float16(42))))
+      lambda: pullback(np.float16(42)))
 
   def test_vjp_bad_cotangent_shape(self):
     x = np.ones((2, 5), dtype=np.float32)
@@ -1780,7 +1780,7 @@ class APITest(jtu.JaxTestCase):
     self.assertLen(s, i)
     for f in (str, repr):
       self.assertEqual(
-          f(s), "ShapeDtypeStruct(shape=({}, 2, 3), dtype=float32)".format(i))
+          f(s), f"ShapeDtypeStruct(shape=({i}, 2, 3), dtype=float32)")
 
   def test_shape_dtype_struct_scalar(self):
     s = api.ShapeDtypeStruct(shape=(), dtype=jnp.float32)
@@ -1862,7 +1862,7 @@ class APITest(jtu.JaxTestCase):
     def fun(A, b, x):
       return jnp.dot(A, x) + b
 
-    class MyArgArray(object):
+    class MyArgArray:
       def __init__(self, shape, dtype):
         self.shape = shape
         self.dtype = np.dtype(dtype)
@@ -1889,7 +1889,7 @@ class APITest(jtu.JaxTestCase):
     def fun(x, y):
       return lax.psum(x, 'i') + y
 
-    class MyArgArray(object):
+    class MyArgArray:
       def __init__(self, shape, dtype, named_shape):
         self.shape = shape
         self.dtype = jnp.dtype(dtype)
@@ -2863,7 +2863,7 @@ class APITest(jtu.JaxTestCase):
 
     x = np.array([1, 2], dtype=np.float32)
     hlo_lines = jax.xla_computation(f)(x).as_hlo_text().split('\n')
-    hlo_lines = set([s.strip() for s in hlo_lines])
+    hlo_lines = {s.strip() for s in hlo_lines}
     self.assertIn('constant.1 = f32[2]{0} constant({7, 14})', hlo_lines)
     self.assertNotIn('constant.2 = f32[2]{0} constant({7, 14})', hlo_lines)
 
@@ -7648,7 +7648,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
       self.assertEqual(in_batched, [in_batched_ref])
-      sz, = set([z.shape[0] for z in tree_util.tree_leaves(xs)])
+      sz, = {z.shape[0] for z in tree_util.tree_leaves(xs)}
       self.assertEqual(axis_size, sz)
       return tree_cos(xs), in_batched[0]
 
@@ -7672,7 +7672,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
       self.assertEqual(in_batched, [in_batched_ref])
-      sz, = set([z.shape[0] for z in tree_util.tree_leaves(xs)])
+      sz, = {z.shape[0] for z in tree_util.tree_leaves(xs)}
       self.assertEqual(axis_size, sz)
       return tree_cos(xs), in_batched[0]
 
@@ -7856,7 +7856,7 @@ class NamedCallTest(jtu.JaxTestCase):
     self.assertEqual(out, 5)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_jit_type={}_func={}".format(jit_type, func),
+      {"testcase_name": f"_jit_type={jit_type}_func={func}",
        "jit_type": jit_type, "func": func}
       for func in ['identity', 'asarray', 'device_put']
       for jit_type in [None, "python", "cpp"]

@@ -39,7 +39,7 @@ def start_server(port: int):
   return xla_client.profiler.start_server(port)
 
 
-class _ProfileState(object):
+class _ProfileState:
   def __init__(self):
     self.profile_session = None
     self.log_dir = None

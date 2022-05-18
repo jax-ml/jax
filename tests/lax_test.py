@@ -2636,7 +2636,7 @@ class LaxTest(jtu.JaxTestCase):
     self.assertAllClose(key, new_key)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dtype={}_weak_type={}".format(dtype.__name__, weak_type),
+      {"testcase_name": f"_dtype={dtype.__name__}_weak_type={weak_type}",
        "dtype": dtype, "weak_type": weak_type}
       for dtype in all_dtypes + python_scalar_types
       for weak_type in [True, False]))
@@ -2805,7 +2805,7 @@ class LazyConstantTest(jtu.JaxTestCase):
       jax_fn(np.ones((2, 2)), axis=0, index_dtype=index_dtype)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_fn={}".format(jax_fn.__name__),
+      {"testcase_name": f"_fn={jax_fn.__name__}",
        "jax_fn": jax_fn}
       for jax_fn in [lax.argmin, lax.argmax]))
   def testArgMinMaxEmptyError(self, jax_fn):
@@ -2814,7 +2814,7 @@ class LazyConstantTest(jtu.JaxTestCase):
       jax_fn(np.ones((0, 2)), axis=0, index_dtype=np.int32)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_fn={}".format(jax_fn.__name__),
+      {"testcase_name": f"_fn={jax_fn.__name__}",
        "jax_fn": jax_fn}
       for jax_fn in [lax.argmin, lax.argmax]))
   def testArgMinMaxInvalidAxisError(self, jax_fn):
@@ -2823,7 +2823,7 @@ class LazyConstantTest(jtu.JaxTestCase):
       jax_fn(np.ones((2, 3)), axis=-1, index_dtype=np.int32)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_fn={}_weaktype={}".format(jax_fn.__name__, weak_type),
+      {"testcase_name": f"_fn={jax_fn.__name__}_weaktype={weak_type}",
        "jax_fn": jax_fn, "weak_type": weak_type}
       for jax_fn in [lax.argmin, lax.argmax]
       for weak_type in [True, False]))
@@ -2845,10 +2845,10 @@ class LazyConstantTest(jtu.JaxTestCase):
   for r in LAX_OPS:
     if r.nargs == 1:
       unary_op_types[r.op] = (unary_op_types.get(r.op, set()) |
-                              set(np.dtype(t) for t in r.dtypes))
+                              {np.dtype(t) for t in r.dtypes})
 
   @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_{}".format(op), "op_name": op, "rec_dtypes": dtypes}
+        {"testcase_name": f"_{op}", "op_name": op, "rec_dtypes": dtypes}
       for op, dtypes in unary_op_types.items()))
   def testUnaryWeakTypes(self, op_name, rec_dtypes):
     """Test that all lax unary ops propagate weak_type information appropriately."""

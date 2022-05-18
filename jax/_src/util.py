@@ -36,14 +36,14 @@ T = TypeVar("T")
 def safe_zip(*args):
   n = len(args[0])
   for arg in args[1:]:
-    assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
+    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
   return list(zip(*args))
 
 def safe_map(f, *args):
   args = list(map(list, args))
   n = len(args[0])
   for arg in args[1:]:
-    assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
+    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
   return list(map(f, *args))
 
 def unzip2(xys):
@@ -446,7 +446,7 @@ def taggedtuple(name, fields) -> Callable[..., Any]:
   def __new__(cls, *xs):
     return tuple.__new__(cls, (cls,) + xs)
   def __repr__(self):
-    return '{}{}'.format(name, tuple.__str__(self[1:]))
+    return f'{name}{tuple.__str__(self[1:])}'
   class_namespace = {'__new__' : __new__, '__repr__': __repr__}
   for i, f in enumerate(fields):
     class_namespace[f] = property(operator.itemgetter(i+1))  # type: ignore

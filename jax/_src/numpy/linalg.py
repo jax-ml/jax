@@ -77,7 +77,7 @@ def matrix_power(a, n):
   try:
     n = operator.index(n)
   except TypeError as err:
-    raise TypeError("exponent must be an integer, got {}".format(n)) from err
+    raise TypeError(f"exponent must be an integer, got {n}") from err
 
   if n == 0:
     return jnp.broadcast_to(jnp.eye(a.shape[-2], dtype=a.dtype), a.shape)
@@ -355,7 +355,7 @@ def eigh(a, UPLO=None, symmetrize_input=True):
   elif UPLO == "U":
     lower = False
   else:
-    msg = "UPLO must be one of None, 'L', or 'U', got {}".format(UPLO)
+    msg = f"UPLO must be one of None, 'L', or 'U', got {UPLO}"
     raise ValueError(msg)
 
   a, = _promote_dtypes_inexact(jnp.asarray(a))
@@ -506,10 +506,10 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
         y = jnp.expand_dims(y, axis)
       return y
     else:
-      raise ValueError("Invalid order '{}' for matrix norm.".format(ord))
+      raise ValueError(f"Invalid order '{ord}' for matrix norm.")
   else:
     raise ValueError(
-        "Invalid axis values ({}) for jnp.linalg.norm.".format(axis))
+        f"Invalid axis values ({axis}) for jnp.linalg.norm.")
 
 
 @_wraps(np.linalg.qr)
@@ -524,7 +524,7 @@ def qr(a, mode="reduced"):
   elif mode == "complete":
     full_matrices = True
   else:
-    raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
+    raise ValueError(f"Unsupported QR decomposition mode '{mode}'")
   q, r = lax_linalg.qr(a, full_matrices=full_matrices)
   if mode == "r":
     return r

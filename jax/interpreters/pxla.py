@@ -28,6 +28,8 @@
 # This encoding is assumed by various parts of the system, e.g. generating
 # replica groups for collective operations.
 
+from __future__ import annotations
+
 from contextlib import contextmanager, ContextDecorator
 from collections import defaultdict, OrderedDict
 import dataclasses
@@ -176,7 +178,7 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
     last_tile_dims = []
     axes_by_type: Dict[OpShardingType, List[MeshAxisName]] = {}
     size_by_type: Dict[OpShardingType, int] = defaultdict(lambda: 1)
-    assert set(x[0] for x in replicated_maxes).issuperset(set(special_axes.keys()))
+    assert {x[0] for x in replicated_maxes}.issuperset(set(special_axes.keys()))
     for axis, size in replicated_maxes:
       ty = special_axes.get(axis, xc.OpSharding.Type.REPLICATED)
       axes_by_type.setdefault(ty, []).append(axis)
@@ -460,7 +462,7 @@ def local_aval_to_result_handler(
     return local_result_handlers[type(aval)](aval, sharding_spec, indices)
   except KeyError as err:
     raise TypeError(
-        "No pxla_result_handler for type: {}".format(type(aval))) from err
+        f"No pxla_result_handler for type: {type(aval)}") from err
 
 PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
 local_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
@@ -493,7 +495,7 @@ def global_aval_to_result_handler(
                                               global_mesh)
   except KeyError as err:
     raise TypeError(
-        "No pxla_result_handler for type: {}".format(type(aval))) from err
+        f"No pxla_result_handler for type: {type(aval)}") from err
 
 global_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 
@@ -925,7 +927,7 @@ def stage_parallel_callable(
 
 
 def _shardings_to_mlir_shardings(
-    shardings: Optional[Sequence['PartitionsOrReplicated']]
+    shardings: Optional[Sequence[PartitionsOrReplicated]]
     ) -> Optional[Sequence[Optional[xc.OpSharding]]]:
   if shardings is None:
     return None
@@ -1064,7 +1066,7 @@ def lower_parallel_callable(
 
 class PmapComputation(stages.Computation):
   _hlo: Union[ir.Module, xc.XlaComputation]
-  _executable: Optional['PmapExecutable']
+  _executable: Optional[PmapExecutable]
 
   def __init__(self, hlo: Union[ir.Module, xc.XlaComputation], **compile_args):
     self._executable = None
@@ -1088,7 +1090,7 @@ class PmapComputation(stages.Computation):
     return self._hlo
 
   @profiler.annotate_function
-  def compile(self) -> 'PmapExecutable':
+  def compile(self) -> PmapExecutable:
     if self._executable is None:
       self._executable = PmapExecutable.from_hlo(self._hlo, **self.compile_args)
     return self._executable
@@ -1107,7 +1109,7 @@ class PmapExecutable(stages.Executable):
   def from_hlo(xla_computation,
                pci: ParallelCallableInfo,
                replicas: ReplicaInfo,
-               parts: 'PartitionInfo',
+               parts: PartitionInfo,
                shards: ShardInfo,
                tuple_args: bool,
                unordered_effects: List[core.Effect],
@@ -1889,7 +1891,7 @@ class _Loop(NamedTuple):
 
 
 def show_axes(axes):
-  return ", ".join(sorted([f"`{a}`" for a in axes]))
+  return ", ".join(sorted(f"`{a}`" for a in axes))
 
 
 class ResourceEnv(NamedTuple):
@@ -1916,7 +1918,7 @@ class ResourceEnv(NamedTuple):
 
   @property
   def loop_resource_axes(self) -> Set[ResourceAxisName]:
-    return set(loop.name for loop in self.loops)
+    return {loop.name for loop in self.loops}
 
   @property
   def resource_axes(self) -> Set[ResourceAxisName]:
@@ -2253,7 +2255,7 @@ def lower_mesh_computation(
 
 class MeshComputation(stages.Computation):
   _hlo: Union[ir.Module, xc.XlaComputation]
-  _executable: Optional['MeshExecutable']
+  _executable: Optional[MeshExecutable]
 
   def __init__(self, name: str, hlo: Union[ir.Module, xc.XlaComputation],
                donated_invars: Sequence[bool], **compile_args):
@@ -2280,7 +2282,7 @@ class MeshComputation(stages.Computation):
 
   def compile(self,
               _allow_propagation_to_outputs : bool = False,
-              _allow_compile_replicated : bool = True) -> 'MeshExecutable':
+              _allow_compile_replicated : bool = True) -> MeshExecutable:
     if self._executable is None:
       self._executable = MeshExecutable.from_hlo(
           self._name, self._hlo, **self.compile_args,
@@ -2356,7 +2358,7 @@ class MeshExecutable(stages.Executable):
                _allow_propagation_to_outputs: bool,
                _allow_compile_replicated: bool,
                unordered_effects: List[core.Effect],
-               keepalive: Any) -> 'MeshExecutable':
+               keepalive: Any) -> MeshExecutable:
     assert not mesh.empty
     backend = xb.get_device_backend(mesh.devices.flat[0])
 
@@ -2536,7 +2538,7 @@ def maybe_extend_axis_env(*args, **kwargs):
   with core.extend_axis_env(*args, **kwargs):
     yield
 
-class DynamicAxisEnvFrame(object):
+class DynamicAxisEnvFrame:
   __slots__ = ["name", "pmap_trace", "hard_size"]
   def __init__(self, name, pmap_trace, hard_size):
     self.name = name
@@ -2549,7 +2551,7 @@ class DynamicAxisEnv(list):
 
   def __getitem__(self, axis_name):
     if axis_name not in self:
-      raise NameError("unbound axis name: {}".format(axis_name))
+      raise NameError(f"unbound axis name: {axis_name}")
     for frame in reversed(self):
       if frame.name == axis_name:
         return frame

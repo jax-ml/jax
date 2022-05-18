@@ -51,7 +51,7 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
 class StaxTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(shape), "shape": shape}
+      {"testcase_name": f"_shape={shape}", "shape": shape}
       for shape in [(2, 3), (5,)]))
   def testRandnInitShape(self, shape):
     key = random.PRNGKey(0)
@@ -59,7 +59,7 @@ class StaxTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(shape), "shape": shape}
+      {"testcase_name": f"_shape={shape}", "shape": shape}
       for shape in [(2, 3), (2, 3, 4)]))
   def testGlorotInitShape(self, shape):
     key = random.PRNGKey(0)
@@ -157,7 +157,7 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(input_shape),
+      {"testcase_name": f"_shape={input_shape}",
        "input_shape": input_shape}
       for input_shape in [(2, 3), (2, 3, 4)]))
   def testFlattenShape(self, input_shape):
@@ -165,7 +165,7 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_input_shape={}_spec={}".format(input_shape, i),
+      {"testcase_name": f"_input_shape={input_shape}_spec={i}",
        "input_shape": input_shape, "spec": spec}
       for input_shape in [(2, 5, 6, 1)]
       for i, spec in enumerate([
@@ -176,7 +176,7 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_input_shape={}".format(input_shape),
+      {"testcase_name": f"_input_shape={input_shape}",
        "input_shape": input_shape}
       for input_shape in [(3, 4), (2, 5, 6, 1)]))
   def testDropoutShape(self, input_shape):
@@ -184,7 +184,7 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_input_shape={}".format(input_shape),
+      {"testcase_name": f"_input_shape={input_shape}",
        "input_shape": input_shape}
       for input_shape in [(3, 4), (2, 5, 6, 1)]))
   def testFanInSum(self, input_shape):
@@ -192,7 +192,7 @@ class StaxTest(jtu.JaxTestCase):
     _CheckShapeAgreement(self, init_fun, apply_fun, [input_shape, input_shape])
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshapes={}_axis={}".format(input_shapes, axis),
+      {"testcase_name": f"_inshapes={input_shapes}_axis={axis}",
        "input_shapes": input_shapes, "axis": axis}
       for input_shapes, axis in [
           ([(2, 3), (2, 1)], 1),

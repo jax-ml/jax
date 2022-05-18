@@ -36,7 +36,7 @@ class MultiBackendTest(jtu.JaxTestCase):
   """Tests jit targeting to different backends."""
 
   @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_backend={}".format(backend),
+        {"testcase_name": f"_backend={backend}",
          "backend": backend,
         }
         for backend in ['cpu', 'gpu', 'tpu', None]
@@ -56,7 +56,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertEqual(z.device_buffer.platform(), correct_platform)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_ordering={}".format(ordering),
+        {"testcase_name": f"_ordering={ordering}",
          "ordering": ordering,}
         for ordering in [('cpu', None), ('gpu', None), ('tpu', None), (None, None)]))
   def testMultiBackendNestedJit(self, ordering):
@@ -78,7 +78,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertEqual(z.device_buffer.platform(), correct_platform)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_ordering={}".format(ordering),
+        {"testcase_name": f"_ordering={ordering}",
          "ordering": ordering,}
         for ordering in [
             ('cpu', 'gpu'), ('gpu', 'cpu'),
@@ -105,7 +105,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertRaises(ValueError, lambda: fun(x, y))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_backend={}".format(backend),
+        {"testcase_name": f"_backend={backend}",
          "backend": backend,}
         for backend in ['cpu', 'gpu', 'tpu']
         ))

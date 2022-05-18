@@ -32,7 +32,7 @@ def jax_issue_role(name, rawtext, text, lineno, inliner, options=None,
   if not text.isdigit():
       raise RuntimeError(f"Invalid content in {rawtext}: expected an issue or PR number.")
   options = {} if options is None else options
-  url = "https://github.com/google/jax/issues/{}".format(text)
+  url = f"https://github.com/google/jax/issues/{text}"
   node = nodes.reference(rawtext, '#' + text, refuri=url, **options)
   return [node], []
 

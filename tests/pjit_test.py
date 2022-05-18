@@ -624,7 +624,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       # Transfer the whole array to all devices for replicated.
       d.transfer_to_infeed((y,))
       # For sharded infeed, transfer only the needed slices to each device.
-      d.transfer_to_infeed((z[3 * didx:3 * didx + 3, :]))
+      d.transfer_to_infeed(z[3 * didx:3 * didx + 3, :])
       d.transfer_to_infeed((w[:, 5 * didx:5 * didx + 5],))
 
     with maps.Mesh(devices, ['d']):

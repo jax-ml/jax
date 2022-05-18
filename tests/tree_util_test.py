@@ -38,7 +38,7 @@ ATuple = collections.namedtuple("ATuple", ("foo", "bar"))
 class ANamedTupleSubclass(ATuple):
   pass
 
-class AnObject(object):
+class AnObject:
 
   def __init__(self, x, y, z):
     self.x = x
@@ -52,7 +52,7 @@ class AnObject(object):
     return hash((self.x, self.y, self.z))
 
   def __repr__(self):
-    return "AnObject({},{},{})".format(self.x, self.y, self.z)
+    return f"AnObject({self.x},{self.y},{self.z})"
 
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
@@ -64,7 +64,7 @@ class Special:
     self.y = y
 
   def __repr__(self):
-    return "Special(x={}, y={})".format(self.x, self.y)
+    return f"Special(x={self.x}, y={self.y})"
 
   def tree_flatten(self):
     return ((self.x, self.y), None)

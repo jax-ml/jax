@@ -212,7 +212,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
-          {"testcase_name": "_{}_{}".format(rec.op.__name__, special_value),
+          {"testcase_name": f"_{rec.op.__name__}_{special_value}",
            "op": rec.op, "special_value": special_value, "tol": rec.tol}
           for special_value in rec.values)
       for rec in LAX_GRAD_SPECIAL_VALUE_TESTS))

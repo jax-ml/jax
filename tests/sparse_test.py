@@ -144,7 +144,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertEmpty(caught_warnings)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes))
@@ -160,7 +160,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertArraysEqual(M.toarray(), jit(todense)(*args))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
@@ -183,7 +183,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(data_out, data)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
@@ -267,7 +267,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes))
@@ -292,7 +292,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(indptr, M_csr.indptr.astype(index_dtype))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}_T={transpose}",
        "shape": shape, "dtype": dtype, "transpose": transpose}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes
@@ -314,7 +314,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertAllClose(op(M) @ v, jit(matvec)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}_T={transpose}",
        "shape": shape, "dtype": dtype, "transpose": transpose}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes
@@ -335,7 +335,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertAllClose(op(M) @ B, jit(matmat)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes))
@@ -351,7 +351,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertArraysEqual(M.toarray(), jit(todense)(*args))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes))
@@ -376,7 +376,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(col, M_coo.col.astype(index_dtype))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}_T={transpose}",
        "shape": shape, "dtype": dtype, "transpose": transpose}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes
@@ -397,7 +397,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertAllClose(op(M) @ v, jit(matvec)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}_T={transpose}",
        "shape": shape, "dtype": dtype, "transpose": transpose}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes
@@ -558,7 +558,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(M, M_out)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
@@ -580,7 +580,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(data_out, data)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
@@ -2071,7 +2071,7 @@ class SparseGradTest(jtu.JaxTestCase):
 class SparseObjectTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}{}".format(cls.__name__, shape), "cls": cls, "shape": shape}
+    {"testcase_name": f"_{cls.__name__}{shape}", "cls": cls, "shape": shape}
     for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]
     for shape in ([2, 5], [5, 3]))
   def test_empty(self, cls, shape):
@@ -2082,7 +2082,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), jnp.empty(shape))
 
   @parameterized.named_parameters(
-    {"testcase_name": "{}_BCOO{}".format(nse, shape), "shape": shape, "nse": nse}
+    {"testcase_name": f"{nse}_BCOO{shape}", "shape": shape, "nse": nse}
     for shape in ([2, 5], [5, 3])
     for nse in [0, 2])
   def test_empty_nse(self, shape, nse=2):
@@ -2091,7 +2091,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), jnp.empty(shape))
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_block_until_ready(self, Obj, shape=(5, 8), dtype=np.float32):
     rng = rand_sparse(self.rng(), post=Obj.fromdense)
@@ -2101,7 +2101,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), M.block_until_ready().todense())
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [jnp.array, sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_todense(self, Obj, shape=(5, 8), dtype=np.float32):
     rng = rand_sparse(self.rng())
@@ -2115,7 +2115,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertEqual(jit(sparse.todense)(1.0), 1.0)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [jnp.array, sparse.BCOO])
   def test_todense_batching(self, Obj, shape=(5, 8), dtype=np.float32):
     rng = rand_sparse(self.rng())
@@ -2128,7 +2128,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(jit(vmap(sparse.todense))(M), M_dense)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [jnp.array, sparse.BCOO])
   def test_todense_ad(self, Obj, shape=(3,), dtype=np.float32):
     M_dense = jnp.array([1., 2., 3.])
@@ -2141,7 +2141,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(jac, jac2)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_attrs(self, Obj, shape=(5, 8), dtype=np.float16):
     rng = rand_sparse(self.rng(), post=Obj.fromdense)

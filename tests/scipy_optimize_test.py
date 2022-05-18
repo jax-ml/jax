@@ -67,7 +67,7 @@ def zakharovFromIndices(x, ii):
 class TestBFGS(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_func={}_maxiter={}".format(func_and_init[0].__name__, maxiter),
+    {"testcase_name": f"_func={func_and_init[0].__name__}_maxiter={maxiter}",
      "maxiter": maxiter, "func_and_init": func_and_init}
     for maxiter in [None]
     for func_and_init in [(rosenbrock, np.zeros(2)),
@@ -143,7 +143,7 @@ class TestBFGS(jtu.JaxTestCase):
 class TestLBFGS(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_func={}_maxiter={}".format(func_and_init[0].__name__, maxiter),
+    {"testcase_name": f"_func={func_and_init[0].__name__}_maxiter={maxiter}",
      "maxiter": maxiter, "func_and_init": func_and_init}
     for maxiter in [None]
     for func_and_init in [(rosenbrock, np.zeros(2)),

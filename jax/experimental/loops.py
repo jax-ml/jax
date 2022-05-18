@@ -150,7 +150,7 @@ from jax._src import source_info_util
 from jax._src.util import safe_map
 
 
-class Scope(object):
+class Scope:
   """A scope context manager to keep the state of loop bodies for functionalization.
 
   Usage::
@@ -218,7 +218,7 @@ class Scope(object):
     # TODO: share these checks with lax_control_flow.cond
     if len(np.shape(pred)) != 0:
       raise TypeError(
-        "Pred must be a scalar, got {} of shape {}.".format(pred, np.shape(pred)))
+        f"Pred must be a scalar, got {pred} of shape {np.shape(pred)}.")
 
     try:
       pred_dtype = np.result_type(pred)
@@ -276,7 +276,7 @@ class Scope(object):
     mt_val = self._mutable_state.get(key)
     if mt_val is None:
       raise AttributeError(
-        "Reading uninitialized data '{}' from the scope.".format(key))
+        f"Reading uninitialized data '{key}' from the scope.")
     return mt_val
 
   def __setattr__(self, key, value):
@@ -290,7 +290,7 @@ class Scope(object):
       if self._active_ranges:
         if key not in self._mutable_state:
           raise ValueError(
-            "New mutable state '{}' cannot be created inside a loop.".format(key))
+            f"New mutable state '{key}' cannot be created inside a loop.")
         assert key in self._mutable_state_aval
         old_aval = self._mutable_state_aval[key]
         flat_values, flat_tree = tree_util.tree_flatten(value)
@@ -336,7 +336,7 @@ class Scope(object):
     self._count_subtraces -= 1
 
 
-class _BodyTracer(object):
+class _BodyTracer:
   """Traces the body of the loop and builds a functional control-flow representation.
 
   This class is also an iterator, only the first iteration is traced.
@@ -457,8 +457,8 @@ class _BodyTracer(object):
     # End the subtrace for the loop body, before we trace the condition
     self.scope.end_subtrace()
 
-    carried_init_val = tuple([self.carried_state_initial[ms]
-                              for ms in self.carried_state_names])
+    carried_init_val = tuple(self.carried_state_initial[ms]
+                              for ms in self.carried_state_names)
     carried_init_vals, carried_tree = tree_util.tree_flatten(carried_init_val)
     assert len(carried_init_vals) == len(body_out_tracers)
 
@@ -489,7 +489,7 @@ class _BodyTracer(object):
     return closed_jaxpr, consts
 
 
-class _LoopBuilder(object):
+class _LoopBuilder:
   """Abstract superclass for the loop builders"""
 
   def can_use_index_var(self):

@@ -615,7 +615,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_ndim={}_nbatch={}_dtype={}".format(ndim, nbatch, dtype.__name__),
+      {"testcase_name": f"_ndim={ndim}_nbatch={nbatch}_dtype={dtype.__name__}",
        "ndim": ndim, "nbatch": nbatch, "dtype": dtype}
       for ndim in [2, 3]
       for nbatch in [1, 3, 5]

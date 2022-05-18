@@ -167,7 +167,7 @@ def _qdwh(x, m, n, is_hermitian, max_iterations, eps):
 
     # Checks convergence.
     iterating_l = jnp.abs(1.0 - l) > tol_l
-    iterating_u = jnp.linalg.norm((u-u_prev)) > tol_norm
+    iterating_u = jnp.linalg.norm(u-u_prev) > tol_norm
     is_unconverged = jnp.logical_or(iterating_l, iterating_u)
 
     is_not_max_iteration = iter_idx < max_iterations

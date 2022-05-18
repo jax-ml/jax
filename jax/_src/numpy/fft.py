@@ -55,7 +55,7 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
 
   if len(axes) != len(set(axes)):
     raise ValueError(
-        "%s does not support repeated axes. Got axes %s." % (full_name, axes))
+        f"{full_name} does not support repeated axes. Got axes {axes}.")
 
   if len(axes) > 3:
     # XLA does not support FFTs over more than 3 dimensions

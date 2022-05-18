@@ -56,7 +56,7 @@ def _update_annotation(
     in_knowns: List[bool]) -> lu.WrappedFun:
   if orig_type is None:
     return f
-  return lu.annotate(f, tuple([ty for k, ty in zip(in_knowns, orig_type) if k]))
+  return lu.annotate(f, tuple(ty for k, ty in zip(in_knowns, orig_type) if k))
 
 class PartialVal(tuple):
   """Partial value: either a known value or an unknown (abstract) value.
@@ -545,7 +545,7 @@ class JaxprTracer(Tracer):
     self.recipe = recipe
 
   def __repr__(self):
-    return 'Traced<{}:{}>'.format(self.aval, self._trace)
+    return f'Traced<{self.aval}:{self._trace}>'
 
   @property
   def aval(self) -> AbstractValue:
@@ -739,7 +739,7 @@ def tracers_to_jaxpr(
     elif isinstance(recipe, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
         raise core.escaped_tracer_error(
-            t, "Tracer not among input tracers {}".format(t))
+            t, f"Tracer not among input tracers {t}")
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
       env[getvar(t)] = recipe.val  # type: ignore

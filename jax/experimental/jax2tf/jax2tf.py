@@ -87,7 +87,7 @@ zip = util.safe_zip
 def _sanitize_scope_name(name):
   scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
   if not _VALID_SCOPE_REGEX.match(scope_name):
-    scope_name = ".{}".format(scope_name)
+    scope_name = f".{scope_name}"
   return scope_name
 
 

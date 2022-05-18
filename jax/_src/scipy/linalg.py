@@ -126,7 +126,7 @@ def _schur(a, output):
 def schur(a, output='real'):
   if output not in ('real', 'complex'):
     raise ValueError(
-      "Expected 'output' to be either 'real' or 'complex', got output={}.".format(output))
+      f"Expected 'output' to be either 'real' or 'complex', got output={output}.")
   return _schur(a, output)
 
 @_wraps(scipy.linalg.inv,
@@ -189,7 +189,7 @@ def _qr(a, mode, pivoting):
   elif mode == "economic":
     full_matrices = False
   else:
-    raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
+    raise ValueError(f"Unsupported QR decomposition mode '{mode}'")
   a, = _promote_dtypes_inexact(jnp.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices=full_matrices)
   if mode == "r":
@@ -244,7 +244,7 @@ def _solve_triangular(a, b, trans, lower, unit_diagonal):
   elif trans == 2 or trans == "C":
     transpose_a, conjugate_a = True, True
   else:
-    raise ValueError("Invalid 'trans' value {}".format(trans))
+    raise ValueError(f"Invalid 'trans' value {trans}")
 
   a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
 
@@ -335,7 +335,7 @@ def _calc_P_Q(A):
     idx = jnp.digitize(A_L1, conds)
     U, V = lax.switch(idx, [_pade3, _pade5, _pade7], A)
   else:
-    raise TypeError("A.dtype={} is not supported.".format(A.dtype))
+    raise TypeError(f"A.dtype={A.dtype} is not supported.")
   P = U + V  # p_m(A) : numerator
   Q = -U + V # q_m(A) : denominator
   return P, Q, n_squarings

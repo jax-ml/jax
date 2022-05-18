@@ -571,7 +571,7 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
   return concatenate_p.bind(*operands, dimension=dimension)
 
 
-class _enum_descriptor(object):
+class _enum_descriptor:
   def __init__(self, val):
     self.val = val
   def __get__(self, _, owner):
@@ -1071,7 +1071,7 @@ def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the last axis of ``operand``."""
   k = int(k)
   if k < 0:
-    raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
+    raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   return top_k_p.bind(operand, k=k)
 
 def tie_in(x: Array, y: Array) -> Array:
@@ -3238,8 +3238,8 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   return select_n(which, *cases), 0
 
 def _select_masking_rule(padded_vals, logical_shapes):
-  which_shape, true_shape, false_shape = [
-      masking.padded_shape_as_value(val.shape) for val in padded_vals]
+  which_shape, true_shape, false_shape = (
+      masking.padded_shape_as_value(val.shape) for val in padded_vals)
   assert np.array_equal(which_shape, true_shape)
   assert np.array_equal(which_shape, false_shape)
   return select_n(*padded_vals)
@@ -3838,7 +3838,7 @@ mlir.register_lowering(sort_p, _sort_lower)
 
 def _top_k_abstract_eval(operand, *, k):
   if k < 0:
-    raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
+    raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   if len(operand.shape) == 0:
     raise TypeError("top_k operand must have >= 1 dimension, got {}"
                     .format(operand.shape))
