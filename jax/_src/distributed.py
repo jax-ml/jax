@@ -32,8 +32,14 @@ def initialize(coordinator_address: Optional[str] = None,
                process_id: Optional[int] = None):
   """Initialize distributed system for topology discovery.
 
-  Currently, calling ``initialize`` sets up the multi-host GPU backend, and
-  is not required for CPU or TPU backends.
+  Currently, calling ``initialize`` sets up the multi-host GPU backend and Cloud
+  TPU backend.
+
+  If you are on GPU platform, you will have to provide the coordinator_address
+  and other args to the `initialize` API.
+
+  If you are on TPU platform, the coordinator_address and other args will be
+  auto detected but you have the option to provide it too.
 
   Args:
     coordinator_address: IP address and port of the coordinator. The choice of
