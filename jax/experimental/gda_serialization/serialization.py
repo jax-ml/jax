@@ -34,7 +34,6 @@ import tensorflow.compat.v2 as tf
 TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
 _REMOVED_VALUE = 'Value removed'
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
-_CHECKPOINT_FAILURE = 'checkpoint_write_failed'
 
 
 async def create_async_gda_from_callback(
@@ -304,7 +303,6 @@ class GlobalAsyncCheckpointManager:
               time.sleep(60)
 
     except Exception as e:
-      self._client.key_value_set(_get_key(self._final_ckpt_dir), _CHECKPOINT_FAILURE)
       self._exception = e
 
   def _start_commit_thread(self, temp_checkpoint_dir, final_checkpoint_dir):
@@ -339,20 +337,10 @@ class GlobalAsyncCheckpointManager:
     self.check_for_errors()
 
     if self._final_ckpt_dir is not None:
-      with _RetryWithTimeout(self._timeout_secs) as t:
-        if t.timed_out:
-          raise TimeoutError("Process 0 didn't finish the rename from "
-                             "temporary to final checkpoint directory")
-        val = self._client.blocking_key_value_get(
-            _get_key(self._final_ckpt_dir), self._timeout_in_ms)
-        while val != _CHECKPOINT_SUCCESS:
-          if val == _CHECKPOINT_FAILURE:
-            raise ValueError(
-                'Checkpoint write failed. Please check the error message on '
-                'all hosts to see the real failure.')
-          logging.info('Waiting for final checkpoint directory to exist on '
-                       'process %s', jax.process_index())
-          time.sleep(15)
+      # Block until process 0 writes success value to the key value store.
+      # If it fails to write it, then `blocking_key_value_get` will time out.
+      self._client.blocking_key_value_get(_get_key(self._final_ckpt_dir),
+                                          self._timeout_in_ms)
 
   def serialize(self, gdas, tensorstore_specs, *, temp_checkpoint_dir,
                 final_checkpoint_dir):
