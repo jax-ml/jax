@@ -138,6 +138,8 @@ class RuntimeTokenSet(threading.local):
   def block_until_ready(self):
     for t, _ in self.tokens.values():
       t[0].block_until_ready()
+    # TODO(sharadmv): use a runtime mechanism to block on computations instead
+    # of using output tokens.
     for t in self.output_tokens.values():
       t[0].block_until_ready()
 
