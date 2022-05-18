@@ -360,6 +360,8 @@ def _custom_jvp_call_jaxpr_jvp(
   outs = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *args, *args_dot)
   primals_out, tangents_out = split_list(outs, [len(outs) // 2])
   tangents_out = map(ad.recast_to_float0, primals_out, tangents_out)
+  if config.jax_enable_checks:
+    assert all(map(core.typecheck, fun_jaxpr.out_avals, primals_out))
   return primals_out, tangents_out
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 

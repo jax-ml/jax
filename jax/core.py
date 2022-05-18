@@ -371,13 +371,12 @@ def traverse_jaxpr_params(f, params):
 
 
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
-  def read(v):
-    if type(v) is Literal:
-      return v.val
-    else:
-      return env[v]
+  def read(v: Atom) -> Any:
+    return v.val if isinstance(v, Literal) else env[v]
 
-  def write(v, val):
+  def write(v: Var, val: Any) -> None:
+    if config.jax_enable_checks and not config.jax_dynamic_shapes:
+      assert typecheck(v.aval, val), (v.aval, val)
     env[v] = val
 
   env: Dict[Var, Any] = {}
