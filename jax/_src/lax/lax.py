@@ -3424,8 +3424,13 @@ def _reduce_lower(ctx, *values, computation, jaxpr, consts, dimensions):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
-  op = mhlo.ReduceOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-                     operands, init_values, mlir.dense_int_elements(dimensions))
+  if jax._src.lib.mlir_api_version < 20:
+    op = mhlo.ReduceOp(
+      [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out], 
+      operands, init_values, mlir.dense_int_elements(dimensions))
+  else:
+    op = mhlo.ReduceOp(
+      operands, init_values, mlir.dense_int_elements(dimensions)) 
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
@@ -3614,9 +3619,13 @@ batching.defreducer(reduce_and_p)
 def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   aval_out, = ctx.avals_out
   dtype = aval_out.dtype
-  op = mhlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
-                     mlir.ir_constants(unit_factory(aval_out.dtype)),
-                     mlir.dense_int_elements(axes))
+  if jax._src.lib.mlir_api_version < 20:
+    op = mhlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
+                       mlir.ir_constants(unit_factory(aval_out.dtype)),
+                       mlir.dense_int_elements(axes))
+  else:
+    op = mhlo.ReduceOp([x], mlir.ir_constants(unit_factory(aval_out.dtype)),
+                       mlir.dense_int_elements(axes))
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
