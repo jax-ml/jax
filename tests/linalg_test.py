@@ -680,7 +680,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),
        "shape": shape, "dtype": dtype, "full_matrices": full_matrices}
       for shape in [(0, 0), (2, 0), (0, 2), (3, 3), (3, 4), (2, 10, 5),
-                    (2, 200, 100), (64, 16, 5), (33, 7, 3), (137, 9, 5)]
+                    (2, 200, 100), (64, 16, 5), (33, 7, 3), (137, 9, 5),
+                    (20000, 2, 2)]
       for dtype in float_types + complex_types
       for full_matrices in [False, True]))
   def testQr(self, shape, dtype, full_matrices):
@@ -715,10 +716,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       sum_of_ratios = ratio.sum(axis=-2, keepdims=True)
       phases = np.divide(sum_of_ratios, np.abs(sum_of_ratios))
       q1 *= phases
-      self.assertTrue(np.all(norm(q1 - q2) < 30))
+      nm = norm(q1 - q2)
+      self.assertTrue(np.all(nm < 120), msg=f"norm={np.amax(nm)}")
 
     # Check a ~= qr
-    self.assertTrue(np.all(norm(a - np.matmul(lq, lr)) < 30))
+    self.assertTrue(np.all(norm(a - np.matmul(lq, lr)) < 40))
 
     # Compare the first 'k' vectors of Q; the remainder form an arbitrary
     # orthonormal basis for the null space.
@@ -726,7 +728,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     # Check that q is close to unitary.
     self.assertTrue(np.all(
-        norm(np.eye(k) - np.matmul(np.conj(T(lq)), lq)) < 5))
+        norm(np.eye(k) - np.matmul(np.conj(T(lq)), lq)) < 10))
 
     if m == n or (m > n and not full_matrices):
       qr = partial(jnp.linalg.qr, mode=mode)
