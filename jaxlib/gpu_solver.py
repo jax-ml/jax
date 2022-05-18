@@ -223,6 +223,42 @@ def _geqrf_mhlo(platform, gpu_solver, dtype, a):
 cuda_geqrf = partial(_geqrf_mhlo, "cu", _cusolver)
 rocm_geqrf = partial(_geqrf_mhlo, "hip", _hipsolver)
 
+def _geqrf_batched_mhlo(platform, gpu_blas, dtype, a):
+  """Batched QR decomposition."""
+  a_type = ir.RankedTensorType(a.type)
+  dims = a_type.shape
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  batch = _prod(batch_dims)
+
+  lwork, opaque = gpu_blas.build_geqrf_batched_descriptor(
+      np.dtype(dtype), batch, m, n)
+
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  out = custom_call(
+      f"{platform}blas_geqrf_batched",
+      [
+        a.type,
+        ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
+        ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
+        ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
+      ],
+      [a],
+      backend_config=opaque,
+      operand_layouts=[layout],
+      result_layouts=[
+        layout,
+        tuple(range(num_bd, -1, -1)),
+        [0],
+        [0],
+      ])
+  return out[:2]
+
+cuda_geqrf_batched = partial(_geqrf_batched_mhlo, "cu", _cublas)
+rocm_geqrf_batched = partial(_geqrf_batched_mhlo, "hip", _hipblas)
+
 
 def _orgqr_mhlo(platform, gpu_solver, dtype, a, tau):
   """Product of elementary Householder reflections."""

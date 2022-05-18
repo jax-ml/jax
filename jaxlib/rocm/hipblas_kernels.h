@@ -56,6 +56,16 @@ struct GetrfBatchedDescriptor {
 void GetrfBatched(hipStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status);
 
+// Batched QR decomposition: geqrfbatched
+
+struct GeqrfBatchedDescriptor {
+  HipblasType type;
+  int batch, m, n;
+};
+
+void GeqrfBatched(hipStream_t stream, void** buffers, const char* opaque,
+                  size_t opaque_len, XlaCustomCallStatus* status);
+
 }  // namespace jax
 
 #endif  // JAXLIB_HIPBLAS_KERNELS_H_

@@ -76,10 +76,19 @@ std::pair<size_t, py::bytes> BuildGetrfBatchedDescriptor(const py::dtype& dtype,
   return {size, PackDescriptor(GetrfBatchedDescriptor{type, b, n})};
 }
 
+// Returns the descriptor for a GetrfBatched operation.
+std::pair<size_t, py::bytes> BuildGeqrfBatchedDescriptor(const py::dtype& dtype,
+                                                         int b, int m, int n) {
+  CublasType type = DtypeToCublasType(dtype);
+  size_t size = b * sizeof(void*);
+  return {size, PackDescriptor(GeqrfBatchedDescriptor{type, b, m, n})};
+}
+
 py::dict Registrations() {
   py::dict dict;
   dict["cublas_trsm_batched"] = EncapsulateFunction(TrsmBatched);
   dict["cublas_getrf_batched"] = EncapsulateFunction(GetrfBatched);
+  dict["cublas_geqrf_batched"] = EncapsulateFunction(GeqrfBatched);
   return dict;
 }
 
@@ -87,6 +96,7 @@ PYBIND11_MODULE(_cublas, m) {
   m.def("registrations", &Registrations);
   m.def("build_trsm_batched_descriptor", &BuildTrsmBatchedDescriptor);
   m.def("build_getrf_batched_descriptor", &BuildGetrfBatchedDescriptor);
+  m.def("build_geqrf_batched_descriptor", &BuildGeqrfBatchedDescriptor);
 }
 
 }  // namespace
