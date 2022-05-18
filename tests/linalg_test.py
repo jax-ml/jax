@@ -677,7 +677,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}_fullmatrices={}".format(
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),
        "shape": shape, "dtype": dtype, "full_matrices": full_matrices}
-      for shape in [(0, 0), (2, 0), (0, 2), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
+      for shape in [(0, 0), (2, 0), (0, 2), (3, 3), (3, 4), (2, 10, 5),
+                    (2, 200, 100), (64, 16, 5), (33, 7, 3), (137, 9, 5)]
       for dtype in float_types + complex_types
       for full_matrices in [False, True]))
   def testQr(self, shape, dtype, full_matrices):
