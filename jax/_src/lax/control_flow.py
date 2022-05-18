@@ -2211,7 +2211,7 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, 
   stacked_keys, stacked_bits = map(map_body, key)
   return (stacked_keys, stacked_bits), (0, 0)
 
-batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
+batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule  # type: ignore
 
 def _show_diff(array1, array2):
   if core.typematch(array1, array2):
