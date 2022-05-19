@@ -19,21 +19,19 @@ import sys
 from typing import List, Optional
 
 import jax
-from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
+from jax.experimental.compilation_cache.gfile_cache import GFileCache
 import jax._src.lib
 from jax._src.lib import xla_client
 from absl import logging
 
 _cache = None
 
-def initialize_cache(path, max_cache_size_bytes=32 * 2**30):
+def initialize_cache(path):
   """Creates a global cache object. Should only be called once per process.
-
-     max_cache_sixe defaults to 32GiB.
   """
   global _cache
   assert _cache == None, f"The cache path has already been initialized to {_cache._path}"
-  _cache = FileSystemCache(path, max_cache_size_bytes)
+  _cache = GFileCache(path)
   logging.warning("Initialized persistent compilation cache at %s", path)
 
 def get_executable(xla_computation, compile_options, backend) -> Optional[xla_client.Executable]:

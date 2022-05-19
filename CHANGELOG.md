@@ -10,6 +10,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.14 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...main).
+* Breaking changes
+  * {func}`jax.experimental.compilation_cache.initialize_cache` does not support `max_cache_size_  bytes` anymore and will not get that as an input.
 * Changes
   * {func}`jax.numpy.linalg.slogdet` now accepts an optional `method` argument
     that allows selection between an LU-decomposition based implementation and
@@ -45,6 +47,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     traces as an alternative to the Tensorboard UI.
   * Added a `jax.named_scope` context manager that adds profiler metadata to
     Python programs (similar to `jax.named_call`).
+  * {func}`jax.experimental.compilation_cache.initialize_cache` now supports gcs 
+    bucket path as input.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
