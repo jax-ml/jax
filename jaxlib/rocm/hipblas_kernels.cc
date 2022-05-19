@@ -24,6 +24,7 @@ limitations under the License.
 #include "rocm/include/hipblas.h"
 #include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_helpers.h"
@@ -231,24 +232,24 @@ static absl::Status GeqrfBatched_(hipStream_t stream, void** buffers,
   auto& handle = *h;
   if (buffers[0] != buffers[1]) {
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
-        buffers[1], buffers[0], SizeOfHiblasType(d.type) * d.batch * d.m * d.n,
+        buffers[1], buffers[0], SizeOfHipblasType(d.type) * d.batch * d.m * d.n,
         hipMemcpyDeviceToDevice, stream)));
   }
 
   std::vector<int> info(d.batch);
   auto a_ptrs_host = MakeBatchPointers(stream, buffers[1], buffers[3], d.batch,
-                                       SizeOfHiblasType(d.type) * d.m * d.n);
+                                       SizeOfHipblasType(d.type) * d.m * d.n);
   JAX_RETURN_IF_ERROR(a_ptrs_host.status());
   auto tau_ptrs_host =
       MakeBatchPointers(stream, buffers[2], buffers[4], d.batch,
-                        SizeOfHiblasType(d.type) * std::min(d.m, d.n));
+                        SizeOfHipblasType(d.type) * std::min(d.m, d.n));
   JAX_RETURN_IF_ERROR(tau_ptrs_host.status());
   // TODO(phawkins): ideally we would not need to synchronize here, but to
   // avoid it we need a way to keep the host-side buffer alive until the copy
   // completes.
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipStreamSynchronize(stream)));
   switch (d.type) {
-    case CublasType::F32: {
+    case HipblasType::F32: {
       float** a_batch_ptrs = static_cast<float**>(buffers[3]);
       float** tau_batch_ptrs = static_cast<float**>(buffers[4]);
       JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
@@ -256,7 +257,7 @@ static absl::Status GeqrfBatched_(hipStream_t stream, void** buffers,
                                tau_batch_ptrs, info.data(), d.batch)));
       break;
     }
-    case CublasType::F64: {
+    case HipblasType::F64: {
       double** a_batch_ptrs = static_cast<double**>(buffers[3]);
       double** tau_batch_ptrs = static_cast<double**>(buffers[4]);
       JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
@@ -264,7 +265,7 @@ static absl::Status GeqrfBatched_(hipStream_t stream, void** buffers,
                                tau_batch_ptrs, info.data(), d.batch)));
       break;
     }
-    case CublasType::C64: {
+    case HipblasType::C64: {
       hipblasComplex** a_batch_ptrs = static_cast<hipblasComplex**>(buffers[3]);
       hipblasComplex** tau_batch_ptrs =
           static_cast<hipblasComplex**>(buffers[4]);
@@ -273,7 +274,7 @@ static absl::Status GeqrfBatched_(hipStream_t stream, void** buffers,
                                tau_batch_ptrs, info.data(), d.batch)));
       break;
     }
-    case CublasType::C128: {
+    case HipblasType::C128: {
       hipblasDoubleComplex** a_batch_ptrs =
           static_cast<hipblasDoubleComplex**>(buffers[3]);
       hipblasDoubleComplex** tau_batch_ptrs =
