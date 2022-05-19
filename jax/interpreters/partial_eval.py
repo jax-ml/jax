@@ -56,7 +56,7 @@ def _update_annotation(
     in_knowns: List[bool]) -> lu.WrappedFun:
   if orig_type is None:
     return f
-  return lu.annotate(f, tuple(ty for k, ty in zip(in_knowns, orig_type) if k))
+  return lu.annotate(f, tuple([ty for k, ty in zip(in_knowns, orig_type) if k]))
 
 class PartialVal(tuple):
   """Partial value: either a known value or an unknown (abstract) value.
@@ -1835,28 +1835,6 @@ def trace_to_jaxpr_dynamic(fun: lu.WrappedFun,
 def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
                               in_avals: Sequence[AbstractValue], *,
                               keep_inputs: Optional[Sequence[bool]] = None):
-  # In general, the Tracers passed to ther Python callable underlying `fun` may
-  # correspond to a subset of `in_avals` (i.e. a subset of the input binders in
-  # the jaxpr). For example:
-  #
-  #   n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
-  #   a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
-  #   b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
-  #
-  #   @lu.wrap_init
-  #   def f(x, y):
-  #     return x, y
-  #
-  #   jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
-  #                                           keep_inputs=[False, True, True])
-  #   print(jaxpr)
-  #   # { lambda ; a:i32[] b:f32[a] c:f32[a]. let  in (b, c) }
-  #
-  # The abstract values passed to trace_to_jaxpr_dynamic are in direct
-  # correspondence to the input binders (invars) of the jaxpr it returns. But in
-  # general the Tracers passed to the function f correspond only to a subset of
-  # those abstract values. That's because axis size variables may not be
-  # explicit arguments to f, while we make everything explicit in the jaxpr.
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
 
   frame = JaxprStackFrame()
@@ -1869,8 +1847,7 @@ def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
     jaxpr, consts = frame.to_jaxpr(out_tracers)
     del fun, main, trace, frame, in_tracers, out_tracers, ans
   if not config.jax_dynamic_shapes:
-    # TODO(frostig,mattjj): check_jaxpr is incomplete under dynamic
-    # shapes; remove this guard when it is
+    # TODO(frostig,mattjj): update check_jaxpr to handle dynamic shapes
     config.jax_enable_checks and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts
 
@@ -1899,17 +1876,23 @@ def trace_to_jaxpr_final(fun: lu.WrappedFun,
 
 
 AbstractedAxisName = Hashable
-AbstractedAxesSpec = Union[Dict[int, AbstractedAxisName], Tuple[AbstractedAxisName, ...]]
+AbstractedAxesSpec = Union[Dict[int, AbstractedAxisName],
+                           Tuple[AbstractedAxisName, ...]]
 
 class DBIdx(NamedTuple):
   val: int
 
 @dataclass(frozen=True)
-class Bound:
-  name: AbstractedAxisName
-  bound: int
+class InDBIdx:
+  val: int
 
-InputType = Tuple[Tuple[AbstractValue, bool], ...]
+@dataclass(frozen=True)
+class OutDBIdx:
+  val: int
+
+InputType = Tuple[Tuple[AbstractValue, bool], ...]  # DBIdx in shapes
+OutputType = Tuple[AbstractValue, ...]  # InDBIdx / OutDBIdx in shapes
+
 
 def infer_lambda_input_type(
     axes_specs: Optional[Sequence[AbstractedAxesSpec]],
@@ -1981,10 +1964,7 @@ def _collect_implicit(
   return idxs, implicit_names
 
 def _implicit_arg_type(name: AbstractedAxisName) -> AbstractValue:
-  if type(name) is Bound:
-    return AbstractBInt(name.bound)
-  else:
-    return ShapedArray((), dtypes.dtype('int32'))
+  return ShapedArray((), dtypes.dtype('int32'))
 
 def _arg_type(
     idxs: Dict[AbstractedAxisName, DBIdx], x: Any,
