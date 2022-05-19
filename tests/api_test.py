@@ -8483,13 +8483,9 @@ class DynamicShapeTest(jtu.JaxTestCase):
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
   def test_jit_basic_iree(self):
-    if not jtu.device_under_test() == 'iree':
-      raise unittest.SkipTest("test only works on IREE")
-
     @jax.jit
     def f(i):
       return jnp.sum(jnp.ones(i, dtype='float32'))
-
     self.assertAllClose(f(3), jnp.array(3., dtype='float32'), check_dtypes=True)
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
@@ -8508,10 +8504,21 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertAllClose(y, 6., check_dtypes=False)
     self.assertEqual(count, 1)
 
-  # TODO(mattjj,dougalm,phawkins): debug iree failure, "'arith.subi' op requires
-  # the same type for all operands and results"
-  # https://github.com/google/iree/issues/8881
-  @jtu.skip_on_devices('iree')
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_jit_polymorphic_output_iree(self):
+    # like test_jit_basic_iree, but without the jnp.sum!
+    count = 0
+
+    @jax.jit
+    def f(i):
+      nonlocal count
+      count += 1
+      return jnp.ones(i, dtype='float32')
+
+    self.assertAllClose(f(3), jnp.ones(3, dtype='float32'), check_dtypes=True)
+    self.assertAllClose(f(4), jnp.ones(4, dtype='float32'), check_dtypes=True)
+    self.assertEqual(count, 1)
+
   def test_slicing_basic(self):
     f = jax.jit(lambda x, n: jnp.sum(x[:n]))
     ans = f(jnp.arange(10), 3)
