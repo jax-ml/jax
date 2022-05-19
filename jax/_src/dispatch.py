@@ -192,8 +192,6 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
                    donated_invars, inline, keep_unused: bool):
   del inline  # Only used at tracing time
   arg_specs = unsafe_map(arg_spec, args)
-  if fun.in_type is not None:
-    arg_specs = [(None, *xs) for _, *xs in arg_specs]
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
                                keep_unused, *arg_specs)
   try:
@@ -279,28 +277,24 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
   abstract_args, arg_devices = util.unzip2(arg_specs)
-  if fun.in_type is not None:
-    abstract_args, which_explicit = util.unzip2(fun.in_type)
+  if fun.in_type is None:
+    # Add an annotation inferred from the arguments; no dynamic axes here.
+    in_type = tuple(unsafe_zip(abstract_args, itertools.repeat(True)))
+    fun = lu.annotate(fun, in_type)
   else:
-    which_explicit = None
+    assert all(map(core.typematch, abstract_args,
+                   [a for a, k in fun.in_type if k]))
   with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                         "for jit in {elapsed_time} sec"):
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(
-        fun, abstract_args, pe.debug_info_final(fun, "jit"), which_explicit)
+    jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
+        fun, pe.debug_info_final(fun, "jit"))
+  out_avals, kept_outputs = util.unzip2(out_type)
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
 
-  if config.jax_dynamic_shapes and fun.in_type is not None:
-    # TODO(mattjj): maybe move this into trace_to_subjaxpr_dynamic
-    # TODO(mattjj,dougalm): out_type and out_avals are redundant, simplify!
-    out_type = tuple([aval.update(shape=tuple(pe.InDBIdx(jaxpr.invars.index(d))
-                                              if type(d) is core.Var
-                                              else d for d in aval.shape))
-                      for aval in out_avals])
+  if config.jax_dynamic_shapes:
     keep_unused = True
   else:
-    out_type = None
-    # TODO(mattjj): handle host_callback w/ dyn shapes, or wait for replacement
     jaxpr = apply_outfeed_rewriter(jaxpr)
 
   if not keep_unused:
@@ -327,7 +321,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
-  if not jaxpr.eqns and not always_lower:
+  if not jaxpr.eqns and not always_lower and all(kept_outputs):
     return XlaComputation(
         name, None, True, None, None, None, jaxpr=jaxpr, consts=consts,
         device=device, in_avals=abstract_args, out_avals=out_avals,
@@ -574,6 +568,31 @@ def _input_handler(backend: Backend,
     return tuple(args), out_type_env and tuple(out_type_env)  # type: ignore
   return elaborate
 
+def _result_handler(backend: Backend,
+                    sticky_device: Optional[Device],
+                    out_type: Optional[pe.OutputType]
+                    ) -> Callable:
+  out_avals, kept_outputs = util.unzip2(out_type)
+  handlers = map(partial(aval_to_result_handler, sticky_device), out_avals)
+  if out_type is None:
+    return SimpleResultHandler(handlers)
+
+  def result_handler(input_env, lists_of_bufs):
+    results = []
+    for handler, bufs in unsafe_zip(handlers, lists_of_bufs):
+      results.append(handler((input_env, results), *bufs))
+    return [r for r, keep in unsafe_zip(results, kept_outputs) if keep]
+  return result_handler
+
+class SimpleResultHandler:
+  handlers: Sequence[ResultHandler]
+  def __init__(self, handlers): self.handlers = handlers
+  def __iter__(self): return iter(self.handlers)
+  def __len__(self): return len(self.handlers)
+  def __call__(self, env, lists_of_bufs):
+    return tuple(h(env, *bs) for h, bs in zip(self.handlers, lists_of_bufs))
+
+
 if MYPY:
   ResultHandler = Any
 else:
@@ -606,11 +625,14 @@ def dynamic_array_result_handler(sticky_device: Optional[Device],
 
 def _dynamic_array_result_handler(sticky_device, aval, env, buf):
   if all(type(d) is int for d in aval.shape):
+    del env
     return device_array.make_device_array(aval, sticky_device, buf)
   else:
-    # TODO(mattjj,dougalm): handle OutDBIdx
-    shape = [env[d.val] if type(d) is pe.InDBIdx else d for d in aval.shape]
-    aval = core.ShapedArray(shape, aval.dtype)
+    assert env is not None
+    in_env, out_env = env
+    shape = [in_env[d.val] if type(d) is pe.InDBIdx else
+             out_env[d.val] if type(d) is pe.OutDBIdx else d for d in aval.shape]
+    aval = core.ShapedArray(tuple(shape), aval.dtype)
     return device_array.make_device_array(aval, sticky_device, buf)
 
 
@@ -658,33 +680,30 @@ def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
 
 def _execute_compiled(name: str, compiled: XlaExecutable,
                       input_handler: Optional[Callable],
-                      output_buffer_counts: Optional[Sequence[int]],
-                      result_handlers,
+                      output_buffer_counts: Sequence[int],
+                      result_handler: Callable,
                       has_unordered_effects: bool,
                       ordered_effects: List[core.Effect],
                       kept_var_idx, *args):
   device, = compiled.local_devices()
   args, env = input_handler(args) if input_handler else (args, None)
-  input_bufs_flat = flatten(device_put(x, device) for i, x in enumerate(args)
-                            if i in kept_var_idx)
+  in_flat = flatten(device_put(x, device) for i, x in enumerate(args)
+                    if i in kept_var_idx)
   if has_unordered_effects or ordered_effects:
-    input_bufs_flat, token_handler = _add_tokens(
-        has_unordered_effects, ordered_effects, device, input_bufs_flat)
-  out_bufs_flat = compiled.execute(input_bufs_flat)
-  check_special(name, out_bufs_flat)
-  if output_buffer_counts is None and not config.jax_dynamic_shapes:
-    return (result_handlers[0](None, *out_bufs_flat),)
-  output_buffer_counts = output_buffer_counts or [1] * len(out_bufs_flat)
-  out_bufs = unflatten(out_bufs_flat, output_buffer_counts)
+    in_flat, token_handler = _add_tokens(has_unordered_effects, ordered_effects,
+                                         device, in_flat)
+  out_flat = compiled.execute(in_flat)
+  check_special(name, out_flat)
+  out_bufs = unflatten(out_flat, output_buffer_counts)
   if ordered_effects or has_unordered_effects:
     out_bufs = token_handler(out_bufs)
-  return tuple(h(env, *bs) for h, bs in unsafe_zip(result_handlers, out_bufs))
+  return result_handler(env, out_bufs)
 
 
 def _execute_replicated(name: str, compiled: XlaExecutable,
                         input_handler: Optional[Callable],
-                        output_buffer_counts: Optional[Sequence[int]],
-                        result_handlers,
+                        output_buffer_counts: Sequence[int],
+                        result_handler: Callable,
                         has_unordered_effects: bool,
                         ordered_effects: List[core.Effect],
                         kept_var_idx, *args):
@@ -698,12 +717,10 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
                 for device in compiled.local_devices()]
   input_bufs_flip = list(unsafe_zip(*input_bufs))
   out_bufs_flat_rep = compiled.execute_sharded_on_local_devices(input_bufs_flip)
-  out_bufs_flat = [bufs[0] for bufs in out_bufs_flat_rep]
-  check_special(name, out_bufs_flat)
-  if output_buffer_counts is None:
-    return (result_handlers[0](None, *out_bufs_flat),)
-  out_bufs = unflatten(out_bufs_flat, output_buffer_counts)
-  return tuple(h(None, *bs) for h, bs in unsafe_zip(result_handlers, out_bufs))
+  out_flat = [bufs[0] for bufs in out_bufs_flat_rep]
+  check_special(name, out_flat)
+  out_bufs = unflatten(out_flat, output_buffer_counts)
+  return result_handler(None, out_bufs)
 
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
@@ -863,8 +880,7 @@ class XlaCompiledComputation(stages.Executable):
       keepalive: Optional[Any]) -> XlaCompiledComputation:
     sticky_device = device
     input_handler = _input_handler(backend, in_type, out_type)
-    result_handlers = map(partial(aval_to_result_handler, sticky_device),
-                          out_type or out_avals)
+    result_handler = _result_handler(backend, sticky_device, out_type)
     options = xb.get_compile_options(
         num_replicas=nreps, num_partitions=1,
         device_assignment=(sticky_device,) if sticky_device else None)
@@ -872,16 +888,13 @@ class XlaCompiledComputation(stages.Executable):
     with log_elapsed_time(f"Finished XLA compilation of {name} "
                           "in {elapsed_time} sec"):
       compiled = compile_or_get_cached(backend, xla_computation, options)
-    buffer_counts = (None if len(out_avals) == 1 and not config.jax_dynamic_shapes
-                     else [aval_to_num_buffers(aval) for aval in out_avals])
+    buffer_counts = [aval_to_num_buffers(aval) for aval in out_avals]
     if ordered_effects or has_unordered_effects:
       num_output_tokens = len(ordered_effects) + has_unordered_effects
-      if buffer_counts is None:
-        buffer_counts = [1]
       buffer_counts = ([1] * num_output_tokens) + buffer_counts
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,  # type: ignore  # noqa: F811
-                          result_handlers, has_unordered_effects,
+                          result_handler, has_unordered_effects,
                           ordered_effects, kept_var_idx)
     return XlaCompiledComputation(compiled, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
@@ -976,7 +989,10 @@ def _device_put_device_array(x: Union[device_array.DeviceArrayProtocol, device_a
 for t in device_array.device_array_types:
   device_put_handlers[t] = _device_put_device_array
 
-def _copy_device_array_to_device(x: Union[device_array.DeviceArrayProtocol, device_array._DeviceArray], device: Optional[xc.Device]) -> Union[device_array.DeviceArrayProtocol, device_array._DeviceArray]:
+def _copy_device_array_to_device(
+    x: Union[device_array.DeviceArrayProtocol, device_array._DeviceArray],
+    device: Optional[xc.Device]
+  ) -> Union[device_array.DeviceArrayProtocol, device_array._DeviceArray]:
   if device is None:
     # no copying to be done because there's no target specified
     return x
