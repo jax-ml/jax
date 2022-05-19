@@ -30,7 +30,7 @@ This code depends on tensorflow_privacy (https://github.com/tensorflow/privacy)
     $ pip install .
 
 The results match those in the reference TensorFlow baseline implementation:
-  https://github.com/tensorflow/privacy/tree/main/tutorials
+  https://github.com/tensorflow/privacy/tree/master/tutorials
 
 Example invocations:
   # this non-private baseline should get ~99% acc
