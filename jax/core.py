@@ -54,7 +54,7 @@ map, unsafe_map = safe_map, map
 
 # -------------------- jaxprs --------------------
 
-Effect = Any
+Effect = Hashable
 Effects = Set[Effect]
 
 no_effects: Effects = set()
@@ -114,7 +114,7 @@ class Jaxpr:
     return Jaxpr(constvars=constvars, invars=invars, outvars=outvars, eqns=eqns,
                  effects=effects)
 
-def join_effects(*effects: Effect) -> Effects:
+def join_effects(*effects: Effects) -> Effects:
   return set.union(*effects) if effects else no_effects
 
 def jaxprs_in_params(params) -> Iterator[Jaxpr]:
