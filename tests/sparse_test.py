@@ -954,11 +954,11 @@ class BCOOTest(jtu.JaxTestCase):
 
     permutations = (1, 0, 2, 3, 4, 6, 5)
     mat_T_indices_sorted = mat.transpose(axes=permutations)
-    self.assertTrue(mat_T_indices_sorted._indices_sorted)
+    self.assertTrue(mat_T_indices_sorted.indices_sorted)
 
     permutations = (0, 1, 3, 2, 4, 5, 6)
     mat_T_indices_unsorted = mat.transpose(axes=permutations)
-    self.assertFalse(mat_T_indices_unsorted._indices_sorted)
+    self.assertFalse(mat_T_indices_unsorted.indices_sorted)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(

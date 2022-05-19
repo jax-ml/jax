@@ -100,7 +100,7 @@ def _bcoo_set_nse(mat, nse):
     indices = jnp.zeros_like(mat.indices, shape=(*mat.indices.shape[:-2], nse, mat.indices.shape[-1]))
     indices = indices.at[..., :mat.nse, :].set(mat.indices)
     indices = indices.at[..., mat.nse:, :].set(jnp.array(mat.shape[mat.n_batch:mat.n_batch + mat.n_sparse]))
-  return BCOO((data, indices), shape=mat.shape, indices_sorted=mat._indices_sorted)
+  return BCOO((data, indices), shape=mat.shape, indices_sorted=mat.indices_sorted)
 
 # TODO(jakevdp) this can be problematic when used with autodiff; see
 # https://github.com/google/jax/issues/10163. Should this be a primitive?
@@ -1385,7 +1385,7 @@ def _bcoo_sum_duplicates_unbatched(indices, *, shape):
   fill_value = jnp.expand_dims(jnp.array(shape[:props.n_sparse], dtype=indices.dtype), (0,))
   out_of_bounds = (indices >= fill_value).any(-1, keepdims=True)
   indices = jnp.where(out_of_bounds, fill_value, indices)
-  # TODO: check if `_indices_sorted` is True.
+  # TODO: check if `indices_sorted` is True.
   indices_unique, inv_idx, nse = _unique(
     indices, axis=0, return_inverse=True, return_true_size=True,
     size=props.nse, fill_value=fill_value)
@@ -2042,15 +2042,15 @@ class BCOO(JAXSparse):
   n_batch = property(lambda self: self.indices.ndim - 2)
   n_sparse = property(lambda self: self.indices.shape[-1])
   n_dense = property(lambda self: self.data.ndim - 1 - self.n_batch)
-  _info = property(lambda self: BCOOInfo(self.shape, self._indices_sorted))
+  indices_sorted: bool
+  _info = property(lambda self: BCOOInfo(self.shape, self.indices_sorted))
   _bufs = property(lambda self: (self.data, self.indices))
-  _indices_sorted: bool
 
   def __init__(self, args, *, shape, indices_sorted=False):
     # JAX transforms will sometimes instantiate pytrees with null values, so we
     # must catch that in the initialization of inputs.
     self.data, self.indices = _safe_asarray(args)
-    self._indices_sorted = indices_sorted
+    self.indices_sorted = indices_sorted
     super().__init__(args, shape=shape)
 
   def __repr__(self):
@@ -2175,7 +2175,7 @@ class BCOO(JAXSparse):
     sparse_perm = [p - self.n_batch
                    for p in axes[self.n_batch: self.n_batch + self.n_sparse]]
     if tuple(sparse_perm) == tuple(range(self.n_sparse)):
-      is_sorted = self._indices_sorted
+      is_sorted = self.indices_sorted
     else:
       # TODO: address the corner cases that the transposed indices are sorted.
       # possibly use permutation?
