@@ -245,8 +245,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(a, b, c):
       ...
 
-    def g(a, /, b, *, c):
-      ...
+    # TODO(phawkins): reenable this test after Python 3.7 support is dropped.
+    # def g(a, /, b, *, c):
+    #   ...
 
     def h(a, *args):
       ...
@@ -256,7 +257,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     # Simplest cases
     self.jit(f, **{argnum_type: (0, 1)})
-    self.jit(g, **{argnum_type: (0, 1)})
+    # self.jit(g, **{argnum_type: (0, 1)})
     self.jit(f, **{argnum_type: (0, 1, -3)})
 
     # Out of bounds without *args
@@ -268,13 +269,13 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     with self.assertWarns(SyntaxWarning):
       self.jit(f, **{argnum_type: (0, 1, -4)})
 
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
-      self.jit(g, **{argnum_type: (0, 1, 3)})
+    # # with self.assertRaises(ValueError):
+    # with self.assertWarns(SyntaxWarning):
+    #   self.jit(g, **{argnum_type: (0, 1, 3)})
 
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
-      self.jit(g, **{argnum_type: (0, 1, -3)})
+    # # with self.assertRaises(ValueError):
+    # with self.assertWarns(SyntaxWarning):
+    #   self.jit(g, **{argnum_type: (0, 1, -3)})
 
     # Out of bounds with *args
     self.jit(h, **{argnum_type: (0, 999)})
@@ -292,8 +293,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def g(a, b, **kwargs):
       ...
 
-    def h(a, /, b, c, *args, **kwargs):
-      ...
+    # TODO(phawkins): reenable this test after Python 3.7 support is dropped.
+    # def h(a, /, b, c, *args, **kwargs):
+    #   ...
 
     # Simplest case
     self.jit(f, static_argnames=("b", "c"))
@@ -306,18 +308,19 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # Undefined arg with **kwargs
     self.jit(g, static_argnames=("a", "b", "not_defined"))
 
-    self.jit(h, static_argnames=("b", "c"))
-    self.jit(h, static_argnames=("b", "c", "not_defined"))
+    # TODO(phawkins): reenable this test after Python 3.7 support is dropped.
+    # self.jit(h, static_argnames=("b", "c"))
+    # self.jit(h, static_argnames=("b", "c", "not_defined"))
+    #
+    # # Positional only
+    # # with self.assertRaises(ValueError):
+    # with self.assertWarns(SyntaxWarning):
+    #   self.jit(h, static_argnames=("a", "c"))
 
-    # Positional only
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
-      self.jit(h, static_argnames=("a", "c"))
-
-    # Var positional
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
-      self.jit(h, static_argnames=("args", "c"))
+    # # Var positional
+    # # with self.assertRaises(ValueError):
+    # with self.assertWarns(SyntaxWarning):
+    #   self.jit(h, static_argnames=("args", "c"))
 
 
   def test_jit_with_many_args_works(self):
