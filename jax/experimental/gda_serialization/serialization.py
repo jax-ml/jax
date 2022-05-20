@@ -157,7 +157,7 @@ async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
       return out.astype(dtype)
     return out
 
-  return await create_async_gda_from_callback(shape, mesh, mesh_axes, cb)
+  return await create_async_gda_from_callback(tuple(shape), mesh, mesh_axes, cb)
 
 
 def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
