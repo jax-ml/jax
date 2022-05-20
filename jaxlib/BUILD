@@ -202,6 +202,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/cuda:cuda_gpu_kernels",
+        "//jaxlib/rocm:hip_gpu_kernels",
     ],
     alwayslink = 1,
 )

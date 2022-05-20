@@ -981,7 +981,7 @@ if gpu_linalg:
   mlir.register_lowering(
       lu_pivots_to_permutation_p,
       partial(_lu_pivots_to_permutation_gpu_lowering,
-              gpu_linalg.rocm_lu_pivots_to_permutation),
+              gpu_linalg.hip_lu_pivots_to_permutation),
       platform='rocm')
 
 

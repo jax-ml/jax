@@ -265,6 +265,21 @@ pybind_extension(
     ],
 )
 
+cc_library(
+    name = "hip_gpu_kernels",
+    srcs = ["hip_gpu_kernels.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hipblas_kernels",
+        ":hip_lu_pivot_kernels",
+        ":hip_prng_kernels",
+        ":hipsolver_kernels",
+        ":hipsparse_kernels",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
+    ],
+    alwayslink = 1,
+)
+
 py_library(
     name = "rocm_gpu_support",
     deps = [
@@ -275,4 +290,3 @@ py_library(
         ":_hipsparse",
     ],
 )
-
