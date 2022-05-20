@@ -15,6 +15,16 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     that allows selection between an LU-decomposition based implementation and
     an implementation based on QR decomposition.
   * {func}`jax.numpy.linalg.qr` now supports `mode="raw"`.
+  * `pickle`, `copy.copy`, and `copy.deepcopy` now have more complete support when
+    used on jax arrays ({jax-issue}`#10659`). In particular:
+    - `pickle` and `deepcopy` previously returned `np.ndarray` objects when used
+      on a `DeviceArray`; now `DeviceArray` objects are returned. For `deepcopy`,
+      the copied array is on the same device as the original. For `pickle` the
+      deserialized array will be on the default device.
+    - Within function transformations (i.e. traced code), `deepcopy` and `copy`
+      previously were no-ops. Now they use the same mechanism as `DeviceArray.copy()`.
+    - Calling `pickle` on a traced array now results in an explicit 
+      `ConcretizationTypeError`.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).

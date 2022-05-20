@@ -24,6 +24,7 @@ except ImportError:
   cloudpickle = None
 
 import jax
+from jax import core
 from jax import numpy as jnp
 from jax.config import config
 from jax._src import test_util as jtu
@@ -72,6 +73,43 @@ class CloudpickleTest(jtu.JaxTestCase):
     actual = g_unpickled(jnp.asarray([[32]]))
     self.assertEqual(expected, actual)
 
+
+class PickleTest(jtu.JaxTestCase):
+
+  def testPickleOfDeviceArray(self):
+    x = jnp.arange(10.0)
+    s = pickle.dumps(x)
+    y = pickle.loads(s)
+    self.assertArraysEqual(x, y)
+    self.assertIsInstance(y, type(x))
+    self.assertEqual(x.aval, y.aval)
+
+  def testPickleOfDeviceArrayWeakType(self):
+    x = jnp.array(4.0)
+    self.assertEqual(x.aval.weak_type, True)
+    s = pickle.dumps(x)
+    y = pickle.loads(s)
+    self.assertArraysEqual(x, y)
+    self.assertIsInstance(y, type(x))
+    self.assertEqual(x.aval, y.aval)
+
+  def testPickleX64(self):
+    with jax.experimental.enable_x64():
+      x = jnp.array(4.0, dtype='float64')
+      s = pickle.dumps(x)
+
+    with jax.experimental.disable_x64():
+      y = pickle.loads(s)
+
+    self.assertEqual(x.dtype, jnp.float64)
+    self.assertArraysEqual(x, y, check_dtypes=False)
+    self.assertEqual(y.dtype, jnp.float32)
+    self.assertEqual(y.aval.dtype, jnp.float32)
+    self.assertIsInstance(y, type(x))
+
+  def testPickleTracerError(self):
+    with self.assertRaises(core.ConcretizationTypeError):
+      jax.jit(pickle.dumps)(0)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
