@@ -27,7 +27,9 @@ from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
 from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, _safe_asarray, CuSparseEfficiencyWarning
+from jax import lax
 from jax import tree_util
+from jax._src.lax.lax import _const
 from jax._src.lib import gpu_sparse
 from jax._src.lib import sparse_apis
 from jax._src.numpy.lax_numpy import _promote_dtypes
@@ -69,6 +71,25 @@ class CSR(JAXSparse):
     indices = jnp.empty(0, index_dtype)
     indptr = jnp.zeros(shape[0] + 1, index_dtype)
     return cls((data, indices, indptr), shape=shape)
+
+  @classmethod
+  def _eye(cls, N, M, k, *, dtype=None, index_dtype='int32'):
+    if k > 0:
+      diag_size = max(N, M - k)
+    else:
+      diag_size = max(N + k, M)
+    k = jnp.asarray(k)
+    data = jnp.ones(diag_size, dtype=dtype)
+    idx = jnp.arange(diag_size, dtype=index_dtype)
+    zero = _const(idx, 0)
+    k = _const(idx, k)
+    col = lax.add(idx, lax.cond(k <= 0, lambda: zero, lambda: k))
+    indices = col.astype(index_dtype)
+    # TODO(jakevdp): this can be done more efficiently.
+    row = lax.sub(idx, lax.cond(k >= 0, lambda: zero, lambda: k))
+    indptr = jnp.zeros(N + 1, dtype=index_dtype).at[1:].set(
+        jnp.cumsum(jnp.bincount(row, length=N)))
+    return cls((data, indices, indptr), shape=(N, M))
 
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape)
@@ -123,6 +144,10 @@ class CSC(JAXSparse):
     indices = jnp.empty(0, index_dtype)
     indptr = jnp.zeros(shape[1] + 1, index_dtype)
     return cls((data, indices, indptr), shape=shape)
+
+  @classmethod
+  def _eye(cls, N, M, k, *, dtype=None, index_dtype='int32'):
+    return CSR._eye(M, N, -k, dtype=dtype, index_dtype=index_dtype).T
 
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape[::-1]).T

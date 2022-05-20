@@ -30,6 +30,7 @@ Further down are some examples of potential high-level wrappers for sparse objec
 (API should be considered unstable and subject to change).
 """
 from functools import partial
+import operator
 
 import jax
 from jax import core
@@ -121,3 +122,31 @@ def empty(shape, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
                      f"must be one of {list(formats.keys())}")
   cls = formats[sparse_format]
   return cls._empty(shape, dtype=dtype, index_dtype=index_dtype, **kwds)
+
+
+def eye(N, M=None, k=0, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
+  """Create 2D sparse identity matrix.
+
+  Args:
+    N: int. Number of rows in the output.
+    M: int, optional. Number of columns in the output. If None, defaults to `N`.
+    k: int, optional. Index of the diagonal: 0 (the default) refers to the main
+       diagonal, a positive value refers to an upper diagonal, and a negative value
+       to a lower diagonal.
+    dtype: data-type, optional. Data-type of the returned array.
+    index_dtype: (optional) dtype of the index arrays.
+    format: string specifying the matrix format (e.g. ['bcoo']).
+    **kwds: additional keywords passed to the format-specific _empty constructor.
+
+  Returns:
+    I: two-dimensional sparse matrix with ones along the k-th diagonal.
+  """
+  formats = {'bcoo': BCOO, 'coo': COO, 'csr': CSR, 'csc': CSC}
+  if M is None:
+    M = N
+  N = core.concrete_or_error(operator.index, N)
+  M = core.concrete_or_error(operator.index, M)
+  k = core.concrete_or_error(operator.index, k)
+
+  cls = formats[sparse_format]
+  return cls._eye(M=M, N=N, k=k, dtype=dtype, index_dtype=index_dtype, **kwds)

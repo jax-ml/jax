@@ -28,6 +28,7 @@ from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _coo_extract, _safe_asarray, CuSparseEfficiencyWarning
 from jax import tree_util
+from jax._src.lax.lax import _const
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import gpu_sparse
 from jax._src.lib import sparse_apis
@@ -98,6 +99,21 @@ class COO(JAXSparse):
     row = col = jnp.empty(0, index_dtype)
     return cls((data, row, col), shape=shape, rows_sorted=True,
                cols_sorted=True)
+
+  @classmethod
+  def _eye(cls, N, M, k, *, dtype=None, index_dtype='int32'):
+    if k > 0:
+      diag_size = max(N, M - k)
+    else:
+      diag_size = max(N + k, M)
+    k = jnp.asarray(k)
+    data = jnp.ones(diag_size, dtype=dtype)
+    idx = jnp.arange(diag_size, dtype=index_dtype)
+    zero = _const(idx, 0)
+    k = _const(idx, k)
+    row = lax.sub(idx, lax.cond(k >= 0, lambda: zero, lambda: k))
+    col = lax.add(idx, lax.cond(k <= 0, lambda: zero, lambda: k))
+    return cls((data, row, col), shape=(N, M), rows_sorted=True, cols_sorted=True)
 
   def todense(self):
     return coo_todense(self)

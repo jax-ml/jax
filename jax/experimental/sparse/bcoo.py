@@ -39,7 +39,7 @@ from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
 from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
-  ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
+  _const, ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
@@ -2102,6 +2102,43 @@ class BCOO(JAXSparse):
     data = jnp.zeros((*batch_shape, nse, *dense_shape), dtype)
     indices = jnp.full((*batch_shape, nse, n_sparse), jnp.array(sparse_shape), index_dtype)
     return cls((data, indices), shape=shape, indices_sorted=True)
+
+  @classmethod
+  def _eye(cls, N, M, k, *, dtype=None, index_dtype='int32', n_batch=0, n_dense=0):
+    n_sparse = 2 - n_batch - n_dense
+    if n_sparse < 0 or n_dense < 0 or n_batch < 0:
+      raise ValueError(f"Invalid inputs: shape={(N, M)}, n_dense={n_dense}, n_batch={n_batch}")
+    if n_dense > 0 or n_batch > 1:
+      # These cases explicitly store all the zeros, so fall back to fromdense.
+      return cls.fromdense(jnp.eye(N, M, k, dtype=dtype),
+                           n_batch=n_batch, n_dense=n_dense,
+                           index_dtype=index_dtype)
+    if k > 0:
+      diag_size = max(N, M - k)
+    else:
+      diag_size = max(N + k, M)
+    k = jnp.asarray(k)
+    if n_batch == 0:
+      data = jnp.ones(diag_size, dtype=dtype)
+      idx = jnp.arange(diag_size, dtype=index_dtype)
+      zero = _const(idx, 0)
+      k = _const(idx, k)
+      indices = jnp.column_stack([
+        lax.sub(idx, lax.cond(k >= 0, lambda: zero, lambda: k)),
+        lax.add(idx, lax.cond(k <= 0, lambda: zero, lambda: k))])
+    else:
+      data = jnp.ones(N, dtype=dtype)
+      indices = jnp.arange(N, dtype=index_dtype)
+      indices = indices + _const(indices, k)
+      if k < 0:
+        data = data.at[:abs(k)].set(0)
+        indices = indices.at[:abs(k)].set(M)
+      elif k > 0:
+        data = data.at[M - abs(k):].set(0)
+        indices = indices.at[M - abs(k)].set(M)
+      data = data[:, None]
+      indices = indices[:, None, None]
+    return cls((data, indices), shape=(N, M), indices_sorted=True)
 
   def _dedupe(self):
     warnings.warn("_dedupe() is deprecated. Use sum_duplicates() instead.", FutureWarning)
