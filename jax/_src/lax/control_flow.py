@@ -1323,10 +1323,8 @@ def _cond_lowering(ctx, index, *args, branches, linear):
   # mhlo.CaseOp takes a single argument 'index' and the corresponding blocks
   # have no arguments; the computation within the block uses implicit
   # captures.
-
-  # TODO(phawkins): avoid build_generic when CaseOp is fixed.
-  case_op = mhlo.CaseOp.build_generic(
-      flat_output_types, [index], regions=len(branches))
+  case_op = mhlo.CaseOp(flat_output_types, index=index,
+                        num_branches=len(branches))
   name_stack = extend_name_stack(ctx.module_context.name_stack, 'cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
