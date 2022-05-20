@@ -299,7 +299,7 @@ def backends():
 
     if FLAGS.jax_platforms:
       jax_platforms = FLAGS.jax_platforms.split(",")
-      platforms = list(jax_platforms)
+      platforms = []
       # Allow platform aliases in the list of platforms.
       for platform in jax_platforms:
         platforms.extend(expand_platform_alias(platform))
