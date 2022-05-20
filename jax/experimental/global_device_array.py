@@ -38,15 +38,6 @@ Index = Tuple[slice, ...]
 _hashed_index = lambda x: hash(tuple((v.start, v.stop) for v in x))
 
 
-def _convert_list_args_to_tuple(f):
-  @functools.wraps(f)
-  def wrapper(*args, **kwargs):
-    args = [tuple(a) if isinstance(a, list) else a for a in args]
-    kwargs = {k: (tuple(v) if isinstance(v, list) else v) for k, v in kwargs.items()}
-    return f(*args, **kwargs)
-  return wrapper
-
-
 def _get_array_mapping(mesh_axes):
   # Import here to avoid cyclic import error when importing gda in pjit.py.
   from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
@@ -70,7 +61,6 @@ def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
   return indices  # type: ignore
 
 
-@_convert_list_args_to_tuple
 @cache()
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
@@ -81,7 +71,6 @@ def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
       for d, i in safe_zip(global_mesh.devices.flat, indices)}  # type: ignore
 
 
-@_convert_list_args_to_tuple
 @cache()
 def get_shard_indices_replica_ids(
     global_shape: Shape, global_mesh: pxla.Mesh,
@@ -114,7 +103,6 @@ def _get_shard_indices_replica_ids_uncached(
   return out
 
 
-@_convert_list_args_to_tuple
 @cache()
 def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   chunk_size = []
