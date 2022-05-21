@@ -187,6 +187,7 @@ myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
 myst_enable_extensions = ['dollarmath']
 nb_execution_mode = "force"
 nb_execution_allow_errors = False
+nb_merge_streams = True
 
 # Notebook cell execution timeout; defaults to 30.
 nb_execution_timeout = 100
