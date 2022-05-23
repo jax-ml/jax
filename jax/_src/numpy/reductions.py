@@ -471,7 +471,8 @@ def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
                         initial=initial, where=where)
 
 # Work around a sphinx documentation warning in NumPy 1.22.
-nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
+if nansum.__doc__ is not None:
+  nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
 
 @_wraps(np.nanprod, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))

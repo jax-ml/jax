@@ -15,7 +15,9 @@
 from functools import partial
 import re
 import textwrap
-from typing import Callable, NamedTuple, Optional, Dict, Sequence, Set, Type
+from typing import (
+    Any, Callable, NamedTuple, Optional, Dict, Sequence, Set, Type, TypeVar
+)
 import warnings
 
 from jax._src.config import config
@@ -28,6 +30,8 @@ from jax import core
 from jax._src.lax import lax
 
 import numpy as np
+
+_T = TypeVar("_T")
 
 _parameter_break = re.compile("\n(?=[A-Za-z_])")
 _section_break = re.compile(r"\n(?=[^\n]{3,15}\n-{3,15})", re.MULTILINE)
@@ -110,9 +114,14 @@ def _parse_extra_params(extra_params: str) -> Dict[str, str]:
   return {p.partition(' : ')[0].partition(', ')[0]: p for p in parameters}
 
 
-def _wraps(fun: Optional[Callable], update_doc: bool = True, lax_description: str = "",
-           sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
-           skip_params: Sequence[str] = (), extra_params: Optional[str]=None):
+def _wraps(
+    fun: Optional[Callable[..., Any]],
+    update_doc: bool = True,
+    lax_description: str = "",
+    sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
+    skip_params: Sequence[str] = (),
+    extra_params: Optional[str] = None,
+) -> Callable[[_T], _T]:
   """Specialized version of functools.wraps for wrapping numpy functions.
 
   This produces a wrapped function with a modified docstring. In particular, if
