@@ -702,6 +702,24 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), jnp.empty(shape, dtype))
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_k={}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string((N, M), dtype), k, n_batch, n_dense),
+       "N": N, "M": M, "k": k, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for N in [3, 5]
+      for M in [None, 4]
+      for k in [-3, -1, 0, 2, 4]
+      for dtype in all_dtypes
+      for n_batch in range(3)
+      for n_dense in range(3 - n_batch)))
+  def test_eye(self, N, M, k, dtype, n_batch, n_dense):
+    mat = sparse.eye(N, M, k, dtype=dtype, n_batch=n_batch, n_dense=n_dense)
+    self.assertIsInstance(mat, sparse.BCOO)
+    self.assertEqual(mat.n_batch, n_batch)
+    self.assertEqual(mat.n_dense, n_dense)
+    self.assertEqual(mat.dtype, dtype)
+    self.assertArraysEqual(mat.todense(), jnp.eye(N, M, k, dtype=dtype))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
        "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
@@ -2080,6 +2098,19 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertIsInstance(M, cls)
     self.assertEqual(M.nse, 0)
     self.assertArraysEqual(M.todense(), jnp.empty(shape))
+
+  @parameterized.named_parameters(
+    {"testcase_name": f"_{cls.__name__}{(M, N, k)}",
+     "cls": cls, "N": N, "M": M, "k": k}
+    for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]
+    for N in [2, 5]
+    for M in [None, 3]
+    for k in [-2, 0, 1])
+  def test_eye(self, cls, N, M, k):
+    sparse_format = cls.__name__.lower()
+    mat = sparse.eye(N, M, k, sparse_format=sparse_format)
+    self.assertIsInstance(mat, cls)
+    self.assertArraysEqual(mat.todense(), jnp.eye(N, M, k))
 
   @parameterized.named_parameters(
     {"testcase_name": f"{nse}_BCOO{shape}", "shape": shape, "nse": nse}

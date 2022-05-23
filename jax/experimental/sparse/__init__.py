@@ -218,6 +218,7 @@ from jax.experimental.sparse.bcoo import (
 
 from jax.experimental.sparse.api import (
     empty as empty,
+    eye as eye,
     todense as todense,
     todense_p as todense_p,
 )
