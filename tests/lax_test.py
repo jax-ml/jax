@@ -2679,6 +2679,12 @@ class LaxTest(jtu.JaxTestCase):
     np.testing.assert_equal(
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
 
+  def test_abs_complex_real_convention(self):
+    # https://github.com/google/jax/issues/10515
+    self.assertAllClose(jax.grad(lax.abs)(0.),
+                        jax.grad(lax.abs)(0. + 0.j),
+                        check_dtypes=False)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

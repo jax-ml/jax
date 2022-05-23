@@ -1889,12 +1889,13 @@ ad.primitive_transposes[conj_p] = _conj_transpose_rule
 abs_p = unop(_complex_basetype, _num, 'abs')
 mlir.register_lowering(abs_p, partial(_nary_lower_mhlo, mhlo.AbsOp))
 
-def _abs_jvp_rule(g, ans, x):
+def _abs_jvp_rule(xdot, ans, x):
   if _iscomplex(x):
-    return _maybe_real(mul(g, div(_maybe_conj(x),
-           _replace_zero(convert_element_type(ans, _dtype(x))))))
+    ans = convert_element_type(ans, _dtype(x))
+    return _maybe_real(mul(xdot, div(_replace_zero(_maybe_conj(x)),
+                                     _replace_zero(ans))))
   else:
-    return select(ge(x, _zero(x)), g, neg(g))
+    return select(ge(x, _zero(x)), xdot, neg(xdot))
 ad.defjvp2(abs_p, _abs_jvp_rule)
 _maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
 _maybe_real = lambda x: real(x) if _iscomplex(x) else x
