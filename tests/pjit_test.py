@@ -1246,6 +1246,23 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
             ValueError, "GDA sharding does not match the input sharding."):
           compiled(gda)
 
+  def test_gda_auto_shardings_len(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
+    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    global_input_shape = (4, 2)
+    input_data = np.arange(
+        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+
+    with jax._src.config.parallel_functions_output_gda(True):
+      with global_mesh:
+        f = pjit(lambda x, y, z: (x, y, z), in_axis_resources=AUTO,
+                 out_axis_resources=AUTO)
+        inp = jax.ShapedArray(input_data.shape, input_data.dtype)
+        compiled = f.lower(inp, inp, inp, _global_avals=True).compile()
+        self.assertLen(compiled.output_shardings, 3)
+        self.assertLen(compiled.input_shardings, 3)
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

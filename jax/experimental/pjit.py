@@ -79,13 +79,11 @@ class PjitCompiled(stages.Compiled):
     return args
 
   @pxla.maybe_cached_property
-  def output_shardings(self) -> Sequence[pxla.PartitionSpec]:
-    args, kwargs = self.out_tree.unflatten([
+  def output_shardings(self):
+    return self.out_tree.unflatten([
         pxla.array_mapping_to_axis_resources(o)
         for o in self._executable._out_axes
     ])  # pytype: disable=attribute-error
-    assert not kwargs
-    return args
 
 
 class PjitLowered(stages.Lowered):
