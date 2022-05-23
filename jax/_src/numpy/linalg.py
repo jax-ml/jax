@@ -29,8 +29,13 @@ from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps, _promote_dtypes_inexact
 from jax._src.util import canonicalize_axis
 
-_T = lambda x: jnp.swapaxes(x, -1, -2)
-_H = lambda x: jnp.conjugate(jnp.swapaxes(x, -1, -2))
+
+def _T(x):
+  return jnp.swapaxes(x, -1, -2)
+
+
+def _H(x):
+  return jnp.conjugate(jnp.swapaxes(x, -1, -2))
 
 
 @_wraps(np.linalg.cholesky)
@@ -500,7 +505,8 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
       elif ord == -2:
         reducer = jnp.amin
       else:
-        reducer = jnp.sum
+        # `sum` takes an extra dtype= argument, unlike `amax` and `amin`.
+        reducer = jnp.sum  # type: ignore[assignment]
       y = reducer(svd(x, compute_uv=False), axis=-1)
       if keepdims:
         y = jnp.expand_dims(y, axis)
