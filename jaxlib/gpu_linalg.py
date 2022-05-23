@@ -67,5 +67,5 @@ def _lu_pivots_to_permutation_mhlo(platform, gpu_linalg, pivots, *, permutation_
 
 cuda_lu_pivots_to_permutation = partial(
     _lu_pivots_to_permutation_mhlo, "cuda", _cuda_linalg)
-rocm_lu_pivots_to_permutation = partial(
-    _lu_pivots_to_permutation_mhlo, "rocm", _hip_linalg)
+hip_lu_pivots_to_permutation = partial(
+    _lu_pivots_to_permutation_mhlo, "hip", _hip_linalg)
