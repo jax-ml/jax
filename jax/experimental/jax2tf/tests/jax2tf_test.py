@@ -801,6 +801,11 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "grad")
 
+  def test_checkpoint_name(self):
+    def f_jax(x):
+      return ad_checkpoint.checkpoint_name(jnp.sin(x), "sin")
+    jax2tf.convert(f_jax)(1.)  # No error.
+
   def test_convert_nullary_func(self):
     # Even nullary functions are converted to TF (as opposed to constant-folded
     # in JAX prior to conversion).

@@ -982,7 +982,6 @@ tf_not_yet_impl = [
     "random_gamma_grad",
     "reduce_precision",
     "schur",
-    "name",
     "closed_call",
     "unreachable",
     "bint",
@@ -2369,6 +2368,8 @@ tf_impl_with_avals[ad_checkpoint.remat_p] = \
                             platform="cpu"),
                     multiple_results=True,
                     extra_name_stack="checkpoint")
+
+tf_impl[ad_checkpoint.name_p] = lambda x, *, name: x
 
 # TODO: Remove once tensorflow is 2.10.0 everywhere.
 if hasattr(tfxla, 'optimization_barrier'):
