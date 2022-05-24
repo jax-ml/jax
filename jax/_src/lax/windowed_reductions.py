@@ -297,12 +297,14 @@ def _generic_reduce_window_lower(ctx, *args, jaxpr, consts,
   _, init_value_avals = util.split_list(ctx.avals_in, [len(operands)])
   scalar_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   rw = mhlo.ReduceWindowOp(
-      map(mlir.aval_to_ir_type, ctx.avals_out), operands, init_values,
+      map(mlir.aval_to_ir_type, ctx.avals_out),
+      operands,
+      init_values,
       mlir.dense_int_elements(window_dimensions),
-      mlir.dense_int_elements(window_strides),
-      mlir.dense_int_elements(base_dilation),
-      mlir.dense_int_elements(window_dilation),
-      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
+      window_strides=mlir.dense_int_elements(window_strides),
+      base_dilations=mlir.dense_int_elements(base_dilation),
+      window_dilations=mlir.dense_int_elements(window_dilation),
+      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
   reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
   with ir.InsertionPoint(reducer):
     if jaxpr.effects:
@@ -448,10 +450,10 @@ def _reduce_window_lower(
       mlir.aval_to_ir_types(aval_out), [operand],
       [mlir.full_like_aval(init_value(scalar_aval.dtype), scalar_aval)],
       mlir.dense_int_elements(window_dimensions),
-      mlir.dense_int_elements(window_strides),
-      mlir.dense_int_elements(base_dilation),
-      mlir.dense_int_elements(window_dilation),
-      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
+      window_strides=mlir.dense_int_elements(window_strides),
+      base_dilations=mlir.dense_int_elements(base_dilation),
+      window_dilations=mlir.dense_int_elements(window_dilation),
+      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
   reducer = rw.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer):
     mhlo.ReturnOp(reduce_op(*reducer.arguments))

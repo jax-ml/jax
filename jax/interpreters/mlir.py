@@ -744,9 +744,9 @@ def lower_jaxpr_to_fun(
          in zip(arg_shardings, input_types)])
   ir_result_shardings = None
   if result_shardings is not None:
-      ir_result_shardings = util.flatten(
-        [[sharding] * len(types) for sharding, types
-         in zip(result_shardings, output_types)])
+    ir_result_shardings = util.flatten(
+        [[sharding] * len(types)
+         for sharding, types in zip(result_shardings, output_types)])
 
   if (replicated_args is not None or ir_arg_shardings is not None
       or input_output_aliases is not None):
@@ -1069,8 +1069,11 @@ def compare_mhlo(x, y, direction: str, comparison_type: Optional[str] = None):
     else:
       comparison_type = "FLOAT"
 
-  return mhlo.CompareOp(x, y, mhlo.ComparisonDirectionAttr.get(direction),
-                        mhlo.ComparisonTypeAttr.get(comparison_type))
+  return mhlo.CompareOp(
+      x,
+      y,
+      mhlo.ComparisonDirectionAttr.get(direction),
+      compare_type=mhlo.ComparisonTypeAttr.get(comparison_type))
 
 def _minmax_mhlo(op, cmp, x, y):
   """Min/max that compares complex values lexicographically as pairs."""

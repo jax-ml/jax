@@ -1328,9 +1328,12 @@ def _gather_lower(ctx, operand, indices, *,
     index_vector_dim=len(ctx.avals_in[1].shape) - 1,
     offset_dims=list(dimension_numbers.offset_dims),
     start_index_map=list(dimension_numbers.start_index_map))
-  return mhlo.GatherOp(operand, indices, dnums,
-                       mlir.dense_int_elements(slice_sizes),
-                       ir.BoolAttr.get(indices_are_sorted)).results
+  return mhlo.GatherOp(
+      operand,
+      indices,
+      dnums,
+      mlir.dense_int_elements(slice_sizes),
+      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
 
 mlir.register_lowering(gather_p, _gather_lower)
 
@@ -1935,9 +1938,14 @@ def _scatter_lower(ctx, operand, indices, updates, *,
     inserted_window_dims=list(dnums.inserted_window_dims),
     scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
     index_vector_dim=len(ctx.avals_in[1].shape) - 1)
-  op = mhlo.ScatterOp(mlir.aval_to_ir_type(aval_out), operand, indices, updates,
-                      scatter_dnums, ir.BoolAttr.get(indices_are_sorted),
-                      ir.BoolAttr.get(unique_indices))
+  op = mhlo.ScatterOp(
+      mlir.aval_to_ir_type(aval_out),
+      operand,
+      indices,
+      updates,
+      scatter_dnums,
+      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted),
+      unique_indices=ir.BoolAttr.get(unique_indices))
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
