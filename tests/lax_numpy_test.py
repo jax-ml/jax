@@ -789,7 +789,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x_cast = x if dtype != jnp.bfloat16 else x.astype(np.float32)
       t = out_dtype if out_dtype != jnp.bfloat16 else np.float32
       return np_op(x_cast, axis, dtype=t, keepdims=keepdims)
-    np_fun = _promote_like_jnp(np_fun, inexact)
+
     jnp_fun = lambda x: jnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
@@ -828,7 +828,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       res = np_op(x_cast, axis, keepdims=keepdims)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
       return res
-    np_fun = _promote_like_jnp(np_fun, inexact)
+
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
     args_maker = lambda: [rng(shape, dtype)]
     tol = {np.float16: 0.002}
@@ -853,13 +853,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
+    @jtu.ignore_warning(category=np.ComplexWarning)
     def np_fun(x):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
       return res
-    np_fun = _promote_like_jnp(np_fun, inexact)
-    np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
+
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
@@ -893,13 +893,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     where = jtu.rand_bool(self.rng())(whereshape, np.bool_)
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
+    @jtu.ignore_warning(category=np.ComplexWarning)
     def np_fun(x):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial, where=where)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
       return res
-    np_fun = _promote_like_jnp(np_fun, inexact)
-    np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
+
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, where=where)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
@@ -932,15 +932,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Mean of empty slice.*")
     @jtu.ignore_warning(category=RuntimeWarning,
-                        message="invalid value encountered in true_divide*")
+                        message="invalid value encountered.*")
+    @jtu.ignore_warning(category=np.ComplexWarning)
     def np_fun(x):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, where=where)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
       return res
 
-    np_fun = _promote_like_jnp(np_fun, inexact)
-    np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, where=where)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
@@ -3744,7 +3743,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = _promote_like_jnp(np_fun, inexact=True)
     tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-2, np.float32: 1e-5,
            np.float64: 1e-12, np.complex64: 1e-5}
-    check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
+    check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE and numpy_version >= (1, 22)
     try:
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                               check_dtypes=check_dtypes, tol=tol)
