@@ -4013,8 +4013,11 @@ def _infeed_lowering(ctx, token, *, shapes, partitions):
            for i in range(len(aval.shape) - 1, -1, -1)])
       for aval in shapes
   ])
-  infeed = mhlo.InfeedOp(flat_output_types + [mhlo.TokenType.get()], token,
-                         ir.StringAttr.get(''), layouts)
+  infeed = mhlo.InfeedOp(
+      flat_output_types + [mhlo.TokenType.get()],
+      token,
+      infeed_config=ir.StringAttr.get(''),
+      layout=layouts)
   if partitions is not None:
     mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
   token = infeed.results[-1]
@@ -4053,8 +4056,10 @@ outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 def _outfeed_lowering(ctx, token, *xs, partitions):
   token_aval = ctx.avals_in[0]
   outfeed = mhlo.OutfeedOp(
-      mlir.aval_to_ir_type(token_aval), mlir.flatten_lowering_ir_args(xs),
-      token, ir.StringAttr.get(''))
+      mlir.aval_to_ir_type(token_aval),
+      mlir.flatten_lowering_ir_args(xs),
+      token,
+      outfeed_config=ir.StringAttr.get(''))
   if partitions is not None:
     mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
   return outfeed.results

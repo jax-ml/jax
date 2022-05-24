@@ -1996,10 +1996,14 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
       core.ShapedArray(aval_out.shape, real_dtype))
 
   def _scatter(operand_part, updates_part):
-    scatter = mhlo.ScatterOp(operand_type_part, operand_part, indices,
-                             updates_part, scatter_dnums,
-                             ir.BoolAttr.get(indices_are_sorted),
-                             ir.BoolAttr.get(unique_indices))
+    scatter = mhlo.ScatterOp(
+        operand_type_part,
+        operand_part,
+        indices,
+        updates_part,
+        scatter_dnums,
+        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted),
+        unique_indices=ir.BoolAttr.get(unique_indices))
     scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), real_dtype))
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):

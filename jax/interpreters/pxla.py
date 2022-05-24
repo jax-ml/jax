@@ -1676,9 +1676,11 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
       float_zero = mlir.full_like_aval(0, padded_aval)
-      out = mhlo.CompareOp(out, float_zero,
-                           mhlo.ComparisonDirectionAttr.get("NE"),
-                           mhlo.ComparisonTypeAttr.get("FLOAT")).result
+      out = mhlo.CompareOp(
+          out,
+          float_zero,
+          mhlo.ComparisonDirectionAttr.get("NE"),
+          compare_type=mhlo.ComparisonTypeAttr.get("FLOAT")).result
     return out
   else:
     raise TypeError(aval)
