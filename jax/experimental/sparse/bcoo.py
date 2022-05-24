@@ -2108,15 +2108,22 @@ class BCOO(JAXSparse):
     n_sparse = 2 - n_batch - n_dense
     if n_sparse < 0 or n_dense < 0 or n_batch < 0:
       raise ValueError(f"Invalid inputs: shape={(N, M)}, n_dense={n_dense}, n_batch={n_batch}")
+
+    if k > 0:
+      diag_size = min(N, M - k)
+    else:
+      diag_size = min(N + k, M)
+
+    if diag_size <= 0:
+      # if k is out of range, return an empty matrix.
+      return cls._empty((N, M), dtype=dtype, index_dtype=index_dtype,
+                        n_batch=n_batch, n_dense=n_dense)
+
     if n_dense > 0 or n_batch > 1:
       # These cases explicitly store all the zeros, so fall back to fromdense.
       return cls.fromdense(jnp.eye(N, M, k, dtype=dtype),
                            n_batch=n_batch, n_dense=n_dense,
                            index_dtype=index_dtype)
-    if k > 0:
-      diag_size = max(N, M - k)
-    else:
-      diag_size = max(N + k, M)
     k = jnp.asarray(k)
     if n_batch == 0:
       data = jnp.ones(diag_size, dtype=dtype)

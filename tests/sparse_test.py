@@ -713,11 +713,15 @@ class BCOOTest(jtu.JaxTestCase):
       for n_dense in range(3 - n_batch)))
   def test_eye(self, N, M, k, dtype, n_batch, n_dense):
     mat = sparse.eye(N, M, k, dtype=dtype, n_batch=n_batch, n_dense=n_dense)
+    expected = jnp.eye(N, M, k, dtype=dtype)
+    expected_nse = sparse.BCOO.fromdense(expected, n_batch=n_batch, n_dense=n_dense).nse
+
     self.assertIsInstance(mat, sparse.BCOO)
     self.assertEqual(mat.n_batch, n_batch)
     self.assertEqual(mat.n_dense, n_dense)
     self.assertEqual(mat.dtype, dtype)
-    self.assertArraysEqual(mat.todense(), jnp.eye(N, M, k, dtype=dtype))
+    self.assertEqual(mat.nse, expected_nse)
+    self.assertArraysEqual(mat.todense(), expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
@@ -2100,7 +2104,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), jnp.empty(shape))
 
   @parameterized.named_parameters(
-    {"testcase_name": f"_{cls.__name__}{(M, N, k)}",
+    {"testcase_name": f"_{cls.__name__}{(N, M, k)}",
      "cls": cls, "N": N, "M": M, "k": k}
     for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]
     for N in [2, 5]
@@ -2109,8 +2113,12 @@ class SparseObjectTest(jtu.JaxTestCase):
   def test_eye(self, cls, N, M, k):
     sparse_format = cls.__name__.lower()
     mat = sparse.eye(N, M, k, sparse_format=sparse_format)
+    expected = jnp.eye(N, M, k)
+    expected_nse = jnp.count_nonzero(expected)
+
     self.assertIsInstance(mat, cls)
-    self.assertArraysEqual(mat.todense(), jnp.eye(N, M, k))
+    self.assertArraysEqual(mat.todense(), expected)
+    self.assertEqual(mat.nse, expected_nse)
 
   @parameterized.named_parameters(
     {"testcase_name": f"{nse}_BCOO{shape}", "shape": shape, "nse": nse}
