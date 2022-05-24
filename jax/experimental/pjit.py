@@ -818,8 +818,6 @@ def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_axis_resources, out_axis_resources,
                        resource_env, donated_invars, name, in_positional_semantics,
                        out_positional_semantics):
-  # XXX: At the moment all residuals get fully replicated, which is extremely
-  #      wasteful and might quickly lead to OOM errors.
   mesh = resource_env.physical_mesh
   in_pvals = [t.pval for t in in_tracers]
 
