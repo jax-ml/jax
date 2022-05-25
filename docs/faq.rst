@@ -578,18 +578,28 @@ Buffer donation
 
 (This feature is implemented only for TPU and GPU.)
 
-When JAX executes a computation it reserves buffers on the device for all inputs and outputs.
+When JAX executes a computation it uses buffers on the device for all inputs and outputs.
 If you know than one of the inputs is not needed after the computation, and if it
 matches the shape and element type of one of the outputs, you can specify that you
 want the corresponding input buffer to be donated to hold an output. This will reduce
 the memory required for the execution by the size of the donated buffer.
 
+If you have something like the following pattern, you can use buffer donation::
+
+   params, state = jax.pmap(update_fn, donate_argnums=(0, 1))(params, state)
+
+You can think of this as a way to do a memory-efficient functional update
+on your immutable JAX arrays. Within the boundaries of a computation XLA can
+make this optimization for you, but at the jit/pmap boundary you need to
+guarantee to XLA that you will not use the donated input buffer after calling
+the donating function.
+
 You achieve this by using the `donate_argnums` parameter to the functions :func:`jax.jit`,
 :func:`jax.pjit`, and :func:`jax.pmap`. This parameter is a sequence of indices (0 based) into
 the positional argument list::
 
-    def add(x, y):
-      return x + y
+   def add(x, y):
+     return x + y
 
    x = jax.device_put(np.ones((2, 3)))
    y = jax.device_put(np.ones((2, 3)))
@@ -597,11 +607,16 @@ the positional argument list::
    # the same shape and type as `y`, so it will share its buffer.
    z = jax.jit(add, donate_argnums=(1,))(x, y)
 
+Note that this currently does not work when calling your function with key-word arguments!
+The following code will not donate any buffers::
+
+   params, state = jax.pmap(update_fn, donate_argnums=(0, 1))(params=params, state=state)
+
 If an argument whose buffer is donated is a pytree, then all the buffers
 for its components are donated::
 
-    def add_ones(xs: List[Array]):
-      return [x + 1 for x in xs]
+   def add_ones(xs: List[Array]):
+     return [x + 1 for x in xs]
 
    xs = [jax.device_put(np.ones((2, 3)), jax.device_put(np.ones((3, 4))]
    # Execute `add_ones` with donation of all the buffers for `xs`.
