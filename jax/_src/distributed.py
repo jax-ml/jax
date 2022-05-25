@@ -114,15 +114,22 @@ def initialize(coordinator_address: Optional[str] = None,
   logging.info('Connecting to JAX distributed service on %s', coordinator_address)
   distributed_client.connect()
 
-  factory = functools.partial(
-      xla_client.make_gpu_client,
-      distributed_client,
-      process_id,
-      platform_name='cuda')
-  xla_bridge.register_backend_factory('cuda', factory, priority=300)
-  factory = functools.partial(
-      xla_client.make_gpu_client,
-      distributed_client,
-      process_id,
-      platform_name='rocm')
-  xla_bridge.register_backend_factory('rocm', factory, priority=300)
+  if xla_client._version >= 65:
+    factory = functools.partial(
+        xla_client.make_gpu_client,
+        distributed_client,
+        process_id,
+        platform_name='cuda')
+    xla_bridge.register_backend_factory('cuda', factory, priority=300)
+    factory = functools.partial(
+        xla_client.make_gpu_client,
+        distributed_client,
+        process_id,
+        platform_name='rocm')
+    xla_bridge.register_backend_factory('rocm', factory, priority=300)
+  else:
+    factory = functools.partial(
+        xla_client.make_gpu_client,
+        distributed_client,
+        process_id)
+    xla_bridge.register_backend_factory('gpu', factory, priority=300)
