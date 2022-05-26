@@ -26,7 +26,7 @@ def download_dataset(dir_path, nb_classes):
   classes_path = os.path.join(
     os.path.dirname(__file__),
     'third_party/zaidalyafeai.github.io/class_names.txt')
-  with open(classes_path, 'r') as classes_file:
+  with open(classes_path) as classes_file:
     classes = (
       list(map(lambda c: c.strip(), classes_file.readlines()))[:nb_classes])
 

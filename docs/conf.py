@@ -77,7 +77,7 @@ extensions = [
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3/', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
-    'scipy': ('https://docs.scipy.org/doc/scipy-1.8.0/html-scipyorg/', None),
+    'scipy': ('https://docs.scipy.org/doc/scipy-1.8.1/', None),
 }
 
 suppress_warnings = [
@@ -187,6 +187,7 @@ myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
 myst_enable_extensions = ['dollarmath']
 nb_execution_mode = "force"
 nb_execution_allow_errors = False
+nb_merge_streams = True
 
 # Notebook cell execution timeout; defaults to 30.
 nb_execution_timeout = 100

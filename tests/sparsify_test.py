@@ -26,7 +26,6 @@ import jax._src.test_util as jtu
 from jax.experimental.sparse import BCOO, sparsify, todense, SparseTracer
 from jax.experimental.sparse.transform import (
   arrays_to_spvalues, spvalues_to_arrays, sparsify_raw, SparsifyValue, SparsifyEnv)
-from jax.experimental.sparse.util import CuSparseEfficiencyWarning
 
 config.parse_flags_with_absl()
 
@@ -73,7 +72,9 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertEqual(len(spvalues), len(args))
     self.assertLen(spenv._buffers, 5)
     self.assertEqual(spvalues,
-        (SparsifyValue(X.shape, 0, None), SparsifyValue(X.shape, 1, 2), SparsifyValue(X.shape, 3, 4)))
+        (SparsifyValue(X.shape, 0, None, False),
+         SparsifyValue(X.shape, 1, 2, True),
+         SparsifyValue(X.shape, 3, 4, True)))
 
     args_out = spvalues_to_arrays(spenv, spvalues)
     self.assertEqual(len(args_out), len(args))
@@ -120,10 +121,7 @@ class SparsifyTest(jtu.JaxTestCase):
     def func(x, v):
       return -jnp.sin(jnp.pi * x).T @ (v + 1)
 
-    with jtu.ignore_warning(
-        category=CuSparseEfficiencyWarning,
-        message="bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
-      result_sparse = func(M_sparse, v)
+    result_sparse = func(M_sparse, v)
     result_dense = func(M_dense, v)
     self.assertAllClose(result_sparse, result_dense)
 
@@ -149,18 +147,12 @@ class SparsifyTest(jtu.JaxTestCase):
     func = self.sparsify(operator.matmul)
 
     # dot_general
-    with jtu.ignore_warning(
-        category=CuSparseEfficiencyWarning,
-        message="bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
-      result_sparse = func(Xsp, Y)
+    result_sparse = func(Xsp, Y)
     result_dense = operator.matmul(X, Y)
     self.assertAllClose(result_sparse, result_dense)
 
     # rdot_general
-    with jtu.ignore_warning(
-        category=CuSparseEfficiencyWarning,
-        message="bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
-      result_sparse = func(Y, Xsp)
+    result_sparse = func(Y, Xsp)
     result_dense = operator.matmul(Y, X)
     self.assertAllClose(result_sparse, result_dense)
 
@@ -439,10 +431,7 @@ class SparsifyTest(jtu.JaxTestCase):
     M_bcoo = BCOO.fromdense(M)
 
     result_dense = func(M, x)
-    with jtu.ignore_warning(
-        category=CuSparseEfficiencyWarning,
-        message="bcoo_dot_general GPU lowering requires matrices with sorted indices*"):
-      result_sparse = self.sparsify(func)(M_bcoo, x)
+    result_sparse = self.sparsify(func)(M_bcoo, x)
 
     self.assertArraysAllClose(result_dense, result_sparse)
 

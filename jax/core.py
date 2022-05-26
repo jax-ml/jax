@@ -17,7 +17,7 @@ import collections
 from collections import namedtuple
 from contextlib import contextmanager
 import functools
-from functools import partialmethod, total_ordering
+from functools import partial, partialmethod, total_ordering
 import gc
 import itertools as it
 import operator
@@ -54,7 +54,7 @@ map, unsafe_map = safe_map, map
 
 # -------------------- jaxprs --------------------
 
-Effect = Any
+Effect = Hashable
 Effects = Set[Effect]
 
 no_effects: Effects = set()
@@ -114,7 +114,7 @@ class Jaxpr:
     return Jaxpr(constvars=constvars, invars=invars, outvars=outvars, eqns=eqns,
                  effects=effects)
 
-def join_effects(*effects: Effect) -> Effects:
+def join_effects(*effects: Effects) -> Effects:
   return set.union(*effects) if effects else no_effects
 
 def jaxprs_in_params(params) -> Iterator[Jaxpr]:
@@ -207,8 +207,6 @@ class JaxprEqn(NamedTuple):
     return self._replace(*args, **kwargs)
 
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
-  if primitive.call_primitive:
-    assert len(outvars) == len(params["call_jaxpr"].outvars)
   source_info = source_info or source_info_util.new_source_info()
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
@@ -296,9 +294,9 @@ class Literal:
 
   def __repr__(self):
     if hasattr(self, 'hash'):
-      return '{}'.format(self.val)
+      return f'{self.val}'
     else:
-      return 'Literal(val={})'.format(self.val)
+      return f'Literal(val={self.val})'
 
 literalable_types: Set[type] = set()
 
@@ -317,7 +315,7 @@ class Primitive:
     self.name = name
 
   def __repr__(self):
-    return '{}'.format(self.name)
+    return f'{self.name}'
 
   def bind(self, *args, **params):
     assert (not config.jax_enable_checks or
@@ -373,13 +371,12 @@ def traverse_jaxpr_params(f, params):
 
 
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
-  def read(v):
-    if type(v) is Literal:
-      return v.val
-    else:
-      return env[v]
+  def read(v: Atom) -> Any:
+    return v.val if isinstance(v, Literal) else env[v]
 
-  def write(v, val):
+  def write(v: Var, val: Any) -> None:
+    if config.jax_enable_checks and not config.jax_dynamic_shapes:
+      assert typecheck(v.aval, val), (v.aval, val)
     env[v] = val
 
   env: Dict[Var, Any] = {}
@@ -606,6 +603,14 @@ class Tracer:
   def __oct__(self): return self.aval._oct(self)
   def __float__(self): return self.aval._float(self)
   def __complex__(self): return self.aval._complex(self)
+  def __copy__(self): return self.aval._copy(self)
+  def __deepcopy__(self, memo): return self.aval._deepcopy(self, memo)
+
+  # raises a useful error on attempts to pickle a Tracer.
+  def __reduce__(self):
+    raise ConcretizationTypeError(
+      self, ("The error occurred in the __reduce__ method, which may "
+             "indicate an attempt to serialize/pickle a traced value."))
 
   # raises the better error message from ShapedArray
   def __setitem__(self, idx, val): return self.aval._setitem(self, idx, val)
@@ -621,7 +626,7 @@ class Tracer:
       attr = getattr(self.aval, name)
     except KeyError as err:
       raise AttributeError(
-          "{} has no attribute {}".format(self.__class__.__name__, name)
+          f"{self.__class__.__name__} has no attribute {name}"
       ) from err
     else:
       t = type(attr)
@@ -639,7 +644,7 @@ class Tracer:
     if contents:
       base = pp.group(pp.nest(2, pp.concat([
         base, pp.text(' with'), pp.brk(), pp.join(pp.brk(), [
-          pp.text('{} = '.format(name)) + pp_payload
+          pp.text(f'{name} = ') + pp_payload
           for name, pp_payload in contents])
       ])))
     return base
@@ -652,12 +657,6 @@ class Tracer:
       return [(name, getattr(self, name)) for name in self.__slots__]
     except AttributeError:
       return ()
-
-  def __copy__(self):
-    return self
-
-  def __deepcopy__(self, unused_memo):
-    return self
 
   def _origin_msg(self) -> str:
     return ""
@@ -707,7 +706,7 @@ class MainTrace:
     self.payload = payload
 
   def __repr__(self) -> str:
-    return "MainTrace({},{})".format(self.level, self.trace_type.__name__)
+    return f"MainTrace({self.level},{self.trace_type.__name__})"
 
   def __hash__(self) -> int:
     return hash((self.level, self.trace_type))
@@ -1019,7 +1018,7 @@ class AbstractValue:
 
   def __repr__(self):
     try:
-      kv_pairs = ('{}={}'.format(k, v) for k, v in self.__dict__.items())
+      kv_pairs = (f'{k}={v}' for k, v in self.__dict__.items())
       return '{}({})'.format(self.__class__.__name__, ','.join(kv_pairs))
     except AttributeError:
       return self.__class__.__name__
@@ -1405,7 +1404,7 @@ class AbstractToken(AbstractValue):
 abstract_token: AbstractToken = AbstractToken()
 
 # Concrete token object
-class Token(object): pass
+class Token: pass
 token: Token = Token()
 pytype_aval_mappings[Token] = lambda _: abstract_token
 
@@ -1822,6 +1821,17 @@ named_call_p: CallPrimitive = CallPrimitive('named_call')
 named_call_p.def_impl(call_impl)
 
 
+class ClosedCallPrimitive(CallPrimitive):
+  def get_bind_params(self, params):
+    new_params = dict(params)
+    jaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
+    return [subfun], new_params
+
+closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
+closed_call_p.def_impl(call_impl)
+
+
 outfeed_primitives: Set[Primitive] = set()
 def jaxpr_uses_outfeed(jaxpr: Jaxpr) -> bool:
   """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
@@ -2169,6 +2179,12 @@ class JaxprTypeError(TypeError): pass
 
 custom_typechecks: Dict[Primitive, Callable] = {}
 
+def _check_closed_call(*in_avals, call_jaxpr):
+  if list(in_avals) != list(call_jaxpr.in_avals):
+    raise JaxprTypeError("Closed call in_avals mismatch")
+  return call_jaxpr.out_avals, call_jaxpr.effects
+custom_typechecks[closed_call_p] = _check_closed_call
+
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
 
@@ -2303,8 +2319,10 @@ def check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
-  if call_jaxpr.effects:
-    raise JaxprTypeError(f"Map primitive {prim} mapping an effectful function")
+  ordered_effects_ = call_jaxpr.effects & ordered_effects
+  if ordered_effects_:
+    raise JaxprTypeError(
+        f"Map primitive {prim} mapping ordered effects: {ordered_effects_}")
   if "axis_size" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]

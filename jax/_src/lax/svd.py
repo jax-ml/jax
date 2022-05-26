@@ -81,7 +81,8 @@ def _svd_tall_and_square_input(
     `a = (u * s) @ v.T.conj()`. For `compute_uv=False`, only `s` is returned.
   """
 
-  u, h, _, _ = lax.linalg.qdwh(a, hermitian, max_iterations)
+  u, h, _, _ = lax.linalg.qdwh(a, is_hermitian=hermitian,
+                               max_iterations=max_iterations)
 
   # TODO: Uses `eigvals_only=True` if `compute_uv=False`.
   v, s = lax.linalg.eigh(h)

@@ -32,6 +32,14 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
+  if global_data is None:
+    global_data = np.arange(prod(global_shape)).reshape(global_shape)
+
+  return GlobalDeviceArray.from_callback(
+      global_shape, global_mesh, mesh_axes, lambda idx: global_data[idx]), global_data
+
+
 class GDATest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -354,7 +362,28 @@ class GDATest(jtu.JaxTestCase):
     gda = GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
 
-    self.assertTrue(gda.block_until_ready() is gda)
+    self.assertIs(gda.block_until_ready(), gda)
+
+
+class JaxArrayTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    jax._src.config.config.update('jax_array', True)
+
+  @parameterized.named_parameters(
+      ("mesh_x_y", P("x", "y")),
+      ("mesh_x", P("x")),
+      ("mesh_y", P("y")),
+      ("mesh_none_y", P(None, "y")),
+      ("mesh_xy", P(("x", "y"))),
+      ("mesh_fully_replicated", P()),
+  )
+  def test_jax_array_gda_value(self, mesh_axes):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    gda, global_data = create_gda(input_shape, global_mesh, mesh_axes)
+    self.assertArraysEqual(gda._value(), global_data)
 
 
 if __name__ == '__main__':

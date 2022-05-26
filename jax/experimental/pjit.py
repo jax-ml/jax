@@ -71,13 +71,19 @@ class PjitCompiled(stages.Compiled):
 
   @pxla.maybe_cached_property
   def input_shardings(self) -> Sequence[pxla.PartitionSpec]:
-    return [pxla.array_mapping_to_axis_resources(i)
-            for i in self._executable._in_axes]  # pytype: disable=attribute-error
+    args, kwargs = self.in_tree.unflatten([
+        pxla.array_mapping_to_axis_resources(i)
+        for i in self._executable._in_axes
+    ])  # pytype: disable=attribute-error
+    assert not kwargs
+    return args
 
   @pxla.maybe_cached_property
-  def output_shardings(self) -> Sequence[pxla.PartitionSpec]:
-    return [pxla.array_mapping_to_axis_resources(o)
-            for o in self._executable._out_axes]  # pytype: disable=attribute-error
+  def output_shardings(self):
+    return self.out_tree.unflatten([
+        pxla.array_mapping_to_axis_resources(o)
+        for o in self._executable._out_axes
+    ])  # pytype: disable=attribute-error
 
 
 class PjitLowered(stages.Lowered):
@@ -257,15 +263,18 @@ def pjit(fun: Callable,
 
     # TODO(yashkatariya): Make sure you are not checking explicitly for `ShapedArray`.
     # One possibility, is to only allow GDA and fully replicated inputs for AUTO.
-    if in_all_auto:
-      assert all(isinstance(a, GDA) or (isinstance(a, core.ShapedArray) and _global_avals)
-                 for a in args_flat), args_flat
+    if in_all_auto and not _global_avals:
+      raise ValueError('Auto sharding is only enabled for global inputs. '
+                       'Please set `_global_avals=True` during `.lower()`. '
+                       'Use the compiled object to call the inputs.')
 
     local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
     # TODO(yashkatariya): This is a hack. This should go away when avals have
     # is_global attribute.
-    in_positional_semantics = tuple(tree_map(
-        partial(_get_in_positional_semantics, _global_avals), args_flat))
+    if _global_avals:
+      in_positional_semantics = (maps._PositionalSemantics.GLOBAL,) * len(args_flat)
+    else:
+      in_positional_semantics = tuple(tree_map(_get_in_positional_semantics, args_flat))
     out_positional_semantics = (
         maps._PositionalSemantics.GLOBAL
         if config.jax_parallel_functions_output_gda else maps._positional_semantics.val)
@@ -647,8 +656,20 @@ def _pjit_call_impl(*args, jaxpr,
       resource_env, donated_invars, name, in_is_global).compile()
   if compiled._auto_spmd_lowering:
     pxla._check_gda_xla_sharding_match(args, compiled._in_axes)
-  distributed_debug_log(("Running pjit'd function", name),
-                        ("mesh", resource_env.physical_mesh))
+  if config.jax_distributed_debug:
+    # Defensively only perform fingerprint logic if debug logging is enabled
+    # NOTE(skyewm): I didn't benchmark this
+    fingerprint = None
+    if hasattr(compiled.runtime_executable(), "fingerprint"):
+      fingerprint = compiled.runtime_executable().fingerprint
+    if fingerprint is not None:
+      fingerprint = fingerprint.hex()
+    distributed_debug_log(("Running pjit'd function", name),
+                          ("mesh", resource_env.physical_mesh),
+                          ("in_axis_resources", in_axis_resources),
+                          ("out_axis_resources", out_axis_resources),
+                          ("abstract args", list(map(xla.abstractify, args))),
+                          ("fingerprint", fingerprint))
   return compiled.unsafe_call(*args)
 pjit_p.def_impl(_pjit_call_impl)
 
@@ -1098,10 +1119,8 @@ def _calc_is_global_sequence(in_positional_semantics, in_axis_resources):
       ips == maps._PositionalSemantics.GLOBAL or p.partitions == ()
       for ips, p in safe_zip(in_positional_semantics, in_axis_resources))
 
-def _get_in_positional_semantics(global_avals: bool, arg) -> maps._PositionalSemantics:
+def _get_in_positional_semantics(arg) -> maps._PositionalSemantics:
   if isinstance(arg, GDA):
-    return maps._PositionalSemantics.GLOBAL
-  if global_avals and isinstance(arg, core.ShapedArray):
     return maps._PositionalSemantics.GLOBAL
   return maps._positional_semantics.val
 

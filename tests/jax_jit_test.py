@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import inspect
 
 from absl.testing import absltest
@@ -199,10 +200,11 @@ class JaxJitTest(jtu.JaxTestCase):
     self.assertTrue(signature.weak_type)
 
   def test_signature_support(self):
+    jit = partial(api._jit, True)
     def f(a, b, c):
       return a + b + c
 
-    jitted_f = api._cpp_jit(f)
+    jitted_f = jit(f)
     self.assertEqual(inspect.signature(f), inspect.signature(jitted_f))
 
 

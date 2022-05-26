@@ -144,7 +144,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertEmpty(caught_warnings)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes))
@@ -160,7 +160,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertArraysEqual(M.toarray(), jit(todense)(*args))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
@@ -183,7 +183,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(data_out, data)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
@@ -267,7 +267,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes))
@@ -292,7 +292,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(indptr, M_csr.indptr.astype(index_dtype))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}_T={transpose}",
        "shape": shape, "dtype": dtype, "transpose": transpose}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes
@@ -314,7 +314,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertAllClose(op(M) @ v, jit(matvec)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}_T={transpose}",
        "shape": shape, "dtype": dtype, "transpose": transpose}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes
@@ -335,7 +335,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertAllClose(op(M) @ B, jit(matmat)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes))
@@ -351,7 +351,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertArraysEqual(M.toarray(), jit(todense)(*args))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes))
@@ -376,7 +376,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(col, M_coo.col.astype(index_dtype))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}_T={transpose}",
        "shape": shape, "dtype": dtype, "transpose": transpose}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes
@@ -397,7 +397,7 @@ class cuSparseTest(jtu.JaxTestCase):
       self.assertAllClose(op(M) @ v, jit(matvec)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}_T={transpose}",
        "shape": shape, "dtype": dtype, "transpose": transpose}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in all_dtypes
@@ -558,7 +558,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(M, M_out)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
@@ -580,7 +580,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(data_out, data)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      {"testcase_name": f"_{jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
@@ -700,6 +700,28 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertEqual(M.n_dense, n_dense)
     self.assertEqual(M.dtype, dtype)
     self.assertArraysEqual(M.todense(), jnp.empty(shape, dtype))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_k={}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string((N, M), dtype), k, n_batch, n_dense),
+       "N": N, "M": M, "k": k, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for N in [3, 5]
+      for M in [None, 4]
+      for k in [-3, -1, 0, 2, 4]
+      for dtype in all_dtypes
+      for n_batch in range(3)
+      for n_dense in range(3 - n_batch)))
+  def test_eye(self, N, M, k, dtype, n_batch, n_dense):
+    mat = sparse.eye(N, M, k, dtype=dtype, n_batch=n_batch, n_dense=n_dense)
+    expected = jnp.eye(N, M, k, dtype=dtype)
+    expected_nse = sparse.BCOO.fromdense(expected, n_batch=n_batch, n_dense=n_dense).nse
+
+    self.assertIsInstance(mat, sparse.BCOO)
+    self.assertEqual(mat.n_batch, n_batch)
+    self.assertEqual(mat.n_dense, n_dense)
+    self.assertEqual(mat.dtype, dtype)
+    self.assertEqual(mat.nse, expected_nse)
+    self.assertArraysEqual(mat.todense(), expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
@@ -954,11 +976,11 @@ class BCOOTest(jtu.JaxTestCase):
 
     permutations = (1, 0, 2, 3, 4, 6, 5)
     mat_T_indices_sorted = mat.transpose(axes=permutations)
-    self.assertTrue(mat_T_indices_sorted._indices_sorted)
+    self.assertTrue(mat_T_indices_sorted.indices_sorted)
 
     permutations = (0, 1, 3, 2, 4, 5, 6)
     mat_T_indices_unsorted = mat.transpose(axes=permutations)
-    self.assertFalse(mat_T_indices_unsorted._indices_sorted)
+    self.assertFalse(mat_T_indices_unsorted.indices_sorted)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
@@ -2004,6 +2026,15 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertEqual(mat_new.n_dense, n_dense_out)
     self.assertArraysEqual(mat.todense(), mat_new.todense())
 
+  def test_bcoo_update_layout_method(self, shape=(2, 3, 4)):
+    # simple test to make sure update_layout method properly forwards.
+    rng = rand_sparse(self.rng())
+    mat = sparse.BCOO.fromdense(rng((2, 3, 4), 'float32'), n_batch=1, n_dense=1)
+    mat_new = mat.update_layout(n_batch=0, n_dense=0)
+    self.assertEqual(mat_new.n_batch, 0)
+    self.assertEqual(mat_new.n_dense, 0)
+    self.assertArraysEqual(mat.todense(), mat_new.todense())
+
   def test_bcoo_bad_fillvals(self):
     # Extra values have 100 rather than zero. This lets us check that logic is
     # properly ignoring these indices.
@@ -2062,7 +2093,7 @@ class SparseGradTest(jtu.JaxTestCase):
 class SparseObjectTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}{}".format(cls.__name__, shape), "cls": cls, "shape": shape}
+    {"testcase_name": f"_{cls.__name__}{shape}", "cls": cls, "shape": shape}
     for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]
     for shape in ([2, 5], [5, 3]))
   def test_empty(self, cls, shape):
@@ -2073,7 +2104,24 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), jnp.empty(shape))
 
   @parameterized.named_parameters(
-    {"testcase_name": "{}_BCOO{}".format(nse, shape), "shape": shape, "nse": nse}
+    {"testcase_name": f"_{cls.__name__}{(N, M, k)}",
+     "cls": cls, "N": N, "M": M, "k": k}
+    for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]
+    for N in [2, 5]
+    for M in [None, 3]
+    for k in [-2, 0, 1])
+  def test_eye(self, cls, N, M, k):
+    sparse_format = cls.__name__.lower()
+    mat = sparse.eye(N, M, k, sparse_format=sparse_format)
+    expected = jnp.eye(N, M, k)
+    expected_nse = jnp.count_nonzero(expected)
+
+    self.assertIsInstance(mat, cls)
+    self.assertArraysEqual(mat.todense(), expected)
+    self.assertEqual(mat.nse, expected_nse)
+
+  @parameterized.named_parameters(
+    {"testcase_name": f"{nse}_BCOO{shape}", "shape": shape, "nse": nse}
     for shape in ([2, 5], [5, 3])
     for nse in [0, 2])
   def test_empty_nse(self, shape, nse=2):
@@ -2082,7 +2130,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), jnp.empty(shape))
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_block_until_ready(self, Obj, shape=(5, 8), dtype=np.float32):
     rng = rand_sparse(self.rng(), post=Obj.fromdense)
@@ -2092,7 +2140,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.todense(), M.block_until_ready().todense())
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [jnp.array, sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_todense(self, Obj, shape=(5, 8), dtype=np.float32):
     rng = rand_sparse(self.rng())
@@ -2106,7 +2154,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertEqual(jit(sparse.todense)(1.0), 1.0)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [jnp.array, sparse.BCOO])
   def test_todense_batching(self, Obj, shape=(5, 8), dtype=np.float32):
     rng = rand_sparse(self.rng())
@@ -2119,7 +2167,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(jit(vmap(sparse.todense))(M), M_dense)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [jnp.array, sparse.BCOO])
   def test_todense_ad(self, Obj, shape=(3,), dtype=np.float32):
     M_dense = jnp.array([1., 2., 3.])
@@ -2132,7 +2180,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(jac, jac2)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_attrs(self, Obj, shape=(5, 8), dtype=np.float16):
     rng = rand_sparse(self.rng(), post=Obj.fromdense)

@@ -37,8 +37,8 @@ def jvp_taylor(fun, primals, series):
   order, = set(map(len, series))
   primals = tuple(jnp.asarray(p) for p in primals)
   def composition(eps):
-    taylor_terms = [sum([eps ** (i+1) * terms[i] / fact(i + 1)
-                         for i in range(len(terms))]) for terms in series]
+    taylor_terms = [sum(eps ** (i+1) * terms[i] / fact(i + 1)
+                         for i in range(len(terms))) for terms in series]
     nudged_args = [(x + t).astype(x.dtype) for x, t in zip(primals, taylor_terms)]
     return fun(*nudged_args)
   primal_out = fun(*primals)

@@ -140,7 +140,7 @@ class WrappedFun:
   def __name__(self):
     return getattr(self.f, '__name__', '<unnamed wrapped function>')
 
-  def wrap(self, gen, gen_static_args, out_store) -> 'WrappedFun':
+  def wrap(self, gen, gen_static_args, out_store) -> WrappedFun:
     """Add another transform and its store."""
     return WrappedFun(self.f, ((gen, gen_static_args),) + self.transforms,
                       (out_store,) + self.stores, self.params, None)
@@ -197,7 +197,7 @@ class WrappedFun:
   def __repr__(self):
     def transform_to_str(x):
       i, (gen, args) = x
-      return "{}   : {}   {}".format(i, fun_name(gen), fun_name(args))
+      return f"{i}   : {fun_name(gen)}   {fun_name(args)}"
     transformation_stack = map(transform_to_str, enumerate(self.transforms))
     return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(self.f) + '\n'
 

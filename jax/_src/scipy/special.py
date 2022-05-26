@@ -53,7 +53,9 @@ The JAX version only accepts real-valued inputs.""")
 def digamma(x):
   x, = _promote_args_inexact("digamma", x)
   return lax.digamma(x)
-ad.defjvp(lax.digamma_p, lambda g, x: lax.mul(g, polygamma(1, x)))
+ad.defjvp(
+    lax.digamma_p,
+    lambda g, x: lax.mul(g, polygamma(1, x)))  # type: ignore[has-type]
 
 
 @_wraps(osp_special.gammainc, update_doc=False)
@@ -586,7 +588,7 @@ def log_ndtr(x, series_order=3):
     lower_segment = _LOGNDTR_FLOAT32_LOWER
     upper_segment = _LOGNDTR_FLOAT32_UPPER
   else:
-    raise TypeError("x.dtype={} is not supported.".format(np.dtype(dtype)))
+    raise TypeError(f"x.dtype={np.dtype(dtype)} is not supported.")
 
   # The basic idea here was ported from:
   #   https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
@@ -1117,14 +1119,14 @@ def _expint1(x):
     -7.294949239640527645655e5,
     1.592627163384945429726e6,
   ]
-  A, B = [jnp.array(U, dtype=x.dtype) for U in [A, B]]
+  A, B = (jnp.array(U, dtype=x.dtype) for U in [A, B])
   f = jnp.polyval(A, x) / jnp.polyval(B, x)
   return x * f + jnp.euler_gamma + jnp.log(x)
 
 
 def _eval_expint_k(A, B, x):
   # helper function for all subsequent intervals
-  A, B = [jnp.array(U, dtype=x.dtype) for U in [A, B]]
+  A, B = (jnp.array(U, dtype=x.dtype) for U in [A, B])
   one = _lax_const(x, 1.0)
   w = one / x
   f = jnp.polyval(A, w) / jnp.polyval(B, w)

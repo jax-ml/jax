@@ -708,6 +708,82 @@ g_jaxx2tf_0 = tape.gradient(res, xs,
 # In this case we get the same result as for TF native.
 ```
 
+### Functions whose arguments and results are Python nested data structures
+
+jax2tf can convert functions with arguments and results that are nested
+collections (tuples, lists, dictionaries) of numeric values or JAX arrays
+([pytrees](https://jax.readthedocs.io/en/latest/pytrees.html)). The
+resulting TensorFlow function will take the same kind of arguments except the
+leaves can be numeric values or TensorFlow tensors (`tf.Tensor`, `tf.TensorSpec`, `tf.Variable`).
+
+As long as the arguments use only standard Python containers (tuple, list, dictionaries),
+both JAX and TensorFlow can flatten and unflatten them and you can use the converted
+function in TensorFlow without limitations.
+
+However, if your JAX function takes a custom container, you can register it with
+the JAX `tree_util` module so that JAX will know how to operate with it, and you
+can still convert the function to use it in TensorFlow
+eager and with `tf.function`, but you won't be able to save it to a SavedModel, nor
+will you be able to compute gradients with TensorFlow
+(code from `jax2tf_test.test_custom_pytree_readme`):
+
+```
+class CustomPair:
+  def __init__(self, a, b):
+    self.a = a
+    self.b = b
+
+# Register it with the JAX tree_util module
+jax.tree_util.register_pytree_node(CustomPair,
+                                   lambda x: ((x.a, x.b), None),
+                                   lambda _, ab: CustomPair(*ab))
+def f_jax(pair: CustomPair):
+  return 2. * pair.a + 3. * pair.b
+
+x = CustomPair(4., 5.)
+res_jax = f_jax(x)
+# TF execution works as long as JAX can flatten the arguments
+res_tf = jax2tf.convert(f_jax)(x)
+self.assertAllClose(res_jax, res_tf.numpy())
+res_tf_2 = tf.function(jax2tf.convert(f_jax), autograph=False, jit_compile=True)(x)
+```
+
+If you want to save the function in a SavedModel or compute gradients,
+you should construct a wrapper:
+
+```
+ # wrapped TF function to use only standard containers
+def f_tf_wrapped(a, b):
+  return f_tf(CustomPair(a, b))
+
+# Try to put into SavedModel
+my_model = tf.Module()
+# Save a function that can take scalar inputs.
+my_model.f = tf.function(f_tf_wrapped, autograph=False,
+                         input_signature=[tf.TensorSpec([], tf.float32),
+                                          tf.TensorSpec([], tf.float32)])
+model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(my_model)))
+tf.saved_model.save(my_model, model_dir,
+                    options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
+
+# Restoring (note: the restored model does *not* require JAX to run, just XLA).
+restored_model = tf.saved_model.load(model_dir)
+def restored_f(pair: CustomPair):
+  return restored_model.f(pair.a, pair.b)
+
+res_tf_3 = restored_f(x)
+self.assertAllClose(res_jax, res_tf_3)
+grad_jax = jax.grad(f_jax)(x)
+
+x_v = [tf.Variable(x.a), tf.Variable(x.b)]
+with tf.GradientTape() as tape:
+  res = f_tf_wrapped(*x_v)
+
+  grad_tf = tape.gradient(res, x_v)
+self.assertAllClose(grad_jax.a, grad_tf[0])
+self.assertAllClose(grad_jax.b, grad_tf[1])
+```
+
 ### Different 64-bit precision in JAX and TensorFlow
 
 JAX behaves somewhat differently than TensorFlow in the handling

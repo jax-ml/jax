@@ -624,7 +624,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       # Transfer the whole array to all devices for replicated.
       d.transfer_to_infeed((y,))
       # For sharded infeed, transfer only the needed slices to each device.
-      d.transfer_to_infeed((z[3 * didx:3 * didx + 3, :]))
+      d.transfer_to_infeed(z[3 * didx:3 * didx + 3, :])
       d.transfer_to_infeed((w[:, 5 * didx:5 * didx + 5],))
 
     with maps.Mesh(devices, ['d']):
@@ -1224,38 +1224,6 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         self.assertArraysEqual(multihost_utils.process_allgather(gda_out),
                                input_data)
 
-  def test_pjit_gda_auto_sharding_multiple_calls_and_caching(self):
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    global_input_shape = (8, 2)
-    input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
-
-    with jax._src.config.parallel_functions_output_gda(True):
-      with global_mesh:
-        f = pjit(lambda x: x, in_axis_resources=AUTO,
-                 out_axis_resources=AUTO)
-        inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-        compiled = f.lower(inp, _global_avals=True).compile()
-        inputs = [create_gda(global_input_shape, global_mesh, ip, input_data)
-                  for ip in compiled.input_shardings]
-
-        # `f` is first compiled in `compile_and_get_sharding`.
-        before_cache = pjit_lib._pjit_lower.cache_info()
-        gda_out1 = compiled(*inputs)
-        gda_out2 = f(gda_out1)
-        after_cache = pjit_lib._pjit_lower.cache_info()
-
-        self.assertEqual(before_cache.hits + 1, after_cache.hits)
-        self.assertEqual(before_cache.misses, after_cache.misses)
-        self.assertIsInstance(gda_out1, global_device_array.GlobalDeviceArray)
-        self.assertIsInstance(gda_out2, global_device_array.GlobalDeviceArray)
-        self.assertArraysEqual(multihost_utils.process_allgather(gda_out1),
-                               input_data)
-        self.assertArraysEqual(multihost_utils.process_allgather(gda_out2),
-                               input_data)
-
   def test_xla_gda_sharding_mismatch(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
@@ -1278,9 +1246,22 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
             ValueError, "GDA sharding does not match the input sharding."):
           compiled(gda)
 
-        with self.assertRaisesRegex(
-            ValueError, "GDA sharding does not match the input sharding."):
-          f(gda)
+  def test_gda_auto_shardings_len(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
+    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    global_input_shape = (4, 2)
+    input_data = np.arange(
+        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+
+    with jax._src.config.parallel_functions_output_gda(True):
+      with global_mesh:
+        f = pjit(lambda x, y, z: (x, y, z), in_axis_resources=AUTO,
+                 out_axis_resources=AUTO)
+        inp = jax.ShapedArray(input_data.shape, input_data.dtype)
+        compiled = f.lower(inp, inp, inp, _global_avals=True).compile()
+        self.assertLen(compiled.output_shardings, 3)
+        self.assertLen(compiled.input_shardings, 3)
 
 
 def spec_regex(s):

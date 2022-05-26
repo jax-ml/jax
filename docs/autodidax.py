@@ -1884,7 +1884,9 @@ pp_rules[xla_call_p] = pprint_xla_call
 # ### `linearize`
 #
 # In the case of `linearize`, we want to stage out the linear part of a `jvp`
-# computation. That is, if we have `jvp : (a -> b) -> (a, T a) -> (b, T b)`,
+# computation. That is, in terms of
+# [Haskell-like type signatures](https://wiki.haskell.org/Type_signature),
+# if we have `jvp : (a -> b) -> (a, T a) -> (b, T b)`,
 # then we write `linearize : (a -> b) -> a -> (b, T a -o T b)`, using `T a` to
 # mean "the tangent type of `a`" and using the "lollipop" `-o` rather than the
 # arrow `->` to indicate a _linear_ function. We define the semantics of
@@ -2969,7 +2971,7 @@ print(out)
 # Transposition is a fairly straightforward application of `transpose_jaxpr`:
 
 def cond_transpose_rule(cts, pred, *invals, true_jaxpr, false_jaxpr):
-  undef_primals = tuple([type(x) is UndefPrimal for x in invals])
+  undef_primals = tuple(type(x) is UndefPrimal for x in invals)
   true_jaxpr, true_consts = transpose_jaxpr(true_jaxpr, undef_primals)
   false_jaxpr, false_consts = transpose_jaxpr(false_jaxpr, undef_primals)
   true_jaxpr, false_jaxpr = _join_jaxpr_consts(

@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -153,7 +152,7 @@ def _fori_scan_body_fun(body_fun):
 def fori_loop(lower, upper, body_fun, init_val):
   """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
 
-  The type signature in brief is
+  The `Haskell-like type signature`_ in brief is
 
   .. code-block:: haskell
 
@@ -183,6 +182,10 @@ def fori_loop(lower, upper, body_fun, init_val):
   structure with a fixed structure and arrays with fixed shape and dtype at the
   leaves).
 
+  .. note::
+    :py:func:`fori_loop` compiles ``body_fun``, so while it can be combined with
+    :py:func:`jit`, it's usually unnecessary.
+
   Args:
     lower: an integer representing the loop index lower bound (inclusive)
     upper: an integer representing the loop index upper bound (exclusive)
@@ -191,6 +194,8 @@ def fori_loop(lower, upper, body_fun, init_val):
 
   Returns:
     Loop value from the final iteration, of type ``a``.
+
+  .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
   if not callable(body_fun):
     raise TypeError("lax.fori_loop: body_fun argument should be callable.")
@@ -235,7 +240,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
                init_val: T) -> T:
   """Call ``body_fun`` repeatedly in a loop while ``cond_fun`` is True.
 
-  The type signature in brief is
+  The `Haskell-like type signature`_ in brief is
 
   .. code-block:: haskell
 
@@ -266,6 +271,10 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   ``while_loop`` is not reverse-mode differentiable because XLA computations
   require static bounds on memory requirements.
 
+  .. note::
+    :py:func:`while_loop` compiles ``cond_fun`` and ``body_fun``, so while it
+    can be combined with :py:func:`jit`, it's usually unnecessary.
+
   Args:
     cond_fun: function of type ``a -> Bool``.
     body_fun: function of type ``a -> a``.
@@ -275,6 +284,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   Returns:
     The output from the final iteration of body_fun, of type ``a``.
+
+  .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
   if not (callable(body_fun) and callable(cond_fun)):
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
@@ -963,8 +974,8 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
     # for the select we broadcast the input operands for simplicity and leave
     # optimizations to XLA.
     # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
-    index, *ops = [
-        batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims)]
+    index, *ops = (
+        batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims))
 
     in_batched  = [True] * len(branches[0].in_avals)
     out_batched = [True] * len(branches[0].out_avals)
@@ -1268,7 +1279,7 @@ def _cond_typecheck(*avals, branches, linear):
     raise core.JaxprTypeError(
       f'cond branches take input types {jaxpr0_in_avals_str}, '
       f'called with operands of type {_avals_short(op_avals)}')
-  if any((b.effects != branches[0].effects for b in branches[1:])):
+  if any(b.effects != branches[0].effects for b in branches[1:]):
     raise core.JaxprTypeError(
       f'cond branches must have matching effect types: '
       f'{[b.effects for b in branches]}')
@@ -1312,10 +1323,8 @@ def _cond_lowering(ctx, index, *args, branches, linear):
   # mhlo.CaseOp takes a single argument 'index' and the corresponding blocks
   # have no arguments; the computation within the block uses implicit
   # captures.
-
-  # TODO(phawkins): avoid build_generic when CaseOp is fixed.
-  case_op = mhlo.CaseOp.build_generic(
-      flat_output_types, [index], regions=len(branches))
+  case_op = mhlo.CaseOp(flat_output_types, index=index,
+                        num_branches=len(branches))
   name_stack = extend_name_stack(ctx.module_context.name_stack, 'cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
@@ -1354,7 +1363,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
          unroll: int = 1) -> Tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
-  The type signature in brief is
+  The `Haskell-like type signature`_ in brief is
 
   .. code-block:: haskell
 
@@ -1395,6 +1404,10 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
   dtype (or a nested tuple/list/dict container data structure with a fixed
   structure and arrays with fixed shape and dtype at the leaves).
 
+  .. note::
+    :py:func:`scan` compiles ``f``, so while it can be combined with
+    :py:func:`jit`, it's usually unnecessary.
+
   Args:
     f: a Python function to be scanned of type ``c -> a -> (c, b)``, meaning
       that ``f`` accepts two arguments where the first is a value of the loop
@@ -1422,6 +1435,8 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     A pair of type ``(c, [b])`` where the first element represents the final
     loop carry value and the second element represents the stacked outputs of
     the second output of ``f`` when scanned over the leading axis of the inputs.
+
+  .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
   if not callable(f):
     raise TypeError("lax.scan: f argument should be a callable.")
@@ -2205,7 +2220,7 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, 
   stacked_keys, stacked_bits = map(map_body, key)
   return (stacked_keys, stacked_bits), (0, 0)
 
-batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
+batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule  # type: ignore
 
 def _show_diff(array1, array2):
   if core.typematch(array1, array2):
@@ -2867,7 +2882,7 @@ def cummin(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
 def _cumred_shape_rule(x, *, axis: int, reverse: bool):
   if axis < 0 or axis >= x.ndim:
     raise ValueError(
-        "axis {} is out of bounds for array of shape {}".format(axis, x.shape))
+        f"axis {axis} is out of bounds for array of shape {x.shape}")
   return x.shape
 
 def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):

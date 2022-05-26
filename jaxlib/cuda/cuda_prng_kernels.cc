@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "jaxlib/cuda/cuda_prng_kernels.h"
 
+#include <string_view>
+
 #include "jaxlib/cuda/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
@@ -37,7 +39,7 @@ void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
                       size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CudaThreeFry2x32_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    absl::string_view message = s.message();
+    std::string_view message = s.message();
     XlaCustomCallStatusSetFailure(status, message.data(), message.length());
   }
 }

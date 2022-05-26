@@ -108,7 +108,7 @@ class ConcreteSparseArray(AbstractSparseArray):
   pass
 
 def sparse_array_result_handler(device, aval):
-  def build_sparse_array(data_buf, indices_buf):
+  def build_sparse_array(_, data_buf, indices_buf):
     data = device_array.make_device_array(aval.data_aval, device, data_buf)
     indices = device_array.make_device_array(aval.indices_aval, device, indices_buf)
     return SparseArray(aval, data, indices)
@@ -277,7 +277,7 @@ xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 class CustomObjectTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_compile={}_primitive={}".format(compile, primitive),
+      {"testcase_name": f"_compile={compile}_primitive={primitive}",
        "compile": compile, "primitive": primitive}
       for primitive in [True, False]
       for compile in [True, False]))
@@ -297,7 +297,7 @@ class CustomObjectTest(jtu.JaxTestCase):
     self.assertAllClose(M.indices, M2.indices)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_compile={}".format(compile),
+      {"testcase_name": f"_compile={compile}",
        "compile": compile}
       for compile in [True, False]))
   def testSparseSplit(self, compile):
@@ -316,7 +316,7 @@ class CustomObjectTest(jtu.JaxTestCase):
       self.assertArraysEqual(M.indices, MM.indices)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_compile={}_primitive={}".format(compile, primitive),
+      {"testcase_name": f"_compile={compile}_primitive={primitive}",
        "compile": compile, "primitive": primitive}
       for primitive in [True, False]
       for compile in [True, False]))
@@ -329,7 +329,7 @@ class CustomObjectTest(jtu.JaxTestCase):
     lax.fori_loop(0, 10, body_fun, M)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_attr={}".format(attr), "attr": attr}
+      {"testcase_name": f"_attr={attr}", "attr": attr}
       for attr in ["data", "indices"]))
   def testSparseAttrAccess(self, attr):
     rng = jtu.rand_default(self.rng())

@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +32,7 @@ import types
 from typing import (Any, Callable, Iterable, NamedTuple, Mapping, Optional,
                     Sequence, Tuple, TypeVar, Union, overload, Dict, Hashable,
                     List)
+from typing_extensions import Literal
 from warnings import warn
 
 import numpy as np
@@ -57,7 +57,7 @@ from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-    shaped_abstractify, _ensure_str_tuple, argnames_partial_except)
+    shaped_abstractify, _ensure_str_tuple, argnames_partial_except, validate_argnames, validate_argnums)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
@@ -179,6 +179,7 @@ def _check_callable(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
 
 def _isgeneratorfunction(fun):
+  # TODO 3.9+: remove
   # re-implemented here because of https://bugs.python.org/issue33261
   while inspect.ismethod(fun):
     fun = fun.__func__
@@ -189,40 +190,35 @@ def _isgeneratorfunction(fun):
 _POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 def _infer_argnums_and_argnames(
-    fun: Callable,
+    sig: inspect.Signature,
     argnums: Union[int, Iterable[int], None],
     argnames: Union[str, Iterable[str], None],
   ) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
   """Infer missing argnums and argnames for a function with inspect."""
   if argnums is None and argnames is None:
-    argnums = ()
-    argnames = ()
-  elif argnums is not None and argnames is not None:
+    return (), ()
+
+  if argnums is not None and argnames is not None:
     argnums = _ensure_index_tuple(argnums)
     argnames = _ensure_str_tuple(argnames)
+
+    return argnums, argnames
+
+  parameters = sig.parameters
+  if argnums is None:
+    assert argnames is not None
+    argnames = _ensure_str_tuple(argnames)
+    argnums = tuple(
+        i for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
+    )
   else:
-    try:
-      signature = inspect.signature(fun)
-    except ValueError:
-      # In rare cases, inspect can fail, e.g., on some builtin Python functions.
-      # In these cases, don't infer any parameters.
-      parameters: Mapping[str, inspect.Parameter] = {}
-    else:
-      parameters = signature.parameters
-    if argnums is None:
-      assert argnames is not None
-      argnames = _ensure_str_tuple(argnames)
-      argnums = tuple(
-          i for i, (k, param) in enumerate(parameters.items())
-          if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
-      )
-    else:
-      assert argnames is None
-      argnums = _ensure_index_tuple(argnums)
-      argnames = tuple(
-          k for i, (k, param) in enumerate(parameters.items())
-          if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
-      )
+    argnums = _ensure_index_tuple(argnums)
+    argnames = tuple(
+        k for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
+    )
+
   return argnums, argnames
 
 
@@ -333,15 +329,63 @@ def jit(
     DeviceArray([   0,    1,  256, 6561], dtype=int32)
   """
   if FLAGS.experimental_cpp_jit and not config.jax_dynamic_shapes:
-    return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
+    return _jit(True, fun, static_argnums, static_argnames, device, backend,
                     donate_argnums, inline, keep_unused)
-  else:
-    return _python_jit(fun, static_argnums, static_argnames, device, backend,
-                       donate_argnums, inline, keep_unused, abstracted_axes)
+  return _jit(False, fun, static_argnums, static_argnames, device, backend,
+                      donate_argnums, inline, keep_unused, abstracted_axes)
 
+def _jit(
+    use_cpp_jit: bool,
+    fun: Callable,
+    static_argnums: Union[int, Iterable[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
+    device: Optional[xc.Device] = None,
+    backend: Optional[str] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
+    inline: bool = False,
+    keep_unused: bool = False,
+    abstracted_axes: Optional[Any] = None,
+  ) -> stages.Wrapped:
+  # Implemements common logic between CPP and Python backends
+  _check_callable(fun)
+
+  # Coerce input
+  donate_argnums = _ensure_index_tuple(donate_argnums)
+
+  try:
+    sig = inspect.signature(fun)
+  except ValueError:
+    # Some built-in functions don't support signature.
+    # See: https://github.com/python/cpython/issues/73485
+    # In this case no validation is done
+    static_argnums = () if static_argnums is None else _ensure_index_tuple(static_argnums)
+    static_argnames = () if static_argnames is None else _ensure_str_tuple(static_argnames)
+  else:
+    # Infer argnums and argnames according to docstring
+    static_argnums, static_argnames = _infer_argnums_and_argnames(
+        sig, static_argnums, static_argnames)
+
+    # Validation
+    validate_argnums(sig, static_argnums, "static_argnums")
+    validate_argnums(sig, donate_argnums, "donate_argnums")
+
+    validate_argnames(sig, static_argnames, "static_argnames")
+
+  # Compensate for static argnums absorbing args
+  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
+
+  if use_cpp_jit:
+    return _cpp_jit(fun, static_argnums=static_argnums, static_argnames=static_argnames,
+                    device=device, backend=backend,
+                    donate_argnums=donate_argnums, inline=inline, keep_unused=keep_unused)
+
+  return _python_jit(fun, static_argnums=static_argnums, static_argnames=static_argnames,
+                      device=device, backend=backend, donate_argnums=donate_argnums,
+                      inline=inline, keep_unused=keep_unused, abstracted_axes=abstracted_axes)
 
 def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
                  args, kwargs):
+  # Validate donate_argnums
   if max(donate_argnums, default=-1) >= len(args):
     raise ValueError(
         f"jitted function has donate_argnums={donate_argnums} but "
@@ -363,22 +407,16 @@ PytreeOfAbstractedAxesSpec = Any
 
 def _python_jit(
     fun: Callable,
-    static_argnums: Union[int, Iterable[int], None] = None,
-    static_argnames: Union[str, Iterable[str], None] = None,
-    device: Optional[xc.Device] = None,
-    backend: Optional[str] = None,
-    donate_argnums: Union[int, Iterable[int]] = (),
-    inline: bool = False,
-    keep_unused: bool = False,
-    abstracted_axes: Optional[PytreeOfAbstractedAxesSpec] = None,
+    *,
+    static_argnums: Tuple[int, ...],
+    static_argnames: Tuple[str, ...],
+    device: Optional[xc.Device],
+    backend: Optional[str],
+    donate_argnums: Tuple[int, ...],
+    inline: bool,
+    keep_unused: bool,
+    abstracted_axes: Optional[PytreeOfAbstractedAxesSpec],
   ) -> stages.Wrapped:
-  _check_callable(fun)
-  static_argnums, static_argnames = _infer_argnums_and_argnames(
-      fun, static_argnums, static_argnames)
-  static_argnums = _ensure_index_tuple(static_argnums)
-  donate_argnums = _ensure_index_tuple(donate_argnums)
-  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
-
   @wraps(fun)
   @api_boundary
   def f_jitted(*args, **kwargs):
@@ -430,13 +468,14 @@ _cpp_jit_cache = jax_jit.CompiledFunctionCache()
 
 def _cpp_jit(
     fun: Callable,
-    static_argnums: Union[int, Iterable[int], None] = None,
-    static_argnames: Union[str, Iterable[str], None] = None,
-    device: Optional[xc.Device] = None,
-    backend: Optional[str] = None,
-    donate_argnums: Union[int, Iterable[int]] = (),
-    inline: bool = False,
-    keep_unused: bool = False,
+    *,
+    static_argnums: Tuple[int, ...],
+    static_argnames: Tuple[str, ...],
+    device: Optional[xc.Device],
+    backend: Optional[str],
+    donate_argnums: Tuple[int, ...],
+    inline: bool,
+    keep_unused: bool,
   ) -> stages.Wrapped:
   # An implementation of `jit` that tries to do as much as possible in C++.
   # The goal of this function is to speed up the time it takes to process the
@@ -445,13 +484,6 @@ def _cpp_jit(
   # As long as it does not support all features of the Python implementation
   # the C++ code will fallback to `_python_jit` when it faces some unsupported
   # feature.
-  _check_callable(fun)
-  static_argnums, static_argnames = _infer_argnums_and_argnames(
-      fun, static_argnums, static_argnames)
-  static_argnums = _ensure_index_tuple(static_argnums)
-  donate_argnums = _ensure_index_tuple(donate_argnums)
-  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
-
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      f"got device={device} and backend={backend}.")
@@ -485,6 +517,7 @@ def _cpp_jit(
     execute: Optional[functools.partial] = (
         dispatch._xla_callable.most_recent_entry())
     # TODO(sharadmv): Enable fast path for effectful jaxprs
+    # TODO(sharadmv): Clean up usage of `execute.args`
     use_fastpath = (
         # This is if we have already executed this code-path (most-recent entry
         # has been reset to None). Thus, we do not support the fast-path.
@@ -492,13 +525,15 @@ def _cpp_jit(
         execute.func is dispatch._execute_compiled and  # not trivial, not pmap
         # No effects in computation
         not execute.args[5] and
+        not execute.args[6] and
         # Not supported: ShardedDeviceArray
         all(device_array.type_is_device_array(x) for x in out_flat) and
         # Not supported: dynamic shapes
         not jax.config.jax_dynamic_shapes)
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
-      _, xla_executable, _, _, result_handlers, _, kept_var_idx = execute.args
+      (_, xla_executable,
+       _, _, result_handlers, _, _, kept_var_idx) = execute.args
       sticky_device = None
       avals = []
       lazy_exprs = [None] * len(result_handlers)
@@ -823,11 +858,15 @@ def xla_computation(fun: Callable,
       else:
         out_parts_flat = tuple(flatten_axes(
             "xla_computation out_parts", out_tree(), out_parts))
-      effects = list(jaxpr.effects)
+      unordered_effects = [eff for eff in jaxpr.effects
+                           if eff not in core.ordered_effects]
+      ordered_effects = [eff for eff in jaxpr.effects
+                         if eff in core.ordered_effects]
       m, _ = mlir.lower_jaxpr_to_module(
           f"xla_computation_{fun_name}",
           core.ClosedJaxpr(jaxpr, consts),
-          effects=effects,
+          unordered_effects=unordered_effects,
+          ordered_effects=ordered_effects,
           platform=backend,
           axis_context=mlir.ReplicaAxisContext(axis_env_),
           name_stack=new_name_stack(wrap_name(fun_name, "xla_computation")),
@@ -2034,6 +2073,8 @@ def _cpp_pmap(
         execute is not None and
         # We don't support JAX extension backends.
         isinstance(execute[0], pxla.ExecuteReplicated) and
+        # TODO(sharadmv): Enable effects in replicated computation
+        not execute[0].has_unordered_effects and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(isinstance(x, device_array.DeviceArray) for x in out_flat))
@@ -2364,37 +2405,18 @@ def _vjp_pullback_wrapper(cotangent_dtypes, cotangent_shapes,
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
+@overload
+def vjp(fun: Callable[..., T],
+        *primals: Any,
+        has_aux: Literal[False] = False,
+        reduce_axes: Sequence[AxisName] = ()) -> Tuple[T, Callable]:
+  ...
 
-if sys.version_info >= (3, 8):
-  from typing import Literal
-
-  @overload  # type: ignore
-  def vjp(fun: Callable[..., T],
-          *primals: Any,
-          has_aux: Literal[False] = False,
-          reduce_axes: Sequence[AxisName] = ()) -> Tuple[T, Callable]:
-    ...
-
-  @overload
-  def vjp(fun: Callable[..., Tuple[T, U]], *primals: Any,
-          has_aux: Literal[True],
-          reduce_axes: Sequence[AxisName] = ()) -> Tuple[T, Callable, U]:
-    ...
-else:
-
-  @overload  # type: ignore
-  def vjp(fun: Callable[..., T], *primals: Any) -> Tuple[T, Callable]:
-    ...
-
-  @overload
-  def vjp(
-      fun: Callable[..., Any], *primals: Any,
-      has_aux: bool,
-      reduce_axes: Sequence[AxisName] = ()
-  ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
-    ...
-
-
+@overload
+def vjp(fun: Callable[..., Tuple[T, U]], *primals: Any,
+        has_aux: Literal[True],
+        reduce_axes: Sequence[AxisName] = ()) -> Tuple[T, Callable, U]:
+  ...
 def vjp(  # type: ignore
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
   ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
@@ -3137,6 +3159,9 @@ def named_call(
 
   return named_call_f
 
+def effects_barrier():
+  """Waits until existing functions have completed any side-effects."""
+  dispatch.runtime_tokens.block_until_ready()
 
 def block_until_ready(x):
   """

@@ -14,6 +14,7 @@
 
 import os
 
+running_in_cloud_tpu_vm = False
 
 def cloud_tpu_init():
   """Automatically sets Cloud TPU topology and other env vars.
@@ -31,6 +32,7 @@ def cloud_tpu_init():
   This will not set any env vars if a single topology-related env var is already
   set.
   """
+  global running_in_cloud_tpu_vm
   try:
     # pylint: disable=import-outside-toplevel
     # pytype: disable=import-error
@@ -41,6 +43,8 @@ def cloud_tpu_init():
     # We assume libtpu is installed iff we're in a correctly-configured Cloud
     # TPU environment. Exit early if we're not running on Cloud TPU.
     return
+
+  running_in_cloud_tpu_vm = True
 
   libtpu.configure_library_path()
   os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
@@ -56,35 +60,6 @@ def cloud_tpu_init():
       os.environ.get('TPU_VISIBLE_DEVICES', None),
   ]):
     return
-
-  # pylint: disable=import-outside-toplevel
-  # pytype: disable=import-error
-  import requests
-  import time
-  # pytype: enable=import-error
-  # pylint: enable=import-outside-toplevel
-
-  # Based on https://github.com/tensorflow/tensorflow/pull/40317
-  gce_metadata_endpoint = 'http://' + os.environ.get(
-      'GCE_METADATA_IP', 'metadata.google.internal')
-
-  def get_metadata(key):
-    retry_count = 0
-    retrySeconds = 0.500
-    api_resp = None
-
-    while retry_count < 6:
-      api_resp = requests.get(
-          f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
-          headers={'Metadata-Flavor': 'Google'})
-      if api_resp.status_code == 200:
-        break
-      retry_count += 1
-      time.sleep(retrySeconds)
-
-    if api_resp is None:
-      raise RuntimeError(f"Getting metadata['{key}'] failed for 6 tries")
-    return api_resp.text
 
   worker_id = get_metadata('agent-worker-number')
   accelerator_type = get_metadata('accelerator-type')
@@ -112,3 +87,28 @@ def cloud_tpu_init():
     os.environ['TPU_CHIPS_PER_HOST_BOUNDS'] = '2,2,1'
     os.environ['TPU_HOST_BOUNDS'] = accelerator_type_to_host_bounds[
         accelerator_type]
+
+
+def get_metadata(key):
+  import requests  # pytype: disable=import-error
+  import time  # pytype: disable=import-error
+  # Based on https://github.com/tensorflow/tensorflow/pull/40317
+  gce_metadata_endpoint = 'http://' + os.environ.get(
+      'GCE_METADATA_IP', 'metadata.google.internal')
+
+  retry_count = 0
+  retrySeconds = 0.500
+  api_resp = None
+
+  while retry_count < 6:
+    api_resp = requests.get(
+        f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
+        headers={'Metadata-Flavor': 'Google'})
+    if api_resp.status_code == 200:
+      break
+    retry_count += 1
+    time.sleep(retrySeconds)
+
+  if api_resp is None:
+    raise RuntimeError(f"Getting metadata['{key}'] failed for 6 tries")
+  return api_resp.text

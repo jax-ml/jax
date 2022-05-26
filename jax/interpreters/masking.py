@@ -430,7 +430,7 @@ def _parse_id(name): return Poly({Mon({name: 1}): 1})
 
 def _parse_lit(val_str): return int(val_str)
 
-class MonomorphicDim(object):
+class MonomorphicDim:
   def __str__(self): return '_'
 
 _monomorphic_dim = MonomorphicDim()
@@ -439,7 +439,7 @@ _monomorphic_dim = MonomorphicDim()
 #   1. '(m, n)'
 #   2. s_['m', 'n']
 
-class S_(object):
+class S_:
   def __getitem__(self, idx):
     return parse_spec(('(' + ','.join(map(str, idx)) + ')')
                              if type(idx) is tuple else str(idx))

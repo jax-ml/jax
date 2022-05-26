@@ -95,8 +95,8 @@ def main(unused_argv):
   params = {"amplitude": jnp.zeros((1, 1)),
             "noise": jnp.zeros((1, 1)) - 5.,
             "lengthscale": jnp.zeros((1, 1))}
-  momentums = dict([(k, p * 0.) for k, p in params.items()])
-  scales = dict([(k, p * 0. + 1.) for k, p in params.items()])
+  momentums = {k: p * 0. for k, p in params.items()}
+  scales = {k: p * 0. + 1. for k, p in params.items()}
 
   lr = 0.01  # Learning rate
   def train_step(params, momentums, scales, x, y):

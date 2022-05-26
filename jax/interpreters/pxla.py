@@ -178,7 +178,7 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
     last_tile_dims = []
     axes_by_type: Dict[OpShardingType, List[MeshAxisName]] = {}
     size_by_type: Dict[OpShardingType, int] = defaultdict(lambda: 1)
-    assert set(x[0] for x in replicated_maxes).issuperset(set(special_axes.keys()))
+    assert {x[0] for x in replicated_maxes}.issuperset(set(special_axes.keys()))
     for axis, size in replicated_maxes:
       ty = special_axes.get(axis, xc.OpSharding.Type.REPLICATED)
       axes_by_type.setdefault(ty, []).append(axis)
@@ -462,7 +462,7 @@ def local_aval_to_result_handler(
     return local_result_handlers[type(aval)](aval, sharding_spec, indices)
   except KeyError as err:
     raise TypeError(
-        "No pxla_result_handler for type: {}".format(type(aval))) from err
+        f"No pxla_result_handler for type: {type(aval)}") from err
 
 PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
 local_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
@@ -495,7 +495,7 @@ def global_aval_to_result_handler(
                                               global_mesh)
   except KeyError as err:
     raise TypeError(
-        "No pxla_result_handler for type: {}".format(type(aval))) from err
+        f"No pxla_result_handler for type: {type(aval)}") from err
 
 global_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 
@@ -927,7 +927,7 @@ def stage_parallel_callable(
 
 
 def _shardings_to_mlir_shardings(
-    shardings: Optional[Sequence['PartitionsOrReplicated']]
+    shardings: Optional[Sequence[PartitionsOrReplicated]]
     ) -> Optional[Sequence[Optional[xc.OpSharding]]]:
   if shardings is None:
     return None
@@ -1050,20 +1050,23 @@ def lower_parallel_callable(
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
       raise ValueError("Ordered effects not supported in `pmap`.")
+    unordered_effects = [eff for eff in closed_jaxpr.effects
+                         if eff not in core.ordered_effects]
     module, keepalive = mlir.lower_jaxpr_to_module(
-        module_name, closed_jaxpr, [], backend.platform,
-        mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars,
-        replicated_args=replicated_args,
+        module_name, closed_jaxpr, unordered_effects, [],
+        backend.platform, mlir.ReplicaAxisContext(axis_env),
+        name_stack, donated_invars, replicated_args=replicated_args,
         arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
         result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
   return PmapComputation(module, pci=pci, replicas=replicas, parts=parts,
                          shards=shards, tuple_args=tuple_args,
+                         unordered_effects=unordered_effects,
                          keepalive=keepalive)
 
 
 class PmapComputation(stages.Computation):
   _hlo: Union[ir.Module, xc.XlaComputation]
-  _executable: Optional['PmapExecutable']
+  _executable: Optional[PmapExecutable]
 
   def __init__(self, hlo: Union[ir.Module, xc.XlaComputation], **compile_args):
     self._executable = None
@@ -1087,7 +1090,7 @@ class PmapComputation(stages.Computation):
     return self._hlo
 
   @profiler.annotate_function
-  def compile(self) -> 'PmapExecutable':
+  def compile(self) -> PmapExecutable:
     if self._executable is None:
       self._executable = PmapExecutable.from_hlo(self._hlo, **self.compile_args)
     return self._executable
@@ -1106,9 +1109,10 @@ class PmapExecutable(stages.Executable):
   def from_hlo(xla_computation,
                pci: ParallelCallableInfo,
                replicas: ReplicaInfo,
-               parts: 'PartitionInfo',
+               parts: PartitionInfo,
                shards: ShardInfo,
                tuple_args: bool,
+               unordered_effects: List[core.Effect],
                keepalive: Any):
     devices = pci.devices
     if devices is None:
@@ -1218,7 +1222,7 @@ class PmapExecutable(stages.Executable):
     handle_args = InputsHandler(
         compiled.local_devices(), input_sharding_specs, input_indices)
     execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args,
-                                    handle_outs, keepalive)
+                                    handle_outs, unordered_effects, keepalive)
     fingerprint = getattr(compiled, "fingerprint", None)
 
     return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
@@ -1556,20 +1560,27 @@ def partitioned_sharding_spec(num_partitions: int,
 class ExecuteReplicated:
   """The logic to shard inputs, execute a replicated model, returning outputs."""
   __slots__ = ['xla_executable', 'backend', 'in_handler', 'out_handler',
-               'keepalive']
+               'has_unordered_effects', 'keepalive']
 
   def __init__(self, xla_executable, backend, in_handler: InputsHandler,
-               out_handler: ResultsHandler, keepalive: Any):
+               out_handler: ResultsHandler,
+               unordered_effects: List[core.Effect], keepalive: Any):
     self.xla_executable = xla_executable
     self.backend = backend
     self.in_handler = in_handler
     self.out_handler = out_handler
+    self.has_unordered_effects = bool(unordered_effects)
     self.keepalive = keepalive
 
   @profiler.annotate_function
   def __call__(self, *args):
     input_bufs = self.in_handler(args)
     out_bufs = self.xla_executable.execute_sharded_on_local_devices(input_bufs)
+    if self.has_unordered_effects:
+      token_bufs, *out_bufs = out_bufs
+      for i, device in enumerate(self.xla_executable.local_devices()):
+        token = (token_bufs[i],)
+        dispatch.runtime_tokens.set_output_token(device, token)
     if dispatch.needs_check_special():
       for bufs in out_bufs:
         dispatch.check_special("parallel computation", bufs)
@@ -1665,9 +1676,11 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
       float_zero = mlir.full_like_aval(0, padded_aval)
-      out = mhlo.CompareOp(out, float_zero,
-                           mhlo.ComparisonDirectionAttr.get("NE"),
-                           mhlo.ComparisonTypeAttr.get("FLOAT")).result
+      out = mhlo.CompareOp(
+          out,
+          float_zero,
+          mhlo.ComparisonDirectionAttr.get("NE"),
+          compare_type=mhlo.ComparisonTypeAttr.get("FLOAT")).result
     return out
   else:
     raise TypeError(aval)
@@ -1880,7 +1893,7 @@ class _Loop(NamedTuple):
 
 
 def show_axes(axes):
-  return ", ".join(sorted([f"`{a}`" for a in axes]))
+  return ", ".join(sorted(f"`{a}`" for a in axes))
 
 
 class ResourceEnv(NamedTuple):
@@ -1907,7 +1920,7 @@ class ResourceEnv(NamedTuple):
 
   @property
   def loop_resource_axes(self) -> Set[ResourceAxisName]:
-    return set(loop.name for loop in self.loops)
+    return {loop.name for loop in self.loops}
 
   @property
   def resource_axes(self) -> Set[ResourceAxisName]:
@@ -2226,9 +2239,11 @@ def lower_mesh_computation(
   with core.extend_axis_env_nd(mesh.shape.items()):
     if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
       raise ValueError("Ordered effects not supported in mesh computations.")
+    unordered_effects = [eff for eff in closed_jaxpr.effects
+                         if eff not in core.ordered_effects]
     module, keepalive = mlir.lower_jaxpr_to_module(
-        module_name, closed_jaxpr, [], backend.platform, axis_ctx, name_stack,
-        donated_invars, replicated_args=replicated_args,
+        module_name, closed_jaxpr, unordered_effects, [], backend.platform,
+        axis_ctx, name_stack, donated_invars, replicated_args=replicated_args,
         arg_shardings=in_partitions, result_shardings=out_partitions)
 
   return MeshComputation(
@@ -2236,12 +2251,13 @@ def lower_mesh_computation(
       global_out_avals=global_out_avals, in_axes=in_axes, out_axes=out_axes,
       spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_global=in_is_global,
       auto_spmd_lowering=auto_spmd_lowering,
+      unordered_effects=unordered_effects,
       keepalive=keepalive)
 
 
 class MeshComputation(stages.Computation):
   _hlo: Union[ir.Module, xc.XlaComputation]
-  _executable: Optional['MeshExecutable']
+  _executable: Optional[MeshExecutable]
 
   def __init__(self, name: str, hlo: Union[ir.Module, xc.XlaComputation],
                donated_invars: Sequence[bool], **compile_args):
@@ -2268,7 +2284,7 @@ class MeshComputation(stages.Computation):
 
   def compile(self,
               _allow_propagation_to_outputs : bool = False,
-              _allow_compile_replicated : bool = True) -> 'MeshExecutable':
+              _allow_compile_replicated : bool = True) -> MeshExecutable:
     if self._executable is None:
       self._executable = MeshExecutable.from_hlo(
           self._name, self._hlo, **self.compile_args,
@@ -2343,7 +2359,8 @@ class MeshExecutable(stages.Executable):
                auto_spmd_lowering: bool,
                _allow_propagation_to_outputs: bool,
                _allow_compile_replicated: bool,
-               keepalive: Any) -> 'MeshExecutable':
+               unordered_effects: List[core.Effect],
+               keepalive: Any) -> MeshExecutable:
     assert not mesh.empty
     backend = xb.get_device_backend(mesh.devices.flat[0])
 
@@ -2390,7 +2407,7 @@ class MeshExecutable(stages.Executable):
       handle_outs = global_avals_to_results_handler(global_out_avals, out_axes, mesh)  # type: ignore  # arg-type
       handle_args = InputsHandler(xla_executable.local_devices(), input_specs, input_indices)
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
-                                      handle_outs, keepalive)
+                                      handle_outs, unordered_effects, keepalive)
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
                           in_axes, out_axes, auto_spmd_lowering)
@@ -2523,7 +2540,7 @@ def maybe_extend_axis_env(*args, **kwargs):
   with core.extend_axis_env(*args, **kwargs):
     yield
 
-class DynamicAxisEnvFrame(object):
+class DynamicAxisEnvFrame:
   __slots__ = ["name", "pmap_trace", "hard_size"]
   def __init__(self, name, pmap_trace, hard_size):
     self.name = name
@@ -2536,7 +2553,7 @@ class DynamicAxisEnv(list):
 
   def __getitem__(self, axis_name):
     if axis_name not in self:
-      raise NameError("unbound axis name: {}".format(axis_name))
+      raise NameError(f"unbound axis name: {axis_name}")
     for frame in reversed(self):
       if frame.name == axis_name:
         return frame

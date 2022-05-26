@@ -162,7 +162,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     def unique_hash(h: primitive_harness.Harness, l: Jax2TfLimitation):
       return (h.group_name, l.description, l.devices,
-              tuple([np.dtype(d).name for d in l.dtypes]), l.modes)
+              tuple(np.dtype(d).name for d in l.dtypes), l.modes)
 
     unique_limitations: Dict[Any, Tuple[primitive_harness.Harness, Jax2TfLimitation]] = {}
     for h in harnesses:

@@ -125,4 +125,4 @@ def minimize(
                            njev=results.ngev,
                            nit=results.k)
 
-  raise ValueError("Method {} not recognized".format(method))
+  raise ValueError(f"Method {method} not recognized")

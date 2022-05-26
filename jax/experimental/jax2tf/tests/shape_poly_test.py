@@ -1551,7 +1551,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     #               poly_axes=[None, 0]),
     [
         _make_harness("reduce", reduce_op.__name__,
-                      lambda x: reduce_op(x, axis=-1, keepdims=True),
+                      lambda x: reduce_op(x, axis=-1, keepdims=True),  # type: ignore
                       [RandArg((3, 5), _f32)],
                       poly_axes=[0])
         for reduce_op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]

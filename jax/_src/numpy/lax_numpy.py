@@ -751,7 +751,7 @@ def _reshape(a, *args, order="C"):
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
-    raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
+    raise ValueError(f"Unexpected value for 'order' argument: {order}.")
 
 def _transpose(a, *args):
   if not args:
@@ -1806,15 +1806,16 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   lax_internal._check_user_dtype_supported(dtype, "array")
 
   # Here we make a judgment call: we only return a weakly-typed array when the
-  # input object itself is weakly typed. That ensures asarray(x) is a no-op whenever
-  # x is weak, but avoids introducing weak types with something like array([1, 2, 3])
+  # input object itself is weakly typed. That ensures asarray(x) is a no-op
+  # whenever x is weak, but avoids introducing weak types with something like
+  # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
 
-  # For Python scalar literals, call coerce_to_array to catch any overflow errors.
-  # We don't use dtypes.is_python_scalar because we don't want this triggering for
-  # traced values. We do this here because it matters whether or not dtype is None.
-  # We don't assign the result because we want the raw object to be used for type
-  # inference below.
+  # For Python scalar literals, call coerce_to_array to catch any overflow
+  # errors. We don't use dtypes.is_python_scalar because we don't want this
+  # triggering for traced values. We do this here because it matters whether or
+  # not dtype is None. We don't assign the result because we want the raw object
+  # to be used for type inference below.
   if isinstance(object, (bool, int, float, complex)):
     _ = dtypes.coerce_to_array(object, dtype)
 
@@ -1838,17 +1839,13 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   ndarray_types = (device_array.DeviceArray, core.Tracer)
 
   if not _any(isinstance(leaf, ndarray_types) for leaf in leaves):
-    # TODO(jakevdp): falling back to numpy here fails to overflow for lists containing
-    # large integers; see discussion in https://github.com/google/jax/pull/6047.
-    # More correct would be to call coerce_to_array on each leaf, but this may have
-    # performance implications.
+    # TODO(jakevdp): falling back to numpy here fails to overflow for lists
+    # containing large integers; see discussion in
+    # https://github.com/google/jax/pull/6047. More correct would be to call
+    # coerce_to_array on each leaf, but this may have performance implications.
     out = np.array(object, dtype=dtype, ndmin=ndmin, copy=False)
   elif isinstance(object, ndarray_types):
-    if object.aval is None:
-      # object is a raw buffer; convert to device array on its current device.
-      aval = ShapedArray(object.xla_shape().dimensions(), object.dtype,
-                         weak_type=bool(getattr(object, "weak_type", False)))
-      object = device_array.make_device_array(aval, object.device(), object)
+    assert object.aval is not None
     out = _array_copy(object) if copy else object
   elif isinstance(object, (list, tuple)):
     if object:
@@ -1863,7 +1860,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     else:
       return array(np.asarray(view), dtype, copy, ndmin=ndmin)
 
-    raise TypeError("Unexpected input type for array: {}".format(type(object)))
+    raise TypeError(f"Unexpected input type for array: {type(object)}")
 
   out = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
   if ndmin > ndim(out):
@@ -2989,7 +2986,7 @@ def _einsum(operands: Sequence,
     assert len(names) == len(result_names) == len(set(names))
     assert set(names) == set(result_names)
     if names != result_names:
-      perm = tuple([names.index(name) for name in result_names])
+      perm = tuple(names.index(name) for name in result_names)
       operand = lax.transpose(operand, perm)
     operands.append(operand)  # used in next iteration
 
@@ -3388,7 +3385,7 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   elif mode == "clip":
     gather_mode = lax.GatherScatterMode.CLIP
   else:
-    raise ValueError("Invalid mode '{}' for np.take".format(mode))
+    raise ValueError(f"Invalid mode '{mode}' for np.take")
 
   index_dims = len(shape(indices))
   slice_sizes = list(shape(a))
@@ -4216,7 +4213,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   elif isinstance(axis, tuple):
     keepdim = list(shape(a))
     nd = ndim(a)
-    axis = tuple([_canonicalize_axis(ax, nd) for ax in axis])
+    axis = tuple(_canonicalize_axis(ax, nd) for ax in axis)
     if len(set(axis)) != len(axis):
         raise ValueError('repeated axis')
     for ax in axis:
@@ -4238,7 +4235,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   q_shape = shape(q)
   q_ndim = ndim(q)
   if q_ndim > 1:
-    raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
+    raise ValueError(f"q must be have rank <= 1, got shape {shape(q)}")
 
   a_shape = shape(a)
 
@@ -4575,9 +4572,18 @@ def _operator_round(number, ndigits=None):
   # If `ndigits` is None, for a builtin float round(7.5) returns an integer.
   return out.astype(int) if ndigits is None else out
 
+def _copy(self):
+  return self.copy()
+
+def _deepcopy(self, memo):
+  del memo  # unused
+  return self.copy()
+
 _operators = {
     "getitem": _rewriting_take,
     "setitem": _unimplemented_setitem,
+    "copy": _copy,
+    "deepcopy": _deepcopy,
     "neg": negative,
     "pos": positive,
     "eq": _defer_to_unrecognized_arg(equal),
@@ -4964,7 +4970,7 @@ def _set_shaped_array_attributes(shaped_array):
   # ShapedArray avals by following the forwarding conventions for Tracer.
   # Forward operators using a single-underscore-prefix naming convention:
   for operator_name, function in _operators.items():
-    setattr(shaped_array, "_{}".format(operator_name), staticmethod(function))
+    setattr(shaped_array, f"_{operator_name}", staticmethod(function))
   # Forward methods and properties using core.{aval_method, aval_property}:
   for method_name in _nondiff_methods + _diff_methods:
     setattr(shaped_array, method_name, core.aval_method(globals()[method_name]))
@@ -4998,7 +5004,7 @@ def _set_device_array_base_attributes(device_array):
   # Forward operators, methods, and properties on DeviceArray to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
   for operator_name, function in _operators.items():
-    setattr(device_array, "__{}__".format(operator_name), function)
+    setattr(device_array, f"__{operator_name}__", function)
   for method_name in _nondiff_methods + _diff_methods:
     setattr(device_array, method_name, globals()[method_name])
   # TODO(jakevdp): remove tile method after August 2022

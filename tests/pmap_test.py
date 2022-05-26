@@ -117,7 +117,12 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   def testDeviceBufferToArray(self):
     sda = self.pmap(lambda x: x)(jnp.ones((jax.device_count(), 2)))
-    buf = sda.device_buffers[-1]
+
+    # Changed in https://github.com/google/jax/pull/10584 not to access
+    # sda.device_buffers, which isn't supported, and instead ensure fast slices
+    # of the arrays returned by pmap are set up correctly.
+    # buf = sda.device_buffers[-1]
+    buf = sda[-1]
 
     view = jnp.array(buf, copy=False)
     self.assertArraysEqual(sda[-1], view)
@@ -460,7 +465,7 @@ class PythonPmapTest(jtu.JaxTestCase):
         lambda: f(self.rng().randn(n), self.rng().randn(n - 1)))
 
   @parameterized.named_parameters(
-      {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
+      {"testcase_name": f"_mesh={device_mesh_shape}".replace(" ", ""),
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testNestedShardingAndStacking(self, device_mesh_shape):
@@ -512,7 +517,7 @@ class PythonPmapTest(jtu.JaxTestCase):
                       if not isinstance(a, pxla.Replicated)])
 
   @parameterized.named_parameters(
-      {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
+      {"testcase_name": f"_mesh={device_mesh_shape}".replace(" ", ""),
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testPartiallyMappedNested(self, device_mesh_shape):
@@ -602,7 +607,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
+      {"testcase_name": f"_mesh={device_mesh_shape}".replace(" ", ""),
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testNestedWithClosure(self, device_mesh_shape):
@@ -680,7 +685,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   # Tests edge cases in lax._reshape_sharded_device_array
   @parameterized.named_parameters(
-      {"testcase_name": "_in={}_out={}".format(in_shape, out_shape)
+      {"testcase_name": f"_in={in_shape}_out={out_shape}"
        .replace(" ", ""),
        "in_shape": in_shape, "out_shape": out_shape}
       for in_shape, out_shape in [
@@ -1993,7 +1998,7 @@ class VmapOfPmapTest(jtu.JaxTestCase):
 class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-      {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
+      {"testcase_name": f"_collective={collective.__name__}".replace(" ", ""),
        "collective": collective}
       for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
   def testCollectivesWithVmap(self, collective):
@@ -2013,7 +2018,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
+      {"testcase_name": f"_collective={collective.__name__}".replace(" ", ""),
        "collective": collective}
       for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
   def testCollectivesWithVmap2(self, collective):

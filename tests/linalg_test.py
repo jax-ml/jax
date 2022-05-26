@@ -54,7 +54,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]
       for dtype in float_types + complex_types))
@@ -81,7 +81,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       f"_n={jtu.format_shape_dtype_string((n,n), dtype)}",
        "n": n, "dtype": dtype}
       for n in [0, 2, 3, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
       for dtype in float_types + complex_types))
@@ -99,7 +99,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (3, 3), (2, 4, 4)]
       for dtype in float_types))
@@ -176,22 +176,28 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype}
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_method={method}",
+       "shape": shape, "dtype": dtype, "method": method}
       for shape in [(0, 0), (1, 1), (3, 3), (4, 4), (10, 10), (200, 200),
                     (2, 2, 2), (2, 3, 3), (3, 2, 2)]
-      for dtype in float_types + complex_types))
-  def testSlogdet(self, shape, dtype):
+      for dtype in float_types + complex_types
+      for method in (["lu"] if jnp.issubdtype(dtype, jnp.complexfloating)
+                     else ["lu", "qr"])
+      ))
+  def testSlogdet(self, shape, dtype, method):
+    if (method == 'qr' and jax._src.lib.xla_extension_version < 69 and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest('qr decomposition is not supported.')
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-
-    self._CheckAgainstNumpy(np.linalg.slogdet, jnp.linalg.slogdet, args_maker,
+    slogdet = partial(jnp.linalg.slogdet, method=method)
+    self._CheckAgainstNumpy(np.linalg.slogdet, slogdet, args_maker,
                             tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.slogdet, args_maker)
+    self._CompileAndCheck(slogdet, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (5, 5), (2, 7, 7)]
       for dtype in float_types + complex_types))
@@ -308,7 +314,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (5, 5)]
       for dtype in float_types + complex_types))
@@ -451,7 +457,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (5, 5)]
       for dtype in float_types + complex_types))
@@ -466,7 +472,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1,), (4,), (5,)]
       for dtype in (np.int32,)))
@@ -483,7 +489,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1,), (4,), (5,)]
       for dtype in (np.int32,)))
@@ -657,7 +663,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "mode": mode}
       for shape in [(0, 2), (2, 0), (3, 4), (3, 3), (4, 3)]
       for dtype in [np.float32]
-      for mode in ["reduced", "r", "full", "complete"]))
+      for mode in ["reduced", "r", "full", "complete", "raw"]))
   def testNumpyQrModes(self, shape, dtype, mode):
     rng = jtu.rand_default(self.rng())
     jnp_func = partial(jax.numpy.linalg.qr, mode=mode)
@@ -665,14 +671,17 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     if mode == "full":
       np_func = jtu.ignore_warning(category=DeprecationWarning, message="The 'full' option.*")(np_func)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_func, jnp_func, args_maker, rtol=1E-5, atol=1E-5)
+    self._CheckAgainstNumpy(np_func, jnp_func, args_maker, rtol=1e-5, atol=1e-5,
+                            check_dtypes=(mode != "raw"))
     self._CompileAndCheck(jnp_func, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
           jtu.format_shape_dtype_string(shape, dtype), full_matrices),
        "shape": shape, "dtype": dtype, "full_matrices": full_matrices}
-      for shape in [(0, 0), (2, 0), (0, 2), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
+      for shape in [(0, 0), (2, 0), (0, 2), (3, 3), (3, 4), (2, 10, 5),
+                    (2, 200, 100), (64, 16, 5), (33, 7, 3), (137, 9, 5),
+                    (20000, 2, 2)]
       for dtype in float_types + complex_types
       for full_matrices in [False, True]))
   def testQr(self, shape, dtype, full_matrices):
@@ -707,10 +716,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       sum_of_ratios = ratio.sum(axis=-2, keepdims=True)
       phases = np.divide(sum_of_ratios, np.abs(sum_of_ratios))
       q1 *= phases
-      self.assertTrue(np.all(norm(q1 - q2) < 30))
+      nm = norm(q1 - q2)
+      self.assertTrue(np.all(nm < 120), msg=f"norm={np.amax(nm)}")
 
     # Check a ~= qr
-    self.assertTrue(np.all(norm(a - np.matmul(lq, lr)) < 30))
+    self.assertTrue(np.all(norm(a - np.matmul(lq, lr)) < 40))
 
     # Compare the first 'k' vectors of Q; the remainder form an arbitrary
     # orthonormal basis for the null space.
@@ -718,7 +728,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     # Check that q is close to unitary.
     self.assertTrue(np.all(
-        norm(np.eye(k) - np.matmul(np.conj(T(lq)), lq)) < 5))
+        norm(np.eye(k) - np.matmul(np.conj(T(lq)), lq)) < 10))
 
     if m == n or (m > n and not full_matrices):
       qr = partial(jnp.linalg.qr, mode=mode)
@@ -751,7 +761,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}_pnorm={}".format(jtu.format_shape_dtype_string(shape, dtype), pnorm),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_pnorm={pnorm}",
        "shape": shape, "pnorm": pnorm, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (2, 3, 5), (5, 5, 5), (20, 20), (5, 10)]
       for pnorm in [jnp.inf, -jnp.inf, 1, -1, 2, -2, 'fro']
@@ -782,7 +792,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (200, 200), (7, 7, 7, 7)]
       for dtype in float_types))
@@ -831,7 +841,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (5, 5, 5), (0, 0)]
       for dtype in float_types))
@@ -857,7 +867,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2),
                     (2, 0, 0), (3, 0, 2), (1, 0)]
@@ -1018,7 +1028,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_i={}".format(i), "args": args}
+      {"testcase_name": f"_i={i}", "args": args}
       for i, args in enumerate([
         (),
         (1,),
@@ -1036,7 +1046,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 5), (10, 5), (50, 50)]
       for dtype in float_types + complex_types))
@@ -1057,7 +1067,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(1, 1), (4, 5), (10, 5), (10, 10), (6, 7, 7)]
       for dtype in float_types + complex_types))
@@ -1071,7 +1081,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(4, 5), (6, 5)]
       for dtype in [jnp.float32]))
@@ -1095,7 +1105,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       f"_n={jtu.format_shape_dtype_string((n,n), dtype)}",
        "n": n, "dtype": dtype}
       for n in [1, 4, 5, 200]
       for dtype in float_types + complex_types))
@@ -1300,7 +1310,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       f"_n={jtu.format_shape_dtype_string((n,n), dtype)}",
        "n": n, "dtype": dtype}
       for n in [1, 4, 5, 20, 50, 100]
       for dtype in float_types + complex_types))
@@ -1336,7 +1346,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name":
-     "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+     f"_n={jtu.format_shape_dtype_string((n,n), dtype)}",
      "n": n, "dtype": dtype}
     for n in [1, 4, 5, 20, 50, 100]
     for dtype in float_types + complex_types
@@ -1378,7 +1388,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+        f"_n={jtu.format_shape_dtype_string((n,n), dtype)}",
        "n": n, "dtype": dtype}
       for n in [1, 4, 5, 20, 50, 100]
       for dtype in float_types + complex_types))
@@ -1395,7 +1405,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       target_norms = [4.0e-1, 1.0, 3.0]
       tol = None
     else:
-      raise TypeError("dtype={} is not supported.".format(dtype))
+      raise TypeError(f"dtype={dtype} is not supported.")
     for norm in target_norms:
       def args_maker():
         a = rng((n, n), dtype)
@@ -1418,7 +1428,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name":
-       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       f"_n={jtu.format_shape_dtype_string((n,n), dtype)}",
       "n": n, "dtype": dtype}
      for n in [1, 4, 5, 20, 50]
      for dtype in float_types + complex_types))
@@ -1430,7 +1440,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     elif dtype == np.float32 or dtype == np.complex64:
       target_norms = [4.0e-1, 1.0, 3.0]
     else:
-      raise TypeError("dtype={} is not supported.".format(dtype))
+      raise TypeError(f"dtype={dtype} is not supported.")
     # TODO(zhangqiaorjc): Reduce tol to default 1e-5.
     # Lower tolerance is due to 2nd order derivative.
     tol = {
@@ -1449,7 +1459,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
         jtu.cases_from_list({
             "testcase_name":
-            "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+            f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
             "shape": shape, "dtype": dtype
         } for shape in [(4, 4), (15, 15), (50, 50), (100, 100)]
                             for dtype in float_types + complex_types))
@@ -1464,7 +1474,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
         jtu.cases_from_list({
             "testcase_name":
-            "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+            f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
             "shape": shape, "dtype": dtype
         } for shape in [(1, 1), (4, 4), (15, 15), (50, 50), (100, 100)]
                             for dtype in float_types + complex_types))
@@ -1483,7 +1493,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
         jtu.cases_from_list({
             "testcase_name":
-            "_shape={}_disp={}".format(jtu.format_shape_dtype_string(shape, dtype), disp),
+            f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_disp={disp}",
             "shape": shape, "dtype": dtype, "disp": disp
         } for shape in [(1, 1), (5, 5), (20, 20), (50, 50)]
           for dtype in float_types + complex_types
@@ -1505,7 +1515,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
     jtu.cases_from_list({
         "testcase_name":
-        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+        f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
         "shape" : shape, "dtype" : dtype
     } for shape in [(4, 4), (15, 15), (50, 50), (100, 100)]
       for dtype in float_types + complex_types))
@@ -1531,7 +1541,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
   jtu.cases_from_list({
       "testcase_name":
-      "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+      f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
       "shape" : shape, "dtype" : dtype
   } for shape in [(4, 4), (15, 15), (50, 50), (100, 100)]
     for dtype in float_types + complex_types))
@@ -1549,7 +1559,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
   jtu.cases_from_list({
       "testcase_name":
-      "_diag={}".format((diag, dtype)),
+      f"_diag={(diag, dtype)}",
       "diag" : diag, "expected": expected, "dtype" : dtype
   } for diag, expected in [([1, 0, 0], [1, 0, 0]), ([0, 4, 0], [0, 2, 0]),
                      ([0, 0, 0, 9],[0, 0, 0, 3]),
@@ -1678,7 +1688,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
         jtu.cases_from_list({
             "testcase_name":
-            "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+            f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
             "shape": shape, "dtype": dtype
         } for shape in [(4, 4), (15, 15), (50, 50), (100, 100)]
                             for dtype in float_types + complex_types))
@@ -1693,7 +1703,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list({
           "testcase_name":
-          "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+          f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
           "shape": shape, "dtype": dtype
       } for shape in [(2, 2), (4, 4), (15, 15), (50, 50), (100, 100)]
                           for dtype in float_types + complex_types))

@@ -183,7 +183,7 @@ except ImportError:
   hip_linalg = None
 
 try:
-  import jaxlib.cuda_linalg as gpu_linalg  # pytype: disable=import-error
+  import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
 except ImportError:
   gpu_linalg = None
 

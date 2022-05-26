@@ -1709,7 +1709,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(
-      {"testcase_name": "_{}".format(scan_name),
+      {"testcase_name": f"_{scan_name}",
        "scan": scan_impl}
       for scan_impl, scan_name in SCAN_IMPLS)
   def testScanHigherOrderDifferentiation(self, scan):
@@ -2003,7 +2003,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax.linearize(func, 1.)  # doesn't crash
 
   @parameterized.named_parameters(
-      dict(testcase_name="_loop={}".format(loop), loop=loop)
+      dict(testcase_name=f"_loop={loop}", loop=loop)
       for loop in ["while", "fori_inside_cond", "fori_inside_scan"])
   def testWhileGradError(self, loop: str = "fori_inside_scan"):
     # Raise error for vjp for loops
@@ -2108,7 +2108,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda: f_loop(jnp.ones(too_big)))
 
   @parameterized.named_parameters(
-      {"testcase_name": "_{}".format(scan_name),
+      {"testcase_name": f"_{scan_name}",
        "scan": scan_impl}
       for scan_impl, scan_name in SCAN_IMPLS)
   def test_scan_reverse(self, scan):

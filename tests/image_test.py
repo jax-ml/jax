@@ -316,7 +316,7 @@ class ImageTest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "antialias={}".format(antialias),
+      {"testcase_name": f"antialias={antialias}",
        "antialias": antialias}
       for antialias in [True, False]))
   def testScaleAndTranslateJITs(self, antialias):
@@ -349,7 +349,7 @@ class ImageTest(jtu.JaxTestCase):
     self.assertAllClose(output, expected, atol=2e-03)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "antialias={}".format(antialias),
+      {"testcase_name": f"antialias={antialias}",
        "antialias": antialias}
       for antialias in [True, False]))
   def testScaleAndTranslateGradFinite(self, antialias):

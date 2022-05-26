@@ -145,7 +145,7 @@ class IreeClient:
     del compile_options  # Ignored.
     iree_binary = iree.compiler.compile_str(
         computation, target_backends=["dylib"], input_type="mhlo",
-        # extra_args=["--print-ir-after-all"],
+        # extra_args=["--mlir-print-ir-after-all"],
         # extended_diagnostics=True,
     )
     # Load it into the runtime.

@@ -678,7 +678,7 @@ def _allreduce_abstract_eval(*args, axes, axis_index_groups):
   pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
   named_shapes = [arg.named_shape for arg in args]
   if axis_index_groups is None:
-    named_axes = set(axis for axis in axes if not isinstance(axis, int))
+    named_axes = {axis for axis in axes if not isinstance(axis, int)}
     named_shapes = [{name: size for name, size in arg.named_shape.items()
                      if name not in named_axes} for arg in args]
   else:
@@ -946,11 +946,17 @@ def _all_to_all_lowering(ctx, x, *,
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
-    return mhlo.AllToAllOp(mlir.aval_to_ir_type(ctx.avals_out[0]),
-                           x, mlir.i64_attr(split_axis),
-                           mlir.i64_attr(concat_axis),
-                           mlir.i64_attr(split_count),
-                           _replica_groups_mhlo(replica_groups)).results
+    if jax._src.lib.mlir_api_version < 19:
+      return mhlo.AllToAllOp(mlir.aval_to_ir_type(ctx.avals_out[0]),
+                             x, mlir.i64_attr(split_axis),
+                             mlir.i64_attr(concat_axis),
+                             mlir.i64_attr(split_count),
+                             _replica_groups_mhlo(replica_groups)).results
+    else:
+      return mhlo.AllToAllOp(x, mlir.i64_attr(split_axis),
+                             mlir.i64_attr(concat_axis),
+                             mlir.i64_attr(split_count),
+                             _replica_groups_mhlo(replica_groups)).results
   else:
     warnings.warn(
         "all_to_all (and pswapaxes) are only implemented properly for TPUs and GPUs (if "

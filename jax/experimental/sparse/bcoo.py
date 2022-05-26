@@ -39,7 +39,7 @@ from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
 from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
-  ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
+  _const, ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
@@ -100,7 +100,7 @@ def _bcoo_set_nse(mat, nse):
     indices = jnp.zeros_like(mat.indices, shape=(*mat.indices.shape[:-2], nse, mat.indices.shape[-1]))
     indices = indices.at[..., :mat.nse, :].set(mat.indices)
     indices = indices.at[..., mat.nse:, :].set(jnp.array(mat.shape[mat.n_batch:mat.n_batch + mat.n_sparse]))
-  return BCOO((data, indices), shape=mat.shape, indices_sorted=mat._indices_sorted)
+  return BCOO((data, indices), shape=mat.shape, indices_sorted=mat.indices_sorted)
 
 # TODO(jakevdp) this can be problematic when used with autodiff; see
 # https://github.com/google/jax/issues/10163. Should this be a primitive?
@@ -1385,7 +1385,7 @@ def _bcoo_sum_duplicates_unbatched(indices, *, shape):
   fill_value = jnp.expand_dims(jnp.array(shape[:props.n_sparse], dtype=indices.dtype), (0,))
   out_of_bounds = (indices >= fill_value).any(-1, keepdims=True)
   indices = jnp.where(out_of_bounds, fill_value, indices)
-  # TODO: check if `_indices_sorted` is True.
+  # TODO: check if `indices_sorted` is True.
   indices_unique, inv_idx, nse = _unique(
     indices, axis=0, return_inverse=True, return_true_size=True,
     size=props.nse, fill_value=fill_value)
@@ -1465,11 +1465,12 @@ mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_mhlo)
 # BCOO functions that maybe should be primitives?
 
 def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error'):
-  """Update the storage layout of a BCOO matrix.
+  """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
 
-  In general, increasing ``mat.n_batch`` or ``mat.n_dense`` will lead to very inefficient
-  storage, with many explicitly-stored zeros, unless the new batch or dense dimensions have
-  size 0 or 1. In such cases, ``bcoo_update_layout`` will raise a :class:`SparseEfficiencyError`.
+  In many cases this can be done without introducing undue storage overhead. However,
+  increasing ``mat.n_batch`` or ``mat.n_dense`` will lead to very inefficient storage,
+  with many explicitly-stored zeros, unless the new batch or dense dimensions have size
+  0 or 1. In such cases, ``bcoo_update_layout`` will raise a :class:`SparseEfficiencyError`.
   This can be silenced by specifying the ``on_inefficient`` argument.
 
   Args:
@@ -1695,10 +1696,10 @@ def bcoo_concatenate(operands, *, dimension):
   out_aval = jax.eval_shape(
     functools.partial(lax.concatenate, dimension=dimension),
     [core.ShapedArray(op.shape, op.dtype) for op in operands])
-  if len(set(op.n_dense for op in operands)) > 1:
+  if len({op.n_dense for op in operands}) > 1:
     raise ValueError("bcoo_concatenate requires inputs to have matching nse dimensions.")
 
-  n_batches = set(op.n_batch for op in operands)
+  n_batches = {op.n_batch for op in operands}
   # Correct for the common case, where op[None, :] adds a single batch dimension and we
   # need to align it in order to match the others & concatenate.
   if len(n_batches) != 1 and max(n_batches) == 1:
@@ -1706,7 +1707,7 @@ def bcoo_concatenate(operands, *, dimension):
       operands = [bcoo_update_layout(op, n_batch=1) if op.n_batch == 0 else op for op in operands]
     elif all(op.shape[0] == 1 for op in operands if op.n_batch == 1):
       operands = [bcoo_update_layout(op, n_batch=0) if op.n_batch == 1 else op for op in operands]
-    n_batches = set(op.n_batch for op in operands)
+    n_batches = {op.n_batch for op in operands}
 
   if len(n_batches) != 1:
     raise ValueError("bcoo_concatenate requires inputs to have matching batch dimensions.")
@@ -1723,7 +1724,7 @@ def bcoo_concatenate(operands, *, dimension):
 
   if dimension < n_batch:  # Concatenation along batch axes
     # Ensure nse of operands match.
-    nses = set(op.nse for op in operands)
+    nses = {op.nse for op in operands}
     if len(nses) != 1:
       nse = max(nses)
       operands = [_bcoo_set_nse(op, nse) for op in operands]
@@ -2041,15 +2042,15 @@ class BCOO(JAXSparse):
   n_batch = property(lambda self: self.indices.ndim - 2)
   n_sparse = property(lambda self: self.indices.shape[-1])
   n_dense = property(lambda self: self.data.ndim - 1 - self.n_batch)
-  _info = property(lambda self: BCOOInfo(self.shape, self._indices_sorted))
+  indices_sorted: bool
+  _info = property(lambda self: BCOOInfo(self.shape, self.indices_sorted))
   _bufs = property(lambda self: (self.data, self.indices))
-  _indices_sorted: bool
 
   def __init__(self, args, *, shape, indices_sorted=False):
     # JAX transforms will sometimes instantiate pytrees with null values, so we
     # must catch that in the initialization of inputs.
     self.data, self.indices = _safe_asarray(args)
-    self._indices_sorted = indices_sorted
+    self.indices_sorted = indices_sorted
     super().__init__(args, shape=shape)
 
   def __repr__(self):
@@ -2102,9 +2103,79 @@ class BCOO(JAXSparse):
     indices = jnp.full((*batch_shape, nse, n_sparse), jnp.array(sparse_shape), index_dtype)
     return cls((data, indices), shape=shape, indices_sorted=True)
 
+  @classmethod
+  def _eye(cls, N, M, k, *, dtype=None, index_dtype='int32', n_batch=0, n_dense=0):
+    n_sparse = 2 - n_batch - n_dense
+    if n_sparse < 0 or n_dense < 0 or n_batch < 0:
+      raise ValueError(f"Invalid inputs: shape={(N, M)}, n_dense={n_dense}, n_batch={n_batch}")
+
+    if k > 0:
+      diag_size = min(N, M - k)
+    else:
+      diag_size = min(N + k, M)
+
+    if diag_size <= 0:
+      # if k is out of range, return an empty matrix.
+      return cls._empty((N, M), dtype=dtype, index_dtype=index_dtype,
+                        n_batch=n_batch, n_dense=n_dense)
+
+    if n_dense > 0 or n_batch > 1:
+      # These cases explicitly store all the zeros, so fall back to fromdense.
+      return cls.fromdense(jnp.eye(N, M, k, dtype=dtype),
+                           n_batch=n_batch, n_dense=n_dense,
+                           index_dtype=index_dtype)
+    k = jnp.asarray(k)
+    if n_batch == 0:
+      data = jnp.ones(diag_size, dtype=dtype)
+      idx = jnp.arange(diag_size, dtype=index_dtype)
+      zero = _const(idx, 0)
+      k = _const(idx, k)
+      indices = jnp.column_stack([
+        lax.sub(idx, lax.cond(k >= 0, lambda: zero, lambda: k)),
+        lax.add(idx, lax.cond(k <= 0, lambda: zero, lambda: k))])
+    else:
+      data = jnp.ones(N, dtype=dtype)
+      indices = jnp.arange(N, dtype=index_dtype)
+      indices = indices + _const(indices, k)
+      if k < 0:
+        data = data.at[:abs(k)].set(0)
+        indices = indices.at[:abs(k)].set(M)
+      elif k > 0:
+        data = data.at[M - abs(k):].set(0)
+        indices = indices.at[M - abs(k)].set(M)
+      data = data[:, None]
+      indices = indices[:, None, None]
+    return cls((data, indices), shape=(N, M), indices_sorted=True)
+
   def _dedupe(self):
     warnings.warn("_dedupe() is deprecated. Use sum_duplicates() instead.", FutureWarning)
     return self.sum_duplicates(nse=self.nse)
+
+  def update_layout(self, *, n_batch=None, n_dense=None, on_inefficient='error'):
+    """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
+
+    In many cases this can be done without introducing undue storage overhead. However,
+    increasing ``mat.n_batch`` or ``mat.n_dense`` will lead to very inefficient storage,
+    with many explicitly-stored zeros, unless the new batch or dense dimensions have size
+    0 or 1. In such cases, ``update_layout`` will raise a :class:`SparseEfficiencyError`.
+    This can be silenced by specifying the ``on_inefficient`` argument.
+
+    Args:
+      n_batch : optional(int) the number of batch dimensions in the output matrix. If None,
+        then n_batch = mat.n_batch.
+      n_dense : optional(int) the number of dense dimensions in the output matrix. If None,
+        then n_dense = mat.n_dense.
+      on_inefficient : optional(string), one of ``['error', 'warn', None]``. Specify the
+        behavior in case of an inefficient reconfiguration. This is defined as a reconfiguration
+        where the size of the resulting representation is much larger than the size of the
+        input representation.
+
+    Returns:
+      mat_out : BCOO array
+        A BCOO array representing the same sparse array as the input, with the specified
+        layout. ``mat_out.todense()`` will match ``mat.todense()`` up to appropriate precision.
+    """
+    return bcoo_update_layout(self, n_batch=n_batch, n_dense=n_dense, on_inefficient=on_inefficient)
 
   def sum_duplicates(self, nse=None, remove_zeros=True):
     """Return a copy of the array with duplicate indices summed.
@@ -2148,7 +2219,7 @@ class BCOO(JAXSparse):
     sparse_perm = [p - self.n_batch
                    for p in axes[self.n_batch: self.n_batch + self.n_sparse]]
     if tuple(sparse_perm) == tuple(range(self.n_sparse)):
-      is_sorted = self._indices_sorted
+      is_sorted = self.indices_sorted
     else:
       # TODO: address the corner cases that the transposed indices are sorted.
       # possibly use permutation?

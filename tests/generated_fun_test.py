@@ -221,7 +221,7 @@ def check_close(x, y, tol=1e-3):
   # TODO(dougalm): re-enable once we've tackled the less pendantic bugs
   # assert x.dtype == y.dtype
   assert jnp.allclose(x, y, rtol=tol, atol=tol), \
-     "Value mismatch:\n{}\n  vs\n{}\n".format(x, y)
+     f"Value mismatch:\n{x}\n  vs\n{y}\n"
 
 def partial_argnums(f, args, dyn_argnums):
   fixed_args = [None if i in dyn_argnums else arg for i, arg in enumerate(args)]

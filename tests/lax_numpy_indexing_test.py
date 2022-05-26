@@ -1363,7 +1363,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self.assertEmpty(caught_warnings)
 
   @parameterized.named_parameters(jtu.cases_from_list({
-      "testcase_name": "idx={}".format(idx), "idx": idx, "idx_type": idx_type}
+      "testcase_name": f"idx={idx}", "idx": idx, "idx_type": idx_type}
     for idx, idx_type in [
       ([0], "array"),
       ([0, 0], "array"),

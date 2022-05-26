@@ -14,6 +14,7 @@
 
 import builtins
 from functools import partial
+import operator
 from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -141,6 +142,15 @@ def conv_general_dilated(
     padding = lax.padtype_to_pads(
         np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,  # type: ignore[index]
         window_strides, padding)
+  else:
+    try:
+      padding = tuple((operator.index(lo), operator.index(hi))
+                      for lo, hi in padding)
+    except (ValueError, TypeError) as e:
+      raise ValueError(
+        "padding argument to conv_general_dilated should be a string or a "
+        f"sequence of (low, high) pairs, got {padding}") from e
+
   preferred_element_type = (
       None if preferred_element_type is None else
       dtypes.canonicalize_dtype(np.dtype(preferred_element_type)))
@@ -696,15 +706,21 @@ def _conv_general_dilated_lower(
     output_spatial_dimensions=list(out_spec[2:]))
   num_spatial_dims = len(rhs_spec) - 2
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
-  return [mhlo.ConvOp(mlir.aval_to_ir_type(aval_out), lhs, rhs,
-                      mlir.dense_int_elements(window_strides),
-                      mlir.dense_int_elements(padding),
-                      mlir.dense_int_elements(lhs_dilation),
-                      mlir.dense_int_elements(rhs_dilation),
-                      window_reversal, dnums,
-                      mlir.i64_attr(feature_group_count),
-                      mlir.i64_attr(batch_group_count),
-                      lax.precision_attr(precision)).result]
+  return [
+      mhlo.ConvOp(
+          mlir.aval_to_ir_type(aval_out),
+          lhs,
+          rhs,
+          dimension_numbers=dnums,
+          feature_group_count=mlir.i64_attr(feature_group_count),
+          batch_group_count=mlir.i64_attr(batch_group_count),
+          window_strides=mlir.dense_int_elements(window_strides),
+          padding=mlir.dense_int_elements(padding),
+          lhs_dilation=mlir.dense_int_elements(lhs_dilation),
+          rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+          window_reversal=window_reversal,
+          precision_config=lax.precision_attr(precision)).result
+  ]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
 # TODO(b/161124619, b/161126248): XLA does not support complex convolution on

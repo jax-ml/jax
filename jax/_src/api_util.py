@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import operator
 from functools import partial
-from typing import Any, Dict, Iterable, Tuple, Sequence, Union, Optional
+from typing import Any, Dict, Iterable, Sequence, Set, Tuple, Union, Optional
+import warnings
 
 import numpy as np
 
@@ -68,7 +70,7 @@ def apply_flat_fun(fun, io_tree, *py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten((py_args, {}))
   if in_tree != in_tree_expected:
-    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError(f"Expected {in_tree_expected}, got {in_tree}")
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -82,7 +84,7 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
   if in_tree != in_tree_expected:
-    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError(f"Expected {in_tree_expected}, got {in_tree}")
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -132,6 +134,94 @@ class _HashableWithStrictTypeEquality:
   def __eq__(self, other):
     return type(self.val) is type(other.val) and self.val == other.val
 
+_POSITIONAL_ARGUMENTS = (
+  inspect.Parameter.POSITIONAL_ONLY,
+  inspect.Parameter.POSITIONAL_OR_KEYWORD
+)
+
+def validate_argnums(sig: inspect.Signature, argnums: Tuple[int, ...], argnums_name: str) -> None:
+  """
+  Validate that the argnums are sensible for a given function.
+
+  For functions that accept a variable number of positions arguments
+  (`f(..., *args)`) all positive argnums are considered valid.
+  """
+  n_pos_args = 0
+  for param in sig.parameters.values():
+    if param.kind in _POSITIONAL_ARGUMENTS:
+      n_pos_args += 1
+
+    elif param.kind is inspect.Parameter.VAR_POSITIONAL:
+      # We can have any number of positional arguments
+      return
+
+  if argnums and (-min(argnums) > n_pos_args or max(argnums) >= n_pos_args):
+    # raise ValueError(f"Jitted function has {argnums_name}={argnums}, "
+    #                  f"but only accepts {n_pos_args} positional arguments.")
+    # TODO: 2022-08-20 or later: replace with error
+    warnings.warn(f"Jitted function has {argnums_name}={argnums}, "
+                  f"but only accepts {n_pos_args} positional arguments. "
+                  "This warning will be replaced by an error after 2022-08-20 "
+                  "at the earliest.", SyntaxWarning)
+
+_INVALID_KEYWORD_ARGUMENTS = (
+  inspect.Parameter.POSITIONAL_ONLY,
+  inspect.Parameter.VAR_POSITIONAL
+)
+
+_KEYWORD_ARGUMENTS = (
+  inspect.Parameter.POSITIONAL_OR_KEYWORD,
+  inspect.Parameter.KEYWORD_ONLY,
+)
+def validate_argnames(sig: inspect.Signature, argnames: Tuple[str, ...], argnames_name: str) -> None:
+  """
+  Validate that the argnames are sensible for a given function.
+
+  For functions that accept a variable keyword arguments
+  (`f(..., **kwargs)`) all argnames are considered valid except those
+  marked as position-only (`f(pos_only, /, ...)`).
+  """
+  var_kwargs = False
+  valid_kwargs: Set[str] = set()
+  invalid_kwargs: Set[str] = set()
+  for param_name, param in sig.parameters.items():
+    if param.kind in _KEYWORD_ARGUMENTS:
+      valid_kwargs.add(param_name)
+
+    elif param.kind is inspect.Parameter.VAR_KEYWORD:
+      var_kwargs = True
+
+    elif param.kind in _INVALID_KEYWORD_ARGUMENTS:
+      invalid_kwargs.add(param_name)
+
+
+  # Check whether any kwargs are invalid due to position only
+  invalid_argnames = invalid_kwargs & set(argnames)
+  if invalid_argnames:
+    # raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
+    #                  f"in {argnames_name}. These are positional-only")
+    # TODO: 2022-08-20 or later: replace with error
+    warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
+                  f"in {argnames_name}. These are positional-only. "
+                  "This warning will be replaced by an error after 2022-08-20 "
+                  "at the earliest.", SyntaxWarning)
+
+  # Takes any kwargs
+  if var_kwargs:
+    return
+
+  # Check that all argnames exist on function
+  invalid_argnames = set(argnames) - valid_kwargs
+  if invalid_argnames:
+    # TODO: 2022-08-20 or later: replace with error
+    # raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
+    #                  f"in {argnames_name}. Function does not take these args.")
+    warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
+                  f"in {argnames_name}. Function does not take these args."
+                  "This warning will be replaced by an error after 2022-08-20 "
+                  "at the earliest.", SyntaxWarning)
+
+
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   dyn_argnums = _ensure_index_tuple(dyn_argnums)
@@ -154,6 +244,11 @@ def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
 
 def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
                      ) -> Tuple[int, ...]:
+  """
+  Ensure argnum is within bounds.
+
+  Also resolves negative argnums
+  """
   result = []
   for i in argnums:
     if i >= num_args and allow_invalid: continue
@@ -162,8 +257,9 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
           "Positional argument indices, e.g. for `static_argnums`, must have "
           "value greater than or equal to -len(args) and less than len(args), "
           f"but got value {i} for len(args) == {num_args}.")
-    result.append(i % num_args)
+    result.append(i % num_args)  # Resolve negative
   return tuple(result)
+
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
                            args: Tuple[Any], *, allow_invalid: bool):
@@ -180,9 +276,7 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
     if allow_invalid and i >= len(args):
       continue
     static_arg = args[i]
-    try:
-      hash(static_arg)
-    except TypeError:
+    if not is_hashable(static_arg):
       raise ValueError(
           "Non-hashable static arguments are not supported, as this can lead "
           f"to unexpected cache-misses. Static argument (index {i}) of type "

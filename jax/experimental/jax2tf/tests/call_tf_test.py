@@ -184,7 +184,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
           testcase_name=f"_{dtype.__name__}{'_jit' if with_jit else ''}",
           dtype=dtype,
           with_jit=with_jit)
-      for dtype in set(jtu.dtypes.all) - set([np.bool_])
+      for dtype in set(jtu.dtypes.all) - {np.bool_}
       for with_jit in [True, False])
   def test_dtypes(self, dtype=np.int32, with_jit=True):
 

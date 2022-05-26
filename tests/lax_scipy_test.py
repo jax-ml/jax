@@ -33,7 +33,7 @@ from jax import scipy as jsp
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
-import jax._src.scipy.eigh
+import jax._src.lax.eigh
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -546,75 +546,39 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {'testcase_name':
-      '_linear_size_={}_seed={}_dtype={}'.format(
-        linear_size, seed, jnp.dtype(dtype).name
+      '_linear_size_={}_seed={}_dtype={}_termination_size={}'.format(
+        linear_size, seed, jnp.dtype(dtype).name, termination_size
       ),
-      'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
+     'linear_size': linear_size, 'seed': seed, 'dtype': dtype,
+     'termination_size': termination_size}
     for linear_size in linear_sizes
     for seed in seeds
-    for dtype in jtu.dtypes.floating))
-  def test_spectral_dac_eigh(self, linear_size, seed, dtype):
-    if jtu.device_under_test != "cpu":
-      raise unittest.SkipTest("Skip eigh off CPU for now.")
+    for dtype in jtu.dtypes.floating
+    for termination_size in [1, 19]))
+  def test_spectral_dac_eigh(self, linear_size, seed, dtype, termination_size):
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       if jtu.device_under_test() != "cpu":
         raise unittest.SkipTest("Skip half precision off CPU.")
+
+    if jtu.device_under_test() != "tpu" and termination_size != 1:
+      raise unittest.SkipTest(
+          "Termination sizes greater than 1 only work on TPU")
 
     rng = self.rng()
     H = rng.randn(linear_size, linear_size)
     H = jnp.array(0.5 * (H + H.conj().T)).astype(dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
-        NotImplementedError, jax._src.scipy.eigh.eigh, H)
+        NotImplementedError, jax._src.lax.eigh.eigh, H)
       return
-    evs, V = jax._src.scipy.eigh.eigh(H)
+    evs, V = jax._src.lax.eigh.eigh(H, termination_size=termination_size)
     ev_exp, eV_exp = jnp.linalg.eigh(H)
     HV = jnp.dot(H, V, precision=lax.Precision.HIGHEST)
-    vV = evs * V
+    vV = evs[None, :] * V
     eps = jnp.finfo(H.dtype).eps
     atol = jnp.linalg.norm(H) * eps
     self.assertAllClose(ev_exp, jnp.sort(evs), atol=20 * atol)
     self.assertAllClose(HV, vV, atol=30 * atol)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {'testcase_name':
-      '_linear_size_={}_seed={}_dtype={}'.format(
-        linear_size, seed, jnp.dtype(dtype).name
-      ),
-      'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
-    for linear_size in linear_sizes
-    for seed in seeds
-    for dtype in jtu.dtypes.floating))
-  @jtu.skip_on_devices("gpu")  # Fails on A100.
-  def test_spectral_dac_svd(self, linear_size, seed, dtype):
-    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
-      if jtu.device_under_test() != "cpu":
-        raise unittest.SkipTest("Skip half precision off CPU.")
-
-    rng = self.rng()
-    A = rng.randn(linear_size, linear_size).astype(dtype)
-    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
-      self.assertRaises(
-        NotImplementedError, jax._src.scipy.eigh.svd, A)
-      return
-    S_expected = np.linalg.svd(A, compute_uv=False)
-    U, S, V = jax._src.scipy.eigh.svd(A)
-    recon = jnp.dot((U * jnp.expand_dims(S, 0)), V,
-                    precision=lax.Precision.HIGHEST)
-    eps = jnp.finfo(dtype).eps
-    eps = eps * jnp.linalg.norm(A) * 15
-    self.assertAllClose(np.sort(S), np.sort(S_expected), atol=eps)
-    self.assertAllClose(A, recon, atol=eps)
-
-    # U is unitary.
-    u_unitary_delta = jnp.dot(U.conj().T, U, precision=lax.Precision.HIGHEST)
-    u_eye = jnp.eye(u_unitary_delta.shape[0], dtype=dtype)
-    self.assertAllClose(u_unitary_delta, u_eye, atol=eps)
-
-    # V is unitary.
-    v_unitary_delta = jnp.dot(V.conj().T, V, precision=lax.Precision.HIGHEST)
-    v_eye = jnp.eye(v_unitary_delta.shape[0], dtype=dtype)
-    self.assertAllClose(v_unitary_delta, v_eye, atol=eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{jtu.format_shape_dtype_string((n_obs, n_codes, *n_feats), dtype)}",

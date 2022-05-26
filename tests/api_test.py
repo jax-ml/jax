@@ -19,6 +19,7 @@ from contextlib import contextmanager
 import copy
 import enum
 from functools import partial
+import inspect
 import operator
 import re
 import subprocess
@@ -79,8 +80,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   """
 
   @property
+  def use_cpp_jit(self) -> bool:
+    return True
+
+  @property
   def jit(self):
-    return api._cpp_jit
+    return functools.partial(api._jit, self.use_cpp_jit)
 
   def test_jit_repr(self):
     def my_function():
@@ -182,7 +187,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertLen(side, 1)
     self.assertEqual(f1(1, A()), 100)
     self.assertLen(side, 1)
-    if self.jit == api._cpp_jit:
+    if self.use_cpp_jit:
       f1_cpp = getattr(f1, "_cpp_jitted_f", f1)
       self.assertEqual(f1_cpp._cache_size(), 1)
 
@@ -230,6 +235,93 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_complex_support(self):
     self.assertEqual(self.jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": f"_{argnum_type}",
+     "argnum_type": argnum_type}
+    for argnum_type in ("static_argnums", "donate_argnums")))
+  def test_jit_argnums_overflow_error(self, argnum_type: str):
+    def f(a, b, c):
+      ...
+
+    # TODO(phawkins): reenable this test after Python 3.7 support is dropped.
+    # def g(a, /, b, *, c):
+    #   ...
+
+    def h(a, *args):
+      ...
+
+    def i():
+      ...
+
+    # Simplest cases
+    self.jit(f, **{argnum_type: (0, 1)})
+    # self.jit(g, **{argnum_type: (0, 1)})
+    self.jit(f, **{argnum_type: (0, 1, -3)})
+
+    # Out of bounds without *args
+    # with self.assertRaises(ValueError):
+    with self.assertWarns(SyntaxWarning):
+      self.jit(f, **{argnum_type: (0, 1, 3)})
+
+    # with self.assertRaises(ValueError):
+    with self.assertWarns(SyntaxWarning):
+      self.jit(f, **{argnum_type: (0, 1, -4)})
+
+    # # with self.assertRaises(ValueError):
+    # with self.assertWarns(SyntaxWarning):
+    #   self.jit(g, **{argnum_type: (0, 1, 3)})
+
+    # # with self.assertRaises(ValueError):
+    # with self.assertWarns(SyntaxWarning):
+    #   self.jit(g, **{argnum_type: (0, 1, -3)})
+
+    # Out of bounds with *args
+    self.jit(h, **{argnum_type: (0, 999)})
+    self.jit(h, **{argnum_type: (0, -999)})
+
+
+    # No positional arguments
+    self.jit(i, static_argnums=())
+    self.jit(i)
+
+  def test_jit_argnames_validation(self):
+    def f(a, b, c):
+      ...
+
+    def g(a, b, **kwargs):
+      ...
+
+    # TODO(phawkins): reenable this test after Python 3.7 support is dropped.
+    # def h(a, /, b, c, *args, **kwargs):
+    #   ...
+
+    # Simplest case
+    self.jit(f, static_argnames=("b", "c"))
+
+    # Undefined arg without **kwargs
+    # with self.assertRaises(ValueError):
+    with self.assertWarns(SyntaxWarning):
+      self.jit(f, static_argnames=("b", "c", "not_defined"))
+
+    # Undefined arg with **kwargs
+    self.jit(g, static_argnames=("a", "b", "not_defined"))
+
+    # TODO(phawkins): reenable this test after Python 3.7 support is dropped.
+    # self.jit(h, static_argnames=("b", "c"))
+    # self.jit(h, static_argnames=("b", "c", "not_defined"))
+    #
+    # # Positional only
+    # # with self.assertRaises(ValueError):
+    # with self.assertWarns(SyntaxWarning):
+    #   self.jit(h, static_argnames=("a", "c"))
+
+    # # Var positional
+    # # with self.assertRaises(ValueError):
+    # with self.assertWarns(SyntaxWarning):
+    #   self.jit(h, static_argnames=("args", "c"))
+
 
   def test_jit_with_many_args_works(self):
 
@@ -486,18 +578,21 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       jitted_f(1, np.asarray(1))
 
   def test_cpp_jit_raises_on_non_hashable_static_argnum(self):
-    if self.jit != api._cpp_jit:
+    if not self.use_cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     f = lambda x, y: x + 3
-    jitted_f = api._cpp_jit(f, static_argnums=[1])
+    jitted_f = self.jit(f, static_argnums=[1])
 
     jitted_f(1, 1)
 
-    msg = ("Non-hashable static arguments are not supported. An error occured "
+    msg = ("Non-hashable static arguments are not supported. An error occurred "
            ".*while trying to hash an object of type "
            "<class 'numpy\\.ndarray'>, 1. The error was:\nTypeError: "
            "unhashable type: 'numpy\\.ndarray'")
+    # Typo was fixed in newer jaxlib
+    if jax._src.lib.xla_extension_version < 66:
+      msg = msg.replace('occurred', 'occured')
 
     with self.assertRaisesRegex(ValueError, msg):
       jitted_f(1, np.asarray(1))
@@ -531,7 +626,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       f(a)
 
   def test_cpp_jitted_function_returns_PyBuffer(self):
-    if self.jit != api._cpp_jit:
+    if not self.use_cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     jitted_f = self.jit(lambda a: a + 1)
@@ -627,39 +722,45 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x, y=1):
       pass
 
+    sig = inspect.signature(f)
+
     argnums, argnames = api._infer_argnums_and_argnames(
-        f, argnums=None, argnames=None)
+        sig, argnums=None, argnames=None)
     assert argnums == ()
     assert argnames == ()
 
     argnums, argnames = api._infer_argnums_and_argnames(
-        f, argnums=0, argnames=None)
+        sig, argnums=0, argnames=None)
     assert argnums == (0,)
     assert argnames == ('x',)
 
     argnums, argnames = api._infer_argnums_and_argnames(
-        f, argnums=None, argnames='y')
+        sig, argnums=None, argnames='y')
     assert argnums == (1,)
     assert argnames == ('y',)
 
     argnums, argnames = api._infer_argnums_and_argnames(
-        f, argnums=0, argnames='y')  # no validation
+        sig, argnums=0, argnames='y')  # no validation
     assert argnums == (0,)
     assert argnames == ('y',)
 
     def g(x, y, *args):
       pass
 
+    sig = inspect.signature(g)
+
     argnums, argnames = api._infer_argnums_and_argnames(
-        g, argnums=(1, 2), argnames=None)
+        sig, argnums=(1, 2), argnames=None)
     assert argnums == (1, 2)
     assert argnames == ('y',)
 
     def h(x, y, **kwargs):
       pass
 
+    sig = inspect.signature(h)
+
     argnums, argnames = api._infer_argnums_and_argnames(
-        h, argnums=None, argnames=('foo', 'bar'))
+        sig, argnums=None, argnames=('foo', 'bar'))
     assert argnums == ()
     assert argnames == ('foo', 'bar')
 
@@ -719,7 +820,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   # TODO(zhangqiaorjc): Test pruning constants after DCE pass prunes primitive
   # applications.
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_num_args={}".format(num_args),
+    {"testcase_name": f"_num_args={num_args}",
      "num_args": num_args}
     for num_args in [2, 3, 4]))
   def test_jit_with_pruned_args(self, num_args):
@@ -918,9 +1019,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 class PythonJitTest(CPPJitTest):
 
   @property
-  def jit(self):
-    return api._python_jit
-
+  def use_cpp_jit(self) -> bool:
+    return False
 
 class APITest(jtu.JaxTestCase):
 
@@ -1525,7 +1625,7 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       TypeError,
       "Type of cotangent input to vjp pullback.*is not the expected tangent type",
-      lambda: pullback((np.float16(42))))
+      lambda: pullback(np.float16(42)))
 
   def test_vjp_bad_cotangent_shape(self):
     x = np.ones((2, 5), dtype=np.float32)
@@ -1777,7 +1877,7 @@ class APITest(jtu.JaxTestCase):
     self.assertLen(s, i)
     for f in (str, repr):
       self.assertEqual(
-          f(s), "ShapeDtypeStruct(shape=({}, 2, 3), dtype=float32)".format(i))
+          f(s), f"ShapeDtypeStruct(shape=({i}, 2, 3), dtype=float32)")
 
   def test_shape_dtype_struct_scalar(self):
     s = api.ShapeDtypeStruct(shape=(), dtype=jnp.float32)
@@ -1859,7 +1959,7 @@ class APITest(jtu.JaxTestCase):
     def fun(A, b, x):
       return jnp.dot(A, x) + b
 
-    class MyArgArray(object):
+    class MyArgArray:
       def __init__(self, shape, dtype):
         self.shape = shape
         self.dtype = np.dtype(dtype)
@@ -1886,7 +1986,7 @@ class APITest(jtu.JaxTestCase):
     def fun(x, y):
       return lax.psum(x, 'i') + y
 
-    class MyArgArray(object):
+    class MyArgArray:
       def __init__(self, shape, dtype, named_shape):
         self.shape = shape
         self.dtype = jnp.dtype(dtype)
@@ -2860,7 +2960,7 @@ class APITest(jtu.JaxTestCase):
 
     x = np.array([1, 2], dtype=np.float32)
     hlo_lines = jax.xla_computation(f)(x).as_hlo_text().split('\n')
-    hlo_lines = set([s.strip() for s in hlo_lines])
+    hlo_lines = {s.strip() for s in hlo_lines}
     self.assertIn('constant.1 = f32[2]{0} constant({7, 14})', hlo_lines)
     self.assertNotIn('constant.2 = f32[2]{0} constant({7, 14})', hlo_lines)
 
@@ -5814,6 +5914,24 @@ class CustomJVPTest(jtu.JaxTestCase):
       self.assertEmpty(aux_args)
     f()
 
+  def test_sinc_constant_function_batching(self):
+    # https://github.com/google/jax/pull/10756
+    batch_data = jnp.arange(15.).reshape(5, 3)
+
+    @jax.vmap
+    def f(x):
+      return jax.lax.map(jnp.sinc, x)
+    g = lambda param: f(param * batch_data).sum()
+
+    @jax.vmap
+    def f_ref(x):
+      return jnp.stack([jnp.sinc(x_) for x_ in x])
+    g_ref = lambda param: f_ref(param * batch_data).sum()
+
+    grad     = jax.grad(g    )(0.1)  # doesn't crash
+    grad_ref = jax.grad(g_ref)(0.1)
+    self.assertAllClose(grad, grad_ref, check_dtypes=False)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -7645,7 +7763,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
       self.assertEqual(in_batched, [in_batched_ref])
-      sz, = set([z.shape[0] for z in tree_util.tree_leaves(xs)])
+      sz, = {z.shape[0] for z in tree_util.tree_leaves(xs)}
       self.assertEqual(axis_size, sz)
       return tree_cos(xs), in_batched[0]
 
@@ -7669,7 +7787,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
       self.assertEqual(in_batched, [in_batched_ref])
-      sz, = set([z.shape[0] for z in tree_util.tree_leaves(xs)])
+      sz, = {z.shape[0] for z in tree_util.tree_leaves(xs)}
       self.assertEqual(axis_size, sz)
       return tree_cos(xs), in_batched[0]
 
@@ -7853,23 +7971,19 @@ class NamedCallTest(jtu.JaxTestCase):
     self.assertEqual(out, 5)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_jit_type={}_func={}".format(jit_type, func),
-       "jit_type": jit_type, "func": func}
+      {"testcase_name": f"_jit={jit._name}_func={func}",
+       "jit": jit, "func": func}
       for func in ['identity', 'asarray', 'device_put']
-      for jit_type in [None, "python", "cpp"]
-      if not (jit_type is None and func == 'identity')))
-  def test_integer_overflow(self, jit_type, func):
+      for jit in jtu.JIT_IMPLEMENTATION
+      if not (jit._name == "noop" and func == 'identity')))
+  def test_integer_overflow(self, jit, func):
     funcdict = {
       'identity': lambda x: x,
       'asarray': jnp.asarray,
       'device_put': api.device_put,
     }
-    jit = {
-      'python': api._python_jit,
-      'cpp': api._cpp_jit,
-      None: lambda x: x,
-    }
-    f = jit[jit_type](funcdict[func])
+
+    f = jit(funcdict[func])
 
     int_dtype = dtypes.canonicalize_dtype(jnp.int_)
     int_max = np.iinfo(int_dtype).max
@@ -8462,13 +8576,9 @@ class DynamicShapeTest(jtu.JaxTestCase):
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
   def test_jit_basic_iree(self):
-    if not jtu.device_under_test() == 'iree':
-      raise unittest.SkipTest("test only works on IREE")
-
     @jax.jit
     def f(i):
       return jnp.sum(jnp.ones(i, dtype='float32'))
-
     self.assertAllClose(f(3), jnp.array(3., dtype='float32'), check_dtypes=True)
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
@@ -8487,10 +8597,21 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertAllClose(y, 6., check_dtypes=False)
     self.assertEqual(count, 1)
 
-  # TODO(mattjj,dougalm,phawkins): debug iree failure, "'arith.subi' op requires
-  # the same type for all operands and results"
-  # https://github.com/google/iree/issues/8881
-  @jtu.skip_on_devices('iree')
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_jit_polymorphic_output_iree(self):
+    # like test_jit_basic_iree, but without the jnp.sum!
+    count = 0
+
+    @jax.jit
+    def f(i):
+      nonlocal count
+      count += 1
+      return jnp.ones(i, dtype='float32')
+
+    self.assertAllClose(f(3), jnp.ones(3, dtype='float32'), check_dtypes=True)
+    self.assertAllClose(f(4), jnp.ones(4, dtype='float32'), check_dtypes=True)
+    self.assertEqual(count, 1)
+
   def test_slicing_basic(self):
     f = jax.jit(lambda x, n: jnp.sum(x[:n]))
     ans = f(jnp.arange(10), 3)

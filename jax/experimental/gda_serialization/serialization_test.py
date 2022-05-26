@@ -129,46 +129,6 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m1.local_shards:
       self.assertArraysEqual(l.data.to_py(), expected_data[l.device.id])
 
-  def test_async_checkpointing(self):
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    global_input_shape = (8, 2)
-    mesh_axes = P('x', 'y')
-    num = util.prod(global_input_shape)
-
-    # First GDA
-    global_input_data1 = np.arange(num).reshape(global_input_shape)
-    def cb1(index):
-      return global_input_data1[index]
-    gda1 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
-                                           mesh_axes, cb1)
-    temp_ckpt_dir1 = pathlib.Path(self.create_tempdir('temp_first').full_path)
-    ckpt_dir1 = str(temp_ckpt_dir1).replace('temp_first', 'first')
-
-    s_tspecs = jax.tree_map(serialization.get_tensorstore_spec, [str(temp_ckpt_dir1)])
-
-    manager = serialization.GlobalAsyncCheckpointManager()
-    manager.serialize([gda1], s_tspecs, temp_checkpoint_dir=temp_ckpt_dir1,
-                      final_checkpoint_dir=ckpt_dir1)
-    manager.wait_until_finished()
-
-    d_tspecs = jax.tree_map(serialization.get_tensorstore_spec, [str(ckpt_dir1)])
-    m1, = manager.deserialize([global_mesh], [mesh_axes], d_tspecs)
-    self.assertArraysEqual(m1.local_shards[0].data.to_py(),
-                           np.array([[0], [2]]))
-    self.assertArraysEqual(m1.local_shards[1].data.to_py(),
-                           np.array([[1], [3]]))
-    self.assertEqual(m1.local_shards[0].data.shape, (2, 1))
-    self.assertEqual(m1.dtype, np.int32)
-
-    # Will throw `file already exists` error when `tf.io.gfile.rename`.
-    # `wait_until_finished` will raise the error.
-    with self.assertRaises(Exception):
-      ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
-      manager1 = serialization.GlobalAsyncCheckpointManager()
-      manager1.serialize([gda1], s_tspecs, temp_checkpoint_dir=temp_ckpt_dir1,
-                         final_checkpoint_dir=ckpt_dir1)
-      manager1.wait_until_finished()
-
   def test_spec_has_metadata(self):
     spec = {
         'a': {

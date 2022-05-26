@@ -940,6 +940,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return []
 
   @classmethod
+  def scatter(cls, harness):
+    return []
+
+  @classmethod
   def select_and_gather_add(cls, harness):
     return [
         # This JAX primitives is not not exposed directly in the JAX API

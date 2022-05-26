@@ -239,11 +239,11 @@ def is_device_cuda():
 def _get_device_tags():
   """returns a set of tags definded for the device under test"""
   if is_device_rocm():
-    device_tags = set([device_under_test(), "rocm"])
+    device_tags = {device_under_test(), "rocm"}
   elif is_device_cuda():
-    device_tags = set([device_under_test(), "cuda"])
+    device_tags = {device_under_test(), "cuda"}
   else:
-    device_tags = set([device_under_test()])
+    device_tags = {device_under_test()}
   return device_tags
 
 def skip_on_devices(*disabled_devices):
@@ -301,7 +301,7 @@ def format_test_name_suffix(opname, shapes, dtypes):
 
 # We use special symbols, represented as singleton objects, to distinguish
 # between NumPy scalars, Python scalars, and 0-D arrays.
-class ScalarShape(object):
+class ScalarShape:
   def __len__(self): return 0
 class _NumpyScalar(ScalarShape): pass
 class _PythonScalar(ScalarShape): pass
@@ -358,9 +358,9 @@ def _format_shape_dtype_string(shape, dtype):
     return 'py' + dtype_str(dtype)
   elif type(shape) is tuple:
     shapestr = ','.join(str(dim) for dim in shape)
-    return '{}[{}]'.format(dtype_str(dtype), shapestr)
+    return f'{dtype_str(dtype)}[{shapestr}]'
   elif type(shape) is int:
-    return '{}[{},]'.format(dtype_str(dtype), shape)
+    return f'{dtype_str(dtype)}[{shape},]'
   else:
     raise TypeError(type(shape))
 
@@ -587,20 +587,19 @@ def check_raises(thunk, err_type, msg):
     thunk()
     assert False
   except err_type as e:
-    assert str(e).startswith(msg), "\n{}\n\n{}\n".format(e, msg)
+    assert str(e).startswith(msg), f"\n{e}\n\n{msg}\n"
 
 def check_raises_regexp(thunk, err_type, pattern):
   try:
     thunk()
     assert False
   except err_type as e:
-    assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
+    assert re.match(pattern, str(e)), f"{e}\n\n{pattern}\n"
 
 
 def iter_eqns(jaxpr):
   # TODO(necula): why doesn't this search in params?
-  for eqn in jaxpr.eqns:
-    yield eqn
+  yield from jaxpr.eqns
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from iter_eqns(subjaxpr)
 
@@ -609,7 +608,7 @@ def assert_dot_precision(expected_precision, fun, *args):
   precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
-    msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
+    msg = f"Unexpected precision: {expected_precision} != {precision}"
     if isinstance(precision, tuple):
       assert precision[0] == expected_precision, msg
       assert precision[1] == expected_precision, msg
@@ -636,7 +635,7 @@ def cases_from_gens(*gens):
   cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
   for size in sizes:
     for i in range(cases_per_size):
-      yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
+      yield (f'_{size}_{i}',) + tuple(gen(size) for gen in gens)
 
 def named_cases_from_sampler(gen):
   seen = set()
@@ -786,7 +785,7 @@ class JaxTestCase(parameterized.TestCase):
       # Print it so we can copy-and-paste it into the test
       print(f"Found\n{what}\n")
     self.assertMultiLineEqual(expected_clean, what_clean,
-                              msg="Found\n{}\nExpecting\n{}".format(what, expected))
+                              msg=f"Found\n{what}\nExpecting\n{expected}")
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True,
                        rtol=None, atol=None, check_cache_misses=True):
@@ -845,6 +844,18 @@ class JaxTestCase(parameterized.TestCase):
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
+_CPP_JIT_IMPLEMENTATION = functools.partial(api._jit, True)
+_CPP_JIT_IMPLEMENTATION._name = "cpp"
+_PYTHON_JIT_IMPLEMENTATION = functools.partial(api._jit, False)
+_PYTHON_JIT_IMPLEMENTATION._name = "python"
+_NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x
+_NOOP_JIT_IMPLEMENTATION._name = "noop"
+
+JIT_IMPLEMENTATION = (
+  _CPP_JIT_IMPLEMENTATION,
+  _PYTHON_JIT_IMPLEMENTATION,
+  _NOOP_JIT_IMPLEMENTATION,
+)
 
 class BufferDonationTestCase(JaxTestCase):
   assertDeleted = lambda self, x: self._assertDeleted(x, True)

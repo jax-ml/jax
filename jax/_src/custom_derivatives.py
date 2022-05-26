@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -233,7 +232,7 @@ def _add_args(f, extra_args):
 
 @lu.transformation
 def _add_args_(extra_args, *args, **kwargs):
-  extra_args = tuple([arg.val for arg in extra_args])
+  extra_args = tuple(arg.val for arg in extra_args)
   all_args = (extra_args + args)
   yield (yield all_args, kwargs)
 
@@ -271,7 +270,7 @@ def _flatten_jvp(in_tree, *args):
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
              "equal shapes and dtypes, but got:\n{}")
       disagreements = (
-          "  primal {} for tangent {}".format(av1.str_short(), av2.str_short())
+          f"  primal {av1.str_short()} for tangent {av2.str_short()}"
           for av1, av2 in zip(primal_avals_out, tangent_avals_out) if av1 != av2)
       raise TypeError(msg.format('\n'.join(disagreements)))
   yield primals_out + tangents_out, out_tree
@@ -360,6 +359,8 @@ def _custom_jvp_call_jaxpr_jvp(
   outs = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *args, *args_dot)
   primals_out, tangents_out = split_list(outs, [len(outs) // 2])
   tangents_out = map(ad.recast_to_float0, primals_out, tangents_out)
+  if config.jax_enable_checks:
+    assert all(map(core.typecheck, fun_jaxpr.out_avals, primals_out))
   return primals_out, tangents_out
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
@@ -781,8 +782,8 @@ def custom_gradient(fun):
   and the VJP (gradient) function. See
   https://www.tensorflow.org/api_docs/python/tf/custom_gradient.
 
-  If the mathematical function to be differentiated has type signature ``a ->
-  b``, then the Python callable ``fun`` should have signature
+  If the mathematical function to be differentiated has Haskell-like signature
+  ``a -> b``, then the Python callable ``fun`` should have the signature
   ``a -> (b, CT b --o CT a)`` where we use ``CT x`` to denote a cotangent type
   for ``x`` and the ``--o`` arrow to denote a linear function. See the example
   below. That is, ``fun`` should return a pair where the first element
@@ -1001,7 +1002,7 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
                 linear_args):
   """Call a linear function, with a custom implementation for its transpose.
 
-  The type signatures of ``fun`` and ``fun_transpose`` are:
+  The `Haskell-like type signatures`_ of ``fun`` and ``fun_transpose`` are:
 
   .. code-block:: haskell
 
@@ -1081,6 +1082,7 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   Returns:
     The call result, i.e. ``fun(residual_args, linear_args)``.
 
+  .. _Haskell-like type signatures: https://wiki.haskell.org/Type_signature
   """
   operands_res, res_tree = tree_flatten(residual_args)
   operands_lin, lin_tree = tree_flatten(linear_args)

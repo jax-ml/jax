@@ -14,6 +14,7 @@
 
 
 import collections
+import copy
 import functools
 from functools import partial
 import inspect
@@ -463,14 +464,14 @@ JAX_RIGHT_OPERATOR_OVERLOADS = [
     op_record("__rrshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), [])
 ]
 
-class _OverrideEverything(object):
+class _OverrideEverything:
   pass
 
 for rec in JAX_OPERATOR_OVERLOADS + JAX_RIGHT_OPERATOR_OVERLOADS:
   if rec.nargs == 2:
     setattr(_OverrideEverything, rec.name, lambda self, other: self)
 
-class _OverrideNothing(object):
+class _OverrideNothing:
   pass
 
 for rec in JAX_OPERATOR_OVERLOADS + JAX_RIGHT_OPERATOR_OVERLOADS:
@@ -540,7 +541,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         func()
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_allow_picke={}".format(dtype, allow_pickle),
+      {"testcase_name": f"_{dtype}_allow_picke={allow_pickle}",
        "dtype": dtype, "allow_pickle": allow_pickle}
       for dtype in float_dtypes + [object]
       for allow_pickle in [True, False]))
@@ -635,7 +636,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck( fun, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": rec.test_name + "_{}".format(dtype),
+      {"testcase_name": rec.test_name + f"_{dtype}",
        "rng_factory": rec.rng_factory,
        "op_name": rec.name, "dtype": dtype}
       for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2
@@ -1151,7 +1152,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in JAX_ARGMINMAX_RECORDS))
   def testArgMinMaxEmpty(self, name, np_op, jnp_op):
     name = name[3:] if name.startswith("nan") else name
-    msg = "attempt to get {} of an empty sequence".format(name)
+    msg = f"attempt to get {name} of an empty sequence"
     with self.assertRaises(ValueError, msg=msg):
       jnp_op(np.array([]))
     with self.assertRaises(ValueError, msg=msg):
@@ -1842,7 +1843,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       # Test if allowed keyword arguments pass
       jnp.pad(arr, pad_width, mode, **allowed)
       # Test if prohibited keyword arguments of other modes raise an error
-      match = "unsupported keyword arguments for mode '{}'".format(mode)
+      match = f"unsupported keyword arguments for mode '{mode}'"
       for key, value in not_allowed.items():
         with self.assertRaisesRegex(ValueError, match):
           jnp.pad(arr, pad_width, mode, **{key: value})
@@ -1850,7 +1851,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # Test if unsupported mode raise error.
     unsupported_modes = [1, None, "foo"]
     for mode in unsupported_modes:
-      match = "Unimplemented padding mode '{}' for np.pad.".format(mode)
+      match = f"Unimplemented padding mode '{mode}' for np.pad."
       with self.assertRaisesRegex(NotImplementedError, match):
         jnp.pad(arr, pad_width, mode)
 
@@ -2091,7 +2092,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_ptype={}".format(ptype), "ptype": ptype}
+      {"testcase_name": f"_ptype={ptype}", "ptype": ptype}
       for ptype in ['int', 'np.int', 'jnp.int']))
   def testIntegerPower(self, ptype):
     p = {'int': 2, 'np.int': np.int32(2), 'jnp.int': jnp.int32(2)}[ptype]
@@ -2101,7 +2102,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(eqns[0].primitive, lax.integer_pow_p)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_x={}_y={}".format(x, y), "x": x, "y": y}
+      {"testcase_name": f"_x={x}_y={y}", "x": x, "y": y}
       for x in [-1, 0, 1]
       for y in [0, 32, 64, 128]))
   def testIntegerPowerOverflow(self, x, y):
@@ -2559,7 +2560,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_fixed_size={}".format(fixed_size),
+      {"testcase_name": f"_fixed_size={fixed_size}",
       "fixed_size": fixed_size}
       for fixed_size in [True, False]))
   def testNonScalarRepeats(self, fixed_size):
@@ -2616,10 +2617,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x -= 1.
       return x
 
-    np_input = np.ones((1))
-    jnp_input = jnp.ones((1))
-    expected_np_input_after_call = np.ones((1))
-    expected_jnp_input_after_call = jnp.ones((1))
+    np_input = np.ones(1)
+    jnp_input = jnp.ones(1)
+    expected_np_input_after_call = np.ones(1)
+    expected_jnp_input_after_call = jnp.ones(1)
 
     self.assertTrue(device_array.type_is_device_array(jnp.concatenate([np_input])))
 
@@ -2774,7 +2775,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "n={}_k={}_m={}".format(n, k, m),
+    {"testcase_name": f"n={n}_k={k}_m={m}",
       "n": n, "k": k, "m": m}
     for n in range(1, 5)
     for k in [-1, 0, 1]
@@ -2786,7 +2787,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "n={}_k={}_m={}".format(n, k, m),
+    {"testcase_name": f"n={n}_k={k}_m={m}",
       "n": n, "k": k, "m": m}
     for n in range(1, 5)
     for k in [-1, 0, 1]
@@ -2826,7 +2827,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_ndim={}_n={}".format(ndim, n),
+      {"testcase_name": f"_ndim={ndim}_n={n}",
        "ndim": ndim, "n": n}
       for ndim in [0, 1, 4]
       for n in [0, 1, 7]))
@@ -2953,7 +2954,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_n={}".format(np.dtype(dtype).name, n),
+      {"testcase_name": f"_shape={np.dtype(dtype).name}_n={n}",
        "dtype": dtype, "n": n}
       for dtype in default_dtypes
       for n in list(range(4))))
@@ -3828,10 +3829,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": f"_dtype={np.dtype(dtype)}_func={func}",
        "dtype": dtype, "func": func}
       for dtype in all_dtypes
-      for func in ["array", "copy"]))
+      for func in ["array", "copy", "copy.copy", "copy.deepcopy"]))
   def testArrayCopy(self, dtype, func):
     x = jnp.ones(10, dtype=dtype)
-    copy_func = getattr(jnp, func)
+    if func == "copy.deepcopy":
+      copy_func = copy.deepcopy
+    elif func == "copy.copy":
+      copy_func = copy.copy
+    else:
+      copy_func = getattr(jnp, func)
 
     x_view = jnp.asarray(x)
     x_view_jit = jax.jit(jnp.asarray)(x)
@@ -3932,7 +3938,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # assert  xla.type_is_device_array(jnp.array(DeviceArrayLike()))
 
   def testArrayMethod(self):
-    class arraylike(object):
+    class arraylike:
       dtype = np.dtype('float32')
       def __array__(self, dtype=None):
         return np.array(3., dtype=dtype)
@@ -3982,7 +3988,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         self.assertTrue(jnp.all(jnp.equal(result_np, result_jit)))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_x={}_y={}_equal_nan={}".format(x, y, equal_nan),
+      {"testcase_name": f"_x={x}_y={y}_equal_nan={equal_nan}",
        "x": x, "y": y, "equal_nan": equal_nan}
       for x, y in itertools.product([
          1, [1], [1, 1 + 1E-4], [1, np.nan]], repeat=2)
@@ -4927,7 +4933,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_dtype={}".format(op, dtype.__name__),
+      {"testcase_name": f"_op={op}_dtype={dtype.__name__}",
        "dtype": dtype, "op": op}
       for dtype in [int, float, bool, complex]
       for op in ["atleast_1d", "atleast_2d", "atleast_3d"]))
@@ -4988,7 +4994,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(*jtu.cases_from_list(
-      {"testcase_name": "_case={}".format(i),
+      {"testcase_name": f"_case={i}",
        "input": input}
        for i, input in enumerate([
          3,
@@ -5756,7 +5762,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           for x in jaxpr.consts))
 
   @parameterized.named_parameters(
-      {"testcase_name": "_from={}_to={}".format(from_shape, to_shape),
+      {"testcase_name": f"_from={from_shape}_to={to_shape}",
        "from_shape": from_shape, "to_shape": to_shape}
       for from_shape, to_shape in [
           [(1, 3), (4, 3)],
@@ -6100,7 +6106,7 @@ class NumpyGradTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
-          {"testcase_name": "_{}_{}".format(rec.op.__name__, special_value),
+          {"testcase_name": f"_{rec.op.__name__}_{special_value}",
            "op": rec.op, "special_value": special_value, "order": rec.order}
           for special_value in rec.values)
       for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))

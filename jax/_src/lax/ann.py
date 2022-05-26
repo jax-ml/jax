@@ -210,7 +210,7 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
                                 reduction_input_size_override,
                                 aggregate_to_topk):
   if k <= 0:
-    raise ValueError('k must be positive, got {}'.format(k))
+    raise ValueError(f'k must be positive, got {k}')
   if len(operand.shape) == 0:
     raise TypeError('approx_top_k operand must have >= 1 dimension, got {}'.format(
         operand.shape))
@@ -257,7 +257,7 @@ def _approx_top_k_tpu_translation(ctx, avals_in, avals_out, operand, *, k,
   c = ctx.builder
   op_shape = c.get_shape(operand)
   if not op_shape.is_array():
-    raise ValueError('operand must be an array, but was {}'.format(op_shape))
+    raise ValueError(f'operand must be an array, but was {op_shape}')
   op_dims = op_shape.dimensions()
   op_type = op_shape.element_type()
   if reduction_dimension < 0:
@@ -281,7 +281,7 @@ def _approx_top_k_fallback_translation(ctx, avals_in, avals_out, operand, *, k,
   c = ctx.builder
   op_shape = c.get_shape(operand)
   if not op_shape.is_array():
-    raise ValueError('operand must be an array, but was {}'.format(op_shape))
+    raise ValueError(f'operand must be an array, but was {op_shape}')
   op_dims = op_shape.dimensions()
   op_type = op_shape.element_type()
 

@@ -90,7 +90,7 @@ def _contains_query(vals, query):
     if jnp.any(vals == query):
       raise FoundValue(str(query))
   else:
-    raise ValueError('Malformed Query: {}'.format(query))
+    raise ValueError(f'Malformed Query: {query}')
 
 ### Helper Functions
 

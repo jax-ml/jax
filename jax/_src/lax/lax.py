@@ -571,7 +571,7 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
   return concatenate_p.bind(*operands, dimension=dimension)
 
 
-class _enum_descriptor(object):
+class _enum_descriptor:
   def __init__(self, val):
     self.val = val
   def __get__(self, _, owner):
@@ -1071,7 +1071,7 @@ def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the last axis of ``operand``."""
   k = int(k)
   if k < 0:
-    raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
+    raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   return top_k_p.bind(operand, k=k)
 
 def tie_in(x: Array, y: Array) -> Array:
@@ -2587,8 +2587,14 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       rhs_batching_dimensions=list(rhs_batch),
       lhs_contracting_dimensions=list(lhs_contracting),
       rhs_contracting_dimensions=list(rhs_contracting))
-  return [mhlo.DotGeneralOp(mlir.aval_to_ir_type(aval_out), lhs, rhs,
-                            dot_dnums, precision_attr(precision)).result]
+  return [
+      mhlo.DotGeneralOp(
+          mlir.aval_to_ir_type(aval_out),
+          lhs,
+          rhs,
+          dot_dnums,
+          precision_config=precision_attr(precision)).result
+  ]
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
 
@@ -3238,8 +3244,8 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   return select_n(which, *cases), 0
 
 def _select_masking_rule(padded_vals, logical_shapes):
-  which_shape, true_shape, false_shape = [
-      masking.padded_shape_as_value(val.shape) for val in padded_vals]
+  which_shape, true_shape, false_shape = (
+      masking.padded_shape_as_value(val.shape) for val in padded_vals)
   assert np.array_equal(which_shape, true_shape)
   assert np.array_equal(which_shape, false_shape)
   return select_n(*padded_vals)
@@ -3812,7 +3818,8 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   sort = mhlo.SortOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
                      mlir.flatten_lowering_ir_args(operands),
-                     mlir.i64_attr(dimension), ir.BoolAttr.get(is_stable))
+                     dimension=mlir.i64_attr(dimension),
+                     is_stable=ir.BoolAttr.get(is_stable))
   scalar_avals = [aval.update(shape=()) for aval in ctx.avals_in]
   scalar_types = safe_map(mlir.aval_to_ir_type, scalar_avals)
   comparator = sort.comparator.blocks.append(
@@ -3838,7 +3845,7 @@ mlir.register_lowering(sort_p, _sort_lower)
 
 def _top_k_abstract_eval(operand, *, k):
   if k < 0:
-    raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
+    raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   if len(operand.shape) == 0:
     raise TypeError("top_k operand must have >= 1 dimension, got {}"
                     .format(operand.shape))
@@ -4006,8 +4013,11 @@ def _infeed_lowering(ctx, token, *, shapes, partitions):
            for i in range(len(aval.shape) - 1, -1, -1)])
       for aval in shapes
   ])
-  infeed = mhlo.InfeedOp(flat_output_types + [mhlo.TokenType.get()], token,
-                         ir.StringAttr.get(''), layouts)
+  infeed = mhlo.InfeedOp(
+      flat_output_types + [mhlo.TokenType.get()],
+      token,
+      infeed_config=ir.StringAttr.get(''),
+      layout=layouts)
   if partitions is not None:
     mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
   token = infeed.results[-1]
@@ -4046,8 +4056,10 @@ outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 def _outfeed_lowering(ctx, token, *xs, partitions):
   token_aval = ctx.avals_in[0]
   outfeed = mhlo.OutfeedOp(
-      mlir.aval_to_ir_type(token_aval), mlir.flatten_lowering_ir_args(xs),
-      token, ir.StringAttr.get(''))
+      mlir.aval_to_ir_type(token_aval),
+      mlir.flatten_lowering_ir_args(xs),
+      token,
+      outfeed_config=ir.StringAttr.get(''))
   if partitions is not None:
     mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
   return outfeed.results

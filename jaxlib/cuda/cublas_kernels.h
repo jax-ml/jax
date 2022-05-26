@@ -58,6 +58,18 @@ struct GetrfBatchedDescriptor {
 void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status);
 
+
+// Batched QR decomposition: geqrfbatched
+
+struct GeqrfBatchedDescriptor {
+  CublasType type;
+  int batch, m, n;
+};
+
+void GeqrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
+                  size_t opaque_len, XlaCustomCallStatus* status);
+
+
 }  // namespace jax
 
 #endif  // JAXLIB_CUBLAS_KERNELS_H_

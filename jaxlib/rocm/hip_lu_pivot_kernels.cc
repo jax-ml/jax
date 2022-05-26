@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "jaxlib/rocm/hip_lu_pivot_kernels.h"
 
+#include <string_view>
+
 #include "jaxlib/rocm/hip_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
@@ -40,7 +42,7 @@ void HipLuPivotsToPermutation(hipStream_t stream, void** buffers,
                               XlaCustomCallStatus* status) {
   auto s = HipLuPivotsToPermutation_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    absl::string_view message = s.message();
+    std::string_view message = s.message();
     XlaCustomCallStatusSetFailure(status, message.data(), message.length());
   }
 }

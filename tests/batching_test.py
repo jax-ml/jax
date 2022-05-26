@@ -501,7 +501,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(per_example, per_example_direct)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_op={}".format(name), "op": op, "unit": unit}
+    {"testcase_name": f"_op={name}", "op": op, "unit": unit}
     for name, op, unit in [("max", lax.max, -jnp.inf), ("min", lax.min, jnp.inf)])
   def testMinMaxPool(self, op, unit):
     W = jnp.array(self.rng().randn(3, 3, 1, 5), dtype=np.float32)

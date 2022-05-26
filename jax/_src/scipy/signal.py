@@ -601,7 +601,7 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
     if len(win.shape) != 1:
       raise ValueError('window must be 1-D')
     if win.shape[0] != nperseg:
-      raise ValueError('window must have length of {0}'.format(nperseg))
+      raise ValueError(f'window must have length of {nperseg}')
   win = win.astype(xsubs.dtype)
 
   xsubs *= win.sum()  # This takes care of the 'spectrum' scaling

@@ -89,12 +89,12 @@ class PolyTest(jtu.JaxTestCase):
       Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
 
   def test_Poly_hash(self):
-    assert not len(set(hash(Poly({Mon(): i})) for i in range(10))) == 1
+    assert not len({hash(Poly({Mon(): i})) for i in range(10)}) == 1
     assert (hash(Poly({Mon(): 3, Mon({'n': 1}): 4}))
             == hash(Poly({Mon({'n': 1}): 4, Mon(): 3})))
 
   def test_Mon_hash(self):
-    assert not len(set(hash(Mon({'a': i})) for i in range(10))) == 1
+    assert not len({hash(Mon({'a': i})) for i in range(10)}) == 1
     assert hash(Mon({'a': 1, 'b': 1})) == hash(Mon({'b': 1, 'a': 1}))
 
   @parameterized.parameters([
@@ -707,7 +707,7 @@ class MaskingTest(jtu.JaxTestCase):
                jtu.rand_default(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+    {"testcase_name": f"_{dtype}", "dtype": np.dtype(dtype).name}
     for dtype in [np.float32, np.float64]))
   @unittest.skip("not yet implemented")
   def test_uniform(self, dtype):
@@ -739,7 +739,7 @@ class MaskingTest(jtu.JaxTestCase):
                [(12,)], ['float_'], jtu.rand_default(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list([{
-    'testcase_name': "operator={}".format(operator.__name__), 'operator': operator}
+    'testcase_name': f"operator={operator.__name__}", 'operator': operator}
     for operator in [jnp.sum, jnp.prod, jnp.max, jnp.min]]))
   def test_reduce(self, operator):
     self.check(operator, ['(m+1, n+1)'], '', {'m': 3, 'n': 4}, [(4, 5)], ['float_'],

@@ -90,6 +90,6 @@ if __name__ == "__main__":
 
     train_acc = accuracy(params, (train_images, train_labels))
     test_acc = accuracy(params, (test_images, test_labels))
-    print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
-    print("Training set accuracy {}".format(train_acc))
-    print("Test set accuracy {}".format(test_acc))
+    print(f"Epoch {epoch} in {epoch_time:0.2f} sec")
+    print(f"Training set accuracy {train_acc}")
+    print(f"Test set accuracy {test_acc}")

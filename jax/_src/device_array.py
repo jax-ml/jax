@@ -21,6 +21,7 @@ import weakref
 
 import numpy as np
 
+import jax
 from jax import core
 from jax._src.config import config
 from jax._src import abstract_arrays
@@ -212,7 +213,7 @@ for device_array in [DeviceArray]:
     sep = ' '
     if last_line_len + len(dtype_str) + 1 > line_width:
       sep = ' ' * len(prefix)
-    return "{}{},{}{}".format(prefix, s, sep, dtype_str)
+    return f"{prefix}{s},{sep}{dtype_str}"
 
   setattr(device_array, "__repr__", __repr__)
 
@@ -265,6 +266,14 @@ for device_array in [DeviceArray]:
 
   setattr(device_array, "__array__", __array__)
 
+  def __reduce__(self):
+    fun, args, arr_state = self._value.__reduce__()
+    aval_state = {'weak_type': self.aval.weak_type,
+                  'named_shape': self.aval.named_shape}
+    return (reconstruct_device_array, (fun, args, arr_state, aval_state))
+
+  setattr(device_array, "__reduce__", __reduce__)
+
   setattr(device_array, "__str__", partialmethod(_forward_to_value, str))
   setattr(device_array, "__bool__", partialmethod(_forward_to_value, bool))
   setattr(device_array, "__nonzero__", partialmethod(_forward_to_value, bool))
@@ -280,10 +289,6 @@ for device_array in [DeviceArray]:
   del to_bytes
   setattr(device_array, "tolist", lambda self: self._value.tolist())
 
-  # pickle saves and loads just like an ndarray
-  setattr(device_array, "__reduce__",
-          partialmethod(_forward_to_value, operator.methodcaller("__reduce__")))
-
   # explicitly set to be unhashable.
   setattr(device_array, "__hash__", None)
 
@@ -296,6 +301,15 @@ for device_array in [DeviceArray]:
 
   setattr(device_array, "__getitem__", lambda self, i: raise_not_implemented())
 # pylint: enable=protected-access
+
+
+def reconstruct_device_array(fun, args, arr_state, aval_state):
+  """Method to reconstruct a device array from a serialized state."""
+  np_value = fun(*args)
+  np_value.__setstate__(arr_state)
+  jnp_value = jax.device_put(np_value)
+  jnp_value.aval = jnp_value.aval.update(**aval_state)
+  return jnp_value
 
 
 class DeletedBuffer(object): pass

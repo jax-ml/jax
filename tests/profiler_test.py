@@ -172,7 +172,7 @@ class ProfilerTest(unittest.TestCase):
 
       # Request for 1000 milliseconds of profile.
       duration_ms = 1000
-      profiler_client.trace('localhost:{}'.format(port), logdir, duration_ms,
+      profiler_client.trace(f'localhost:{port}', logdir, duration_ms,
                             '', 1000, options)
       self.profile_done = True
 

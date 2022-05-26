@@ -87,7 +87,7 @@ zip = util.safe_zip
 def _sanitize_scope_name(name):
   scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
   if not _VALID_SCOPE_REGEX.match(scope_name):
-    scope_name = ".{}".format(scope_name)
+    scope_name = f".{scope_name}"
   return scope_name
 
 
@@ -982,7 +982,7 @@ tf_not_yet_impl = [
     "random_gamma_grad",
     "reduce_precision",
     "schur",
-    "name",
+    "closed_call",
     "unreachable",
     "bint",
     "getslice",
@@ -1010,6 +1010,8 @@ tf_not_yet_impl = [
     "all_gather",
     "lu_pivots_to_permutation",
     "xla_pmap",
+    "geqrf",
+    "orgqr",
 ]
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
@@ -2366,6 +2368,8 @@ tf_impl_with_avals[ad_checkpoint.remat_p] = \
                             platform="cpu"),
                     multiple_results=True,
                     extra_name_stack="checkpoint")
+
+tf_impl[ad_checkpoint.name_p] = lambda x, *, name: x
 
 # TODO: Remove once tensorflow is 2.10.0 everywhere.
 if hasattr(tfxla, 'optimization_barrier'):

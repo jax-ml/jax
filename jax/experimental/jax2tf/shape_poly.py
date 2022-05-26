@@ -644,7 +644,7 @@ def _parse_spec(spec: Optional[Union[str, PolyShape]],
         return dim_size
       return dim_poly
 
-  dims = tuple([_process_dim(i, ds) for i, ds in enumerate(spec_tuple)])
+  dims = tuple(_process_dim(i, ds) for i, ds in enumerate(spec_tuple))
   return dims
 
 

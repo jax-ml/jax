@@ -30,7 +30,7 @@ from absl import logging
 logging._warn_preinit_stderr = 0
 
 import jax._src.lib
-from jax._src.config import flags, bool_env
+from jax._src.config import flags, bool_env, int_env
 from jax._src.lib import tpu_driver_client
 from jax._src.lib import xla_client
 from jax._src import util, traceback_util
@@ -79,6 +79,11 @@ flags.DEFINE_bool(
     bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
+flags.DEFINE_integer(
+    'jax_xla_profile_version', int_env('JAX_XLA_PROFILE_VERSION', 0),
+    'Optional profile version for XLA compilation. '
+    'This is meaningful only when XLA is configured to '
+    'support the remote compilation profile feature.')
 
 def get_compile_options(
     num_replicas: int,
@@ -152,6 +157,8 @@ def get_compile_options(
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
+  if jax._src.lib.xla_extension_version >= 68:
+    compile_options.profile_version = FLAGS.jax_xla_profile_version
   return compile_options
 
 
@@ -212,19 +219,21 @@ register_backend_factory('cpu',
 register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
 
-if xla_client._version >= 65:
-  register_backend_factory(
-      'cuda', partial(xla_client.make_gpu_client, platform_name='cuda'),
-      priority=200)
-  register_backend_factory(
-      'rocm', partial(xla_client.make_gpu_client, platform_name='rocm'),
-      priority=200)
-else:
-  register_backend_factory('gpu', xla_client.make_gpu_client,
-                           priority=200)
+if hasattr(xla_client, "make_gpu_client"):
+  if xla_client._version >= 65:
+    register_backend_factory(
+        'cuda', partial(xla_client.make_gpu_client, platform_name='cuda'),
+        priority=200)
+    register_backend_factory(
+        'rocm', partial(xla_client.make_gpu_client, platform_name='rocm'),
+        priority=200)
+  else:
+    register_backend_factory('gpu', xla_client.make_gpu_client,
+                             priority=200)
 
-register_backend_factory(
-  'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
+if hasattr(xla_client, "make_tpu_client"):
+  register_backend_factory(
+    'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
 
 if iree is not None:
   register_backend_factory("iree", iree.iree_client_factory, priority=-100)
@@ -290,7 +299,7 @@ def backends():
 
     if FLAGS.jax_platforms:
       jax_platforms = FLAGS.jax_platforms.split(",")
-      platforms = list(jax_platforms)
+      platforms = []
       # Allow platform aliases in the list of platforms.
       for platform in jax_platforms:
         platforms.extend(expand_platform_alias(platform))

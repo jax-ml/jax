@@ -62,6 +62,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax.util import safe_map, safe_zip, split_list
+from jax._src.config import config
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import lax_numpy
 from jax._src.util import canonicalize_axis
@@ -153,7 +154,7 @@ class SparsifyEnv:
     return SparsifyValue(np.shape(data), self._push(data), None)
 
   def sparse(self, shape, data=None, indices=None,
-             *, data_ref=None, indices_ref=None):
+             *, data_ref=None, indices_ref=None, indices_sorted=False):
     """Add a new sparse array to the sparsify environment."""
     if data is not None:
       assert data_ref is None
@@ -167,13 +168,14 @@ class SparsifyEnv:
     else:
       assert indices_ref is not None and indices_ref < len(self._buffers)
 
-    return SparsifyValue(shape, data_ref, indices_ref)
+    return SparsifyValue(shape, data_ref, indices_ref, indices_sorted)
 
 
 class SparsifyValue(NamedTuple):
   shape: Tuple[int, ...]
   data_ref: Optional[int]
   indices_ref: Optional[int]
+  indices_sorted: Optional[bool] = False
 
   @property
   def ndim(self):
@@ -194,7 +196,8 @@ def arrays_to_spvalues(
   """Convert a pytree of (sparse) arrays to an equivalent pytree of spvalues."""
   def array_to_spvalue(arg):
     if isinstance(arg, BCOO):
-      return spenv.sparse(arg.shape, arg.data, arg.indices)
+      return spenv.sparse(arg.shape, arg.data, arg.indices,
+                          indices_sorted=arg.indices_sorted)
     else:
       return spenv.dense(arg)
   return tree_map(array_to_spvalue, args, is_leaf=_is_bcoo)
@@ -208,7 +211,8 @@ def spvalues_to_arrays(
   def spvalue_to_array(spvalue):
     if spvalue.is_sparse():
       assert spvalue.indices_ref is not None
-      return BCOO((spenv.data(spvalue), spenv.indices(spvalue)), shape=spvalue.shape)
+      return BCOO((spenv.data(spvalue), spenv.indices(spvalue)),
+                  shape=spvalue.shape, indices_sorted=spvalue.indices_sorted)
     else:
       return spenv.data(spvalue)
   return tree_map(spvalue_to_array, spvalues, is_leaf=_is_spvalue)
@@ -471,7 +475,8 @@ def _transpose_sparse(spenv, *spvalues, permutation):
   permutation = tuple(permutation)
   args = spvalues_to_arrays(spenv, spvalues)
   shape = args[0].shape
-  mat = sparse.BCOO((args[0].data, args[0].indices), shape=shape)
+  mat = sparse.BCOO((args[0].data, args[0].indices), shape=shape,
+                    indices_sorted=args[0].indices_sorted)
   mat_transposed = sparse.bcoo_transpose(mat, permutation=permutation)
   out_shape = tuple(shape[i] for i in permutation)
 
@@ -494,6 +499,7 @@ def _transpose_sparse(spenv, *spvalues, permutation):
   else:
     kwds['indices'] = mat_transposed.indices
 
+  kwds['indices_sorted'] = mat_transposed.indices_sorted
   spvalue = spenv.sparse(out_shape, **kwds)
   return (spvalue,)
 
@@ -506,7 +512,10 @@ def _add_sparse(spenv, *spvalues):
       raise NotImplementedError("Addition between sparse matrices of different shapes.")
     if X.indices_ref == Y.indices_ref:
       out_data = lax.add(spenv.data(X), spenv.data(Y))
-      out_spvalue = spenv.sparse(X.shape, out_data, indices_ref=X.indices_ref)
+      if config.jax_enable_checks:
+        assert X.indices_sorted == Y.indices_sorted
+      out_spvalue = spenv.sparse(X.shape, out_data, indices_ref=X.indices_ref,
+                                 indices_sorted=X.indices_sorted)
     elif spenv.indices(X).ndim != spenv.indices(Y).ndim or spenv.data(X).ndim != spenv.data(Y).ndim:
       raise NotImplementedError("Addition between sparse matrices with different batch/dense dimensions.")
     else:
@@ -514,15 +523,18 @@ def _add_sparse(spenv, *spvalues):
       out_data = lax.concatenate([spenv.data(X), spenv.data(Y)], dimension=spenv.indices(X).ndim - 2)
       out_spvalue = spenv.sparse(X.shape, out_data, out_indices)
   else:
-    raise NotImplementedError("Addition between sparse and dense matrix.")
+    raise NotImplementedError("Addition between sparse and dense array.")
 
   return (out_spvalue,)
 
 sparse_rules[lax.add_p] = _add_sparse
 
 def _sub_sparse(spenv, *spvalues):
-  lhs, rhs = spvalues
-  return _add_sparse(spenv, lhs, *sparse_rules[lax.neg_p](spenv, rhs))
+  X, Y = spvalues
+  if X.is_sparse() and Y.is_sparse():
+    return _add_sparse(spenv, X, *sparse_rules[lax.neg_p](spenv, Y))
+  else:
+    raise NotImplementedError("Subtraction between sparse and dense array.")
 
 sparse_rules[lax.sub_p] = _sub_sparse
 
@@ -532,7 +544,10 @@ def _mul_sparse(spenv, *spvalues):
     if X.indices_ref == Y.indices_ref:
       # TODO(jakevdp): this is inaccurate if there are duplicate indices
       out_data = lax.mul(spenv.data(X), spenv.data(Y))
-      out_spvalue = spenv.sparse(X.shape, out_data, indices_ref=X.indices_ref)
+      if config.jax_enable_checks:
+        assert X.indices_sorted == Y.indices_sorted
+      out_spvalue = spenv.sparse(X.shape, out_data, indices_ref=X.indices_ref,
+                                 indices_sorted=X.indices_sorted)
     else:
       X_promoted, Y_promoted = spvalues_to_arrays(spenv, spvalues)
       mat = bcoo_multiply_sparse(X_promoted, Y_promoted)
@@ -542,7 +557,8 @@ def _mul_sparse(spenv, *spvalues):
       X, Y = Y, X
     X_promoted = spvalues_to_arrays(spenv, X)
     out_data = bcoo_multiply_dense(X_promoted, spenv.data(Y))
-    out_spvalue = spenv.sparse(X.shape, out_data, indices_ref=X.indices_ref)
+    out_spvalue = spenv.sparse(X.shape, out_data, indices_ref=X.indices_ref,
+                               indices_sorted=X.indices_sorted)
 
   return (out_spvalue,)
 
@@ -713,7 +729,9 @@ sparse_rules[lax.cond_p] = _cond_sparse
 
 def _todense_sparse_rule(spenv, spvalue, *, tree):
   del tree  # TODO(jakvdp): we should assert that tree is PytreeDef(*)
-  out = sparse.BCOO((spenv.data(spvalue), spenv.indices(spvalue)), shape=spvalue.shape).todense()
+  out = sparse.BCOO((spenv.data(spvalue), spenv.indices(spvalue)),
+                    shape=spvalue.shape,
+                    indices_sorted=spvalue.indices_sorted).todense()
   return (spenv.dense(out),)
 
 sparse_rules[sparse.todense_p] = _todense_sparse_rule

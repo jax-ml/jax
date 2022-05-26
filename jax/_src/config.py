@@ -46,7 +46,7 @@ def bool_env(varname: str, default: bool) -> bool:
   elif val in ('n', 'no', 'f', 'false', 'off', '0'):
     return False
   else:
-    raise ValueError("invalid truth value %r for environment %r" % (val, varname))
+    raise ValueError(f"invalid truth value {val!r} for environment {varname!r}")
 
 def int_env(varname: str, default: int) -> int:
   """Read an environment variable and interpret it as an integer."""
@@ -81,7 +81,7 @@ class Config:
     else:
       self.check_exists(name)
       if name not in self.values:
-        raise Exception("Unrecognized config option: {}".format(name))
+        raise Exception(f"Unrecognized config option: {name}")
       self.values[name] = val
 
     hook = self._update_hooks.get(name, None)
@@ -105,7 +105,7 @@ class Config:
   def add_option(self, name, default, opt_type, meta_args, meta_kwargs,
                  update_hook=None):
     if name in self.values:
-      raise Exception("Config option {} already defined".format(name))
+      raise Exception(f"Config option {name} already defined")
     self.values[name] = default
     self.meta[name] = (opt_type, meta_args, meta_kwargs)
     if update_hook:
@@ -114,7 +114,7 @@ class Config:
 
   def check_exists(self, name):
     if name not in self.values:
-      raise AttributeError("Unrecognized config option: {}".format(name))
+      raise AttributeError(f"Unrecognized config option: {name}")
 
   def DEFINE_bool(self, name, default, *args, **kwargs):
     update_hook = kwargs.pop("update_hook", None)
@@ -476,7 +476,7 @@ flags.DEFINE_integer(
 
 flags.DEFINE_bool(
     'jax_pprint_use_color',
-    bool_env('JAX_PPRINT_USE_COLOR', False),
+    bool_env('JAX_PPRINT_USE_COLOR', True),
     help='Enable jaxpr pretty-printing with colorful syntax highlighting.'
 )
 
@@ -571,7 +571,13 @@ log_compiles = config.define_bool_state(
 parallel_functions_output_gda = config.define_bool_state(
     name='jax_parallel_functions_output_gda',
     default=False,
-    help='If True, pjit will output GSDAs.')
+    help='If True, pjit will output GDAs.')
+
+jax_array = config.define_bool_state(
+    name='jax_array',
+    default=False,
+    help=('If True, new pjit behavior will be enabled and `jax.Array` will be '
+          'used.'))
 
 
 distributed_debug = config.define_bool_state(

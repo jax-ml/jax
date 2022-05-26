@@ -8,8 +8,37 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.11 (Unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.10...main).
+## jax 0.3.14 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...main).
+* Changes
+  * {func}`jax.numpy.linalg.slogdet` now accepts an optional `method` argument
+    that allows selection between an LU-decomposition based implementation and
+    an implementation based on QR decomposition.
+  * {func}`jax.numpy.linalg.qr` now supports `mode="raw"`.
+  * `pickle`, `copy.copy`, and `copy.deepcopy` now have more complete support when
+    used on jax arrays ({jax-issue}`#10659`). In particular:
+    - `pickle` and `deepcopy` previously returned `np.ndarray` objects when used
+      on a `DeviceArray`; now `DeviceArray` objects are returned. For `deepcopy`,
+      the copied array is on the same device as the original. For `pickle` the
+      deserialized array will be on the default device.
+    - Within function transformations (i.e. traced code), `deepcopy` and `copy`
+      previously were no-ops. Now they use the same mechanism as `DeviceArray.copy()`.
+    - Calling `pickle` on a traced array now results in an explicit 
+      `ConcretizationTypeError`.
+
+## jaxlib 0.3.11 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
+
+## jax 0.3.13 (May 16, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.12...jax-v0.3.13).
+
+## jax 0.3.12 (May 15, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.11...jax-v0.3.12).
+* Changes
+  * Fixes [#10717](https://github.com/google/jax/issues/10717).
+
+## jax 0.3.11 (May 15, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.10...jax-v0.3.11).
 * Changes
   * {func}`jax.lax.eigh` now accepts an optional `sort_eigenvalues` argument
     that allows users to opt out of eigenvalue sorting on TPU.
@@ -21,9 +50,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     However, most users should prefer to use {mod}`jax.numpy.linalg` instead.
   * {func}`jax.scipy.linalg.polar_unitary`, which was a JAX extension to the
     scipy API, is deprecated. Use {func}`jax.scipy.linalg.polar` instead.
-
-## jaxlib 0.3.11 (Unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
 
 ## jax 0.3.10 (May 3, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.9...jax-v0.3.10).

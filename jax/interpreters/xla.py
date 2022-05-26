@@ -354,7 +354,7 @@ def axis_read(axis_env, axis_name):
   try:
     return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
   except ValueError:
-    raise NameError("unbound axis name: {}".format(axis_name)) from None
+    raise NameError(f"unbound axis name: {axis_name}") from None
 
 def axis_groups(axis_env: AxisEnv, name) -> Tuple[Tuple[int, ...]]:
   if not isinstance(name, (list, tuple)):
@@ -560,7 +560,3 @@ def lower_fun(fun: Callable, *, multiple_results: bool, backend=None,
                        "Add an MLIR (MHLO) lowering via jax.interpreters.mlir "
                        "instead.")
   return f
-
-
-ad.primitive_transposes[core.named_call_p] = partial(ad.call_transpose,
-                                                     core.named_call_p)

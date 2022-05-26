@@ -109,3 +109,30 @@ symlink_inputs(
         "//jaxlib/mlir/_mlir_libs:_mlirHlo",
     ],
 )
+
+symlink_inputs(
+    name = "pass_manager",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        ".": [
+            "@llvm-project//mlir/python:PassManagerPyFiles",
+        ],
+    }},
+    deps = [
+        ":mlir",
+    ],
+)
+
+symlink_inputs(
+    name = "transforms",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "transforms": [
+            "@llvm-project//mlir/python:TransformsPyFiles",
+        ],
+    }},
+    deps = [
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirTransforms",
+    ],
+)

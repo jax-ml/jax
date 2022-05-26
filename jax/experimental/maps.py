@@ -990,7 +990,7 @@ def _resource_typing_xmap(avals,
         for axis in v.aval.named_shape:
           for raxis in inner_axis_resources[axis]:
             resource_to_axis[raxis] = axis
-        partitioning_axes = set(resource_to_axis[raxis] for raxis in overlap)
+        partitioning_axes = {resource_to_axis[raxis] for raxis in overlap}
         raise JAXTypeError(
             f"One of xmapped function ({params['name']}) outputs is broadcast "
             f"along axis `{baxis}` which is assigned to resources "
@@ -1782,7 +1782,7 @@ def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
       continue
     undeclared_axes = (set(aval.named_shape) - set(axes)) & defined_axes
     if undeclared_axes:
-      undeclared_axes_str = sorted([str(axis) for axis in undeclared_axes])
+      undeclared_axes_str = sorted(str(axis) for axis in undeclared_axes)
       raise TypeError(f"One of xmap results has an out_axes specification of "
                       f"{axes.user_repr}, but is actually mapped along more axes "
                       f"defined by this xmap call: {', '.join(undeclared_axes_str)}")

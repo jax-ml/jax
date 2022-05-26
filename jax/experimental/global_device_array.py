@@ -38,15 +38,6 @@ Index = Tuple[slice, ...]
 _hashed_index = lambda x: hash(tuple((v.start, v.stop) for v in x))
 
 
-def _convert_list_args_to_tuple(f):
-  @functools.wraps(f)
-  def wrapper(*args, **kwargs):
-    args = [tuple(a) if isinstance(a, list) else a for a in args]
-    kwargs = {k: (tuple(v) if isinstance(v, list) else v) for k, v in kwargs.items()}
-    return f(*args, **kwargs)
-  return wrapper
-
-
 def _get_array_mapping(mesh_axes):
   # Import here to avoid cyclic import error when importing gda in pjit.py.
   from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
@@ -70,18 +61,16 @@ def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
   return indices  # type: ignore
 
 
-@_convert_list_args_to_tuple
 @cache()
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
   # The type: ignore is to ignore the type returned by `spec_to_indices`.
-  return dict(
-      (d, i)
-      for d, i in safe_zip(global_mesh.devices.flat, indices))  # type: ignore
+  return {
+      d: i
+      for d, i in safe_zip(global_mesh.devices.flat, indices)}  # type: ignore
 
 
-@_convert_list_args_to_tuple
 @cache()
 def get_shard_indices_replica_ids(
     global_shape: Shape, global_mesh: pxla.Mesh,
@@ -114,7 +103,6 @@ def _get_shard_indices_replica_ids_uncached(
   return out
 
 
-@_convert_list_args_to_tuple
 @cache()
 def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   chunk_size = []
@@ -389,7 +377,7 @@ class GlobalDeviceArray:
     # multiple accesses should be cheap.
     global_indices_rid = get_shard_indices_replica_ids(
         self._global_shape, self._global_mesh, self.mesh_axes)
-    device_to_buffer = dict((db.device(), db) for db in self._device_buffers)
+    device_to_buffer = {db.device(): db for db in self._device_buffers}
     global_shards = []
     for device, (index, rid) in global_indices_rid.items():
       local_shard = device.process_index == self._current_process
@@ -407,6 +395,22 @@ class GlobalDeviceArray:
     for db in self._device_buffers:
       db.block_until_ready()
     return self
+
+  def _value(self):
+    if not config.jax_array:
+      raise NotImplementedError('Please set `jax_array` config option to True '
+                                'to use this feature.')
+    if self.mesh.is_multi_process:
+      raise RuntimeError("Fetching value for GDA that spans non-addressable "
+                         "devices is not possible. You can use "
+                         "`jax.experimental.multihost_utils.process_allgather` "
+                         "for this use case.")
+    unique_shards = [s.data.copy_to_host_async() or s
+                     for s in self.local_shards if s.replica_id == 0]
+    npy_value = np.empty(self.shape, self.dtype)
+    for s in unique_shards:
+      npy_value[s.index] = s.data.to_py()
+    return npy_value
 
   @classmethod
   def from_callback(cls, global_shape: Shape, global_mesh: pxla.Mesh,

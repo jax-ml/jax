@@ -30,7 +30,7 @@ This code depends on tensorflow_privacy (https://github.com/tensorflow/privacy)
     $ pip install .
 
 The results match those in the reference TensorFlow baseline implementation:
-  https://github.com/tensorflow/privacy/tree/main/tutorials
+  https://github.com/tensorflow/privacy/tree/master/tutorials
 
 Example invocations:
   # this non-private baseline should get ~99% acc
@@ -230,7 +230,7 @@ def main(_):
         opt_state = update(
             key, next(itercount), opt_state, shape_as_image(*next(batches)))
     epoch_time = time.time() - start_time
-    print('Epoch {} in {:0.2f} sec'.format(epoch, epoch_time))
+    print(f'Epoch {epoch} in {epoch_time:0.2f} sec')
 
     # evaluate test accuracy
     params = get_params(opt_state)
@@ -245,7 +245,7 @@ def main(_):
       num_examples = 60000
       eps = compute_epsilon(epoch * steps_per_epoch, num_examples, delta)
       print(
-          'For delta={:.0e}, the current epsilon is: {:.2f}'.format(delta, eps))
+          f'For delta={delta:.0e}, the current epsilon is: {eps:.2f}')
     else:
       print('Trained with vanilla non-private SGD optimizer')
 
