@@ -95,8 +95,8 @@ class PjitLowered(stages.Lowered):
 
 # TODO(yashkatariya): Add pjit microbenchmarks.
 def pjit(fun: Callable,
-         in_axis_resources,
-         out_axis_resources,
+         in_axis_resources = None,
+         out_axis_resources = None,
          static_argnums: Union[int, Sequence[int]] = (),
          donate_argnums: Union[int, Sequence[int]] = ()) -> stages.Wrapped:
   """Makes ``fun`` compiled and automatically partitioned across multiple devices.
@@ -215,6 +215,9 @@ def pjit(fun: Callable,
   [ 0.5  2.   4.   6.   8.  10.  12.  10. ]
   """
   _check_callable(fun)
+
+  if not config.jax_array and (in_axis_resources is None or out_axis_resources is None):
+    raise ValueError('in_axis_resources and out_axis_resources should be set.')
 
   if isinstance(in_axis_resources, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
