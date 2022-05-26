@@ -29,7 +29,7 @@ from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 
-from jax.config import config
+from jax._src.config import config
 config.parse_flags_with_absl()
 
 FLAGS = config.FLAGS
@@ -136,7 +136,44 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(isinstance(z, jnp.ndarray), msg=(x, y, z))
       self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
 
-  def testPromoteDtypes(self):
+  @jax.numpy_dtype_promotion('strict')
+  def testPromoteDtypesStrict(self):
+    # Check that strong types have diagonal promotion table:
+    for t1 in all_dtypes:
+      for t2 in all_dtypes:
+        if t1 == t2:
+          self.assertEqual(t1, dtypes.promote_types(t1, t2))
+        else:
+          self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, t2)
+
+    # Promotion between weak types matches numpy promotion
+    for t1 in [int, float, complex]:
+      for t2 in [int, float, complex]:
+        py_result = type(t1(0) + t2(0))
+        lattice_dtype, lattice_weak_type = dtypes._lattice_result_type(t1, t2)
+        self.assertTrue(lattice_weak_type)
+        self.assertEqual(lattice_dtype, np.dtype(py_result))
+
+    # Check that weak promotion only works if strong value is not cast:
+    for t1 in bool_dtypes:
+      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, int)
+      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, float)
+      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, complex)
+    for t1 in signed_dtypes + unsigned_dtypes:
+      self.assertEqual(dtypes.promote_types(t1, int), t1)
+      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, float)
+      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, complex)
+    for t1 in float_dtypes:
+      self.assertEqual(dtypes.promote_types(t1, int), t1)
+      self.assertEqual(dtypes.promote_types(t1, float), t1)
+      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, complex)
+    for t1 in complex_dtypes:
+      self.assertEqual(dtypes.promote_types(t1, int), t1)
+      self.assertEqual(dtypes.promote_types(t1, float), t1)
+      self.assertEqual(dtypes.promote_types(t1, complex), t1)
+
+  @jax.numpy_dtype_promotion('standard')
+  def testPromoteDtypesStandard(self):
     for t1 in all_dtypes:
       self.assertEqual(t1, dtypes.promote_types(t1, t1))
 
@@ -163,7 +200,15 @@ class DtypesTest(jtu.JaxTestCase):
                    np_float_dtypes + complex_dtypes]:
       for t1, t2 in itertools.combinations(groups, 2):
         self.assertEqual(np.promote_types(t1, t2),
-                         dtypes.promote_types(t1, t2))
+                        dtypes.promote_types(t1, t2))
+
+    # Promotion between weak types matches numpy promotion
+    for t1 in [int, float, complex]:
+      for t2 in [int, float, complex]:
+        py_result = type(t1(0) + t2(0))
+        lattice_dtype, lattice_weak_type = dtypes._lattice_result_type(t1, t2)
+        self.assertTrue(lattice_weak_type)
+        self.assertEqual(lattice_dtype, np.dtype(py_result))
 
   @parameterized.parameters([jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64])
   def testScalarInstantiation(self, scalar_type):
