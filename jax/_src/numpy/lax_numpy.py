@@ -1212,8 +1212,9 @@ fill_value : array_like, optional
 
 @_wraps(np.nonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
 def nonzero(a, *, size=None, fill_value=None):
+  _check_arraylike("nonzero", a)
   a = atleast_1d(a)
-  mask = a != 0
+  mask = a if a.dtype == bool else (a != 0)
   if size is None:
     size = mask.sum()
   size = core.concrete_or_error(operator.index, size,
