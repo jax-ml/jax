@@ -47,6 +47,7 @@ from jax._src.config import (
   log_compiles as log_compiles,
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
+  numpy_dtype_promotion as numpy_dtype_promotion,
   numpy_rank_promotion as numpy_rank_promotion,
   jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
   transfer_guard as transfer_guard,

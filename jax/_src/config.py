@@ -350,7 +350,8 @@ class Config:
     Values included in this set should also most likely be included in
     the C++ JIT state, which is handled separately."""
     return (self.x64_enabled, self.jax_numpy_rank_promotion,
-            self.jax_default_matmul_precision, self.jax_dynamic_shapes)
+            self.jax_default_matmul_precision, self.jax_dynamic_shapes,
+            self.jax_numpy_dtype_promotion)
 
 class NoDefault: pass
 no_default = NoDefault()
@@ -437,6 +438,7 @@ already_configured_with_absl = False
 
 class GlobalJitState(NamedTuple):
   numpy_rank_promotion: Optional[str] = None
+  numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
 
@@ -450,6 +452,7 @@ def update_global_jit_state(**kw):
 class ThreadLocalJitState(NamedTuple):
   dynamic_trace_state: Optional[Any] = None
   numpy_rank_promotion: Optional[str] = None
+  numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
 
@@ -626,6 +629,19 @@ config.define_enum_state(
     help=('Specify bit width of default dtypes, either 32-bit or 64-bit. '
           'This is a temporary flag that will be used during the process '
           'of deprecating the ``jax_enable_x64`` flag.'))
+
+numpy_dtype_promotion = config.define_enum_state(
+    name='jax_numpy_dtype_promotion',
+    enum_values=['standard', 'strict'],
+    default='standard',
+    help=('Specify the rules used for implicit type promotion in operations '
+          'between arrays. Options are "standard" or "strict"; in strict-mode, '
+          'binary operations between arrays of differing strongly-specified '
+          'dtypes will result in an error.'),
+    update_global_hook=lambda val: \
+      update_global_jit_state(numpy_dtype_promotion=val),
+    update_thread_local_hook=lambda val: \
+      update_thread_local_jit_state(numpy_dtype_promotion=val))
 
 def _update_x64_global(val):
   lib.jax_jit.global_state().enable_x64 = val
