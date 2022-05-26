@@ -289,22 +289,34 @@ class DtypesTest(jtu.JaxTestCase):
 class TestPromotionTables(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-    {"testcase_name": f"_jaxtype={jaxtype}",
-     "jaxtype": jaxtype}
-     for jaxtype in dtypes._jax_types)
+      {"testcase_name": f"_jaxtype={jaxtype}", "jaxtype": jaxtype}
+      for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromType(self, jaxtype):
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
 
   @parameterized.named_parameters(
-    {"testcase_name": f"_jaxtype={jaxtype}",
-     "jaxtype": jaxtype}
-     for jaxtype in dtypes._jax_types)
+      {"testcase_name": f"_jaxtype={jaxtype}", "jaxtype": jaxtype}
+      for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromVal(self, jaxtype):
     try:
       val = jaxtype(0)
     except TypeError:
       val = jaxtype.type(0)
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(val)), jaxtype)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_dtype={dtype}", "dtype": dtype}
+      for dtype in dtypes._jax_types)
+  def testJaxTypeWeak(self, dtype):
+    jax_type = dtypes._jax_type(dtype, weak_type=True)
+    if dtypes.issubdtype(jax_type, np.complexfloating):
+      self.assertIs(jax_type, complex)
+    elif dtypes.issubdtype(jax_type, np.floating):
+      self.assertIs(jax_type, float)
+    elif dtypes.issubdtype(jax_type, np.integer):
+      self.assertIs(jax_type, int)
+    else:
+      self.assertIs(jax_type, np.dtype(bool))
 
   def testResultTypeNone(self):
     # This matches the behavior of np.result_type(None) => np.float_

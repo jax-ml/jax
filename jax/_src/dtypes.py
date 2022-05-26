@@ -269,7 +269,13 @@ _jax_dtype_set = {float0, *_bool_types, *_int_types, *_float_types, *_complex_ty
 
 def _jax_type(dtype, weak_type):
   """Return the jax type for a dtype and weak type."""
-  return type(dtype.type(0).item()) if (weak_type and dtype != bool) else dtype
+  if weak_type:
+    if dtype == bool:
+      return dtype
+    if dtype == _bfloat16_dtype:
+      return float
+    return type(dtype.type(0).item())
+  return dtype
 
 def _dtype_and_weaktype(value):
   """Return a (dtype, weak_type) tuple for the given input."""
