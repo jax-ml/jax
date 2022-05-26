@@ -2118,9 +2118,9 @@ def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   _check_arraylike("linspace", start, stop)
 
   if dtype is None:
-    dtype = result_type(start, stop, dtypes.canonicalize_dtype(float_))
+    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
+  computation_dtype = dtypes._to_inexact_dtype(dtype)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
 
@@ -2176,9 +2176,9 @@ def _logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
   """Implementation of logspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "logspace")
   if dtype is None:
-    dtype = result_type(start, stop, dtypes.canonicalize_dtype(float_))
+    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
+  computation_dtype = dtypes._to_inexact_dtype(dtype)
   _check_arraylike("logspace", start, stop)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
@@ -2198,9 +2198,9 @@ def _geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   """Implementation of geomspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "geomspace")
   if dtype is None:
-    dtype = result_type(start, stop, dtypes.canonicalize_dtype(float_))
+    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
+  computation_dtype = dtypes._to_inexact_dtype(dtype)
   _check_arraylike("geomspace", start, stop)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
