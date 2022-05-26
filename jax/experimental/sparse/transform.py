@@ -453,7 +453,12 @@ def _zero_preserving_unary_op(prim):
     assert len(spvalues) == 1
     buf = spenv.data(spvalues[0])
     buf_out = prim.bind(buf, **kwargs)
-    out_spvalue = spenv.sparse(spvalues[0].shape, buf_out, indices_ref=spvalues[0].indices_ref)
+    if spvalues[0].is_sparse():
+      out_spvalue = spenv.sparse(spvalues[0].shape, buf_out,
+                                 indices_ref=spvalues[0].indices_ref,
+                                 indices_sorted=spvalues[0].indices_sorted)
+    else:
+      out_spvalue = spenv.dense(buf)
     return (out_spvalue,)
   return func
 
