@@ -529,9 +529,7 @@ def _cpp_jit(
         # Not supported: ShardedDeviceArray
         all(device_array.type_is_device_array(x) for x in out_flat) and
         # Not supported: dynamic shapes
-        not jax.config.jax_dynamic_shapes and
-        execute.args[4] is dispatch.SimpleResultHandler
-    )
+        not jax.config.jax_dynamic_shapes)
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       (_, xla_executable,
@@ -2665,16 +2663,14 @@ def make_jaxpr(fun: Callable,
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       f, args = argnums_partial(f, dyn_argnums, args)
     in_avals, in_tree, keep_inputs = abstractify(args, kwargs)
-    in_type = tuple(zip(in_avals, keep_inputs))
     f, out_tree = flatten_fun(f, in_tree)
-    f = lu.annotate(f, in_type)
     with ExitStack() as stack:
       for axis_name, size in axis_env or []:
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
-      jaxpr, out_type, consts = pe.trace_to_jaxpr_dynamic2(f)
+      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
+          f, in_avals, keep_inputs=keep_inputs)
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     if return_shape:
-      out_avals, _ = unzip2(out_type)
       out_shapes_flat = [
           ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
       return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)

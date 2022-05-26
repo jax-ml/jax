@@ -56,9 +56,10 @@ map, unsafe_map = safe_map, map
 
 Effect = Hashable
 Effects = Set[Effect]
-no_effects: Effects = set()
-ordered_effects: Set[Effect] = set()
 
+no_effects: Effects = set()
+
+ordered_effects: Set[Effect] = set()
 
 class Jaxpr:
   constvars: List[Var]

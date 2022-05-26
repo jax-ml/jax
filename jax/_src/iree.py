@@ -80,10 +80,6 @@ class IreeBuffer(xla_client.DeviceArrayBase):
   def block_until_ready(self) -> IreeBuffer:
     return self  # no async
 
-  # overrides repr on base class which expects _value and aval attributes
-  def __repr__(self):
-    return f'IreeBuffer({self._npy_value})'
-
 class IreeExecutable:
 
   def __init__(self, client, devices, module_object, function_name):

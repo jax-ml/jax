@@ -70,7 +70,6 @@ FLAGS = config.FLAGS
 
 python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
-jaxlib_version = jax._src.lib.version
 
 
 class CPPJitTest(jtu.BufferDonationTestCase):
@@ -8633,18 +8632,6 @@ class DynamicShapeTest(jtu.JaxTestCase):
       ans = cumsum(x)
     expected = jnp.cumsum(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
-  @unittest.skipIf(jaxlib_version < (0, 3, 11), "test requires jaxlib>=0.3.11")
-  def test_jit_of_broadcast(self):
-    x = jax.jit(jnp.ones)(3)
-    self.assertAllClose(x, jnp.ones(3))
-
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
-  @unittest.skipIf(jaxlib_version < (0, 3, 11), "test requires jaxlib>=0.3.11")
-  def test_jit_of_broadcast2(self):
-    x = jax.jit(lambda n: jnp.ones(2 * n))(3)
-    self.assertAllClose(x, jnp.ones(2 * 3))
 
 
 if __name__ == '__main__':
