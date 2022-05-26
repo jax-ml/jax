@@ -270,15 +270,10 @@ def _promote_dtypes_inexact(*args):
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
-  to_dtype_inexact = _to_inexact_dtype(to_dtype)
+  to_dtype_inexact = dtypes._to_inexact_dtype(to_dtype)
   weak_type = (weak_type and to_dtype == to_dtype_inexact)
   return [lax_internal._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
-
-
-def _to_inexact_dtype(dtype):
-  """Promotes a dtype into an inexact dtype, if it is not already one."""
-  return dtype if dtypes.issubdtype(dtype, np.inexact) else dtypes.promote_types(dtype, dtypes.float_)
 
 
 def _complex_elem_type(dtype):

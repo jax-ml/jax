@@ -55,6 +55,26 @@ _dtype_to_32bit_dtype = {
     np.dtype('complex128'): np.dtype('complex64'),
 }
 
+# Note: we promote narrow types to float32 here for backward compatibility
+# with earlier approaches. We might consider revisiting this, or perhaps
+# tying the logic more closely to the type promotion lattice.
+_dtype_to_inexact = {
+    np.dtype(k): np.dtype(v) for k, v in [
+        ('bool', 'float32'),
+        ('uint8', 'float32'), ('int8', 'float32'),
+        ('uint16', 'float32'), ('int16', 'float32'),
+        ('uint32', 'float32'), ('int32', 'float32'),
+        ('uint64', 'float64'), ('int64', 'float64')
+    ]
+}
+
+
+def _to_inexact_dtype(dtype):
+  """Promotes a dtype into an inexact dtype, if it is not already one."""
+  dtype = np.dtype(dtype)
+  return _dtype_to_inexact.get(dtype, dtype)
+
+
 @functools.lru_cache(maxsize=None)
 def _canonicalize_dtype(x64_enabled, dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""

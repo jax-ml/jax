@@ -30,6 +30,7 @@ import jax
 from jax import numpy as jnp
 from jax import lax
 from jax import scipy as jsp
+from jax.tree_util import tree_map
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
@@ -181,8 +182,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     # TODO(mattjj): test autodiff
     if use_b:
       def scipy_fun(array_to_reduce, scale_array):
-        return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
-                                     return_sign=return_sign, b=scale_array)
+        res = osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                    return_sign=return_sign, b=scale_array)
+        if dtype == np.int32:
+          res = tree_map(lambda x: x.astype('float32'), res)
+        return res
 
       def lax_fun(array_to_reduce, scale_array):
         return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
@@ -191,8 +195,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       args_maker = lambda: [rng(shapes[0], dtype), rng(shapes[1], dtype)]
     else:
       def scipy_fun(array_to_reduce):
-        return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
-                                     return_sign=return_sign)
+        res = osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                    return_sign=return_sign)
+        if dtype == np.int32:
+          res = tree_map(lambda x: x.astype('float32'), res)
+        return res
 
       def lax_fun(array_to_reduce):
         return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
