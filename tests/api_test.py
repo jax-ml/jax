@@ -44,7 +44,7 @@ import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import core, lax
 from jax import custom_batching
-from jax._src import api, dtypes
+from jax._src import api, dtypes, dispatch
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
@@ -70,6 +70,7 @@ FLAGS = config.FLAGS
 
 python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
+jaxlib_version = jax._src.lib.version
 
 
 class CPPJitTest(jtu.BufferDonationTestCase):
@@ -1000,7 +1001,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     with self.assertRaisesRegex(TypeError, "'<' not supported.*"):
       f({E.A: 1.0, E.B: 2.0})
 
-
   def test_jit_static_argnums_requires_type_equality(self):
     # See: https://github.com/google/jax/pull/9311
     @partial(self.jit, static_argnums=(0,))
@@ -1015,6 +1015,34 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(x, f(x))
       python_should_be_executing = False
       self.assertEqual(x, f(x))
+
+  def test_hitting_cpp_path(self):
+    if not self.use_cpp_jit:
+      raise unittest.SkipTest("this test only applies to _cpp_jit")
+
+    jit_impl = dispatch._xla_call_impl
+    count = 0
+
+    def jit_impl_and_count(*args, **kwargs):
+      nonlocal count
+      count += 1
+      return jit_impl(*args, **kwargs)
+
+    f = self.jit(lambda x: x + 1)
+
+    try:
+      xla.xla_call_p.def_impl(jit_impl_and_count)
+      f(0)
+      self.assertEqual(count, 1)
+      f(0)
+      self.assertEqual(count, 1)
+      f(1)
+      self.assertEqual(count, 1)
+      f(2)
+      self.assertEqual(count, 1)
+    finally:
+      xla.xla_call_p.def_impl(jit_impl)
+
 
 class PythonJitTest(CPPJitTest):
 
@@ -8632,6 +8660,18 @@ class DynamicShapeTest(jtu.JaxTestCase):
       ans = cumsum(x)
     expected = jnp.cumsum(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @unittest.skipIf(jaxlib_version < (0, 3, 11), "test requires jaxlib>=0.3.11")
+  def test_jit_of_broadcast(self):
+    x = jax.jit(jnp.ones)(3)
+    self.assertAllClose(x, jnp.ones(3))
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @unittest.skipIf(jaxlib_version < (0, 3, 11), "test requires jaxlib>=0.3.11")
+  def test_jit_of_broadcast2(self):
+    x = jax.jit(lambda n: jnp.ones(2 * n))(3)
+    self.assertAllClose(x, jnp.ones(2 * 3))
 
 
 if __name__ == '__main__':
