@@ -2,7 +2,7 @@
 name: Google Chat Pull Request Notifier
 on:
   pull_request:
-    types: 
+    types:
       - opened
 
 jobs:
@@ -12,8 +12,8 @@ jobs:
     steps:
       - name: Google Chat Notification
         run: |
-          curl --location --request POST '${{ secrets.RELEASES_WEBHOOK }}' \
-          --header 'Content-Type: application/json' \
-          --data-raw '{
-            "text": "Pull Request ${{github.event.pull_request.title}} by ${{github.event.pull_request.user.login}}: ${{github.event.pull_request.body}} <${{github.event.pull_request.html_url}}|[github]>"
-        }'
+            curl --location --request POST '${{ secrets.RELEASES_WEBHOOK }}' \
+            --header 'Content-Type: application/json' \
+            --data-raw '{ 
+              "text": "Pull Request ${{github.event.pull_request.title}} by ${{github.event.pull_request.user.login}}: ${{github.event.pull_request.body}} <${{github.event.pull_request.html_url}}|[github]>" 
+            }'
