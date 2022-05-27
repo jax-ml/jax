@@ -19,6 +19,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from jax import lax
 from jax import core
 from jax import numpy as jnp
@@ -270,11 +271,13 @@ def threefry_seed(seed: int) -> jnp.ndarray:
     raise TypeError(f"PRNG key seed must be a scalar; got {seed!r}.")
   if not np.issubdtype(seed_arr.dtype, np.integer):
     raise TypeError(f"PRNG key seed must be an integer; got {seed!r}")
-
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
   k1 = convert(
       lax.shift_right_logical(seed_arr, lax_internal._const(seed_arr, 32)))
-  k2 = convert(jnp.bitwise_and(seed_arr, np.uint32(0xFFFFFFFF)))
+  with jax.numpy_dtype_promotion('standard'):
+    # TODO(jakevdp): in X64 mode, this can generate 64-bit computations for 32-bit
+    # inputs. We should avoid this.
+    k2 = convert(jnp.bitwise_and(seed_arr, np.uint32(0xFFFFFFFF)))
   return lax.concatenate([k1, k2], 0)
 
 
