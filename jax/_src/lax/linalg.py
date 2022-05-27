@@ -35,6 +35,8 @@ from jax.core import Primitive, ShapedArray, raise_to_shaped
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
+from jax._src.lax import control_flow
+from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
 import jax._src.lib
@@ -574,17 +576,54 @@ ad.primitive_jvps[eig_p] = eig_jvp_rule
 
 # Symmetric/Hermitian eigendecomposition
 
+
+def eigh_jacobi(x, *, lower: bool = True, sort_eigenvalues: bool = True):
+  """Helper Jacobi eigendecomposition implemented by XLA.
+
+  Used as a subroutine of QDWH-eig on TPU."""
+  w, v = eigh_jacobi_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues)
+  return w, v
+
+def _eigh_jacobi_impl(operand, *, lower, sort_eigenvalues):
+  w, v = xla.apply_primitive(eigh_jacobi_p, operand, lower=lower,
+                             sort_eigenvalues=sort_eigenvalues)
+  return w, v
+
+def _eigh_jacobi_abstract_eval(operand, *, lower, sort_eigenvalues):
+  if isinstance(operand, ShapedArray):
+    if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
+      raise ValueError(
+        "Argument to symmetric eigendecomposition must have shape [..., n, n],"
+        "got shape {}".format(operand.shape))
+
+    batch_dims = operand.shape[:-2]
+    n = operand.shape[-1]
+    w = operand.update(shape=batch_dims + (n,),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
+    v = operand.update(shape=batch_dims + (n, n))
+  else:
+    w, v = operand, operand
+  return w, v
+
+def _eigh_jacobi_translation_rule(ctx, avals_in, avals_out, operand, *, lower,
+                                  sort_eigenvalues):
+  operand_aval, = avals_in
+  if operand_aval.shape[-1] == 0:
+    return [xops.Real(xops.Reshape(operand, operand_aval.shape[:-1])), operand]
+  v, w = xops.Eigh(operand, lower=lower, sort_eigenvalues=sort_eigenvalues)
+  return w, v
+
+eigh_jacobi_p = Primitive('eigh_jacobi')
+eigh_jacobi_p.multiple_results = True
+eigh_jacobi_p.def_impl(_eigh_jacobi_impl)
+eigh_jacobi_p.def_abstract_eval(_eigh_jacobi_abstract_eval)
+xla.register_translation(eigh_jacobi_p, _eigh_jacobi_translation_rule)
+
+
 def _eigh_impl(operand, *, lower, sort_eigenvalues):
   v, w = xla.apply_primitive(eigh_p, operand, lower=lower,
                              sort_eigenvalues=sort_eigenvalues)
   return v, w
-
-def _eigh_translation_rule(ctx, avals_in, avals_out, operand, *, lower,
-                           sort_eigenvalues):
-  operand_aval, = avals_in
-  if operand_aval.shape[-1] == 0:
-    return [operand, xops.Real(xops.Reshape(operand, operand_aval.shape[:-1]))]
-  return xops.Eigh(operand, lower=lower, sort_eigenvalues=sort_eigenvalues)
 
 def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
   if isinstance(operand, ShapedArray):
@@ -625,6 +664,45 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
       w, _nan_like_mhlo(w_aval))
   return [v, w]
 
+def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
+  *_, m, n = x.shape
+  assert m == n, (m, n)
+
+  termination_size = 256
+
+  if m <= termination_size:
+    eig_vals, eig_vecs = eigh_jacobi(x, lower=lower,
+                                     sort_eigenvalues=sort_eigenvalues)
+    return eig_vecs, eig_vals
+
+  def eigh_qdwh(x):
+    if len(x.shape) > 2:
+      return control_flow.map(eigh_qdwh, x)
+
+    # We should only look at elements from the lower/upper triangle. Reflects
+    # that triangle into the other triangle to form a Hermitian matrix.
+    if lower:
+      mask = jnp.tri(n, k=0, dtype=bool)
+    else:
+      mask = jnp.logical_not(jnp.tri(n, k=-1, dtype=bool))
+    if dtypes.issubdtype(x.dtype, jnp.complexfloating):
+      re = lax.select(mask, lax.real(x), _T(lax.real(x)))
+      if lower:
+        im_mask = jnp.tri(n, k=-1, dtype=bool)
+      else:
+        im_mask = jnp.logical_not(jnp.tri(n, k=0, dtype=bool))
+      im = lax.select(im_mask, lax.imag(x), jnp.zeros_like(lax.imag(x)))
+      im = lax.select(mask, im, -_T(im))
+      x = lax.complex(re, im)
+    else:
+      x = lax.select(mask, x, _T(x))
+
+    return lax_eigh.eigh(x, sort_eigenvalues=sort_eigenvalues,
+                         termination_size=termination_size)
+
+  eig_vals, eig_vecs = eigh_qdwh(x)
+  return eig_vecs, eig_vals
+
 def _eigh_jvp_rule(primals, tangents, *, lower, sort_eigenvalues):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
   # This is classic nondegenerate perurbation theory, but also see
@@ -663,7 +741,6 @@ eigh_p = Primitive('eigh')
 eigh_p.multiple_results = True
 eigh_p.def_impl(_eigh_impl)
 eigh_p.def_abstract_eval(_eigh_abstract_eval)
-xla.register_translation(eigh_p, _eigh_translation_rule)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
@@ -684,6 +761,10 @@ if solver_apis is not None:
   mlir.register_lowering(
     eigh_p, partial(_eigh_cpu_gpu_lowering, solver_apis.syevd_mhlo),
     platform='gpu')
+
+mlir.register_lowering(
+    eigh_p, mlir.lower_fun(_eigh_tpu_impl, multiple_results=True),
+    platform='tpu')
 
 
 triangular_solve_dtype_rule = partial(

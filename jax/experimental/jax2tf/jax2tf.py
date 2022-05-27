@@ -1012,6 +1012,7 @@ tf_not_yet_impl = [
     "xla_pmap",
     "geqrf",
     "orgqr",
+    "eigh_jacobi",
 ]
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient

@@ -332,7 +332,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string((n,n), dtype), lower,
           sort_eigenvalues),
        "n": n, "dtype": dtype, "lower": lower}
-      for n in [0, 4, 5, 50]
+      for n in [0, 4, 5, 50, 512]
       for dtype in float_types + complex_types
       for lower in [True, False]
       for sort_eigenvalues in [True, False]))
@@ -459,7 +459,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
-      for shape in [(1, 1), (4, 4), (5, 5)]
+      for shape in [(1, 1), (4, 4), (5, 5), (300, 300)]
       for dtype in float_types + complex_types))
   def testEighBatching(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
@@ -467,8 +467,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args = rng(shape, dtype)
     args = (args + np.conj(T(args))) / 2
     ws, vs = vmap(jsp.linalg.eigh)(args)
-    self.assertTrue(np.all(np.linalg.norm(
-        np.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
+    norm = np.max(np.linalg.norm(np.matmul(args, vs) - ws[..., None, :] * vs))
+    self.assertTrue(norm < 3e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
