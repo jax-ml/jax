@@ -74,6 +74,7 @@ def identity(x):
   return x
 
 
+@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class DtypesTest(jtu.JaxTestCase):
 
   def test_canonicalize_type(self):
@@ -104,6 +105,7 @@ class DtypesTest(jtu.JaxTestCase):
     for swap in [False, True] for jit in [False, True])
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")
+  @jax.numpy_dtype_promotion('standard')
   def testBinaryPromotion(self, swap, jit):
     testcases = [
       (jnp.array(1.), 0., jnp.float64),
@@ -286,6 +288,7 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
 
 
+@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class TestPromotionTables(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -333,6 +336,7 @@ class TestPromotionTables(jtu.JaxTestCase):
 
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")
+  @jax.numpy_dtype_promotion('standard')
   def testObservedPromotionTable(self):
     """Test that the weak & strong dtype promotion table does not change over time."""
     # Note: * here refers to weakly-typed values
@@ -429,6 +433,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     for xfun, yfun in itertools.product(
       [identity, abs, jnp.array], repeat=2)
     )
+  @jax.numpy_dtype_promotion('standard')
   def testBinaryPromotionJitInvariance(self, xtype, ytype, xfun, yfun):
     """Test jit invariance of simple binary promotion rules with and without weak types."""
     f = lambda x, y: xfun(x) + yfun(y)
@@ -451,18 +456,33 @@ class TestPromotionTables(jtu.JaxTestCase):
       expected = x.dtype
     self.assertEqual(dtypes.result_type(x), expected)
 
-  @parameterized.named_parameters(
-    {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}",
-     "dtype": dtype, "weak_type": weak_type}
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}_promotion={promotion}",
+     "dtype": dtype, "weak_type": weak_type, "promotion": promotion}
     for dtype in all_dtypes
     for weak_type in [True, False]
-  )
-  def testBinaryNonPromotion(self, dtype, weak_type):
+    for promotion in ['standard', 'strict']))
+  def testBinaryNonPromotion(self, dtype, weak_type, promotion):
     # Regression test for https://github.com/google/jax/issues/6051
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
-    y = (x + x)
-    assert x.dtype == y.dtype
-    assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
+    with jax.numpy_dtype_promotion(promotion):
+      y = (x + x)
+
+    if promotion == 'standard' or not weak_type or dtype == dtypes.bool_:
+      expected_dtype = dtype
+    elif dtypes.issubdtype(dtype, np.complexfloating):
+      expected_dtype = dtypes.complex_
+    elif dtypes.issubdtype(dtype, np.floating):
+      expected_dtype = dtypes.float_
+    else:
+      expected_dtype = dtypes.int_
+
+    # No boolean weak types.
+    expected_weak_type = weak_type and dtype != bool
+    expected_dtype = dtypes.canonicalize_dtype(expected_dtype)
+
+    self.assertEqual(y.dtype, expected_dtype)
+    self.assertEqual(dtypes.is_weakly_typed(y), expected_weak_type)
 
   @parameterized.named_parameters(
     {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}",
