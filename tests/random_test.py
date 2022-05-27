@@ -472,6 +472,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertGreater(scipy.stats.kstest(samples, cdf).pvalue, fail_prob)
 
   def _CheckChiSquared(self, samples, pmf):
+    if samples.dtype == bool:
+      samples = samples.astype(int)
     alpha = 0.01  # significance level, threshold for p-value
 
     # scipy.stats.chisquare requires the sum of expected and actual to

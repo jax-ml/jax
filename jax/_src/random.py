@@ -538,8 +538,8 @@ def _normal(key, shape, dtype) -> jnp.ndarray:
 
     key_re, key_im = _split(key)
     real_dtype = np.array(0, dtype).real.dtype
-    _re = _normal_real(key_re, shape, real_dtype)
-    _im = _normal_real(key_im, shape, real_dtype)
+    _re = _normal_real(key_re, shape, real_dtype).astype(dtype)
+    _im = _normal_real(key_im, shape, real_dtype).astype(dtype)
     return (_re + 1j * _im) / sqrt2
   else:
     return _normal_real(key, shape, dtype) # type: ignore
@@ -1466,7 +1466,7 @@ def rademacher(key: KeyArray,
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _rademacher(key, shape, dtype):
-  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape)
+  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape).astype(dtype)
   return (2 * bernoulli_samples - 1).astype(dtype)
 
 
@@ -1622,4 +1622,4 @@ def orthogonal(
   z = normal(key, (*shape, n, n), dtype)
   q, r = jnp.linalg.qr(z)
   d = jnp.diagonal(r, 0, -2, -1)
-  return q * jnp.expand_dims(d / abs(d), -2)
+  return lax.mul(q, lax.expand_dims(lax.div(d, abs(d).astype(d.dtype)), [-2]))
