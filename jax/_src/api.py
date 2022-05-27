@@ -221,7 +221,6 @@ def _infer_argnums_and_argnames(
 
   return argnums, argnames
 
-
 def jit(
     fun: Callable,
     *,
@@ -277,15 +276,19 @@ def jit(
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend: ``'cpu'``, ``'gpu'``, or
       ``'tpu'``.
-    donate_argnums: Specify which argument buffers are "donated" to the computation.
-      It is safe to donate argument buffers if you no longer need them once the
-      computation has finished. In some cases XLA can make use of donated
-      buffers to reduce the amount of memory needed to perform a computation,
-      for example recycling one of your input buffers to store a result. You
-      should not reuse buffers that you donate to a computation, JAX will raise
-      an error if you try to. By default, no argument buffers are donated.
+    donate_argnums: Specify which positional argument buffers are "donated" to
+      the computation. It is safe to donate argument buffers if you no longer
+      need them once the computation has finished. In some cases XLA can make
+      use of donated buffers to reduce the amount of memory needed to perform a
+      computation, for example recycling one of your input buffers to store a
+      result. You should not reuse buffers that you donate to a computation, JAX
+      will raise an error if you try to. By default, no argument buffers are
+      donated.
+      Note that donate_argnums only work for positional arguments, and keyword
+      arguments will not be donated.
 
-      For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+      For more details on buffer donation see the
+      [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
 
     inline: Specify whether this function should be inlined into enclosing
       jaxprs (rather than being represented as an application of the xla_call
@@ -1676,15 +1679,18 @@ def pmap(
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend. 'cpu', 'gpu', or 'tpu'.
     axis_size: Optional; the size of the mapped axis.
-    donate_argnums: Specify which argument buffers are "donated" to the computation.
-      It is safe to donate argument buffers if you no longer need them once the
-      computation has finished. In some cases XLA can make use of donated
-      buffers to reduce the amount of memory needed to perform a computation,
-      for example recycling one of your input buffers to store a result. You
-      should not reuse buffers that you donate to a computation, JAX will raise
-      an error if you try to.
+    donate_argnums: Specify which positional argument buffers are "donated" to
+      the computation. It is safe to donate argument buffers if you no longer need
+      them once the computation has finished. In some cases XLA can make use of
+      donated buffers to reduce the amount of memory needed to perform a
+      computation, for example recycling one of your input buffers to store a
+      result. You should not reuse buffers that you donate to a computation, JAX
+      will raise an error if you try to.
+      Note that donate_argnums only work for positional arguments, and keyword
+      arguments will not be donated.
 
-      For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+      For more details on buffer donation see the
+      [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
 
     global_arg_shapes: Optional, must be set when using pmap(sharded_jit) and
       the partitioned values span multiple processes. The global cross-process
