@@ -18,5 +18,5 @@ jobs:
           curl --location --request POST '${{ secrets.RELEASES_WEBHOOK }}' \
           --header 'Content-Type: application/json' \
           --data-raw '{
-              "text": "Main is broken @ {github.event.check_suite.created_at} see <{github.event.check_suite.url}|[github]>"
+              "text": "Main is broken @ ${{github.event.check_suite.created_at}} see <${{github.event.check_suite.url}}|[github]>"
           }'
