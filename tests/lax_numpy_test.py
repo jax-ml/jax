@@ -4232,10 +4232,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_int(self.rng(), low=-((2 * size) // 3), high=(2 * size) // 3)
 
     def np_fun(index, shape):
+      # JAX's version outputs the same dtype as the input in the typical case
+      # where shape is weakly-typed.
+      out_dtype = index.dtype
       # Adjust out-of-bounds behavior to match jax's documented behavior.
       index = np.clip(index, -size, size - 1)
       index = np.where(index < 0, index + size, index)
-      return np.unravel_index(index, shape)
+      return [i.astype(out_dtype) for i in np.unravel_index(index, shape)]
+
     jnp_fun = jnp.unravel_index
     args_maker = lambda: [rng(idx_shape, dtype), shape]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
