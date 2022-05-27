@@ -260,48 +260,21 @@ class GlobalAsyncCheckpointManager:
       for future in self._commit_futures:
         for f in future:
           f.result()
-      logging.info('Commit to storage layer has completed.')
 
       current_process = jax.process_index()
+      logging.info('Commit to storage layer has completed by process: %s',
+                   current_process)
 
-      # TODO(yashkatariya): Add a method to the distributed system to wait for
-      # the key's value to change.
-      # Value already exists -- wait until value is NOT _REMOVED_VALUE.
-      with _RetryWithTimeout(self._timeout_secs) as t:
-        while self._client.blocking_key_value_get(
-            _get_key(str(current_process)), self._timeout_in_ms) == _REMOVED_VALUE:
-          if t.timed_out:
-            raise TimeoutError('Terminating after waiting for '
-                               f'{self._timeout_secs} secs for lock value to appear.')
-          logging.info('Waiting for current process %s lock value to appear.',
-                       current_process)
-          time.sleep(60)
+      # All processes will wait at the barrier. When all processes are at the
+      # barrier, the barrier will be satisfied. If not, then it will timeout.
+      self._client.wait_at_barrier(self._final_ckpt_dir, self._timeout_in_ms)
+      logging.info('Finished waiting at barrier for process %s', current_process)
 
-      self._client.key_value_set(_get_key(str(current_process)), _REMOVED_VALUE)
-      logging.info('Lock value removed for process %s', current_process)
-
-      # This while loop will not trigger until all commits have finished.
       if current_process == 0:
-        with _RetryWithTimeout(self._timeout_secs) as t:
-          while True:
-            if t.timed_out:
-              raise TimeoutError('Terminating after waiting for '
-                                 f'{self._timeout_secs} secs for '
-                                 'finishing the serialization.')
-            # Mark as done when no lock values exist.
-            if all(
-                self._client.blocking_key_value_get(
-                    _get_key(str(p)), self._timeout_in_ms) == _REMOVED_VALUE
-                for p in range(jax.process_count())):
-              logging.info('Renaming %s to %s', temp_checkpoint_dir, final_checkpoint_dir)
-              tf.io.gfile.rename(temp_checkpoint_dir, final_checkpoint_dir)
-              logging.info('Finished saving GDA checkpoint to `%s`.', final_checkpoint_dir)
-              self._client.key_value_set(_get_key(self._final_ckpt_dir), _CHECKPOINT_SUCCESS)
-              break
-            else:
-              logging.info('Thread sleeping for 60 seconds.')
-              time.sleep(60)
-
+        logging.info('Renaming %s to %s', temp_checkpoint_dir, final_checkpoint_dir)
+        tf.io.gfile.rename(temp_checkpoint_dir, final_checkpoint_dir)
+        logging.info('Finished saving GDA checkpoint to `%s`.', final_checkpoint_dir)
+        self._client.key_value_set(_get_key(self._final_ckpt_dir), _CHECKPOINT_SUCCESS)
     except Exception as e:
       self._exception = e
 
@@ -310,17 +283,6 @@ class GlobalAsyncCheckpointManager:
         target=self._thread_func,
         args=(temp_checkpoint_dir, final_checkpoint_dir))
     self._thread.start()
-
-  def _write_lock_values(self):
-    write_count = 0
-    for p in range(jax.process_count()):
-      # TODO(yashkatariya): Make the key value store writes safe if checkpoint
-      # managers are created concurrently.
-      self._client.key_value_set(_get_key(str(p)), f'Lock value for process {str(p)}')
-      write_count += 1
-    if write_count != jax.process_count():
-      raise ValueError("Process 0 couldn't write all the lock values.")
-    logging.info('Lock values for all processes have been written by process 0.')
 
   def check_for_errors(self):
     if self._exception is not None:
@@ -365,10 +327,6 @@ class GlobalAsyncCheckpointManager:
     """
     logging.info('Waiting for thread to finish serialization.')
     self.wait_until_finished()
-
-    # Process 0 writes lock files for all processes.
-    if jax.process_index() == 0:
-      self._write_lock_values()
 
     self._commit_futures = [[] for _ in range(len(tensorstore_specs))]
 
