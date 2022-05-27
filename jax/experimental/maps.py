@@ -661,7 +661,6 @@ def make_xmap_callable(fun: lu.WrappedFun,
                        global_axis_sizes, axis_resources, resource_env, backend,
                        spmd_in_axes, spmd_out_axes_thunk, in_positional_semantics,
                        out_positional_semantics, *in_avals):
-  assert out_positional_semantics == _PositionalSemantics.LOCAL
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes, in_positional_semantics)
 
