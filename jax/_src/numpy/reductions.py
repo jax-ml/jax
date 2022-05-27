@@ -349,8 +349,9 @@ def _var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
   a_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
+  a = a.astype(a_dtype)
   a_mean = mean(a, axis, dtype=a_dtype, keepdims=True, where=where)
-  centered = a - a_mean
+  centered = lax.sub(a, a_mean)
   if dtypes.issubdtype(centered.dtype, np.complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
   else:
@@ -512,9 +513,10 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
   a_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
+  a = a.astype(a_dtype)
   a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True, where=where)
 
-  centered = _where(lax_internal._isnan(a), 0, a - a_mean)  # double-where trick for gradients.
+  centered = _where(lax_internal._isnan(a), 0, lax.sub(a, a_mean))  # double-where trick for gradients.
   if dtypes.issubdtype(centered.dtype, np.complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
   else:
