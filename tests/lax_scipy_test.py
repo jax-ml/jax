@@ -553,20 +553,17 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {'testcase_name':
-      '_linear_size_={}_seed={}_dtype={}_termination_size={}'.format(
+      '_linear_size={}_seed={}_dtype={}_termination_size={}'.format(
         linear_size, seed, jnp.dtype(dtype).name, termination_size
       ),
      'linear_size': linear_size, 'seed': seed, 'dtype': dtype,
      'termination_size': termination_size}
     for linear_size in linear_sizes
     for seed in seeds
-    for dtype in jtu.dtypes.floating
+    for dtype in jtu.dtypes.supported([jnp.float32, jnp.float64, jnp.complex64,
+                                       jnp.complex128])
     for termination_size in [1, 19]))
   def test_spectral_dac_eigh(self, linear_size, seed, dtype, termination_size):
-    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
-      if jtu.device_under_test() != "cpu":
-        raise unittest.SkipTest("Skip half precision off CPU.")
-
     if jtu.device_under_test() != "tpu" and termination_size != 1:
       raise unittest.SkipTest(
           "Termination sizes greater than 1 only work on TPU")
@@ -585,7 +582,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     eps = jnp.finfo(H.dtype).eps
     atol = jnp.linalg.norm(H) * eps
     self.assertAllClose(ev_exp, jnp.sort(evs), atol=20 * atol)
-    self.assertAllClose(HV, vV, atol=30 * atol)
+    self.assertAllClose(
+        HV, vV, atol=atol * (70 if jnp.issubdtype(dtype, jnp.complexfloating)
+                             else 30))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{jtu.format_shape_dtype_string((n_obs, n_codes, *n_feats), dtype)}",

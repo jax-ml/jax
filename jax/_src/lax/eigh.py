@@ -192,7 +192,7 @@ def split_spectrum(H, n, split_point, V0=None):
   H_shift = H - split_point * jnp.eye(N, dtype=H.dtype)
   U, _, _, _ = qdwh.qdwh(H_shift, is_hermitian=True, dynamic_shape=(n, n))
   P = -0.5 * (U - _mask(jnp.eye(N, dtype=H.dtype), (n, n)))
-  rank = jnp.round(jnp.trace(P)).astype(jnp.int32)
+  rank = jnp.round(jnp.trace(jnp.real(P))).astype(jnp.int32)
 
   V_minus, V_plus = _projector_subspace(P, H, n, rank)
   H_minus = (V_minus.conj().T @ H) @ V_minus
@@ -340,7 +340,7 @@ def _eigh_work(H, n, termination_size=256):
     H = _slice(blocks, (offset, 0), (b, b), (B, B))
     V = _slice(eigenvectors, (0, offset), (n, b), (N, B))
 
-    split_point = jnp.nanmedian(_mask(jnp.diag(H), (b,), jnp.nan))  # TODO: Improve this?
+    split_point = jnp.nanmedian(_mask(jnp.diag(jnp.real(H)), (b,), jnp.nan))  # TODO: Improve this?
     H_minus, V_minus, H_plus, V_plus, rank = split_spectrum(H, b, split_point, V0=V)
 
     blocks = _update_slice(blocks, H_minus, (offset, 0), (rank, rank))
@@ -411,7 +411,7 @@ def eigh(H, *, precision="float32", termination_size=256, n=None):
   n = N if n is None else n
   with jax.default_matmul_precision(precision):
     eig_vals, eig_vecs = _eigh_work(H, n, termination_size=termination_size)
-  eig_vals = _mask(eig_vals, (n,), jnp.nan)
+  eig_vals = _mask(jnp.real(eig_vals), (n,), jnp.nan)
   sort_idxs = jnp.argsort(eig_vals)
   eig_vals = eig_vals[sort_idxs]
   eig_vecs = eig_vecs[:, sort_idxs]
