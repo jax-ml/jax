@@ -20,6 +20,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from jax import core
 from jax import lax
 from jax._src import api
@@ -53,6 +54,10 @@ def _moveaxis(a, source: int, destination: int):
   perm.insert(destination, source)
   return lax.transpose(a, perm)
 
+def _upcast_f16(dtype):
+  if dtype in [np.float16, dtypes.bfloat16]:
+    return np.dtype('float32')
+  return dtype
 
 def _reduction(a, name, np_fun, op, init_val, has_identity=True,
                preproc=None, bool_op=None, upcast_f16_for_computation=False,
@@ -80,7 +85,7 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   pos_dims, dims = _reduction_dims(a, axis)
   result_dtype = dtypes.canonicalize_dtype(dtype or dtypes.dtype(np_fun(np.ones((), dtype=dtypes.dtype(a)))))
   if upcast_f16_for_computation and dtypes.issubdtype(result_dtype, np.inexact):
-    computation_dtype = dtypes.promote_types(result_dtype, np.float32)
+    computation_dtype = _upcast_f16(result_dtype)
   else:
     computation_dtype = result_dtype
   a = lax.convert_element_type(a, computation_dtype)
@@ -348,9 +353,9 @@ def _var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
-  a_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
-  a = a.astype(a_dtype)
-  a_mean = mean(a, axis, dtype=a_dtype, keepdims=True, where=where)
+  computation_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
+  a = a.astype(computation_dtype)
+  a_mean = mean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
   centered = lax.sub(a, a_mean)
   if dtypes.issubdtype(centered.dtype, np.complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
@@ -381,14 +386,15 @@ def _var_promote_types(a_dtype, dtype):
              "on https://github.com/google/jax/issues/2283 if this behavior is "
              "important to you.")
       raise ValueError(msg)
-    a_dtype = dtypes.promote_types(a_dtype, dtype)
+    computation_dtype = dtypes.promote_types(a_dtype, dtype)
   else:
     if not dtypes.issubdtype(a_dtype, np.inexact):
-      dtype = a_dtype = dtypes.canonicalize_dtype(dtypes.float_)
+      dtype = dtypes.canonicalize_dtype(dtypes.float_)
+      computation_dtype = dtype
     else:
       dtype = _complex_elem_type(a_dtype)
-      a_dtype = dtypes.promote_types(a_dtype, np.float32)
-  return a_dtype, dtype
+      computation_dtype = _upcast_f16(a_dtype)
+  return computation_dtype, dtype
 
 
 @_wraps(np.std, skip_params=['out'])
@@ -512,9 +518,9 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
-  a_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
-  a = a.astype(a_dtype)
-  a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True, where=where)
+  computation_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
+  a = a.astype(computation_dtype)
+  a_mean = nanmean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
 
   centered = _where(lax_internal._isnan(a), 0, lax.sub(a, a_mean))  # double-where trick for gradients.
   if dtypes.issubdtype(centered.dtype, np.complexfloating):
