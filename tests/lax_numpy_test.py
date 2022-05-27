@@ -5602,7 +5602,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for num in [0, 1, 2, 5, 20]
         for endpoint in [True, False]
         for base in [10.0, 2, np.e]
-        for dtype in inexact_dtypes + [None,]))
+        # skip 16-bit floats due to insufficient precision for the test.
+        for dtype in jtu.dtypes.inexact + [None,]))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogspace(self, start_shape, stop_shape, num,
                    endpoint, base, dtype):
@@ -5613,8 +5614,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                               " doesn't exactly match other platforms.")
     rng = jtu.rand_default(self.rng())
     # relax default tolerances slightly
-    tol = {np.float16: 2e-2, np.float32: 1e-2, np.float64: 1e-6,
-           np.complex64: 1e-3, np.complex128: 1e-6}
+    tol = {np.float32: 1e-2, np.float64: 1e-6, np.complex64: 1e-3, np.complex128: 1e-6}
     args_maker = self._GetArgsMaker(rng,
                                     [start_shape, stop_shape],
                                     [dtype, dtype])
