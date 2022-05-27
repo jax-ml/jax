@@ -725,11 +725,11 @@ traceback_filtering = config.define_enum_state(
          " * \"remove_frames\": removes hidden frames from tracebacks, and adds "
          " the unfiltered traceback as a __cause__ of the exception.\n")
 
-# This flag is temporary and for internal use.
-# TODO(tianjianlu): Removes after providing the information in BCOO meta data.
+# This flag is for internal use.
+# TODO(tianjianlu): Removes once we always enable cusparse lowering.
 bcoo_cusparse_lowering = config.define_bool_state(
     name='jax_bcoo_cusparse_lowering',
-    default=False,
+    default=True,
     help=('Enables lowering BCOO ops to cuSparse.'))
 
 # TODO(mattjj): remove this flag when we ensure we only succeed at trace-staging
