@@ -814,13 +814,8 @@ and out-of-bounds indices are clipped into the valid range.
 @_wraps(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(indices, shape):
   _check_arraylike("unravel_index", indices)
-  # Note: we do not convert shape to an array, because it may be passed as a
-  # tuple of weakly-typed values, and asarray() would strip these weak types.
-  try:
-    shape = list(shape)
-  except TypeError:
-    shape = [shape]
-  if _any(ndim(s) != 0 for s in shape):
+  shape = atleast_1d(shape)
+  if shape.ndim != 1:
     raise ValueError("unravel_index: shape should be a scalar or 1D sequence.")
   out_indices = [None] * len(shape)
   for i, s in reversed(list(enumerate(shape))):
