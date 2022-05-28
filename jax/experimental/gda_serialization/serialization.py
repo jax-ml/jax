@@ -13,10 +13,10 @@
 # limitations under the License.
 """GlobalDeviceArray serialization and deserialization."""
 
+import abc
 import asyncio
 import re
 import threading
-import time
 from typing import Callable
 from absl import logging
 
@@ -171,27 +171,38 @@ def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
   return asyncio.run(_run_deserializer())
 
 
-class _RetryWithTimeout:
-  def __init__(self, secs):
-    self.secs = secs
-
-  def __enter__(self):
-    self.timeout_after = time.time() + self.secs
-    return self
-
-  def __exit__(self, type, value, traceback):
-    pass
-
-  @property
-  def timed_out(self):
-    return time.time() > self.timeout_after
-
-
 def _get_key(key: str):
   return f'checkpoint_{key}'
 
 
-class GlobalAsyncCheckpointManager:
+class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
+  """Interface for checkpointing asynchronously."""
+
+  @abc.abstractmethod
+  def check_for_errors(self):
+    raise NotImplementedError('Subclasses must implement.')
+
+  @abc.abstractmethod
+  def wait_until_finished(self):
+    raise NotImplementedError('Subclasses must implement.')
+
+  @abc.abstractmethod
+  def start_async_commit(self, temp_checkpoint_dir: str,
+                         final_checkpoint_dir: str):
+    raise NotImplementedError('Subclasses must implement.')
+
+  @abc.abstractmethod
+  def serialize(self, gdas, tensorstore_specs, *, temp_checkpoint_dir,
+                final_checkpoint_dir):
+    raise NotImplementedError('Subclasses must implement.')
+
+  @abc.abstractmethod
+  def deserialize(self, global_meshes, mesh_axes, tensorstore_specs,
+                  global_shapes=None, dtypes=None):
+    raise NotImplementedError('Subclasses must implement.')
+
+
+class GlobalAsyncCheckpointManager(GlobalAsyncCheckpointManagerBase):
   """Responsible for serializing GDAs via TensorStore.
 
   This class manages the state of an ongoing asynchronous checkpoint.
@@ -200,7 +211,7 @@ class GlobalAsyncCheckpointManager:
   step 1 and after some computation the model is on checkpoint 2. But step 1's
   checkpoint hasn't finished committing to the storage layer yet. So until that
   is finished, checkpoint for step 2 will need to be blocked. Maintaining a
-  class allows to maintain that state.
+  class allows to manage that state.
 
   Example:
 
@@ -278,7 +289,7 @@ class GlobalAsyncCheckpointManager:
     except Exception as e:
       self._exception = e
 
-  def _start_commit_thread(self, temp_checkpoint_dir, final_checkpoint_dir):
+  def start_async_commit(self, temp_checkpoint_dir, final_checkpoint_dir):
     self._thread = threading.Thread(
         target=self._thread_func,
         args=(temp_checkpoint_dir, final_checkpoint_dir))
@@ -339,7 +350,7 @@ class GlobalAsyncCheckpointManager:
     # Used in wait_until_finished to check on process != 0, if the checkpoint
     # has finished writing.
     self._final_ckpt_dir = final_checkpoint_dir
-    self._start_commit_thread(temp_checkpoint_dir, final_checkpoint_dir)
+    self.start_async_commit(temp_checkpoint_dir, final_checkpoint_dir)
 
   def deserialize(self, global_meshes, mesh_axes, tensorstore_specs,
                   global_shapes=None, dtypes=None):
