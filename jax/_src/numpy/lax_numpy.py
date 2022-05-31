@@ -3212,7 +3212,7 @@ def sort(a, axis: Optional[int] = -1, kind='quicksort', order=None):
 def sort_complex(a):
   _check_arraylike("sort_complex", a)
   a = lax.sort(a, dimension=0)
-  return lax.convert_element_type(a, result_type(a, dtypes.canonicalize_dtype(complex_)))
+  return lax.convert_element_type(a, dtypes._to_complex_dtype(a.dtype))
 
 @_wraps(np.lexsort)
 @partial(jit, static_argnames=('axis',))
