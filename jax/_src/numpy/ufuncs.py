@@ -445,10 +445,10 @@ def signbit(x):
 
 def _normalize_float(x):
   info = dtypes.finfo(dtypes.dtype(x))
+  int_type = _INT_DTYPES[info.bits]
   cond = lax.abs(x) < info.tiny
   x1 = _where(cond, x * _lax_const(x, 1 << info.nmant), x)
-  x2 = _where(cond, lax.full_like(x, -info.nmant, dtype=np.int32), lax.full_like(x, 0, dtype=np.int32))
-  int_type = _INT_DTYPES[info.bits]
+  x2 = _where(cond, int_type(-info.nmant), int_type(0))
   return lax.bitcast_convert_type(x1, int_type), x2
 
 
@@ -498,10 +498,9 @@ def ldexp(x1, x2):
 @jit
 def frexp(x):
   _check_arraylike("frexp", x)
+  x, = _promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise TypeError("frexp does not support complex-valued inputs")
-  elif not dtypes.issubdtype(dtypes.dtype(x), np.floating):
-    x = lax.convert_element_type(x, np.float_)
 
   dtype = dtypes.dtype(x)
   info = dtypes.finfo(dtype)
