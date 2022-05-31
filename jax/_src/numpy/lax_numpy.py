@@ -4209,7 +4209,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
     raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
                      "'midpoint', or 'nearest'")
-  a, q = _promote_dtypes_inexact(a, q)
+  a, = _promote_dtypes_inexact(a)
   keepdim = []
   if issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
@@ -4417,9 +4417,8 @@ def percentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                out=None, overwrite_input=False, method="linear",
                keepdims=False, interpolation=None):
   _check_arraylike("percentile", a, q)
-  a, q = _promote_dtypes_inexact(a, q)
-  q = true_divide(q, 100.0)
-  return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+  q, = _promote_dtypes_inexact(q)
+  return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, method=method, keepdims=keepdims)
 
 @_wraps(np.nanpercentile, skip_params=['out', 'overwrite_input'])
