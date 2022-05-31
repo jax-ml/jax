@@ -75,6 +75,13 @@ def _to_inexact_dtype(dtype):
   return _dtype_to_inexact.get(dtype, dtype)
 
 
+def _to_complex_dtype(dtype):
+  ftype = _to_inexact_dtype(dtype)
+  if ftype in [np.dtype('float64'), np.dtype('complex128')]:
+    return np.dtype('complex128')
+  return np.dtype('complex64')
+
+
 @functools.lru_cache(maxsize=None)
 def _canonicalize_dtype(x64_enabled, dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
