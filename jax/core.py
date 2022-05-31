@@ -44,7 +44,8 @@ from jax._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,
                         tuple_delete, as_hashable_function,
                         HashableFunction, weakref_lru_cache)
 import jax._src.pretty_printer as pp
-
+from jax._src import lib
+from jax._src.lib import jax_jit
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
@@ -804,8 +805,31 @@ def _update_thread_local_jit_state(dynamic):
 class ThreadLocalState(threading.local):
   def __init__(self):
     self.trace_state = TraceState()
-    _update_thread_local_jit_state(self.trace_state.trace_stack.dynamic)
+
 thread_local_state = ThreadLocalState()
+
+
+def _initialize_jax_jit_thread_local_state():
+  """Initializes the C++ thread-local context.
+
+  When the user spawns threads, the C++ `jax_jit.thread_local_state` is None.
+  The C++ accessor calls this function if it realizes the thread_local_state
+  is None (which means it's not yet initialized for this thread).
+
+  This function does not live in `config.py`, to prevent circular imports.
+  """
+  tls = jax_jit.thread_local_state()
+  if tls.extra_jit_context is None:
+    dynamic = thread_local_state.trace_state.trace_stack.dynamic
+    copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
+    tls.extra_jit_context = jax_config._ThreadLocalExtraJitContext(
+        dynamic_trace_state=copy)
+
+
+# TODO(phawkins): remove after minimum jaxlib version is > 0.3.11
+if lib.xla_extension_version >= 70:
+  jax_jit.set_thread_local_state_initialization_callback(
+      _initialize_jax_jit_thread_local_state)
 
 def trace_state_clean() -> bool:
   trace_state = thread_local_state.trace_state
@@ -815,7 +839,7 @@ def trace_state_clean() -> bool:
           trace_state.trace_stack.dynamic == MainTrace(0, EvalTrace))
 
 def reset_trace_state() -> bool:
-  "Reset the global trace state and return True if it was already clean."
+  """Resets the global trace state and returns True if it was already clean."""
   if not trace_state_clean():
     thread_local_state.trace_state.__init__()  # type: ignore
     return False

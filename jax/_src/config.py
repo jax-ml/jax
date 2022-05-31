@@ -435,21 +435,28 @@ already_configured_with_absl = False
 # The C++ JIT maintains its own copy of several configuration items as
 # a global/thread-local state. These methods allow updates to part of the
 # state when a configuration value changes.
-
-class GlobalJitState(NamedTuple):
+class _GlobalExtraJitContext(NamedTuple):
   numpy_rank_promotion: Optional[str] = None
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
 
 
-def update_global_jit_state(**kw):
+def _update_global_jit_state(**kw):
   gs = jax_jit.global_state()
-  context = gs.extra_jit_context or GlobalJitState()
+  context = gs.extra_jit_context or _GlobalExtraJitContext()
   gs.extra_jit_context = context._replace(**kw)
 
 
-class ThreadLocalJitState(NamedTuple):
+class _ThreadLocalExtraJitContext(NamedTuple):
+  """"A namedtuple containing states to add to the cache key.
+
+  Just in time compilation (for jit, pmap, etc) behavior is configurable through
+  global and thread-local options, used in the cache key.
+
+  The initialization, which uses both config.py and core.py is done using
+  `_update_thread_local_jit_state` in core.py to prevent circular imports.
+  """
   dynamic_trace_state: Optional[Any] = None
   numpy_rank_promotion: Optional[str] = None
   numpy_dtype_promotion: Optional[str] = None
@@ -459,7 +466,10 @@ class ThreadLocalJitState(NamedTuple):
 
 def update_thread_local_jit_state(**kw):
   tls = jax_jit.thread_local_state()
-  context = tls.extra_jit_context or ThreadLocalJitState()
+  # After xla_client._version >= 70, the thread_local object will necessarily
+  # be initialized when accessed. The following line can be removed when the
+  # minimum  jaxlib version is past version 70
+  context = tls.extra_jit_context or _ThreadLocalExtraJitContext()
   tls.extra_jit_context = context._replace(**kw)
 
 
@@ -639,7 +649,7 @@ numpy_dtype_promotion = config.define_enum_state(
           'binary operations between arrays of differing strongly-specified '
           'dtypes will result in an error.'),
     update_global_hook=lambda val: \
-      update_global_jit_state(numpy_dtype_promotion=val),
+      _update_global_jit_state(numpy_dtype_promotion=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(numpy_dtype_promotion=val))
 
@@ -682,7 +692,7 @@ numpy_rank_promotion = config.define_enum_state(
     help=('Control NumPy-style automatic rank promotion broadcasting '
           '("allow", "warn", or "raise").'),
     update_global_hook=lambda val: \
-      update_global_jit_state(numpy_rank_promotion=val),
+      _update_global_jit_state(numpy_rank_promotion=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(numpy_rank_promotion=val))
 
@@ -707,7 +717,7 @@ default_matmul_precision = config.define_enum_state(
           "option is the fastest and least precise; 'float32' is similar to "
           "full float32 precision; 'tensorfloat32' is intermediate.\n\n"),
     update_global_hook=lambda val: \
-      update_global_jit_state(default_matmul_precision=val),
+      _update_global_jit_state(default_matmul_precision=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(default_matmul_precision=val))
 
@@ -740,7 +750,7 @@ config.define_bool_state(
     help=('Enables experimental features for staging out computations with '
           'dynamic shapes.'),
     update_global_hook=lambda val: \
-      update_global_jit_state(dynamic_shapes=val),
+      _update_global_jit_state(dynamic_shapes=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(dynamic_shapes=val))
 

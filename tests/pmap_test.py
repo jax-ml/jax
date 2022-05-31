@@ -1952,6 +1952,27 @@ class CppPmapTest(PythonPmapTest):
     f(np.zeros([num_devices], dtype=np.float32))
     self.assertEqual(f._cache_size(), size+1)
 
+  def test_cache_hits_across_threads(self):
+    # TODO(phawkins): remove after minimum jaxlib version is > 0.3.11
+    if xla_bridge.xla_client._version < 70:
+      raise unittest.SkipTest("This test requires jaxlib version >= 0.3.11")
+
+    f = lambda x: x+1
+    inputs = np.zeros([jax.device_count()], dtype=np.float32)
+    pmaped_f = self.pmap(f)
+    pmaped_f(inputs)
+    self.assertEqual(pmaped_f._cache_size, 1)
+
+    # Note: We do not call jax.pmap in the other thread but we reuse the same
+    # object.
+    futures = []
+    with ThreadPoolExecutor(max_workers=1) as executor:
+      futures.append(executor.submit(lambda: pmaped_f(inputs)))
+      outputs = [f.result() for f in futures]
+
+    np.testing.assert_array_equal(pmaped_f(inputs), outputs[0])
+    self.assertEqual(pmaped_f._cache_size, 1)
+
 
 class VmapOfPmapTest(jtu.JaxTestCase):
 
