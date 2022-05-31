@@ -4330,18 +4330,20 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 
 @partial(vectorize, excluded={0, 2})
 def _searchsorted(a, v, side):
+  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
   if len(a) == 0:
-    return 0
+    return dtype(0)
   op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
   a, v = _promote_dtypes(a, v)
-  def body_fun(i, state):
+  def body_fun(_, state):
     low, high = state
     mid = (low + high) // 2
     go_left = op(v, a[mid])
     return (where(go_left, low, mid), where(go_left, mid, high))
 
   n_levels = int(np.ceil(np.log2(len(a) + 1)))
-  return lax.fori_loop(0, n_levels, body_fun, (0, len(a)))[1]
+  init = (dtype(0), dtype(len(a)))
+  return lax.fori_loop(0, n_levels, body_fun, init)[1]
 
 
 @_wraps(np.searchsorted, skip_params=['sorter'])
