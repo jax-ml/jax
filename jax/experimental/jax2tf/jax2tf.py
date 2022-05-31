@@ -2131,6 +2131,12 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
   return proto
 
 
+def _maybe_cast_to_int64(x: TfVal) -> TfVal:
+  if x.dtype != tf.int32 and x.dtype != tf.int64:
+    return tf.cast(x, tf.int64)
+  return x
+
+
 @partial(handle_boolean_args, argnums=[0])
 def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shape,
             indices_are_sorted, unique_indices, mode, fill_value,
@@ -2146,6 +2152,7 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
         indices_are_sorted=indices_are_sorted, fill_value=fill_value,
         output_shape=_out_aval.shape, _in_avals=_in_avals, _out_aval=_out_aval)
 
+  start_indices = _maybe_cast_to_int64(start_indices)
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
   slice_sizes_tf = _eval_shape(slice_sizes)
   out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf,
@@ -2179,7 +2186,7 @@ tf_impl_with_avals[lax.slice_p] = _slice
 def _dynamic_slice(operand, *start_indices, slice_sizes: core.Shape,
                    _in_avals: Sequence[core.ShapedArray],
                    _out_aval: core.ShapedArray):
-  start_indices = tf.stack(start_indices)
+  start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
   slice_sizes_tf = _eval_shape(slice_sizes)
 
   res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes_tf)
@@ -2194,7 +2201,8 @@ tf_impl_with_avals[lax.dynamic_slice_p] = _dynamic_slice
 def _dynamic_update_slice(operand, update, *start_indices,
                           _in_avals: Sequence[core.ShapedArray],
                           _out_aval: core.ShapedArray):
-  out = tfxla.dynamic_update_slice(operand, update, tf.stack(start_indices))
+  start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
+  out = tfxla.dynamic_update_slice(operand, update, start_indices)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
     out = tf.stop_gradient(out)  # See #7839
   return out

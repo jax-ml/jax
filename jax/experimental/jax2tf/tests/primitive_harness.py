@@ -1122,6 +1122,7 @@ for indices, index_oob, indices_name in [
     (np.array(2, dtype=np.int32), False, "1"),
     (np.array([2], dtype=np.int32), False, "2"),
     (np.array([2, 4], dtype=np.int32), False, "3"),
+    (np.array([2, 4], dtype=np.uint32), False, "3_uint32"),  # uint32 indices
     (np.array([[2, 4], [5, 6]], dtype=np.int32), False, "4"),
     (np.array([[0], [1], [10]], dtype=np.int32), True, "5_oob"), # Index out of bounds too high
     (np.array([[0, 1], [2, -1]], dtype=np.int32), False, "6_neg"), # Negative index is from the end
@@ -2106,6 +2107,9 @@ for shape, start_indices, limit_indices in [
     ((5, 3), (1, 1), (3, 2)),
     ((7, 5, 3), (4, 0, 1), (7, 1, 3)),
     ((5, 3), (1, 1), (2, 1)),
+    ((3,), (np.array(1, np.uint32),), (np.array(2,
+                                                np.uint32),)),  # uint32 indices
+    ((3,), (np.array(1, np.uint8),), (np.array(2, np.uint8),)),  # uint8 indices
     # out-of-bounds cases, allowed for dynamic_slice
     ((5,), (-1,), (0,)),
     ((5,), (-1,), (1,)),
@@ -2158,6 +2162,8 @@ for shape, start_indices, update_shape in [
     ((3,), (1,), (1,)),
     ((5, 3), (1, 1), (3, 1)),
     ((7, 5, 3), (4, 1, 0), (2, 0, 1)),
+    ((3,), (np.array(1, np.uint32),), (1,)),  # uint32 indices
+    ((3,), (np.array(1, np.uint8),), (1,)),  # uint8 indices
     ((3,), (-1,), (1,)),  # out-of-bounds
     ((3,), (10,), (1,)),  # out-of-bounds
     ((3,), (10,), (2,)),  # out-of-bounds
