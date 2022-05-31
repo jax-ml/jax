@@ -3085,10 +3085,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testSearchsorted(self, ashape, vshape, side, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [np.sort(rng(ashape, dtype)), rng(vshape, dtype)]
-    np_fun = lambda a, v: np.searchsorted(a, v, side=side)
+    def np_fun(a, v):
+      return np.searchsorted(a, v, side=side).astype('int32')
     jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testSearchsortedDtype(self):
+    # Test that for large arrays, int64 indices are used. We test this
+    # via abstract evaluation to avoid allocating a large array in tests.
+    a_int32 = jax.core.ShapedArray((np.iinfo(np.int32).max,), np.float32)
+    a_int64 = jax.core.ShapedArray((np.iinfo(np.int32).max + 1,), np.float32)
+    v = jax.core.ShapedArray((), np.float32)
+
+    out_int32 = jax.eval_shape(jnp.searchsorted, a_int32, v)
+    self.assertEqual(out_int32.dtype, np.int32)
+
+    if config.x64_enabled:
+      out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
+      self.assertEqual(out_int64.dtype, np.int64)
+    else:
+      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
+        out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": f"_dtype={dtype.__name__}_side={side}", "dtype": dtype, "side": side}
@@ -3126,7 +3144,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     order = jnp.index_exp[::-1] if reverse else jnp.index_exp[:]
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), jnp.sort(rng(binshape, dtype))[order]]
-    np_fun = lambda x, bins: np.digitize(x, bins, right=right)
+    np_fun = lambda x, bins: np.digitize(x, bins, right=right).astype('int32')
     jnp_fun = lambda x, bins: jnp.digitize(x, bins, right=right)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
