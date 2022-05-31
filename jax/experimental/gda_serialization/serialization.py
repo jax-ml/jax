@@ -28,7 +28,7 @@ from jax.experimental.maps import Mesh
 import jax.numpy as jnp
 import numpy as np
 import tensorstore as ts
-import tensorflow.compat.v2 as tf
+from etils import epath
 
 
 TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
@@ -256,7 +256,7 @@ class GlobalAsyncCheckpointManager:
 
       if current_process == 0:
         logging.info('Renaming %s to %s', temp_checkpoint_dir, final_checkpoint_dir)
-        tf.io.gfile.rename(temp_checkpoint_dir, final_checkpoint_dir)
+        epath.Path(temp_checkpoint_dir).rename(final_checkpoint_dir)
         logging.info('Finished saving GDA checkpoint to `%s`.', final_checkpoint_dir)
         self._client.key_value_set(_get_key(self._final_ckpt_dir), _CHECKPOINT_SUCCESS)
     except Exception as e:
