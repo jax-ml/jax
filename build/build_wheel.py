@@ -278,7 +278,7 @@ def build_wheel(sources_path, output_path, cpu):
     ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
     ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
     ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
-    ("Darwin", "x86_64"): ("macosx_10_9", "x86_64"),
+    ("Darwin", "x86_64"): ("macosx_10_12", "x86_64"),
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
     ("Windows", "AMD64"): ("win", "amd64"),
   }[(platform.system(), cpu)]
