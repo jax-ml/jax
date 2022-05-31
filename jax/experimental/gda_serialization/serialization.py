@@ -171,22 +171,6 @@ def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
   return asyncio.run(_run_deserializer())
 
 
-class _RetryWithTimeout:
-  def __init__(self, secs):
-    self.secs = secs
-
-  def __enter__(self):
-    self.timeout_after = time.time() + self.secs
-    return self
-
-  def __exit__(self, type, value, traceback):
-    pass
-
-  @property
-  def timed_out(self):
-    return time.time() > self.timeout_after
-
-
 def _get_key(key: str):
   return f'checkpoint_{key}'
 
