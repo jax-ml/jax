@@ -3,7 +3,7 @@
 
 # Sets the default Apple platform to macOS.
 build --apple_platform_type=macos
-build --macos_minimum_os=10.9
+build --macos_minimum_os=10.12
 
 # Make Bazel print out all options from rc files.
 build --announce_rc
