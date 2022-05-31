@@ -13,5 +13,5 @@ jobs:
             curl --location --request POST '${{ secrets.RELEASES_WEBHOOK }}' \
             --header 'Content-Type: application/json' \
             --data-raw '{
-                "text": "Release ${{github.event.release.name}} at ${{github.event.release.published_at}} by ${{github.event.release.author.login}}. Changes: ${{github.event.release.body}} <${{github.event.release.url}}|[github]>"
+                "text": "Release ${{github.event.release.name}} at ${{github.event.release.published_at}} by ${{github.event.release.author.login}}. <${{github.event.release.url}}|[github]>"
             }'
