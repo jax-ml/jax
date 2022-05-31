@@ -25,9 +25,15 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
       previously were no-ops. Now they use the same mechanism as `DeviceArray.copy()`.
     - Calling `pickle` on a traced array now results in an explicit 
       `ConcretizationTypeError`.
+  * The implementation of singular value decomposition (SVD) and
+    symmetric/Hermitian eigendecomposition should be significantly faster on
+    TPU, especially for matrices above 1000x1000 or so. Both now use a spectral
+    divide-and-conquer algorithm for eigendecomposition (QDWH-eig).
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
+  * x86-64 Mac wheels now require Mac OS 10.12 (Sierra) or newer. Mac OS 10.12
+    was released in 2016, so this should not be an onerous requirement.
 
 ## jax 0.3.13 (May 16, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.12...jax-v0.3.13).
