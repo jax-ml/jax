@@ -3314,7 +3314,7 @@ def packbits(a, axis: Optional[int] = None, bitorder='big'):
     raise TypeError('Expected an input array of integer or boolean data type')
   if bitorder not in ['little', 'big']:
     raise ValueError("'order' must be either 'little' or 'big'")
-  a = greater(a, 0).astype('uint8')
+  a = lax.gt(a, _lax_const(a, 0)).astype('uint8')
   bits = arange(8, dtype='uint8')
   if bitorder == 'big':
     bits = bits[::-1]
