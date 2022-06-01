@@ -955,14 +955,20 @@ def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
 
 
 @_wraps(np.interp)
-@partial(jit, static_argnames=('period',))
+@jit
 def interp(x, xp, fp, left=None, right=None, period=None):
+  _check_arraylike("interp", x, xp, fp)
   if shape(xp) != shape(fp) or ndim(xp) != 1:
     raise ValueError("xp and fp must be one-dimensional arrays of equal size")
-  x, xp, fp = _promote_dtypes_inexact(x, xp, fp)
+  x, xp = _promote_dtypes_inexact(x, xp)
+  fp, = _promote_dtypes_inexact(fp)
+
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("jnp.interp: complex x values not supported.")
+
   if period is not None:
-    if period == 0:
-      raise ValueError(f"period must be a non-zero value; got {period}")
+    if ndim(period) != 0:
+      raise ValueError(f"period must be a scalar; got {period}")
     period = abs(period)
     x = x % period
     xp = xp % period
