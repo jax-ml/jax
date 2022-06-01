@@ -21,6 +21,7 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial, lru_cache
 import os
+import platform as py_platform
 import threading
 from typing import Any, Dict, List, Optional, Union
 import warnings
@@ -340,7 +341,11 @@ def backends():
                        err)
           _backends_errors[platform] = str(err)
           continue
-    if _default_backend.platform == "cpu" and FLAGS.jax_platform_name != 'cpu':
+    # We don't warn about falling back to CPU on Mac OS, because we don't
+    # support anything else there at the moment and warning would be pointless.
+    if (py_platform.system() != "Darwin" and
+        _default_backend.platform == "cpu" and
+        FLAGS.jax_platform_name != 'cpu'):
       logging.warning('No GPU/TPU found, falling back to CPU. '
                       '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
     return _backends
