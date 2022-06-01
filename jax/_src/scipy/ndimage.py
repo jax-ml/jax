@@ -21,6 +21,7 @@ import textwrap
 import scipy.ndimage
 
 from jax._src import api
+from jax._src import util
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
@@ -108,7 +109,7 @@ def _map_coordinates(input, coordinates, order, mode, cval):
 
   outputs = []
   for items in itertools.product(*valid_1d_interpolations):
-    indices, validities, weights = zip(*items)
+    indices, validities, weights = util.unzip3(items)
     if all(valid is True for valid in validities):
       # fast path
       contribution = input[indices]

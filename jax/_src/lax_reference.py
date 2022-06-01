@@ -22,6 +22,7 @@ import opt_einsum
 import scipy.special
 
 from jax._src import dtypes
+from jax._src import util
 
 _slice = builtins.slice
 _max = builtins.max
@@ -256,7 +257,7 @@ def reshape(operand, new_sizes, dimensions=None):
 
 def pad(operand, padding_value, padding_config):
   # https://www.tensorflow.org/xla/operation_semantics#pad
-  lo, hi, interior = zip(*padding_config)
+  lo, hi, interior = util.unzip3(padding_config)
   # Handle first the positive edge padding and interior
   lo_pos, hi_pos = np.clip(lo, 0, None), np.clip(hi, 0, None)
   outshape = np.add(np.add(np.add(lo_pos, hi_pos), operand.shape),
