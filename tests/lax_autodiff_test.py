@@ -502,9 +502,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       {"testcase_name": "_inshape={}_pads={}"
        .format(jtu.format_shape_dtype_string(shape, dtype), pads),
        "shape": shape, "dtype": dtype, "pads": pads}
-      for shape in [(2, 3)]
       for dtype in float_dtypes
-      for pads in [[(1, 2, 1), (0, 1, 0)], [(-1, 0, 0), (-1, 0, 2)]]))
+      for shape, paddings in [
+        [(), [()]],
+        ((2, 3), [[(1, 2, 1), (0, 1, 0)], [(-1, 0, 0), (-1, 0, 2)]]),
+      ]
+      for pads in paddings))
   def testPadGrad(self, shape, dtype, pads):
     rng = jtu.rand_small(self.rng())
     operand = rng(shape, dtype)
