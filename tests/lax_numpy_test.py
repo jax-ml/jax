@@ -2965,29 +2965,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_period={}_left={}_right={}".format(
-       jtu.format_shape_dtype_string(shape, dtype), period, left, right),
-       "shape": shape, "dtype": dtype,
+      {"testcase_name": "_{}_period={}_left={}_right={}_target_dtype={}".format(
+         jtu.format_shape_dtype_string(shape, dtype), period, left, right,
+         target_dtype.__name__),
+       "shape": shape, "dtype": dtype, "target_dtype": target_dtype,
        "period": period, "left": left, "right": right}
       for shape in nonempty_shapes
       for period in [None, 0.59]
       for left in [None, 0]
       for right in [None, 1]
-      for dtype in default_dtypes
-      # following types lack precision for meaningful tests
-      if dtype not in [np.int8, np.int16, np.float16, jnp.bfloat16]
+      # Note: skip 8-bit and 16-bit types due to insufficient precision.
+      for dtype in jtu.dtypes.integer + jtu.dtypes.floating
+      for target_dtype in jtu.dtypes.inexact
   ))
-  def testInterp(self, shape, dtype, period, left, right):
+  def testInterp(self, shape, dtype, period, left, right, target_dtype):
     rng = jtu.rand_default(self.rng(), scale=10)
     kwds = dict(period=period, left=left, right=right)
     np_fun = partial(np.interp, **kwds)
     jnp_fun = partial(jnp.interp, **kwds)
-    args_maker = lambda: [rng(shape, dtype), np.sort(rng((20,), dtype)), np.linspace(0, 1, 20)]
+
+    if dtype != target_dtype:
+      # This case explicitly exercises dtype promotion.
+      jnp_fun = jax.numpy_dtype_promotion('standard')(jnp_fun)
+
+    args_maker = lambda: [rng(shape, dtype), np.sort(rng((20,), dtype)),
+                          rng((20,), target_dtype)]
 
     # skip numpy comparison for integer types with period specified, because numpy
     # uses an unstable sort and so results differ for duplicate values.
     if not (period and np.issubdtype(dtype, np.integer)):
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol={np.float32: 2E-4})
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                              rtol=1E-3)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
