@@ -26,7 +26,7 @@ from jax import lax
 from jax._src import api
 from jax._src import dtypes
 from jax._src.numpy.ndarray import ndarray
-from jax._src.numpy.util import _broadcast_to, _check_arraylike, _complex_elem_type, _where, _wraps
+from jax._src.numpy.util import _broadcast_to, _check_arraylike, _complex_elem_type, _promote_dtypes_inexact, _where, _wraps
 from jax._src.lax import lax as lax_internal
 from jax._src.util import canonicalize_axis as _canonicalize_axis, maybe_named_axis
 
@@ -291,23 +291,18 @@ def average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
 
 @partial(api.jit, static_argnames=('axis', 'returned'), inline=True)
 def _average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
-            returned=False):
-  a = _asarray(a)
-
+             returned=False):
   if weights is None: # Treat all weights as 1
+    _check_arraylike("average", a)
+    a, = _promote_dtypes_inexact(a)
     avg = mean(a, axis=axis)
     if axis is None:
-      weights_sum = lax.full((), core.dimension_as_value(np.size(a)), dtype=avg.dtype)
+      weights_sum = lax.full((), core.dimension_as_value(a.size), dtype=avg.dtype)
     else:
       weights_sum = lax.full_like(avg, core.dimension_as_value(a.shape[axis]), dtype=avg.dtype)
   else:
-    weights = _asarray(weights)
-
-    if dtypes.issubdtype(a.dtype, np.inexact):
-      out_dtype = dtypes.result_type(a.dtype, weights.dtype)
-    else:
-      out_dtype = dtypes.result_type(a.dtype, weights.dtype, dtypes.float_)
-    out_dtype = dtypes.canonicalize_dtype(out_dtype)
+    _check_arraylike("average", a, weights)
+    a, weights = _promote_dtypes_inexact(a, weights)
 
     a_shape = np.shape(a)
     a_ndim = len(a_shape)
@@ -329,8 +324,8 @@ def _average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None
       weights = _broadcast_to(weights, (a_ndim - 1) * (1,) + weights_shape)
       weights = _moveaxis(weights, -1, axis)
 
-    weights_sum = sum(weights, axis=axis, dtype=out_dtype)
-    avg = sum(a * weights, axis=axis, dtype=out_dtype) / weights_sum
+    weights_sum = sum(weights, axis=axis)
+    avg = sum(a * weights, axis=axis) / weights_sum
 
   if returned:
     if avg.shape != weights_sum.shape:
