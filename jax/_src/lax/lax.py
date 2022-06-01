@@ -1552,6 +1552,7 @@ _bool = {np.bool_}
 _num = _int | _float | _complex
 _any = _int | _float | _complex | _bool
 _bool_or_int = _int | _bool
+_ordered = _int | _float | _bool
 
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
@@ -2106,7 +2107,7 @@ ad.defjvp(div_p,
 ad.primitive_transposes[div_p] = _div_transpose_rule
 mlir.register_lowering(div_p, partial(_nary_lower_mhlo, mhlo.DivOp))
 
-rem_p = standard_naryop([_num, _num], 'rem')
+rem_p = standard_naryop([_int | _float, _int | _float], 'rem')
 ad.defjvp(
     rem_p,
     lambda g, x, y: _maybe_broadcast(broadcast_shapes(np.shape(x), np.shape(y)), g),
@@ -2171,19 +2172,19 @@ ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne')
 ad.defjvp_zero(ne_p)
 mlir.register_lowering(ne_p, partial(_compare_lower_mhlo, "NE"))
 
-ge_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ge')
+ge_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'ge')
 ad.defjvp_zero(ge_p)
 mlir.register_lowering(ge_p, partial(_compare_lower_mhlo, "GE"))
 
-gt_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'gt')
+gt_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'gt')
 ad.defjvp_zero(gt_p)
 mlir.register_lowering(gt_p, partial(_compare_lower_mhlo, "GT"))
 
-le_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'le')
+le_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'le')
 ad.defjvp_zero(le_p)
 mlir.register_lowering(le_p, partial(_compare_lower_mhlo, "LE"))
 
-lt_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'lt')
+lt_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'lt')
 ad.defjvp_zero(lt_p)
 mlir.register_lowering(lt_p, partial(_compare_lower_mhlo, "LT"))
 

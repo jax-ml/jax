@@ -2533,6 +2533,11 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "duplicate value in 'axes' .*"):
       lax.reduce(np.arange(3), 0, lax.add, (0, 0))
 
+  @parameterized.parameters([lax.rem, lax.lt, lax.gt, lax.ge, lax.le])
+  def test_ops_do_not_accept_complex_dtypes(self, op):
+    with self.assertRaisesRegex(TypeError, ".*does not accept dtype complex.*"):
+      op(2+3j, 4+5j)
+
   def test_population_count_booleans_not_supported(self):
     # https://github.com/google/jax/issues/3886
     msg = "population_count does not accept dtype bool"
