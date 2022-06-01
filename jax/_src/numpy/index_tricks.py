@@ -14,8 +14,10 @@
 
 import abc
 
+import jax
 from jax import core
 from jax._src.numpy.lax_numpy import arange, array, concatenate, expand_dims, linspace, meshgrid, stack, transpose
+from jax._src.numpy.util import _promote_dtypes
 import numpy as np
 
 
@@ -46,6 +48,8 @@ class _IndexGrid(abc.ABC):
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name=self.op_name)
     output = (_make_1d_grid_from_slice(k, op_name=self.op_name) for k in key)
+    with jax.numpy_dtype_promotion('standard'):
+      output = _promote_dtypes(*output)
     output = meshgrid(*output, indexing='ij', sparse=self.sparse)
     return output if self.sparse else stack(output, 0)
 
