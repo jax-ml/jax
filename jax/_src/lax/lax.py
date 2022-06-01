@@ -2893,7 +2893,7 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
     t_operand = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     t_padv = ad_util.Zero(padding_value.aval) if ad.is_undefined_primal(padding_value) else None
   else:
-    lo, hi, interior = zip(*padding_config)
+    lo, hi, interior = util.unzip3(padding_config)
     total = lambda x: _reduce_sum(x, list(range(t.ndim)))
 
     def t_op():
