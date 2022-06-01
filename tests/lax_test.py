@@ -1756,6 +1756,26 @@ class LaxTest(jtu.JaxTestCase):
     out_jit = jax.jit(fun)(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out_jit), arr_weak_type and init_weak_type)
 
+  def testReduceWindowScalar(self):
+    rng = jtu.rand_small(self.rng())
+    dtype = jnp.float32
+    init_val = np.asarray(0, dtype=dtype)
+    op = lax.add
+
+    def fun(operand, init_val):
+      return lax.reduce_window(
+          operand, init_val, op, window_dimensions=(), window_strides=(),
+          padding=(), base_dilation=(), window_dilation=())
+
+    def reference_fun(operand, init_val):
+      return lax_reference.reduce_window(
+          operand, init_val, op, window_dimensions=(), window_strides=(),
+          padding=(), base_dilation=())
+
+    args_maker = lambda: [rng((), dtype), init_val]
+    self._CompileAndCheck(fun, args_maker)
+    self._CheckAgainstNumpy(reference_fun, fun, args_maker)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
                          "_basedilation={}_windowdilation={}")
