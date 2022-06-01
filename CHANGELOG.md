@@ -29,6 +29,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     symmetric/Hermitian eigendecomposition should be significantly faster on
     TPU, especially for matrices above 1000x1000 or so. Both now use a spectral
     divide-and-conquer algorithm for eigendecomposition (QDWH-eig).
+  * {func}`jax.numpy.ldexp` no longer silently promotes all inputs to float64,
+    instead it promotes to float32 for integer inputs of size int32 or smaller
+    ({jax-issue}`#10921`).
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).

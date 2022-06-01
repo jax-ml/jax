@@ -3006,16 +3006,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for x1_dtype in default_dtypes))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLdexp(self, x1_shape, x1_dtype, x2_shape, x1_rng_factory, x2_rng_factory):
-    # integer types are converted to float64 in numpy's implementation
-    if (x1_dtype not in [jnp.bfloat16, np.float16, np.float32]
-        and not config.x64_enabled):
-      self.skipTest("Only run float64 testcase when float64 is enabled.")
     x1_rng = x1_rng_factory(self.rng())
     x2_rng = x2_rng_factory(self.rng())
-    np_fun = lambda x1, x2: np.ldexp(x1, x2)
-    np_fun = jtu.ignore_warning(category=RuntimeWarning,
-                                 message="overflow.*")(np_fun)
-    jnp_fun = lambda x1, x2: jnp.ldexp(x1, x2)
+
+    @jtu.ignore_warning(category=RuntimeWarning, message="overflow.*")
+    def np_fun(x1, x2):
+      out_dtype = dtypes._to_inexact_dtype(x1.dtype)
+      return np.ldexp(x1.astype(out_dtype), x2)
+
+    jnp_fun = jnp.ldexp
     args_maker = lambda: [x1_rng(x1_shape, x1_dtype),
                           x2_rng(x2_shape, np.int32)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)

@@ -45,12 +45,6 @@ def _constant_like(x, const):
   return np.array(const, dtype=dtypes.dtype(x))
 
 
-def _result_dtype(op, *args):
-  """Compute result dtype of applying op to arguments with given dtypes."""
-  args = [np.ones((0,) * np.ndim(arg), dtypes.dtype(arg)) for arg in args]
-  return dtypes.dtype(op(*args))
-
-
 def _replace_inf(x):
   return lax.select(isposinf(real(x)), lax_internal._zeros(x), x)
 
@@ -456,16 +450,23 @@ def _normalize_float(x):
 @jit
 def ldexp(x1, x2):
   _check_arraylike("ldexp", x1, x2)
-  dtype = dtypes.canonicalize_dtype(_result_dtype(np.ldexp, x1, x2))
+  x1_dtype = dtypes.dtype(x1)
+  x2_dtype = dtypes.dtype(x2)
+  if (dtypes.issubdtype(x1_dtype, np.complexfloating)
+      or dtypes.issubdtype(x2_dtype, np.inexact)):
+    raise ValueError(f"ldexp not supported for input types {(x1_dtype, x2_dtype)}")
+
   x1, x2 = _promote_shapes("ldexp", x1, x2)
-  x1 = lax.convert_element_type(x1, dtype)
 
+  dtype = dtypes.canonicalize_dtype(dtypes._to_inexact_dtype(x1_dtype))
   info = dtypes.finfo(dtype)
-  mask = (1 << info.nexp) - 1
-  bias = ((1 << info.nexp) - 1) >> 1
-
   int_type = _INT_DTYPES[info.bits]
 
+  x1 = lax.convert_element_type(x1, dtype)
+  x2 = lax.convert_element_type(x2, int_type)
+
+  mask = (1 << info.nexp) - 1
+  bias = ((1 << info.nexp) - 1) >> 1
   x, e = _normalize_float(x1)
   x2 += e + ((x >> info.nmant) & mask) - bias
 
