@@ -32,6 +32,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.numpy.ldexp` no longer silently promotes all inputs to float64,
     instead it promotes to float32 for integer inputs of size int32 or smaller
     ({jax-issue}`#10921`).
+  * Add a `create_perfetto_link` option to {func}`jax.profiler.start_trace` and
+    {func}`jax.profiler.start_trace`. When used, the profiler will generate a
+    link to the Perfetto UI to view the trace.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
