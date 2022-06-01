@@ -21,6 +21,7 @@ from typing import Callable, Any
 from jax import core
 from jax import tree_util
 from jax import lax
+from jax._src import lib as jaxlib
 from jax._src import util
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -118,6 +119,9 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
+if jaxlib.version >= (0, 3, 11):
+  mlir.register_lowering(
+      debug_callback_p, debug_callback_lowering, platform="gpu")
 
 def debug_callback(callback: Callable[..., Any], effect: DebugEffect, *args,
                    **kwargs):

@@ -56,9 +56,15 @@ def setUpModule():
 def tearDownModule():
   prev_xla_flags()
 
+# TODO(sharadmv): remove jaxlib guards for GPU tests when jaxlib minimum
+#                 version is >= 0.3.11
+disabled_backends = ["tpu"]
+if jaxlib.version < (0, 3, 11):
+  disabled_backends.append("gpu")
+
 class DebugPrintTest(jtu.JaxTestCase):
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_simple_debug_print_works_in_eager_mode(self):
     def f(x):
       debug_print('x: {}', x)
@@ -67,7 +73,7 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_debug_print_works_with_named_format_strings(self):
     def f(x):
       debug_print('x: {x}', x=x)
@@ -76,7 +82,7 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_multiple_debug_prints_should_print_multiple_values(self):
     def f(x):
       debug_print('x: {x}', x=x)
@@ -86,7 +92,7 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\ny: 3\n")
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_debug_print(self):
     @jax.jit
     def f(x):
@@ -96,7 +102,7 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print(self):
     @jax.jit
     def f(x):
@@ -106,7 +112,7 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print_with_pytree(self):
     @jax.jit
     def f(x):
@@ -189,28 +195,27 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_scan(self, ordered):
     def f(xs):
       def _body(carry, x):
-        debug_print("carry: {carry}", carry=carry, ordered=ordered)
-        debug_print("x: {x}", x=x, ordered=ordered)
+        debug_print("carry: {carry}, x: {x}", carry=carry, x=x, ordered=ordered)
         return carry + 1, x + 1
       return lax.scan(_body, 2, xs)
     with capture_stdout() as output:
       f(jnp.arange(2))
       jax.effects_barrier()
-    self.assertEqual(output(), _format_multiline("""
-      carry: 2
-      x: 0
-      carry: 3
-      x: 1
+    self.assertEqual(
+        output(),
+        _format_multiline("""
+      carry: 2, x: 0
+      carry: 3, x: 1
       """))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_for_loop(self, ordered):
     def f(x):
       def _body(i, x):
@@ -231,7 +236,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_while_loop_body(self, ordered):
     def f(x):
       def _cond(x):
@@ -254,7 +259,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_while_loop_cond(self, ordered):
     def f(x):
       def _cond(x):
@@ -286,7 +291,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_cond(self, ordered):
     def f(x):
       def true_fun(x):
@@ -312,7 +317,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_switch(self, ordered):
     def f(x):
       def b1(x):
@@ -348,7 +353,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
   def _assertLinesEqual(self, text1, text2):
     self.assertSetEqual(set(text1.split("\n")), set(text2.split("\n")))
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_ordered_print_not_supported_in_pmap(self):
 
     @jax.pmap
@@ -358,7 +363,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         ValueError, "Ordered effects not supported in `pmap`."):
       f(jnp.arange(jax.local_device_count()))
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_works_in_pmap(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
@@ -369,7 +374,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     with capture_stdout() as output:
       f(jnp.arange(jax.local_device_count()))
       jax.effects_barrier()
-    self._assertLinesEqual(output(), "hello: 0\nhello: 1\n")
+    lines = [f"hello: {i}\n" for i in range(jax.local_device_count())]
+    self._assertLinesEqual(output(), "".join(lines))
 
     @jax.pmap
     def f2(x):

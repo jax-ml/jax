@@ -59,6 +59,12 @@ lcf.allowed_effects.add('while')
 lcf.allowed_effects.add('while1')
 lcf.allowed_effects.add('while2')
 
+# TODO(sharadmv): remove jaxlib guards for GPU tests when jaxlib minimum
+#                 version is >= 0.3.11
+disabled_backends = ['tpu']
+if jaxlib.version < (0, 3, 11):
+  disabled_backends.append('gpu')
+
 
 def trivial_effect_lowering(ctx, *, effect):
   ctx.set_tokens_out(ctx.tokens_in)
@@ -570,7 +576,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
 class EffectOrderingTest(jtu.JaxTestCase):
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_execute_python_callback(self):
     # TODO(sharadmv): remove jaxlib check when minimum version is bumped
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
@@ -592,7 +598,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
     self.assertListEqual(log, [2., 3.])
     dispatch.runtime_tokens.block_until_ready()
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_ordered_effect_remains_ordered_across_multiple_devices(self):
     # TODO(sharadmv): remove jaxlib check when minimum version is bumped
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
@@ -628,7 +634,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
     expected_log = [x_, y_, x_, y_, x_, y_]
     self.assertListEqual(log, expected_log)
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_different_threads_get_different_tokens(self):
     # TODO(sharadmv): remove jaxlib check when minimum version is bumped
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
@@ -685,7 +691,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
       return x
     jax.pmap(f)(jnp.arange(jax.local_device_count()))
 
-  @jtu.skip_on_devices("tpu", "gpu")
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_pmap_unordered_callback(self):
     # TODO(sharadmv): remove jaxlib check when minimum version is bumped
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
