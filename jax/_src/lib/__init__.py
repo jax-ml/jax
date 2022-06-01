@@ -28,14 +28,6 @@ __all__ = [
    'tpu_driver_client', 'version', 'xla_client', 'xla_extension',
 ]
 
-# Before attempting to import jaxlib, warn about experimental
-# machine configurations.
-if platform.system() == "Darwin" and platform.machine() == "arm64":
-  warnings.warn("JAX on Mac ARM machines is experimental and minimally tested. "
-                "Please see https://github.com/google/jax/issues/5501 in the "
-                "event of problems.")
-
-
 # This apparently-unused import is to work around
 # https://github.com/google/jax/issues/9218#issuecomment-1016949739
 # If the user is using Conda, we want to ensure that Conda's libstdc++ is chosen
