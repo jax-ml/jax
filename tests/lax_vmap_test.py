@@ -114,17 +114,18 @@ class LaxVmapTest(jtu.JaxTestCase):
        "testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
        "rhs_dilation={}_dims={}_feature_group_count={}_batch_group_count={}"
-       "_lhs_bdim={}_rhs_bdim={}"
+       "_lhs_bdim={}_rhs_bdim={}_bdim_size={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
                jtu.format_shape_dtype_string(rhs_shape, dtype),
                strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums),
-               feature_group_count, batch_group_count, lhs_bdim, rhs_bdim),
+               feature_group_count, batch_group_count, lhs_bdim, rhs_bdim,
+               bdim_size),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "dimension_numbers": dim_nums,
        "perms": perms, "lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim,
        "feature_group_count": feature_group_count,
-       "batch_group_count": batch_group_count,
+       "batch_group_count": batch_group_count, "bdim_size": bdim_size,
      } for batch_group_count, feature_group_count in s([(1, 1), (2, 1), (1, 2)])
        for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in s([
            ((b * batch_group_count, i * feature_group_count, 6, 7),  # lhs_shape
@@ -142,7 +143,10 @@ class LaxVmapTest(jtu.JaxTestCase):
        for dim_nums, perms in s([
            (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
            (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
-           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))])
+           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3])),
+           (("HWCN", "HWIO", "HWCN"), ([2, 3, 1, 0], [2, 3, 1, 0])),
+       ])
+       for bdim_size in s([0, 5])
        for lhs_bdim in s(itertools.chain([cast(Optional[int], None)],
                                          range(len(lhs_shape) + 1)))
        for rhs_bdim in s(itertools.chain([cast(Optional[int], None)],
@@ -152,7 +156,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
       dimension_numbers, perms, feature_group_count, batch_group_count,
-      lhs_bdim, rhs_bdim):
+      lhs_bdim, rhs_bdim, bdim_size):
     rng = jtu.rand_default(self.rng())
     tol = 1e-1 if dtypes.finfo(dtype).bits <= 32 else 1e-3
 
@@ -167,8 +171,9 @@ class LaxVmapTest(jtu.JaxTestCase):
                    feature_group_count=feature_group_count,
                    batch_group_count=batch_group_count,
                    precision=lax.Precision.HIGHEST)
-    self._CheckBatching(conv, 5, (lhs_bdim, rhs_bdim), (lhs_shape, rhs_shape),
-                        (dtype, dtype), rng, rtol=tol, atol=tol)
+    self._CheckBatching(conv, bdim_size, (lhs_bdim, rhs_bdim),
+                        (lhs_shape, rhs_shape), (dtype, dtype), rng, rtol=tol,
+                        atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_from_dtype={}_to_dtype={}_bdims={}".format(
@@ -467,12 +472,11 @@ class LaxVmapTest(jtu.JaxTestCase):
       for init_val, op, dtypes in [
           (0, lax.add, default_dtypes),
           (1, lax.mul, default_dtypes),
-          (0, lax.max, all_dtypes), # non-monoidal
+          # non-monoidal for everything except unsigned integers
+          (0, lax.max, all_dtypes),
           (-np.inf, lax.max, float_dtypes),
           (dtypes.iinfo(np.int32).min, lax.max, [np.int32]),
           (dtypes.iinfo(np.int64).min, lax.max, [np.int64]),
-          (dtypes.iinfo(np.uint32).min, lax.max, [np.uint32]),
-          (dtypes.iinfo(np.uint64).min, lax.max, [np.uint64]),
           (np.inf, lax.min, float_dtypes),
           (dtypes.iinfo(np.int32).max, lax.min, [np.int32]),
           (dtypes.iinfo(np.int64).max, lax.min, [np.int64]),

@@ -534,6 +534,29 @@ def _conv_general_dilated_batch_rule(
   lhs_bdim, rhs_bdim = batch_dims
   lhs_spec, rhs_spec, out_spec = dimension_numbers
 
+  # Some of the cases that reshape into batch or feature dimensions do not work
+  # with size 0 batch dimensions. The best fix would be to extend HLO to support
+  # multiple batch dimensions.
+  if ((lhs_bdim is not None and lhs.shape[lhs_bdim] == 0) or
+      (rhs_bdim is not None and rhs.shape[rhs_bdim] == 0)):
+    lhs_shape_unbatched, rhs_shape_unbatched = list(lhs.shape), list(rhs.shape)
+    if lhs_bdim is not None:
+      lhs_shape_unbatched.pop(lhs_bdim)
+    if rhs_bdim is not None:
+      rhs_shape_unbatched.pop(rhs_bdim)
+    shape = _conv_general_dilated_shape_rule(
+      core.ShapedArray(lhs_shape_unbatched, lhs.dtype),
+      core.ShapedArray(rhs_shape_unbatched, rhs.dtype),
+      window_strides=window_strides, padding=padding, lhs_dilation=lhs_dilation,
+      rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count)
+    return lax.full(
+      (0,) + shape, 0,
+      dtype=lhs.dtype if preferred_element_type is None
+            else preferred_element_type), 0
+
+
   if lhs_bdim is not None and rhs_bdim is not None:
     assert lhs.shape[lhs_bdim] == rhs.shape[rhs_bdim]
     if batch_group_count > 1:
@@ -596,8 +619,7 @@ def _conv_general_dilated_batch_rule(
       new_rhs = _reshape_axis_out_of(rhs_spec[0] + int(rhs_bdim <= rhs_spec[0]),
                                      group_count, rhs)
       new_rhs = _reshape_axis_into(rhs_bdim + int(rhs_spec[0] < rhs_bdim),
-                                   rhs_spec[0] + 1,
-                                   new_rhs)
+                                   rhs_spec[0] + 1, new_rhs)
       new_rhs = _reshape_axis_into(rhs_spec[0], rhs_spec[0], new_rhs)
       out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
                                  lhs_dilation, rhs_dilation, dimension_numbers,
@@ -737,6 +759,10 @@ mlir.register_lowering(
 
 
 def _reshape_axis_into(src, dst, x):
+  # NB: `dst` is the number of the dimension that we should reshape into
+  # *after* `src` is removed from `x`'s list of dimensions. For example, if
+  # `src` is an added batch dimension, `dst` might name a target dimension in
+  # the unbatched list of dimensions.
   perm = [i for i in range(x.ndim) if i != src]
   perm.insert(dst, src)
   new_shape = list(np.delete(x.shape, src))
