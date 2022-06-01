@@ -4180,9 +4180,8 @@ def corrcoef(x, y=None, rowvar=True):
     # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
     return divide(c, c)
   d = diag(c)
-  stddev = sqrt(real(d))
-  c = divide(c, stddev[:,None])
-  c = divide(c, stddev[None,:])
+  stddev = sqrt(real(d)).astype(c.dtype)
+  c = c / stddev[:, None] / stddev[None, :]
 
   real_part = clip(real(c), -1, 1)
   if iscomplexobj(c):
