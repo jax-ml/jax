@@ -868,7 +868,7 @@ def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
 
   known_avals = [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if not uk]
   jaxpr_known, _, consts_known = trace_to_jaxpr_dynamic(lu.wrap_init(fun), known_avals)
-  (out_unknowns, jaxpr_unknown, res_avals), = cell
+  (out_unknowns, jaxpr_unknown, res_avals), = cell  # pytype: disable=bad-unpacking
 
   # check jaxpr_known and jaxpr_unknown in isolation
   if config.jax_enable_checks:

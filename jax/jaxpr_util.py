@@ -117,7 +117,7 @@ def vars_by_fanout(jaxpr: core.Jaxpr):
     return {fmt_key(var, var_def): len(var_refs)
             for var, var_def, var_refs in reads}
 
-  return [(j, hist(j, reads)) for j, reads in var_defs_and_refs(jaxpr)]
+  return [(j, hist(j, reads)) for j, reads in var_defs_and_refs(jaxpr)]  # pytype: disable=bad-unpacking
 
 def print_histogram(histogram: Dict[Any, int]):
   count_width = max(len(str(v)) for v in histogram.values())
