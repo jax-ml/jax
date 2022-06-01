@@ -2675,7 +2675,7 @@ def insert(arr, obj, values, axis=None):
   indices = where(indices < 0, indices + n_input, indices)
   indices = clip(indices, 0, n_input)
 
-  values_ind = indices.at[argsort(indices)].add(arange(n_insert))
+  values_ind = indices.at[argsort(indices)].add(arange(n_insert, dtype=indices.dtype))
   arr_mask = ones(n_input + n_insert, dtype=bool).at[values_ind].set(False)
   arr_ind = where(arr_mask, size=n_input)[0]
 
