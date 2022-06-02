@@ -32,19 +32,30 @@ traceback_util.register_exclusion(__file__)
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 
+_profiler_server: Optional[xla_client.profiler.ProfilerServer] = None
+
 
 def start_server(port: int):
-  """Starts a profiler server on port `port`.
+  """Starts the profiler server on port `port`.
 
   Using the "TensorFlow profiler" feature in `TensorBoard
   <https://www.tensorflow.org/tensorboard>`_ 2.2 or newer, you can
   connect to the profiler server and sample execution traces that show CPU,
   GPU, and/or TPU device activity.
-
-  Returns a profiler server object. The server remains alive and listening until
-  the server object is destroyed.
   """
-  return xla_client.profiler.start_server(port)
+  global _profiler_server
+  if _profiler_server is not None:
+    raise ValueError("Only one profiler server can be active at a time.")
+  _profiler_server = xla_client.profiler.start_server(port)
+  return _profiler_server
+
+
+def stop_server():
+  """Stops the running profiler server."""
+  global _profiler_server
+  if _profiler_server is None:
+    raise ValueError("No active profiler server.")
+  _profiler_server = None # Should destroy the profiler server
 
 
 class _ProfileState:

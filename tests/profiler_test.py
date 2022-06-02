@@ -52,10 +52,25 @@ class ProfilerTest(unittest.TestCase):
     self.profile_done = False
 
   @unittest.skipIf(not portpicker, "Test requires portpicker")
-  def testStartServer(self):
+  def testStartStopServer(self):
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port=port)
     del port
+    jax.profiler.stop_server()
+
+  @unittest.skipIf(not portpicker, "Test requires portpicker")
+  def testCantStartMultipleServers(self):
+    port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port=port)
+    port = portpicker.pick_unused_port()
+    with self.assertRaisesRegex(
+        ValueError, "Only one profiler server can be active at a time."):
+      jax.profiler.start_server(port=port)
+    jax.profiler.stop_server()
+
+  def testCantStopServerBeforeStartingServer(self):
+    with self.assertRaisesRegex(ValueError, "No active profiler server."):
+      jax.profiler.stop_server()
 
   def testProgrammaticProfiling(self):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -151,14 +166,14 @@ class ProfilerTest(unittest.TestCase):
     "Test requires tensorflow.profiler and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
     def on_worker(port, worker_start):
-      # Must keep return value `server` around.
-      server = jax.profiler.start_server(port)  # noqa: F841
+      jax.profiler.start_server(port)
       worker_start.set()
       x = jnp.ones((1000, 1000))
       while True:
         with jax.profiler.TraceAnnotation("atraceannotation"):
           jnp.dot(x, x.T).block_until_ready()
           if self.profile_done:
+            jax.profiler.stop_server()
             break
 
     def on_profile(port, logdir, worker_start):

@@ -35,6 +35,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Add a `create_perfetto_link` option to {func}`jax.profiler.start_trace` and
     {func}`jax.profiler.start_trace`. When used, the profiler will generate a
     link to the Perfetto UI to view the trace.
+  * Changed the semantics of {func}`jax.profiler.start_server(...)` to store the
+    keepalive globally, rather than requiring the user to keep a reference to
+    it.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
