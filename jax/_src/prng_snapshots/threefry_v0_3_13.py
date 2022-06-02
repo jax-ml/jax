@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,8 +14,6 @@
 
 
 from functools import partial
-from typing import Callable, Iterator, NamedTuple, Sequence
-import warnings
 
 import numpy as np
 
@@ -23,21 +21,14 @@ import jax
 from jax import core
 from jax import lax
 from jax import numpy as jnp
-from jax import tree_util
-from jax.config import config
-from jax.dtypes import float0
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import xla
 
+from jax._src import prng
 from jax._src.api import jit, vmap
 from jax._src.lax import lax as lax_internal
-from jax._src.lib.mlir.dialects import mhlo
-from jax._src.numpy.lax_numpy import (
-    _canonicalize_tuple_index, _eliminate_deprecated_list_indexing,
-    _expand_bool_indices, _register_stackable)
-import jax._src.pretty_printer as pp
-from jax._src.util import canonicalize_axis, prod
+from jax._src.util import prod
 
 # TODO(phawkins): make gpu_prng unconditional after jaxlib >= 0.3.11
 # becomes the minimum; remove cuda_prng and hip_prng.
@@ -46,200 +37,8 @@ from jax._src.lib import cuda_prng
 from jax._src.lib import hip_prng
 
 
-UINT_DTYPES = {
-    8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}  # type: ignore[has-type]
-
-# -- PRNG implementation interface --
-
-class PRNGImpl(NamedTuple):
-  """Specifies PRNG key shape and operations.
-
-  A PRNG implementation is determined by a key type ``K`` and a
-  collection of functions that operate on such keys. The key type
-  ``K`` is an array type with element type uint32 and shape specified
-  by ``key_shape``. The type signature of each operations is::
-
-    seed :: int[] -> K
-    fold_in :: K -> int[] -> K
-    split[n] :: K -> K[n]
-    random_bits[shape, bit_width] :: K -> uint<bit_width>[shape]
-
-  A PRNG implementation is adapted to an array-like object of keys
-  ``K`` by the ``PRNGKeyArray`` class, which should be created via the
-  ``seed_with_impl`` function.
-  """
-  key_shape: core.Shape
-  seed: Callable
-  split: Callable
-  random_bits: Callable
-  fold_in: Callable
-
-  def pprint(self):
-    return (pp.text(f"{self.__class__.__name__}:") +
-            pp.nest(2, pp.group(pp.brk() + pp.join(pp.brk(), [
-              pp.text(f"{k} = {v}") for k, v in self._asdict().items()
-            ]))))
-
-
-# -- PRNG key arrays --
-
-def _check_prng_key_data(impl, key_data: jnp.ndarray):
-  ndim = len(impl.key_shape)
-  if not all(hasattr(key_data, attr) for attr in ['ndim', 'shape', 'dtype']):
-    raise TypeError("JAX encountered invalid PRNG key data: expected key_data "
-                    f"to have ndim, shape, and dtype attributes. Got {key_data}")
-  if key_data.ndim < 1:
-    raise TypeError("JAX encountered invalid PRNG key data: expected "
-                    f"key_data.ndim >= 1; got ndim={key_data.ndim}")
-  if key_data.shape[-ndim:] != impl.key_shape:
-    raise TypeError("JAX encountered invalid PRNG key data: expected key_data.shape to "
-                    f"end with {impl.key_shape}; got shape={key_data.shape} for impl={impl}")
-  if key_data.dtype not in [np.uint32, float0]:
-    raise TypeError("JAX encountered invalid PRNG key data: expected key_data.dtype = uint32; "
-                    f"got dtype={key_data.dtype}")
-
-
-@tree_util.register_pytree_node_class
-class PRNGKeyArray:
-  """An array whose elements are PRNG keys.
-
-  This class lifts the definition of a PRNG, provided in the form of a
-  ``PRNGImpl``, into an array-like pytree class. Instances of this
-  class behave like an array whose base elements are keys, hiding the
-  fact that keys are typically arrays (of ``uint32`` dtype) themselves.
-
-  PRNGKeyArrays are also restricted relative to JAX arrays in that
-  they do not expose arithmetic operations. They instead expose
-  wrapper methods around the PRNG implementation functions (``split``,
-  ``random_bits``, ``fold_in``).
-  """
-
-  impl: PRNGImpl
-  _keys: jnp.ndarray
-
-  def __init__(self, impl, key_data: jnp.ndarray):
-    # key_data might be a placeholder python `object` or `bool`
-    # instead of a jnp.ndarray due to tree_unflatten
-    if type(key_data) not in [object, bool]:
-      _check_prng_key_data(impl, key_data)
-    self.impl = impl
-    self._keys = key_data
-
-  def tree_flatten(self):
-    return (self._keys,), self.impl
-
-  def unsafe_raw_array(self):
-    """Access the raw numerical array that carries underlying key data.
-
-    Returns:
-      A uint32 JAX array whose leading dimensions are ``self.shape``.
-    """
-    return self._keys
-
-  @classmethod
-  def tree_unflatten(cls, impl, keys):
-    keys, = keys
-    return cls(impl, keys)
-
-  @property
-  def dtype(self):
-    # TODO(frostig): remove after deprecation window
-    if config.jax_enable_custom_prng:
-      raise AttributeError("'PRNGKeyArray' has no attribute 'dtype'")
-    else:
-      warnings.warn(
-          'deprecated `dtype` attribute of PRNG key arrays', FutureWarning)
-      return np.uint32
-
-  @property
-  def shape(self):
-    # TODO(frostig): simplify once we always enable_custom_prng
-    if config.jax_enable_custom_prng:
-      return self._shape
-    else:
-      warnings.warn(
-          'deprecated `shape` attribute of PRNG key arrays. In a future version '
-          'of JAX this attribute will be removed or its value may change.',
-          FutureWarning)
-      return self._keys.shape
-
-  @property
-  def _shape(self):
-    base_ndim = len(self.impl.key_shape)
-    return self._keys.shape[:-base_ndim]
-
-  @property
-  def ndim(self):
-    return len(self.shape)
-
-  def _is_scalar(self):
-    base_ndim = len(self.impl.key_shape)
-    return self._keys.ndim == base_ndim
-
-  def __len__(self):
-    if self._is_scalar():
-      raise TypeError('len() of unsized object')
-    return len(self._keys)
-
-  def __iter__(self) -> Iterator['PRNGKeyArray']:
-    if self._is_scalar():
-      raise TypeError('iteration over a 0-d single PRNG key')
-    return (PRNGKeyArray(self.impl, k) for k in iter(self._keys))
-
-  def __getitem__(self, idx) -> 'PRNGKeyArray':
-    base_ndim = len(self.impl.key_shape)
-    ndim = self._keys.ndim - base_ndim
-    indexable_shape = self.impl.key_shape[:ndim]
-    idx = _eliminate_deprecated_list_indexing(idx)
-    idx = _expand_bool_indices(idx, indexable_shape)
-    idx = _canonicalize_tuple_index(ndim, idx, array_name='PRNGKeyArray')
-    return PRNGKeyArray(self.impl, self._keys[idx])
-
-  def _fold_in(self, data: int) -> 'PRNGKeyArray':
-    return PRNGKeyArray(self.impl, self.impl.fold_in(self._keys, data))
-
-  def _random_bits(self, bit_width, shape) -> jnp.ndarray:
-    return self.impl.random_bits(self._keys, bit_width, shape)
-
-  def _split(self, num: int) -> 'PRNGKeyArray':
-    return PRNGKeyArray(self.impl, self.impl.split(self._keys, num))
-
-  def reshape(self, newshape, order=None):
-    reshaped_keys = jnp.reshape(self._keys, (*newshape, -1), order=order)
-    return PRNGKeyArray(self.impl, reshaped_keys)
-
-  def concatenate(self, key_arrs, axis):
-    axis = canonicalize_axis(axis, self.ndim)
-    arrs = [self._keys, *[k._keys for k in key_arrs]]
-    return PRNGKeyArray(self.impl, jnp.concatenate(arrs, axis))
-
-  def broadcast_to(self, shape):
-    if jnp.ndim(shape) == 0:
-      shape = (shape,)
-    new_shape = (*shape, *self.impl.key_shape)
-    return PRNGKeyArray(self.impl, jnp.broadcast_to(self._keys, new_shape))
-
-  def expand_dims(self, dimensions: Sequence[int]):
-    # follows lax.expand_dims, not jnp.expand_dims, so dimensions is a sequence
-    ndim_out = self.ndim + len(set(dimensions))
-    dimensions = [canonicalize_axis(d, ndim_out) for d in dimensions]
-    return PRNGKeyArray(self.impl, lax.expand_dims(self._keys, dimensions))
-
-  def __repr__(self):
-    arr_shape = self._shape
-    pp_keys = pp.text('shape = ') + pp.text(str(arr_shape))
-    pp_impl = pp.text('impl = ') + self.impl.pprint()
-    return str(pp.group(
-      pp.text('PRNGKeyArray:') +
-      pp.nest(2, pp.brk() + pp_keys + pp.brk() + pp_impl)))
-
-
-def seed_with_impl(impl: PRNGImpl, seed: int) -> PRNGKeyArray:
-  return PRNGKeyArray(impl, impl.seed(seed))
-
-_register_stackable(PRNGKeyArray)
-
-# -- threefry2x32 PRNG implementation --
+UINT_DTYPES = prng.UINT_DTYPES
+PRNGImpl = prng.PRNGImpl
 
 
 def _is_threefry_prng_key(key: jnp.ndarray) -> bool:
@@ -554,54 +353,3 @@ threefry_prng_impl = PRNGImpl(
     split=threefry_split,
     random_bits=threefry_random_bits,
     fold_in=threefry_fold_in)
-
-
-# -- RngBitGenerator PRNG implementation --
-
-# This code is experimental!
-# https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator
-# Notice that the RngBitGenerator operations are not guaranteed to be
-# stable/deterministic across backends or compiler versions. Correspondingly, we
-# reserve the right to change any of these implementations at any time!
-
-def _rbg_seed(seed: int) -> jnp.ndarray:
-  halfkey = threefry_seed(seed)
-  return jnp.concatenate([halfkey, halfkey])
-
-def _rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
-  return vmap(_threefry_split, (0, None), 1)(key.reshape(2, 2), num).reshape(num, 4)
-
-def _rbg_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
-  return vmap(_threefry_fold_in, (0, None), 0)(key.reshape(2, 2), data).reshape(4)
-
-def _rbg_random_bits(key: jnp.ndarray, bit_width: int, shape: Sequence[int]
-                     ) -> jnp.ndarray:
-  if not key.shape == (4,) and key.dtype == jnp.dtype('uint32'):
-    raise TypeError("_rbg_random_bits got invalid prng key.")
-  if bit_width not in (8, 16, 32, 64):
-    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
-  _, bits = lax.rng_bit_generator(key, shape, dtype=UINT_DTYPES[bit_width])
-  return bits
-
-rbg_prng_impl = PRNGImpl(
-    key_shape=(4,),
-    seed=_rbg_seed,
-    split=_rbg_split,
-    random_bits=_rbg_random_bits,
-    fold_in=_rbg_fold_in)
-
-def _unsafe_rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
-  # treat 10 iterations of random bits as a 'hash function'
-  _, keys = lax.rng_bit_generator(key, (10 * num, 4), dtype='uint32')
-  return keys[::10]
-
-def _unsafe_rbg_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
-  _, random_bits = lax.rng_bit_generator(_rbg_seed(data), (10, 4), dtype='uint32')
-  return key ^ random_bits[-1]
-
-unsafe_rbg_prng_impl = PRNGImpl(
-    key_shape=(4,),
-    seed=_rbg_seed,
-    split=_unsafe_rbg_split,
-    random_bits=_rbg_random_bits,
-    fold_in=_unsafe_rbg_fold_in)

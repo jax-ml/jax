@@ -53,11 +53,6 @@ def _prng_key_as_array(key):
   return key.unsafe_raw_array() if config.jax_enable_custom_prng else key
 
 
-PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
-              ('rbg', prng.rbg_prng_impl),
-              ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]
-
-
 class RandomValuesCase(NamedTuple):
   name: str
   prng_impl: str
@@ -224,38 +219,67 @@ class PrngTest(jtu.JaxTestCase):
     finally:
       xla.apply_primitive = apply_primitive
 
-  def testRngRandomBits(self):
-    # Test specific outputs to ensure consistent random values between JAX versions.
-    key = random.PRNGKey(1701)
+  # TODO(frostig): Currently only checking 3 bits from the same single
+  # key. Test more comprehensively across fixed keys, keys split from
+  # a key, shapes.
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_" + name, "prng_name": name}
+      for name in jax._src.random.prng_impls().keys()))
+  def testRngRandomBits(self, prng_name):
+    key = 1701
 
-    bits8 = jax._src.random._random_bits(key, 8, (3,))
-    expected8 = np.array([216, 115,  43], dtype=np.uint8)
-    self.assertArraysEqual(bits8, expected8)
+    random_bits_reference = {
+        'threefry2x32': {
+            8:  np.array([216, 115,  43], dtype=np.uint8),
+            16: np.array([41682,  1300, 55017], dtype=np.uint16),
+            32: np.array([56197195, 4200222568, 961309823], dtype=np.uint32),
+            64: (np.array([3982329540505020460, 16822122385914693683,
+                           7882654074788531506], dtype=np.uint64)
+                 if config.x64_enabled else
+                 np.array([676898860, 3164047411, 4010691890], dtype=np.uint32))
+        },
+        'threefry2x32@v0.3.13': {
+            8:  np.array([216, 115,  43], dtype=np.uint8),
+            16: np.array([41682,  1300, 55017], dtype=np.uint16),
+            32: np.array([56197195, 4200222568, 961309823], dtype=np.uint32),
+            64: (np.array([3982329540505020460, 16822122385914693683,
+                           7882654074788531506], dtype=np.uint64)
+                 if config.x64_enabled else
+                 np.array([676898860, 3164047411, 4010691890], dtype=np.uint32))
+        },
+    }
 
-    bits16 = jax._src.random._random_bits(key, 16, (3,))
-    expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
-    self.assertArraysEqual(bits16, expected16)
+    if prng_name not in random_bits_reference:
+      self.skipTest("no reference random bits")
 
-    bits32 = jax._src.random._random_bits(key, 32, (3,))
-    expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
-    self.assertArraysEqual(bits32, expected32)
+    with jax.default_prng_impl(prng_name):
+      # Test specific outputs to ensure consistent random values between JAX versions.
+      key = random.PRNGKey(1701)
 
-    with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
-      bits64 = jax._src.random._random_bits(key, 64, (3,))
-    if config.x64_enabled:
-      expected64 = np.array([3982329540505020460, 16822122385914693683,
-                             7882654074788531506], dtype=np.uint64)
-    else:
-      expected64 = np.array([676898860, 3164047411, 4010691890], dtype=np.uint32)
-    self.assertArraysEqual(bits64, expected64)
+      bits8 = jax._src.random._random_bits(key, 8, (3,))
+      expected8 = random_bits_reference[prng_name][8]
+      self.assertArraysEqual(bits8, expected8)
+
+      bits16 = jax._src.random._random_bits(key, 16, (3,))
+      expected16 = random_bits_reference[prng_name][16]
+      self.assertArraysEqual(bits16, expected16)
+
+      bits32 = jax._src.random._random_bits(key, 32, (3,))
+      expected32 = random_bits_reference[prng_name][32]
+      self.assertArraysEqual(bits32, expected32)
+
+      with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
+        bits64 = jax._src.random._random_bits(key, 64, (3,))
+      expected64 = random_bits_reference[prng_name][64]
+      self.assertArraysEqual(bits64, expected64)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_" + name, "prng_name": name}
-      for name, _ in PRNG_IMPLS))
+      for name in jax._src.random.prng_impls().keys()))
   def testRngRandomBitsShapeDtype(self, prng_name):
-    # Like testRngRandomBits, but only meant to exercise random_bits
-    # on every PRNG implementation. Instead of values, only checks
-    # that shapes/dtypes are as expected.
+    # Like testRngRandomBits, but meant to exercise random_bits on all
+    # PRNG implementations, even those without reference bits. Instead
+    # of values, only checks that shapes/dtypes are as expected.
 
     with jax.default_prng_impl(prng_name):
       key = random.PRNGKey(1701)
@@ -384,7 +408,7 @@ class PrngTest(jtu.JaxTestCase):
   def test_default_prng_selection(self):
     if not config.jax_enable_custom_prng:
       self.skipTest("test requires config.jax_enable_custom_prng")
-    for name, impl in PRNG_IMPLS:
+    for name, impl in jax._src.random.prng_impls().items():
       with jax.default_prng_impl(name):
         self.assertIs(random.default_prng_impl(), impl)
         key = random.PRNGKey(42)
@@ -396,7 +420,7 @@ class PrngTest(jtu.JaxTestCase):
   def test_default_prng_selection_without_custom_prng_mode(self):
     if config.jax_enable_custom_prng:
       self.skipTest("test requires that config.jax_enable_custom_prng is False")
-    for name, impl in PRNG_IMPLS:
+    for name, impl in jax._src.random.prng_impls().items():
       with jax.default_prng_impl(name):
         self.assertIs(random.default_prng_impl(), impl)
         key = random.PRNGKey(42)
