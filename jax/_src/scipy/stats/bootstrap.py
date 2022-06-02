@@ -57,7 +57,6 @@ def _bootstrap_resample_and_compute_statistic(sample, statistic, n_resamples, ke
   def _resample_and_compute_once(input_key):
     idxs = random.randint(input_key, shape=(n,), minval=0, maxval=n)
     # `sample` is a tuple of sample sets, we need to apply same indexing on each sample set
-    input_key, next_key = jax.random.split(input_key)
     resample = jax.tree_map(lambda data: data[..., idxs], sample)
     return statistic(*resample)
 
