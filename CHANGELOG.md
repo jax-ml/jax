@@ -38,8 +38,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
-  * x86-64 Mac wheels now require Mac OS 10.12 (Sierra) or newer. Mac OS 10.12
-    was released in 2016, so this should not be an onerous requirement.
+  * x86-64 Mac wheels now require Mac OS 10.14 (Mojave) or newer. Mac OS 10.14
+    was released in 2018, so this should not be a very onerous requirement.
 
 ## jax 0.3.13 (May 16, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.12...jax-v0.3.13).
