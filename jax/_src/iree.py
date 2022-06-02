@@ -118,7 +118,7 @@ class IreeClient:
     self.platform = "iree"
     self.platform_version = "0.0.1"
     self.runtime_type = "iree"
-    self.runtime_driver = runtime_driver
+    self.iree_config = iree_runtime.system_api.Config(runtime_driver)
     self._devices = [IreeDevice(self)]
 
   def process_index(self) -> int:
@@ -153,8 +153,8 @@ class IreeClient:
         # extended_diagnostics=True,
     )
     # Load it into the runtime.
-    module_object = iree_runtime.load_vm_flatbuffer(iree_binary,
-                                                    driver=self.runtime_driver)
+    vm_module = iree_runtime.VmModule.from_flatbuffer(iree_binary)
+    module_object = iree_runtime.load_vm_module(vm_module, self.iree_config)
     return IreeExecutable(self, self._devices, module_object, "main")
 
   def buffer_from_pyval(
