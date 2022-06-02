@@ -96,13 +96,16 @@ def _initialize_polar_test(rng, shape, n_zero_svs, degeneracy, geometric_spectru
 
 OpRecord = collections.namedtuple(
     "OpRecord",
-    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name"])
+    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff",
+     "nondiff_argnums", "test_name", "kwargs"])
 
 
-def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None):
+def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(),
+              test_name=None, kwargs={}):
   test_name = test_name or name
   nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
-  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
+  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums,
+                  test_name, kwargs)
 
 # TODO(phawkins): we should probably separate out the function domains used for
 # autodiff tests from the function domains used for equivalence testing. For
@@ -144,6 +147,15 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("expi", 1, [np.float32], jtu.rand_default, True),
     op_record("exp1", 1, [np.float32], jtu.rand_positive, True),
     op_record("expn", 2, (int_dtypes, [np.float32]), jtu.rand_positive, True, (0,)),
+    # TODO: we avoid testing autodiff on factorial and comb because we avoid it
+    # in gammaln above and the two use it directly
+    op_record("factorial", 1, int_dtypes + float_dtypes, jtu.rand_positive,
+              False),
+    op_record("comb", 2, (int_dtypes + float_dtypes, int_dtypes + float_dtypes),
+              jtu.rand_positive, False),
+    op_record("comb", 2, (int_dtypes + float_dtypes, int_dtypes + float_dtypes),
+              jtu.rand_positive, False, test_name="comb_repetition",
+              kwargs={'repetition': True}),
 ]
 
 
@@ -243,14 +255,15 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
          "test_autodiff": rec.test_autodiff,
          "nondiff_argnums": rec.nondiff_argnums,
          "scipy_op": getattr(osp_special, rec.name),
-         "lax_op": getattr(lsp_special, rec.name)}
+         "lax_op": getattr(lsp_special, rec.name),
+         "kwargs": rec.kwargs}
         for shapes in itertools.combinations_with_replacement(all_shapes, rec.nargs)
         for dtypes in (itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
           if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)))
       for rec in JAX_SPECIAL_FUNCTION_RECORDS))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
-                          test_autodiff, nondiff_argnums):
+                          test_autodiff, nondiff_argnums, kwargs):
     if (jtu.device_under_test() == "cpu" and
         (lax_op is lsp_special.gammainc or lax_op is lsp_special.gammaincc)):
       # TODO(b/173608403): re-enable test when LLVM bug is fixed.
@@ -258,7 +271,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
-    self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
+    self.assertAllClose(scipy_op(*args, **kwargs), lax_op(*args, **kwargs),
+                        atol=1e-3, rtol=1e-3,
                         check_dtypes=False)
     self._CompileAndCheck(lax_op, args_maker, rtol=1e-4)
 

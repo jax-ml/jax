@@ -1465,3 +1465,22 @@ def expn_jvp(n, primals, tangents):
 def exp1(x):
   (x,) = _promote_args_inexact("exp1", x)
   return expn(1, x)
+
+
+@_wraps(osp_special.factorial)
+def factorial(n, exact=False):
+  if exact:
+    raise NotImplementedError('scipy.special.factorial with exact=True')
+  return jnp.where(n > 0., jnp.exp(gammaln(n + 1.)), 0.)
+
+
+@_wraps(osp_special.comb)
+def comb(N, k, exact=False, repetition=False):
+  if exact:
+    raise NotImplementedError('scipy.special.comb with exact=True')
+  if repetition:
+    return comb(N + k - 1, k, exact=exact, repetition=False)
+  return jnp.where(
+      (0. <= k) & (k <= N),
+      jnp.exp(gammaln(N + 1.) - gammaln(k + 1.) - gammaln(N - k + 1.)),
+      0.)
