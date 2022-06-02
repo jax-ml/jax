@@ -712,10 +712,16 @@ def _select_and_gather_add_lowering(
     def pack(a, b):
       a_dims = ir.RankedTensorType(a.type).shape
       b_dims = ir.RankedTensorType(b.type).shape
-      a = mhlo.ReducePrecisionOp(a.type, a, exponent_bits=mlir.i32_attr(nexp),
-                                 mantissa_bits=mlir.i32_attr(nmant))
-      b = mhlo.ReducePrecisionOp(b.type, b, exponent_bits=mlir.i32_attr(nexp),
-                                 mantissa_bits=mlir.i32_attr(nmant))
+      if jax._src.lib.mlir_api_version >= 21:
+        a = mhlo.ReducePrecisionOp(a, exponent_bits=mlir.i32_attr(nexp),
+                                   mantissa_bits=mlir.i32_attr(nmant))
+        b = mhlo.ReducePrecisionOp(b, exponent_bits=mlir.i32_attr(nexp),
+                                   mantissa_bits=mlir.i32_attr(nmant))
+      else:
+        a = mhlo.ReducePrecisionOp(a.type, a, exponent_bits=mlir.i32_attr(nexp),
+                                   mantissa_bits=mlir.i32_attr(nmant))
+        b = mhlo.ReducePrecisionOp(b.type, b, exponent_bits=mlir.i32_attr(nexp),
+                                   mantissa_bits=mlir.i32_attr(nmant))
       a = mhlo.BitcastConvertOp(ir.RankedTensorType.get(a_dims, word_type), a)
       b = mhlo.BitcastConvertOp(ir.RankedTensorType.get(b_dims, word_type), b)
       b = mhlo.ShiftRightLogicalOp(

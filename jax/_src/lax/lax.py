@@ -3666,9 +3666,13 @@ masking.defvectorized(reduce_precision_p)
 
 def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
-  return mhlo.ReducePrecisionOp(mlir.aval_to_ir_type(aval_out), operand,
-                                mlir.i32_attr(exponent_bits),
-                                mlir.i32_attr(mantissa_bits)).results
+  if jax._src.lib.mlir_api_version >= 21:
+    return mhlo.ReducePrecisionOp(operand, mlir.i32_attr(exponent_bits),
+                                  mlir.i32_attr(mantissa_bits)).results
+  else:
+    return mhlo.ReducePrecisionOp(mlir.aval_to_ir_type(aval_out), operand,
+                                  mlir.i32_attr(exponent_bits),
+                                  mlir.i32_attr(mantissa_bits)).results
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
 
