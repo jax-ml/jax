@@ -26,7 +26,7 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.interpreters import mlir
-from jax._src.util import safe_zip
+from jax._src import util
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 
@@ -943,7 +943,7 @@ def _conv_general_vjp_lhs_padding(
   pad_before = np.subtract(rhs_dilated_shape, [lo for lo, _ in padding]) - 1
   pad_after = (np.add(lhs_dilated_shape, rhs_dilated_shape) - 1
                - out_dilated_shape - pad_before)
-  return safe_zip(pad_before, pad_after)
+  return util.safe_zip(pad_before, pad_after)
 
 
 def _conv_general_vjp_rhs_padding(
@@ -955,7 +955,7 @@ def _conv_general_vjp_rhs_padding(
   lhs_dilated_shape = lax._dilate_shape(in_shape, lhs_dilation)
   rhs_dilated_shape = lax._dilate_shape(window_dimensions, rhs_dilation)
   out_dilated_shape = lax._dilate_shape(out_shape, window_strides)
-  pads_lo, _ = zip(*padding)
+  pads_lo, _ = util.unzip2(padding)
   pads_from_lhs = core.diff_shape(out_dilated_shape, lhs_dilated_shape)
   pads_from_rhs = core.diff_shape(core.diff_shape(rhs_dilated_shape, pads_lo),
                                   (1,) * len(pads_lo))
