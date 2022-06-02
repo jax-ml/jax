@@ -854,6 +854,16 @@ config.define_bool_state(
     upgrade=True,
     help='Gate changes until after NeurIPS 2022 deadline.')
 
+# TODO(b/205307544): Remove flag once coordination service has rolled out.
+config.define_bool_state(
+    name='jax_coordination_service',
+    default=False,
+    help=(
+         'Use coordination service (experimental) instead of the default PjRT '
+         'distributed runtime.'
+    )
+)
+
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:
   """Indicates that the current context is an explicit device_put*() call."""
