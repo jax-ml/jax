@@ -11,6 +11,7 @@ JAX configuration
    checking_leaks
    debug_nans
    debug_infs
+   default_device
    default_matmul_precision
    default_prng_impl
    enable_checks

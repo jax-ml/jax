@@ -567,11 +567,15 @@ def _cpp_jit(
 
     return _BackendAndDeviceInfo(default_device, committed_to_device)
 
-  cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
-                             static_argnums=static_argnums,
-                             static_argnames=static_argnames,
-                             donate_argnums=donate_argnums,
-                             cache=_cpp_jit_cache)
+  cpp_jitted_f = jax_jit.jit(
+      fun,
+      cache_miss,
+      get_device_info,
+      static_argnums=static_argnums,
+      static_argnames=static_argnames,
+      donate_argnums=donate_argnums,
+      cache=_cpp_jit_cache,
+      has_explicit_device=device is not None or backend is not None)
   f_jitted = wraps(fun)(cpp_jitted_f)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,

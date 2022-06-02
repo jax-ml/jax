@@ -234,6 +234,55 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(x, jnp.DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
 
+  @jtu.skip_on_devices("cpu")
+  def test_jit_default_device(self):
+    if jax.device_count() == 1:
+      raise unittest.SkipTest("Test requires multiple devices")
+
+    system_default_device = jnp.add(1, 1).device()
+    test_device = jax.devices()[-1]
+    self.assertNotEqual(system_default_device, test_device)
+
+    f = jax.jit(lambda x: x + 1)
+    self.assertEqual(f(1).device(), system_default_device)
+
+    with jax.default_device(test_device):
+      self.assertEqual(jnp.add(1, 1).device(), test_device)
+      self.assertEqual(f(1).device(), test_device)
+
+    self.assertEqual(jnp.add(1, 1).device(), system_default_device)
+    self.assertEqual(f(1).device(), system_default_device)
+
+    with jax.default_device(test_device):
+      # Explicit `device` or `backend` argument to jit overrides default_device
+      self.assertEqual(
+          jax.jit(f, device=system_default_device)(1).device(),
+          system_default_device)
+      self.assertEqual(jax.jit(f, backend="cpu")(1).platform(), "cpu")
+
+      # Sticky input device overrides default_device
+      sticky = jax.device_put(1, system_default_device)
+      self.assertEqual(jnp.add(sticky, 1).device(), system_default_device)
+      self.assertEqual(f(sticky).device(), system_default_device)
+
+      # Test nested default_devices
+      with jax.default_device(system_default_device):
+        self.assertEqual(f(1).device(), system_default_device)
+      self.assertEqual(f(1).device(), test_device)
+
+    # Test a few more non-default_device calls for good luck
+    self.assertEqual(jnp.add(1, 1).device(), system_default_device)
+    self.assertEqual(f(sticky).device(), system_default_device)
+    self.assertEqual(f(1).device(), system_default_device)
+
+  # TODO(skye): make this work!
+  def test_jit_default_platform(self):
+    with self.assertRaisesWithLiteralMatch(
+        ValueError, "jax.default_device must be passed a Device object "
+        "(e.g. `jax.devices('cpu')[0]`), got: 'cpu'"):
+      with jax.default_device("cpu"):
+        jax.jit(lambda x: x + 1)(1)
+
   def test_complex_support(self):
     self.assertEqual(self.jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
 
@@ -497,7 +546,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def noop(arr, token):
       return arr, token
 
-    arr = jax.numpy.ones(10)
+    arr = jnp.ones(10)
     token = jax.lax.create_token()
 
     self.assertEqual(token, noop(arr, token)[1])
