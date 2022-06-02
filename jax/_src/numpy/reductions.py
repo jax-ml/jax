@@ -274,10 +274,7 @@ def _mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
     normalizer = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)
 
   if dtype is None:
-    if dtypes.issubdtype(dtypes.dtype(a), np.bool_) or dtypes.issubdtype(dtypes.dtype(a), np.integer):
-      dtype = dtypes.float_
-    else:
-      dtype = dtypes.dtype(a)
+    dtype = dtypes._to_inexact_dtype(dtypes.dtype(a))
   dtype = dtypes.canonicalize_dtype(dtype)
 
   return lax.div(
@@ -381,15 +378,15 @@ def _var_promote_types(a_dtype, dtype):
              "on https://github.com/google/jax/issues/2283 if this behavior is "
              "important to you.")
       raise ValueError(msg)
-    computation_dtype = dtypes.promote_types(a_dtype, dtype)
+    computation_dtype = dtype
   else:
     if not dtypes.issubdtype(a_dtype, np.inexact):
-      dtype = dtypes.canonicalize_dtype(dtypes.float_)
+      dtype = dtypes._to_inexact_dtype(a_dtype)
       computation_dtype = dtype
     else:
       dtype = _complex_elem_type(a_dtype)
-      computation_dtype = _upcast_f16(a_dtype)
-  return computation_dtype, dtype
+      computation_dtype = a_dtype
+  return _upcast_f16(computation_dtype), dtype
 
 
 @_wraps(np.std, skip_params=['out'])
