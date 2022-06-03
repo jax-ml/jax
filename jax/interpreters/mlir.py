@@ -1257,12 +1257,12 @@ def emit_python_callback(platform, callback,
                          result_avals: List[core.AbstractValue],
                          has_side_effect: bool) -> Tuple[List[ir.Value], Any]:
   """Creates an MHLO `CustomCallOp` that calls back to the provided function."""
-  if platform == "cuda" and jax._src.lib.version < (0, 3, 11):
+  if platform in {"cuda", "rocm"} and jax._src.lib.version < (0, 3, 11):
     raise ValueError(
         "`EmitPythonCallback` on CUDA only supported on jaxlib >= 0.3.11")
-  if platform not in {"cpu", "cuda"}:
+  if platform not in {"cpu", "cuda", "rocm"}:
     raise ValueError(
-        "`EmitPythonCallback` only supported on CPU and CUDA backends.")
+        "`EmitPythonCallback` only supported on CPU, CUDA, and ROCM backends.")
   backend = xb.get_backend(platform)
   result_shapes = util.flatten(
       [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
@@ -1277,7 +1277,7 @@ def emit_python_callback(platform, callback,
       [aval_to_ir_types(aval) for aval in result_avals])
   result_type = ir.TupleType.get_tuple(result_types)
   call_target_name = ("xla_python_gpu_callback"
-                      if platform == "cuda" else "xla_python_cpu_callback")
+                     if platform in {"cuda", "rocm"} else "xla_python_cpu_callback")
   result = mhlo.CustomCallOp(
       [result_type],
       callback_operands,
