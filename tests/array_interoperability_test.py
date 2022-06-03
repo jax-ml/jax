@@ -75,7 +75,7 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in dlpack_dtypes
      for take_ownership in [False, True]
      for gpu in [False, True]))
-  @jtu.skip_on_devices("rocm") # relevant dlpack protocol is N/A for ROCm ATM
+  @jtu.skip_on_devices("rocm") # TODO(sharadmv,phawkins): see GH issue #10973
   def testJaxRoundTrip(self, shape, dtype, take_ownership, gpu):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
@@ -100,6 +100,7 @@ class DLPackTest(jtu.JaxTestCase):
      for shape in all_shapes
      for dtype in dlpack_dtypes))
   @unittest.skipIf(not tf, "Test requires TensorFlow")
+  @jtu.skip_on_devices("rocm") # TODO(sharadmv,phawkins): see GH issue #10973
   def testTensorFlowToJax(self, shape, dtype):
     if not config.x64_enabled and dtype in [jnp.int64, jnp.uint64, jnp.float64]:
       raise self.skipTest("x64 types are disabled by jax_enable_x64")
