@@ -1,70 +1,104 @@
-# Evaluation Results
+# JAX Converters Evaluation Results
 
-*Last generated on: 2021-11-22* (YYYY-MM-DD)
+*Last generated on: 2022-05-29* (YYYY-MM-DD)
 
-## jax2tf --> TFLite
+This file contains the evaluation results for all converters in table format.
+Please see [README.md](README.md) for more details.
 
-### The Flax Examples
-[URL to examples](https://github.com/google/flax/tree/main/examples)
+## Summary Table
 
-Description: List of examples maintained by the Flax team.
-These exampls are representative for what the average ML researcher is interested in.
+| Example | jax2tf_xla | jax2tf_to_tfjs | jax2tf_to_tflite |
+| --- | --- | --- | --- |
+| flax/actor_critic | YES | YES | YES |
+| flax/bilstm | YES | YES | [NO](#error-trace-modelflaxbilstm-converterjax2tf_to_tflite) | 
+| flax/cnn | YES | YES | YES |
+| flax/resnet50 | YES | YES | YES |
+| flax/seq2seq_lstm | YES | [NO](#error-trace-modelflaxseq2seq_lstm-converterjax2tf_to_tfjs) |  YES |
+| flax/transformer_lm1b | [NO](#error-trace-modelflaxtransformer_lm1b-converterjax2tf_xla) |  [NO](#error-trace-modelflaxtransformer_lm1b-converterjax2tf_to_tfjs) |  [NO](#error-trace-modelflaxtransformer_lm1b-converterjax2tf_to_tflite) | 
+| flax/transformer_nlp_seq | YES | YES | YES |
+| flax/transformer_wmt | [NO](#error-trace-modelflaxtransformer_wmt-converterjax2tf_xla) |  [NO](#error-trace-modelflaxtransformer_wmt-converterjax2tf_to_tfjs) |  [NO](#error-trace-modelflaxtransformer_wmt-converterjax2tf_to_tflite) | 
+| flax/vae | YES | YES | YES |
 
-| Example | Result | Error Message |
-| --- | --- | --- |
-| imagenet | SUCCESS |
-| lm1b | FAIL | ValueError('For JAX vs TF (enable_xla=False): Numerical difference jax_result=[[[ 1.0656209e+00  9.3210316e-01 -7.5562042e-01  5.7160920e-01\n    4.7576640e-04 -8.3388436e-01 -6.6835815e-01  8.1217813e-01]]\n\n [[ 1.0656208e+00  9.3210304e-01 -7.5562... (CROPPED)
-| mnist | SUCCESS |
-| nlp_seq | SUCCESS |
-| pixelcnn++ | SUCCESS |
-| ppo | FAIL | ValueError('For JAX vs TF (enable_xla=False): Numerical difference jax_result=[[-2.0793843 -2.079457  -2.0794344 -2.079432  -2.0793545 -2.0794942\n  -2.079453  -2.0795226]] vs tf_result=[[-2.0794415 -2.0794415 -2.0794415 -2.0794415 -2.0794415 -2.0794... (CROPPED)
-| seq2seq | SUCCESS |
-| sst2 | FAIL | RuntimeError('tensorflow/lite/kernels/concatenation.cc:158 t->dims->data[d] != t0->dims->data[d] (3 != 1)Node number 11 (CONCATENATION) failed to prepare.Node number 7 (WHILE) failed to invoke.')
-| vae | FAIL | ValueError('For JAX vs TF (enable_xla=False): Numerical difference jax_result=[[[[1.00000000e+00 1.59054339e-10 2.23751954e-06 ... 0.00000000e+00\n    9.99998808e-01 2.93910057e-12]\n   [1.00000000e+00 1.49735279e-04 1.17003319e-05 ... 2.77897666e-16... (CROPPED)
-| wmt | SUCCESS |
+## Errors
 
-## jax2tf --> TFjs
+## Error trace: model=flax/bilstm, converter=jax2tf_to_tflite
+```
+RuntimeError('third_party/tensorflow/lite/kernels/concatenation.cc:158 t->dims->data[d] != t0->dims->data[d] (3 != 1)Node number 11 (CONCATENATION) failed to prepare.Node number 29 (WHILE) failed to invoke.')
+```
+[Back to top](#summary-table)
+## Error trace: model=flax/seq2seq_lstm, converter=jax2tf_to_tfjs
+```
+ValueError('Unsupported Ops in the model before optimization
+RightShift, Bitcast, BitwiseOr, BitwiseAnd, LeftShift, BitwiseXor')
+```
+[Back to top](#summary-table)
+## Error trace: model=flax/transformer_lm1b, converter=jax2tf_xla
+```
+InvalidArgumentError()
+```
+[Back to top](#summary-table)
+## Error trace: model=flax/transformer_lm1b, converter=jax2tf_to_tfjs
+```
+ValueError("in user code:
 
-### The Flax Examples
-[URL to examples](https://github.com/google/flax/tree/main/examples)
 
-Description: List of examples maintained by the Flax team.
-These exampls are representative for what the average ML researcher is interested in.
+    ValueError: Got a non-Tensor value FrozenDict({
+        cache: {
+            decoder: {
+                encoderdecoderblock_0: {
+                    SelfAttention_0: {
+                        cache_index: <tf.Tensor 'StatefulPartitionedCall:1' shape=() dtype=int32>,
+                        cached_key: <tf.Tensor 'StatefulPartitionedCall:2' shape=(2, 1, 1, 2) dtype=float32>,
+                        cached_value: <tf.Tensor 'StatefulPartitionedCall:3' shape=(2, 1, 1, 2) dtype=float32>,
+                    },
+                },
+                posembed_output: {
+                    cache_index: <tf.Tensor 'StatefulPartitionedCall:4' shape=() dtype=uint32>,
+                },
+            },
+        },
+    }) for key 'output_1' in the output of the function __inference_tf_graph_261080 used to generate the SavedModel signature 'serving_default'. Outputs for functions used as signatures must be a single Tensor, a sequence of Tensors, or a dictionary from string to Tensor.
+")
+```
+[Back to top](#summary-table)
+## Error trace: model=flax/transformer_lm1b, converter=jax2tf_to_tflite
+```
+TypeError("The DType <class 'numpy._FloatAbstractDType'> could not be promoted by <class 'numpy.dtype[str_]'>. This means that no common DType exists for the given inputs. For example they cannot be stored in a single array unless the dtype is `object`. The full list of DTypes is: (<class 'numpy.dtype[str_]'>, <class 'numpy._FloatAbstractDType'>)")
+```
+[Back to top](#summary-table)
+## Error trace: model=flax/transformer_wmt, converter=jax2tf_xla
+```
+InvalidArgumentError()
+```
+[Back to top](#summary-table)
+## Error trace: model=flax/transformer_wmt, converter=jax2tf_to_tfjs
+```
+ValueError("in user code:
 
-| Example | Result | Error Message |
-| --- | --- | --- |
-| imagenet | SUCCESS |
-| lm1b | FAIL | ValueError("Error when tracing gradients for SavedModel.\n\nCheck the error log to see the error that was raised when converting a gradient function to a concrete function. You may need to update the custom gradient, or disable saving gradients with ... (CROPPED)
-| mnist | SUCCESS |
-| nlp_seq | FAIL | ValueError("Error when tracing gradients for SavedModel.\n\nCheck the error log to see the error that was raised when converting a gradient function to a concrete function. You may need to update the custom gradient, or disable saving gradients with ... (CROPPED)
-| pixelcnn++ | SUCCESS |
-| ppo | SUCCESS |
-| seq2seq | FAIL | ValueError('Unsupported Ops in the model before optimization\nLeftShift, BitwiseOr, Bitcast, BitwiseAnd, RightShift, BitwiseXor')
-| sst2 | FAIL | ValueError('Unsupported Ops in the model before optimization\nBitwiseAnd')
-| vae | SUCCESS |
-| wmt | FAIL | ValueError("Error when tracing gradients for SavedModel.\n\nCheck the error log to see the error that was raised when converting a gradient function to a concrete function. You may need to update the custom gradient, or disable saving gradients with ... (CROPPED)
 
-## jax2tf (enable_xla=True)
+    ValueError: Got a non-Tensor value FrozenDict({
+        cache: {
+            decoder: {
+                encoderdecoderblock_0: {
+                    SelfAttention_0: {
+                        cache_index: <tf.Tensor 'StatefulPartitionedCall:1' shape=() dtype=int32>,
+                        cached_key: <tf.Tensor 'StatefulPartitionedCall:2' shape=(2, 1, 1, 2) dtype=float32>,
+                        cached_value: <tf.Tensor 'StatefulPartitionedCall:3' shape=(2, 1, 1, 2) dtype=float32>,
+                    },
+                },
+                posembed_output: {
+                    cache_index: <tf.Tensor 'StatefulPartitionedCall:4' shape=() dtype=uint32>,
+                },
+            },
+        },
+    }) for key 'output_1' in the output of the function __inference_tf_graph_280065 used to generate the SavedModel signature 'serving_default'. Outputs for functions used as signatures must be a single Tensor, a sequence of Tensors, or a dictionary from string to Tensor.
+")
+```
+[Back to top](#summary-table)
+## Error trace: model=flax/transformer_wmt, converter=jax2tf_to_tflite
+```
+TypeError("The DType <class 'numpy._FloatAbstractDType'> could not be promoted by <class 'numpy.dtype[str_]'>. This means that no common DType exists for the given inputs. For example they cannot be stored in a single array unless the dtype is `object`. The full list of DTypes is: (<class 'numpy.dtype[str_]'>, <class 'numpy._FloatAbstractDType'>)")
+```
+[Back to top](#summary-table)
 
-### The Flax Examples
-[URL to examples](https://github.com/google/flax/tree/main/examples)
-
-Description: List of examples maintained by the Flax team.
-These exampls are representative for what the average ML researcher is interested in.
-
-| Example | Result | Error Message |
-| --- | --- | --- |
-| imagenet | SUCCESS |
-| lm1b | FAIL | TypeError("Value passed to parameter 'start_indices' has DataType uint32 not in list of allowed values: int32, int64")
-| mnist | SUCCESS |
-| nlp_seq | SUCCESS |
-| pixelcnn++ | SUCCESS |
-| ppo | SUCCESS |
-| seq2seq | SUCCESS |
-| sst2 | SUCCESS |
-| vae | SUCCESS |
-| wmt | FAIL | TypeError("Value passed to parameter 'start_indices' has DataType uint32 not in list of allowed values: int32, int64")
-
-## Table generation
-
-See `examples_test.py` for instructions on how to regenerate this table.
+See `model_test.py` for instructions on how to regenerate this table.

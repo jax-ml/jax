@@ -5,18 +5,12 @@
 This file contains the evaluation results for all converters in table format.
 Please see [README.md](README.md) for more details.
 
-## jax2tf --> TFLite
+## Summary Table
 
-{{jax2tf_to_tflite}}
+{{table}}
 
-## jax2tf --> TFjs
+## Errors
 
-{{jax2tf_to_tfjs}}
+{{errors}}
 
-## jax2tf (enable_xla=True)
-
-{{jax2tf_xla}}
-
-## Table generation
-
-See `converters_eval_main.py` for instructions on how to regenerate this table.
+See `models_test.py` for instructions on how to regenerate this table.
