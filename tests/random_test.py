@@ -1057,6 +1057,50 @@ class LaxRandomTest(jtu.JaxTestCase):
       )
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_p={}_shape={}"\
+       .format(p, jtu.format_shape_dtype_string(shape, dtype)),
+       "p": p,
+       "shape": shape,
+       "dtype": dtype}
+      for p in [.5, 1., 1.5, 2., 2.5]
+      for shape in [(), (5,), (10, 5)]
+      for dtype in jtu.dtypes.floating))
+  def testGeneralizedNormal(self, p, shape, dtype):
+    key = self.seed_prng(0)
+    rand = lambda key, p: random.generalized_normal(key, p, shape, dtype)
+    crand = jax.jit(rand)
+    uncompiled_samples = rand(key, p)
+    compiled_samples = crand(key, p)
+    for samples in [uncompiled_samples, compiled_samples]:
+      self.assertEqual(samples.shape, shape)
+      self.assertEqual(samples.dtype, dtype)
+      self._CheckKolmogorovSmirnovCDF(samples.ravel(), scipy.stats.gennorm(p).cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_d={}_p={}_shape={}"\
+       .format(d, p, jtu.format_shape_dtype_string(shape, dtype)),
+       "d": d,
+       "p": p,
+       "shape": shape,
+       "dtype": dtype}
+      for d in range(1, 5)
+      for p in [.5, 1., 1.5, 2., 2.5]
+      for shape in [(), (5,), (10, 5)]
+      for dtype in jtu.dtypes.floating))
+  def testBall(self, d, p, shape, dtype):
+    key = self.seed_prng(0)
+    rand = lambda key, p: random.ball(key, d, p, shape, dtype)
+    crand = jax.jit(rand)
+    uncompiled_samples = rand(key, p)
+    compiled_samples = crand(key, p)
+    for samples in [uncompiled_samples, compiled_samples]:
+      self.assertEqual(samples.shape, (*shape, d))
+      self.assertEqual(samples.dtype, dtype)
+      self.assertTrue(((jnp.abs(samples) ** p).sum(-1) <= 1).all())
+      norms = (jnp.abs(samples) ** p).sum(-1) ** (d / p)
+      self._CheckKolmogorovSmirnovCDF(norms.ravel(), scipy.stats.uniform().cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_b={b}_dtype={np.dtype(dtype).name}",
        "b": b, "dtype": dtype}
       for b in [0.1, 1., 10.]

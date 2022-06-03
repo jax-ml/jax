@@ -1623,3 +1623,56 @@ def orthogonal(
   q, r = jnp.linalg.qr(z)
   d = jnp.diagonal(r, 0, -2, -1)
   return lax.mul(q, lax.expand_dims(lax.div(d, abs(d).astype(d.dtype)), [-2]))
+
+def generalized_normal(
+  key: KeyArray,
+  p: float,
+  shape: Sequence[int] = (),
+  dtype: DTypeLikeFloat = dtypes.float_
+) -> jnp.ndarray:
+  """Sample from the generalized normal distribution.
+
+  Args:
+    key: a PRNG key used as the random key.
+    p: a float representing the shape parameter.
+    shape: optional, the batch dimensions of the result. Default ().
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  _check_shape("generalized_normal", shape)
+  keys = split(key)
+  g = gamma(keys[0], 1/p, shape, dtype)
+  r = rademacher(keys[1], shape, dtype)
+  return r * g ** (1 / p)
+
+def ball(
+  key: KeyArray,
+  d: int,
+  p: float = 2,
+  shape: Sequence[int] = (),
+  dtype: DTypeLikeFloat = dtypes.float_
+):
+  """Sample uniformly from the unit Lp ball.
+
+  Reference: https://arxiv.org/abs/math/0503650.
+
+  Args:
+    key: a PRNG key used as the random key.
+    d: a nonnegative int representing the dimensionality of the ball.
+    p: a float representing the p parameter of the Lp norm.
+    shape: optional, the batch dimensions of the result. Default ().
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array of shape `(*shape, d)` and specified dtype.
+  """
+  _check_shape("ball", shape)
+  d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
+  keys = split(key)
+  g = generalized_normal(keys[0], p, (*shape, d), dtype)
+  e = exponential(keys[1], shape, dtype)
+  return g / (((jnp.abs(g) ** p).sum(-1) + e) ** (1 / p))[..., None]

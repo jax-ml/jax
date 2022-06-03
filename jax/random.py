@@ -125,6 +125,7 @@ KeyArray = PRNGKeyArray
 
 from jax._src.random import (
   PRNGKey as PRNGKey,
+  ball as ball,
   bernoulli as bernoulli,
   beta as beta,
   categorical as categorical,
@@ -136,6 +137,7 @@ from jax._src.random import (
   exponential as exponential,
   fold_in as fold_in,
   gamma as gamma,
+  generalized_normal as generalized_normal,
   gumbel as gumbel,
   laplace as laplace,
   logistic as logistic,
