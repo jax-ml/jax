@@ -40,6 +40,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     it.
   * Added {func}`jax.random.generalized_normal`.
   * Added {func}`jax.random.ball`.
+  * Added a `python -m jax.collect_profile` script to manually capture program
+    traces as an alternative to the Tensorboard UI.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).

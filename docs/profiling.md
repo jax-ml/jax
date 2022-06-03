@@ -41,6 +41,29 @@ or if you're using Google Cloud:
 $ gcloud compute ssh <machine-name> -- -L 9001:127.0.0.1:9001
 ```
 
+### Manual capture
+
+Instead of capturing traces programmatically using `jax.profiler.trace`, you can
+instead start a profiling server in the script of interest by calling
+`jax.profiler.start_server(<port>)`. If you only need the profiler server to be
+active for a portion of your script, you can shut it down by calling
+`jax.profiler.stop_server()`.
+
+Once the script is running and after the profiler server has started, we can
+manually capture an trace by running:
+```bash
+$ python -m jax.collect_profile <port> <duration_in_ms>
+```
+
+By default, the resulting trace information is dumped into a temporary directory
+but this can be overridden by passing in `--log_dir=<directory of choice>`. 
+Also, by default, the program will prompt you to open a link to
+`ui.perfetto.dev`. When you open the link, the Perfetto UI will load the trace
+file and open a visualizer. This feature is disabled by passing in
+`--no_perfetto_link` into the command. Alternatively, you can also point
+Tensorboard to the `log_dir` to analyze the trace (see the
+"Tensorboard Profiling" section below).
+
 ## TensorBoard profiling
 
 [TensorBoard's
