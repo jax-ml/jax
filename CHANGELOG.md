@@ -38,6 +38,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Changed the semantics of {func}`jax.profiler.start_server(...)` to store the
     keepalive globally, rather than requiring the user to keep a reference to
     it.
+  * Added {func}`jax.random.generalized_normal`.
+  * Added {func}`jax.random.ball`.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
