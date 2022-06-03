@@ -154,7 +154,7 @@ class SerialLoop:
 def serial_loop(name: ResourceAxisName, length: int):
   """Define a serial loop resource to be available in scope of this context manager.
 
-  This is similar to :py:func:`mesh` in that it extends the resource
+  This is similar to :py:class:`Mesh` in that it extends the resource
   environment with a resource called ``name``. But, any use of this resource
   axis in ``axis_resources`` argument of :py:func:`xmap` will cause the
   body of :py:func:`xmap` to get executed ``length`` times with each execution
@@ -330,7 +330,7 @@ def xmap(fun: Callable,
   :py:func:`vmap`. However, this behavior can be further customized by the
   ``axis_resources`` argument.  When specified, each axis introduced by
   :py:func:`xmap` can be assigned to one or more *resource axes*. Those include
-  the axes of the hardware mesh, as defined by the :py:func:`mesh` context
+  the axes of the hardware mesh, as defined by the :py:class:`Mesh` context
   manager. Each value that has a named axis in its ``named_shape`` will be
   partitioned over all mesh axes that axis is assigned to. Hence,
   :py:func:`xmap` can be seen as an alternative to :py:func:`pmap` that also
@@ -423,7 +423,7 @@ def xmap(fun: Callable,
   to implement a distributed matrix-multiplication in just a few lines of code::
 
     devices = np.array(jax.devices())[:4].reshape((2, 2))
-    with mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
+    with Mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
       distributed_out = xmap(
         jnp.vdot,
         in_axes=({0: 'left'}, {1: 'right'}),

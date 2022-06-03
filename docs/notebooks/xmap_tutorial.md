@@ -120,13 +120,13 @@ But on a whim we can decide to parallelize over the batch axis:
 
 import jax
 import numpy as np
-from jax.experimental.maps import mesh
+from jax.experimental.maps import Mesh
 
 loss = xmap(named_loss, in_axes=in_axes, out_axes=[...],
             axis_resources={'batch': 'x'})
 
 devices = np.array(jax.local_devices())
-with mesh(devices, ('x',)):
+with Mesh(devices, ('x',)):
   print(loss(w1, w2, images, labels))
 ```
 
@@ -141,7 +141,7 @@ loss = xmap(named_loss, in_axes=in_axes, out_axes=[...],
             axis_resources={'hidden': 'x'})
 
 devices = np.array(jax.local_devices())
-with mesh(devices, ('x',)):
+with Mesh(devices, ('x',)):
   print(loss(w1, w2, images, labels))
 ```
 
@@ -156,7 +156,7 @@ loss = xmap(named_loss, in_axes=in_axes, out_axes=[...],
             axis_resources={'batch': 'x', 'hidden': 'y'})
 
 devices = np.array(jax.local_devices()).reshape((4, 2))
-with mesh(devices, ('x', 'y')):
+with Mesh(devices, ('x', 'y')):
   print(loss(w1, w2, images, labels))
 ```
 
@@ -531,15 +531,15 @@ except Exception as e:
 
 +++ {"id": "KHbRwYl0BOr1"}
 
-To introduce the resources in a scope, use the `with mesh` context manager:
+To introduce the resources in a scope, use the `with Mesh` context manager:
 
 ```{code-cell} ipython3
 :id: kYdoeaSS9m9f
 
-from jax.experimental.maps import mesh
+from jax.experimental.maps import Mesh
 
 local = local_matmul(x, x)  # The local function doesn't require the mesh definition
-with mesh(*mesh_def):  # Makes the mesh axis names available as resources
+with Mesh(*mesh_def):  # Makes the mesh axis names available as resources
   distr = distr_matmul(x, x)
 np.testing.assert_allclose(local, distr)
 ```
@@ -580,7 +580,7 @@ def sum_two_args(x: f32[(), {'a': 4}], y: f32[(), {'b': 12}]) -> f32[()]:
 
 q = jnp.ones((4,), dtype=np.float32)
 u = jnp.ones((12,), dtype=np.float32)
-with mesh(np.array(jax.devices()[:4]), ('x',)):
+with Mesh(np.array(jax.devices()[:4]), ('x',)):
   v = xmap(sum_two_args,
            in_axes=(['a', ...], ['b', ...]),
            out_axes=[...],
