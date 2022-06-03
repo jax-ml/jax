@@ -833,6 +833,9 @@ def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
     msg = ("slice slice_sizes must be greater than or equal to zero, "
            "got slice_sizes of {}.")
     raise TypeError(msg.format(slice_sizes))
+  if any(idx.ndim != 0 for idx in start_indices):
+    raise TypeError("start_indices arguments to dynamic_slice must be scalars, "
+                    f" got indices {start_indices}")
   return tuple(slice_sizes)
 
 def _dynamic_slice_dtype_rule(operand, *start_indices, slice_sizes):
@@ -927,6 +930,9 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
     msg = ("dynamic_update_slice update shape must be smaller than operand "
            "shape, got update shape {} for operand shape {}.")
     raise TypeError(msg.format(update.shape, operand.shape))
+  if any(idx.ndim != 0 for idx in start_indices):
+    raise TypeError("start_indices arguments to dynamic_update_slice must be "
+                    f"scalars, got indices {start_indices}")
   return operand.shape
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):

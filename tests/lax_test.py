@@ -1609,6 +1609,11 @@ class LaxTest(jtu.JaxTestCase):
     np.testing.assert_equal(lax.dynamic_slice(x, [2, 3], jnp.array([2, 2])),
                             x[2:4, 3:5])
 
+  def testDynamicSliceWithNonScalarIndex(self):
+    x = jnp.ones((6, 7), np.int32)
+    with self.assertRaises(TypeError):
+      lax.dynamic_slice_in_dim(x, jnp.array([2, 2]), 3)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_indices={}_update_shape={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
@@ -1659,6 +1664,12 @@ class LaxTest(jtu.JaxTestCase):
     expected = jnp.vstack([lax.dynamic_update_slice(x, y, (i,)) for i in ind])
     actual = jax.vmap(lax.dynamic_update_slice, (None, None, 0))(x, y, (ind,))
     self.assertAllClose(expected, actual)
+
+  def testDynamicUpdateSliceWithNonScalarIndex(self):
+    x = jnp.ones((6, 7), np.int32)
+    with self.assertRaises(TypeError):
+      lax.dynamic_update_slice_in_dim(x, jnp.ones((2, 7), np.int32),
+                                      jnp.array([2, 2]), axis=0)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_perm={}".format(
