@@ -100,7 +100,9 @@ def _bcoo_set_nse(mat, nse):
     indices = jnp.zeros_like(mat.indices, shape=(*mat.indices.shape[:-2], nse, mat.indices.shape[-1]))
     indices = indices.at[..., :mat.nse, :].set(mat.indices)
     indices = indices.at[..., mat.nse:, :].set(jnp.array(mat.shape[mat.n_batch:mat.n_batch + mat.n_sparse]))
-  return BCOO((data, indices), shape=mat.shape, indices_sorted=mat.indices_sorted)
+  return BCOO((data, indices), shape=mat.shape,
+              indices_sorted=mat.indices_sorted,
+              unique_indices=mat.unique_indices)
 
 # TODO(jakevdp) this can be problematic when used with autodiff; see
 # https://github.com/google/jax/issues/10163. Should this be a primitive?
@@ -132,6 +134,7 @@ class BCOOProperties(NamedTuple):
 class BCOOInfo(NamedTuple):
   shape: Shape
   indices_sorted: bool = False
+  unique_indices: bool = False
 
 def _validate_bcoo(data: jnp.ndarray, indices: jnp.ndarray, shape: Sequence[int]) -> BCOOProperties:
   props = _validate_bcoo_indices(indices, shape)
@@ -238,7 +241,9 @@ def _bcoo_todense_batching_rule(batched_args, batch_dims, *, spinfo):
   if batch_dims[1] is None:
     indices = indices[None, ...]
   new_spinfo = BCOOInfo(
-    shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape))
+      shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape),
+      indices_sorted=spinfo.indices_sorted,
+      unique_indices=spinfo.unique_indices)
   return _bcoo_todense(data, indices, spinfo=new_spinfo), 0
 
 ad.defjvp(bcoo_todense_p, _bcoo_todense_jvp, None)
@@ -278,7 +283,7 @@ def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32
   nse = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
   return BCOO(_bcoo_fromdense(mat, nse=nse, n_batch=n_batch, n_dense=n_dense,
                               index_dtype=index_dtype),
-              shape=mat.shape, indices_sorted=True)
+              shape=mat.shape, indices_sorted=True, unique_indices=True)
 
 def _bcoo_fromdense(mat, *, nse, n_batch=0, n_dense=0, index_dtype=jnp.int32):
   """Create BCOO-format sparse matrix from a dense matrix.
@@ -475,7 +480,7 @@ def bcoo_transpose(mat, *, permutation: Sequence[int]):
     A BCOO-format array.
   """
   return BCOO(_bcoo_transpose(mat.data, mat.indices, permutation=permutation, spinfo=mat._info),
-              shape=mat._info.shape)
+              shape=mat._info.shape, unique_indices=mat.unique_indices)
 
 def _bcoo_transpose(data, indices, *, permutation: Sequence[int], spinfo: BCOOInfo):
   permutation = tuple(permutation)
@@ -1223,7 +1228,7 @@ bcoo_sort_indices_p = core.Primitive("bcoo_sort_indices")
 bcoo_sort_indices_p.multiple_results = True
 
 def bcoo_sort_indices(mat):
-  """Sort indices of a BCOO array, and optionally sum duplicates & eliminate zeros.
+  """Sort indices of a BCOO array.
 
   Args:
     mat : BCOO array
@@ -1232,7 +1237,8 @@ def bcoo_sort_indices(mat):
     mat_out : BCOO array with sorted indices.
   """
   data, indices = bcoo_sort_indices_p.bind(*mat._bufs, spinfo=mat._info)
-  return BCOO((data, indices), shape=mat.shape, indices_sorted=True)
+  return BCOO((data, indices), shape=mat.shape, indices_sorted=True,
+              unique_indices=mat.unique_indices)
 
 @bcoo_sort_indices_p.def_impl
 def _bcoo_sort_indices_impl(data, indices, *, spinfo):
@@ -1335,7 +1341,8 @@ def bcoo_sum_duplicates(mat, nse=None):
     mat_out : BCOO array with sorted indices and no duplicate indices.
   """
   data, indices = _bcoo_sum_duplicates(mat.data, mat.indices, spinfo=mat._info, nse=nse)
-  return BCOO((data, indices), shape=mat.shape, indices_sorted=True)
+  return BCOO((data, indices), shape=mat.shape, indices_sorted=True,
+              unique_indices=True)
 
 def _bcoo_sum_duplicates(data, indices, *, spinfo, nse):
   if nse is not None:
@@ -2043,14 +2050,18 @@ class BCOO(JAXSparse):
   n_sparse = property(lambda self: self.indices.shape[-1])
   n_dense = property(lambda self: self.data.ndim - 1 - self.n_batch)
   indices_sorted: bool
-  _info = property(lambda self: BCOOInfo(self.shape, self.indices_sorted))
+  unique_indices: bool
+  _info = property(lambda self: BCOOInfo(self.shape, self.indices_sorted,
+                                         self.unique_indices))
   _bufs = property(lambda self: (self.data, self.indices))
 
-  def __init__(self, args, *, shape, indices_sorted=False):
+  def __init__(self, args, *, shape, indices_sorted=False,
+               unique_indices=False):
     # JAX transforms will sometimes instantiate pytrees with null values, so we
     # must catch that in the initialization of inputs.
     self.data, self.indices = _safe_asarray(args)
     self.indices_sorted = indices_sorted
+    self.unique_indices = unique_indices
     super().__init__(args, shape=shape)
 
   def __repr__(self):
@@ -2088,8 +2099,9 @@ class BCOO(JAXSparse):
     data = jnp.asarray(mat.data)
     indices = jnp.column_stack((mat.row, mat.col)).astype(
         index_dtype or jnp.int32)
-    # TODO: determines sorted indices for scipy conversion.
-    return cls((data, indices), shape=mat.shape, indices_sorted=False)
+    # TODO: determines sorted and unique indices for scipy conversion.
+    return cls((data, indices), shape=mat.shape, indices_sorted=False,
+               unique_indices=False)
 
   @classmethod
   def _empty(cls, shape, *, dtype=None, index_dtype='int32', n_dense=0, n_batch=0, nse=0):
@@ -2101,7 +2113,8 @@ class BCOO(JAXSparse):
     batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
     data = jnp.zeros((*batch_shape, nse, *dense_shape), dtype)
     indices = jnp.full((*batch_shape, nse, n_sparse), jnp.array(sparse_shape), index_dtype)
-    return cls((data, indices), shape=shape, indices_sorted=True)
+    return cls((data, indices), shape=shape, indices_sorted=True,
+               unique_indices=True)
 
   @classmethod
   def _eye(cls, N, M, k, *, dtype=None, index_dtype='int32', n_batch=0, n_dense=0):
@@ -2145,7 +2158,8 @@ class BCOO(JAXSparse):
         indices = indices.at[M - abs(k)].set(M)
       data = data[:, None]
       indices = indices[:, None, None]
-    return cls((data, indices), shape=(N, M), indices_sorted=True)
+    return cls((data, indices), shape=(N, M), indices_sorted=True,
+               unique_indices=True)
 
   def _dedupe(self):
     warnings.warn("_dedupe() is deprecated. Use sum_duplicates() instead.", FutureWarning)
@@ -2225,7 +2239,7 @@ class BCOO(JAXSparse):
       # possibly use permutation?
       is_sorted = False
     return BCOO((mat_T.data, mat_T.indices), shape=shape_T,
-                indices_sorted=is_sorted)
+                indices_sorted=is_sorted, unique_indices=self.unique_indices)
 
   def tree_flatten(self):
     return (self.data, self.indices), self._info._asdict()

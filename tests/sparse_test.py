@@ -796,16 +796,23 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertEqual(j1.shape, data.shape + M.shape)
     self.assertEqual(hess.shape, data.shape + 2 * M.shape)
 
-  def test_bcoo_fromdense_indices_sorted(self):
+  def test_bcoo_fromdense_sorted_and_unique_indices(self):
     rng = self.rng()
     rng_sparse = rand_sparse(rng)
     mat = sparse.BCOO.fromdense(rng_sparse((5, 6), np.float32))
     perm = rng.permutation(mat.nse)
     mat_unsorted = sparse.BCOO((mat.data[perm], mat.indices[perm]),
-                               shape=mat.shape)
+                               shape=mat.shape,
+                               unique_indices=mat.unique_indices)
     mat_resorted = mat_unsorted.sort_indices()
-    self.assertArraysEqual(mat.indices, mat_resorted.indices)
-    self.assertArraysEqual(mat.data, mat_resorted.data)
+    with self.subTest('sorted indices'):
+      self.assertArraysEqual(mat.indices, mat_resorted.indices)
+      self.assertArraysEqual(mat.data, mat_resorted.data)
+
+    with self.subTest('unique indices'):
+      self.assertTrue(mat.unique_indices)
+      self.assertTrue(mat_unsorted.unique_indices)
+      self.assertTrue(mat_resorted.unique_indices)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
@@ -1637,6 +1644,8 @@ class BCOOTest(jtu.JaxTestCase):
       self.assertAllClose(M.todense(), M_dedup.todense())
       self.assertEqual(M_dedup.nse, nse)
 
+    self.assertTrue(M_dedup.unique_indices)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}_nse={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, nse),
@@ -1687,6 +1696,7 @@ class BCOOTest(jtu.JaxTestCase):
 
     M_sorted = M.sort_indices()
     self.assertArraysEqual(M.todense(), M_sorted.todense())
+    self.assertEqual(M.unique_indices, M_sorted.unique_indices)
 
     indices = M_sorted.indices
     if indices.size > 0:
