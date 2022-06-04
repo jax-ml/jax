@@ -18,6 +18,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 from absl.testing import absltest
 
@@ -38,6 +39,14 @@ try:
 except ImportError:
   profiler_client = None
   tf_profiler = None
+
+TBP_ENABLED = False
+try:
+  import tensorboard_plugin_profile
+  del tensorboard_plugin_profile
+  TBP_ENABLED = True
+except ImportError:
+  pass
 
 config.parse_flags_with_absl()
 
@@ -203,6 +212,33 @@ class ProfilerTest(unittest.TestCase):
     thread_profiler.start()
     thread_profiler.join()
     thread_worker.join(120)
+    self._check_xspace_pb_exist(logdir)
+
+  @unittest.skipIf(
+      not (portpicker and profiler_client and tf_profiler and TBP_ENABLED),
+    "Test requires tensorflow.profiler, portpicker and "
+    "tensorboard_profile_plugin")
+  def test_remote_profiler(self):
+    port = portpicker.pick_unused_port()
+
+    logdir = absltest.get_default_test_tmpdir()
+    # Remove any existing log files.
+    shutil.rmtree(logdir, ignore_errors=True)
+    def on_profile():
+      os.system(
+          f"python -m jax.collect_profile {port} 500 --log_dir {logdir} "
+          "--no_perfetto_link")
+
+    thread_profiler = threading.Thread(
+        target=on_profile, args=())
+    thread_profiler.start()
+    jax.profiler.start_server(port)
+    start_time = time.time()
+    y = jnp.zeros((5, 5))
+    while time.time() - start_time < 3:
+      y = jnp.dot(y, y)
+    jax.profiler.stop_server()
+    thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
 
 if __name__ == "__main__":
