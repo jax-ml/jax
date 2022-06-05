@@ -25,7 +25,7 @@ import warnings
 
 from typing import Callable, Optional
 
-from absl import logging
+from jax import logging
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 

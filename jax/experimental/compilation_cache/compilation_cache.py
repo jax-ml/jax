@@ -19,10 +19,10 @@ import sys
 from typing import List, Optional
 
 import jax
+from jax import logging
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
-from absl import logging
 
 _cache = None
 
@@ -57,14 +57,17 @@ def put_executable(module_name, xla_computation, compile_options,
   _cache.put(cache_key, serialized_executable)
 
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
-  if logging.vlog_is_on(1):
+  if logging.vlog_is_on(logging.CPP_WARNING):
     # Log the hash of just this entry
     fresh_hash_obj = hashlib.sha256()
     hashfn(fresh_hash_obj)
-    logging.vlog(1, "get_cache_key hash of serialized %s: %s", last_serialized,
+    logging.vlog(logging.CPP_WARNING,
+                 "get_cache_key hash of serialized %s: %s",
+                 last_serialized,
                  fresh_hash_obj.digest().hex())
     # Log the cumulative hash
-    logging.vlog(1, "get_cache_key hash after serializing %s: %s",
+    logging.vlog(logging.CPP_WARNING,
+                 "get_cache_key hash after serializing %s: %s",
                  last_serialized, hash_obj.digest().hex())
 
 def get_cache_key(xla_computation, compile_options, backend) -> str:
@@ -212,9 +215,13 @@ def _hash_xla_flags(hash_obj):
   # (e.g. --xla_force_host_platform_device_count=8) (I think).
   for flag in xla_flags:
     if flag.split('=')[0] in _xla_flags_to_exclude_from_cache_key:
-      logging.vlog(1, "Not including XLA flag in cache key: %s", flag)
+      logging.vlog(logging.CPP_WARNING,
+                   "Not including XLA flag in cache key: %s",
+                   flag)
       continue
-    logging.vlog(1, "Including XLA flag in cache key: %s", flag)
+    logging.vlog(logging.CPP_WARNING,
+                 "Including XLA flag in cache key: %s",
+                 flag)
     _hash_string(hash_obj, flag)
 
 def _hash_int(hash_obj, int_var):

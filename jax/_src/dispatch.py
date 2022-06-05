@@ -30,12 +30,12 @@ import re
 import threading
 import warnings
 
-from absl import logging
 import numpy as np
 
 import jax
 from jax import core
 from jax import linear_util as lu
+from jax import logging
 from jax.errors import UnexpectedTracerError
 import jax.interpreters.ad as ad
 import jax.interpreters.batching as batching

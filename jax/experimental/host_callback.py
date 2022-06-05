@@ -503,14 +503,13 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence,
                     Tuple, cast)
 import warnings
 
-from absl import logging
-
 from jax._src import api
 from jax import core
 from jax.config import config
 from jax import custom_derivatives
 from jax._src import dtypes
 from jax import lax
+from jax import logging
 from jax.experimental import pjit
 from jax.interpreters import ad, xla, batching, pxla
 from jax.interpreters import partial_eval as pe
@@ -1231,8 +1230,8 @@ def _outside_call_run_callback(
   try:
     arg = api.tree_unflatten(arg_treedef, arrays)
     unpacked_transforms = _unpack_transforms(transforms)
-    if logging.vlog_is_on(2):
-      logging.vlog(2,
+    if logging.vlog_is_on(logging.CPP_ERROR):
+      logging.vlog(logging.CPP_ERROR,
                    f"Outside call invoking call_func {callback}, device={device}, transforms={unpacked_transforms}")
     res = callback(arg, device, unpacked_transforms)
     if identity:
@@ -1250,9 +1249,9 @@ def _outside_call_run_callback(
 
       canonical_flat_results = tuple(util.safe_map(xla.canonicalize_dtype, actual_flat_results))
       actual_flat_results_aval = _values_to_avals(canonical_flat_results)
-      if logging.vlog_is_on(2):
+      if logging.vlog_is_on(logging.CPP_ERROR):
         logging.vlog(
-            2,
+            logging.CPP_ERROR,
             f"Outside call {callback} result {flat_results_aval}. Sending to infeed for device {device}."
         )
 
@@ -1285,12 +1284,12 @@ def _outside_call_run_callback(
       # TODO: implement a proper error handling for TPU
       if device.platform != "tpu":
         canonical_flat_results = [xla.canonicalize_dtype(np.arange(12345, dtype=np.int8))]
-        if logging.vlog_is_on(2):
-          logging.vlog(2, f"Outside call consumer {callback} exception {e}. Sending to infeed the error result.")
+        if logging.vlog_is_on(logging.CPP_ERROR):
+          logging.vlog(logging.CPP_ERROR, f"Outside call consumer {callback} exception {e}. Sending to infeed the error result.")
         device.transfer_to_infeed(tuple(canonical_flat_results))
       else:
-        if logging.vlog_is_on(2):
-          logging.vlog(2, f"Outside call consumer {callback} exception {e}. On TPU we do not send infeed.")
+        if logging.vlog_is_on(logging.CPP_ERROR):
+          logging.vlog(logging.CPP_ERROR, f"Outside call consumer {callback} exception {e}. On TPU we do not send infeed.")
     raise e  # Let the exception propagate
 
 
@@ -1920,9 +1919,9 @@ def _initialize_outfeed_receiver(
     if clients_with_outfeed:
       devices_with_outfeed = list(
         itertools.chain(*[backend.local_devices() for backend in clients_with_outfeed]))
-      if logging.vlog_is_on(2):
+      if logging.vlog_is_on(logging.CPP_ERROR):
         logging.vlog(
-            2,
+            logging.CPP_ERROR,
             f"Starting outfeed_receiver for {[str(d) for d in devices_with_outfeed]}. "
             f"max_callback_queue_size_bytes={max_callback_queue_size_bytes}")
       _callback_handler_data.receiver = outfeed_receiver_module.start(
@@ -1959,43 +1958,43 @@ def barrier_wait(logging_name: Optional[str] = None):
       for this invocation. See `Debugging` in the module documentation.
   """
   logging_name = logging_name or ""
-  if logging.vlog_is_on(2):
-    logging.vlog(2, f"barrier_wait[{logging_name}]: start")
+  if logging.vlog_is_on(logging.CPP_ERROR):
+    logging.vlog(logging.CPP_ERROR, f"barrier_wait[{logging_name}]: start")
 
   lock = threading.Lock()
   cv = threading.Condition(lock=lock)
   devices_at_barrier = []  # Protected by lock
   def barrier_tap_received(dev_idx, _):
     device = _callback_handler_data.devices[dev_idx]
-    if logging.vlog_is_on(2):
+    if logging.vlog_is_on(logging.CPP_ERROR):
       logging.vlog(
-          2,
+          logging.CPP_ERROR,
           f"barrier_wait[{logging_name}]: at barrier_tap for device {device} "
           f". Thread {threading.current_thread()}")
     with lock:
       devices_at_barrier.append(device)
-      if logging.vlog_is_on(2):
+      if logging.vlog_is_on(logging.CPP_ERROR):
         waiting_for_devices = [d for d in _callback_handler_data.devices
                                if d not in devices_at_barrier]
-        logging.vlog(2,
+        logging.vlog(logging.CPP_ERROR,
                      f"barrier_wait[{logging_name}]: still waiting "
                      f"for {len(waiting_for_devices)} devices at "
                      f"barrier ({waiting_for_devices})")
       cv.notify()
 
   for d_idx, d in enumerate(_callback_handler_data.devices):
-    if logging.vlog_is_on(2):
-      logging.vlog(2,
+    if logging.vlog_is_on(logging.CPP_ERROR):
+      logging.vlog(logging.CPP_ERROR,
                    f"barrier_wait[{logging_name}]: enqueueing barrier on device {d}")
     x_on_dev = api.device_put(d_idx, device=d)
     api.jit(lambda x: id_tap(barrier_tap_received, x), device=d)(x_on_dev)
-  if logging.vlog_is_on(2):
-    logging.vlog(2,
+  if logging.vlog_is_on(logging.CPP_ERROR):
+    logging.vlog(logging.CPP_ERROR,
                  f"barrier_wait[{logging_name}]: waiting for callbacks")
   with lock:
     cv.wait_for(lambda: len(devices_at_barrier) == len(_callback_handler_data.devices))
-  if logging.vlog_is_on(2):
-    logging.vlog(2, f"barrier_wait[{logging_name}]: done")
+  if logging.vlog_is_on(logging.CPP_ERROR):
+    logging.vlog(logging.CPP_ERROR, f"barrier_wait[{logging_name}]: done")
   if _callback_handler_data.last_callback_exception is not None:
     last_exception, formatted_last_exception = _callback_handler_data.last_callback_exception
     _callback_handler_data.last_callback_exception = None

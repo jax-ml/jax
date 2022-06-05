@@ -26,9 +26,9 @@ import threading
 from typing import Any, Dict, List, Optional, Union
 import warnings
 
-from absl import logging
+from jax import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
-logging._warn_preinit_stderr = 0
+logging.set_warn_preinit_stderr(False)
 
 import jax._src.lib as lib
 from jax._src.config import flags, bool_env, int_env
@@ -127,7 +127,7 @@ def get_compile_options(
     build_options.auto_spmd_partitioning_mesh_ids = auto_spmd_partitioning_mesh_ids
   if device_assignment is not None:
     logging.vlog(
-        2,
+        logging.CPP_ERROR,
         'get_compile_options: num_replicas=%s num_partitions=%s device_assignment=%s',
         num_replicas, num_partitions, device_assignment)
     device_assignment = np.array(device_assignment)
@@ -384,7 +384,7 @@ def _init_backend(platform):
   if factory is None:
     raise RuntimeError(f"Unknown backend '{platform}'")
 
-  logging.vlog(1, "Initializing backend '%s'" % platform)
+  logging.vlog(logging.CPP_WARNING, "Initializing backend '%s'" % platform)
   backend = factory()
   # TODO(skye): consider raising more descriptive errors directly from backend
   # factories instead of returning None.
@@ -396,7 +396,7 @@ def _init_backend(platform):
                              ("process_index", backend.process_index()),
                              ("device_count", backend.device_count()),
                              ("local_devices", backend.local_devices()))
-  logging.vlog(1, "Backend '%s' initialized" % platform)
+  logging.vlog(logging.CPP_WARNING, "Backend '%s' initialized" % platform)
   return backend
 
 

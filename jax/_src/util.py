@@ -24,11 +24,11 @@ from typing import (Any, Callable, Dict, Iterable, List, Tuple, Generic,
                     TypeVar, Set, Iterator, Sequence, Optional)
 import weakref
 
-from absl import logging
 import numpy as np
 
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
+from jax import logging
 from jax.config import config
 
 Seq = Sequence

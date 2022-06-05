@@ -44,13 +44,12 @@ from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
                     Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast,
                     TYPE_CHECKING)
 
-from absl import logging
-
 import numpy as np
 
 import jax
 from jax import core
 from jax import linear_util as lu
+from jax import logging
 from jax.core import ConcreteArray, ShapedArray
 from jax.errors import JAXTypeError
 from jax.interpreters import ad
@@ -1363,19 +1362,19 @@ def lower_parallel_callable(
   jaxpr, consts, replicas, parts, shards = stage_parallel_callable(
       pci, fun, global_arg_shapes)
 
-  if logging.vlog_is_on(2):
-    logging.vlog(2, "sharded_avals: %s", shards.sharded_avals)
-    logging.vlog(2, "global_sharded_avals: %s", shards.global_sharded_avals)
-    logging.vlog(2, "num_replicas: %d  num_local_replicas: %d",
+  if logging.vlog_is_on(logging.CPP_ERROR):
+    logging.vlog(logging.CPP_ERROR, "sharded_avals: %s", shards.sharded_avals)
+    logging.vlog(logging.CPP_ERROR, "global_sharded_avals: %s", shards.global_sharded_avals)
+    logging.vlog(logging.CPP_ERROR, "num_replicas: %d  num_local_replicas: %d",
                  replicas.num_global_replicas, replicas.num_local_replicas)
-    logging.vlog(2, "num_partitions: %d  local_num_partitions: %d",
+    logging.vlog(logging.CPP_ERROR, "num_partitions: %d  local_num_partitions: %d",
                  parts.num_partitions, parts.local_num_partitions)
-    logging.vlog(2, "arg_parts: %s", parts.arg_parts)
-    logging.vlog(2, "local_arg_parts: %s", parts.local_arg_parts)
-    logging.vlog(2, "out_parts: %s", parts.out_parts)
-    logging.vlog(2, "local_out_parts: %s", parts.local_out_parts)
-    logging.vlog(2, "devices: %s", devices)
-    logging.vlog(2, "local_devices: %s", pci.local_devices)
+    logging.vlog(logging.CPP_ERROR, "arg_parts: %s", parts.arg_parts)
+    logging.vlog(logging.CPP_ERROR, "local_arg_parts: %s", parts.local_arg_parts)
+    logging.vlog(logging.CPP_ERROR, "out_parts: %s", parts.out_parts)
+    logging.vlog(logging.CPP_ERROR, "local_out_parts: %s", parts.local_out_parts)
+    logging.vlog(logging.CPP_ERROR, "devices: %s", devices)
+    logging.vlog(logging.CPP_ERROR, "local_devices: %s", pci.local_devices)
 
   if (xb.process_count(backend) > 1 and must_run_on_all_devices and
       shards.num_local_shards != xb.local_device_count(backend)):

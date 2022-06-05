@@ -17,8 +17,8 @@
 import itertools
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from absl import logging
 import jax
+from jax import logging
 import numpy as np
 
 _TPU_V2 = 'TPU v2'

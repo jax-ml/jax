@@ -20,9 +20,9 @@ from functools import partial
 import re
 import threading
 from typing import Callable, Sequence, Optional
-from absl import logging
 
 import jax
+from jax import logging
 from jax._src import distributed
 from jax._src.config import config
 from jax.experimental import global_device_array as gda
