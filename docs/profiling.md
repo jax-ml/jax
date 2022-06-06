@@ -6,7 +6,7 @@ We can use the JAX profiler to generate traces of a JAX program that can be
 visualized using the [Perfetto visualizer](https://ui.perfetto.dev). Currently,
 this method blocks the program until a link is clicked and the Perfetto UI loads
 the trace. If you wish to get profiling information without any interaction,
-check out the the Tensorboard profiler below.
+check out the Tensorboard profiler below.
 
 ```python
 with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):

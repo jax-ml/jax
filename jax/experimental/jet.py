@@ -19,7 +19,7 @@ r"""Jet is an experimental module for higher-order automatic differentiation
   Consider a function :math:`f = g \circ h`, some point :math:`x`
   and some offset :math:`v`.
   First-order automatic differentiation (such as :func:`jax.jvp`)
-  computes the pair :math:`(f(x), \partial f(x)[v])` from the the pair
+  computes the pair :math:`(f(x), \partial f(x)[v])` from the pair
   :math:`(h(x), \partial h(x)[v])`.
 
   :func:`jet` implements the higher-order analogue:

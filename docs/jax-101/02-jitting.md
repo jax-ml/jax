@@ -263,7 +263,7 @@ print(g_jit_decorated(10, 20))
 
 ## When to use JIT
 
-In many of the the examples above, jitting is not worth it:
+In many of the examples above, jitting is not worth it:
 
 ```{code-cell} ipython3
 :id: uMOqsNnqYApD
