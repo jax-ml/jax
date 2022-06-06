@@ -10,7 +10,7 @@ jupyter-sphinx>=0.3.2
 # Newer versions cause build failures; see https://github.com/google/jax/pull/10502
 myst-nb==0.15.0
 # Traitlets 5.2.X fails: https://github.com/ipython/traitlets/issues/741
-traitlets<5.2.0
+traitlets<5.3.0
 
 # Need to pin docutils to 0.16 to make bulleted lists appear correctly on
 # ReadTheDocs: https://stackoverflow.com/a/68008428
