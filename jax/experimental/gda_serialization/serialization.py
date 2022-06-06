@@ -13,6 +13,7 @@
 # limitations under the License.
 """GlobalDeviceArray serialization and deserialization."""
 
+import abc
 import asyncio
 import re
 import threading
@@ -175,8 +176,8 @@ def _get_key(key: str):
   return f'checkpoint_{key}'
 
 
-class GlobalAsyncCheckpointManager:
-  """Responsible for serializing GDAs via TensorStore.
+class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
+  """Interface for checkpointing GDAs asynchronously.
 
   This class manages the state of an ongoing asynchronous checkpoint.
 
@@ -215,6 +216,34 @@ class GlobalAsyncCheckpointManager:
   manager.wait_until_finished()
   ```
   """
+
+  @abc.abstractmethod
+  def check_for_errors(self):
+    """Checks if any errors have been raised in the child thread.
+
+    This is a non-blocking call that can be called in the main thread.
+    """
+
+  @abc.abstractmethod
+  def wait_until_finished(self):
+    """Blocks until serialization has finished."""
+
+  @abc.abstractmethod
+  # TODO(b/233793426): Try removing temp_checkpoint_dir and final_checkpoint_dir
+  # from the API and use a callback instead. This will affect how async
+  # mechanism works.
+  def serialize(self, gdas, tensorstore_specs, *, temp_checkpoint_dir,
+                final_checkpoint_dir):
+    """Serializes GDAs to TensorStore."""
+
+  @abc.abstractmethod
+  def deserialize(self, global_meshes, mesh_axes, tensorstore_specs,
+                  global_shapes=None, dtypes=None):
+    """Deserializes GDAs from TensorStore."""
+
+
+class GlobalAsyncCheckpointManager(GlobalAsyncCheckpointManagerBase):
+  """Responsible for serializing GDAs via TensorStore."""
 
   def __init__(self, timeout_secs=300):
     self._timeout_secs = timeout_secs
@@ -262,7 +291,7 @@ class GlobalAsyncCheckpointManager:
     except Exception as e:
       self._exception = e
 
-  def _start_commit_thread(self, temp_checkpoint_dir, final_checkpoint_dir):
+  def _start_async_commit(self, temp_checkpoint_dir, final_checkpoint_dir):
     self._thread = threading.Thread(
         target=self._thread_func,
         args=(temp_checkpoint_dir, final_checkpoint_dir))
@@ -323,7 +352,7 @@ class GlobalAsyncCheckpointManager:
     # Used in wait_until_finished to check on process != 0, if the checkpoint
     # has finished writing.
     self._final_ckpt_dir = final_checkpoint_dir
-    self._start_commit_thread(temp_checkpoint_dir, final_checkpoint_dir)
+    self._start_async_commit(temp_checkpoint_dir, final_checkpoint_dir)
 
   def deserialize(self, global_meshes, mesh_axes, tensorstore_specs,
                   global_shapes=None, dtypes=None):
