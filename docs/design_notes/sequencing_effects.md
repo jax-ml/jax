@@ -82,7 +82,7 @@ def f(x):
   jax.print("world")
   return x
 ```
-Even though in Python, we've written the the `"hello"` print before the `"world"` print,
+Even though in Python, we've written the `"hello"` print before the `"world"` print,
 a compiler like XLA is free to reorder them because there's no explicit data-dependence between the prints.
 
 ## Motivation
