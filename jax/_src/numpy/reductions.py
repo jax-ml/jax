@@ -73,16 +73,19 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   lax_internal._check_user_dtype_supported(dtype, name)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
-  if initial is None and not has_identity:
-    if not _all(core.greater_equal_dim(d, 1) for d in np.shape(a)):
-      raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
-    if where_ is not None:
-      raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
-                       f"where mask one has to specify 'initial'")
+  if initial is None and not has_identity and where_ is not None:
+    raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
+                     f"where mask one has to specify 'initial'")
 
   a = a if isinstance(a, ndarray) else _asarray(a)
   a = preproc(a) if preproc else a
   pos_dims, dims = _reduction_dims(a, axis)
+
+  if initial is None and not has_identity:
+    shape = np.shape(a)
+    if not _all(core.greater_equal_dim(shape[d], 1) for d in pos_dims):
+      raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
+
   result_dtype = dtypes.canonicalize_dtype(dtype or dtypes.dtype(np_fun(np.ones((), dtype=dtypes.dtype(a)))))
   if upcast_f16_for_computation and dtypes.issubdtype(result_dtype, np.inexact):
     computation_dtype = _upcast_f16(result_dtype)
