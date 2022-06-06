@@ -40,39 +40,26 @@ class MockTpuDevice:
   slice_index: int = 0
 
 
-def mock_devices(x, y, z, dev_kind, one_device_per_chip, num_slices=1):
-  """Hard-coded reproduction of jax.devices() output on 8x8, 4x4x4."""
-  devices = []
-  process_index = 0
-  for slice_index in range(num_slices):
-    for k in range(z):
-      for j in range(0, y, 2):
-        for i in range(0, x, 2):
-          # Local 2x2 subgrid of chips, with 2 cores per chip.
-          host_devices = [
-              MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i, j, k), 0, slice_index),
-              MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i, j, k), 1, slice_index),
-              MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i + 1, j, k), 0, slice_index),
-              MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i + 1, j, k), 1, slice_index),
-              MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i, j + 1, k), 0, slice_index),
-              MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i, j + 1, k), 1, slice_index),
-              MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i + 1, j + 1, k), 0, slice_index),
-              MockTpuDevice(-1, 'tpu', dev_kind, process_index, (i + 1, j + 1, k), 1, slice_index),
-          ]
-          if one_device_per_chip:
-            # Only include core_on_chip = 0.
-            host_devices = host_devices[::2]
-          devices.extend(host_devices)
-          # Simulate one process per host (1 host = 2x2x1 slice)
-          process_index += 1
-
-  # id grows in (z, y, x) major order
-  for d in devices:
-    i, j, k = d.coords
-    d.id = k*x*y + j*x + i
-    if not one_device_per_chip:
-      d.id = d.id * 2 + d.core_on_chip
-
+def mock_tpu_devices(x, y, z, dev_kind, one_device_per_chip, num_slices=1,
+                     reorder=False):
+  """Produce fake jax.devices() output for a TPU slice."""
+  cores_per_chip = 1 if one_device_per_chip else 2
+  nxd, nyd, nzd = (2, 2, 1)
+  nxp, nyp, nzp = x // nxd, y // nyd, z // nzd
+  def mock_tpu_device(core_on_chip, xd, yd, zd, xp, yp, zp, slice_index):
+    process_index = xp + nxp * (yp + nyp * (zp + nzp * slice_index))
+    coords =  (xd + nxd * xp, yd + nyd * yp, zd + nzd * zp)
+    device_id = core_on_chip + cores_per_chip * (xd + nxd * (xp + nxp * (
+        yd + nyd * (yp + nyp * (zd + nzd * (zp + nzp * slice_index))))))
+    return MockTpuDevice(device_id, 'tpu', dev_kind, process_index, coords,
+                         core_on_chip, slice_index)
+  devices = [mock_tpu_device(core_on_chip, xd, yd, zd, xp, yp, zp, slice_index)
+             for slice_index in range(num_slices)
+             for zp in range(nzp) for yp in range(nyp) for xp in range(nxp)
+             for zd in range(nzd) for yd in range(nyd) for xd in range(nxd)
+             for core_on_chip in range(cores_per_chip)]
+  if reorder:
+    devices = devices[::-1]
   _validate_mocked_process_indices(devices, one_device_per_chip)
   return devices
 
@@ -101,57 +88,57 @@ def _validate_mocked_process_indices(devices, one_device_per_chip):
 
 def mock_2x2_devices():
   """Hard-coded reproduction of jax.devices() output on v3-2x2."""
-  return mock_devices(2, 2, 1, 'TPU v3', False)
+  return mock_tpu_devices(2, 2, 1, 'TPU v3', False)
 
 
 def mock_4x4_devices():
   """Hard-coded reproduction of jax.devices() output on v3-4x4."""
-  return mock_devices(4, 4, 1, 'TPU v3', False)
+  return mock_tpu_devices(4, 4, 1, 'TPU v3', False)
 
 
 def mock_8x8_devices():
   """Hard-coded reproduction of jax.devices() output on v3-8x8."""
-  return mock_devices(8, 8, 1, 'TPU v3', False)
+  return mock_tpu_devices(8, 8, 1, 'TPU v3', False)
 
 
 def mock_2x2x1_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 2x2x1."""
-  return mock_devices(2, 2, 1, 'TPU v4', one_device_per_chip)
+  return mock_tpu_devices(2, 2, 1, 'TPU v4', one_device_per_chip)
 
 
 def mock_2x2x4_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 2x2x4."""
-  return mock_devices(2, 2, 4, 'TPU v4', one_device_per_chip)
+  return mock_tpu_devices(2, 2, 4, 'TPU v4', one_device_per_chip)
 
 
 def mock_4x4x4_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 4x4x4."""
-  return mock_devices(4, 4, 4, 'TPU v4', one_device_per_chip)
+  return mock_tpu_devices(4, 4, 4, 'TPU v4', one_device_per_chip)
 
 
 def mock_4x4x8_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 4x4x8."""
-  return mock_devices(4, 4, 8, 'TPU v4', one_device_per_chip)
+  return mock_tpu_devices(4, 4, 8, 'TPU v4', one_device_per_chip)
 
 
 def mock_8x8x8_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 8x8x8."""
-  return mock_devices(8, 8, 8, 'TPU v4', one_device_per_chip)
+  return mock_tpu_devices(8, 8, 8, 'TPU v4', one_device_per_chip)
 
 
 def mock_4x8x8_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 4x8x8."""
-  return mock_devices(4, 8, 8, 'TPU v4', one_device_per_chip)
+  return mock_tpu_devices(4, 8, 8, 'TPU v4', one_device_per_chip)
 
 
 def mock_4x8x16_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 4x8x16."""
-  return mock_devices(4, 8, 16, 'TPU v4', one_device_per_chip)
+  return mock_tpu_devices(4, 8, 16, 'TPU v4', one_device_per_chip)
 
 
 def mock_8x8x16_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 8x8x16."""
-  return mock_devices(8, 8, 16, 'TPU v4', one_device_per_chip)
+  return mock_tpu_devices(8, 8, 16, 'TPU v4', one_device_per_chip)
 
 
 class MeshUtilsTest(test_util.JaxTestCase):
@@ -169,16 +156,16 @@ class MeshUtilsTest(test_util.JaxTestCase):
         expected_bounds)
 
   @parameterized.named_parameters(
-      ('4x4x4', mock_4x4x4_devices, (4, 4, 4)),
-      ('4x4x8', mock_4x4x8_devices, (4, 4, 8)),
-      ('8x8x8', mock_8x8x8_devices, (8, 8, 8)),
-      ('8x8x16', mock_8x8x16_devices, (8, 8, 16)),
+      ('4x4x4_t', (4, 4, 4), True),
+      ('4x4x4_f', (4, 4, 4), False),
+      ('8x8x16_t', (8, 8, 16), True),
+      ('8x8x16_f', (8, 8, 16), False),
   )
-  def test_get_physical_tpu_mesh(self, devices, expected_shape):
-    jax_devices = devices(True)
+  def test_get_physical_tpu_mesh(self, xyz, reorder):
+    x, y, z = xyz
+    jax_devices = mock_tpu_devices(x, y, z, 'TPU v4', True, reorder=reorder)
     normalized = mesh_utils._get_physical_tpu_mesh(jax_devices)
-    self.assertEqual(normalized.shape, expected_shape)
-    x, y, z = expected_shape
+    self.assertEqual(normalized.shape, xyz)
     # major_to_minor: x, y, z
     for i in range(x):
       for j in range(y):
@@ -209,7 +196,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
       ('2X4x4x4b', (1, 4, 16), (1, 2, 1)),
   )
   def test_create_hybrid_device_mesh(self, mesh_shape, dcn_mesh_shape):
-    devices = mock_devices(4, 4, 4, 'TPU v4', True, 2)
+    devices = mock_tpu_devices(4, 4, 4, 'TPU v4', True, 2)
     mesh = mesh_utils.create_hybrid_device_mesh(
         mesh_shape, dcn_mesh_shape, devices)
     total_mesh_shape = tuple(
@@ -248,7 +235,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
     v4 = mesh_utils._TPU_V4
     for topology, mesh_shapes in mesh_utils._TRANSPOSE_TRICKS.items():
       logging.vlog(1, "topology: %s", topology)
-      devices = mock_devices(topology[0], topology[1], topology[2], v4,
+      devices = mock_tpu_devices(topology[0], topology[1], topology[2], v4,
                              one_device_per_chip=True)
       for mesh_shape in mesh_shapes:
         logging.vlog(1, "  mesh_shape: %s", mesh_shape)
@@ -261,7 +248,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
 
     topology = (4, 4, 8)
     mesh_shape = (1, 16, 8)
-    devices = mock_devices(topology[0], topology[1], topology[2], v4,
+    devices = mock_tpu_devices(topology[0], topology[1], topology[2], v4,
                            one_device_per_chip=True)
     with self.assertRaisesWithLiteralMatch(
         ValueError,
@@ -272,7 +259,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
 
     topology = (4, 8, 8)
     mesh_shape = (1, 128, 2)
-    devices = mock_devices(topology[0], topology[1], topology[2], v4,
+    devices = mock_tpu_devices(topology[0], topology[1], topology[2], v4,
                            one_device_per_chip=True)
     with self.assertRaisesWithLiteralMatch(
         ValueError,

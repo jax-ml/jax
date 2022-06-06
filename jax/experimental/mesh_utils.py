@@ -180,29 +180,21 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
     A np.ndarray of JAX devices with shape [global_x, global_y, global_z]. On
       v2 and v3, global_z is instead cores_per_chip (i.e., 2).
   """
-  first_process = jax_devices[0].process_index
-  jax_local_devices_from_process_0 = [
-      d for d in jax_devices if d.process_index == first_process]
-  local_topology = _bounds_from_last_device(
-      jax_local_devices_from_process_0[-1])
-  # h_x, h_y can be 2x2 or 1x1 depending on tasks_per_host=4 or 1
-  h_x, h_y, _, cores_per_chip = local_topology
-  physical_topology = _bounds_from_last_device(jax_devices[-1])
-  g_x, g_y, g_z, cores_per_chip = physical_topology
-  assert g_x % h_x == 0 and g_y % h_y == 0
-
-  jax_devices_array = np.array(jax_devices).reshape(
-      (g_z, g_y // h_y, g_x // h_x, h_y, h_x, cores_per_chip))
-  jax_devices_array = jax_devices_array.transpose(0, 1, 3, 2, 4, 5)
-  jax_devices_array = jax_devices_array.reshape((g_z, g_y, g_x, cores_per_chip))
-  if cores_per_chip == 2 and g_z > 1:
-    raise ValueError('Creating meshes for TPU v4 requires one device per chip')
-  if cores_per_chip == 2:
-    # TPU v2/v3 case
-    return jax_devices_array.reshape(
-        (g_y, g_x, cores_per_chip)).transpose(1, 0, 3)
-  else:
-    return jax_devices_array.reshape((g_z, g_y, g_x)).transpose()
+  device_kind = jax_devices[0].device_kind
+  def sort_key(device):
+    x, y, z = device.coords
+    core = device.core_on_chip
+    if device_kind == _TPU_V4:
+      if core != 0:
+        raise ValueError(
+            'Creating meshes for TPU v4 requires one device per chip')
+      return (x, y, z)
+    elif device_kind in (_TPU_V2, _TPU_V3):
+      assert z == 0
+      return (x, y, core)
+  sorted_devices = sorted(jax_devices, key=sort_key)
+  x, y, *_ = _bounds_from_last_device(sorted_devices[-1])
+  return np.array(sorted_devices).reshape((x, y, -1))
 
 
 # jekbradbury's famous trick for creating contiguous submeshes (where available)
