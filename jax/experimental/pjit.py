@@ -238,7 +238,7 @@ def pjit(fun: Callable,
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axis_resources = tuple(in_axis_resources)
 
-  in_axis_resources, _, _, in_all_auto = _prepare_axis_resources(
+  in_axis_resources, _, _, in_any_auto = _prepare_axis_resources(
       in_axis_resources, "in_axis_resources")
   out_axis_resources, _, _, _ = _prepare_axis_resources(
       out_axis_resources, "out_axis_resources")
@@ -277,7 +277,7 @@ def pjit(fun: Callable,
 
     # TODO(yashkatariya): Make sure you are not checking explicitly for `ShapedArray`.
     # One possibility, is to only allow GDA and fully replicated inputs for AUTO.
-    if in_all_auto and not _global_avals:
+    if in_any_auto and not _global_avals:
       raise ValueError('Auto sharding is only enabled for global inputs. '
                        'Please set `_global_avals=True` during `.lower()`. '
                        'Use the compiled object to call the inputs.')
@@ -592,17 +592,14 @@ def _prepare_axis_resources(axis_resources,
   # PyTrees don't treat None values as leaves, so we use an is_leaf function.
   entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
-  # TODO(yashkatariya): Allow AUTO and other specification together after
-  # auto sharding pass supports user specified annotations.
-  all_auto = pxla._check_if_all_or_none_auto(entries, arg_name)
-  if not all_auto:
-    entries = [
-      entry if _is_from_gda(entry) else ParsedPartitionSpec.from_user_input(
+  any_auto = pxla._check_if_any_auto(entries)
+  entries = [
+      entry if _is_from_gda(entry) or _is_auto(entry) else ParsedPartitionSpec.from_user_input(
           entry, what, allow_unconstrained_dims=allow_unconstrained_dims)
       for entry in entries
-    ]
-    _check_unique_resources(entries, arg_name)
-  return tree_unflatten(treedef, entries), entries, treedef, all_auto
+  ]
+  _check_unique_resources(entries, arg_name)
+  return tree_unflatten(treedef, entries), entries, treedef, any_auto
 
 
 def _check_resources_mismatch(in_axis_resources_flat, is_gda):
@@ -614,6 +611,7 @@ def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
     if _is_from_gda(arg_axis_resources): continue
+    if _is_auto(arg_axis_resources): continue
     constrained_dims = [d for d in arg_axis_resources if d is not None]
     resource_counts = Counter(it.chain.from_iterable(constrained_dims))
     if not resource_counts: continue
@@ -668,7 +666,8 @@ def _pjit_call_impl(*args, jaxpr,
   compiled = _pjit_lower(
       jaxpr, in_axis_resources, out_axis_resources,
       resource_env, donated_invars, name, in_is_global).compile()
-  if compiled._auto_spmd_lowering:
+  # This check is expensive so only do it if enable_checks is on.
+  if compiled._auto_spmd_lowering and config.jax_enable_checks:
     pxla._check_gda_xla_sharding_match(args, compiled._in_axes)
   if config.jax_distributed_debug:
     # Defensively only perform fingerprint logic if debug logging is enabled

@@ -2096,15 +2096,13 @@ class TileManual:
 TilingMethod = Union[TileVectorize, TileManual]
 
 
-def _check_if_all_or_none_auto(axis_resources, name):
+def _check_if_any_auto(axis_resources):
   if not axis_resources:
     return False
-  should_auto = _is_auto(axis_resources[0])
   for resource in axis_resources:
-    if _is_auto(resource) != should_auto:
-      raise ValueError(f'`pjit.AUTO` exists in {name}. '
-                       f'Make sure that every entry in {name} is `pjit.AUTO`.')
-  return should_auto
+    if _is_auto(resource):
+      return True
+  return False
 
 
 class _UnconstrainedPartitionSingleton:
@@ -2157,7 +2155,7 @@ def lower_mesh_computation(
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
-  auto_spmd_lowering = _check_if_all_or_none_auto(in_axes + out_axes, 'in_axes and out_axes') # type: ignore  # union-attr
+  auto_spmd_lowering = _check_if_any_auto(in_axes + out_axes)  # type: ignore  # union-attr
 
   if auto_spmd_lowering and not spmd_lowering:
     raise ValueError('Enable spmd_lowering to use auto spmd lowering.')
@@ -2213,15 +2211,17 @@ def lower_mesh_computation(
   out_partitions: Optional[List[Optional[xc.OpSharding]]]
   axis_ctx: mlir.AxisContext
   if spmd_lowering:
-    if auto_spmd_lowering:
-      in_partitions = None
-      out_partitions = None
-    else:
-      global_sharding_spec = mesh_sharding_specs(global_axis_sizes, mesh.axis_names)
-      in_partitions = [global_sharding_spec(aval, aval_in_axes).sharding_proto()
-                       for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)]
-      out_partitions = [global_sharding_spec(aval, aval_out_axes).sharding_proto()
-                        for aval, aval_out_axes in safe_zip(global_out_avals, out_axes)]
+    global_sharding_spec = mesh_sharding_specs(global_axis_sizes, mesh.axis_names)
+    in_partitions = [
+        None if _is_auto(aval_in_axes) else global_sharding_spec(aval, aval_in_axes).sharding_proto()
+        for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)
+    ]
+    # TODO(yashkatariya): Fix the HLO produced if out_partitions is
+    # [None, OpShardingProto] has the sharding annotations.
+    out_partitions = [
+        None if _is_auto(aval_out_axes) else global_sharding_spec(aval, aval_out_axes).sharding_proto()
+        for aval, aval_out_axes in safe_zip(global_out_avals, out_axes)
+    ]
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = mlir.SPMDAxisContext(mesh)
     axis_env = axis_ctx.axis_env
