@@ -19,7 +19,7 @@ from typing import Optional
 
 from absl import logging
 from jax._src import cloud_tpu_init
-from jax._src import config
+from jax._src.config import config
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
