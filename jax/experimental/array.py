@@ -14,14 +14,15 @@
 
 from __future__ import annotations
 
+import dataclasses
 import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional
 
-from jax import core
 from jax._src.config import config
-from jax._src.util import prod, cache
+from jax._src.util import prod
 from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
+from jax.interpreters import pxla
 from jax.experimental.sharding import Sharding, SingleDeviceSharding, XLACompatibleSharding
 
 Shape = Tuple[int, ...]
@@ -29,6 +30,25 @@ Device = xc.Device
 DeviceArray = xc.Buffer
 Index = Tuple[slice, ...]
 ArrayLike = Union[np.ndarray, DeviceArray]
+
+
+@dataclasses.dataclass(frozen=True)
+class Shard:
+  """A single data shard of an Array.
+
+  Args:
+    device : Which device this shard resides on.
+    index : The index into the global array of this shard.
+    replica_id : Integer id indicating which replica of the global array this
+      shard is part of. Always 0 for fully sharded data
+      (i.e. when there’s only 1 replica).
+    data : The data of this shard. None if ``device`` is non-local.
+  """
+  device: Device
+  index: Index
+  replica_id: int
+  # None if this `Shard` lives on a non-addressable device.
+  data: Optional[Array] = None
 
 
 class Array:
@@ -75,18 +95,27 @@ class Array:
   def is_fully_addressable(self) -> bool:
     return len(self.sharding.device_set) == len(self.sharding.addressable_devices)
 
-  @cache()
-  def addressable_shards(self) -> Sequence[Array]:
-    # Wrap the device arrays in `Array`.
-    return [Array(da.shape, SingleDeviceSharding(da.device()), [da], committed=True)
-            for da in self._arrays]
+  @pxla.maybe_cached_property
+  def addressable_shards(self) -> Sequence[Shard]:
+    device_to_index = self.sharding.devices_indices_map(self.shape)
+    device_to_replica_id = self.sharding.device_replica_id_map(self.shape)
+
+    out = []
+    for db in self._arrays:
+      db = pxla._set_aval(db)
+      device = db.device()
+      index = device_to_index[device]
+      rid = device_to_replica_id[device]
+      # Wrap the device arrays in `Array` until C++ returns an Array instead
+      # of a DA.
+      array = Array(db.aval, SingleDeviceSharding(device), [db], committed=True)
+      out.append(Shard(device, index, rid, array))
+    return out
 
   def copy_to_host_async(self):
-    device_to_replica_id = self.sharding.device_replica_id_map(self.shape)
-    for arr in self.addressable_shards():
-      device, = arr.sharding.device_set
-      if device_to_replica_id[device] == 0:
-        arr._arrays[0].copy_to_host_async()
+    for s in self.addressable_shards:
+      if s.replica_id == 0:
+        s.data._arrays[0].copy_to_host_async()
 
   def _value(self) -> np.ndarray:
     # TODO(yashkatariya): Cache the numpy value if its already set.
@@ -96,12 +125,10 @@ class Array:
                          "`jax.experimental.multihost_utils.process_allgather` "
                          "for this use case.")
     self.copy_to_host_async()
-    device_to_replica_id = self.sharding.device_replica_id_map(self.shape)
     npy_value = np.empty(self.shape, self.dtype)
-    for arr in self.addressable_shards():
-      device, = arr.sharding.device_set
-      if device_to_replica_id[device] == 0:
-        npy_value[self.sharding.device_indices(device, self.shape)] = arr._arrays[0].to_py()
+    for s in self.addressable_shards:
+      if s.replica_id == 0:
+        npy_value[s.index] = s.data._arrays[0].to_py()  # type: ignore  # [union-attr]
     return npy_value
 
 

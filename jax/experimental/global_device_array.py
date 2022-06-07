@@ -119,12 +119,6 @@ def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   return tuple(chunk_size)
 
 
-def _set_aval(val):
-  if val.aval is None:
-    val.aval = core.ShapedArray(val.shape, val.dtype)
-  return val
-
-
 @dataclasses.dataclass(frozen=True)
 class Shard:
   """A single data shard of a GlobalDeviceArray.
@@ -355,7 +349,7 @@ class GlobalDeviceArray:
 
     out = []
     for db in self._device_buffers:
-      db = _set_aval(db)
+      db = pxla._set_aval(db)
       device = db.device()
       index, rid = global_indices_rid[device]
       out.append(Shard(device, index, rid, db))
@@ -389,7 +383,7 @@ class GlobalDeviceArray:
     return global_shards
 
   def local_data(self, index) -> DeviceArray:
-    return _set_aval(self._device_buffers[index])
+    return pxla._set_aval(self._device_buffers[index])
 
   def block_until_ready(self):
     for db in self._device_buffers:
