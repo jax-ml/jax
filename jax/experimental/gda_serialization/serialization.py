@@ -224,11 +224,11 @@ class GlobalAsyncCheckpointManager:
     self._thread = None
     self._exception = None
 
-    if distributed.distributed_client is None:
+    if distributed.global_state.client is None:
       raise ValueError('Please initialize the distributed system via '
                        '`jax.distributed.initialize()` at the start of your '
                        'program.')
-    self._client = distributed.distributed_client
+    self._client = distributed.global_state.client
     self._final_ckpt_dir = None
 
   def __del__(self):

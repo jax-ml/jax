@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.distributed import initialize
+from jax._src.distributed import (initialize, shutdown)
