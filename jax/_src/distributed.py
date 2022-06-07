@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
 import os
 import functools
 
@@ -19,7 +20,7 @@ from typing import Optional
 
 from absl import logging
 from jax._src import cloud_tpu_init
-from jax._src import config
+from jax._src.config import config
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
@@ -101,6 +102,14 @@ def initialize(coordinator_address: Optional[str] = None,
     global jax_service
     if jax_service is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
+    logging.info('Starting JAX distributed service on %s', coordinator_address)
+    if xla_client._version >= 72:
+      jax_service = xla_extension.get_distributed_runtime_service(
+          coordinator_address, num_processes, config.jax_coordination_service)
+    else:
+      jax_service = xla_extension.get_distributed_runtime_service(
+          coordinator_address, num_processes)
+    atexit.register(jax_service.shutdown)
 
   global distributed_client
   if distributed_client is not None:
@@ -108,17 +117,14 @@ def initialize(coordinator_address: Optional[str] = None,
 
   logging.info('Starting JAX distributed service on %s', coordinator_address)
   if xla_client._version >= 72:
-    jax_service = xla_extension.get_distributed_runtime_service(
-        coordinator_address, num_processes, config.jax_coordination_service)
     distributed_client = xla_extension.get_distributed_runtime_client(
         coordinator_address, process_id, config.jax_coordination_service)
   else:
-    jax_service = xla_extension.get_distributed_runtime_service(
-        coordinator_address, num_processes)
     distributed_client = xla_extension.get_distributed_runtime_client(
         coordinator_address, process_id)
   logging.info('Connecting to JAX distributed service on %s', coordinator_address)
   distributed_client.connect()
+  atexit.register(distributed_client.shutdown)
 
   if xla_client._version >= 65:
     factory = functools.partial(
