@@ -266,8 +266,8 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       effect_p.bind(effect='bar')
       return x
     f = maps.xmap(f, in_axes=['a'], out_axes=['a'])
-    with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
-      jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
+    jaxpr = jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
+    self.assertSetEqual(jaxpr.effects, {"foo", "bar"})
 
   def test_pjit_inherits_effects(self):
     def f(x):
