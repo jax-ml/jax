@@ -25,6 +25,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax.config import config
+from jax.experimental import maps
 from jax._src import debugging
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
@@ -385,6 +386,20 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       f2(jnp.arange(2))
       jax.effects_barrier()
     self._assertLinesEqual(output(), "hello: 0\nhello: 1\nhello: 2\nhello: 3\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_unordered_print_with_xmap(self):
+
+    def f(x):
+      debug_print("{}", x, ordered=False)
+    f = maps.xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
+                  axis_resources={'a': 'dev'})
+    with maps.Mesh(np.array(jax.devices(backend='cpu')), ['dev']):
+      with capture_stdout() as output:
+        f(jnp.arange(40))
+        jax.effects_barrier()
+      lines = [f"{i}\n" for i in range(40)]
+      self._assertLinesEqual(output(), "".join(lines))
 
 if jaxlib.version < (0, 3, 8):
   # No lowering for `emit_python_callback` in older jaxlibs.
