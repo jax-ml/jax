@@ -2457,7 +2457,7 @@ def custom_linear_solve(
     b: constant right handle side of the equation. May be any nested structure
       of arrays.
     solve: higher level function that solves for solution to the linear
-      equation, i.e., ``solve(matvec, x) == x`` for all ``x`` of the same form
+      equation, i.e., ``solve(matvec, matvec(x)) == x`` for all ``x`` of the same form
       as ``b``. This function need not be differentiable.
     transpose_solve: higher level function for solving the transpose linear
       equation, i.e., ``transpose_solve(vecmat, x) == x``, where ``vecmat`` is
