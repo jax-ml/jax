@@ -309,6 +309,12 @@ NUMPY_SCALAR_SHAPE = _NumpyScalar()
 PYTHON_SCALAR_SHAPE = _PythonScalar()
 
 
+# Some shape combinations don't make sense.
+def is_valid_shape(shape, dtype):
+  if shape == PYTHON_SCALAR_SHAPE:
+    return dtype == np.dtype(type(np.array(0, dtype=dtype).item()))
+
+
 def _dims_of_shape(shape):
   """Converts `shape` to a tuple of dimensions."""
   if type(shape) in (list, tuple):

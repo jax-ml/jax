@@ -775,7 +775,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for shape in rec.shapes for dtype in rec.dtypes
         for out_dtype in [None] + rec.dtypes if out_dtype not in unsigned_dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for keepdims in [False, True])
+        for keepdims in [False, True]
+        if jtu.is_valid_shape(shape, dtype))
       for rec in JAX_REDUCER_RECORDS))
   def testReducer(self, np_op, jnp_op, rng_factory, shape, dtype, out_dtype,
                   axis, keepdims, inexact):
@@ -816,7 +817,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for keepdims in [False, True])
+        for keepdims in [False, True]
+        if jtu.is_valid_shape(shape, dtype))
       for rec in JAX_REDUCER_NO_DTYPE_RECORDS))
   def testReducerNoDtype(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, inexact):
@@ -851,7 +853,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         "initial": initial, "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for initial in [0, 1] for keepdims in [False, True])
+        for initial in [0, 1] for keepdims in [False, True]
+        if jtu.is_valid_shape(shape, dtype))
       for rec in JAX_REDUCER_INITIAL_RECORDS))
   def testReducerInitial(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, initial, inexact):
@@ -888,7 +891,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for shape in rec.shapes for dtype in rec.dtypes
         for whereshape in _compatible_shapes(shape)
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for initial in [0, 1] for keepdims in [False, True])
+        for initial in [0, 1] for keepdims in [False, True]
+        if jtu.is_valid_shape(shape, dtype))
       for rec in JAX_REDUCER_INITIAL_RECORDS))
   def testReducerWhere(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
                        keepdims, initial, inexact, whereshape):
@@ -931,7 +935,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in rec.shapes for dtype in rec.dtypes
       for whereshape in _compatible_shapes(shape)
       for axis in list(range(-len(shape), len(shape))) + [None]
-      for keepdims in [False, True])
+      for keepdims in [False, True]
+      if jtu.is_valid_shape(shape, dtype))
     for rec in JAX_REDUCER_WHERE_NO_INITIAL_RECORDS))
   def testReducerWhereNoInitial(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
                                 keepdims, inexact, whereshape):
