@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import abc
-from typing import Sequence, Tuple, Optional, Mapping, Set
+from collections import Counter
+from typing import Sequence, Tuple, Optional, Mapping, Dict, Set
 
+from jax._src.util import cache
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla
@@ -39,7 +41,7 @@ class Sharding(metaclass=abc.ABCMeta):
   def addressable_devices(self) -> Set[Device]:
     """A set of addressable devices by the current process"""
     process_index = xb.process_index()
-    return {d for d in self.device_set() if d.process_index == process_index}
+    return {d for d in self.device_set if d.process_index == process_index}
 
   @abc.abstractmethod
   def device_indices(self, device: Device,
@@ -55,8 +57,20 @@ class Sharding(metaclass=abc.ABCMeta):
 class XLACompatibleSharding(Sharding):
 
   @abc.abstractmethod
-  def _to_xla_op_sharding_and_device_assignment(
-      self, num_dimensions: int) -> Tuple[xc.OpSharding, XLADeviceAssignment]:
+  def _device_assignment(self) -> XLADeviceAssignment:
+    raise NotImplementedError('Subclasses should implement this method.')
+
+  @abc.abstractmethod
+  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
+    raise NotImplementedError('Subclasses should implement this method.')
+
+  @cache()
+  def _addressable_device_assignment(self) -> XLADeviceAssignment:
+    process_index = xb.process_index()
+    return [d for d in self._device_assignment() if d.process_index == process_index]
+
+  @abc.abstractmethod
+  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
 
@@ -66,6 +80,7 @@ class MeshPspecSharding(XLACompatibleSharding):
     self.mesh = mesh
     self.spec = spec
 
+  @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:
     return set(self.mesh.devices.flat)
 
@@ -80,8 +95,24 @@ class MeshPspecSharding(XLACompatibleSharding):
     # `get_shard_indices` is cached.
     return global_device_array.get_shard_indices(global_shape, self.mesh, self.spec)
 
-  def _to_xla_op_sharding_and_device_assignment(
-      self, num_dimensions: int) -> Tuple[xc.OpSharding, XLADeviceAssignment]:
+  def _hashed_index(self, x) -> int:
+    return hash(tuple((v.start, v.stop) for v in x))
+
+  @cache()
+  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
+    index_to_replica: Dict[int, int] = Counter()
+    out = {}
+    for device, index in self.devices_indices_map(global_shape).items():
+      h_index = self._hashed_index(index)
+      replica_id = index_to_replica[h_index]
+      index_to_replica[h_index] += 1
+      out[device] = replica_id
+    return out
+
+  def _device_assignment(self) -> XLADeviceAssignment:
+    return list(self.mesh.devices.flat)
+
+  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
 
     parsed_spec, _, _, _ = _prepare_axis_resources(self.spec, "spec")
@@ -90,4 +121,34 @@ class MeshPspecSharding(XLACompatibleSharding):
     # since we don't really need sharding spec.
     sharding_spec = pxla.new_mesh_sharding_specs(
         self.mesh.shape, self.mesh.axis_names)(num_dimensions, array_mapping)
-    return sharding_spec.sharding_proto(), list(self.mesh.devices.flat),
+    return sharding_spec.sharding_proto()
+
+
+class SingleDeviceSharding(XLACompatibleSharding):
+
+  def __init__(self, device: Device):
+    self._device = device
+
+  @pxla.maybe_cached_property
+  def device_set(self) -> Set[Device]:
+    return {self._device}
+
+  def device_indices(self, device: Device, global_shape: Shape) -> Optional[Index]:
+    return self.devices_indices_map(global_shape)[device]
+
+  @cache()
+  def devices_indices_map(
+      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+    return {self._device: (slice(None),) * len(global_shape)}
+
+  @cache()
+  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
+    return {self._device: 0}
+
+  def _device_assignment(self) -> XLADeviceAssignment:
+    return [self._device]
+
+  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
+    proto = xc.OpSharding()
+    proto.type = xc.OpSharding.Type.REPLICATED
+    return proto

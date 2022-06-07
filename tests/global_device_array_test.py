@@ -22,13 +22,11 @@ import jax
 from jax import core
 from jax._src import test_util as jtu
 from jax._src.util import prod, safe_zip
-from jax._src.lib import xla_client as xc
 
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import Mesh
 import jax.experimental.global_device_array as gda_lib
 from jax.experimental.global_device_array import GlobalDeviceArray, get_shard_indices
-from jax.experimental import sharding
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -365,43 +363,6 @@ class GDATest(jtu.JaxTestCase):
         global_input_shape, global_mesh, mesh_axes, cb)
 
     self.assertIs(gda.block_until_ready(), gda)
-
-
-class JaxArrayTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    jax._src.config.config.update('jax_array', True)
-
-  @parameterized.named_parameters(
-      ("mesh_x_y", P("x", "y")),
-      ("mesh_x", P("x")),
-      ("mesh_y", P("y")),
-      ("mesh_none_y", P(None, "y")),
-      ("mesh_xy", P(("x", "y"))),
-      ("mesh_fully_replicated", P()),
-  )
-  def test_jax_array_gda_value(self, mesh_axes):
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    input_shape = (8, 2)
-    gda, global_data = create_gda(input_shape, global_mesh, mesh_axes)
-    self.assertArraysEqual(gda._value(), global_data)
-
-  def test_mesh_pspec_sharding_interface(self):
-    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    pspec = P('y', 'x')
-    global_shape = (8, 4)
-    mp_sharding = sharding.MeshPspecSharding(mesh, pspec)
-    di_map = mp_sharding.devices_indices_map(global_shape)
-    op_sharding, device_assignment = mp_sharding._to_xla_op_sharding_and_device_assignment(
-        len(global_shape))
-
-    self.assertEqual(di_map[mesh.devices.flat[0]], (slice(0, 4), slice(0, 1)))
-    self.assertArraysEqual(device_assignment, list(mesh.devices.flat))
-    self.assertEqual(op_sharding.type, xc.OpSharding.Type.OTHER)
-    self.assertListEqual(op_sharding.tile_assignment_dimensions, [2, 4])
-    self.assertListEqual(op_sharding.tile_assignment_devices,
-                         [0, 2, 4, 6, 1, 3, 5, 7])
 
 
 if __name__ == '__main__':
