@@ -402,9 +402,12 @@ def rand_fullrange(rng, standardize_nans=False):
   """Random numbers that span the full range of available bits."""
   def gen(shape, dtype, post=lambda x: x):
     dtype = np.dtype(dtype)
-    size = dtype.itemsize * np.prod(_dims_of_shape(shape))
+    size = dtype.itemsize * np.prod(_dims_of_shape(shape), dtype=int)
     vals = rng.randint(0, np.iinfo(np.uint8).max, size=size, dtype=np.uint8)
-    vals = post(vals).view(dtype).reshape(shape)
+    vals = post(vals).view(dtype)
+    if shape is PYTHON_SCALAR_SHAPE and dtype == np.uint64:
+      vals = vals.astype(np.int64)  # prevent overflows
+    vals = vals.reshape(shape)
     # Non-standard NaNs cause errors in numpy equality assertions.
     if standardize_nans and np.issubdtype(dtype, np.floating):
       vals[np.isnan(vals)] = np.nan
