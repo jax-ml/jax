@@ -137,7 +137,7 @@ async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
   requires_padding = prod(shape) > prod(t.shape)
 
   if requires_padding:
-    new_shard_shape = gda.get_shard_shape(shape, mesh, mesh_axes)
+    new_shard_shape = gda.get_shard_shape(tuple(shape), mesh, mesh_axes)
 
   async def cb(index):
     if requires_padding:
