@@ -23,7 +23,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
       deserialized array will be on the default device.
     - Within function transformations (i.e. traced code), `deepcopy` and `copy`
       previously were no-ops. Now they use the same mechanism as `DeviceArray.copy()`.
-    - Calling `pickle` on a traced array now results in an explicit 
+    - Calling `pickle` on a traced array now results in an explicit
       `ConcretizationTypeError`.
   * The implementation of singular value decomposition (SVD) and
     symmetric/Hermitian eigendecomposition should be significantly faster on
@@ -40,6 +40,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     it.
   * Added {func}`jax.random.generalized_normal`.
   * Added {func}`jax.random.ball`.
+  * Added {func}`jax.default_device`.
   * Added a `python -m jax.collect_profile` script to manually capture program
     traces as an alternative to the Tensorboard UI.
 
