@@ -50,6 +50,7 @@ Just-in-time compilation (:code:`jit`)
     device_get
     default_backend
     named_call
+    named_scope
     block_until_ready
 
 .. _jax-grad:
