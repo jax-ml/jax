@@ -108,7 +108,7 @@ def _svd_tall_and_square_input(
     u_out = u_out @ jnp.diag(lax.sign(jnp.diag(r)))
     return u_out
 
-  eps = jnp.finfo(a.dtype).eps
+  eps = float(jnp.finfo(a.dtype).eps)
   u_out = lax.cond(s[0] < a.shape[1] * eps * s_out[0],
                    correct_rank_deficiency,
                    lambda u_out: u_out,

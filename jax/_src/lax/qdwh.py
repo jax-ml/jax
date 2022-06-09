@@ -121,7 +121,7 @@ def _qdwh(x, m, n, is_hermitian, max_iterations, eps):
   # norm(x, 2) such that `alpha >= norm(x, 2)` and `beta` is a lower bound for
   # the smallest singular value of x.
   if eps is None:
-    eps = jnp.finfo(x.dtype).eps
+    eps = float(jnp.finfo(x.dtype).eps)
   alpha = (jnp.sqrt(jnp.linalg.norm(x, ord=1)) *
            jnp.sqrt(jnp.linalg.norm(x, ord=jnp.inf)))
   l = eps
