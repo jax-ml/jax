@@ -77,7 +77,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
                         "max", "get"])
   def test_jit_oob_update(self, update_fn):
     def f(x, i):
-      return getattr(x.at[i], update_fn)(1.)
+      return getattr(x.at[i], update_fn)(1)
 
     f = jax.jit(f)
     checked_f = checkify.checkify(f, errors=checkify.index_checks)

@@ -350,9 +350,10 @@ def _iterative_classical_gram_schmidt(Q, x, xnorm, max_iterations=2):
 
   # This assumes that Q's leaves all have the same dimension in the last
   # axis.
-  r = jnp.zeros(tree_leaves(Q)[0].shape[-1])
+  Q0 = tree_leaves(Q)[0]
+  r = jnp.zeros(Q0.shape[-1], dtype=Q0.dtype)
   q = x
-  xnorm_scaled = xnorm / jnp.sqrt(2)
+  xnorm_scaled = xnorm / jnp.sqrt(2.0)
 
   def body_function(carry):
     k, q, r, qnorm_scaled = carry
@@ -368,7 +369,7 @@ def _iterative_classical_gram_schmidt(Q, x, xnorm, max_iterations=2):
     def qnorm(carry):
       k, _, q, qnorm_scaled = carry
       _, qnorm = _safe_normalize(q)
-      qnorm_scaled = qnorm / jnp.sqrt(2)
+      qnorm_scaled = qnorm / jnp.sqrt(2.0)
       return (k, False, q, qnorm_scaled)
 
     init = (k, True, q, qnorm_scaled)

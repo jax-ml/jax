@@ -45,6 +45,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     traces as an alternative to the Tensorboard UI.
   * Added a `jax.named_scope` context manager that adds profiler metadata to
     Python programs (similar to `jax.named_call`).
+  * In scatter-update operations (i.e. :attr:`jax.numpy.ndarray.at`), unsafe implicit
+    dtype casts are deprecated, and now result in a `FutureWarning`.
+    In a future release, this will become an error. An example of an unsafe implicit
+    cast is `jnp.zeros(4, dtype=int).at[0].set(1.5)`, in which `1.5` previously was
+    silently truncated to `1`.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
