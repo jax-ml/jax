@@ -206,6 +206,11 @@ def isin(element, test_elements, assume_unique=False, invert=False):  # noqa: F8
 
 
 ### SetOps
+
+UNIQUE_SIZE_HINT = (
+  "To make jnp.unique() compatible with JIT and other transforms, you can specify "
+  "a concrete value for the size argument, which will determine the output size.")
+
 @partial(jit, static_argnums=1)
 def _unique_sorted_mask(ar, axis):
   aux = moveaxis(ar, axis, 0)
@@ -243,7 +248,11 @@ def _unique(ar, axis, return_index=False, return_inverse=False, return_counts=Fa
       "jnp.unique: for zero-sized input with nonzero size argument, fill_value must be specified")
 
   aux, mask, perm = _unique_sorted_mask(ar, axis)
-  ind = mask if size is None else nonzero(mask, size=size)[0]
+  if size is None:
+    ind = core.concrete_or_error(None, mask,
+        "The error arose in jnp.unique(). " + UNIQUE_SIZE_HINT)
+  else:
+    ind = nonzero(mask, size=size)[0]
   result = aux[ind] if aux.size else aux
   if fill_value is not None:
     fill_value = asarray(fill_value, dtype=result.dtype)
@@ -304,9 +313,11 @@ def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis: Optional[int] = None, *, size=None, fill_value=None):
   _check_arraylike("unique", ar)
   if size is None:
-    ar = core.concrete_or_error(None, ar, "The error arose for the first argument of jnp.unique()")
+    ar = core.concrete_or_error(None, ar,
+        "The error arose for the first argument of jnp.unique(). " + UNIQUE_SIZE_HINT)
   else:
-    size = core.concrete_or_error(operator.index, size, "The error arose for the size argument of jnp.unique()")
+    size = core.concrete_or_error(operator.index, size,
+         "The error arose for the size argument of jnp.unique(). " + UNIQUE_SIZE_HINT)
   ar = asarray(ar)
   if axis is None:
     axis = 0
