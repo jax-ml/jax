@@ -30,6 +30,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    pytrees
    type_promotion
    errors
+   transfer_guard
    glossary
    changelog
 
@@ -59,7 +60,6 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    device_memory_profiling
    rank_promotion_warning
    custom_vjp_update
-   transfer_guard
 
 .. toctree::
    :maxdepth: 2
