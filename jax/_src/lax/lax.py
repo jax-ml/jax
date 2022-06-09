@@ -635,8 +635,8 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   For more general contraction, see the `dot_general` operator.
 
   Args:
-    lhs: an array of rank 1 or 2.
-    rhs: an array of rank 1 or 2.
+    lhs: an array of dimension 1 or 2.
+    rhs: an array of dimension 1 or 2.
     precision: Optional. Either ``None``, which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
@@ -4403,7 +4403,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     return  # TODO(mattjj): handle more checks in the dynamic shape case
   obj_arr = np.array(obj)
   if obj_arr.ndim != 1:
-    msg = "{} {} must be rank 1, got {}."
+    msg = "{} {} must be 1-dimensional, got {}."
     raise TypeError(msg.format(obj_arr.ndim))
   try:
     canonicalize_shape(obj_arr)
