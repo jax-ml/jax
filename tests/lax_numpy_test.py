@@ -331,15 +331,15 @@ JAX_COMPOUND_OP_RECORDS = [
 
 JAX_BITWISE_OP_RECORDS = [
     op_record("bitwise_and", 2, int_dtypes + unsigned_dtypes, all_shapes,
-              jtu.rand_fullrange, []),
+              jtu.rand_bool, []),
     op_record("bitwise_not", 1, int_dtypes + unsigned_dtypes, all_shapes,
-              jtu.rand_fullrange, []),
+              jtu.rand_bool, []),
     op_record("invert", 1, int_dtypes + unsigned_dtypes, all_shapes,
-              jtu.rand_fullrange, []),
+              jtu.rand_bool, []),
     op_record("bitwise_or", 2, int_dtypes + unsigned_dtypes, all_shapes,
-              jtu.rand_fullrange, []),
+              jtu.rand_bool, []),
     op_record("bitwise_xor", 2, int_dtypes + unsigned_dtypes, all_shapes,
-              jtu.rand_fullrange, []),
+              jtu.rand_bool, []),
 ]
 
 JAX_REDUCER_RECORDS = [
@@ -725,6 +725,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testBitwiseOp(self, np_op, jnp_op, rng_factory, shapes, dtypes):
     rng = rng_factory(self.rng())
+    if not config.x64_enabled and any(
+        jnp.iinfo(dtype).bits == 64 for dtype in dtypes):
+      self.skipTest("x64 types are disabled by jax_enable_x64")
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
                             check_dtypes=jtu.PYTHON_SCALAR_SHAPE not in shapes)
