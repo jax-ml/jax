@@ -43,6 +43,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Added {func}`jax.default_device`.
   * Added a `python -m jax.collect_profile` script to manually capture program
     traces as an alternative to the Tensorboard UI.
+  * Added a `jax.named_scope` context manager that adds profiler metadata to
+    Python programs (similar to `jax.named_call`).
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
