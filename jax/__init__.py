@@ -96,6 +96,7 @@ from jax._src.api import (
   make_jaxpr as make_jaxpr,
   mask as mask,
   named_call as named_call,
+  named_scope as named_scope,
   pmap as pmap,
   process_count as process_count,
   process_index as process_index,
