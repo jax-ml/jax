@@ -90,7 +90,7 @@ py_extension(
 py_extension(
     name = "_mlirHlo",
     srcs = [
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo:python/MlirHloModule.cpp",
+        "@org_tensorflow//tensorflow/compiler/mlir/hlo:python/MlirHloModule.cc",
     ],
     copts = COPTS,
     deps = [
