@@ -191,9 +191,9 @@ def nextafter(x1: Array, x2: Array) -> Array:
   values which appear as zero in any operations. Consider this example::
 
     >>> jnp.nextafter(0, 1)  # denormal numbers are representable
-    DeviceArray(1.e-45, dtype=float32)
+    DeviceArray(1.e-45, dtype=float32, weak_type=True)
     >>> jnp.nextafter(0, 1) * 1  # but are flushed to zero
-    DeviceArray(0., dtype=float32)
+    DeviceArray(0., dtype=float32, weak_type=True)
 
   For the smallest usable (i.e. normal) float, use ``tiny`` of ``jnp.finfo``.
   """
