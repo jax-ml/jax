@@ -99,7 +99,8 @@ def _bcoo_set_nse(mat, nse):
     data = data.at[(*(slice(None) for i in range(mat.n_batch)), slice(mat.nse))].set(mat.data)
     indices = jnp.zeros_like(mat.indices, shape=(*mat.indices.shape[:-2], nse, mat.indices.shape[-1]))
     indices = indices.at[..., :mat.nse, :].set(mat.indices)
-    indices = indices.at[..., mat.nse:, :].set(jnp.array(mat.shape[mat.n_batch:mat.n_batch + mat.n_sparse]))
+    indices = indices.at[..., mat.nse:, :].set(jnp.array(mat.shape[mat.n_batch:mat.n_batch + mat.n_sparse],
+                                                         dtype=indices.dtype))
   return BCOO((data, indices), shape=mat.shape,
               indices_sorted=mat.indices_sorted,
               unique_indices=mat.unique_indices)
@@ -1738,7 +1739,8 @@ def bcoo_concatenate(operands, *, dimension):
     new_indices = lax.concatenate([op.indices for op in operands], dimension=dimension)
     new_data = lax.concatenate([op.data for op in operands], dimension=dimension)
   elif dimension < n_batch + n_sparse:  # Concatenation along sparse axes
-    offsets = np.cumsum([0] + [op.shape[dimension] for op in operands[:-1]])
+    offsets = np.cumsum([0] + [op.shape[dimension] for op in operands[:-1]],
+                        dtype=operands[0].indices.dtype)
     new_data = lax.concatenate([op.data for op in operands], dimension=n_batch)
     new_indices = lax.concatenate([op.indices.at[..., dimension - n_batch].add(offset)
                                    for op, offset in safe_zip(operands, offsets)],
@@ -1803,7 +1805,7 @@ def bcoo_reshape(mat, *, new_sizes, dimensions):
   new_indices = jnp.concatenate([col[..., None] for col in new_index_cols], axis=-1)
   with jax.numpy_rank_promotion('allow'):
     oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:])).any(-1)
-  new_indices = new_indices.at[oob_indices].set(jnp.array(sparse_sizes))
+  new_indices = new_indices.at[oob_indices].set(jnp.array(sparse_sizes, dtype=new_indices.dtype))
 
   return BCOO((data, new_indices), shape=new_sizes)
 
