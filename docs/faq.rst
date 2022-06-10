@@ -693,6 +693,86 @@ Additional reading:
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.
 
 
+Why are gradients zero for functions based on sort order?
+---------------------------------------------------------
+
+If you define a function that processes the input using operations that depend on
+the relative ordering of inputs (e.g. ``max``, ``greater``, ``argsort``, etc.) then
+you may be surprised to find that the gradient is everywhere zero.
+Here is an example, where we define `f(x)` to be a step function that returns
+`0` when `x` is negative, and `1` when `x` is positive:
+
+  import jax
+  import numpy as np
+  import jax.numpy as jnp
+
+  def f(x):
+    return (x > 0).astype(float)
+
+  df = jax.vmap(jax.grad(f))
+
+  x = jnp.array([-1.0, -0.5, 0.0, 0.5, 1.0])
+
+  print(f"f(x)  = {f(x)}")
+  # f(x)  = [0. 0. 0. 1. 1.]
+
+  print(f"df(x) = {df(x)}")
+  # df(x) = [0. 0. 0. 0. 0.]
+
+The fact that the gradient is everywhere zero may be confusing at first glance:
+after all, the output does change in response to the input, so how can the gradient
+be zero? However, zero turns out to be the correct result in this case.
+
+Why is this? Remember that what differentiation is measuring the change in ``f``
+given an infinitesimal change in ``x``. For ``x=1.0``, ``f`` returns ``1.0``.
+If we perturb ``x`` to make it slightly larger or smaller, this does not change
+the output, so by definition, :code:`grad(f)(1.0)` should be zero.
+This same logic holds for all values of ``f`` greater than zero: infinitessimally
+perturbing the input does not change the output, so the gradient is zero.
+Similarly, for all values of ``x`` less than zero, the output is zero.
+Perturbing ``x`` does not change this output, so the gradient is zero.
+That leaves us with the tricky case of ``x=0``. Surely, if you perturb ``x`` upward,
+it will change the output, but this is problematic: an infinitesimal change in ``x``
+produces a finite change inthe function value, which implies the gradient is
+undefined.
+Fortunately, there's another way for us to measure the gradient in this case: we
+perturb the function downward, in which case the output does not change, and so the
+gradient is zero.
+JAX and other autodiff systems tend to handle discontinuities in this way: if the
+positive gradient and negative gradient disagree, but one is defined and the other is
+not, we use the one that is defined.
+Under this definition of the gradient, mathematically and numerically the gradient of
+this function is everywhere zero.
+
+The problem stems from the fact that our function has a discontinuity at ``x = 0``.
+Our ``f`` here is essentially a `Heaviside Step Function`_, and we can use a
+`Sigmoid Function`_ as a smoothed replacement.
+The sigmoid is approximately equal to the heaviside function when `x` is far from zero,
+but replaces the discontinuity at ``x = 0`` with a smooth, differentiable curve.
+As a result of using :func:`jax.nn.sigmoid`, we get a similar computation with
+well-defined gradients::
+
+  def g(x):
+    return jax.nn.sigmoid(x)
+
+  dg = jax.vmap(jax.grad(g))
+
+  x = jnp.array([-10.0, -1.0, 0.0, 1.0, 10.0])
+
+  with np.printoptions(suppress=True, precision=2):
+    print(f"g(x)  = {g(x)}")
+    # g(x)  = [0.   0.27 0.5  0.73 1.  ]
+
+    print(f"dg(x) = {dg(x)}")
+    # dg(x) = [0.   0.2  0.25 0.2  0.  ]
+
+The :mod:`jax.nn` submodule also has smooth versions of other common rank-based
+functions, for example :func:`jax.nn.softmax` can replace uses of
+:func:`jax.numpy.argmax`, :func:`jax.nn.soft_sign` can replace uses of
+:func:`jax.numpy.sign`, :func:`jax.nn.softplus` can replace uses of
+:func:`jax.nn.relu`, etc.
+
+
 Additional Sections
 -------------------
 
@@ -701,3 +781,7 @@ Additional Sections
 ``Abstract tracer value encountered where concrete value is expected`` error
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 See :class:`jax.errors.ConcretizationTypeError`
+
+
+.. _Heaviside Step Function: https://en.wikipedia.org/wiki/Heaviside_step_function
+.. _Sigmoid Function: https://en.wikipedia.org/wiki/Sigmoid_function
