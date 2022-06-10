@@ -37,6 +37,8 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
 from jax.experimental import multihost_utils
+from jax.experimental import array
+from jax.experimental.sharding import MeshPspecSharding
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    SpecSync, FROM_GDA, AUTO)
@@ -79,6 +81,17 @@ def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
 
   return global_device_array.GlobalDeviceArray.from_callback(
       global_shape, global_mesh, mesh_axes, lambda idx: global_data[idx])
+
+
+def create_array(global_shape, global_mesh, mesh_axes, global_data=None):
+  if global_data is None:
+    global_data = np.arange(
+        prod(global_shape), dtype=np.float32).reshape(global_shape)
+
+  sharding = MeshPspecSharding(global_mesh, mesh_axes)
+
+  return array.make_array_from_callback(
+      global_shape, sharding, lambda idx: global_data[idx]), global_data
 
 
 @curry
@@ -1292,6 +1305,44 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
           self.assertIsInstance(g, global_device_array.GlobalDeviceArray)
           self.assertArraysEqual(multihost_utils.process_allgather(g),
                                  input_data)
+
+
+class ArrayPjitTest(jtu.JaxTestCase):
+
+  def test_pjit_array_single_output(self):
+    global_input_shape = (8, 2)
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    mesh_axes = P('x', 'y')
+
+    input_array, input_data = create_array(global_input_shape, global_mesh, mesh_axes)
+
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = pjit(lambda x: x @ x.T, out_axis_resources=P('x', 'y'))
+        expected_matrix_mul = input_data @ input_data.T
+
+        out = f(input_array)
+        self.assertIsInstance(out, array.Array)
+        self.assertEqual(out.shape, (8, 8))
+        self.assertEqual(out.addressable_shards[0].data.shape, (2, 4))
+        for s in out.addressable_shards:
+          self.assertLen(s.data._arrays, 1)
+          self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
+        self.assertArraysEqual(out._value(), expected_matrix_mul)
+
+  def test_non_array_input_error(self):
+    input_shape = (8, 2)
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_data = np.arange(
+        prod(input_shape), dtype=np.float32).reshape(input_shape)
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = pjit(lambda x: x,
+                 out_axis_resources=P('x', 'y'))
+        with self.assertRaisesRegex(
+            ValueError, ('All arguments to pjit when `config.jax_array` is '
+                         'enabled should be `Array`s.')):
+          f(input_data)
 
 
 def spec_regex(s):

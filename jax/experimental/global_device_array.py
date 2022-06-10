@@ -553,7 +553,7 @@ xla.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
 xla.canonicalize_dtype_handlers[GlobalDeviceArray] = pxla.identity
 
 def _gda_shard_arg(x, devices, indices):
-  return [d for d in x._device_buffers]
+  return x._device_buffers
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
 
@@ -565,5 +565,7 @@ def _gda_array_result_handler(global_aval, out_axis_resources, global_mesh):
   return lambda bufs: GlobalDeviceArray(
       global_aval.shape, global_mesh, out_axis_resources, bufs, fast_path_args,
       _enable_checks=False)
-pxla.global_result_handlers[core.ShapedArray] = _gda_array_result_handler
-pxla.global_result_handlers[core.ConcreteArray] = _gda_array_result_handler
+pxla.global_result_handlers[
+    (core.ShapedArray, pxla.OutputType.GlobalDeviceArray)] = _gda_array_result_handler
+pxla.global_result_handlers[
+    (core.ConcreteArray, pxla.OutputType.GlobalDeviceArray)] = _gda_array_result_handler

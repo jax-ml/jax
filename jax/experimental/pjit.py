@@ -21,6 +21,7 @@ from functools import partial
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
+from jax.experimental.array import Array
 from jax import core
 from jax import linear_util as lu
 from jax import stages
@@ -230,6 +231,17 @@ def pjit(fun: Callable,
     raise ValueError('in_axis_resources and out_axis_resouces should not '
                      'be the unspecified singleton value.')
 
+  # Duck type `UNSPECIFIED` with `FROM_GDA` to use that codepath for `Array`.
+  if config.jax_array:
+    # TODO(yashkatariya): Lift this restriction by using
+    # `_allow_propagation_to_outputs`.
+    if _is_unspecified(out_axis_resources):
+      raise ValueError('Please specify `out_axis_resources` when using `Array` '
+                       'or `GDA` for now until we add some support to support '
+                       'unspecified out_axis_resources.')
+    assert _is_unspecified(in_axis_resources)
+    in_axis_resources = FROM_GDA
+
   if isinstance(in_axis_resources, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
     # list: if in_axes is not a leaf, it must be a tuple of trees. However,
@@ -273,7 +285,13 @@ def pjit(fun: Callable,
     else:
       donated_invars = (False,) * len(args_flat)
 
-    _maybe_check_pjit_gda_mesh(args_flat, mesh)
+    if config.jax_array:
+      if any(not isinstance(a, Array) for a in args_flat):
+        raise ValueError('All arguments to pjit when `config.jax_array` is '
+                         'enabled should be `Array`s.')
+
+    # TODO(yashkatariya): Check device_set for Array instead of the mesh.
+    _maybe_check_pjit_gda_or_array_mesh(args_flat, mesh)
 
     # TODO(yashkatariya): Make sure you are not checking explicitly for `ShapedArray`.
     # One possibility, is to only allow GDA and fully replicated inputs for AUTO.
@@ -285,17 +303,18 @@ def pjit(fun: Callable,
     local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
     # TODO(yashkatariya): This is a hack. This should go away when avals have
     # is_global attribute.
-    if _global_avals:
+    if _global_avals or config.jax_array:
       in_positional_semantics = (maps._PositionalSemantics.GLOBAL,) * len(args_flat)
     else:
       in_positional_semantics = tuple(tree_map(_get_in_positional_semantics, args_flat))
     out_positional_semantics = (
         maps._PositionalSemantics.GLOBAL
-        if config.jax_parallel_functions_output_gda else maps._positional_semantics.val)
+        if config.jax_parallel_functions_output_gda or config.jax_array else
+        maps._positional_semantics.val)
 
     global_in_avals, canonicalized_in_axis_resources_flat = _process_in_axis_resources(
         mesh, local_in_avals, hashable_pytree(in_axis_resources), in_tree,
-        in_positional_semantics, tuple(isinstance(a, GDA) for a in args_flat))
+        in_positional_semantics, tuple(isinstance(a, (GDA, Array)) for a in args_flat))
 
     jaxpr, canonicalized_out_axis_resources_flat = _pjit_jaxpr(
         flat_fun, mesh, global_in_avals, HashableFunction(out_tree, closure=()),
@@ -1143,6 +1162,13 @@ def _create_cpspec(x):
 def _maybe_replace_from_gda_with_pspec(
     in_axis_resources_flat: Union[CanonicalizedParsedPartitionSpec, _AUTOAxisResource],
     arg) -> Union[CanonicalizedParsedPartitionSpec, _AUTOAxisResource]:
+  # TODO(yashkatariya): Don't use `spec` from `MeshPspecSharding`. Write a
+  # sharding inference handler that will work with any sharding.
+  if isinstance(arg, Array):
+    return CanonicalizedParsedPartitionSpec(
+        ParsedPartitionSpec.from_user_input(
+            arg.sharding.spec, arg_name="Array spec"))
+
   if isinstance(arg, GDA):
     # TODO(yashkatariya): Use `TypeGuard` on `_is_auto` when it is supported.
     # Don't use `_is_auto` here to satisfy pytype and mypy.
@@ -1164,11 +1190,14 @@ def _maybe_replace_from_gda_with_pspec(
   return in_axis_resources_flat
 
 
-def _maybe_check_pjit_gda_mesh(args, mesh):
+def _maybe_check_pjit_gda_or_array_mesh(args, mesh):
   for x in args:
     if isinstance(x, GDA) and x.mesh != mesh:
       raise ValueError("Pjit's mesh and GDA's mesh should be equal. Got Pjit "
                        f"mesh: {mesh},\n GDA mesh: {x.mesh}")
+    if isinstance(x, Array) and x.sharding.mesh != mesh:
+      raise ValueError("Pjit's mesh and Array's mesh should be equal. Got Pjit "
+                       f"mesh: {mesh},\n Array mesh: {x.sharding.mesh}")
 
 # -------------------- XLA OpSharding to PartitionSpec --------------------
 # Note that OpSharding is more expressive than PartitionSpecs, so it's not

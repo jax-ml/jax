@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import enum
 from contextlib import contextmanager, ContextDecorator
 from collections import defaultdict, OrderedDict
 import dataclasses
@@ -473,6 +474,11 @@ local_result_handlers[ShapedArray] = sda_array_result_handler
 local_result_handlers[ConcreteArray] = sda_array_result_handler
 
 
+class OutputType(enum.Enum):
+  Array = 0
+  GlobalDeviceArray = 1
+
+
 def global_aval_to_result_handler(
     aval: core.AbstractValue, out_axis_resources, global_mesh,
 ) -> Callable[[List[xb.xla_client.Buffer]], Any]:
@@ -490,14 +496,18 @@ def global_aval_to_result_handler(
     for this output. The function will return an object suitable for returning
     to the user, e.g. a ShardedDeviceArray.
   """
+  if config.jax_array:
+    output_type = OutputType.Array
+  elif config.jax_parallel_functions_output_gda:
+    output_type = OutputType.GlobalDeviceArray
   try:
-    return global_result_handlers[type(aval)](aval, out_axis_resources,
-                                              global_mesh)
+    return global_result_handlers[(type(aval), output_type)](
+        aval, out_axis_resources, global_mesh)
   except KeyError as err:
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
-global_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
+global_result_handlers: Dict[Tuple[Type[core.AbstractValue], OutputType], PxlaResultHandler] = {}
 
 ### lazy device-memory persistence and result handling
 
@@ -1433,7 +1443,7 @@ def local_avals_to_results_handler(
 def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
                                     out_axes: Sequence[ArrayMapping],
                                     global_mesh):
-  if config.jax_parallel_functions_output_gda:
+  if config.jax_parallel_functions_output_gda or config.jax_array:
     global_sharding_spec = mesh_sharding_specs(global_mesh.shape, global_mesh.axis_names)
     global_out_specs = [global_sharding_spec(aval, oa)
                         for aval, oa in safe_zip(global_out_avals, out_axes)]
