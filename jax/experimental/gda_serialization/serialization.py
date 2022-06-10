@@ -338,7 +338,7 @@ class GlobalAsyncCheckpointManager(GlobalAsyncCheckpointManagerBase):
       final_checkpoint_dir: Final checkpoint directory where the checkpoints
         will be moved from `temp_checkpoint_dir`.
     """
-    logging.info('Waiting for thread to finish serialization.')
+    logging.info('Waiting for previous serialization to finish.')
     self.wait_until_finished()
 
     self._commit_futures = [[] for _ in range(len(tensorstore_specs))]
