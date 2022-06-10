@@ -7,7 +7,7 @@ jupytext:
     format_version: 0.13
     jupytext_version: 1.13.8
 kernelspec:
-  display_name: Python 3
+  display_name: 'Python 3.8.12 (''.venv'': venv)'
   language: python
   name: python3
 ---
@@ -420,6 +420,32 @@ outputId: e31b43b3-05f7-4300-fdd2-40e3896f6f8f
 ---
 jnp.sum(jnp.array(x))
 ```
+
+Of course, writing the conversion explicitly does not make it any faster. Consider the following example of converting a nested list of integers to a JAX array:
+
+```{code-cell} ipython3
+x = [list(range(1000)) for i in range(1000)]    # A simple nested list
+%timeit jnp.array(x)
+```
+
+This conversion can be sped up immensely by first converting the list to a NumPy array:
+
+```{code-cell} ipython3
+%timeit jnp.array(np.array(x))
+```
+
+So in places where performance matters and the dtype of the input data is known, it can often be a good idea to first convert to NumPy, before initializing the JAX array.
+
+However, there are situations where `jnp.array(...)` and `jnp.array(np.array(...))` behave differently. Firstly, inside jit-compiled functions, `np.array` cannot be used on non-static inputs, because it would be presented with a tracer object and throw an error. Secondly, and this is related to why `jnp.array` is slower in the first place, they handle mixed dtypes differently:
+
+```{code-cell} ipython3
+x = np.float16(0)
+
+print(jnp.array([x, 1]).dtype)
+print(jnp.array(np.array([x, 1])).dtype)
+```
+
+JAX treats unspecified Python scalars as "weakly-typed", in that they conform to the types of other "strongly-typed" values they interact with, so in this example JAX converts the `1` to a `float16` dtype. In contrast, NumPy treats Python scalars as 64-bit, and tends to promote things to 64-bit indiscriminately (more on this below).
 
 +++ {"id": "MUycRNh6e50W"}
 
