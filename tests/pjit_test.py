@@ -1372,6 +1372,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
   )
   def test_pjit_array_multi_input_multi_output(self, mesh_shape, s1_shape,
                                                s2_shape, s3_shape, s4_shape):
+    if xla_client._version < 74:
+      raise unittest.SkipTest('Needs xla_extension_version >= 74.')
     global_mesh = jtu.create_global_mesh(mesh_shape, ('x', 'y'))
     global_input_shape = (8, 2)
 
@@ -1431,6 +1433,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
             ('Got an input Array to pjit with different partitioning '
              'than specified in the in_axis_resources argument to pjit')):
           f(input_array)
+
+  def test_in_axis_resources_same_as_array_sharding(self):
+    global_input_shape = (8, 2)
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    mesh_axes = P('x', 'y')
+
+    input_array, _ = create_array(global_input_shape, global_mesh, mesh_axes)
+
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        out = pjit(lambda x: x, in_axis_resources=P('x' ,'y'))(input_array)
+        self.assertIsInstance(out, array.Array)
 
 
 def spec_regex(s):
