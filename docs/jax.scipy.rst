@@ -220,6 +220,16 @@ jax.scipy.stats.gamma
    logpdf
    pdf
 
+jax.scipy.stats.gennorm
+~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.gennorm
+.. autosummary::
+  :toctree: _autosummary
+
+   cdf
+   logpdf
+   pdf
+
 jax.scipy.stats.geom
 ~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.geom

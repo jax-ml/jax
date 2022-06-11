@@ -30,3 +30,4 @@ from jax.scipy.stats import t as t
 from jax.scipy.stats import uniform as uniform
 from jax.scipy.stats import chi2 as chi2
 from jax.scipy.stats import betabinom as betabinom
+from jax.scipy.stats import gennorm as gennorm
