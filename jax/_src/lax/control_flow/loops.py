@@ -829,8 +829,9 @@ def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
   assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
   return used_inputs, new_eqn
 
-def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
+def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts, num_carry,
                     jaxpr, linear, unroll):
+  avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'scan')
   tc(reverse, 'reverse', 'bool', type(reverse) is bool)
   tc(num_consts, 'num_consts', 'non-negative int',
@@ -853,8 +854,10 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
   const_avals, init_avals, x_avals = split_list(avals, [num_consts, num_carry])
   const_avals_jaxpr, init_avals_jaxpr, x_avals_jaxpr = split_list(
       jaxpr.in_avals, [num_consts, num_carry])
-  carry_avals_jaxpr, _ = split_list(jaxpr.out_avals, [num_carry])
+  carry_avals_jaxpr, y_avals_mapped = split_list(jaxpr.out_avals, [num_carry])
   x_avals_mapped = _map(partial(core.mapped_aval, length, 0), x_avals)
+  y_avals = [core.unmapped_aval(length, core.no_axis_name, 0, a)
+             for a in y_avals_mapped]
 
   if not all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)):
     raise core.JaxprTypeError(
@@ -872,12 +875,13 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
     raise core.JaxprTypeError(
       f'scan jaxpr takes input sequence types\n{_avals_short(x_avals_jaxpr)},\n'
       f'called with sequence of type\n{_avals_short(x_avals)}')
-  return None, jaxpr.effects
+  return [*init_avals, *y_avals], jaxpr.effects
 
 def scan_bind(*args, **params):
   if config.jax_enable_checks:
     avals = _map(core.get_aval, args)
-    _scan_typecheck(True, *avals, **params)
+    in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
+    _scan_typecheck(True, *in_atoms, **params)
     core.check_jaxpr(params['jaxpr'].jaxpr)
   return core.AxisPrimitive.bind(scan_p, *args, **params)
 

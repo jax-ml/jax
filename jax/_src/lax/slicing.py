@@ -2060,6 +2060,7 @@ def _dynamic_slice_indices(operand, start_indices: Any):
           for i, d in zip(start_indices, operand.shape)]
 
 
+# TODO(mattjj): getslice is a prototype for dynamic shapes, revise or remove it
 def _getslice(x, lo, hi):
   return getslice_p.bind(x, lo, hi)
 

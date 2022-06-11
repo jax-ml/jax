@@ -553,7 +553,8 @@ def _cond_transpose(reduce_axes, cts, *args, branches, linear):
   assert next(out_iter, None) is None
   return [None] + out
 
-def _cond_typecheck(*avals, branches, linear):
+def _cond_typecheck(*in_atoms, branches, linear):
+  avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'cond')
   tc(branches, 'branches', 'tuple of ClosedJaxpr',
      type(branches) is tuple and
@@ -612,12 +613,13 @@ def _cond_typecheck(*avals, branches, linear):
       f'cond branches must have matching effect types: '
       f'{[b.effects for b in branches]}')
   joined_effects = core.join_effects(*(b.effects for b in branches))
-  return None, joined_effects
+  return jaxpr0.out_avals, joined_effects
 
 def cond_bind(*args, branches, linear):
   if config.jax_enable_checks:
     avals = _map(core.get_aval, args)
-    _cond_typecheck(*avals, branches=branches, linear=linear)
+    in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
+    _cond_typecheck(*in_atoms, branches=branches, linear=linear)
     for jaxpr in branches:
       core.check_jaxpr(jaxpr.jaxpr)
   return core.AxisPrimitive.bind(cond_p, *args, branches=branches, linear=linear)

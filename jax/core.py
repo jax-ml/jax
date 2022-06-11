@@ -16,6 +16,7 @@ from __future__ import annotations
 import collections
 from collections import namedtuple
 from contextlib import contextmanager
+from dataclasses import dataclass
 import functools
 from functools import partial, partialmethod, total_ordering
 import gc
@@ -208,6 +209,9 @@ class JaxprEqn(NamedTuple):
 
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
   source_info = source_info or source_info_util.new_source_info()
+  if config.jax_enable_checks:
+    assert all(isinstance(x, (Var, Literal)) for x in  invars)
+    assert all(isinstance(v,  Var)           for v in outvars)
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
 
@@ -1032,7 +1036,6 @@ def find_top_trace(xs) -> Trace:
 
 # -------------------- abstract values --------------------
 
-
 class AbstractValue:
   __slots__: List[str] = []
 
@@ -1061,6 +1064,33 @@ class AbstractValue:
   def str_short(self, short_dtypes=False):
     return str(self)
 
+
+# For type signatures involving dynamic shapes, we use lists of abstract values
+# which may contain (reverse) de Bruijn indices in their shapes.
+class DBIdx(NamedTuple):
+  val: int
+
+@dataclass(frozen=True)
+class InDBIdx:
+  val: int
+
+@dataclass(frozen=True)
+class OutDBIdx:
+  val: int
+
+# For annotating input types of callables (i.e. linear_util.WrappedFuns), we use
+# a sequence of pairs where the first element of each pair is an AbstractValue
+# (possibly containing DBIdx instances in its shape) and the second is a boolean
+# indicating whether that argument is explicit (i.e. passed to the callable).
+InputType = Tuple[Tuple[AbstractValue, bool], ...]  # DBIdx in shapes
+
+# For annotating jaxpr output types, we use a sequence of pairs where the first
+# element of each pair is an AbstractValue (possibly containing InDBIdx and/or
+# OutDBIdx instances in its shape) and the second is a boolean indicating
+# whether that argument is explicit (i.e. returned by the callable).
+OutputType = Tuple[Tuple[AbstractValue, bool], ...]  # InDBIdx / OutDBIdx shapes
+
+
 class Bot(AbstractValue): pass
 
 bot = Bot()
@@ -1086,6 +1116,9 @@ def lattice_join(x: Optional[AbstractValue],
   elif isinstance(x, type(y)):
     return y.join(x)
   elif isinstance(y, type(x)):
+    return x.join(y)
+  elif isinstance(x, DShapedArray) and isinstance(y, ShapedArray):
+    # TODO(mattjj): remove this special case after dynamic shapes are integrated
     return x.join(y)
   else:
     raise TypeError(x, y)
@@ -1272,6 +1305,15 @@ class DShapedArray(UnshapedArray):
 
   def __hash__(self):
     return hash((self.shape, self.dtype, self.weak_type))
+
+  def join(self, other):
+    if self.shape == other.shape and self.dtype == other.dtype:
+      weak_type = self.weak_type and other.weak_type
+      return self.update(weak_type=weak_type)
+    elif self.dtype == other.dtype:
+      return UnshapedArray(self.dtype)
+    else:
+      raise TypeError(self, other)
 
 del AxisSize, AxisSizeForTracing, AxisSizeForJaxprType, \
     AxisSizeForJaxprTracingSpec
@@ -2202,7 +2244,8 @@ class JaxprTypeError(TypeError): pass
 
 custom_typechecks: Dict[Primitive, Callable] = {}
 
-def _check_closed_call(*in_avals, call_jaxpr):
+def _check_closed_call(*in_atoms, call_jaxpr):
+  in_avals = [x.aval for x in in_atoms]
   if list(in_avals) != list(call_jaxpr.in_avals):
     raise JaxprTypeError("Closed call in_avals mismatch")
   return call_jaxpr.out_avals, call_jaxpr.effects
@@ -2228,7 +2271,7 @@ def check_jaxpr(jaxpr: Jaxpr):
     return ctx, pp_settings
 
   try:
-    _check_jaxpr(ctx_factory, jaxpr, [v.aval for v in jaxpr.invars])
+    _check_jaxpr(ctx_factory, jaxpr)
   except JaxprTypeError as e:
     ctx, pp_settings = ctx_factory()
     if len(e.args) == 2:
@@ -2243,51 +2286,73 @@ def check_jaxpr(jaxpr: Jaxpr):
 
 def _check_jaxpr(
     ctx_factory: Callable[[], Tuple[JaxprPpContext, JaxprPpSettings]],
-    jaxpr: Jaxpr,
-    in_avals: Sequence[AbstractValue]) -> None:
+    jaxpr: Jaxpr
+  ) -> None:
+  # Use set of variables to types to check that variables are in scope.
+  env: Set[Var] = set()
 
-  def read(v: Atom) -> AbstractValue:
-    if isinstance(v, Literal):
-      return raise_to_shaped(get_aval(v.val))
-    else:
-      if v not in env:
+  def read(x: Atom) -> Atom:
+    # Check the type annotation is itself well-typed.
+    check_type(ctx_factory, env, x.aval)
+    if isinstance(x, Var):
+      # Check the variable is in-scope and consistently typed.
+      if x not in env:
         ctx, _ = ctx_factory()
-        raise JaxprTypeError(f"Variable '{pp_var(v, ctx)}' not defined")
-      return env[v]
+        raise JaxprTypeError(f"Variable '{pp_var(x, ctx)}' not defined")
+      return x
+    elif isinstance(x, Literal):
+      # Check that the literal matches its type annotation.
+      if not typecheck(x.aval, x.val):
+        ctx, _ = ctx_factory()
+        raise JaxprTypeError(
+            f"Literal value {x.val} does not match its type annotation "
+            f"{pp_aval(x.aval, ctx)}")
+      return x
+    else:
+      assert False, "syntactically invalid jaxpr"
 
   def write(v: Var, a: AbstractValue) -> None:
+    assert isinstance(v, Var), "syntactically invalid jaxpr"
+    # Check the type annotation of the binder is itself well-typed.
+    check_type(ctx_factory, env, v.aval)
+    # Check that the variable is not already bound.
     if v in env:
       ctx, _ = ctx_factory()
       raise JaxprTypeError(f"Variable '{pp_var(v, ctx)}' already bound")
+    # Check that the computed type is consistent with the binder annotation.
+    if not typematch(v.aval, a):
+      ctx, _ = ctx_factory()
+      raise JaxprTypeError(
+          f"Value for variable '{pp_var(v, ctx)}' inconsistently typed "
+          f"as {pp_aval(a, ctx)} for let-binder of type {pp_aval(v.aval, ctx)}")
+    # If the variable is not a DropVar, add it to the environment.
     if not isinstance(v, DropVar):
-      if not typecompat(v.aval, a):
-        ctx, _ = ctx_factory()
-        raise JaxprTypeError(
-            f"Variable '{pp_var(v, ctx)}' inconsistently typed as "
-            f"{pp_aval(a, ctx)}, bound as {pp_aval(v.aval, ctx)}")
-      env[v] = a
+      env.add(v)
 
-  env : Dict[Var, AbstractValue] = {}
+  # Check type annotations on lambda binders.
+  for v in it.chain(jaxpr.constvars, jaxpr.invars):
+    check_type(ctx_factory, env, v.aval)
+    write(v, v.aval)
 
-  map(write, jaxpr.constvars, [v.aval for v in jaxpr.constvars])
-  map(write, jaxpr.invars, in_avals)
-
+  # Check each eqn.
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
     try:
-      in_avals = map(read, eqn.invars)
-      if any(isinstance(ina, ConcreteArray) for ina in in_avals):
-        raise JaxprTypeError("Equation given ConcreteArray type inputs")
+      in_atoms = map(read, eqn.invars)
+      in_avals = [x.aval for x in in_atoms]  # use in_atoms for dyn shapes
+
+      # Compute the type of the primitive application.
       if prim in custom_typechecks:
-        out_avals, effects = custom_typechecks[prim](*in_avals, **eqn.params)
-        if out_avals is None:
-          out_avals = [v.aval for v in eqn.outvars]
+        out_type, effects = custom_typechecks[prim](*in_atoms, **eqn.params)
       elif prim.call_primitive:
-        out_avals, effects = check_call(ctx_factory, prim, in_avals, eqn.params)
+        out_type, effects = _check_call(ctx_factory, prim, in_atoms, eqn.params)
       elif prim.map_primitive:
-        out_avals, effects = check_map(ctx_factory, prim, in_avals, eqn.params)
+        out_type, effects = _check_map(ctx_factory, prim, in_avals, eqn.params)
       else:
-        out_avals, effects = check_eqn(prim, in_avals, eqn.params)
+        out_type, effects = check_eqn(prim, in_avals, eqn.params)
+
+      # Check the computed effect type matches the eqn's annotation, and is
+      # included in the jaxpr's annotation.
       if eqn.effects != effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
@@ -2296,7 +2361,11 @@ def _check_jaxpr(
         raise JaxprTypeError("Equation effects are not subset of Jaxpr effects. "
                              f"Equation effects: {eqn.effects}. "
                              f"Jaxpr effects: {jaxpr.effects}")
-      map(write, eqn.outvars, out_avals)
+
+      # Check out_type matches the let-binders' annotation (after substitution).
+      out_type = substitute_vars_in_output_ty(out_type, eqn.invars, eqn.outvars)
+      map(write, eqn.outvars, out_type)
+
     except JaxprTypeError as e:
       ctx, settings = ctx_factory()
       msg, = e.args
@@ -2305,7 +2374,51 @@ def _check_jaxpr(
                          f"from source: {src}"])
       raise JaxprTypeError(msg, eqn_idx) from None
 
+  # TODO(mattjj): include output type annotation on jaxpr and check it here
   map(read, jaxpr.outvars)
+
+def check_type(
+    ctx_factory: Callable[[], Tuple[JaxprPpContext, JaxprPpSettings]],
+    env: Set[Var],
+    ty: AbstractValue,
+  ) -> None:
+  if isinstance(ty, DShapedArray):
+    # Check all elements in the shape tuple are well-typed.
+    for d in ty.shape:
+      if isinstance(d, int):
+        continue
+      elif isinstance(d, Var):
+        if d not in env:
+          ctx, _ = ctx_factory()
+          raise JaxprTypeError(f"unbound axis size: '{pp_var(d, ctx)}'")
+        if not isinstance(d.aval, (ShapedArray, AbstractBInt)):
+          raise JaxprTypeError(f"axis size with unexpected type annotation: "
+                               f"{d.aval} of type {type(d.aval)}")
+        if isinstance(d.aval, ShapedArray):
+          shape, dtype = d.aval.shape, d.aval.dtype
+          if shape: raise JaxprTypeError(f"axis size nonscalar: {d.aval}")
+          if not dtypes.issubdtype(dtype, np.integer):
+            raise JaxprTypeError(f"axis size with non-integer dtype: {d.aval}")
+      else:
+        raise JaxprTypeError(f"unexpected type in shape: {type(d)}")
+  else:
+    return  # Except in above case(s), all syntactic forms are valid
+
+def substitute_vars_in_output_ty(
+    out_type: Sequence[AbstractValue],  # shapes may contain InDBIdx / OutDBIdx
+    in_atoms: Sequence[Atom],
+    out_binders: Sequence[Var],
+  ) -> List[AbstractValue]:  # shapes may contain Vars
+  in_atoms = [x.val if type(x) is Literal else x for x in in_atoms]
+  result = []
+  for aval in out_type:
+    if type(aval) is DShapedArray:
+      shape = [in_atoms[d.val] if type(d) is InDBIdx else  # type: ignore
+               out_binders[d.val] if type(d) is OutDBIdx else  # type: ignore
+               d for d in aval.shape]
+      aval = aval.update(shape=tuple(shape))
+    result.append(aval)
+  return result
 
 def check_eqn(prim, in_avals, params):
   for jaxpr in jaxprs_in_params(params):
@@ -2316,29 +2429,43 @@ def check_eqn(prim, in_avals, params):
     out_avals = [out_avals]
   return out_avals, effects
 
-def check_call(ctx_factory, prim, in_avals, params):
+def _check_call(ctx_factory, prim, in_atoms, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(
         f"Call primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
 
-  # These checks also happen in recursive call, but give better errors here.
-  if len(in_avals) != len(call_jaxpr.invars):
-    raise JaxprTypeError(f"Call primitive {prim} with {len(in_avals)} "
-                         f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
-                         f"inputs")
-  binder_avals = [v.aval for v in call_jaxpr.invars]
-  for binder_aval, in_aval in zip(binder_avals, in_avals):
-    if not typecompat(binder_aval, in_aval):
-      raise JaxprTypeError(f"Call primitive {prim} passes operand {in_aval} "
-                           f"to jaxpr expecting {binder_aval}")
+  if len(in_atoms) != len(call_jaxpr.invars):
+    raise JaxprTypeError(f"Call primitive {prim} with {len(in_atoms)} "
+                         f"operands cannot call jaxpr with "
+                         f"{len(call_jaxpr.invars)} inputs")
 
-  _check_jaxpr(ctx_factory, call_jaxpr, in_avals)
+  # Check `call_jaxpr` can be applied to in_atoms.
+  env: Dict[Var, Atom] = {}
+  def substitute(aval: AbstractValue):
+    if isinstance(aval, DShapedArray):
+      aval = aval.update(shape=tuple([env.get(d, d) for d in aval.shape]))  # type: ignore
+    return aval
+  for v, x in zip(call_jaxpr.invars, in_atoms):
+    if not typecompat(substitute(v.aval), x.aval):
+      # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__
+      raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
+                           f"{x.aval} to jaxpr expecting type {v.aval}")
+    env[v] = x if type(x) is Var else x.val
 
-  out_avals = [v.aval for v in call_jaxpr.outvars]
-  return out_avals, call_jaxpr.effects
+  _check_jaxpr(ctx_factory, call_jaxpr)
 
-def check_map(ctx_factory, prim, in_avals, params):
+  invars, outvars = call_jaxpr.invars, call_jaxpr.outvars
+  in_map : Dict[Var,  InDBIdx] = {v:  InDBIdx(i) for i, v in enumerate( invars)}
+  out_map: Dict[Var, OutDBIdx] = {x: OutDBIdx(i) for i, x in enumerate(outvars)
+                                  if type(x) is Var}
+  out_avals = [x.aval for x in call_jaxpr.outvars]
+  out_type = [a.update(shape=tuple(in_map.get(d, out_map.get(d))
+                                   if type(d) is Var else d for d in a.shape))
+              if type(a) is DShapedArray else a for a in out_avals]
+  return out_type, call_jaxpr.effects
+
+def _check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
@@ -2367,14 +2494,12 @@ def check_map(ctx_factory, prim, in_avals, params):
       raise JaxprTypeError(f"Call primitive {prim} passes operand {in_aval} "
                            f"to jaxpr expecting {binder_aval}")
 
-  mapped_avals = [mapped_aval(axis_size, in_axis, aval)
-                  if in_axis is not None else aval
-                  for aval, in_axis in zip(in_avals, in_axes)]
   with extend_axis_env(params['axis_name'], axis_size, None):
-    _check_jaxpr(ctx_factory, call_jaxpr, mapped_avals)
+    _check_jaxpr(ctx_factory, call_jaxpr)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval) if out_axis is not None else aval
+  out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval)
+               if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals, call_jaxpr.effects
 
