@@ -193,15 +193,15 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
                    donated_invars, inline, keep_unused: bool):
   del inline  # Only used at tracing time
   arg_specs = unsafe_map(arg_spec, args)
-  compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
-                               keep_unused, *arg_specs)
+  compiled_fun = xla_callable(fun, device, backend, name, donated_invars,
+                              keep_unused, *arg_specs)
   try:
     return compiled_fun(*args)
   except FloatingPointError:
     assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
     print("Invalid value encountered in the output of a jit-decorated function. "
           "Calling the de-optimized version.")
-    # We want to run the wrapped function again (after _xla_callable already ran
+    # We want to run the wrapped function again (after xla_callable already ran
     # it), but linear_util.WrappedFun instances are meant to be run only once.
     # In addition to re-executing the Python code, which is usually undesirable
     # but which config.jax_debug_nans is meant to opt into, we'll be
@@ -245,7 +245,7 @@ def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
   return lower_xla_callable(fun, device, backend, name, donated_invars, False,
                             keep_unused, *arg_specs).compile().unsafe_call
 
-_xla_callable = lu.cache(_xla_callable_uncached)
+xla_callable = lu.cache(_xla_callable_uncached)
 
 
 @contextlib.contextmanager

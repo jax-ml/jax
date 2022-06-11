@@ -25,10 +25,6 @@ import functools
 from functools import partial
 import inspect
 import itertools as it
-import sys
-import threading
-import weakref
-import types
 from typing import (Any, Callable, Generator, Iterable, NamedTuple, Mapping,
                     Optional, Sequence, Tuple, TypeVar, Union, overload, Dict,
                     Hashable, List)
@@ -452,6 +448,11 @@ def _python_jit(
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
                               backend, donate_argnums, inline, keep_unused)
+
+  def clear_cache():
+    dispatch.xla_callable.evict_function(fun)
+  f_jitted.clear_cache = clear_cache
+
   return f_jitted
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
@@ -476,6 +477,11 @@ class _FastpathData(NamedTuple):
   kept_var_bitvec: Iterable[bool]
 
 _cpp_jit_cache = jax_jit.CompiledFunctionCache()
+
+
+def _cpp_jit_clear_cache(self):
+  self._clear_cache()
+  dispatch.xla_callable.evict_function(self._fun)
 
 def _cpp_jit(
     fun: Callable,
@@ -526,7 +532,7 @@ def _cpp_jit(
     # inspect the argument x, we actually do need to execute it and look at the
     # outputs that could be tracers (if f is capturing `Tracer` by closure).
     execute: Optional[functools.partial] = (
-        dispatch._xla_callable.most_recent_entry())
+        dispatch.xla_callable.most_recent_entry())
     # TODO(sharadmv): Enable fast path for effectful jaxprs
     # TODO(sharadmv): Clean up usage of `execute.args`
     use_fastpath = (
@@ -592,6 +598,8 @@ def _cpp_jit(
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
                               backend, donate_argnums, inline, keep_unused)
+  f_jitted._fun = fun
+  type(f_jitted).clear_cache = _cpp_jit_clear_cache
 
   return f_jitted
 

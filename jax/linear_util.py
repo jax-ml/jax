@@ -296,8 +296,12 @@ def cache(call: Callable):
       thread_local.most_recent_entry = None
       return result
 
+  def _evict_function(f):
+    fun_caches.pop(f, None)
+
   memoized_fun.most_recent_entry = _most_recent_entry  # type: ignore
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
+  memoized_fun.evict_function = _evict_function  # type: ignore
 
   return memoized_fun
 
