@@ -94,11 +94,29 @@ class PjitLowered(stages.Lowered):
                         no_kwargs=self._no_kwargs)
 
 
-class _UnspecifiedValue:
-  pass
-_UNSPECIFIED = _UnspecifiedValue()
-def _is_unspecified(x):
-  return isinstance(x, _UnspecifiedValue)
+_UnspecifiedValue = pxla._UnspecifiedValue
+_UNSPECIFIED = pxla._UNSPECIFIED
+_is_unspecified = pxla._is_unspecified
+
+def _is_unspecified_or_from_gda_or_auto(x):
+  return _is_from_gda(x) or _is_auto(x) or _is_unspecified(x)
+
+
+def _check_all_or_none_unspecified(axis_resources, name):
+  if not axis_resources:
+    return False
+  unspecified_count = 0
+  unspecified = _is_unspecified(axis_resources[0])
+  for resource in axis_resources:
+    current_is_unspecified = _is_unspecified(resource)
+    if current_is_unspecified:
+      unspecified_count += 1
+      assert unspecified_count == 1
+    if current_is_unspecified != unspecified:
+      raise ValueError(f'`pjit._UNSPECIFIED` exists in {name}. '
+                       f'Make sure that every entry in {name} is '
+                       '`pjit._UNSPECIFIED`.')
+  return unspecified
 
 
 # TODO(yashkatariya): Add pjit microbenchmarks.
@@ -231,17 +249,6 @@ def pjit(fun: Callable,
     raise ValueError('in_axis_resources and out_axis_resouces should not '
                      'be the unspecified singleton value.')
 
-  # Duck type `UNSPECIFIED` with `FROM_GDA` to use that codepath for `Array`.
-  if config.jax_array:
-    # TODO(yashkatariya): Lift this restriction by using
-    # `_allow_propagation_to_outputs`.
-    if _is_unspecified(out_axis_resources):
-      raise ValueError('Please specify `out_axis_resources` when using `Array` '
-                       'or `GDA` for now until we add some support to support '
-                       'unspecified out_axis_resources.')
-    assert _is_unspecified(in_axis_resources)
-    in_axis_resources = FROM_GDA
-
   if isinstance(in_axis_resources, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
     # list: if in_axes is not a leaf, it must be a tuple of trees. However,
@@ -254,6 +261,11 @@ def pjit(fun: Callable,
       in_axis_resources, "in_axis_resources")
   out_axis_resources, _, _, _ = _prepare_axis_resources(
       out_axis_resources, "out_axis_resources")
+
+    # Duck type `UNSPECIFIED` with `FROM_GDA` to use that codepath for `Array`.
+  if config.jax_array:
+    assert _is_unspecified(in_axis_resources)
+    in_axis_resources = FROM_GDA
 
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
@@ -611,10 +623,14 @@ def _prepare_axis_resources(axis_resources,
   # PyTrees don't treat None values as leaves, so we use an is_leaf function.
   entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
+  # All entries should be specified or if unspecified then there should only
+  # be 1 entry for that since _UNSPECIFIED is a private API.
+  _check_all_or_none_unspecified(entries, arg_name)
   any_auto = pxla._check_if_any_auto(entries)
   entries = [
-      entry if _is_from_gda(entry) or _is_auto(entry) else ParsedPartitionSpec.from_user_input(
-          entry, what, allow_unconstrained_dims=allow_unconstrained_dims)
+      (entry if _is_unspecified_or_from_gda_or_auto(entry)
+       else ParsedPartitionSpec.from_user_input(
+          entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
       for entry in entries
   ]
   _check_unique_resources(entries, arg_name)
@@ -629,8 +645,7 @@ def _check_resources_mismatch(in_axis_resources_flat, is_gda):
 def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
-    if _is_from_gda(arg_axis_resources): continue
-    if _is_auto(arg_axis_resources): continue
+    if _is_unspecified_or_from_gda_or_auto(arg_axis_resources): continue
     constrained_dims = [d for d in arg_axis_resources if d is not None]
     resource_counts = Counter(it.chain.from_iterable(constrained_dims))
     if not resource_counts: continue
@@ -646,9 +661,7 @@ def _check_shapes_against_resources(what: str, is_global_shape: bool,
                                     allow_uneven_sharding: bool):
   global_str = " global" if is_global_shape else ""
   for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
-    if _is_from_gda(aval_axis_resources):
-      continue
-    if _is_auto(aval_axis_resources):
+    if _is_unspecified_or_from_gda_or_auto(aval_axis_resources):
       continue
     shape = aval.shape
     if len(shape) < len(aval_axis_resources):
@@ -682,9 +695,14 @@ def _pjit_call_impl(*args, jaxpr,
                     resource_env, donated_invars, name,
                     in_positional_semantics, out_positional_semantics):
   in_is_global = _calc_is_global_sequence(in_positional_semantics, in_axis_resources)
+  if config.jax_array and all(_is_unspecified(o) for o in out_axis_resources):
+    _allow_propagation_to_outputs = True
+  else:
+    _allow_propagation_to_outputs = False
   compiled = _pjit_lower(
       jaxpr, in_axis_resources, out_axis_resources,
-      resource_env, donated_invars, name, in_is_global).compile()
+      resource_env, donated_invars, name, in_is_global).compile(
+          _allow_propagation_to_outputs=_allow_propagation_to_outputs)
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
     pxla._check_gda_xla_sharding_match(args, compiled._in_axes)
@@ -1099,10 +1117,12 @@ pxla.custom_resource_typing_rules[sharding_constraint_p] = \
 
 # -------------------- helpers --------------------
 
-def get_array_mapping(axis_resources: Union[ParsedPartitionSpec, _AUTOAxisResource]) -> pxla.ArrayMappingOrAuto:
+def get_array_mapping(
+    axis_resources: Union[ParsedPartitionSpec, _AUTOAxisResource, _UnspecifiedValue]
+) -> pxla.ArrayMappingOrAutoOrUnspecified:
   # TODO(yashkatariya): Use `TypeGuard` on `_is_auto` when it is supported.
   # Don't use `_is_auto` here to satisfy pytype and mypy.
-  if isinstance(axis_resources, _AUTOAxisResource):
+  if isinstance(axis_resources, (_AUTOAxisResource, _UnspecifiedValue)):
     return axis_resources
   return OrderedDict((axis, i)
                      for i, axes in enumerate(axis_resources)
@@ -1157,7 +1177,7 @@ def _get_in_positional_semantics(arg) -> maps._PositionalSemantics:
   return maps._positional_semantics.val
 
 def _create_cpspec(x):
-  return x if _is_from_gda(x) or _is_auto(x) else CanonicalizedParsedPartitionSpec(x)
+  return x if _is_unspecified_or_from_gda_or_auto(x) else CanonicalizedParsedPartitionSpec(x)
 
 def _maybe_replace_from_gda_with_pspec(
     in_axis_resources_flat: Union[CanonicalizedParsedPartitionSpec, _AUTOAxisResource],
