@@ -93,7 +93,7 @@ class CSR(JAXSparse):
     # TODO(jakevdp): this can be done more efficiently.
     row = lax.sub(idx, lax.cond(k >= 0, lambda: zero, lambda: k))
     indptr = jnp.zeros(N + 1, dtype=index_dtype).at[1:].set(
-        jnp.cumsum(jnp.bincount(row, length=N)))
+        jnp.cumsum(jnp.bincount(row, length=N).astype(index_dtype)))
     return cls((data, indices, indptr), shape=(N, M))
 
   def todense(self):
@@ -296,7 +296,7 @@ def _csr_fromdense_impl(mat, *, nse, index_dtype):
   row = jnp.where(true_nonzeros, row, m)
   indices = col.astype(index_dtype)
   indptr = jnp.zeros(m + 1, dtype=index_dtype).at[1:].set(
-      jnp.cumsum(jnp.bincount(row, length=m)))
+      jnp.cumsum(jnp.bincount(row, length=m).astype(index_dtype)))
   return data, indices, indptr
 
 @csr_fromdense_p.def_abstract_eval
