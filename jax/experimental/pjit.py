@@ -262,9 +262,8 @@ def pjit(fun: Callable,
   out_axis_resources, _, _, _ = _prepare_axis_resources(
       out_axis_resources, "out_axis_resources")
 
-    # Duck type `UNSPECIFIED` with `FROM_GDA` to use that codepath for `Array`.
-  if config.jax_array:
-    assert _is_unspecified(in_axis_resources)
+  # Duck type `UNSPECIFIED` with `FROM_GDA` to use that codepath for `Array`.
+  if config.jax_array and _is_unspecified(in_axis_resources):
     in_axis_resources = FROM_GDA
 
   static_argnums = _ensure_index_tuple(static_argnums)
@@ -1182,31 +1181,29 @@ def _create_cpspec(x):
 def _maybe_replace_from_gda_with_pspec(
     in_axis_resources_flat: Union[CanonicalizedParsedPartitionSpec, _AUTOAxisResource],
     arg) -> Union[CanonicalizedParsedPartitionSpec, _AUTOAxisResource]:
-  # TODO(yashkatariya): Don't use `spec` from `MeshPspecSharding`. Write a
-  # sharding inference handler that will work with any sharding.
-  if isinstance(arg, Array):
-    return CanonicalizedParsedPartitionSpec(
-        ParsedPartitionSpec.from_user_input(
-            arg.sharding.spec, arg_name="Array spec"))
-
-  if isinstance(arg, GDA):
+  if isinstance(arg, (GDA, Array)):
     # TODO(yashkatariya): Use `TypeGuard` on `_is_auto` when it is supported.
     # Don't use `_is_auto` here to satisfy pytype and mypy.
     if isinstance(in_axis_resources_flat, _AUTOAxisResource):
       return in_axis_resources_flat
-    gda_cpspec = CanonicalizedParsedPartitionSpec(
+
+    arr_flavor = 'GDA' if isinstance(arg, GDA) else 'Array'
+    # TODO(yashkatariya): Don't use `spec` from `MeshPspecSharding`. Write a
+    # sharding inference handler that will work with any sharding.
+    gda_or_array_cpspec = CanonicalizedParsedPartitionSpec(
         ParsedPartitionSpec.from_user_input(
-            arg.mesh_axes, arg_name="GDA mesh_axes"))
-    assert type(gda_cpspec) is CanonicalizedParsedPartitionSpec
+            arg.mesh_axes if arr_flavor == 'GDA' else arg.sharding.spec,  # type: ignore  # union-attr
+            arg_name=f"{arr_flavor} spec"))
     if (not _is_from_gda(in_axis_resources_flat) and
-        in_axis_resources_flat != gda_cpspec):
+        in_axis_resources_flat != gda_or_array_cpspec):
       raise ValueError(
-          'Got an input GDA to pjit with different partitioning than specified in '
+          f"Got an input {arr_flavor} to pjit with different partitioning than specified in "
           "the in_axis_resources argument to pjit. The partitioning must match, or "
-          "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources`. "
-          f"Got GDA spec: {gda_cpspec.user_spec} and "
-          f"pjit spec: {in_axis_resources_flat.user_spec} for GDA: {arg}")
-    return gda_cpspec
+          "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. "
+          "Leave in_axis_resources empty for Array. "
+          f"Got {arr_flavor} spec: {gda_or_array_cpspec.user_spec} and "
+          f"pjit spec: {in_axis_resources_flat.user_spec} for {arr_flavor}: {arg}")
+    return gda_or_array_cpspec
   return in_axis_resources_flat
 
 

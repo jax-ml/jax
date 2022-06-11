@@ -1059,8 +1059,9 @@ class GDAPjitTest(jtu.JaxTestCase):
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "Got an input GDA to pjit with different partitioning than specified "
-        'in the in_axis_resources argument to pjit. The partitioning must '
-        'match, or use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources`. '
+        'in the in_axis_resources argument to pjit. The partitioning must match, or '
+        'use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. '
+        'Leave in_axis_resources empty for Array. '
         "Got GDA spec: PartitionSpec('x',) and "
         "pjit spec: PartitionSpec('x', 'y') "
         'for GDA: GlobalDeviceArray(shape=(8, 2), dtype=float32)'):
@@ -1414,6 +1415,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
         self.assertEqual(out4.addressable_shards[0].data.shape, s4_shape)
         for s in out4.addressable_shards:
           self.assertArraysEqual(s.data._arrays[0], input_data)
+
+  def test_in_axis_resources_mismatch_error(self):
+    global_input_shape = (8, 2)
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    mesh_axes = P('x', 'y')
+
+    input_array, _ = create_array(global_input_shape, global_mesh, mesh_axes)
+
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = pjit(lambda x: x, in_axis_resources=P('x'))
+        with self.assertRaisesRegex(
+            ValueError,
+            ('Got an input Array to pjit with different partitioning '
+             'than specified in the in_axis_resources argument to pjit')):
+          f(input_array)
 
 
 def spec_regex(s):
