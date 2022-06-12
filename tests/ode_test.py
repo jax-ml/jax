@@ -250,6 +250,20 @@ class ODETest(jtu.JaxTestCase):
 
     jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
 
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_max_dt(self):
+    """Test max step size control."""
+
+    def rhs(y, t):
+      return jnp.piecewise(
+        t,
+        [t <= 2., (t >= 5.) & (t <= 7.)],
+        [lambda s: jnp.array(1.), lambda s: jnp.array(-1.), lambda s: jnp.array(0.)]
+      )
+    ys = odeint(func=rhs, y0=jnp.array(0.), t=jnp.array([0., 5., 10.]), dtmax=1.)
+
+    self.assertTrue(jnp.abs(ys[-1]) < 1e-4)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
