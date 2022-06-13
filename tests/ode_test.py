@@ -251,7 +251,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
 
   @jtu.skip_on_devices("tpu", "gpu")
-  def test_dtmax(self):
+  def test_hmax(self):
     """Test max step size control."""
 
     def rhs(y, t):
@@ -260,7 +260,7 @@ class ODETest(jtu.JaxTestCase):
         [t <= 2., (t >= 5.) & (t <= 7.)],
         [lambda s: jnp.array(1.), lambda s: jnp.array(-1.), lambda s: jnp.array(0.)]
       )
-    ys = odeint(func=rhs, y0=jnp.array(0.), t=jnp.array([0., 5., 10.]), dtmax=1.)
+    ys = odeint(func=rhs, y0=jnp.array(0.), t=jnp.array([0., 5., 10.]), hmax=1.)
 
     self.assertTrue(jnp.abs(ys[1] - 2.) < 1e-4)
     self.assertTrue(jnp.abs(ys[2]) < 1e-4)
