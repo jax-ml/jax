@@ -10,6 +10,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.14 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...main).
+* Breaking changes
+  * {func}`jax.experimental.compilation_cache.initialize_cache` does not support
+    `max_cache_size_  bytes` anymore and will not get that as an input.
 * Changes
   * {func}`jax.numpy.linalg.slogdet` now accepts an optional `method` argument
     that allows selection between an LU-decomposition based implementation and
@@ -50,6 +53,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     In a future release, this will become an error. An example of an unsafe implicit
     cast is `jnp.zeros(4, dtype=int).at[0].set(1.5)`, in which `1.5` previously was
     silently truncated to `1`.
+  * {func}`jax.experimental.compilation_cache.initialize_cache` now supports gcs
+    bucket path as input.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
