@@ -174,14 +174,14 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf, dtmax=j
   converted, consts = custom_derivatives.closure_convert(func, y0, t[0], *args)
   return _odeint_wrapper(converted, rtol, atol, mxstep, dtmax, y0, t, *args, *consts)
 
-@partial(jax.jit, static_argnums=(0, 1, 2, 3))
+@partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
 def _odeint_wrapper(func, rtol, atol, mxstep, dtmax, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
   func = ravel_first_arg(func, unravel)
   out = _odeint(func, rtol, atol, mxstep, dtmax, y0, ts, *args)
   return jax.vmap(unravel)(out)
 
-@partial(jax.custom_vjp, nondiff_argnums=(0, 1, 2, 3))
+@partial(jax.custom_vjp, nondiff_argnums=(0, 1, 2, 3, 4))
 def _odeint(func, rtol, atol, mxstep, dtmax, y0, ts, *args):
   func_ = lambda y, t: func(y, t, *args)
 
@@ -216,11 +216,11 @@ def _odeint(func, rtol, atol, mxstep, dtmax, y0, ts, *args):
   _, ys = lax.scan(scan_fun, init_carry, ts[1:])
   return jnp.concatenate((y0[None], ys))
 
-def _odeint_fwd(func, rtol, atol, mxstep, y0, ts, *args):
-  ys = _odeint(func, rtol, atol, mxstep, y0, ts, *args)
+def _odeint_fwd(func, rtol, atol, mxstep, dtmax, y0, ts, *args):
+  ys = _odeint(func, rtol, atol, mxstep, dtmax, y0, ts, *args)
   return ys, (ys, ts, args)
 
-def _odeint_rev(func, rtol, atol, mxstep, res, g):
+def _odeint_rev(func, rtol, atol, mxstep, dtmax, res, g):
   ys, ts, args = res
 
   def aug_dynamics(augmented_state, t, *args):
@@ -245,7 +245,7 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
     _, y_bar, t0_bar, args_bar = odeint(
         aug_dynamics, (ys[i], y_bar, t0_bar, args_bar),
         jnp.array([-ts[i], -ts[i - 1]]),
-        *args, rtol=rtol, atol=atol, mxstep=mxstep)
+        *args, rtol=rtol, atol=atol, mxstep=mxstep, dtmax=dtmax)
     y_bar, t0_bar, args_bar = tree_map(op.itemgetter(1), (y_bar, t0_bar, args_bar))
     # Add gradient from current output
     y_bar = y_bar + g[i - 1]
