@@ -39,6 +39,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.config import config
 from jax.errors import JAXTypeError
+from jax.experimental.array import Array
 from jax.experimental.global_device_array import GlobalDeviceArray, _get_array_mapping
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
@@ -543,10 +544,16 @@ def xmap(fun: Callable,
       lambda: tuple(_flatten_axes("xmap out_axes", out_tree(), out_axes, tupled_args=False)),
       closure=(out_axes_entries, out_axes_treedef))
 
-    in_positional_semantics = tuple(
-        _PositionalSemantics.GLOBAL
-        if isinstance(a, GlobalDeviceArray) else _positional_semantics.val
-        for a in args_flat)
+    if config.jax_array:
+      if any(not isinstance(a, Array) for a in args_flat):
+        raise ValueError('All arguments to pjit when `config.jax_array` is '
+                         'enabled should be `Array`s.')
+      in_positional_semantics = (_PositionalSemantics.GLOBAL,) * len(args_flat)
+    else:
+      in_positional_semantics = tuple(
+          _PositionalSemantics.GLOBAL
+          if isinstance(a, GlobalDeviceArray) else _positional_semantics.val
+          for a in args_flat)
     out_positional_semantics = _positional_semantics.val
 
     axis_resource_count = _get_axis_resource_count(
@@ -577,7 +584,7 @@ def xmap(fun: Callable,
                            f"which asserts that it should be of rank {spec.expected_rank}, "
                            f"but the argument has rank {arg.ndim} (and shape {arg.shape})")
 
-    _check_gda_xmap_partitioning(frozen_axis_resources, resource_env,
+    _check_gda_or_array_xmap_partitioning(frozen_axis_resources, resource_env,
                                  frozen_global_axis_sizes, in_axes_flat,
                                  in_positional_semantics, args_flat)
 
@@ -1785,27 +1792,30 @@ def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
                       f"defined by this xmap call: {', '.join(undeclared_axes_str)}")
 
 
-def _check_gda_xmap_partitioning(axis_resources, resource_env,
-                                 global_axis_sizes, in_axes_flat,
-                                 in_positional_semantics, args_flat):
+def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
+                                          global_axis_sizes, in_axes_flat,
+                                          in_positional_semantics, args_flat):
   mesh_in_axes = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes,
       in_positional_semantics).to_mesh_axes(in_axes_flat)
   for arg, xmap_array_mapping in safe_zip(args_flat, mesh_in_axes):
-    if isinstance(arg, GlobalDeviceArray):
-      if arg.mesh != resource_env.physical_mesh:
-        raise ValueError("xmap's mesh and GDA's mesh should be equal. Got Xmap "
-                         f"mesh: {resource_env.physical_mesh},\n"
-                         f"GDA mesh: {arg.mesh}")
+    if isinstance(arg, (GlobalDeviceArray, Array)):
+      arr_flavor = 'GDA' if isinstance(arg, GlobalDeviceArray) else 'Array'
+      mesh = arg.mesh if arr_flavor == 'GDA' else arg.sharding.mesh
+      if mesh != resource_env.physical_mesh:
+        raise ValueError(f"xmap's mesh and {arr_flavor}'s mesh should be equal. "
+                         f"Got xmap mesh: {resource_env.physical_mesh},\n"
+                         f"{arr_flavor} mesh: {mesh}")
 
-      gda_array_mapping = _get_array_mapping(arg.mesh_axes)
-      if gda_array_mapping != xmap_array_mapping:
+      array_mapping = _get_array_mapping(
+          arg.mesh_axes if arr_flavor == 'GDA' else arg.sharding.spec)
+      if array_mapping != xmap_array_mapping:
         raise ValueError(
-            "Got an input GDA to xmap with different partitioning than "
+            f"Got an input {arr_flavor} to xmap with different partitioning than "
             "specified in xmap. The partitioning must match. "
-            f"Got GDA spec: {pxla.array_mapping_to_axis_resources(gda_array_mapping)} and "
+            f"Got {arr_flavor} spec: {pxla.array_mapping_to_axis_resources(array_mapping)} and "
             f"xmap spec: {pxla.array_mapping_to_axis_resources(xmap_array_mapping)} "
-            f"for GDA: {arg}")
+            f"for {arr_flavor}: {arg}")
 
 
 # TODO: We should relax this at least for "constructor primitives"

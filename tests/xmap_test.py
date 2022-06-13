@@ -35,6 +35,8 @@ from jax import core
 from jax.core import NamedShape
 from jax.experimental import maps
 from jax.experimental import global_device_array
+from jax.experimental import array
+from jax.experimental.sharding import MeshPspecSharding
 from jax.experimental.pjit import pjit, with_sharding_constraint
 from jax.experimental.pjit import PartitionSpec as P
 from jax.experimental.maps import xmap, serial_loop, SerialLoop
@@ -69,6 +71,17 @@ def tearDownModule():
   else:
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
+
+
+def create_array(global_shape, global_mesh, mesh_axes, global_data=None):
+  if global_data is None:
+    global_data = np.arange(
+        prod(global_shape), dtype=np.float32).reshape(global_shape)
+
+  sharding = MeshPspecSharding(global_mesh, mesh_axes)
+
+  return array.make_array_from_callback(
+      global_shape, sharding, lambda idx: global_data[idx]), global_data
 
 
 # -------------------- Itertools helpers --------------------
@@ -1008,6 +1021,102 @@ class XMapGDATest(XMapTestCase):
           ('Got an input GDA to xmap with different partitioning than '
            'specified in xmap. The partitioning must match.')):
         f(gda_obj)
+
+
+class XMapArrayTest(XMapTestCase):
+
+  def test_basic(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_array, input_data = create_array(global_input_shape, global_mesh,
+                                           mesh_axes)
+
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = maps.xmap(
+              lambda x: x,
+              in_axes=({0: "a", 1: "b"}),
+              out_axes=({0: "a", 1: "b"}),
+              axis_resources={"a": "x", "b": "y"})
+
+        out = f(input_array)
+        self.assertIsInstance(out, array.Array)
+        self.assertEqual(out.shape, (8, 2))
+        self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
+        self.assertDictEqual(out.sharding.mesh.shape, {'x': 4, 'y': 2})
+        for s in out.addressable_shards:
+          self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
+
+  def test_xmap_array_mixed_inputs(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x')
+    input_array, input_data = create_array(global_input_shape, global_mesh,
+                                           mesh_axes)
+
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = maps.xmap(
+              lambda x, y: (x @ x.T, y @ y.T),
+              in_axes=({0: "a"}, ["c", ...]),
+              out_axes=({0: "a"}, ["c", ...]),
+              axis_resources={"a": "x", "c": "x"})
+        with self.assertRaisesRegex(
+            ValueError, ('All arguments to pjit when `config.jax_array` is '
+                         'enabled should be `Array`s.')):
+          f(input_array, input_data)
+
+  def test_xmap_array_double_input(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    a1, input_data = create_array(global_input_shape, global_mesh, P('x'))
+    a2, _ = create_array(global_input_shape, global_mesh, P('y'))
+
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = maps.xmap(
+              lambda x, y: (x @ x.T, y @ y.T),
+              in_axes=({0: "a"}, ["c", ...]),
+              out_axes=({0: "a"}, ["c", ...]),
+              axis_resources={"a": "x", "c": "y"})
+
+        expected_matrix_mul = np.diagonal(input_data @ input_data.T)
+        out1, out2 = f(a1, a2)
+
+        self.assertIsInstance(out1, array.Array)
+        self.assertEqual(out1.shape, (8,))
+        self.assertEqual(out1.addressable_shards[0].data.shape, (2,))
+        self.assertDictEqual(out1.sharding.mesh.shape, {'x': 4, 'y': 2})
+        for s in out1.addressable_shards:
+          self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
+
+        self.assertIsInstance(out2, array.Array)
+        self.assertEqual(out2.shape, (8,))
+        self.assertEqual(out2.addressable_shards[0].data.shape, (4,))
+        self.assertDictEqual(out2.sharding.mesh.shape, {'x': 4, 'y': 2})
+        for s in out2.addressable_shards:
+          self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
+
+  def test_xmap_array_sharding_mismatch(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_array, _ = create_array(global_input_shape, global_mesh,
+                                           mesh_axes)
+
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = maps.xmap(
+              lambda x: x @ x.T,
+              in_axes=({0: "a"}),
+              out_axes=({0: "a"}),
+              axis_resources={"a": "x"})
+        with self.assertRaisesRegex(
+            ValueError,
+            ('Got an input Array to xmap with different partitioning than '
+             'specified in xmap. The partitioning must match.')):
+          f(input_array)
 
 
 class NewPrimitiveTest(XMapTestCase):
