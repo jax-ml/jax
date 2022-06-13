@@ -157,7 +157,7 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf, dtmax=j
     rtol: float, relative local error tolerance for solver (optional).
     atol: float, absolute local error tolerance for solver (optional).
     mxstep: int, maximum number of steps to take for each timepoint (optional).
-    dtmax: float, upper bound solver step size (optional).
+    dtmax: float, upper bound on solver step size (optional).
 
   Returns:
     Values of the solution `y` (i.e. integrated system values) at each time
