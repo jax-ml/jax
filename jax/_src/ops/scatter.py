@@ -16,6 +16,7 @@
 
 import sys
 from typing import Any, Callable, Optional, Sequence, Tuple, Union
+import warnings
 
 import numpy as np
 
@@ -80,6 +81,13 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
                   normalize_indices):
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
+
+  if dtype != dtypes.result_type(x, y):
+    # TODO(jakevdp): change this to an error after the deprecation period.
+    warnings.warn("scatter inputs have incompatible types: cannot safely cast "
+                  f"value from dtype={lax.dtype(y)} to dtype={lax.dtype(x)}. "
+                  "In future JAX releases this will result in an error.",
+                  FutureWarning)
 
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
