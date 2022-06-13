@@ -1696,11 +1696,18 @@ round_p = standard_unop(_float, 'round')
 ad.defjvp_zero(round_p)
 
 def _round_lower(ctx, x, *, rounding_method):
-  if rounding_method is RoundingMethod.AWAY_FROM_ZERO:
-    return mhlo.RoundOp(x).results
+  if mlir_api_version >= 33:
+    if rounding_method is RoundingMethod.AWAY_FROM_ZERO:
+      return mhlo.RoundOp(x, mhlo.RoundingModeAttr.get('AFZ')).results
+    else:
+      assert rounding_method is RoundingMethod.TO_NEAREST_EVEN
+      return mhlo.RoundOp(x, mhlo.RoundingModeAttr.get('EVEN')).results
   else:
-    assert rounding_method is RoundingMethod.TO_NEAREST_EVEN
-    return mhlo.RoundNearestEvenOp(x).results
+    if rounding_method is RoundingMethod.AWAY_FROM_ZERO:
+      return mhlo.RoundOp(x).results
+    else:
+      assert rounding_method is RoundingMethod.TO_NEAREST_EVEN
+      return mhlo.RoundNearestEvenOp(x).results
 mlir.register_lowering(round_p, _round_lower)
 
 is_finite_p = unop(_fixed_dtype(np.bool_), _float, 'is_finite')
