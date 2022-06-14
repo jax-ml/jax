@@ -132,7 +132,7 @@ def _projector_subspace(P, H, n, rank, maxiter=2):
   X = _mask(X, (n, rank))
 
   H_norm = jnp_linalg.norm(H)
-  thresh = 10 * jnp.finfo(X.dtype).eps * H_norm
+  thresh = 10.0 * float(jnp.finfo(X.dtype).eps) * H_norm
 
   # First iteration skips the matmul.
   def body_f_after_matmul(X):
@@ -190,7 +190,7 @@ def split_spectrum(H, n, split_point, V0=None):
     rank: The dynamic size of the m subblock.
   """
   N, _ = H.shape
-  H_shift = H - split_point * jnp.eye(N, dtype=H.dtype)
+  H_shift = H - (split_point * jnp.eye(N, dtype=split_point.dtype)).astype(H.dtype)
   U, _, _, _ = qdwh.qdwh(H_shift, is_hermitian=True, dynamic_shape=(n, n))
   P = -0.5 * (U - _mask(jnp.eye(N, dtype=H.dtype), (n, n)))
   rank = jnp.round(jnp.trace(jnp.real(P))).astype(jnp.int32)
@@ -331,6 +331,7 @@ def _eigh_work(H, n, termination_size=256):
     eig_vals = _mask(eig_vals, (b,))
     eig_vecs = jnp.dot(V, eig_vecs)
 
+    eig_vals = eig_vals.astype(eig_vecs.dtype)
     blocks = _update_slice(blocks, eig_vals[:, None], (offset, 0), (b, b))
     eigenvectors = _update_slice(eigenvectors, eig_vecs, (0, offset), (n, b))
     return agenda, blocks, eigenvectors
@@ -370,12 +371,11 @@ def _eigh_work(H, n, termination_size=256):
     i = min(2 * i, N)
     buckets.append(i)
     branches.append(partial(recursive_case, i))
-  buckets = jnp.array(buckets)
+  buckets = jnp.array(buckets, dtype='int32')
 
   def loop_body(state):
     agenda, blocks, eigenvectors = state
     (offset, b), agenda = agenda.pop()
-
     which = jnp.where(buckets < b, jnp.iinfo(jnp.int32).max, buckets)
     choice = jnp.argmin(which)
     return lax.switch(choice, branches, offset, b, agenda, blocks, eigenvectors)

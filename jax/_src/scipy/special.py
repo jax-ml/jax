@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import scipy.special as osp_special
@@ -26,8 +27,6 @@ import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
 from jax._src.numpy.util import _wraps
-
-from typing import Optional, Tuple
 
 
 @_wraps(osp_special.gammaln)
@@ -680,7 +679,7 @@ def i1(x):
 
 
 def _gen_recurrence_mask(
-    l_max: int, is_normalized: bool = True
+    l_max: int, is_normalized: bool, dtype: Any
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
   """Generates mask for recurrence relation on the remaining entries.
 
@@ -697,7 +696,10 @@ def _gen_recurrence_mask(
   """
 
   # Computes all coefficients.
-  m_mat, l_mat = jnp.mgrid[:l_max + 1, :l_max + 1]
+  m_mat, l_mat = jnp.meshgrid(
+    jnp.arange(l_max + 1, dtype=dtype),
+    jnp.arange(l_max + 1, dtype=dtype),
+    indexing='ij')
   if is_normalized:
     c0 = l_mat * l_mat
     c1 = m_mat * m_mat
@@ -711,7 +713,7 @@ def _gen_recurrence_mask(
 
   d0_mask_indices = jnp.triu_indices(l_max + 1, 1)
   d1_mask_indices = jnp.triu_indices(l_max + 1, 2)
-  d_zeros = jnp.zeros((l_max + 1, l_max + 1))
+  d_zeros = jnp.zeros((l_max + 1, l_max + 1), dtype=dtype)
   d0_mask = d_zeros.at[d0_mask_indices].set(d0[d0_mask_indices])
   d1_mask = d_zeros.at[d1_mask_indices].set(d1[d1_mask_indices])
 
@@ -720,7 +722,7 @@ def _gen_recurrence_mask(
   # j = jnp.arange(l_max + 1)[None, :, None]
   # k = jnp.arange(l_max + 1)[None, None, :]
   i, j, k = jnp.ogrid[:l_max + 1, :l_max + 1, :l_max + 1]
-  mask = 1.0 * (i + j - k == 0)
+  mask = (i + j - k == 0).astype(dtype)
 
   d0_mask_3d = jnp.einsum('jk,ijk->ijk', d0_mask, mask)
   d1_mask_3d = jnp.einsum('jk,ijk->ijk', d1_mask, mask)
@@ -762,24 +764,27 @@ def _gen_derivatives(p: jnp.ndarray,
         'Negative orders for normalization is not implemented yet.')
   else:
     if num_l > 1:
-      l_vec = jnp.arange(1, num_l - 1)
+      l_vec = jnp.arange(1, num_l - 1, dtype=x.dtype)
       p_p1 = p[1, 1:num_l - 1, :]
       coeff = -1.0 / ((l_vec + 1) * l_vec)
       update_p_p1 = jnp.einsum('i,ij->ij', coeff, p_p1)
       p_mm2_lm1 = p_mm2_lm1.at[1, 2:num_l, :].set(update_p_p1)
 
     if num_l > 2:
-      l_vec = jnp.arange(2, num_l - 1)
+      l_vec = jnp.arange(2, num_l - 1, dtype=x.dtype)
       p_p2 = p[2, 2:num_l - 1, :]
       coeff = 1.0 / ((l_vec + 2) * (l_vec + 1) * l_vec * (l_vec - 1))
       update_p_p2 = jnp.einsum('i,ij->ij', coeff, p_p2)
       p_mm2_lm1 = p_mm2_lm1.at[0, 3:num_l, :].set(update_p_p2)
 
-  m_mat, l_mat = jnp.mgrid[:num_m, :num_l]
+  m_mat, l_mat = jnp.meshgrid(
+    jnp.arange(num_m, dtype=x.dtype),
+    jnp.arange(num_l, dtype=x.dtype),
+    indexing='ij')
 
-  coeff_zeros = jnp.zeros((num_m, num_l))
+  coeff_zeros = jnp.zeros((num_m, num_l), dtype=x.dtype)
   upper_0_indices = jnp.triu_indices(num_m, 0, num_l)
-  zero_vec = jnp.zeros((num_l,))
+  zero_vec = jnp.zeros((num_l,), dtype=x.dtype)
 
   a0 = -0.5 / (m_mat - 1.0)
   a0_masked = coeff_zeros.at[upper_0_indices].set(a0[upper_0_indices])
@@ -809,13 +814,13 @@ def _gen_derivatives(p: jnp.ndarray,
 
   # Special treatment of the singularity at m = 1.
   if num_m > 1:
-    l_vec = jnp.arange(num_l)
+    l_vec = jnp.arange(num_l, dtype=p.dtype)
     g0 = jnp.einsum('i,ij->ij', (l_vec + 1) * l_vec, p[0, :, :])
     if num_l > 2:
       g0 = g0 -  p[2, :, :]
     p_derivative_m0 = jnp.einsum('j,ij->ij', 0.5 / jnp.sqrt(1 - x * x), g0)
     p_derivative = p_derivative.at[1, :, :].set(p_derivative_m0)
-    p_derivative = p_derivative.at[1, 0, :].set(jnp.zeros((num_x,)))
+    p_derivative = p_derivative.at[1, 0, :].set(0)
 
   return p_derivative
 
@@ -869,10 +874,10 @@ def _gen_associated_legendre(l_max: int,
     of the ALFs at `x`; the dimensions in the sequence of order, degree, and
     evalution points.
   """
-  p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]))
+  p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]), dtype=x.dtype)
 
-  a_idx = jnp.arange(1, l_max + 1)
-  b_idx = jnp.arange(l_max)
+  a_idx = jnp.arange(1, l_max + 1, dtype=x.dtype)
+  b_idx = jnp.arange(l_max, dtype=x.dtype)
   if is_normalized:
     initial_value = 0.5 / jnp.sqrt(jnp.pi)  # The initial value p(0,0).
     f_a = jnp.cumprod(-1 * jnp.sqrt(1.0 + 0.5 / a_idx))
@@ -901,7 +906,7 @@ def _gen_associated_legendre(l_max: int,
 
   # Compute the remaining entries with recurrence.
   d0_mask_3d, d1_mask_3d = _gen_recurrence_mask(
-      l_max, is_normalized=is_normalized)
+      l_max, is_normalized=is_normalized, dtype=x.dtype)
 
   def body_fun(i, p_val):
     coeff_0 = d0_mask_3d[i]

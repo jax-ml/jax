@@ -699,6 +699,7 @@ def polar(a, side='right', *, method='qdwh', eps=None, max_iterations=None):
                                 f"side='left', got {a.shape} with side={side}")
   elif method == "svd":
     u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
+    s_svd = s_svd.astype(u_svd.dtype)
     unitary = u_svd @ vh_svd
     if side == "right":
       # a = u * p
