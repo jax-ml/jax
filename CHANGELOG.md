@@ -55,6 +55,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     silently truncated to `1`.
   * {func}`jax.experimental.compilation_cache.initialize_cache` now supports gcs
     bucket path as input.
+  * Added {func}`jax.scipy.stats.gennorm`.
 
 ## jaxlib 0.3.11 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).

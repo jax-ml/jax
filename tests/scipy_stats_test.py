@@ -245,6 +245,34 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(
       osp_stats.gamma.pdf(0.0, 1.0), lsp_stats.gamma.pdf(0.0, 1.0), atol=1E-6)
 
+  @genNamedParametersNArgs(2)
+  def testGenNormLogPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gennorm.logpdf
+    lax_fun = lsp_stats.gennorm.logpdf
+
+    def args_maker():
+      x, p = map(rng, shapes, dtypes)
+      return [x, p]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-4, rtol=1e-3)
+    self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(2)
+  def testGenNormCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gennorm.cdf
+    lax_fun = lsp_stats.gennorm.cdf
+
+    def args_maker():
+      x, p = map(rng, shapes, dtypes)
+      return [x, p]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-4, rtol=1e-3)
+    self._CompileAndCheck(lax_fun, args_maker)
+
   @genNamedParametersNArgs(4)
   def testNBinomLogPmf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
