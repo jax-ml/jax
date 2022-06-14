@@ -48,6 +48,7 @@ def cloud_tpu_init():
 
   libtpu.configure_library_path()
   os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
+  os.environ['TPU_ML_PLATFORM'] = 'JAX'
 
   # If the user has set any topology-related env vars, don't set any
   # automatically.
