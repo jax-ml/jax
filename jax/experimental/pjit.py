@@ -228,7 +228,7 @@ def pjit(fun: Callable,
     automaticly partitioned by the mesh available at each call site.
 
   For example, a convolution operator can be automatically partitioned over
-  an arbitrary set of devices by a single ```pjit`` application:
+  an arbitrary set of devices by a single ``pjit`` application:
 
   >>> import jax
   >>> import jax.numpy as jnp
