@@ -394,7 +394,7 @@ class Config:
     the C++ JIT state, which is handled separately."""
     return (self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision, self.jax_dynamic_shapes,
-            self.jax_numpy_dtype_promotion)
+            self.jax_numpy_dtype_promotion, self.jax_default_device)
 
 class NoDefault: pass
 no_default = NoDefault()

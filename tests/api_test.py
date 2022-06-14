@@ -3349,6 +3349,24 @@ class APITest(jtu.JaxTestCase):
     first_local_device = api.local_devices()[0]
     self.assertEqual(first_local_device.platform, api.default_backend())
 
+  @jtu.skip_on_devices("cpu")
+  def test_default_device(self):
+    system_default_device = jnp.zeros(2).device()
+    test_device = jax.devices("cpu")[-1]
+
+    # Sanity check creating array using system default device
+    self.assertEqual(jnp.ones(1).device(), system_default_device)
+
+    # Create array with default_device set
+    with jax.default_device(test_device):
+      # Hits cached primitive path
+      self.assertEqual(jnp.ones(1).device(), test_device)
+      # Uncached
+      self.assertEqual(jnp.zeros((1, 2)).device(), test_device)
+
+    # Test that we can reset to system default device
+    self.assertEqual(jnp.ones(1).device(), system_default_device)
+
   def test_dunder_jax_array(self):
     # https://github.com/google/jax/pull/4725
 
