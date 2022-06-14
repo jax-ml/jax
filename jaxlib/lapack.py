@@ -15,6 +15,7 @@
 # Shims that allow the XLA CPU backend to call scipy-provided LAPACK kernels
 # via CustomCallWithLayout.
 
+import jax
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.mhlo as mhlo
 
@@ -30,26 +31,51 @@ for _name, _value in _lapack.registrations().items():
 
 if xla_client._version >= 64:
   def _mhlo_u8(x):
-    return mhlo.ConstOp(
-        ir.DenseElementsAttr.get(np.array(x, dtype=np.uint8),
-                                 type=ir.IntegerType.get_unsigned(8))).result
+    if jax._src.lib.mlir_api_version < 21:
+      return mhlo.ConstOp(
+          ir.DenseElementsAttr.get(
+              np.array(x, dtype=np.uint8),
+              type=ir.IntegerType.get_unsigned(8))).result
+    else:
+      return mhlo.ConstantOp(
+          ir.DenseElementsAttr.get(
+              np.array(x, dtype=np.uint8),
+              type=ir.IntegerType.get_unsigned(8))).result
 
   def _mhlo_s32(x):
-    return mhlo.ConstOp(
-        ir.DenseElementsAttr.get(np.array(x, dtype=np.int32),
-                                 type=ir.IntegerType.get_signless(32))).result
+    if jax._src.lib.mlir_api_version < 21:
+      return mhlo.ConstOp(
+          ir.DenseElementsAttr.get(
+              np.array(x, dtype=np.int32),
+              type=ir.IntegerType.get_signless(32))).result
+    else:
+      return mhlo.ConstantOp(
+          ir.DenseElementsAttr.get(
+              np.array(x, dtype=np.int32),
+              type=ir.IntegerType.get_signless(32))).result
 else:
   def _mhlo_u8(x):
     typ = ir.RankedTensorType.get([], ir.IntegerType.get_unsigned(8))
-    return mhlo.ConstOp(
-        typ,
-        ir.DenseElementsAttr.get(np.array(x, dtype=np.uint8),
-                                 type=typ.element_type)).result
+    if jax._src.lib.mlir_api_version < 21:
+      return mhlo.ConstOp(
+          typ,
+          ir.DenseElementsAttr.get(
+              np.array(x, dtype=np.uint8), type=typ.element_type)).result
+    else:
+      return mhlo.ConstantOp(
+          typ,
+          ir.DenseElementsAttr.get(
+              np.array(x, dtype=np.uint8), type=typ.element_type)).result
 
   def _mhlo_s32(x):
     typ = ir.RankedTensorType.get([], ir.IntegerType.get_signless(32))
-    return mhlo.ConstOp(
-        typ, ir.DenseElementsAttr.get(np.array(x, dtype=np.int32))).result
+    if jax._src.lib.mlir_api_version < 21:
+      return mhlo.ConstOp(typ,
+                          ir.DenseElementsAttr.get(np.array(
+                              x, dtype=np.int32))).result
+    else:
+      return mhlo.ConstantOp(
+          typ, ir.DenseElementsAttr.get(np.array(x, dtype=np.int32))).result
 
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.

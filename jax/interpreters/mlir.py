@@ -221,10 +221,16 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
     x = x.view(np.uint16)
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
-  if jax._src.lib.xla_extension_version >= 64:
-    return (mhlo.ConstOp(attr).result,)
+  if jax._src.lib.mlir_api_version < 21:
+    if jax._src.lib.xla_extension_version >= 64:
+      return (mhlo.ConstOp(attr).result,)
+    else:
+      return (mhlo.ConstOp(ir_type, attr).result,)
   else:
-    return (mhlo.ConstOp(ir_type, attr).result,)
+    if jax._src.lib.xla_extension_version >= 64:
+      return (mhlo.ConstantOp(attr).result,)
+    else:
+      return (mhlo.ConstantOp(ir_type, attr).result,)
 
 
 
