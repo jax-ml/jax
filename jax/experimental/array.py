@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import numpy as np
-from typing import Sequence, Tuple, Callable, Union, Optional
+from typing import Sequence, Tuple, Callable, Union, Optional, cast
 
 from jax import core
 from jax._src.config import config
@@ -64,6 +64,7 @@ class Array:
     # See https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
     # for what committed means.
     self._committed = committed
+    self._npy_value = None
 
     dtype = arrays[0].dtype
     if config.jax_enable_checks:
@@ -98,8 +99,12 @@ class Array:
     # Disable pytype because it does not recognize cached properties.
     return len(self.sharding.device_set) == len(self.sharding.addressable_devices)  # pytype:disable=wrong-arg-types
 
+  def __array__(self, dtype=None):
+    return np.asarray(self._value, dtype=dtype)
+
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
+    self._check_if_deleted()
     device_to_index = self.sharding.devices_indices_map(self.shape)
     device_to_replica_id = self.sharding.device_replica_id_map(self.shape)
 
@@ -115,24 +120,48 @@ class Array:
       out.append(Shard(device, index, rid, array))
     return out
 
-  def copy_to_host_async(self):
-    for s in self.addressable_shards:
-      if s.replica_id == 0:
-        s.data._arrays[0].copy_to_host_async()
+  def delete(self):
+    if self._arrays is None:
+      return
+    for buf in self._arrays:
+      buf.delete()
+    self._arrays = None
+    self._npy_value = None
 
+  def _check_if_deleted(self):
+    if self._arrays is None:
+      raise ValueError("Array has been deleted.")
+
+  def block_until_ready(self):
+    self._check_if_deleted()
+    for db in self._arrays:
+      db.block_until_ready()
+    return self
+
+  def copy_to_host_async(self):
+    self._check_if_deleted()
+    if self._npy_value is None:
+      for s in self.addressable_shards:
+        if s.replica_id == 0:
+          s.data._arrays[0].copy_to_host_async()
+
+  @property
   def _value(self) -> np.ndarray:
-    # TODO(yashkatariya): Cache the numpy value if its already set.
+    self._check_if_deleted()
     if not self.is_fully_addressable():
       raise RuntimeError("Fetching value for `jax.Array` that spans "
                          "non-addressable devices is not possible. You can use "
                          "`jax.experimental.multihost_utils.process_allgather` "
                          "for this use case.")
-    self.copy_to_host_async()
-    npy_value = np.empty(self.shape, self.dtype)
-    for s in self.addressable_shards:
-      if s.replica_id == 0:
-        npy_value[s.index] = s.data._arrays[0].to_py()  # type: ignore  # [union-attr]
-    return npy_value
+    if self._npy_value is None:
+      self.copy_to_host_async()
+      npy_value = np.empty(self.shape, self.dtype)
+      for s in self.addressable_shards:
+        if s.replica_id == 0:
+          npy_value[s.index] = s.data._arrays[0].to_py()  # type: ignore  # [union-attr]
+      self._npy_value = npy_value  # type: ignore
+    # https://docs.python.org/3/library/typing.html#typing.cast
+    return cast(np.ndarray, self._npy_value)
 
 
 def make_array_from_callback(shape: Shape, sharding: Sharding,

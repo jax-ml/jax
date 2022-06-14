@@ -53,7 +53,31 @@ class JaxArrayTest(jtu.JaxTestCase):
       input_shape = (8, 2)
       arr, global_data = create_array(
           input_shape, sharding.MeshPspecSharding(global_mesh, mesh_axes))
-      self.assertArraysEqual(arr._value(), global_data)
+      for s in arr.addressable_shards:
+        self.assertLen(s.data._arrays, 1)
+        self.assertArraysEqual(s.data._arrays[0], global_data[s.index])
+      self.assertArraysEqual(arr._value, global_data)
+      self.assertArraysEqual(arr._npy_value, global_data)
+
+  def test_array_delete(self):
+    with jax._src.config.jax_array(True):
+      global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+      input_shape = (8, 2)
+      arr, _ = create_array(
+          input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+      arr.delete()
+      with self.assertRaisesRegex(ValueError, 'Array has been deleted.'):
+        arr._check_if_deleted()
+      self.assertIsNone(arr._npy_value)
+      self.assertIsNone(arr._arrays)
+
+  def test_array_device_get(self):
+    with jax._src.config.jax_array(True):
+      global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+      input_shape = (8, 2)
+      arr, input_data = create_array(
+          input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+      self.assertArraysEqual(jax.device_get(arr), input_data)
 
 
 class ShardingTest(jtu.JaxTestCase):

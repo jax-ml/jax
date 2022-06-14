@@ -1329,7 +1329,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         for s in out.addressable_shards:
           self.assertLen(s.data._arrays, 1)
           self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
-        self.assertArraysEqual(out._value(), expected_matrix_mul)
+        self.assertArraysEqual(out._value, expected_matrix_mul)
 
   def test_non_array_input_error(self):
     input_shape = (8, 2)
@@ -1363,7 +1363,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         for s in out.addressable_shards:
           self.assertLen(s.data._arrays, 1)
           self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
-        self.assertArraysEqual(out._value(), input_data)
+        self.assertArraysEqual(out._value, input_data)
 
   @parameterized.named_parameters(
     ('mesh1', (4, 2), (2, 1), (2, 2), (1, 2), (8, 2)),
