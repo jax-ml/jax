@@ -123,7 +123,7 @@ def _qdwh(x, m, n, is_hermitian, max_iterations, eps):
   if eps is None:
     eps = float(jnp.finfo(x.dtype).eps)
   alpha = (jnp.sqrt(jnp.linalg.norm(x, ord=1)) *
-           jnp.sqrt(jnp.linalg.norm(x, ord=jnp.inf)))
+           jnp.sqrt(jnp.linalg.norm(x, ord=jnp.inf))).astype(x.dtype)
   l = eps
 
   u = x / alpha
