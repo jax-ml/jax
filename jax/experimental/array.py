@@ -34,11 +34,10 @@ Index = Tuple[slice, ...]
 ArrayLike = Union[np.ndarray, DeviceArray]
 
 
-@dataclasses.dataclass(frozen=True)
 class Shard:
   """A single data shard of an Array.
 
-  Args:
+  Attributes:
     device : Which device this shard resides on.
     index : The index into the global array of this shard.
     replica_id : Integer id indicating which replica of the global array this
@@ -46,11 +45,35 @@ class Shard:
       (i.e. when there’s only 1 replica).
     data : The data of this shard. None if ``device`` is non-local.
   """
-  device: Device
-  index: Index
-  replica_id: int
-  # None if this `Shard` lives on a non-addressable device.
-  data: Optional[Array] = None
+
+  def __init__(self, device: Device, sharding: Sharding, global_shape: Shape,
+               data: Optional[Array] = None):
+    self.device = device
+    self._sharding = sharding
+    self._global_shape = global_shape
+    self.data = data
+
+  @property
+  def index(self) -> Index:
+    try:
+      device_indices_fn = self._sharding.device_indices
+    except AttributeError:
+      raise ValueError('Cannot calculate indices from sharding: '
+                       f'{self._sharding}. Please create a device to index '
+                       'mapping for your sharding.') from None
+    index = device_indices_fn(self.device, self._global_shape)
+    assert index is not None
+    return index
+
+  @property
+  def replica_id(self) -> int:
+    try:
+      device_replica_id_fn = self._sharding.device_replica_id_map  # pytype: disable=attribute-error
+    except AttributeError:
+      raise ValueError('Cannot calculate replica ids from sharding: '
+                       f'{self._sharding}. Please create a device to replica id '
+                       'mapping for your sharding.') from None
+    return device_replica_id_fn(self._global_shape)[self.device]
 
 
 class Array:
@@ -101,23 +124,18 @@ class Array:
 
   def __array__(self, dtype=None):
     return np.asarray(self._value, dtype=dtype)
+    self._check_if_deleted()
 
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
-    self._check_if_deleted()
-    device_to_index = self.sharding.devices_indices_map(self.shape)
-    device_to_replica_id = self.sharding.device_replica_id_map(self.shape)
-
     out = []
     for db in self._arrays:
       db = pxla._set_aval(db)
       device = db.device()
-      index = device_to_index[device]
-      rid = device_to_replica_id[device]
       # Wrap the device arrays in `Array` until C++ returns an Array instead
       # of a DA.
       array = Array(db.shape, SingleDeviceSharding(device), [db], committed=True)
-      out.append(Shard(device, index, rid, array))
+      out.append(Shard(device, self.sharding, self.shape, array))
     return out
 
   def delete(self):
@@ -141,9 +159,19 @@ class Array:
   def copy_to_host_async(self):
     self._check_if_deleted()
     if self._npy_value is None:
+      try:
+        self.addressable_shards[0].replica_id
+        replica_id_exists = True
+      except ValueError:
+        replica_id_exists = False
+
       for s in self.addressable_shards:
-        if s.replica_id == 0:
-          s.data._arrays[0].copy_to_host_async()
+        if replica_id_exists:
+          replica_id = s.replica_id
+        else:
+          replica_id = 0
+        if replica_id == 0:
+          s.data._arrays[0].copy_to_host_async()  # pytype: disable=attribute-error
 
   @property
   def _value(self) -> np.ndarray:
@@ -156,8 +184,19 @@ class Array:
     if self._npy_value is None:
       self.copy_to_host_async()
       npy_value = np.empty(self.shape, self.dtype)
+
+      try:
+        self.addressable_shards[0].replica_id
+        replica_id_exists = True
+      except ValueError:
+        replica_id_exists = False
+
       for s in self.addressable_shards:
-        if s.replica_id == 0:
+        if replica_id_exists:
+          replica_id = s.replica_id
+        else:
+          replica_id = 0
+        if replica_id == 0:
           npy_value[s.index] = s.data._arrays[0].to_py()  # type: ignore  # [union-attr]
       self._npy_value = npy_value  # type: ignore
     # https://docs.python.org/3/library/typing.html#typing.cast
