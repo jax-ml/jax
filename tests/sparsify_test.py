@@ -20,6 +20,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
+import jax
 from jax import config, jit, lax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
@@ -129,6 +130,7 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(args[0], out[0])
     self.assertBcooIdentical(args[1], out[1])
 
+  @jax.numpy_dtype_promotion('standard')  # explicitly exercises implicit dtype promotion.
   def testSparsify(self):
     M_dense = jnp.arange(24).reshape(4, 6)
     M_sparse = BCOO.fromdense(M_dense)
@@ -159,7 +161,7 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertAllClose(result_sparse.todense(), result_dense)
 
   def testSparseMatmul(self):
-    X = jnp.arange(16).reshape(4, 4)
+    X = jnp.arange(16.0).reshape(4, 4)
     Xsp = BCOO.fromdense(X)
     Y = jnp.ones(4)
     Ysp = BCOO.fromdense(Y)
@@ -176,7 +178,7 @@ class SparsifyTest(jtu.JaxTestCase):
     result_dense = operator.matmul(Y, X)
     self.assertAllClose(result_sparse, result_dense)
 
-    # spdot_general
+  # spdot_general
     result_sparse = self.sparsify(operator.matmul)(Xsp, Ysp)
     result_dense = operator.matmul(X, Y)
     self.assertAllClose(result_sparse.todense(), result_dense)
@@ -466,8 +468,9 @@ class SparsifyTest(jtu.JaxTestCase):
     M = jnp.arange(25).reshape(5, 5)
     M_bcoo = BCOO.fromdense(M)
 
-    result_dense = func(M, x)
-    result_sparse = self.sparsify(func)(M_bcoo, x)
+    with jax.numpy_dtype_promotion('standard'):
+      result_dense = func(M, x)
+      result_sparse = self.sparsify(func)(M_bcoo, x)
 
     self.assertArraysAllClose(result_dense, result_sparse)
 
