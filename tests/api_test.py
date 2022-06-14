@@ -457,6 +457,19 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     python_should_be_executing = False
     self.jit(f)(3)
 
+  def test_jit_cache_clear(self):
+    @self.jit
+    def f(x, y): return x + y
+
+    client = jax.devices()[0].client
+    num_live_initial = len(client.live_executables())
+    f(1, 2).block_until_ready()
+    num_live = len(client.live_executables())
+    self.assertEqual(num_live_initial + 1, num_live)
+    f.clear_cache()
+    num_live = len(client.live_executables())
+    self.assertEqual(num_live_initial, num_live)
+
   def test_jit_shallow_copy(self):
     def f(x):
       return copy.copy(x)
