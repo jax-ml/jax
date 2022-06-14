@@ -89,9 +89,9 @@ def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
 def remat_impl(*args,
                call_jaxpr: Optional[core.Jaxpr] = None,
                jaxpr: Optional[core.Jaxpr] = None,
-               platform: str,
                prevent_cse: bool, differentiated: bool,
                policy,
+               is_gpu_platform: bool = False,
                concrete: bool = False,
                name: str = "checkpoint"):
   # Support either "jaxpr" (for remat2) and "call_jaxpr" (for remat)
@@ -106,7 +106,7 @@ def remat_impl(*args,
   if differentiated and prevent_cse:
     if config.jax_remat_opt_barrier:
       translation_rule = _remat_translation_using_opt_barrier
-    elif platform == 'gpu':
+    elif is_gpu_platform:
       translation_rule = _remat_translation_using_while
     else:
       translation_rule = _remat_translation_using_cond
@@ -115,13 +115,14 @@ def remat_impl(*args,
 
   return jax.named_call(translation_rule, name=wrap_name(name, "remat"))(*args, jaxpr=jaxpr)
 
-for platform in ("cpu", "gpu", "tpu"):
-  for remat_primitive in (pe.remat_call_p, ad_checkpoint.remat_p):  # type: ignore
-    mlir.register_lowering(remat_primitive,
-                           mlir.lower_fun(partial(remat_impl,
-                                                   platform=platform),
-                                          multiple_results=True),
-                           platform=platform)
+for remat_primitive in (pe.remat_call_p, ad_checkpoint.remat_p):  # type: ignore
+  mlir.register_lowering(remat_primitive,
+                         mlir.lower_fun(remat_impl, multiple_results=True))
+  mlir.register_lowering(remat_primitive,
+                         mlir.lower_fun(partial(remat_impl,
+                                                is_gpu_platform=True),
+                                        multiple_results=True),
+                         platform="gpu")
 
 
 def _optimization_barrier_abstract_eval(*args):
