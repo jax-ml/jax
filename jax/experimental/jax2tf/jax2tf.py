@@ -2374,7 +2374,7 @@ tf_impl_with_avals[lax.scan_p] = _convert_jax_impl(
 tf_impl_with_avals[ad_checkpoint.remat_p] = \
   _convert_jax_impl(partial(lax_control_flow.remat_impl,
                             # TODO: jax2tf cannot discriminate by platform
-                            platform="cpu"),
+                            is_gpu_platform=False),
                     multiple_results=True,
                     extra_name_stack="checkpoint")
 
