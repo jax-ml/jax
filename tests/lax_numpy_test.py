@@ -893,6 +893,42 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
+        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
+            rec.test_name.capitalize(),
+            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
+        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
+        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
+        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+        for shape in rec.shapes if np.prod(shape) == 0
+        for dtype in rec.dtypes
+        for keepdims in [False, True]
+        for axis in range(-len(shape), len(shape)) if shape[axis] >= 1)
+      for rec in JAX_REDUCER_INITIAL_RECORDS))
+  def testReducerNoInitialZeroDims(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+                                   keepdims, inexact):
+    rng = rng_factory(self.rng())
+    is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom <= 0 for slice.*")
+    @jtu.ignore_warning(category=np.ComplexWarning)
+    def np_fun(x):
+      x = np.asarray(x)
+      if inexact:
+        x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+      x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
+      res = np_op(x_cast, axis, keepdims=keepdims)
+      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
+      return res
+
+    jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
+    jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
+    args_maker = lambda: [rng(shape, dtype)]
+    tol = {jnp.bfloat16: 3E-2}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
         {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_initial={}_whereshape={}".format(
             rec.test_name.capitalize(),
             jtu.format_shape_dtype_string(shape, dtype), axis, keepdims, initial,
