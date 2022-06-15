@@ -1749,6 +1749,44 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_reducedims={}_initval={}_prim={}"
+       .format(op.__name__, shape, dims, init_val, prim),
+       "op": op, "init_val": init_val, "shape": shape, "dims": dims, "prim": prim}
+      for init_val, op , prim in [
+        (True, lax.bitwise_and, jax.lax.reduce_and_p),
+        (False, lax.bitwise_or, jax.lax.reduce_or_p),
+        (False, lax.bitwise_xor, jax.lax.reduce_xor_p),
+      ]
+      for shape, dims in [
+          [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
+          [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
+      ]))
+  def testReduceBoolean(self, op, init_val, shape, dims, prim):
+    def reference_fun(operand, init_value):
+      np_op = getattr(np, op.__name__)
+      return np_op.reduce(operand, axis=dims, initial=init_val)
+
+    dtype = np.bool_
+    rng = jtu.rand_bool(self.rng())
+    init_val = np.asarray(init_val, dtype=dtype)
+    fun = lambda operand, init_val: lax.reduce(operand, init_val, op, dims)
+    args_maker = lambda: [rng(shape, dtype), init_val]
+    self._CompileAndCheck(fun, args_maker)
+    self._CheckAgainstNumpy(reference_fun, fun, args_maker)
+
+    # recheck with a static init_val
+    fun = lambda operand: lax.reduce(operand, init_val, op, dims)
+    reference_fun = partial(reference_fun, init_value=init_val)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CompileAndCheck(fun, args_maker)
+    self._CheckAgainstNumpy(reference_fun, fun, args_maker)
+
+    # check that the correct monoid reducer primitive is used inside the
+    # jaxpr. This requires the init_val (monoid identity element) to be static
+    jaxpr = jax.make_jaxpr(fun)(rng(shape, dtype))
+    self.assertEqual(jaxpr.eqns[0].primitive, prim)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}.{}_arr_weak_type={}_init_weak_type={}"
        .format(op_namespace.__name__, op, arr_weak_type, init_weak_type),
        "op": op, "op_namespace": op_namespace, "arr_weak_type": arr_weak_type, "init_weak_type": init_weak_type}

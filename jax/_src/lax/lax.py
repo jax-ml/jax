@@ -983,6 +983,8 @@ def _get_monoid_reducer(monoid_op: Callable,
       return np.equal(aval.val, _get_max_identity(dtype)) and _reduce_or
     elif monoid_op is bitwise_and and dtype == np.bool_:
       return np.equal(aval.val, _get_min_identity(dtype)) and _reduce_and
+    elif monoid_op is bitwise_xor and dtype == np.bool_:
+      return np.equal(aval.val, _get_max_identity(dtype)) and _reduce_xor
     elif monoid_op is max:
       return np.equal(aval.val, _get_max_identity(dtype)) and _reduce_max
     elif monoid_op is min:
@@ -1023,6 +1025,8 @@ def _reduce_or(operand: Array, axes: Sequence[int]) -> Array:
 def _reduce_and(operand: Array, axes: Sequence[int]) -> Array:
   return reduce_and_p.bind(operand, axes=tuple(axes))
 
+def _reduce_xor(operand: Array, axes: Sequence[int]) -> Array:
+  return reduce_xor_p.bind(operand, axes=tuple(axes))
 
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Union[Array, Tuple[Array, ...]]:
@@ -3618,6 +3622,12 @@ reduce_and_p = standard_primitive(
 batching.defreducer(reduce_and_p)
 
 
+reduce_xor_p = standard_primitive(
+    _reduce_logical_shape_rule, _fixed_dtype(np.bool_), 'reduce_xor',
+    weak_type_rule=_strip_weak_type)
+batching.defreducer(reduce_xor_p)
+
+
 def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   aval_out, = ctx.avals_out
   dtype = aval_out.dtype
@@ -3639,6 +3649,8 @@ mlir.register_lowering(reduce_or_p, partial(_unary_reduce_lower, mhlo.OrOp,
                                          lambda dtype: np.array(False, dtype)))
 mlir.register_lowering(reduce_and_p, partial(_unary_reduce_lower, mhlo.AndOp,
                                           lambda dtype: np.array(True, dtype)))
+mlir.register_lowering(reduce_xor_p, partial(_unary_reduce_lower, mhlo.XorOp,
+                                          lambda dtype: np.array(False, dtype)))
 mlir.register_lowering(reduce_min_p, partial(_unary_reduce_lower, mlir.min_mhlo,
                                          _get_min_identity))
 mlir.register_lowering(reduce_max_p, partial(_unary_reduce_lower, mlir.max_mhlo,

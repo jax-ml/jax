@@ -182,6 +182,7 @@ from jax._src.lax.lax import (
   reduce_precision_p as reduce_precision_p,
   reduce_prod_p as reduce_prod_p,
   reduce_sum_p as reduce_sum_p,
+  reduce_xor_p as reduce_xor_p,
   regularized_incomplete_beta_p as regularized_incomplete_beta_p,
   rem as rem,
   rem_p as rem_p,
