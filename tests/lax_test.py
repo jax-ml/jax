@@ -72,7 +72,10 @@ preferred_type_combinations = [
   (np.float64, np.float64), (np.int8, np.int8), (np.int8, np.int16), (np.int8, np.int32),
   (np.int8, np.int64), (np.int16, np.int16), (np.int16, np.int32), (np.int16, np.int64),
   (np.int32, np.int32), (np.int32, np.int64), (np.int64, np.int64),
-  (np.complex64, np.complex64), (np.complex64, np.complex128), (np.complex128, np.complex128)]
+  (np.complex64, np.complex64), (np.complex64, np.complex128), (np.complex128, np.complex128),
+  (np.int8, np.float16), (np.int8, dtypes.bfloat16), (np.int8, np.float32), (np.int8, np.float64),
+  (np.int16, np.float16), (np.int16, dtypes.bfloat16), (np.int16, np.float32), (np.int16, np.float64),
+  (np.int32, np.float32), (np.int32, np.float64), (np.int64, np.float64)]
 
 
 OpRecord = collections.namedtuple(
