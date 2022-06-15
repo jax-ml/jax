@@ -16,7 +16,6 @@ import collections
 import functools
 import re
 import types
-import pprint
 
 import unittest
 
@@ -575,11 +574,11 @@ class PyTreeWalkTest(jtu.JaxTestCase):
               3)
     self.assertEqual(out, expect)
 
+    print('\nobj', obj)
     tree_util.tree_print(obj, 'obj/')
 
     for i,tree in enumerate(TREES):
-      print(f'TREES[{i}]: ', end='')
-      pprint.pp(tree[0])
+      print(f'TREES[{i}]: ', tree[0])
       tree_util.tree_print(tree[0], f'  foo/')
 
   @parameterized.parameters(*TREES)
