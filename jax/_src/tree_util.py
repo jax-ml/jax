@@ -584,7 +584,7 @@ def tree_labels(td, leaves):
     elif isinstance(node_data, dict):
       labels = node_data.keys
 
-    # TODO: (awf) Remove 'if TYPE_CHECKING' above, and use pytree.PyTreeDef? 
+    # TODO: (awf) Remove 'if TYPE_CHECKING' above, and use pytree.PyTreeDef?
     elif isinstance(node_data, xla_extension.PyTreeDef):
       if node_data.children() == [] and node_data.num_nodes == 1  and node_data.num_leaves == 1:
         # Pass through to the single leaf
@@ -619,11 +619,11 @@ def tree_labels(td, leaves):
 
 def tree_print(obj, prefix=''):
   """Print tree of OBJ, one line per leaf, with path-like labels.
-  
+
   Args:
     obj: Object to print, assumed to be jax.tree_* compatible.
     prefix: a string to print in front of each path.
-  
+
   Example:
     >>> foo = [3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={'baz': 34})]
     >>> tree_print(foo, 'foo/')
