@@ -2645,7 +2645,7 @@ class LaxTest(jtu.JaxTestCase):
     result = lax.reduce(operands, init_values,
                         lambda x, y: tree_util.tree_map(lax.add, x, y),
                         [0])
-    self.assertDictEqual(result, {'x': [5., 10.]})
+    self.assertDictEqual(result, {'x': [5., 10]})
 
   def test_reduce_with_mismatched_pytrees_errors(self):
     operands = {'x': np.ones(5)}
@@ -2951,10 +2951,11 @@ class LazyConstantTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, x)
 
   def testLog1pNearOne(self):
+    expected = np.log1p(np.float32(1e-5))
     np.testing.assert_array_almost_equal_nulp(
-        np.log1p(np.float32(1e-5)), lax.log1p(np.float32(1e-5)))
+        expected.astype(np.float32), lax.log1p(np.float32(1e-5)))
     np.testing.assert_array_almost_equal_nulp(
-        np.log1p(np.float32(1e-5)), lax.log1p(np.complex64(1e-5)))
+        expected.astype(np.complex64), lax.log1p(np.complex64(1e-5)))
 
 
 class LaxNamedShapeTest(jtu.JaxTestCase):
