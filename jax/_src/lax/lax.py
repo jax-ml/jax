@@ -1016,21 +1016,29 @@ def _get_monoid_reducer(monoid_op: Callable,
   aval = core.get_aval(x)
   dtype = _dtype(x)
   if (type(aval) is ConcreteArray) and aval.shape == ():
+    # allow bitwise reductions for boolean and integer types
+    _is_intlike = dtype == np.bool_ or dtypes.issubdtype(dtype, np.integer)
     if monoid_op is add:
       return np.equal(aval.val, 0) and partial(_reduce_sum)
     elif monoid_op is mul:
       return np.equal(aval.val, 1) and _reduce_prod
-    elif monoid_op is bitwise_or and dtype == np.bool_:
-      return np.equal(aval.val, _get_max_identity(dtype)) and _reduce_or
-    elif monoid_op is bitwise_and and dtype == np.bool_:
-      return np.equal(aval.val, _get_min_identity(dtype)) and _reduce_and
-    elif monoid_op is bitwise_xor and dtype == np.bool_:
-      return np.equal(aval.val, _get_max_identity(dtype)) and _reduce_xor
+    elif monoid_op is bitwise_or and _is_intlike:
+      return np.equal(aval.val, _get_bitwise_or_identity(dtype)) and _reduce_or
+    elif monoid_op is bitwise_and and _is_intlike:
+      return np.equal(aval.val, _get_bitwise_and_identity(dtype)) and _reduce_and
+    elif monoid_op is bitwise_xor and _is_intlike:
+      return np.equal(aval.val, _get_bitwise_or_identity(dtype)) and _reduce_xor
     elif monoid_op is max:
       return np.equal(aval.val, _get_max_identity(dtype)) and _reduce_max
     elif monoid_op is min:
       return np.equal(aval.val, _get_min_identity(dtype)) and _reduce_min
   return None
+
+def _get_bitwise_and_identity(dtype: DType) -> Array:
+  return np.array(-1, dtype)
+
+def _get_bitwise_or_identity(dtype: DType) -> Array:
+  return np.array(0, dtype)
 
 def _get_max_identity(dtype: DType) -> Array:
   if dtypes.issubdtype(dtype, np.inexact):
@@ -3761,25 +3769,24 @@ mlir.register_lowering(argmax_p, mlir.cache_lowering(mlir.lower_fun(
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
-  if operand.dtype != np.bool_:
-    msg = "logical reduction requires operand dtype bool, got {}."
-    raise TypeError(msg.format(operand.dtype))
+  if operand.dtype != np.bool_ and not np.issubdtype(operand.dtype, np.integer):
+    raise TypeError(f"logical reduction requires operand dtype bool or int, got {operand.dtype}.")
   return tuple(np.delete(operand.shape, axes))
 
 reduce_or_p = standard_primitive(
-    _reduce_logical_shape_rule, _fixed_dtype(np.bool_), 'reduce_or',
+    _reduce_logical_shape_rule, _input_dtype, 'reduce_or',
     weak_type_rule=_strip_weak_type)
 batching.defreducer(reduce_or_p)
 
 
 reduce_and_p = standard_primitive(
-    _reduce_logical_shape_rule, _fixed_dtype(np.bool_), 'reduce_and',
+    _reduce_logical_shape_rule, _input_dtype, 'reduce_and',
     weak_type_rule=_strip_weak_type)
 batching.defreducer(reduce_and_p)
 
 
 reduce_xor_p = standard_primitive(
-    _reduce_logical_shape_rule, _fixed_dtype(np.bool_), 'reduce_xor',
+    _reduce_logical_shape_rule, _input_dtype, 'reduce_xor',
     weak_type_rule=_strip_weak_type)
 batching.defreducer(reduce_xor_p)
 
@@ -3802,11 +3809,11 @@ mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, mhlo.AddOp,
 mlir.register_lowering(reduce_prod_p, partial(_unary_reduce_lower, mhlo.MulOp,
                                           lambda dtype: np.array(1, dtype)))
 mlir.register_lowering(reduce_or_p, partial(_unary_reduce_lower, mhlo.OrOp,
-                                         lambda dtype: np.array(False, dtype)))
+                                          _get_bitwise_or_identity))
 mlir.register_lowering(reduce_and_p, partial(_unary_reduce_lower, mhlo.AndOp,
-                                          lambda dtype: np.array(True, dtype)))
+                                          _get_bitwise_and_identity))
 mlir.register_lowering(reduce_xor_p, partial(_unary_reduce_lower, mhlo.XorOp,
-                                          lambda dtype: np.array(False, dtype)))
+                                          _get_bitwise_or_identity))
 mlir.register_lowering(reduce_min_p, partial(_unary_reduce_lower, mlir.min_mhlo,
                                          _get_min_identity))
 mlir.register_lowering(reduce_max_p, partial(_unary_reduce_lower, mlir.max_mhlo,

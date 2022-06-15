@@ -183,6 +183,27 @@ LAX_OPS = [
     op_record("lt", 2, default_dtypes, jtu.rand_small),
 ]
 
+ReducerOpRecord = collections.namedtuple(
+  "ReducerOpRecord", ["op", "reference_op", "init_val", "dtypes", "primitive"]
+)
+
+LAX_REDUCE_OPS = [
+  ReducerOpRecord(lax.add, np.add, 0, default_dtypes, lax.reduce_sum_p),
+  ReducerOpRecord(lax.mul, np.multiply, 1, default_dtypes, lax.reduce_prod_p),
+  ReducerOpRecord(lax.max, np.maximum, 0, uint_dtypes + bool_dtypes, lax.reduce_max_p),
+  ReducerOpRecord(lax.max, np.maximum, -np.inf, float_dtypes, lax.reduce_max_p),
+  ReducerOpRecord(lax.max, np.maximum, dtypes.iinfo(np.int32).min, [np.int32], lax.reduce_max_p),
+  ReducerOpRecord(lax.max, np.maximum, dtypes.iinfo(np.int64).min, [np.int64], lax.reduce_max_p),
+  ReducerOpRecord(lax.min, np.minimum, np.inf, float_dtypes, lax.reduce_min_p),
+  ReducerOpRecord(lax.min, np.minimum, dtypes.iinfo(np.int32).max, [np.int32], lax.reduce_min_p),
+  ReducerOpRecord(lax.min, np.minimum, dtypes.iinfo(np.int64).max, [np.int64], lax.reduce_min_p),
+  ReducerOpRecord(lax.min, np.minimum, dtypes.iinfo(np.uint32).max, [np.uint32], lax.reduce_min_p),
+  ReducerOpRecord(lax.min, np.minimum, dtypes.iinfo(np.uint64).max, [np.uint64], lax.reduce_min_p),
+  ReducerOpRecord(lax.bitwise_and, np.bitwise_and, -1, int_dtypes + uint_dtypes + bool_dtypes, lax.reduce_and_p),
+  ReducerOpRecord(lax.bitwise_or, np.bitwise_or, 0, int_dtypes + uint_dtypes + bool_dtypes, lax.reduce_or_p),
+  ReducerOpRecord(lax.bitwise_xor, np.bitwise_xor, 0, int_dtypes + uint_dtypes + bool_dtypes, lax.reduce_xor_p),
+]
+
 
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
@@ -1715,28 +1736,28 @@ class LaxTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_inshape={}_reducedims={}_initval={}"
-       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims,
-               init_val),
-       "op": op, "init_val": init_val, "shape": shape, "dtype": dtype, "dims": dims}
-      for init_val, op, types in [
-          (0, lax.add, default_dtypes),
-          (1, lax.mul, default_dtypes),
-          (0, lax.max, all_dtypes), # non-monoidal
-          (-np.inf, lax.max, float_dtypes),
-          (dtypes.iinfo(np.int32).min, lax.max, [np.int32]),
-          (dtypes.iinfo(np.int64).min, lax.max, [np.int64]),
-          (np.inf, lax.min, float_dtypes),
-          (dtypes.iinfo(np.int32).max, lax.min, [np.int32]),
-          (dtypes.iinfo(np.int64).max, lax.min, [np.int64]),
-          (dtypes.iinfo(np.uint32).max, lax.min, [np.uint32]),
-          (dtypes.iinfo(np.uint64).max, lax.min, [np.uint64]),
-      ]
-      for dtype in types
+       .format(rec.op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims,
+               rec.init_val),
+       "op": rec.op, "reference_op": rec.reference_op, "init_val": rec.init_val,
+       "shape": shape, "dtype": dtype, "dims": dims, "primitive": rec.primitive}
+      for rec in LAX_REDUCE_OPS
+      for dtype in rec.dtypes
       for shape, dims in [
           [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
           [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
       ]))
-  def testReduce(self, op, init_val, shape, dtype, dims):
+  def testReduce(self, op, reference_op, init_val, shape, dtype, dims, primitive):
+    if not config.x64_enabled and dtype in (np.float64, np.int64, np.uint64):
+      raise SkipTest("x64 mode is disabled.")
+    def reference_fun(operand):
+      if hasattr(reference_op, "reduce"):
+        initial = np.array(init_val, dtype=dtype)
+        result = reference_op.reduce(operand, axis=dims, initial=initial)
+      else:
+        result = reference_op(operand, axis=dims)
+
+      return result.astype(dtype)
+
     rng_factory = (jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
                    else jtu.rand_small)
     rng = rng_factory(self.rng())
@@ -1750,44 +1771,12 @@ class LaxTest(jtu.JaxTestCase):
     fun = lambda operand: lax.reduce(operand, init_val, op, dims)
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_shape={}_reducedims={}_initval={}_prim={}"
-       .format(op.__name__, shape, dims, init_val, prim),
-       "op": op, "init_val": init_val, "shape": shape, "dims": dims, "prim": prim}
-      for init_val, op , prim in [
-        (True, lax.bitwise_and, jax.lax.reduce_and_p),
-        (False, lax.bitwise_or, jax.lax.reduce_or_p),
-        (False, lax.bitwise_xor, jax.lax.reduce_xor_p),
-      ]
-      for shape, dims in [
-          [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
-          [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
-      ]))
-  def testReduceBoolean(self, op, init_val, shape, dims, prim):
-    def reference_fun(operand, init_value):
-      np_op = getattr(np, op.__name__)
-      return np_op.reduce(operand, axis=dims, initial=init_val)
-
-    dtype = np.bool_
-    rng = jtu.rand_bool(self.rng())
-    init_val = np.asarray(init_val, dtype=dtype)
-    fun = lambda operand, init_val: lax.reduce(operand, init_val, op, dims)
-    args_maker = lambda: [rng(shape, dtype), init_val]
-    self._CompileAndCheck(fun, args_maker)
     self._CheckAgainstNumpy(reference_fun, fun, args_maker)
 
-    # recheck with a static init_val
-    fun = lambda operand: lax.reduce(operand, init_val, op, dims)
-    reference_fun = partial(reference_fun, init_value=init_val)
-    args_maker = lambda: [rng(shape, dtype)]
-    self._CompileAndCheck(fun, args_maker)
-    self._CheckAgainstNumpy(reference_fun, fun, args_maker)
-
-    # check that the correct monoid reducer primitive is used inside the
-    # jaxpr. This requires the init_val (monoid identity element) to be static
+    # check that the correct monoid reducer primitive is used inside the jaxpr.
+    # This requires the init_val (monoid identity element) to be static
     jaxpr = jax.make_jaxpr(fun)(rng(shape, dtype))
-    self.assertEqual(jaxpr.eqns[0].primitive, prim)
+    self.assertEqual(jaxpr.eqns[0].primitive, primitive)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}.{}_arr_weak_type={}_init_weak_type={}"
