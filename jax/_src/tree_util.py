@@ -203,6 +203,11 @@ def tree_multimap(*args, **kwargs):
                 'instead as a drop-in replacement.', FutureWarning)
   return tree_map(*args, **kwargs)
 
+# TODO(mattjj,phawkins): consider removing this function
+def _process_pytree(process_node, tree):
+  leaves, treedef = pytree.flatten(tree)
+  return treedef.walk(lambda node, data: process_node(node), None, leaves), treedef
+
 def build_tree(treedef, xs):
   return treedef.from_iterable_tree(xs)
 
@@ -539,3 +544,99 @@ def __getattr__(name):
     return _deprecate(globals()[name])
   else:
     raise AttributeError(f"module {__name__} has no attribute {name!r}")
+def tree_labels(td, leaves):
+  """Annotate tree leaves with paths.
+
+  Primarily motivated by printing (see tree_print), associate each leaf with a
+  symbolic path indicating how to get to that leaf from the tree root.
+
+  As there may be custom tree nodes, there is no guarantee that the paths
+  can be easily turned into executable code to rebuild the tree, but it allows
+  for easy examination of the leaves.
+
+  Args:
+    td, leaves: The outputs of tree_flatten
+
+  Returns:
+    An iterable over pairs of the form
+      (PATH, LEAF)
+    where PATH is a representation of the indexing/accessing needed to get
+    to LEAF from the object root.
+  """
+
+  def node_visit(xs,node_data):
+    return (xs, node_data)
+
+  def leaf_visit(x):
+    return (x, leaf_visit)
+
+  def recurse(prefix, xs, node_data):
+    if node_data is leaf_visit:
+      yield (prefix, xs)
+      return
+
+    if isinstance(node_data, (list, tuple)) and len(node_data) == len(xs):
+      labels = node_data
+
+    elif isinstance(node_data, tuple) and len(node_data) == 2 and node_data[0] == dict:
+      labels = node_data[1]
+
+    elif isinstance(node_data, dict):
+      labels = node_data.keys
+
+    # TODO: (awf) Remove 'if TYPE_CHECKING' above, and use pytree.PyTreeDef? 
+    elif isinstance(node_data, xla_extension.PyTreeDef):
+      if node_data.children() == [] and node_data.num_nodes == 1  and node_data.num_leaves == 1:
+        # Pass through to the single leaf
+        labels = ['-']
+      else:
+        # Short walk (not O(N^2)) to get labels from the PyTreeDef itself
+        labels = node_data.walk(lambda n,d: d, None, xs)
+        if labels is not None and len(labels) == 1:
+          labels = labels * len(xs)
+
+    elif hasattr(node_data, '_fields'):
+      # Same logic as
+      # https://github.com/tensorflow/tensorflow/blob/92c3ae0a003435bcfb6eed6e1a157732f00d85a8/tensorflow/compiler/xla/python/pytree.cc#L123
+      labels = node_data._fields
+
+    else:
+      if node_data is None:
+        labels = [f'{i}' for i in range(len(xs))]
+      else:
+        labels = [f'{node_data}[{i}]' for i in range(len(xs))]
+
+    if labels is not None and len(labels):
+      assert len(labels) == len(xs)
+      for (x,label) in zip(xs, labels):
+        yield from recurse(prefix + [label], x[0], x[1])
+    else:
+      yield from recurse(prefix, xs, leaf_visit)
+
+  out = td.walk(node_visit, leaf_visit, leaves)
+  yield from recurse([], out[0], out[1])
+
+
+def tree_print(obj, prefix=''):
+  """Print tree of OBJ, one line per leaf, with path-like labels.
+  
+  Args:
+    obj: Object to print, assumed to be jax.tree_* compatible.
+    prefix: a string to print in front of each path.
+  
+  Example:
+    >>> foo = [3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={'baz': 34})]
+    >>> tree_print(foo, 'foo/')
+    foo/0 = 3
+    foo/1/foo/0 = 3
+    foo/1/foo/1/foo = 3
+    foo/1/foo/1/bar = ()
+    foo/1/bar/baz = 34
+
+  One might prefer to use pprint, but pprint has trouble with pybind, which looks noneasy to fix
+  - https://github.com/pybind/pybind11/issues/2722#issuecomment-757556621
+  """
+
+  leaves,td = pytree.flatten(obj)
+  for path,leaf in tree_labels(td, leaves):
+    print(prefix + '/'.join(map(str,path)) + ' =', leaf)
