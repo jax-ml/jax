@@ -2461,6 +2461,13 @@ class APITest(jtu.JaxTestCase):
     for x, y in zip(xs, ys):
       self.assertAllClose(x, y)
 
+  def test_dtype_from_builtin_types(self):
+    for dtype in [bool, int, float, complex]:
+      with warnings.catch_warnings(record=True) as caught_warnings:
+        x = jnp.array(0, dtype=dtype)
+      self.assertEmpty(caught_warnings)
+      assert x.dtype == dtypes.canonicalize_dtype(dtype)
+
   def test_dtype_warning(self):
     # cf. issue #1230
     if config.x64_enabled:
