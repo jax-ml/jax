@@ -14,10 +14,17 @@ http_archive(
     ],
 )
 
-# For development, one can use a local TF repository instead.
+# For development, one often wants to make changes to the TF repository as well
+# as the JAX repository. You can override the pinned repository above with a
+# local checkout by either:
+# a) overriding the TF repository on the build.py command line by passing a flag
+#    like:
+#    python build/build.py --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow
+#    or
+# b) by commenting out the http_archive above and uncommenting the following:
 # local_repository(
 #    name = "org_tensorflow",
-#    path = "tensorflow",
+#    path = "/path/to/tensorflow",
 # )
 
 load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
