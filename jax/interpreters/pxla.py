@@ -126,6 +126,11 @@ def sharding_spec_mesh_shape(self):
   return tuple(sharded_axis_sizes[a.axis] if isinstance(a, ShardedAxis) else a.replicas
                for a in self.mesh_mapping)
 
+
+def _get_logical_mesh_ids(mesh_shape):
+  return np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+
+
 def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType] = {}):
   """Converts a ShardingSpec to an OpSharding proto.
 
@@ -136,7 +141,7 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/experimental/xla_sharding/xla_sharding.py
   """
   mesh_shape = cast(Tuple[int, ...], self.mesh_shape)
-  mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+  mesh = _get_logical_mesh_ids(self.mesh_shape)
 
   sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
   replicated_maxes = []  # lists mesh axis identifiers to replicate over
@@ -2397,7 +2402,8 @@ class MeshExecutable(stages.Executable):
         # Set by default. The decision to use them is taken in
         # `xb.get_compile_options`.
         auto_spmd_partitioning_mesh_shape=list(mesh.shape.values()),
-        auto_spmd_partitioning_mesh_ids=mesh.device_ids.reshape(-1),
+        auto_spmd_partitioning_mesh_ids=_get_logical_mesh_ids(
+            list(mesh.shape.values())).reshape(-1),
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
     compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
