@@ -30,19 +30,12 @@ from jax.interpreters import batching
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 from jax._src.lib import pocketfft
+from jax._src.numpy.util import _promote_dtypes_complex, _promote_dtypes_inexact
 
 __all__ = [
   "fft",
   "fft_p",
 ]
-
-def _promote_to_complex(arg):
-  dtype = dtypes.result_type(arg, np.complex64)
-  return lax.convert_element_type(arg, dtype)
-
-def _promote_to_real(arg):
-  dtype = dtypes.result_type(arg, np.float32)
-  return lax.convert_element_type(arg, dtype)
 
 def _str_to_fft_type(s: str) -> xla_client.FftType:
   if s == "FFT":
@@ -68,9 +61,9 @@ def fft(x, fft_type: Union[xla_client.FftType, str], fft_lengths: Sequence[int])
   if typ == xla_client.FftType.RFFT:
     if np.iscomplexobj(x):
       raise ValueError("only real valued inputs supported for rfft")
-    x = _promote_to_real(x)
+    x, = _promote_dtypes_inexact(x)
   else:
-    x = _promote_to_complex(x)
+    x, = _promote_dtypes_complex(x)
   if len(fft_lengths) == 0:
     # XLA FFT doesn't support 0-rank.
     return x
@@ -137,7 +130,7 @@ def _irfft_transpose(t, fft_lengths):
   x = fft(t, xla_client.FftType.RFFT, fft_lengths)
   n = x.shape[-1]
   is_odd = fft_lengths[-1] % 2
-  full = partial(lax.full_like, t, dtype=t.dtype)
+  full = partial(lax.full_like, t, dtype=x.dtype)
   mask = lax.concatenate(
       [full(1.0, shape=(1,)),
        full(2.0, shape=(n - 2 + is_odd,)),

@@ -17,9 +17,10 @@ from functools import partial
 import scipy.fftpack as osp_fft  # TODO use scipy.fft once scipy>=1.4.0 is used
 from jax import lax, numpy as jnp
 from jax._src.util import canonicalize_axis
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import _wraps, _promote_dtypes_complex
 
 def _W4(N, k):
+  N, k = _promote_dtypes_complex(N, k)
   return jnp.exp(-.5j * jnp.pi * k / N)
 
 def _dct_interleave(x, axis):
@@ -49,7 +50,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None):
   N = x.shape[axis]
   v = _dct_interleave(x, axis)
   V = jnp.fft.fft(v, axis=axis)
-  k = lax.expand_dims(jnp.arange(N), [a for a in range(x.ndim) if a != axis])
+  k = lax.expand_dims(jnp.arange(N, dtype=V.real.dtype), [a for a in range(x.ndim) if a != axis])
   out = V * _W4(N, k)
   out = 2 * out.real
   if norm == 'ortho':
@@ -62,8 +63,10 @@ def _dct2(x, axes, norm):
   N1, N2 = x.shape[axis1], x.shape[axis2]
   v = _dct_interleave(_dct_interleave(x, axis1), axis2)
   V = jnp.fft.fftn(v, axes=axes)
-  k1 = lax.expand_dims(jnp.arange(N1), [a for a in range(x.ndim) if a != axis1])
-  k2 = lax.expand_dims(jnp.arange(N2), [a for a in range(x.ndim) if a != axis2])
+  k1 = lax.expand_dims(jnp.arange(N1, dtype=V.dtype),
+                       [a for a in range(x.ndim) if a != axis1])
+  k2 = lax.expand_dims(jnp.arange(N2, dtype=V.dtype),
+                       [a for a in range(x.ndim) if a != axis2])
   out = _W4(N1, k1) * (_W4(N2, k2) * V + _W4(N2, -k2) * jnp.roll(jnp.flip(V, axis=axis2), shift=1, axis=axis2))
   out = 2 * out.real
   if norm == 'ortho':
