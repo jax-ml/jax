@@ -555,9 +555,9 @@ class PyTreeWalkTest(jtu.JaxTestCase):
     x.x2 = {'x21': '2a', 'x22': y}
 
     obj = {'a1': 'leaf-a1',
-           'a2':{'b1': [111,2,3], 
-                 'b2': jnp.ones((2,3)), 
-                 'b3': {'c1': 33, 
+           'a2':{'b1': [111,2,3],
+                 'b2': jnp.ones((2,3)),
+                 'b3': {'c1': 33,
                         'c2': (44,55)}},
            'a3': x,
            'a4':'fred'}
@@ -568,9 +568,9 @@ class PyTreeWalkTest(jtu.JaxTestCase):
     self.assertEqual(out, len(leaves))
 
     out = td.walk(lambda n,node_data:n, lambda x:3, leaves)
-    expect = (3, 
-              ((3, 3, 3), 3, (3, (3, 3))), 
-              ((3, ((3, 3),), 3), (3, ((3, 3),))), 
+    expect = (3,
+              ((3, 3, 3), 3, (3, (3, 3))),
+              ((3, ((3, 3),), 3), (3, ((3, 3),))),
               3)
     self.assertEqual(out, expect)
 
@@ -579,7 +579,7 @@ class PyTreeWalkTest(jtu.JaxTestCase):
 
     for i,tree in enumerate(TREES):
       print(f'TREES[{i}]: ', tree[0])
-      tree_util.tree_print(tree[0], f'  foo/')
+      tree_util.tree_print(tree[0], '  foo/')
 
   @parameterized.parameters(*TREES)
   def testPrintedAllLeaves(self, obj):
@@ -591,7 +591,7 @@ class PyTreeWalkTest(jtu.JaxTestCase):
       leaves_printed = [x for x in leaves_printed if x != ()]
       # Ensure all leaves were printed, in the correct order
       assert leaves_printed == leaf_indices
-          
+
 
 
 if __name__ == "__main__":
