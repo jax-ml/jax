@@ -29,13 +29,16 @@ import jax
 from jax import core
 from jax.errors import UnexpectedTracerError
 from jax import lax
+from jax import linear_util as lu
 from jax import random
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2
 from jax.experimental import maps
+from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
+from jax._src.lax.control_flow import for_loop
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -2442,6 +2445,162 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def cond_id(x):
       return lax.cond(x < 0., lambda x: x, lambda x: x, x)
     jax.vmap(jax.jacrev(lambda x: cond_id(cond_id(x))))(jnp.ones(1))
+
+
+class ForLoopTest(jtu.JaxTestCase):
+
+  def test_cant_eval_get_primitive(self):
+    with self.assertRaises(ValueError):
+      for_loop.get_p.bind(jnp.ones(5))
+
+  def test_cant_eval_swap_primitive(self):
+    with self.assertRaises(ValueError):
+      for_loop.swap_p.bind(jnp.ones(5), jnp.zeros(5))
+
+  def test_cant_eval_addupdate_primitive(self):
+    with self.assertRaises(ValueError):
+      for_loop.addupdate_p.bind(jnp.ones(5), jnp.zeros(5))
+
+  def test_get_abstract_eval(self):
+    ref_aval = for_loop.ShapedArrayRef((1, 2, 3), jnp.float32)
+    out_aval, effect = for_loop.get_p.abstract_eval(ref_aval, 0)
+    self.assertSetEqual(effect, {for_loop.State})
+    self.assertTupleEqual(out_aval.shape, (2, 3))
+    self.assertEqual(out_aval.dtype, jnp.float32)
+
+  def test_get_abstract_aval_must_take_in_refs(self):
+    with self.assertRaises(ValueError):
+      for_loop.get_p.abstract_eval(core.ShapedArray((1, 2, 3), jnp.float32))
+
+  def test_swap_abstract_eval(self):
+    ref_aval = for_loop.ShapedArrayRef((1, 2, 3), jnp.float32)
+    val_aval = core.ShapedArray((2, 3), jnp.float32)
+    out_aval, effect = for_loop.swap_p.abstract_eval(ref_aval, val_aval, 0)
+    self.assertSetEqual(effect, {for_loop.State})
+    self.assertTupleEqual(out_aval.shape, (2, 3))
+    self.assertEqual(out_aval.dtype, jnp.float32)
+
+  def test_swap_abstract_eval_must_take_in_refs(self):
+    with self.assertRaises(ValueError):
+      for_loop.swap_p.abstract_eval(core.ShapedArray((1, 2, 3), jnp.float32),
+                                    core.ShapedArray((1, 2, 3), jnp.float32))
+
+  def test_swap_checks_for_correct_shapes(self):
+    with self.assertRaises(ValueError):
+      for_loop.swap_p.abstract_eval(
+          for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
+          core.ShapedArray((2, 3), jnp.float32))
+    with self.assertRaises(ValueError):
+      for_loop.swap_p.abstract_eval(
+          for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
+          core.ShapedArray((1, 2, 3, 4), jnp.float32))
+    for_loop.swap_p.abstract_eval(
+        for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
+        core.ShapedArray((2, 3), jnp.float32), 1)
+
+  def test_addupdate_abstract_eval(self):
+    ref_aval = for_loop.ShapedArrayRef((1, 2, 3), jnp.float32)
+    val_aval = core.ShapedArray((2, 3), jnp.float32)
+    out_avals, effect = for_loop.addupdate_p.abstract_eval(ref_aval, val_aval,
+                                                           0)
+    self.assertSetEqual(effect, {for_loop.State})
+    self.assertListEqual(out_avals, [])
+
+  def test_addupdate_abstract_eval_must_take_in_refs(self):
+    with self.assertRaises(ValueError):
+      for_loop.addupdate_p.abstract_eval(core.ShapedArray((1, 2, 3), jnp.float32),
+                                    core.ShapedArray((1, 2, 3), jnp.float32))
+
+  def test_addupdate_checks_for_correct_shapes(self):
+    with self.assertRaises(ValueError):
+      for_loop.addupdate_p.abstract_eval(
+          for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
+          core.ShapedArray((2, 3), jnp.float32))
+    with self.assertRaises(ValueError):
+      for_loop.addupdate_p.abstract_eval(
+          for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
+          core.ShapedArray((1, 2, 3, 4), jnp.float32))
+    for_loop.addupdate_p.abstract_eval(
+        for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
+        core.ShapedArray((2, 3), jnp.float32), 1)
+
+  def test_can_represent_get_and_swap_in_jaxprs(self):
+
+    def body(x):
+      x[()] = 1
+      x[()] = 2
+      return (x[()],)
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
+    self.assertLen(consts, 0)
+    self.assertListEqual(out_avals, [core.ShapedArray((), jnp.int32)])
+    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.swap_p)
+    self.assertEqual(jaxpr.eqns[1].primitive, for_loop.swap_p)
+    self.assertEqual(jaxpr.eqns[2].primitive, for_loop.get_p)
+
+  def test_can_represent_addupdate_in_jaxprs(self):
+
+    def body(x):
+      for_loop.ref_addupdate(x, (), 1)
+      return (x[()],)
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
+    self.assertLen(consts, 0)
+    self.assertListEqual(out_avals, [core.ShapedArray((), jnp.int32)])
+    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.addupdate_p)
+
+  def test_get_jvp(self):
+
+    def f(r):
+      x = r[()]
+      return jnp.cos(x)
+
+    def g(r, rdot):
+      return jax.jvp(f, (r,), (rdot,))
+
+    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32')),
+                for_loop.ShapedArrayRef((), jnp.dtype('float32'))]
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(lu.wrap_init(g), in_avals)
+    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.get_p)
+    self.assertEqual(jaxpr.eqns[1].primitive, for_loop.get_p)
+
+  def test_swap_jvp(self):
+
+    def f(a):
+      x = a[()]
+      a[()] = jnp.sin(x)
+      return a[()]
+
+    def g(r, rdot):
+      return jax.jvp(f, (r,), (rdot,))
+
+    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32')),
+                for_loop.ShapedArrayRef((), jnp.dtype('float32'))]
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(lu.wrap_init(g), in_avals)
+    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.get_p)
+    self.assertEqual(jaxpr.eqns[1].primitive, for_loop.get_p)
+    self.assertEqual(jaxpr.eqns[2].primitive, lax.sin_p)
+    self.assertEqual(jaxpr.eqns[3].primitive, lax.cos_p)
+    self.assertEqual(jaxpr.eqns[4].primitive, lax.mul_p)
+    self.assertEqual(jaxpr.eqns[5].primitive, for_loop.swap_p)
+    self.assertEqual(jaxpr.eqns[6].primitive, for_loop.swap_p)
+
+  def test_addupdate_jvp(self):
+
+    def f(a):
+      for_loop.ref_addupdate(a, (), 1.)
+      return a[()]
+
+    def g(r, rdot):
+      return jax.jvp(f, (r,), (rdot,))
+
+    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32')),
+                for_loop.ShapedArrayRef((), jnp.dtype('float32'))]
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(lu.wrap_init(g), in_avals)
+    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.addupdate_p)
+    self.assertEqual(jaxpr.eqns[1].primitive, for_loop.addupdate_p)
+    self.assertEqual(jaxpr.eqns[2].primitive, for_loop.get_p)
+    self.assertEqual(jaxpr.eqns[3].primitive, for_loop.get_p)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

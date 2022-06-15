@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
-from typing import Any, Callable, Dict, Type
+from typing import Any, Callable, Dict, Type, Union
 
 from jax import core
 from jax.core import (lattice_join, Primitive, valid_jaxtype, raise_to_shaped,
@@ -44,6 +45,11 @@ def add_abstract(xs, ys):
   return lattice_join(xs, ys)
 
 jaxval_zeros_likers: Dict[type, Array] = {}
+
+def instantiate(z: Union[Zero, Array]) -> Array:
+  if type(z) is Zero:
+    return zeros_like_aval(z.aval)
+  return z
 
 def zeros_like_aval(aval):
   return aval_zeros_likers[type(aval)](aval)

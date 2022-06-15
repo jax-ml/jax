@@ -461,9 +461,13 @@ def _pp_xla_call(eqn: core.JaxprEqn, context: core.JaxprPpContext,
                     k == 'backend' and v is not None or
                     k == 'device' and v is not None or
                     k == 'donated_invars' and any(v)}
-  return [pp.text(eqn.primitive.name),
-          core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-          pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
+  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
+  rhs = [pp.text(eqn.primitive.name),
+         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
+         pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
 core.pp_eqn_rules[xla_call_p] = _pp_xla_call
 
 
