@@ -348,7 +348,7 @@ def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
       write(eqn.invars[0], _dynamic_update_index(x, idx, val))
     elif eqn.primitive is addupdate_p:
       # `x[i] += val` becomes:
-      #    y = ds x ii
+      #    y = ds x i
       #    z = y + val
       #    x = dus x i z
       x, val, *idx = in_vals
