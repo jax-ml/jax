@@ -257,7 +257,8 @@ def gelu(x: Array, approximate: bool = True) -> Array:
     cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))
     return x * cdf
   else:
-    return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
+    sqrt_2 = np.sqrt(2).astype(x.dtype)
+    return jnp.array(x * (lax.erf(x / sqrt_2) + 1) / 2, dtype=x.dtype)
 
 @partial(jax.jit, static_argnames=("axis",))
 def glu(x: Array, axis: int = -1) -> Array:
