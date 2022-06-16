@@ -34,12 +34,6 @@ one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
 scipy_version = tuple(map(int, osp.version.version.split('.')[:2]))
 
 
-def _strict_promotion_if_dtypes_match(dtypes):
-  if all(dtype == dtypes[0] for dtype in dtypes):
-    return jax.numpy_dtype_promotion('strict')
-  return jax.numpy_dtype_promotion('standard')
-
-
 def genNamedParametersNArgs(n):
     return parameterized.named_parameters(
         jtu.cases_from_list(
@@ -68,7 +62,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       loc = np.floor(loc)
       return [k, mu, loc]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14})
@@ -87,7 +81,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       loc = np.floor(loc)
       return [k, mu, loc]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -104,7 +98,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       mu = np.clip(np.abs(mu), a_min=0.1, a_max=None).astype(mu.dtype)
       return [k, mu, loc]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -123,7 +117,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       loc = np.floor(loc)
       return [x, p, loc]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -141,7 +135,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       loc = np.floor(loc)
       return [x, p, loc]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -156,7 +150,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, a, b, loc, scale = map(rng, shapes, dtypes)
       return [x, a, b, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker,
@@ -181,7 +175,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -222,7 +216,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     tol = {np.float32: 1E-3, np.float64: 1e-5}
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=tol)
       self._CompileAndCheck(lax_fun, args_maker, atol=tol, rtol=tol)
@@ -237,7 +231,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, loc, scale = map(rng, shapes, dtypes)
       return [x, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -252,7 +246,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, a, loc, scale = map(rng, shapes, dtypes)
       return [x, a, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -272,7 +266,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, p = map(rng, shapes, dtypes)
       return [x, p]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4, rtol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -287,7 +281,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, p = map(rng, shapes, dtypes)
       return [x, p]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4, rtol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -308,7 +302,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     tol = {np.float32: 1e-6, np.float64: 1e-8}
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
@@ -325,7 +319,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -342,7 +336,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol={np.float32: 1e-5, np.float64: 1e-6})
       self._CompileAndCheck(lax_fun, args_maker)
@@ -356,7 +350,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       return list(map(rng, shapes, dtypes))
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-6)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -419,7 +413,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -437,7 +431,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -455,7 +449,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-6)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -475,7 +469,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [q, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
 
@@ -490,7 +484,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, b, loc, scale = map(rng, shapes, dtypes)
       return [x, b, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -508,7 +502,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, df, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker,
@@ -525,7 +519,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, loc, scale = map(rng, shapes, dtypes)
       return [x, loc, np.abs(scale)]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -540,7 +534,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, df, loc, scale = map(rng, shapes, dtypes)
       return [x, df, loc, scale]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker)
@@ -559,7 +553,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       loc = np.floor(loc)
       return [k, n, a, b, loc]
 
-    with _strict_promotion_if_dtypes_match(dtypes):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       if scipy_version >= (1, 4):
         scipy_fun = osp_stats.betabinom.logpmf
         self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,

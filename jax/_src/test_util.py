@@ -30,6 +30,7 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
+import jax
 from jax._src import api
 from jax import core
 from jax._src import dtypes as _dtypes
@@ -1053,3 +1054,13 @@ class DeprecatedBufferDonationTestCase(BufferDonationTestCase):
       as np.testing.assert_allclose(), which work directly with JAX arrays."""),
       category=DeprecationWarning)
     super().__init__(*args, **kwargs)
+
+
+def strict_promotion_if_dtypes_match(dtypes):
+  """
+  Context manager to enable strict promotion if all dtypes match,
+  and enable standard dtype promotion otherwise.
+  """
+  if all(dtype == dtypes[0] for dtype in dtypes):
+    return jax.numpy_dtype_promotion('strict')
+  return jax.numpy_dtype_promotion('standard')
