@@ -828,7 +828,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
   def test_tap_jit_several_together(self):
     arg = jnp.arange(50, dtype=jnp.int32).reshape((10, 5))
-    jax.jit(lambda x, y: hcb.id_print((x, y, x * 2.)))(arg, jnp.ones(100, dtype=jnp.int32))
+    jax.jit(lambda x, y: hcb.id_print((x, y, x * 2)))(arg, jnp.ones(100, dtype=jnp.int32))
 
   def test_tap_jit_interleaving(self):
     # Several jit's without data dependencies; they may interfere
@@ -1075,7 +1075,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
   def test_tap_grad_float0(self):
     def func(x, yint):
       x, yint = hcb.id_print((x, yint), what="pair", output_stream=testing_stream)
-      return x * yint
+      return x * yint.astype(x.dtype)
 
     grad_func = jax.grad(func)
 
@@ -2104,7 +2104,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
       return lax.scan(step, init, np.arange(2))
 
-    self.assertAllClose(tap_scalar(3., do_print=False), tap_scalar(3., do_print=True))
+    self.assertAllClose(tap_scalar(3, do_print=False), tap_scalar(3, do_print=True))
     hcb.barrier_wait()
     expected = """
       what: step_nr
