@@ -1216,7 +1216,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testAxisIndex(self):
     device_count = jax.device_count()
     f = self.pmap(lambda x: x + lax.axis_index('i'), 'i')
-    x = jnp.ones(device_count)
+    x = jnp.ones(device_count, dtype='int32')
     ans = f(x)
     expected = 1 + np.arange(device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -1226,7 +1226,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     if device_count < 4:
       raise SkipTest("test requires at least four devices")
     f = lambda axis: self.pmap(self.pmap(lambda x: x + lax.axis_index(axis), 'j'), 'i')
-    x = jnp.ones((2, 2))
+    x = jnp.ones((2, 2), dtype='int32')
     expected_j = np.broadcast_to(1 + np.arange(2), (2, 2))
     self.assertAllClose(f('j')(x), expected_j, check_dtypes=False)
     self.assertAllClose(f('i')(x), expected_j.T, check_dtypes=False)
@@ -1236,7 +1236,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     if device_count < 4:
       raise SkipTest("test requires at least four devices")
     f = lambda axes: self.pmap(self.pmap(lambda x: x + lax.axis_index(axes), 'j'), 'i')
-    x = jnp.ones((2, 2))
+    x = jnp.ones((2, 2), dtype='int32')
     expected = 1 + np.arange(4).reshape((2, 2))
     self.assertAllClose(f(('i', 'j'))(x), expected, check_dtypes=False)
     self.assertAllClose(f(('j', 'i'))(x), expected.T, check_dtypes=False)
@@ -1249,8 +1249,8 @@ class PythonPmapTest(jtu.JaxTestCase):
       return lax.scan(body, 0, x)[0]
     device_count = jax.device_count()
     shape = (device_count, 10)
-    self.assertAllClose(f(jnp.ones(shape, dtype=int)),
-                        (np.arange(device_count) + 1) * 10)
+    self.assertAllClose(f(jnp.ones(shape, dtype='int32')),
+                        (jnp.arange(device_count, dtype='int32') + 1) * 10)
 
   def testVmapOfPmap(self):
     device_count = jax.device_count()
@@ -1469,7 +1469,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     n = 4 * jax.device_count()
     def f(x):
       return x * lax.axis_index('i')
-    ans = soft_pmap(f, 'i')(2 * jnp.ones(n))
+    ans = soft_pmap(f, 'i')(2 * jnp.ones(n, dtype='int32'))
     expected = 2 * np.arange(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -2068,7 +2068,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
     if jax.device_count() < 8:
       raise SkipTest("test requires at least eight devices")
-    x = jnp.arange(4*2*64*64).reshape(4, 2, 64, 64)
+    x = jnp.arange(4*2*64*64, dtype=float).reshape(4, 2, 64, 64)
     y = f(jax.pmap, jax.pmap)(x, x)
     self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
