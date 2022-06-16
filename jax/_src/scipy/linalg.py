@@ -23,9 +23,10 @@ import warnings
 import jax
 from jax import jit, vmap, jvp
 from jax import lax
+from jax._src import dtypes
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import qdwh
-from jax._src.numpy.util import _wraps, _promote_dtypes_inexact
+from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg as np_linalg
 
@@ -119,7 +120,7 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
 @partial(jit, static_argnames=('output',))
 def _schur(a, output):
   if output == "complex":
-    a = a.astype(jnp.result_type(a.dtype, 0j))
+    a = a.astype(dtypes._to_complex_dtype(a.dtype))
   return lax_linalg.schur(a)
 
 @_wraps(scipy.linalg.schur)
@@ -160,10 +161,10 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
 @partial(jit, static_argnums=(1,))
 def _lu(a, permute_l):
   a, = _promote_dtypes_inexact(jnp.asarray(a))
-  lu, pivots, permutation = lax_linalg.lu(a)
+  lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
-  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m)[:, None], dtype=dtype))
+  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype))
   k = min(m, n)
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
   u = jnp.triu(lu)[:k, :]
@@ -322,16 +323,18 @@ def _calc_P_Q(A):
   if A.dtype == 'float64' or A.dtype == 'complex128':
    maxnorm = 5.371920351148152
    n_squarings = jnp.maximum(0, jnp.floor(jnp.log2(A_L1 / maxnorm)))
-   A = A / 2**n_squarings
+   A = A / 2 ** n_squarings.astype(A.dtype)
    conds = jnp.array([1.495585217958292e-002, 2.539398330063230e-001,
-                      9.504178996162932e-001, 2.097847961257068e+000])
+                      9.504178996162932e-001, 2.097847961257068e+000],
+                      dtype=A_L1.dtype)
    idx = jnp.digitize(A_L1, conds)
    U, V = lax.switch(idx, [_pade3, _pade5, _pade7, _pade9, _pade13], A)
   elif A.dtype == 'float32' or A.dtype == 'complex64':
     maxnorm = 3.925724783138660
     n_squarings = jnp.maximum(0, jnp.floor(jnp.log2(A_L1 / maxnorm)))
-    A = A / 2**n_squarings
-    conds = jnp.array([4.258730016922831e-001, 1.880152677804762e+000])
+    A = A / 2 ** n_squarings.astype(A.dtype)
+    conds = jnp.array([4.258730016922831e-001, 1.880152677804762e+000],
+                      dtype=A_L1.dtype)
     idx = jnp.digitize(A_L1, conds)
     U, V = lax.switch(idx, [_pade3, _pade5, _pade7], A)
   else:
@@ -360,7 +363,7 @@ def _squaring(R, n_squarings, max_squarings):
 
   def _scan_f(c, i):
     return lax.cond(i < n_squarings, _squaring_precise, _identity, c), None
-  res, _ = lax.scan(_scan_f, R, jnp.arange(max_squarings))
+  res, _ = lax.scan(_scan_f, R, jnp.arange(max_squarings, dtype=n_squarings.dtype))
 
   return res
 
@@ -574,11 +577,11 @@ def eigh_tridiagonal(d, e, *, eigvals_only=False, select='a',
   # Determine the indices of the desired eigenvalues, based on select and
   # select_range.
   if select == 'a':
-    target_counts = jnp.arange(n)
+    target_counts = jnp.arange(n, dtype=jnp.int32)
   elif select == 'i':
     if select_range[0] > select_range[1]:
       raise ValueError('Got empty index range in select_range.')
-    target_counts = jnp.arange(select_range[0], select_range[1] + 1)
+    target_counts = jnp.arange(select_range[0], select_range[1] + 1, dtype=jnp.int32)
   elif select == 'v':
     # TODO(phawkins): requires dynamic shape support.
     raise NotImplementedError("eigh_tridiagonal(..., select='v') is not "
@@ -791,11 +794,8 @@ def rsf2csf(T, Z, check_finite=True):
   if T.shape[0] != Z.shape[0]:
     raise ValueError(f"Input array shapes must match: Z: {Z.shape} vs. T: {T.shape}")
 
-  common_dtype = jnp.result_type(T, Z, jnp.complex64)
-  eps = jnp.finfo(common_dtype).eps
-
-  T = jnp.asarray(T, dtype=common_dtype)
-  Z = jnp.asarray(Z, dtype=common_dtype)
+  T, Z = _promote_dtypes_complex(T, Z)
+  eps = jnp.finfo(T.dtype).eps
   N = T.shape[0]
 
   if N == 1:
@@ -803,10 +803,10 @@ def rsf2csf(T, Z, check_finite=True):
 
   def _update_T_Z(m, T, Z):
     mu = np_linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
-    r = np_linalg.norm([mu[0], T[m, m-1]])
+    r = np_linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
     c = mu[0] / r
     s = T[m, m-1] / r
-    G = jnp.array([[c.conj(), s], [-s, c]], dtype=common_dtype)
+    G = jnp.array([[c.conj(), s], [-s, c]], dtype=T.dtype)
 
     # T[m-1:m+1, m-1:] = G @ T[m-1:m+1, m-1:]
     T_rows = lax.dynamic_slice_in_dim(T, m-1, 2, axis=0)

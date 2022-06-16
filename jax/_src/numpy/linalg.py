@@ -61,7 +61,7 @@ def svd(a, full_matrices: bool = True, compute_uv: bool = True,
       idxs = lax.rev(idxs, dimensions=[s.ndim - 1])
       sign = lax.rev(sign, dimensions=[s.ndim - 1])
       u = jnp.take_along_axis(w, idxs[..., None, :], axis=-1)
-      vh = _H(u * sign[..., None, :])
+      vh = _H(u * sign[..., None, :].astype(u.dtype))
       return u, s, vh
     else:
       return lax.rev(lax.sort(s, dimension=-1), dimensions=[s.ndim-1])
@@ -117,7 +117,7 @@ def matrix_rank(M, tol=None):
     return jnp.any(M != 0).astype(jnp.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
   if tol is None:
-    tol = S.max() * np.max(M.shape) * jnp.finfo(S.dtype).eps
+    tol = S.max() * np.max(M.shape).astype(S.dtype) * jnp.finfo(S.dtype).eps
   return jnp.sum(S > tol)
 
 
@@ -127,10 +127,11 @@ def _slogdet_lu(a):
   lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   is_zero = jnp.any(diag == jnp.array(0, dtype=dtype), axis=-1)
-  iota = lax.expand_dims(jnp.arange(a.shape[-1]), range(pivot.ndim - 1))
+  iota = lax.expand_dims(jnp.arange(a.shape[-1], dtype=pivot.dtype),
+                         range(pivot.ndim - 1))
   parity = jnp.count_nonzero(pivot != iota, axis=-1)
   if jnp.iscomplexobj(a):
-    sign = jnp.prod(diag / jnp.abs(diag), axis=-1)
+    sign = jnp.prod(diag / jnp.abs(diag).astype(diag.dtype), axis=-1)
   else:
     sign = jnp.array(1, dtype=dtype)
     parity = parity + jnp.count_nonzero(diag < 0, axis=-1)
@@ -139,7 +140,7 @@ def _slogdet_lu(a):
                   sign * jnp.array(-2 * (parity % 2) + 1, dtype=dtype))
   logdet = jnp.where(
       is_zero, jnp.array(-jnp.inf, dtype=dtype),
-      jnp.sum(jnp.log(jnp.abs(diag)), axis=-1))
+      jnp.sum(jnp.log(jnp.abs(diag)).astype(dtype), axis=-1))
   return sign, jnp.real(logdet)
 
 @custom_jvp
@@ -159,7 +160,7 @@ def _slogdet_qr(a):
   sign_diag = jnp.prod(jnp.sign(jnp.diagonal(a, axis1=-2, axis2=-1)), axis=-1)
   # The determinant of a Householder reflector is -1. So whenever we actually
   # made a reflection (tau != 0), multiply the result by -1.
-  sign_taus = jnp.prod(jnp.where(taus[..., :(n-1)] != 0, -1, 1), axis=-1)
+  sign_taus = jnp.prod(jnp.where(taus[..., :(n-1)] != 0, -1, 1), axis=-1).astype(sign_diag.dtype)
   return sign_diag * sign_taus, log_abs_det
 
 @_wraps(
@@ -192,8 +193,8 @@ def _slogdet_jvp(primals, tangents):
   sign, ans = slogdet(x)
   ans_dot = jnp.trace(solve(x, g), axis1=-1, axis2=-2)
   if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
-    sign_dot = (ans_dot - np.real(ans_dot)) * sign
-    ans_dot = np.real(ans_dot)
+    sign_dot = (ans_dot - jnp.real(ans_dot).astype(ans_dot.dtype)) * sign
+    ans_dot = jnp.real(ans_dot)
   else:
     sign_dot = jnp.zeros_like(sign)
   return (sign, ans), (sign_dot, ans_dot)
@@ -265,7 +266,8 @@ def _cofactor_solve(a, b):
   lu = jnp.broadcast_to(lu, batch_dims + lu.shape[-2:])
   # Compute (partial) determinant, ignoring last diagonal of LU
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
-  iota = lax.expand_dims(jnp.arange(a_shape[-1]), range(pivots.ndim - 1))
+  iota = lax.expand_dims(jnp.arange(a_shape[-1], dtype=pivots.dtype),
+                         range(pivots.ndim - 1))
   parity = jnp.count_nonzero(pivots != iota, axis=-1)
   sign = jnp.asarray(-2 * (parity % 2) + 1, dtype=dtype)
   # partial_det[:, -1] contains the full determinant and
@@ -317,7 +319,7 @@ def det(a):
     return _det_3x3(a)
   elif len(a_shape) >= 2 and a_shape[-1] == a_shape[-2]:
     sign, logdet = slogdet(a)
-    return sign * jnp.exp(logdet)
+    return sign * jnp.exp(logdet).astype(sign.dtype)
   else:
     msg = "Argument to _det() must have shape [..., n, n], got {}"
     raise ValueError(msg.format(a_shape))
@@ -388,14 +390,14 @@ def pinv(a, rcond=None):
   a = jnp.conj(a)
   if rcond is None:
     max_rows_cols = max(a.shape[-2:])
-    rcond = 10. * max_rows_cols * jnp.finfo(a.dtype).eps
+    rcond = 10. * max_rows_cols * jnp.array(jnp.finfo(a.dtype).eps)
   rcond = jnp.asarray(rcond)
   u, s, vh = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   rcond = lax.expand_dims(rcond[..., jnp.newaxis], range(s.ndim - rcond.ndim - 1))
   cutoff = rcond * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
-  s = jnp.where(s > cutoff, s, jnp.inf)
+  s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
   res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]))
   return lax.convert_element_type(res, a.dtype)
 
@@ -470,8 +472,9 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
     else:
       abs_x = jnp.abs(x)
       ord = lax_internal._const(abs_x, ord)
+      ord_inv = lax_internal._const(abs_x, 1. / ord)
       out = jnp.sum(abs_x ** ord, axis=axis, keepdims=keepdims)
-      return jnp.power(out, 1. / ord)
+      return jnp.power(out, ord_inv)
 
   elif num_axes == 2:
     row_axis, col_axis = cast(Tuple[int, ...], axis)
@@ -566,9 +569,9 @@ def _lstsq(a, b, rcond, *, numpy_resid=False):
   else:
     rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
   u, s, vt = svd(a, full_matrices=False)
-  mask = s >= rcond * s[0]
+  mask = s >= jnp.array(rcond, dtype=s.dtype) * s[0]
   rank = mask.sum()
-  safe_s = jnp.where(mask, s, 1)
+  safe_s = jnp.where(mask, s, 1).astype(a.dtype)
   s_inv = jnp.where(mask, 1 / safe_s, 0)[:, jnp.newaxis]
   uTb = jnp.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
   x = jnp.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
