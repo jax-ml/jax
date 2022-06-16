@@ -94,7 +94,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       for jit in [False, True]))
   def test_jit_div_errors(self, jit):
     def f(x, y):
-      return x/y
+      return x / y
 
     f = jax.jit(f) if jit else f
     checked_f = checkify.checkify(f, errors=checkify.float_checks)
@@ -102,7 +102,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     err, _ = checked_f(jnp.ones((3,)), jnp.ones((3,)))
     self.assertIs(err.get(), None)
 
-    err, _ = checked_f(jnp.ones((3,)), jnp.array([1, 0, 1]))
+    err, _ = checked_f(jnp.ones((3,)), jnp.array([1., 0., 1.]))
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "divided by zero")
 

@@ -498,7 +498,7 @@ def gather_error_check(error, enabled_errors, operand, start_indices, *,
   upper_bound = operand_dims[np.array(dnums.start_index_map)]
   upper_bound -= np.array(slice_sizes)[np.array(dnums.start_index_map)]
   upper_bound = jnp.expand_dims(upper_bound, axis=tuple(range(num_batch_dims)))
-  in_bounds = (start_indices >= 0) & (start_indices <= upper_bound)
+  in_bounds = (start_indices >= 0) & (start_indices <= upper_bound.astype(start_indices.dtype))
 
   # Get first OOB index, axis and axis size so it can be added to the error msg.
   flat_idx = jnp.argmin(in_bounds)
@@ -544,7 +544,7 @@ def scatter_in_bounds(operand, indices, updates, dnums):
                                      (len(indices.shape) - 1,))
 
   lower_in_bounds = jnp.all(jnp.greater_equal(indices, 0))
-  upper_in_bounds = jnp.all(jnp.less_equal(indices, upper_bound))
+  upper_in_bounds = jnp.all(jnp.less_equal(indices, upper_bound.astype(indices.dtype)))
   return jnp.logical_and(lower_in_bounds, upper_in_bounds)
 
 def scatter_error_check(prim, error, enabled_errors, operand, indices, updates,
