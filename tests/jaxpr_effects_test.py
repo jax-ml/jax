@@ -532,7 +532,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     @jax.pmap
     def f(x):
       effect_p.bind(effect='foo')
-      return x + 1.
+      return x + 1
     with self.assertRaisesRegex(
         ValueError,
         "Ordered effects not supported for map primitives: {'foo'}"):
