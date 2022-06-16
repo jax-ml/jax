@@ -209,7 +209,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     def f(x, y, z):
       side.append(None)
-      return 100 * x + 10 * y + z
+      return 100 * x + 10 * y + z.astype(y.dtype)
 
     f = self.jit(f)
     assert f(one, two, three) == 123
@@ -386,7 +386,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_donate_argnums_warning_raised(self):
     x = jnp.array([1.0, 2.0], jnp.float32)
     y = jnp.array([1, 2], jnp.int32)
-    f = self.jit(lambda x, y: x.sum() + y.sum(), donate_argnums=(0, 1))
+    f = self.jit(lambda x, y: x.sum() + jnp.float32(y.sum()), donate_argnums=(0, 1))
     with warnings.catch_warnings(record=True) as w:
       warnings.simplefilter("always")
       f(x, y)
@@ -1440,9 +1440,9 @@ class APITest(jtu.JaxTestCase):
   def test_hessian_holomorphic(self):
     R = self.rng().randn
     A = R(4, 4)
-    x = R(4) * (1 + 2j)
+    x = R(4).astype('complex64') * (1 + 2j)
 
-    f = lambda x: jnp.dot(x, jnp.dot(A, x))
+    f = lambda x: jnp.dot(x, jnp.dot(A.astype(x.dtype), x))
     assert np.allclose(hessian(f, holomorphic=True)(x), A + A.T)
 
   @jtu.skip_on_devices("tpu")
@@ -1494,8 +1494,8 @@ class APITest(jtu.JaxTestCase):
       self.assertAllClose(ans, expected, check_dtypes=False)
 
       R = self.rng().randn
-      x = R(2)
-      y = R(3)
+      x = jnp.array(R(2))
+      y = jnp.array(R(3))
       ans = jacfun(lambda x, y: {'x': x, 'xy': jnp.outer(x, y)})(x, y)
       expected = {'x': np.eye(2),
                   'xy': np.kron(np.eye(2), y[:, None]).reshape(2, 3, 2)}
@@ -1828,6 +1828,7 @@ class APITest(jtu.JaxTestCase):
     expected = grad(f)(zs)
     self.assertAllClose(ans, expected)
 
+  @jax.numpy_dtype_promotion('standard')  # Test explicitly exercises implicit dtype promotion.
   def test_heterogeneous_jacfwd(self):
     # See https://github.com/google/jax/issues/7157
     # See https://github.com/google/jax/issues/7780
@@ -1847,6 +1848,7 @@ class APITest(jtu.JaxTestCase):
     jtu._check_dtypes_match(actual, desired)
     jtu.check_eq(actual, desired)
 
+  @jax.numpy_dtype_promotion('standard')  # Test explicitly exercises implicit dtype promotion.
   def test_heterogeneous_jacrev(self):
     # See https://github.com/google/jax/issues/7157
     # See https://github.com/google/jax/issues/7780
@@ -1894,7 +1896,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(x, device_array.DeviceArray)
     repr(x)  # doesn't crash
 
-    x = device_put(jnp.ones(3) + 1j * jnp.ones(3))
+    x = device_put(jnp.full(3, 1 + 1j))
     self.assertIsInstance(x, device_array.DeviceArray)
     repr(x)  # doesn't crash
 
@@ -2433,7 +2435,7 @@ class APITest(jtu.JaxTestCase):
               x, axis_name=axis_name)
       return y * lax.axis_index(axis_name).astype(jnp.float32)
 
-    input_x = jnp.ones((5,6,4))
+    input_x = jnp.ones((5,6,4), dtype=jnp.float32)
     axis_env = [(axis_name, api.local_device_count())]
     _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
 
@@ -2444,7 +2446,7 @@ class APITest(jtu.JaxTestCase):
         return carry + a, ()
       return jax.lax.scan(inner_fn, jnp.zeros_like(z[0]), z)
 
-    x = jnp.ones((5, 6, 4))
+    x = jnp.ones((5, 6, 4), dtype=jnp.float32)
     _ = jax.xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
 
   def test_concurrent_device_get_and_put(self):
@@ -5891,7 +5893,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       n_features = x.shape[0]
       u = jnp.sort(x)[::-1]
       cssv = jnp.cumsum(u) - s
-      ind = jnp.arange(n_features) + 1
+      ind = jnp.arange(n_features, dtype=x.dtype) + 1
       cond = u - cssv / ind > 0
       idx = jnp.count_nonzero(cond)
       threshold = cssv[idx - 1] / idx.astype(x.dtype)
@@ -5903,8 +5905,8 @@ class CustomJVPTest(jtu.JaxTestCase):
       x, = primals
       x_dot, = tangents
       primal_out = projection_unit_simplex(x)
-      supp = primal_out > 0
-      card = jnp.count_nonzero(supp)
+      supp = (primal_out > 0).astype(x_dot.dtype)
+      card = jnp.count_nonzero(supp).astype(x_dot.dtype)
       tangent_out = supp * x_dot - (jnp.dot(supp, x_dot) / card) * supp
       return primal_out, tangent_out
 
@@ -5915,8 +5917,8 @@ class CustomJVPTest(jtu.JaxTestCase):
     J_fwd = jax.jacfwd(projection_unit_simplex)(x)
 
     p = projection_unit_simplex(x)
-    support = (p > 0).astype(jnp.int32)
-    cardinality = jnp.count_nonzero(support)
+    support = (p > 0).astype(jnp.float32)
+    cardinality = jnp.count_nonzero(support).astype(support.dtype)
     J_true = jnp.diag(support) - jnp.outer(support, support) / cardinality
     self.assertAllClose(J_true, J_fwd)
     self.assertAllClose(J_true, J_rev)
@@ -7587,7 +7589,7 @@ class CustomVmapTest(jtu.JaxTestCase):
       self.assertEqual(axis_size, ys.shape[0])
       return jnp.cos(xs) + ys ** 2., True
 
-    xs, ys = jnp.arange(3), jnp.arange(3)
+    xs, ys = jnp.arange(3.0), jnp.arange(3.0)
     zs = api.vmap(f)(xs, ys)
     self.assertAllClose(zs, jnp.cos(xs) + ys ** 2.)
 
