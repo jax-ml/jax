@@ -2448,7 +2448,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
 
 class ForLoopTest(jtu.JaxTestCase):
- 
+
   def test_cant_eval_get_primitive(self):
     with self.assertRaises(ValueError):
       for_loop.get_p.bind(jnp.ones(5))
