@@ -109,12 +109,6 @@ def _generate_bcoo_dot_general_properties(shapes, dtypes) -> BcooDotGeneralPrope
             )
 
 
-def _strict_promotion_if_dtypes_match(dtypes):
-  if all(dtype == dtypes[0] for dtype in dtypes):
-    return jax.numpy_dtype_promotion('strict')
-  return jax.numpy_dtype_promotion('standard')
-
-
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 
 
@@ -1846,7 +1840,7 @@ class BCOOTest(jtu.JaxTestCase):
     lhs_sp = sparse.BCOO.fromdense(lhs, n_batch=max(0, len(lhs_shape) - 2))
     rhs_sp = sparse.BCOO.fromdense(rhs, n_batch=max(0, len(rhs_shape) - 2))
 
-    with _strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+    with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       out1 = lhs @ rhs
       out2 = lhs_sp @ rhs
       out3 = lhs @ rhs_sp
@@ -1881,7 +1875,7 @@ class BCOOTest(jtu.JaxTestCase):
 
     sp = lambda x: sparse.BCOO.fromdense(x, n_batch=n_batch, n_dense=n_dense)
 
-    with _strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+    with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       out1 = lhs * rhs
       out2 = (sp(lhs) * rhs).todense()
       out3 = (rhs * sp(lhs)).todense()
@@ -1917,7 +1911,7 @@ class BCOOTest(jtu.JaxTestCase):
     lhs_sp = sparse.BCOO.fromdense(lhs, n_batch=lhs_n_batch, n_dense=n_dense)
     rhs_sp = sparse.BCOO.fromdense(rhs, n_batch=rhs_n_batch, n_dense=n_dense)
 
-    with _strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+    with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       out1 = lhs * rhs
       out2 = (lhs_sp * rhs_sp).todense()
 
