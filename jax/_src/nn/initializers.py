@@ -27,7 +27,7 @@ from jax import lax
 from jax import random
 from jax import core
 from jax._src.util import prod
-from jax import dtypes
+from jax._src import dtypes
 
 DType = Any
 
@@ -149,9 +149,10 @@ def _complex_uniform(key, shape, dtype):
   with zero mean and unit variance.
   """
   key_r, key_theta = random.split(key)
-  dtype = np.array(0, dtype).real.dtype
-  r = jnp.sqrt(2 * random.uniform(key_r, shape, dtype))
-  theta = 2 * jnp.pi * random.uniform(key_theta, shape, dtype)
+  real_dtype = np.array(0, dtype).real.dtype
+  dtype = dtypes._to_complex_dtype(real_dtype)
+  r = jnp.sqrt(2 * random.uniform(key_r, shape, real_dtype)).astype(dtype)
+  theta = 2 * jnp.pi * random.uniform(key_theta, shape, real_dtype).astype(dtype)
   return r * jnp.exp(1j * theta)
 
 def _complex_truncated_normal(key, upper, shape, dtype):
@@ -160,10 +161,11 @@ def _complex_truncated_normal(key, upper, shape, dtype):
   whose modulus is truncated to `upper`, and the variance before the truncation is one.
   """
   key_r, key_theta = random.split(key)
-  dtype = np.array(0, dtype).real.dtype
-  t = (1 - jnp.exp(jnp.array(-(upper ** 2), dtype))) * random.uniform(key_r, shape, dtype)
+  real_dtype = np.array(0, dtype).real.dtype
+  dtype = dtypes._to_complex_dtype(real_dtype)
+  t = (1 - jnp.exp(jnp.array(-(upper ** 2), dtype))) * random.uniform(key_r, shape, real_dtype).astype(dtype)
   r = jnp.sqrt(-jnp.log(1 - t))
-  theta = 2 * jnp.pi * random.uniform(key_theta, shape, dtype)
+  theta = 2 * jnp.pi * random.uniform(key_theta, shape, real_dtype).astype(dtype)
   return r * jnp.exp(1j * theta)
 
 def variance_scaling(scale, mode: str, distribution: str,
