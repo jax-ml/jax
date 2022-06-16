@@ -123,12 +123,12 @@ class VectorizeTest(jtu.JaxTestCase):
       debiased = array - bias
       return bias, debiased
 
-    b, a = center(jnp.arange(3))
+    b, a = center(jnp.arange(3.0))
     self.assertEqual(a.shape, (3,))
     self.assertEqual(b.shape, ())
     self.assertAllClose(1.0, b, check_dtypes=False)
 
-    b, a = center(jnp.arange(6).reshape(2, 3))
+    b, a = center(jnp.arange(6.0).reshape(2, 3))
     self.assertEqual(a.shape, (2, 3))
     self.assertEqual(b.shape, (2,))
     self.assertAllClose(jnp.array([1.0, 4.0]), b, check_dtypes=False)
