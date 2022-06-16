@@ -347,6 +347,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a = (a + np.conj(a.T)) / 2
     w, v = jnp.linalg.eigh(np.tril(a) if lower else np.triu(a),
                            UPLO=uplo, symmetrize_input=False)
+    w = w.astype(v.dtype)
     self.assertLessEqual(
         np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
     with jax.numpy_rank_promotion('allow'):
@@ -362,6 +363,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                   [-1.,  1.,  0., -1.],
                   [1., -1., -1.,  0.]], dtype=np.float32)
     w, v = jnp.linalg.eigh(a)
+    w = w.astype(v.dtype)
     with jax.numpy_rank_promotion('allow'):
       self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
                           1e-3 * np.linalg.norm(a))
@@ -438,6 +440,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     new_a = a + a_dot
     new_w, new_v = f(new_a)
     new_a = (new_a + np.conj(new_a.T)) / 2
+    new_w = new_w.astype(new_a.dtype)
     # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
     RTOL = 1e-2
     with jax.numpy_rank_promotion('allow'):
@@ -467,6 +470,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args = rng(shape, dtype)
     args = (args + np.conj(T(args))) / 2
     ws, vs = vmap(jsp.linalg.eigh)(args)
+    ws = ws.astype(vs.dtype)
     norm = np.max(np.linalg.norm(np.matmul(args, vs) - ws[..., None, :] * vs))
     self.assertTrue(norm < 3e-2)
 
@@ -580,6 +584,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                          hermitian=hermitian)
     if compute_uv:
       # Check the reconstructed matrices
+      out = list(out)
+      out[1] = out[1].astype(out[0].dtype)  # for strict dtype promotion.
       if m and n:
         if full_matrices:
           k = min(m, n)
@@ -594,7 +600,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         else:
           max_backward_error = compute_max_backward_error(
               a, np.matmul(out[1][..., None, :] * out[0], out[2]))
-          print(max_backward_error)
           self.assertLess(max_backward_error, reconstruction_tol)
 
       # Check the unitary properties of the singular vector matrices.
@@ -644,7 +649,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           full_matrices=full_matrices,
           compute_uv=compute_uv)
         vdiag = jnp.vectorize(jnp.diag, signature='(k)->(k,k)')
-        return jnp.matmul(jnp.matmul(u, vdiag(s)), v).real
+        return jnp.matmul(jnp.matmul(u, vdiag(s).astype(u.dtype)), v).real
       _, t_out = jvp(f, (1.,), (1.,))
       if dtype == np.complex128:
         atol = 1e-13

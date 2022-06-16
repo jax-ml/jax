@@ -62,7 +62,7 @@ class SvdTest(jtu.JaxTestCase):
       cond = 10**log_cond
       s = jnp.linspace(cond, 1, min(m, n))
       a = (u * s) @ v
-      a = a + 1j * a
+      a = a.astype(complex) * (1 + 1j)
 
       osp_linalg_fn = functools.partial(
           osp_linalg.svd, full_matrices=full_matrices)
