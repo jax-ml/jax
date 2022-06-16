@@ -83,7 +83,7 @@ def trajectory(dynamics, U, x0):
   T, _ = U.shape
   d, = x0.shape
 
-  X = jnp.zeros((T + 1, d))
+  X = jnp.zeros((T + 1, d), dtype=x0.dtype)
   X = X.at[0].set(x0)
 
   def loop(t, X):
