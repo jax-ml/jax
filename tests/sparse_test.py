@@ -109,6 +109,12 @@ def _generate_bcoo_dot_general_properties(shapes, dtypes) -> BcooDotGeneralPrope
             )
 
 
+def _strict_promotion_if_dtypes_match(dtypes):
+  if all(dtype == dtypes[0] for dtype in dtypes):
+    return jax.numpy_dtype_promotion('strict')
+  return jax.numpy_dtype_promotion('standard')
+
+
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 
 
@@ -1840,9 +1846,10 @@ class BCOOTest(jtu.JaxTestCase):
     lhs_sp = sparse.BCOO.fromdense(lhs, n_batch=max(0, len(lhs_shape) - 2))
     rhs_sp = sparse.BCOO.fromdense(rhs, n_batch=max(0, len(rhs_shape) - 2))
 
-    out1 = lhs @ rhs
-    out2 = lhs_sp @ rhs
-    out3 = lhs @ rhs_sp
+    with _strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+      out1 = lhs @ rhs
+      out2 = lhs_sp @ rhs
+      out3 = lhs @ rhs_sp
 
     tol = {np.float64: 1E-13, np.complex128: 1E-13,
            np.float32: 1E-6, np.complex64: 1E-6}
@@ -1874,9 +1881,10 @@ class BCOOTest(jtu.JaxTestCase):
 
     sp = lambda x: sparse.BCOO.fromdense(x, n_batch=n_batch, n_dense=n_dense)
 
-    out1 = lhs * rhs
-    out2 = (sp(lhs) * rhs).todense()
-    out3 = (rhs * sp(lhs)).todense()
+    with _strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+      out1 = lhs * rhs
+      out2 = (sp(lhs) * rhs).todense()
+      out3 = (rhs * sp(lhs)).todense()
 
     tol = {np.float64: 1E-13, np.complex128: 1E-13,
            np.float32: 1E-6, np.complex64: 1E-6}
@@ -1909,8 +1917,9 @@ class BCOOTest(jtu.JaxTestCase):
     lhs_sp = sparse.BCOO.fromdense(lhs, n_batch=lhs_n_batch, n_dense=n_dense)
     rhs_sp = sparse.BCOO.fromdense(rhs, n_batch=rhs_n_batch, n_dense=n_dense)
 
-    out1 = lhs * rhs
-    out2 = (lhs_sp * rhs_sp).todense()
+    with _strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+      out1 = lhs * rhs
+      out2 = (lhs_sp * rhs_sp).todense()
 
     tol = {np.float64: 1E-13, np.complex128: 1E-13,
            np.float32: 1E-6, np.complex64: 1E-6}
@@ -2273,7 +2282,8 @@ class SparseObjectTest(jtu.JaxTestCase):
     # Test mismatched type
     x = rng_b(bshape, np.int32)
     x = jnp.asarray(x)
-    self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
+    with jax.numpy_dtype_promotion('standard'):
+      self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}({})".format(
@@ -2335,7 +2345,7 @@ class SparseRandomTest(jtu.JaxTestCase):
       np.ceil(0.2 * np.prod(sparse_shape))
       * np.prod(batch_shape) * np.prod(dense_shape))
     num_nonzero = (mat_dense != 0).sum()
-    self.assertAlmostEqual(num_nonzero, approx_expected_num_nonzero, delta=2)
+    self.assertAlmostEqual(int(num_nonzero), approx_expected_num_nonzero, delta=2)
 
 
 if __name__ == "__main__":

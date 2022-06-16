@@ -326,8 +326,8 @@ def _bcoo_fromdense_impl(mat, *, nse, n_batch, n_dense, index_dtype):
     indices = jnp.moveaxis(jnp.array(indices, index_dtype), 0, n_batch + 1)
   data = bcoo_extract(indices, mat)
 
-  true_nonzeros = (lax.broadcasted_iota(jnp.int32, (1,) * n_batch + (nse,), n_batch) <
-                   mask.sum(list(range(n_batch, mask.ndim)))[..., None])
+  true_nse = mask.sum(list(range(n_batch, mask.ndim)))[..., None]
+  true_nonzeros = lax.broadcasted_iota(true_nse.dtype, (1,) * n_batch + (nse,), n_batch) < true_nse
   true_nonzeros = true_nonzeros[(n_batch + 1) * (slice(None),) + n_dense * (None,)]
   data = jnp.where(true_nonzeros, data, 0)
 
@@ -1062,9 +1062,11 @@ def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, 
   #   comparison.
   overlap = (lhs_i[:, None] == rhs_i[None, :]).all(-1)
   lhs_fill_value = jnp.expand_dims(
-    jnp.array([lhs_shape[d] for d in lhs_contracting]), range(lhs_i.ndim - 1))
+    jnp.array([lhs_shape[d] for d in lhs_contracting], dtype=lhs_i.dtype),
+    range(lhs_i.ndim - 1))
   rhs_fill_value = jnp.expand_dims(
-    jnp.array([rhs_shape[d] for d in rhs_contracting]), range(rhs_i.ndim - 1))
+    jnp.array([rhs_shape[d] for d in rhs_contracting], dtype=rhs_i.dtype),
+    range(rhs_i.ndim - 1))
   lhs_valid = (lhs_i < lhs_fill_value).all(-1)
   rhs_valid = (rhs_i < rhs_fill_value).all(-1)
   out_data = jnp.where(overlap & lhs_valid[:, None] & rhs_valid[None, :],
@@ -1397,7 +1399,7 @@ def _bcoo_sum_duplicates_unbatched(indices, *, shape):
   indices_unique, inv_idx, nse = _unique(
     indices, axis=0, return_inverse=True, return_true_size=True,
     size=props.nse, fill_value=fill_value)
-  nse = nse - (indices == fill_value).any()
+  nse = nse - (indices == fill_value).any().astype(nse.dtype)
   return indices_unique, inv_idx, nse
 
 @bcoo_sum_duplicates_p.def_abstract_eval
@@ -1804,7 +1806,7 @@ def bcoo_reshape(mat, *, new_sizes, dimensions):
   new_index_cols = jnp.unravel_index(flat_indices, sparse_sizes)
   new_indices = jnp.concatenate([col[..., None] for col in new_index_cols], axis=-1)
   with jax.numpy_rank_promotion('allow'):
-    oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:])).any(-1)
+    oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:], dtype=indices.dtype)).any(-1)
   new_indices = new_indices.at[oob_indices].set(jnp.array(sparse_sizes, dtype=new_indices.dtype))
 
   return BCOO((data, new_indices), shape=new_sizes)
@@ -1841,7 +1843,8 @@ def _bcoo_reduce_sum(data, indices, *, spinfo, axes):
   if n_sparse:
     # zero-out data corresponding to invalid indices.
     fill_value = jnp.expand_dims(
-      jnp.array(shape[n_batch: n_batch + n_sparse]), range(indices.ndim - 1))
+      jnp.array(shape[n_batch: n_batch + n_sparse], dtype=indices.dtype),
+      range(indices.ndim - 1))
     mask = jnp.all(indices < fill_value, -1)
     if data.ndim > mask.ndim:
       mask = lax.expand_dims(mask, tuple(range(mask.ndim, data.ndim)))
