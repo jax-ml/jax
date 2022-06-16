@@ -2448,17 +2448,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
 
 class ForLoopTest(jtu.JaxTestCase):
-  
-  def setUp(self):
-    super().setUp()
-    from jax.config import config
-    config.update('jax_enable_x64', True)
-
-  def tearDown(self):
-    super().tearDown()
-    from jax.config import config
-    config.update('jax_enable_x64', False)
-
+ 
   def test_cant_eval_get_primitive(self):
     with self.assertRaises(ValueError):
       for_loop.get_p.bind(jnp.ones(5))
