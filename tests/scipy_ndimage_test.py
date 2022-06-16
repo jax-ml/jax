@@ -96,12 +96,14 @@ class NdimageTest(jtu.JaxTestCase):
     impl_fun = (osp_ndimage.map_coordinates if impl == "original"
                 else _fixed_ref_map_coordinates)
     osp_op = lambda x, c: impl_fun(x, c, order=order, mode=mode, cval=cval)
-    if dtype in float_dtypes:
-      epsilon = max(dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
-                     for d in [dtype, coords_dtype])
-      self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=100*epsilon)
-    else:
-      self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=0)
+
+    with jtu.strict_promotion_if_dtypes_match([dtype, int if round else coords_dtype]):
+      if dtype in float_dtypes:
+        epsilon = max(dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
+                      for d in [dtype, coords_dtype])
+        self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=100*epsilon)
+      else:
+        self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=0)
 
   def testMapCoordinatesErrors(self):
     x = np.arange(5.0)
@@ -131,7 +133,9 @@ class NdimageTest(jtu.JaxTestCase):
 
     lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=order)
     osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=order)
-    self._CheckAgainstNumpy(osp_op, lsp_op, args_maker)
+
+    with jtu.strict_promotion_if_dtypes_match([dtype, c.dtype]):
+      self._CheckAgainstNumpy(osp_op, lsp_op, args_maker)
 
   def testContinuousGradients(self):
     # regression test for https://github.com/google/jax/issues/3024
@@ -139,7 +143,7 @@ class NdimageTest(jtu.JaxTestCase):
     def loss(delta):
       x = np.arange(100.0)
       border = 10
-      indices = np.arange(x.size) + delta
+      indices = np.arange(x.size, dtype=x.dtype) + delta
       # linear interpolation of the linear function y=x should be exact
       shifted = lsp_ndimage.map_coordinates(x, [indices], order=1)
       return ((x - shifted) ** 2)[border:-border].mean()
