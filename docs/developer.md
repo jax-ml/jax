@@ -66,6 +66,28 @@ specify the paths to CUDA and CUDNN, which you must have installed. Here
 may need to use `python3` instead. By default, the wheel is written to the
 `dist/` subdirectory of the current directory.
 
+### Building jaxlib from source with a modified TensorFlow repository.
+
+JAX depends on XLA, whose source code is in the
+[Tensorflow GitHub repository](https://github.com/tensorflow/tensorflow).
+By default JAX uses a pinned copy of the TensorFlow repository, but we often
+want to use a locally-modified copy of XLA when working on JAX. There are two
+ways to do this:
+
+* use Bazel's `override_repository` feature, which you can pass as a command
+  line flag to `build.py` as follows:
+
+  ```
+  python build/build.py --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow
+  ```
+* modify the `WORKSPACE` file in the root of the JAX source tree to point to
+  a different TensorFlow tree.
+
+To contribute changes back to XLA, send PRs to the TensorFlow repository.
+
+The version of XLA pinned by JAX is regularly updated, but is updated in
+particular before each `jaxlib` release.
+
 ### Additional Notes for Building `jaxlib` from source on Windows
 
 On Windows, follow [Install Visual Studio](https://docs.microsoft.com/en-us/visualstudio/install/install-visual-studio?view=vs-2019)
