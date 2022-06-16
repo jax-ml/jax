@@ -359,7 +359,6 @@ def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
       # Default primitive rule, similar to `core.eval_jaxpr`. Note that here
       # we assume any higher-order primitives inside of the jaxpr are *not*
       # stateful.
-      # TODO(sharadmv): enable discharging state in higher order primitives
       subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
       if eqn.primitive.multiple_results:
