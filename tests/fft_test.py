@@ -23,7 +23,9 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import numpy as jnp
+from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.numpy.util import _promote_dtypes_complex
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -111,7 +113,7 @@ class FftTest(jtu.JaxTestCase):
   def testLaxIrfftDoesNotMutateInputs(self, dtype):
     if dtype == np.float64 and not config.x64_enabled:
       raise self.skipTest("float64 requires jax_enable_x64=true")
-    x = jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=dtype) * (1+1j)
+    x = (1 + 1j) * jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=dtypes._to_complex_dtype(dtype))
     y = np.asarray(jnp.fft.irfft2(x))
     z = np.asarray(jnp.fft.irfft2(x))
     self.assertAllClose(y, z)
@@ -157,7 +159,9 @@ class FftTest(jtu.JaxTestCase):
       return jax.vmap(linear_func)(jnp.eye(size, size))
 
     def func(x):
-      return jnp.fft.irfft(jnp.concatenate([jnp.zeros(1), x[:2] + 1j*x[2:]]))
+      x, = _promote_dtypes_complex(x)
+      return jnp.fft.irfft(jnp.concatenate([jnp.zeros_like(x, shape=1),
+                                            x[:2] + 1j*x[2:]]))
 
     def func_transpose(x):
       return jax.linear_transpose(func, x)(x)[0]
