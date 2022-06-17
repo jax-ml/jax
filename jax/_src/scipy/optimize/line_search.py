@@ -201,7 +201,7 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
     state = state._replace(j=state.j + 1)
     # Choose higher cutoff for maxiter than Scipy as Jax takes longer to find
     # the same value - possibly floating point issues?
-    state = state._replace(failed= state.failed | state.j >= 30)
+    state = state._replace(failed= state.failed | (state.j >= 30))
     return state
 
   state = lax.while_loop(lambda state: (~state.done) & (~pass_through) & (~state.failed),
