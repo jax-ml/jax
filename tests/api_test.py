@@ -2969,7 +2969,7 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         UnexpectedTracerError,
         re.compile(
-          "Encountered an unexpected tracer.*Tracer not among input tracers",
+          "Encountered an unexpected tracer.*Tracer not in input tracers",
           re.DOTALL)):
       api.jit(func1)(2.)
 
@@ -4619,11 +4619,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(res[4][0].shape, ())
     self.assertStartsWith(res[4][1], "named 'z'")
     self.assertEqual(res[5][0].shape, ())
-
-  def test_saved_residuals_utility_literals(self):
-    res = saved_residuals(lambda x: x * 2., 3.)
-    self.assertLen(res, 1)
-    self.assertEqual(res[0][0].shape, ())
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -9049,6 +9044,229 @@ class DynamicShapeTest(jtu.JaxTestCase):
     c, d = eqn.outvars
     self.assertEqual(c.aval.shape, (3,))
     self.assertEqual(d.aval.shape, (3,))
+
+  def test_linearize_basic(self):
+    @partial(jax.jit, abstracted_axes=('n',))
+    def foo(x):
+      return jax.lax.sin(x)
+
+    x = jnp.arange(3.)
+
+    # primal computation
+    outer_jaxpr = jax.make_jaxpr(lambda x: jax.linearize(foo, x))(x)
+    # { lambda ; a:f32[3]. let
+    #     b:f32[3] c:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; d:i32[] e:f32[d]. let
+    #           f:f32[d] = sin e
+    #           g:f32[d] = cos e
+    #         in (f, g) }
+    #       name=foo
+    #     ] 3 a
+    #   in (b, c) }
+    self.assertLen(outer_jaxpr.jaxpr.eqns, 1)
+    eqn, = outer_jaxpr.jaxpr.eqns
+    self.assertIn('call_jaxpr', eqn.params)
+    jaxpr = eqn.params['call_jaxpr']
+    self.assertLen(jaxpr.invars, 2)
+    d, e = jaxpr.invars
+    self.assertEqual(d.aval.shape, ())
+    self.assertEqual(e.aval.shape, (d,))
+    self.assertLen(jaxpr.eqns, 2)
+    self.assertLen(jaxpr.outvars, 2)
+    f, g = jaxpr.outvars
+    self.assertEqual(jaxpr.eqns[0].outvars, [f])
+    self.assertEqual(jaxpr.eqns[1].outvars, [g])
+    self.assertLen(eqn.outvars, 2)
+    b, c = eqn.outvars
+    self.assertEqual(b.aval.shape, (3,))
+    self.assertEqual(c.aval.shape, (3,))
+
+    # primal and tangent computation
+    outer_jaxpr = jax.make_jaxpr(
+        lambda x, xdot: jax.linearize(foo, x)[1](xdot))(x, x)
+    # { lambda ; a:f32[3] b:f32[3]. let
+    #     _:f32[3] c:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; d:i32[] e:f32[d]. let
+    #           f:f32[d] = sin e
+    #           g:f32[d] = cos e
+    #         in (f, g) }
+    #       name=foo
+    #     ] 3 a
+    #     h:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; i:i32[] j:f32[i] k:f32[i]. let
+    #           l:f32[i] = mul k j
+    #         in (l,) }
+    #       name=foo
+    #     ] 3 c b
+    #   in (h,) }
+    self.assertLen(outer_jaxpr.jaxpr.eqns, 2)
+    _, eqn = outer_jaxpr.jaxpr.eqns
+    self.assertIn('call_jaxpr', eqn.params)
+    jaxpr = eqn.params['call_jaxpr']
+    self.assertLen(jaxpr.invars, 3)
+    i, j, k = jaxpr.invars
+    self.assertEqual(i.aval.shape, ())
+    self.assertEqual(j.aval.shape, (i,))
+    self.assertEqual(k.aval.shape, (i,))
+    self.assertLen(eqn.outvars, 1)
+    h, = eqn.outvars
+    self.assertEqual(h.aval.shape, (3,))
+
+  def test_linearize_basic2(self):
+    @partial(jax.jit, abstracted_axes=('n',))
+    def foo(x):
+      return jax.jit(jax.lax.sin)(x)
+
+    x = jnp.arange(3.)
+    outer_jaxpr = jax.make_jaxpr(lambda x: jax.linearize(foo, x))(x)
+    # { lambda ; a:f32[3]. let
+    #     b:f32[3] c:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; d:i32[] e:f32[d]. let
+    #           f:f32[d] g:f32[d] = xla_call[
+    #             call_jaxpr={ lambda ; h:i32[] i:f32[h]. let
+    #                 j:f32[h] = sin i
+    #                 k:f32[h] = cos i
+    #               in (j, k) }
+    #             name=sin
+    #           ] d e
+    #         in (f, g) }
+    #       name=foo
+    #     ] 3 a
+    #   in (b, c) }
+    self.assertLen(outer_jaxpr.jaxpr.eqns, 1)
+    eqn, = outer_jaxpr.jaxpr.eqns
+    self.assertLen(eqn.outvars, 2)
+    b, c = eqn.outvars
+    self.assertEqual(b.aval.shape, (3,))
+    self.assertEqual(c.aval.shape, (3,))
+
+  def test_grad_basic(self):
+    @partial(jax.jit, abstracted_axes=('n',))
+    def foo(x):
+      y = jax.lax.sin(x)
+      return y.sum()
+
+    x = jnp.arange(3.)
+    outer_jaxpr = jax.make_jaxpr(jax.grad(foo))(x)
+    # { lambda ; a:f32[3]. let
+    #     _:f32[] b:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; c:i32[] d:f32[c]. let
+    #           e:f32[c] = sin d
+    #           f:f32[c] = cos d
+    #           g:f32[] = reduce_sum[axes=(0,)] e
+    #         in (g, f) }
+    #       name=foo
+    #     ] 3 a
+    #     h:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; i:i32[] j:f32[i] k:f32[]. let
+    #           l:f32[i] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] k i
+    #           m:f32[i] = mul l j
+    #         in (m,) }
+    #       name=foo
+    #     ] 3 b 1.0
+    #   in (h,) }
+    self.assertLen(outer_jaxpr.jaxpr.eqns, 2)
+    fwd_eqn, bwd_eqn = outer_jaxpr.jaxpr.eqns
+    self.assertIn('call_jaxpr', fwd_eqn.params)
+    fwd_jaxpr = fwd_eqn.params['call_jaxpr']
+    self.assertLen(fwd_jaxpr.invars, 2)
+    c, d = fwd_jaxpr.invars
+    self.assertEqual(c.aval.shape, ())
+    self.assertEqual(d.aval.shape, (c,))
+    self.assertLen(fwd_jaxpr.outvars, 2)
+    g, f = fwd_jaxpr.outvars
+    self.assertEqual(g.aval.shape, ())
+    self.assertEqual(f.aval.shape, (c,))
+    self.assertLen(fwd_eqn.outvars, 2)
+    _, b = fwd_eqn.outvars
+    self.assertEqual(b.aval.shape, (3,))
+    self.assertIn('call_jaxpr', bwd_eqn.params)
+    bwd_jaxpr = bwd_eqn.params['call_jaxpr']
+    self.assertLen(bwd_jaxpr.invars, 3)
+    i, j, k = bwd_jaxpr.invars
+    self.assertEqual(i.aval.shape, ())
+    self.assertEqual(j.aval.shape, (i,))
+    self.assertEqual(k.aval.shape, ())
+    self.assertLen(bwd_jaxpr.outvars, 1)
+    m, = bwd_jaxpr.outvars
+    self.assertEqual(m.aval.shape, (i,))
+    self.assertLen(bwd_eqn.outvars, 1)
+    h, = bwd_eqn.outvars
+    self.assertEqual(h.aval.shape, (3,))
+
+  def test_mlp_autodiff_dynamic_batch_toplevel(self):
+    def predict(params, inputs):
+      for W, b in params:
+        outputs = jnp.dot(inputs, W) + b
+        inputs = jnp.maximum(0, outputs)
+      return outputs
+
+    def loss(params, batch):
+      inputs, targets = batch
+      predictions = predict(params, inputs)
+      return jnp.sum((predictions - targets) ** 2)
+
+    batch = (inputs, targets) = (jnp.ones((128, 784)), jnp.ones((128, 10)))
+    params = [(jnp.ones((784, 256)), jnp.ones(256)),
+              (jnp.ones((256, 256)), jnp.ones(256)),
+              (jnp.ones((256,  10)), jnp.ones( 10))]
+
+    # jvp
+    def loss_jvp(params, batch):
+      return jax.jvp(loss, (params, batch), (params, batch))
+    jaxpr = jax.make_jaxpr(loss_jvp, abstracted_axes=({}, {0: 'n'}))(params, batch)
+    core.check_jaxpr(jaxpr.jaxpr)
+
+    # linearize
+    def loss_lin(params, batch):
+      y, f_lin = jax.linearize(loss, params, batch)
+      y_dot = f_lin(params, batch)
+      return y, y_dot
+    jaxpr = jax.make_jaxpr(loss_lin, abstracted_axes=({}, {0: 'n'}))(params, batch)
+    core.check_jaxpr(jaxpr.jaxpr)
+
+    # grad
+    jaxpr = jax.make_jaxpr(jax.grad(loss), abstracted_axes=({}, {0: 'n'}))(params, batch)
+    core.check_jaxpr(jaxpr.jaxpr)
+
+  def test_mlp_autodiff_dynamic_batch_inner(self):
+    # This is like the above 'toplevel' test, but instead of introducing
+    # abstracted axes on the make_jaxpr call, we do it on a jit.
+
+    @partial(jax.jit, abstracted_axes=({}, {0: 'n'}))
+    def predict(params, inputs):
+      for W, b in params:
+        outputs = jnp.dot(inputs, W) + b
+        inputs = jnp.maximum(0, outputs)
+      return outputs
+
+    def loss(params, batch):
+      inputs, targets = batch
+      predictions = predict(params, inputs)
+      return jnp.sum((predictions - targets) ** 2)
+
+    batch = (inputs, targets) = (jnp.ones((128, 784)), jnp.ones((128, 10)))
+    params = [(jnp.ones((784, 256)), jnp.ones(256)),
+              (jnp.ones((256, 256)), jnp.ones(256)),
+              (jnp.ones((256,  10)), jnp.ones( 10))]
+
+    # jvp
+    def loss_jvp(params, batch):
+      return jax.jvp(loss, (params, batch), (params, batch))
+    jaxpr = jax.make_jaxpr(loss_jvp)(params, batch)
+    core.check_jaxpr(jaxpr.jaxpr)
+
+    # linearize
+    def loss_lin(params, batch):
+      y, f_lin = jax.linearize(loss, params, batch)
+      y_dot = f_lin(params, batch)
+      return y, y_dot
+    jaxpr = jax.make_jaxpr(loss_lin)(params, batch)
+    core.check_jaxpr(jaxpr.jaxpr)
+
+    # grad
+    jaxpr = jax.make_jaxpr(jax.grad(loss))(params, batch)
+    core.check_jaxpr(jaxpr.jaxpr)
 
 
 if __name__ == '__main__':

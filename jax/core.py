@@ -214,11 +214,8 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None)
     assert all(isinstance(v,  Var)           for v in outvars)
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
-
 @total_ordering
 class Var:
-  # TODO(frostig,mattjj): We don't override __eq__ or __hash__, so comparison is
-  # by object id, but pretty printing might collide.
   count: int
   suffix: str
   aval: AbstractValue
@@ -554,6 +551,9 @@ class Tracer:
 
   def _assert_live(self) -> None:
     pass  # Override for liveness checking
+
+  def get_referent(self) -> Any:
+    return self  # Override for object equivalence checking
 
   # Python looks up special methods only on classes, not instances. This means
   # these methods needs to be defined explicitly rather than relying on
@@ -1033,6 +1033,12 @@ def find_top_trace(xs) -> Trace:
               else top_main)
   return top_main and top_main.with_cur_sublevel()  # type: ignore
 
+def get_referent(x: Any) -> Any:
+  return x.get_referent() if isinstance(x, Tracer) else x
+
+def same_referent(x: Any, y: Any) -> bool:
+  return get_referent(x) is get_referent(y)
+
 
 # -------------------- abstract values --------------------
 
@@ -1089,6 +1095,14 @@ InputType = Tuple[Tuple[AbstractValue, bool], ...]  # DBIdx in shapes
 # OutDBIdx instances in its shape) and the second is a boolean indicating
 # whether that argument is explicit (i.e. returned by the callable).
 OutputType = Tuple[Tuple[AbstractValue, bool], ...]  # InDBIdx / OutDBIdx shapes
+
+
+def _jaxpr_type_to_callable_annotation(jaxpr: Jaxpr) -> InputType:
+  idxs = {v: DBIdx(i) for i, v in enumerate((*jaxpr.constvars, *jaxpr.invars))}
+  out = [(v.aval.update(shape=tuple(idxs.get(d, d) for d in v.aval.shape))  # type: ignore
+          if type(v.aval) is DShapedArray else v.aval, True)
+         for v in jaxpr.invars]
+  return tuple(out)
 
 
 class Bot(AbstractValue): pass
@@ -1307,7 +1321,8 @@ class DShapedArray(UnshapedArray):
     return hash((self.shape, self.dtype, self.weak_type))
 
   def join(self, other):
-    if self.shape == other.shape and self.dtype == other.dtype:
+    if (symbolic_equal_shape(self.shape, other.shape) and
+        self.dtype == other.dtype):
       weak_type = self.weak_type and other.weak_type
       return self.update(weak_type=weak_type)
     elif self.dtype == other.dtype:
@@ -1624,7 +1639,7 @@ def is_constant_dim(d: DimSize) -> bool:
   return handler.is_constant(*ds)
 
 def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
-  if d1 is d2: return True  # identical objects always compare equal
+  if d1 is d2 or get_referent(d1) is get_referent(d2): return True
   handler, ds = _dim_handler_and_canonical(d1, d2)
   return handler.symbolic_equal(*ds)
 
@@ -1840,7 +1855,7 @@ class CallPrimitive(Primitive):
     jaxpr = new_params.pop('call_jaxpr')
     subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
     if config.jax_dynamic_shapes:
-      subfun = lu.annotate(subfun, tuple((v.aval, True) for v in jaxpr.invars))
+      subfun = lu.annotate(subfun, _jaxpr_type_to_callable_annotation(jaxpr))
     return [subfun], new_params
 
 def call_bind(primitive: CallPrimitive, fun, *args, **params):
@@ -2455,7 +2470,8 @@ def _check_call(ctx_factory, prim, in_atoms, params):
     if not typecompat(substitute(v.aval), x.aval):
       # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__
       raise JaxprTypeError(f"Call primitive {prim} passes operand {x} of type "
-                           f"{x.aval} to jaxpr expecting type {v.aval}")
+                           f"{x.aval} to jaxpr expecting type "
+                           f"{substitute(v.aval)}")
     env[v] = x if type(x) is Var else x.val
 
   _check_jaxpr(ctx_factory, call_jaxpr)

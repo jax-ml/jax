@@ -47,7 +47,7 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 import jax._src.pretty_printer as pp
 from jax._src import util
-from jax._src.util import (cache, safe_zip, prod, safe_map, canonicalize_axis,
+from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
                            split_list)
 from jax.tree_util import tree_map
 import jax._src.lib
@@ -82,6 +82,9 @@ Shape = core.Shape
 
 T = TypeVar("T")
 
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
+
 def _validate_shapes(shapes: Sequence[Shape]):
   def _check_static_shape(shape: Shape):
     checked = canonicalize_shape(shape)
@@ -95,7 +98,7 @@ def _validate_shapes(shapes: Sequence[Shape]):
     # pass dynamic shapes through unchecked
     return
   else:
-    _ = tuple(map(_check_static_shape, shapes))
+    map(_check_static_shape, shapes)
 
 def _try_broadcast_shapes(
     shapes: Sequence[Tuple[int, ...]]) -> Optional[Tuple[int, ...]]:
@@ -1135,7 +1138,7 @@ def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
 
 def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
-  axes = tuple(map(int, axes))
+  axes = map(int, axes)
   dtype = dtypes.canonicalize_dtype(dtype)
   base_shape = tuple(np.take(shape, axes))  # type: ignore[arg-type]
   iotas = [broadcasted_iota(np.uint32, base_shape, i)
@@ -1433,7 +1436,7 @@ def _broadcasting_shape_rule(name, *avals):
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
   result_shape = []
   for ds in zip(*shapes):
-    if all(d is ds[0] for d in ds):
+    if all(core.same_referent(d, ds[0]) for d in ds[1:]):
       # if all axes are identical objects, the resulting size is the object
       result_shape.append(ds[0])
     else:
@@ -1488,7 +1491,7 @@ def _broadcast_translate(op, ctx, avals_in, avals_out, *args):
 # Like autograd.numpy.numpy_vjps.unbroadcast, this utility handles transposition
 # involving linear primitives with implicit broadcasting.
 def _unbroadcast(aval, x):
-  if not isinstance(aval, ShapedArray):
+  if not isinstance(aval, (core.DShapedArray, ShapedArray)):
     raise TypeError("transpose with implicit broadcasting of unshaped values")
   x_shape = np.shape(x)
   if core.symbolic_equal_shape(aval.shape, x_shape):
@@ -1505,8 +1508,11 @@ def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)
   if core.symbolic_equal_shape(x_shape, target_shape):
     return x
+  elif not x_shape:
+    return broadcast_in_dim(x, target_shape, ())
   else:
-    dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape)) if core.symbolic_equal_dim(a, b)]
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape))
+            if core.symbolic_equal_dim(a, b)]
     squeeze_shape = [x_shape[i] for i in dims]
     return broadcast_in_dim(reshape(x, squeeze_shape), target_shape, dims)
 
@@ -2525,9 +2531,13 @@ def _dot_general_pp_rule(eqn, context, settings):
   (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = eqn.params['dimension_numbers']
   printed_params['dimension_numbers'] = (
       (list(lhs_cont), list(rhs_cont)), (list(lhs_batch), list(rhs_batch)))
-  return [pp.text(eqn.primitive.name),
-          core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-          pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
+  rhs = [pp.text(eqn.primitive.name),
+         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
+         pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
+  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
 
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
@@ -2638,15 +2648,14 @@ def _broadcast_in_dim_typecheck_rule(
 
 def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
                                      shape, broadcast_dimensions):
-  if dyn_shape:
-    raise NotImplementedError("dynamic shape broadcast transpose not implemented")
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)]
-  unit_axes = [i for i, s in enumerate(operand.aval.shape)
-               if core.symbolic_equal_dim(s, 1)]
-  bdims = tuple(np.delete(broadcast_dimensions, unit_axes))
+  unit_dims = [i for i, s in enumerate(operand.aval.shape)
+               if core.symbolic_equal_dim(s,  1)]
+  bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
   axes = tuple(np.delete(range(len(shape)), bdims))
-  return [expand_dims(_reduce_sum(ct, axes), unit_axes)]
+  return ([expand_dims(_reduce_sum(ct, axes), unit_dims)] +
+          [None] * len(dyn_shape))
 
 def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
                                  broadcast_dimensions):
@@ -2713,15 +2722,26 @@ def _broadcast_in_dim_jvp_rule(primals, tangents, *, shape, broadcast_dimensions
     y_dot = broadcast_in_dim_p.bind(operand_dot, *dyn_shape, shape=shape,
                                     broadcast_dimensions=broadcast_dimensions)
   return y, y_dot
-broadcast_in_dim_p = standard_primitive(
-    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
-ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
-ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
-batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
-pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
-pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
-pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
-core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
+
+def _broadcast_in_dim_partial_eval(
+    trace, operand, *dyn_shape, shape, broadcast_dimensions):
+  if not dyn_shape:
+    return trace.default_process_primitive(
+        broadcast_in_dim_p, (operand, *dyn_shape),
+        dict(shape=shape, broadcast_dimensions=broadcast_dimensions))
+  assert all(t.pval.is_known() for t in dyn_shape)
+  operand_tracer = trace.instantiate_const(operand)
+  dyn_shape_tracers = map(trace.instantiate_const, dyn_shape)
+  dyn_shape_tracers_ = iter(dyn_shape_tracers)
+  shape_ = [next(dyn_shape_tracers_) if d is None else d for d in shape]
+  out_aval = core.DShapedArray(tuple(shape_), operand.dtype, operand.weak_type)
+  out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
+  eqn = pe.new_eqn_recipe(
+      [operand_tracer, *dyn_shape_tracers], [out_tracer], broadcast_in_dim_p,
+      dict(shape=shape, broadcast_dimensions=broadcast_dimensions),
+      core.no_effects, source_info_util.current())
+  out_tracer.recipe = eqn
+  return out_tracer
 
 def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   aval_out, = ctx.avals_out
@@ -2740,7 +2760,33 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
         mlir.aval_to_ir_type(aval_out), x,
         mlir.dense_int_elements(broadcast_dimensions)
     ).results
+
+def _broadcast_in_dim_pp_rule(eqn, context, settings):
+  # Don't print shape or trivial broadcast_dimensions in params, since it can be
+  # inferred from the let-binder's type annotation.
+  printed_params = {}
+  if eqn.params['broadcast_dimensions']:
+    printed_params['broadcast_dimensions'] = eqn.params['broadcast_dimensions']
+  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
+  rhs = [pp.text(eqn.primitive.name),
+         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
+         pp.text(" ") + core.pp_vars(eqn.invars[:1], context)]
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
+  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+
+broadcast_in_dim_p = standard_primitive(
+    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
+ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
+ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
+batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
+pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
+pe.custom_partial_eval_rules[broadcast_in_dim_p] = _broadcast_in_dim_partial_eval
+pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
+pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
+core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+# core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -4400,7 +4446,7 @@ def _check_same_dtypes(name, ignore_fp_precision, *ttypes):
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
-  types = list(map(np.dtype, ttypes))  # canonicalize
+  types = map(np.dtype, ttypes)  # canonicalize
   if ignore_fp_precision:
     types = [
         np.floating if dtypes.issubdtype(dtype, np.floating)

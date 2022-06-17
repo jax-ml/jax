@@ -244,7 +244,16 @@ def annotate(f: WrappedFun,
     return f
   assert (type(in_type) is tuple and all(type(e) is tuple for e in in_type) and
           all(isinstance(a, core.AbstractValue) and type(b) is bool
-              for a, b in in_type))
+              and not isinstance(a, core.ConcreteArray) for a, b in in_type) and
+          all(isinstance(d, (int, core.DBIdx)) for a, _ in in_type
+              if type(a) is core.DShapedArray for d in a.shape))
+  provided = [e for _, e in in_type]
+  for aval, _ in in_type:
+    if type(aval) is core.DShapedArray:
+      for d in aval.shape:
+        if isinstance(d, core.DBIdx):
+          provided[d.val] = True
+  assert all(provided)
   return WrappedFun(f.f, f.transforms, f.stores, f.params, in_type)
 
 
