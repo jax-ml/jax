@@ -201,11 +201,6 @@ def tree_multimap(*args, **kwargs):
                 'instead as a drop-in replacement.', FutureWarning)
   return tree_map(*args, **kwargs)
 
-# TODO(mattjj,phawkins): consider removing this function
-def _process_pytree(process_node, tree):
-  leaves, treedef = pytree.flatten(tree)
-  return treedef.walk(process_node, None, leaves), treedef
-
 def build_tree(treedef, xs):
   return treedef.from_iterable_tree(xs)
 

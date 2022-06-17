@@ -24,7 +24,7 @@ from jax import tree_util
 from jax import flatten_util
 from jax._src import test_util as jtu
 from jax._src.lib import pytree as pytree
-from jax._src.tree_util import _process_pytree, prefix_errors
+from jax._src.tree_util import prefix_errors
 import jax.numpy as jnp
 
 
@@ -209,12 +209,6 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(p1.func, fun)
     self.assertEqual(p1.func, p2.func)
     self.assertEqual(hash(p1.func), hash(p2.func))
-
-  @parameterized.parameters(*(TREES + LEAVES))
-  def testRoundtripViaBuild(self, inputs):
-    xs, tree = _process_pytree(tuple, inputs)
-    actual = tree_util.build_tree(tree, xs)
-    self.assertEqual(actual, inputs)
 
   def testChildren(self):
     _, tree = tree_util.tree_flatten(((1, 2, 3), (4,)))
