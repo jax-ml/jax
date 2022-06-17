@@ -743,9 +743,10 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
 
   outs = []
   for aval, x in zip(ctx.avals_in, args):
-    # TODO(b/141575627): we handle complex-dtype sum-reduction directly as a
-    # special case because it's not currently handled by XLA:GPU
-    if prim is lax.add_p and dtypes.issubdtype(aval.dtype, np.complexfloating):
+    # TODO(phawkins): remove this special case when jaxlib > 0.3.10 is the
+    # minimum.
+    if (jax._src.lib.xla_extension_version < 75 and prim is lax.add_p
+        and dtypes.issubdtype(aval.dtype, np.complexfloating)):
       real_dtype = np.finfo(aval.dtype).dtype
       outs.append(
           mhlo.ComplexOp(
