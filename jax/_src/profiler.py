@@ -46,6 +46,15 @@ def start_server(port: int):
   global _profiler_server
   if _profiler_server is not None:
     raise ValueError("Only one profiler server can be active at a time.")
+
+  # Make sure backends are initialized before creating a profiler
+  # session. Otherwise on Cloud TPU, libtpu may not be initialized before
+  # creating the tracer, which will cause the TPU tracer initialization to
+  # fail and no TPU operations will be included in the profile.
+  # NOTE(skyewm): I'm not sure this is necessary for start_server (is definitely
+  # is for start_trace), but I'm putting it here to be safe.
+  xla_bridge.get_backend()
+
   _profiler_server = xla_client.profiler.start_server(port)
   return _profiler_server
 
@@ -92,6 +101,12 @@ def start_trace(log_dir, create_perfetto_link: bool = False):
     if _profile_state.profile_session is not None:
       raise RuntimeError("Profile has already been started. "
                          "Only one profile may be run at a time.")
+    # Make sure backends are initialized before creating a profiler
+    # session. Otherwise on Cloud TPU, libtpu may not be initialized before
+    # creating the tracer, which will cause the TPU tracer initialization to
+    # fail and no TPU operations will be included in the profile.
+    xla_bridge.get_backend()
+
     _profile_state.profile_session = xla_client.profiler.ProfilerSession()
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.log_dir = log_dir
