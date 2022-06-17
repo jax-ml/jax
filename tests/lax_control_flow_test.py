@@ -355,18 +355,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def fun(x):
       return lax.while_loop(lambda x: x < lax.axis_index('i'), lambda x: x + 2, x)
 
-    ans = jax.vmap(fun, axis_name='i')(np.array([0, 0, 0, 0]))
+    ans = jax.vmap(fun, axis_name='i')(np.array([0, 0, 0, 0], dtype='int32'))
     expected = np.array([0, 2, 2, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     fun = jax.jit(fun)
-    ans = jax.vmap(fun, axis_name='i')(np.array([0, 0, 0, 0]))
+    ans = jax.vmap(fun, axis_name='i')(np.array([0, 0, 0, 0], dtype='int32'))
     expected = np.array([0, 2, 2, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     ans = jax.vmap(lambda _, x: fun(x), axis_name='i', in_axes=(0, None))(
         np.array([0, 0, 0, 0]), 0)
-    expected = np.array([0, 2, 2, 4])
+    expected = np.array([0, 2, 2, 4], dtype='int32')
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testWhileLoopBatchedWithConstBody(self):
@@ -2304,7 +2304,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     @f.defjvp
     def f_jvp(primals, tangents):
       (x,), (xdot,) = primals, tangents
-      const = np.arange(3, dtype='int32')
+      const = np.arange(3, dtype=x.dtype)
       return x * const, xdot * const
 
     g = lambda x: jax.lax.cond(True, f, lambda x: x, x)
@@ -2320,7 +2320,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     init_weak = 0  # Python scalars are weakly-typed.
     x = jnp.ones(5, dtype=dtype)
     carry, result = lax.scan(func, init_weak, x)
-    self.assertEqual(carry, x.sum())
+    self.assertEqual(carry, x.sum(dtype=carry.dtype))
     self.assertArraysEqual(result, x)
 
   @parameterized.named_parameters(
@@ -2368,7 +2368,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     scan_v = jax.vmap(scan, in_axes=0, out_axes=0, axis_name='i')
     self.assertAllClose(
-      scan_v(jnp.ones([1]), jnp.arange(5).reshape((1, 5))),
+      scan_v(jnp.ones([1]), jnp.arange(5.).reshape((1, 5))),
       (jnp.array([1.]), jnp.array([[0., 1., 2., 3., 4.]])))
 
   def test_xla_cpu_gpu_loop_cond_bug(self):
@@ -2417,8 +2417,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_while_loop_fixed_point_with_nested_named_axes(self):
     def f(x):
-      z = x + lax.axis_index('a')
-      y = x + lax.axis_index('b')
+      z = x + lax.axis_index('a').astype(x.dtype)
+      y = x + lax.axis_index('b').astype(x.dtype)
       def cond(carry):
         i, x = carry
         return x < 5
