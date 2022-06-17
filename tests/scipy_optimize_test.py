@@ -104,7 +104,7 @@ class TestBFGS(jtu.JaxTestCase):
   @jtu.skip_on_flag('jax_enable_x64', False)
   def test_zakharov(self):
     def zakharov_fn(x):
-      ii = jnp.arange(1, len(x) + 1, step=1)
+      ii = jnp.arange(1, len(x) + 1, step=1, dtype=x.dtype)
       answer = zakharovFromIndices(x=x, ii=ii)
       return answer
 
@@ -208,8 +208,8 @@ class TestLBFGS(jtu.JaxTestCase):
     complex_dim = 5
 
     f_re = rosenbrock(jnp)
-    init_re = jnp.zeros((2 * complex_dim,))
-    expect_re = jnp.ones((2 * complex_dim,))
+    init_re = jnp.zeros((2 * complex_dim,), dtype=complex)
+    expect_re = jnp.ones((2 * complex_dim,), dtype=complex)
 
     def f(z):
       x_re = jnp.concatenate([jnp.real(z), jnp.imag(z)])

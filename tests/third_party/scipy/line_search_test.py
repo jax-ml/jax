@@ -130,7 +130,7 @@ class TestLineSearch(jtu.JaxTestCase):
     # |x + s| <= c2 * |x|
     f = lambda x: jnp.dot(x, x)
     fp = lambda x: 2 * x
-    p = jnp.array([1, 0])
+    p = jnp.array([1.0, 0.0])
 
     # Smallest s satisfying strong Wolfe conditions for these arguments is 30
     x = -60 * p
