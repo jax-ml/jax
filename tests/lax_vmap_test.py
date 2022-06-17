@@ -419,7 +419,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     op = lambda c, x, y: lax.select(c < 0, x, y)
     self._CheckBatching(op, 5, bdims, (pred_shape, arg_shape, arg_shape,),
-                        (np.bool_, arg_dtype, arg_dtype), rng)
+                        (arg_dtype, arg_dtype, arg_dtype), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
