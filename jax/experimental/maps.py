@@ -929,10 +929,11 @@ ad.primitive_transposes[xmap_p] = _xmap_transpose
 
 
 def _typecheck_xmap(
-    *in_avals, call_jaxpr, name, in_axes, out_axes, donated_invars,
+    *in_atoms, call_jaxpr, name, in_axes, out_axes, donated_invars,
     global_axis_sizes, axis_resources, resource_env, backend,
     spmd_in_axes, spmd_out_axes, in_positional_semantics,
     out_positional_semantics):
+  in_avals = [x.aval for x in in_atoms]
   axis_resource_count = _get_axis_resource_count(
       axis_resources, resource_env, in_positional_semantics)
   local_axis_sizes = {
@@ -946,11 +947,8 @@ def _typecheck_xmap(
       raise core.JaxprTypeError(
         f"xmap passes operand {in_aval} to jaxpr expecting {binder_in_aval}")
 
-  mapped_in_avals = [_delete_aval_axes(a, a_in_axes, global_axis_sizes)
-                     for a, a_in_axes in zip(in_avals, in_axes)]
   with core.extend_axis_env_nd(global_axis_sizes.items()):
-    core._check_jaxpr(lambda: core.JaxprPpContext(), call_jaxpr,
-                      mapped_in_avals)
+    core._check_jaxpr(lambda: core.JaxprPpContext(), call_jaxpr)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [_insert_aval_axes(a, a_out_axes, local_axis_sizes)

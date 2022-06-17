@@ -525,7 +525,7 @@ def _input_handler(backend: Backend,
   in_avals, which_explicit = util.unzip2(in_type)
   # Check whether we actually need an input_handler.
   needs_implicit = which_explicit and not all(which_explicit)
-  needs_out_handling = any(type(d) is pe.InDBIdx for a in out_type or []
+  needs_out_handling = any(type(d) is core.InDBIdx for a in out_type or []
                            if type(a) is core.DShapedArray for d in a.shape)
 
   if not needs_implicit and not needs_out_handling:
@@ -539,14 +539,14 @@ def _input_handler(backend: Backend,
   for arg_idx, aval in enumerate(in_avals):
     if isinstance(aval, core.DShapedArray):
       for axis_idx, d in enumerate(aval.shape):
-        if isinstance(d, pe.DBIdx) and d.val in implicit_idxs:
+        if isinstance(d, core.DBIdx) and d.val in implicit_idxs:
           implicit_args_from_axes.append((d.val, arg_idx, axis_idx))
   assert {i for i, _, _ in implicit_args_from_axes} == implicit_idxs
 
   # Precompute which input values are needed for output types.
   inputs_needed_for_out_types = out_type and [
       d.val for aval in out_type if type(aval) is core.DShapedArray  # type: ignore
-      for d in aval.shape if type(d) is pe.InDBIdx]
+      for d in aval.shape if type(d) is core.InDBIdx]
 
   def elaborate(explicit_args: Sequence[Any]) -> Tuple[Tuple, Optional[Tuple]]:
     if needs_implicit:
@@ -582,7 +582,7 @@ def _result_handler(backend: Backend,
   out_avals, kept_outputs = util.unzip2(out_type)
   handlers = map(partial(aval_to_result_handler, sticky_device), out_avals)
   dyn_outs = any(type(aval) is core.DShapedArray and
-                 any(type(d) in (pe.InDBIdx, pe.OutDBIdx) for d in aval.shape)
+                 any(type(d) in (core.InDBIdx, core.OutDBIdx) for d in aval.shape)
                  for aval in out_avals)
   if not dyn_outs:
     return SimpleResultHandler(handlers)
@@ -641,8 +641,9 @@ def _dynamic_array_result_handler(sticky_device, aval, env, buf):
   else:
     assert env is not None
     in_env, out_env = env
-    shape = [in_env[d.val] if type(d) is pe.InDBIdx else
-             out_env[d.val] if type(d) is pe.OutDBIdx else d for d in aval.shape]
+    shape = [in_env[d.val] if type(d) is core.InDBIdx else
+             out_env[d.val] if type(d) is core.OutDBIdx else d
+             for d in aval.shape]
     aval = core.ShapedArray(tuple(shape), aval.dtype)
     return device_array.make_device_array(aval, sticky_device, buf)
 

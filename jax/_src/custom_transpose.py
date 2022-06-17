@@ -179,8 +179,9 @@ class CustomTransposePrimitive(core.Primitive):
 
 
 # TODO(frostig,mattjj): reinstate checks
-def custom_transpose_typecheck(*avals, **params):
-  return None, core.no_effects
+def custom_transpose_typecheck(*in_atoms, out_types, **params):
+  del in_atoms, params
+  return out_types, core.no_effects
 
 
 def custom_transpose_transpose_rule(

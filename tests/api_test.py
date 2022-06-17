@@ -4701,7 +4701,7 @@ class JaxprTest(jtu.JaxTestCase):
 
   def test_make_jaxpr_return_shape(self):
     _, shape_tree = api.make_jaxpr(lambda x: (x + 1, jnp.zeros(2, jnp.float32)),
-                                   return_shape=True)(np.int32(1))
+                                   return_shape=True)(jnp.int32(1))
     expected = (api.ShapeDtypeStruct(shape=(), dtype=jnp.int32),
                 api.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32))
     self.assertEqual(shape_tree, expected)
@@ -8460,9 +8460,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     #       name=g
     #     ] a b
     #   in (c,) }
-    # TODO(mattjj,dougalm): support dynamic shapes in type checker
-    with jax.enable_checks(False):
-      jaxpr = jax.make_jaxpr(f)(3)
+    jaxpr = jax.make_jaxpr(f)(3)
 
     a, = jaxpr.jaxpr.invars
     c, = jaxpr.jaxpr.outvars
@@ -8509,7 +8507,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     def zeros(shape):
       if not isinstance(shape, (tuple, list)):
         shape = shape,
-      return lax.broadcast(0., shape)
+      return lax.broadcast(jnp.float32(0.), shape)
 
     def f(n):
       m = 2 * n
@@ -8530,7 +8528,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     #       name=<lambda>
     #     ] b a c d
     #   in (e,) }
-    jaxpr = jax.make_jaxpr(f)(3)
+    jaxpr = jax.make_jaxpr(f)(jnp.int32(3))
     a, = jaxpr.jaxpr.invars
     b, = jaxpr.jaxpr.eqns[0].outvars
     c, = jaxpr.jaxpr.eqns[1].outvars
@@ -8553,7 +8551,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     @partial(jax.jit, abstracted_axes=('n',))
     def f(x):
       return jnp.sum(x)
-    jaxpr = jax.make_jaxpr(f)(jnp.ones(3))
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(3, jnp.dtype('float32')))
     # { lambda ; a:f32[3]. let
     #     b:f32[] = xla_call[
     #       call_jaxpr={ lambda ; c:i32[] d:f32[c]. let
@@ -8580,7 +8578,8 @@ class DynamicShapeTest(jtu.JaxTestCase):
     @partial(jax.jit, abstracted_axes=('n',))
     def fun(x):
       return jnp.sum(x)
-    jaxpr = jax.make_jaxpr(lambda n: fun(jnp.ones(n + n)))(3)
+    jaxpr = jax.make_jaxpr(lambda n: fun(jnp.ones(n + n, jnp.dtype('float32')))
+                           )(3)
     # { lambda ; a:i32[]. let
     #     b:i32[] = add a a
     #     c:f32[b] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] 1.0 b
@@ -8731,7 +8730,9 @@ class DynamicShapeTest(jtu.JaxTestCase):
 
   def test_slicing_basic(self):
     f = jax.jit(lambda x, n: jnp.sum(x[:n]))
-    ans = f(jnp.arange(10), 3)
+    # TODO(mattjj): revise getslice, add typecheck rule for it, enable checks
+    with jax.enable_checks(False):
+      ans = f(jnp.arange(10), 3)
     expected = jnp.sum(jnp.arange(10)[:3])
     self.assertAllClose(ans, expected, check_dtypes=True)
 

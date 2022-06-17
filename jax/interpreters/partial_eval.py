@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from collections import namedtuple
 import contextlib
-from dataclasses import dataclass
 import functools
 from functools import partial
 import inspect
@@ -39,10 +38,10 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache)
 from jax.core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
-                      ClosedJaxpr, new_jaxpr_eqn, ConcreteArray,
-                      raise_to_shaped, Var, DropVar, Atom, JaxprEqn, Primitive,
-                      ShapedArray, DShapedArray, AbstractBInt, mapped_aval,
-                      unmapped_aval)
+                      ClosedJaxpr, new_jaxpr_eqn, ConcreteArray, Var, DropVar,
+                      raise_to_shaped, Atom, JaxprEqn, Primitive, ShapedArray,
+                      DShapedArray, AbstractBInt, mapped_aval, unmapped_aval,
+                      DBIdx, InDBIdx, OutDBIdx, InputType, OutputType)
 from jax._src import source_info_util
 from jax.config import config
 
@@ -1856,9 +1855,7 @@ def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
     out_tracers = map(trace.full_raise, ans)
     jaxpr, consts = frame.to_jaxpr(out_tracers)
     del fun, main, trace, frame, in_tracers, out_tracers, ans
-  if not config.jax_dynamic_shapes:
-    # TODO(frostig,mattjj): update check_jaxpr to handle dynamic shapes
-    config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  config.jax_enable_checks and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts
 
 
@@ -1886,9 +1883,7 @@ def trace_to_subjaxpr_dynamic2(
     out_tracers = map(trace.full_raise, ans)
     jaxpr, out_type, consts = frame.to_jaxpr2(out_tracers)
     del fun, main, trace, frame, in_tracers, out_tracers, ans
-  if not config.jax_dynamic_shapes:
-    # TODO(frostig,mattjj): update check_jaxpr to handle dynamic shapes
-    config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  config.jax_enable_checks and core.check_jaxpr(jaxpr)
   return jaxpr, out_type, consts
 
 
@@ -1931,22 +1926,6 @@ def trace_to_jaxpr_final2(
 AbstractedAxisName = Hashable
 AbstractedAxesSpec = Union[Dict[int, AbstractedAxisName],
                            Tuple[AbstractedAxisName, ...]]
-
-class DBIdx(NamedTuple):
-  val: int
-
-@dataclass(frozen=True)
-class InDBIdx:
-  val: int
-
-@dataclass(frozen=True)
-class OutDBIdx:
-  val: int
-
-InputType = Tuple[Tuple[AbstractValue, bool], ...]  # DBIdx in shapes
-OutputType = Tuple[Tuple[AbstractValue, bool], ...]  # InDBIdx / OutDBIdx shapes
-
-
 def infer_lambda_input_type(
     axes_specs: Optional[Sequence[AbstractedAxesSpec]],
     args: Sequence[Any]
@@ -1954,10 +1933,10 @@ def infer_lambda_input_type(
   ndims = [getattr(get_aval(x), 'ndim', 0) for x in args]
   partial_specs = _canonicalize_specs(ndims, axes_specs)
   specs = _complete_specs(args, partial_specs)
-  idxs, implicit_names = _collect_implicit(args, specs)
-  implicit_inputs = [(_implicit_arg_type(n), False) for n in implicit_names]
-  explicit_inputs = [(_arg_type(idxs, x, s), True) for x, s in zip(args, specs)]
-  return (*implicit_inputs, *explicit_inputs)
+  idxs, implicit_types = _collect_implicit(args, specs)
+  implicit_sig = [(ty, False) for ty in implicit_types]
+  explicit_sig = [(_arg_type(idxs, x, s), True) for x, s in zip(args, specs)]
+  return (*implicit_sig, *explicit_sig)
 
 def _canonicalize_specs(
     ndims: Sequence[int], specs: Optional[Sequence[AbstractedAxesSpec]]
@@ -2007,38 +1986,34 @@ def _complete_specs(
 
 def _collect_implicit(
     args: Sequence[Any], specs: List[Dict[int, AbstractedAxisName]]
-  ) -> Tuple[Dict[AbstractedAxisName, DBIdx], List[AbstractedAxisName]]:
+  ) -> Tuple[Dict[AbstractedAxisName, DBIdx], List[AbstractValue]]:
   # Given an explicit argument list and a specification of abstracted axes, we
   # want to produce an InputType by identifying AbstractedAxisNames with DBIdxs
   # and figuring out which AbstractedAxisNames correspond to implicit arguments.
-  # An AbstractedAxisName corresponds to an implicit argument only when its size
-  # is a Tracer which already occurs in `args` to the left of where it's needed.
 
   idxs: Dict[AbstractedAxisName, DBIdx] = {}
+  implicit_types: List[AbstractValue] = []
   explicit_tracers: Dict[TracerId, int] = {}
   counter = (DBIdx(i) for i in it.count())
 
   # Add implicit arguments to idxs.
+
   for explicit_idx, (x, spec) in enumerate(zip(args, specs)):
     for i, name in spec.items():
       if name not in idxs and id(x.shape[i]) not in explicit_tracers:
         idxs[name] = next(counter)
+        implicit_types.append(core.get_aval(x.shape[i]))
     if isinstance(x, Tracer):
       explicit_tracers[id(x)] = explicit_idx
-  implicit_names: List[AbstractedAxisName] = list(idxs)
 
   # Now that we know the implicit args, add explicit args to idxs.
-  offset = len(implicit_names)
+  offset = len(implicit_types)
   for x, spec in zip(args, specs):
     for i, name in spec.items():
       if id(x.shape[i]) in explicit_tracers:
         idxs[name] = DBIdx(offset + explicit_tracers[id(x.shape[i])])
 
-  return idxs, implicit_names
-
-def _implicit_arg_type(name: AbstractedAxisName) -> AbstractValue:
-  # For now, implicit args are always axis sizes, which always have type i32[].
-  return ShapedArray((), dtypes.dtype('int32'))
+  return idxs, implicit_types
 
 def _arg_type(
     idxs: Dict[AbstractedAxisName, DBIdx], x: Any,
@@ -2065,7 +2040,7 @@ def _add_implicit_outputs(jaxpr: Jaxpr) -> Tuple[Jaxpr, OutputType]:
   outvars = [*impl_outvars, *expl_outvars]
 
   # Now assemble an OutputType by mapping vars in shapes to InDBIdx/OutDBIdx.
-  in_map : Dict[Var,  InDBIdx] = {v:  InDBIdx(i) for i, v in enumerate(invars )}
+  in_map : Dict[Var,  InDBIdx] = {v:  InDBIdx(i) for i, v in enumerate( invars)}
   out_map: Dict[Var, OutDBIdx] = {x: OutDBIdx(i) for i, x in enumerate(outvars)
                                   if type(x) is Var}
   out_avals_ = (x.aval for x in outvars)

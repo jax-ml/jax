@@ -734,8 +734,6 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
-  shape = _broadcast_in_dim_shape_rule(
-    operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
       and isinstance(operand, (device_array.DeviceArray, core.Tracer))):
     return operand
@@ -2646,6 +2644,22 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
 
   return shape
 
+def _broadcast_in_dim_typecheck_rule(
+    operand, *dyn_shape, shape, broadcast_dimensions):
+  if not dyn_shape:
+    out_aval, effects = broadcast_in_dim_p.abstract_eval(
+        operand.aval, shape=shape, broadcast_dimensions=broadcast_dimensions)
+    return [out_aval], effects
+  else:
+    # TODO(mattjj): perform more checks like _broadcast_in_dim_shape_rule
+    dyn_shape_ = iter(dyn_shape)
+    out_shape = [next(dyn_shape_) if d is None else d for d in shape]
+    assert next(dyn_shape_, None) is None
+    out_shape = [x.val if type(x) is core.Literal else x for x in out_shape]
+    out_aval = core.DShapedArray(tuple(out_shape), operand.aval.dtype,
+                                 operand.aval.weak_type)
+    return [out_aval], core.no_effects
+
 def _broadcast_in_dim_transpose_rule(ct, operand, *, shape, broadcast_dimensions):
   shape_in = operand.aval.shape
   unit_dimensions = tuple(i for i, s in enumerate(shape_in) if core.symbolic_equal_dim(s,  1))
@@ -2714,6 +2728,7 @@ batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
+core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 
 def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   aval_out, = ctx.avals_out
