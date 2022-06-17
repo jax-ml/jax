@@ -57,6 +57,10 @@ class JetTest(jtu.JaxTestCase):
 
   def check_jet(self, fun, primals, series, atol=1e-5, rtol=1e-5,
                 check_dtypes=True):
+    # Convert to jax arrays to ensure dtype canonicalization.
+    primals = jax.tree_map(jnp.asarray, primals)
+    series = jax.tree_map(jnp.asarray, series)
+
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
 
@@ -68,6 +72,9 @@ class JetTest(jtu.JaxTestCase):
 
   def check_jet_finite(self, fun, primals, series, atol=1e-5, rtol=1e-5,
                        check_dtypes=True):
+    # Convert to jax arrays to ensure dtype canonicalization.
+    primals = jax.tree_map(jnp.asarray, primals)
+    series = jax.tree_map(jnp.asarray, series)
 
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
@@ -370,7 +377,9 @@ class JetTest(jtu.JaxTestCase):
     terms_x = [rng.randn(*x.shape) for _ in range(order)]
     terms_y = [rng.randn(*y.shape) for _ in range(order)]
     series_in = (terms_b, terms_x, terms_y)
-    self.check_jet(jnp.where, primals, series_in, rtol=5e-4)
+    # Since this nudges bool inputs, we need to allow promotion to float.
+    with jax.numpy_dtype_promotion('standard'):
+      self.check_jet(jnp.where, primals, series_in, rtol=5e-4)
 
   def test_inst_zero(self):
     def f(x):

@@ -538,7 +538,8 @@ def _atan2_taylor(primals_in, series_in):
   primal_out = lax.atan2(x, y)
 
   x, series = jet(lax.div, primals_in, series_in)
-  c0, cs = jet(lambda x: lax.div(1, 1 + lax.square(x)), (x, ), (series, ))
+  one = lax_internal._const(x, 1)
+  c0, cs = jet(lambda x: lax.div(one, 1 + lax.square(x)), (x, ), (series, ))
   c = [c0] + cs
   u = [x] + series
   v = [primal_out] + [None] * len(series)
