@@ -407,8 +407,8 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
 
     def f(x, y):
       a = lax.dot(x, y)
-      b = a + jnp.ones(a.shape)
-      c = b + jnp.ones(a.shape[0])[jnp.newaxis]
+      b = a + jnp.ones_like(a)
+      c = b + jnp.ones_like(a, shape=a.shape[0])[jnp.newaxis]
       return c
 
     self._runTest(f, in_partitions, out_partitions)
