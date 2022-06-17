@@ -21,6 +21,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Breaking changes
   * {func}`jax.experimental.compilation_cache.initialize_cache` does not support
     `max_cache_size_  bytes` anymore and will not get that as an input.
+  * `JAX_PLATFORMS` now raises an exception when platform initialization fails.
 * Changes
   * {func}`jax.numpy.linalg.slogdet` now accepts an optional `method` argument
     that allows selection between an LU-decomposition based implementation and
