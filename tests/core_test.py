@@ -373,6 +373,23 @@ class CoreTest(jtu.JaxTestCase):
     dropvar, b = jaxpr.eqns[0].outvars
     self.assertEqual(dropvar.aval, aval)
 
+  def test_input_residual_forwarding(self):
+    # https://github.com/google/jax/pull/11151
+    x = jnp.arange(3 * 4.).reshape(3, 4)
+    y = jnp.arange(4 * 3.).reshape(4, 3)
+
+    g = jax.jit(jnp.dot)
+
+    def f(y):
+      z, g_lin = jax.linearize(lambda y: g(x, y), y)
+      zdot = g_lin(y)
+      return z, zdot
+
+    jaxpr = jax.make_jaxpr(f)(y)
+    e1, e2 = jaxpr.jaxpr.eqns
+    self.assertLen(e1.outvars, 1)  # only primal out, no residuals
+    self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
+
 
 class JaxprTypeChecks(jtu.JaxTestCase):
 
