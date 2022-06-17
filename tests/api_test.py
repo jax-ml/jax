@@ -8980,6 +8980,73 @@ class DynamicShapeTest(jtu.JaxTestCase):
     x = jax.jit(lambda n: jnp.ones(2 * n))(3)
     self.assertAllClose(x, jnp.ones(2 * 3))
 
+  def test_jvp_broadcast(self):
+    @jax.jit
+    def fn(n, x):
+      return lax.broadcast_in_dim(x, (n,), ())
+
+    outer_jaxpr = jax.make_jaxpr(
+        lambda x, t: jax.jvp(lambda y: fn(3, y), (x,), (t,))
+    )(3., 4.)
+    # { lambda ; a:f32[] b:f32[]. let
+    #     c:f32[3] d:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; e:i32[] f:f32[] g:f32[]. let
+    #           h:f32[e] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] f e
+    #           i:f32[e] = broadcast_in_dim[broadcast_dimensions=() shape=(None,)] g e
+    #         in (h, i) }
+    #       name=f
+    #     ] 3 a b
+    #   in (c, d) }
+    self.assertLen(outer_jaxpr.jaxpr.eqns, 1)
+    eqn, = outer_jaxpr.jaxpr.eqns
+    self.assertIn('call_jaxpr', eqn.params)
+    jaxpr = eqn.params['call_jaxpr']
+    self.assertLen(jaxpr.invars, 3)
+    e, f, g = jaxpr.invars
+    self.assertEqual(e.aval.shape, ())
+    self.assertEqual(f.aval.shape, ())
+    self.assertEqual(g.aval.shape, ())
+    self.assertLen(jaxpr.outvars, 2)
+    h, i = jaxpr.outvars
+    self.assertEqual(h.aval.shape, (e,))
+    self.assertEqual(i.aval.shape, (e,))
+    self.assertLen(eqn.outvars, 2)
+    c, d = eqn.outvars
+    self.assertEqual(c.aval.shape, (3,))
+    self.assertEqual(d.aval.shape, (3,))
+
+  def test_jvp_basic(self):
+    @partial(jax.jit, abstracted_axes=('n',))
+    def foo(x):
+      return jnp.sin(x)
+
+    x = t = jnp.arange(3.)
+    outer_jaxpr = jax.make_jaxpr(lambda x, t: jax.jvp(foo, (x,), (t,)))(x, t)
+    # { lambda ; a:f32[3] b:f32[3]. let
+    #     c:f32[3] d:f32[3] = xla_call[
+    #       call_jaxpr={ lambda ; e:i32[] f:f32[e] g:f32[e]. let
+    #           h:f32[e] = sin f
+    #           i:f32[e] = cos f
+    #           j:f32[e] = mul g i
+    #         in (h, j) }
+    #       name=f
+    #     ] 3 a b
+    #   in (c, d) }
+    self.assertLen(outer_jaxpr.jaxpr.eqns, 1)
+    eqn, = outer_jaxpr.eqns
+    self.assertIn('call_jaxpr', eqn.params)
+    jaxpr = eqn.params['call_jaxpr']
+    self.assertLen(jaxpr.invars, 3)
+    e, f, g = jaxpr.invars
+    self.assertEqual(e.aval.shape, ())
+    self.assertEqual(f.aval.shape, (e,))
+    self.assertEqual(g.aval.shape, (e,))
+    self.assertLen(jaxpr.outvars, 2)
+    self.assertLen(eqn.outvars, 2)
+    c, d = eqn.outvars
+    self.assertEqual(c.aval.shape, (3,))
+    self.assertEqual(d.aval.shape, (3,))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
