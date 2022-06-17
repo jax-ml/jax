@@ -163,7 +163,7 @@ def _host_perfetto_trace_file(log_dir):
     os.chdir(directory)
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(('127.0.0.1', port), _PerfettoServer) as httpd:
-      url = f"https://ui.perfetto.dev/#!/?url=http://127.0.0.1:{port}/{filename}'"
+      url = f"https://ui.perfetto.dev/#!/?url=http://127.0.0.1:{port}/{filename}"
       print(f"Open URL in browser: {url}")
 
       # Once ui.perfetto.dev acquires trace.json from this server we can close
