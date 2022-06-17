@@ -203,7 +203,7 @@ class JaxprTrace(Trace):
     # which were unknown to the first call (corresponding to in_avals).
 
     # Wrap f to perform the partial evaluation and plumb out aux data.
-    f_ = trace_to_subjaxpr_nounits(f, self.main, False)
+    f_ = trace_to_subjaxpr_nounits_fwd(f, self.main, False)
     f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns), tuple(in_avals))
     # Adjust parameters (e.g. donated_invars) for the call to be evaluated now.
     const_params = update_params(params, in_knowns, 0)
@@ -211,16 +211,22 @@ class JaxprTrace(Trace):
     # Run the call, getting known out vals and aux data used for staged-out call
     out = primitive.bind(_update_annotation(f_, f.in_type, in_knowns),
                          *in_consts, **const_params)
-    out_knowns, out_avals, jaxpr, env = aux()
-    # Split apart known outputs from the original call and residuals.
-    out_consts, res = split_list(out, [len(out) - len(jaxpr.constvars)])
+    fwds, out_knowns, out_avals, jaxpr, env = aux()
+    # Split apart known outputs from the original call and non-fwded residuals.
+    out_consts, non_fwd_res_ = split_list(out, [sum(out_knowns)])
+
+    # Form the complete list of residuals by forwarding some inputs.
+    non_fwd_res = iter(non_fwd_res_)
+    res = [next(non_fwd_res) if idx is None else in_consts[idx] for idx in fwds]
+    sentinel = object()
+    assert next(non_fwd_res, sentinel) is sentinel
 
     # Create the input tracers for the staged-out (unknown-value) call.
-    const_tracers = map(self.new_instantiated_const, res)
+    res_tracers = map(self.new_instantiated_const, res)
     env_tracers = map(self.full_raise, env)
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
     # Adjust parameters (e.g. donated_invars) for the staged-out call's args.
-    num_new_args = len(const_tracers) + len(env_tracers)
+    num_new_args = len(res_tracers) + len(env_tracers)
     staged_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
     staged_params = update_params(staged_params, map(op.not_, in_knowns),
                                   num_new_args)
@@ -229,7 +235,7 @@ class JaxprTrace(Trace):
                    for a in out_avals]
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
-    eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),
+    eqn = new_eqn_recipe((*res_tracers, *env_tracers, *unknown_arg_tracers),
                          out_tracers, primitive, staged_params, jaxpr.effects,
                          source)
     for t in out_tracers: t.recipe = eqn
@@ -504,9 +510,9 @@ def partial_eval_wrapper_nounits(
               PartialVal.unknown(next(in_avals_)) for known in in_knowns]
   sentinel = object()
   assert next(in_avals_, sentinel) is next(in_consts_, sentinel) is sentinel
-  jaxpr, (out_pvals, res, env) = yield (in_pvals,), {}
+  jaxpr, (*maybe_fwds, out_pvals, res, env) = yield (in_pvals,), {}
   out_knowns, out_avals, out_consts = partition_pvals(out_pvals)
-  yield (*out_consts, *res), (out_knowns, out_avals, jaxpr, env)
+  yield (*out_consts, *res), (*maybe_fwds, out_knowns, out_avals, jaxpr, env)
 
 custom_partial_eval_rules: Dict[Primitive, Callable] = {}
 call_partial_eval_rules: Dict[Primitive, Callable] = {}
@@ -620,9 +626,17 @@ def trace_to_jaxpr_nounits(
 
 @lu.transformation
 def trace_to_subjaxpr_nounits(
-    main: core.MainTrace, instantiate: Union[bool, Sequence[bool]],
+    main: core.MainTrace,
+    instantiate: Union[bool, Sequence[bool]],
     in_pvals: Sequence[PartialVal]):
   assert all([isinstance(pv, PartialVal) for pv in in_pvals]), in_pvals
+  out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
+      main, instantiate, in_pvals)
+  out_pvals = [t.pval for t in out_tracers]
+  del out_tracers
+  yield jaxpr, (out_pvals, out_consts, env)
+
+def _trace_to_subjaxpr_nounits(main, instantiate, in_pvals):
   trace = main.with_cur_sublevel()
   in_knowns  = [pval.is_known()     for pval in in_pvals]
   in_consts  = [pval.get_known()    for pval in in_pvals if     pval.is_known()]
@@ -637,11 +651,31 @@ def trace_to_subjaxpr_nounits(
     instantiate = [instantiate] * len(ans)
   out_tracers = map(trace.full_raise, map(core.full_lower, ans))
   out_tracers = map(partial(instantiate_const_at, trace), instantiate, out_tracers)
-  out_pvals = [t.pval for t in out_tracers]
   out_tracers_ = [t for t in out_tracers if not t.is_known()]
-  jaxpr, consts, env = tracers_to_jaxpr(in_tracers, out_tracers_)
-  del trace, in_tracers, out_tracers, out_tracers_
-  yield jaxpr, (out_pvals, consts, env)
+  jaxpr, out_consts, env = tracers_to_jaxpr(in_tracers, out_tracers_)
+  return out_tracers, jaxpr, out_consts, env
+
+# The below variant implements an optimization where residuals which are also
+# inputs are indicated in auxiliary data rather than passed as outputs.
+# TODO(mattjj): update all callers to use this version, delete other version.
+@lu.transformation
+def trace_to_subjaxpr_nounits_fwd(
+    main: core.MainTrace,
+    instantiate: Union[bool, Sequence[bool]],
+    in_pvals: Sequence[PartialVal]):
+  assert all([isinstance(pv, PartialVal) for pv in in_pvals]), in_pvals
+  out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
+      main, instantiate, in_pvals)
+  out_pvals = [t.pval for t in out_tracers]
+
+  # Which out_consts (aka residuals) are just forwarded inputs? Check obj id.
+  in_consts  = [pval.get_known()    for pval in in_pvals if     pval.is_known()]
+  id_map = {id(c): i for i, c in enumerate(in_consts)}
+  fwds: List[Optional[int]] = [id_map.get(id(c)) for c in out_consts]
+  pruned_consts = [c for c, fwd in zip(out_consts, fwds) if fwd is None]
+
+  del out_tracers
+  yield jaxpr, (fwds, out_pvals, pruned_consts, env)
 
 def instantiate_const_at(trace: JaxprTrace, instantiate: bool, tracer):
   if instantiate:
