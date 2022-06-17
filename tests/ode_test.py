@@ -238,7 +238,7 @@ class ODETest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/8757
 
     def dy_dt(y, t, alpha):
-      return alpha * y * jnp.exp(-t)
+      return alpha * y * jnp.exp(-t).astype(y.dtype)
 
     def f(y0, ts, alpha):
       return odeint(dy_dt, y0, ts, alpha).real
@@ -248,7 +248,10 @@ class ODETest(jtu.JaxTestCase):
     ts = jnp.linspace(0., 1., 11)
     tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
-    jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
+    # During the backward pass, this ravels all parameters into a single array
+    # such that dtype promotion is unavoidable.
+    with jax.numpy_dtype_promotion('standard'):
+      jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
 
 
 if __name__ == '__main__':
