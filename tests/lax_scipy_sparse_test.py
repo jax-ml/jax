@@ -283,7 +283,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
     b = matmul_high_precision(A, solution)
-    tol = shape[0] * jnp.finfo(dtype).eps
+    tol = shape[0] * float(jnp.finfo(dtype).eps)
     x, info = jax.scipy.sparse.linalg.bicgstab(A, b, tol=tol, atol=tol,
                                                M=M)
     using_x64 = solution.dtype.kind in {np.float64, np.complex128}
@@ -308,7 +308,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     solution = rng(shape[1:], dtype)
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
     b = matmul_high_precision(A, solution)
-    tol = shape[0] * jnp.finfo(A.dtype).eps
+    tol = shape[0] * float(jnp.finfo(A.dtype).eps)
     x, info = jax.scipy.sparse.linalg.bicgstab(A, b, tol=tol, atol=tol, M=M)
     using_x64 = solution.dtype.kind in {np.float64, np.complex128}
     solution_tol = 1e-8 if using_x64 else 1e-4
@@ -411,7 +411,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
     b = matmul_high_precision(A, solution)
     restart = shape[-1]
-    tol = shape[0] * jnp.finfo(dtype).eps
+    tol = shape[0] * float(jnp.finfo(dtype).eps)
     x, info = jax.scipy.sparse.linalg.gmres(A, b, tol=tol, atol=tol,
                                             restart=restart,
                                             M=M, solve_method=solve_method)
@@ -442,7 +442,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
     b = matmul_high_precision(A, solution)
     restart = shape[-1]
-    tol = shape[0] * jnp.finfo(A.dtype).eps
+    tol = shape[0] * float(jnp.finfo(A.dtype).eps)
     x, info = jax.scipy.sparse.linalg.gmres(A, b, tol=tol, atol=tol,
                                             restart=restart,
                                             M=M, solve_method=solve_method)
@@ -495,7 +495,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     n = shape[0]
     x0 = rng(shape[:1], dtype)
     Q = np.zeros((n, n + 1), dtype=dtype)
-    Q[:, 0] = x0/jnp.linalg.norm(x0)
+    Q[:, 0] = x0 / jnp.linalg.norm(x0).astype(dtype)
     Q = jnp.array(Q)
     H = jnp.eye(n, n + 1, dtype=dtype)
 
