@@ -79,6 +79,14 @@ class JaxArrayTest(jtu.JaxTestCase):
           input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
       self.assertArraysEqual(jax.device_get(arr), input_data)
 
+  def test_repr(self):
+    with jax._src.config.jax_array(True):
+      global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+      input_shape = (8, 2)
+      arr, _ = create_array(
+          input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+      repr(arr)  # doesn't crash
+
 
 class ShardingTest(jtu.JaxTestCase):
 

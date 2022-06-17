@@ -118,6 +118,24 @@ class Array:
   def sharding(self):
     return self._sharding
 
+  def __repr__(self):
+    prefix = '{}('.format(self.__class__.__name__.lstrip('_'))
+    # TODO(yashkatariya): Add weak_type to the repr and handle weak_type
+    # generally too.
+    dtype_str = f'dtype={self.dtype.name})'
+
+    if self.is_fully_addressable():
+      line_width = np.get_printoptions()["linewidth"]
+      s = np.array2string(self._value, prefix=prefix, suffix=',',
+                          separator=', ', max_line_width=line_width)
+      last_line_len = len(s) - s.rfind('\n') + 1
+      sep = ' '
+      if last_line_len + len(dtype_str) + 1 > line_width:
+        sep = ' ' * len(prefix)
+      return f"{prefix}{s},{sep}{dtype_str}"
+    else:
+      return f"{prefix}{self.shape}{dtype_str}"
+
   def is_fully_addressable(self) -> bool:
     # Disable pytype because it does not recognize cached properties.
     return len(self.sharding.device_set) == len(self.sharding.addressable_devices)  # pytype:disable=wrong-arg-types
