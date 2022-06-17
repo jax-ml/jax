@@ -43,9 +43,11 @@ from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
 from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_bridge
-from jax._src.util import prod, safe_map
+from jax._src.util import prod, safe_map, safe_zip
 from jax.interpreters import pxla
 from jax.interpreters import xla
+from jax.experimental import array
+from jax.experimental.sharding import PmapSharding
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -107,6 +109,22 @@ ignore_slow_all_to_all_warning = partial(
 
 ignore_xmap_warning = partial(
   jtu.ignore_warning, message=".*is an experimental.*")
+
+
+def create_input_array_for_pmap(input_shape, input_data=None):
+  dtype = np.int32
+  aval = ShapedArray(input_shape, dtype)
+
+  if input_data is None:
+    input_data = np.arange(prod(input_shape)).reshape(input_shape)
+
+  sharded_aval = aval.update(shape=aval.shape[1:])
+  sharding_spec = pxla._pmap_sharding_spec(aval.shape[0], aval.shape[0], 1,
+                                           None, sharded_aval, 0)
+  pmap_sharding = PmapSharding(np.array(jax.devices()), sharding_spec)
+
+  return array.make_array_from_callback(
+      input_shape, pmap_sharding, lambda idx: input_data[idx]), input_data
 
 
 class PythonPmapTest(jtu.JaxTestCase):
@@ -2768,6 +2786,60 @@ class ShardArgsTest(jtu.JaxTestCase):
     self.assertEqual(len(bufs[0]), nshards)
     for buf, idx in zip(bufs[0], indices):
       self.assertAllClose(buf.to_py(), x[idx], check_dtypes=False)
+
+
+class ArrayPmapTest(jtu.JaxTestCase):
+
+  def test_pmap_array_single_output(self):
+    input_shape = (jax.device_count(), 2)
+    input_data = np.arange(prod(input_shape)).reshape(input_shape)
+
+    f = jax.pmap(lambda x, y: x * y)
+    with jax._src.config.jax_array(True):
+      out = f(input_data, input_data)
+
+    expected = input_data * input_data
+
+    self.assertIsInstance(out, array.Array)
+    for s in out.addressable_shards:
+      self.assertArraysEqual(s.data._arrays[0], expected[s.index])
+    self.assertArraysEqual(out, expected)
+
+  def test_pmap_input_array_output_array(self):
+    input_shape = (jax.device_count(), 2)
+    input_array, input_data = create_input_array_for_pmap(input_shape)
+
+    f = jax.pmap(lambda x, y: x * y, devices=jax.devices())
+    with jax._src.config.jax_array(True):
+      out = f(input_array, input_array)
+
+    expected = input_data * input_data
+
+    self.assertIsInstance(out, array.Array)
+    for s in out.addressable_shards:
+      self.assertArraysEqual(s.data._arrays[0], expected[s.index])
+    self.assertArraysEqual(out, expected)
+
+  def test_pmap_double_input_array_output_array(self):
+    input_shape = (jax.device_count(), 2)
+    input_array, input_data = create_input_array_for_pmap(input_shape)
+
+    def f(x, y):
+      assert x.shape == (2,)
+      assert y.shape == (2,)
+      return x, y
+
+    f = jax.pmap(f, devices=jax.devices())
+    with jax._src.config.jax_array(True):
+      out1, out2 = f(input_array, input_array)
+
+    self.assertIsInstance(out1, array.Array)
+    self.assertIsInstance(out2, array.Array)
+    for s1, s2 in safe_zip(out1.addressable_shards, out2.addressable_shards):
+      self.assertArraysEqual(s1.data._arrays[0], input_data[s1.index])
+      self.assertArraysEqual(s2.data._arrays[0], input_data[s2.index])
+    self.assertArraysEqual(out1, input_data)
+    self.assertArraysEqual(out2, input_data)
 
 
 if __name__ == '__main__':

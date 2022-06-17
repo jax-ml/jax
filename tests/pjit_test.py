@@ -1310,7 +1310,11 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
 
 class ArrayPjitTest(jtu.JaxTestCase):
 
-  def test_pjit_array_single_output(self):
+  @parameterized.named_parameters(
+    ('fully_sharded_output', P('x', 'y'), (2, 4)),
+    ('fully_replicated_output', P(None), (8, 8)),
+  )
+  def test_pjit_array_single_output(self, out_axis_resources, shard_shape):
     global_input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mesh_axes = P('x', 'y')
@@ -1319,13 +1323,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jax._src.config.jax_array(True):
       with global_mesh:
-        f = pjit(lambda x: x @ x.T, out_axis_resources=P('x', 'y'))
+        f = pjit(lambda x: x @ x.T, out_axis_resources=out_axis_resources)
         expected_matrix_mul = input_data @ input_data.T
 
         out = f(input_array)
         self.assertIsInstance(out, array.Array)
         self.assertEqual(out.shape, (8, 8))
-        self.assertEqual(out.addressable_shards[0].data.shape, (2, 4))
+        self.assertEqual(out.addressable_shards[0].data.shape, shard_shape)
         for s in out.addressable_shards:
           self.assertLen(s.data._arrays, 1)
           self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])

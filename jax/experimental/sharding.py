@@ -16,10 +16,12 @@ import abc
 from collections import Counter
 from typing import Sequence, Tuple, Optional, Mapping, Dict, Set
 
-from jax._src.util import cache
+from jax._src.util import cache, safe_zip
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla
+
+import numpy as np
 
 Shape = Tuple[int, ...]
 Device = xc.Device
@@ -152,3 +154,44 @@ class SingleDeviceSharding(XLACompatibleSharding):
     proto = xc.OpSharding()
     proto.type = xc.OpSharding.Type.REPLICATED
     return proto
+
+
+class PmapSharding(XLACompatibleSharding):
+
+  def __init__(self, devices: np.ndarray, sharding_spec: pxla.ShardingSpec):
+    self.devices = devices
+    self.sharding_spec = sharding_spec
+
+  @pxla.maybe_cached_property
+  def device_set(self) -> Set[Device]:
+    return set(self.devices.flat)
+
+  def device_indices(self, device: Device, global_shape: Shape) -> Optional[Index]:
+    return self.devices_indices_map(global_shape)[device]
+
+  @cache()
+  def devices_indices_map(
+      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+    indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
+    return {d: i for d, i in safe_zip(self.devices.flat, indices)}  # type: ignore
+
+  def _hashed_index(self, x) -> int:
+    return hash(
+        tuple((v.start, v.stop) if isinstance(v, slice) else v for v in x))
+
+  @cache()
+  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
+    index_to_replica: Dict[int, int] = Counter()
+    out = {}
+    for device, index in self.devices_indices_map(global_shape).items():
+      h_index = self._hashed_index(index)
+      replica_id = index_to_replica[h_index]
+      index_to_replica[h_index] += 1
+      out[device] = replica_id
+    return out
+
+  def _device_assignment(self) -> XLADeviceAssignment:
+    return list(self.devices.flat)
+
+  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
+    raise NotImplementedError("pmap doesn't use OpSharding.")

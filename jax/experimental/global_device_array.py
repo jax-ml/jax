@@ -557,7 +557,8 @@ def _gda_shard_arg(x, devices, indices):
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
 
-def _gda_array_result_handler(global_aval, out_axis_resources, global_mesh):
+def _gda_array_result_handler(global_aval, out_sharding):
+  global_mesh, out_axis_resources = out_sharding.mesh, out_sharding.spec
   global_idx_rid = get_shard_indices_replica_ids(global_aval.shape, global_mesh,
                                                  out_axis_resources)
   local_devices = global_mesh.local_devices

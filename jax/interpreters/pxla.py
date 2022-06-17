@@ -39,7 +39,8 @@ import itertools as it
 import operator as op
 import threading
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
-                    Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast)
+                    Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast,
+                    TYPE_CHECKING)
 import sys
 
 from absl import logging
@@ -75,6 +76,8 @@ from jax._src.util import (unzip3, prod, safe_map, safe_zip,
                            new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log)
 
+if TYPE_CHECKING:
+  from jax.experimental.sharding import MeshPspecSharding, XLACompatibleSharding
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
@@ -493,7 +496,7 @@ class OutputType(enum.Enum):
 
 
 def global_aval_to_result_handler(
-    aval: core.AbstractValue, out_axis_resources, global_mesh,
+    aval: core.AbstractValue, out_sharding,
 ) -> Callable[[List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
@@ -514,8 +517,7 @@ def global_aval_to_result_handler(
   elif config.jax_parallel_functions_output_gda:
     output_type = OutputType.GlobalDeviceArray
   try:
-    return global_result_handlers[(type(aval), output_type)](
-        aval, out_axis_resources, global_mesh)
+    return global_result_handlers[(type(aval), output_type)](aval, out_sharding)
   except KeyError as err:
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
@@ -1215,21 +1217,34 @@ class PmapExecutable(stages.Executable):
     if parts.local_out_parts is None:
       local_out_parts = (None,) * nouts
 
-    local_out_avals = [
+    if config.jax_array:
+      global_unmapped_avals = [
+        core.unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval)
+        if out_axis is not None else aval
+        for aval, out_axis in safe_zip(shards.out_sharded_avals, pci.out_axes)]
+      global_out_specs = [
+        _pmap_sharding_spec(replicas.num_global_replicas, pci.axis_size,
+                            parts.num_partitions, op, aval, out_axis)
+        for op, aval, out_axis in safe_zip(
+            out_parts, shards.out_sharded_avals, pci.out_axes)]
+      pmap_shardings = _get_pmap_sharding(device_assignment, global_out_specs)
+      handle_outs = global_avals_to_results_handler(
+          global_unmapped_avals, pmap_shardings)
+    else:
+      local_out_avals = [
         get_local_aval(aval, parts, lparts)
         for aval, parts, lparts
         in safe_zip(shards.out_sharded_avals, out_parts, local_out_parts)]
-    local_unmapped_avals = [
-        core.unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval)
-        if out_axis is not None else aval
-        for aval, out_axis in safe_zip(local_out_avals, pci.out_axes)]
-
-    out_specs = [
-        _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
-                            parts.local_num_partitions, out_parts, aval, out_axis)
-        for out_parts, aval, out_axis in safe_zip(
-            local_out_parts, local_out_avals, pci.out_axes)]
-    handle_outs = local_avals_to_results_handler(out_specs, local_unmapped_avals)
+      local_unmapped_avals = [
+          core.unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval)
+          if out_axis is not None else aval
+          for aval, out_axis in safe_zip(local_out_avals, pci.out_axes)]
+      out_specs = [
+          _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
+                              parts.local_num_partitions, out_parts, aval, out_axis)
+          for out_parts, aval, out_axis in safe_zip(
+              local_out_parts, local_out_avals, pci.out_axes)]
+      handle_outs = local_avals_to_results_handler(out_specs, local_unmapped_avals)
 
     if hasattr(pci.backend, "compile_replicated"):
       execute_fun = pci.backend.compile_replicated(
@@ -1264,6 +1279,12 @@ class PmapExecutable(stages.Executable):
     arg_avals = map(xla.abstractify, args)
     dispatch.check_arg_avals_for_call(self.in_avals, arg_avals)
     return self.unsafe_call(*args)
+
+
+def _get_pmap_sharding(devices, out_specs):
+  from jax.experimental.sharding import PmapSharding
+
+  return [PmapSharding(devices, spec) for spec in out_specs]
 
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
@@ -1453,30 +1474,73 @@ def local_avals_to_results_handler(
   return ResultsHandler(handlers, local_out_specs, out_indices, unmapped_local_out_avals)
 
 
-def global_avals_to_results_handler(global_out_avals: Sequence[ShapedArray],
-                                    out_axes: Sequence[ArrayMapping],
-                                    global_mesh):
+def _get_mesh_sharding_spec_and_avals(
+    shardings: Sequence[MeshPspecSharding], avals: Sequence[ShapedArray],
+    is_global: bool) -> Tuple[Sequence[ShardingSpec], Sequence[ShapedArray]]:
+  from jax.experimental.global_device_array import _get_array_mapping
+
+  global_mesh = shardings[0].mesh
+  if is_global:
+    global_sharding_spec = mesh_sharding_specs(
+        global_mesh.shape, global_mesh.axis_names)
+    return [global_sharding_spec(aval, _get_array_mapping(s.spec))
+            for aval, s in safe_zip(avals, shardings)], avals
+  else:
+    out_axes = [_get_array_mapping(s.spec) for s in shardings]
+    local_sharding_spec = mesh_sharding_specs(
+        global_mesh.local_mesh.shape, global_mesh.axis_names)
+    local_out_untiled_avals = [
+        global_mesh._global_to_local(o, aval)
+        for aval, o in safe_zip(avals, out_axes)
+    ]
+    return [local_sharding_spec(aval, oa)
+            for aval, oa in safe_zip(local_out_untiled_avals, out_axes)], local_out_untiled_avals
+
+
+def _get_sharding_spec_and_avals(
+    shardings: Sequence[XLACompatibleSharding],
+    avals: Sequence[ShapedArray]) -> Tuple[Sequence[ShardingSpec], Sequence[ShapedArray]]:
+  from jax.experimental import sharding
+
+  if not shardings:
+    return [], []
+
+  if config.jax_parallel_functions_output_gda:
+    assert all(isinstance(s, sharding.MeshPspecSharding) for s in shardings)
+    return _get_mesh_sharding_spec_and_avals(
+        cast(Sequence[sharding.MeshPspecSharding], shardings), avals, is_global=True)
+  elif config.jax_array:
+    if all(isinstance(s, sharding.PmapSharding) for s in shardings):
+      # Cast for type checkers. Does not affect runtime.
+      shardings = cast(Sequence[sharding.PmapSharding], shardings)
+      return [s.sharding_spec for s in shardings], avals
+    else:
+      assert all(isinstance(s, sharding.MeshPspecSharding) for s in shardings)
+      return _get_mesh_sharding_spec_and_avals(
+          cast(Sequence[sharding.MeshPspecSharding], shardings), avals, is_global=True)
+  else:
+    assert all(isinstance(s, sharding.MeshPspecSharding) for s in shardings)
+    return _get_mesh_sharding_spec_and_avals(
+        cast(Sequence[sharding.MeshPspecSharding], shardings), avals, is_global=False)
+
+
+def global_avals_to_results_handler(
+    global_out_avals: Sequence[ShapedArray],
+    shardings: Sequence[XLACompatibleSharding]):
   if config.jax_parallel_functions_output_gda or config.jax_array:
-    global_sharding_spec = mesh_sharding_specs(global_mesh.shape, global_mesh.axis_names)
-    global_out_specs = [global_sharding_spec(aval, oa)
-                        for aval, oa in safe_zip(global_out_avals, out_axes)]
-    global_out_indices = [spec_to_indices(aval.shape, spec)
-                   for aval, spec in safe_zip(global_out_avals, global_out_specs)]
-    out_axis_resources = [array_mapping_to_axis_resources(o) for o in out_axes]
+    global_out_specs, _ = _get_sharding_spec_and_avals(shardings, global_out_avals)
+    global_out_indices = [list(s.devices_indices_map(aval.shape).values())
+                          for s, aval in safe_zip(shardings, global_out_avals)]
     handlers = [
-        global_aval_to_result_handler(global_aval, out_axis, global_mesh)
-        for global_aval, out_axis in safe_zip(global_out_avals, out_axis_resources)
+        global_aval_to_result_handler(global_aval, s)
+        for global_aval, s in safe_zip(global_out_avals, shardings)
     ]
     return ResultsHandler(handlers, global_out_specs, global_out_indices,
                           global_out_avals)
   else:
-    local_sharding_spec = mesh_sharding_specs(global_mesh.local_mesh.shape, global_mesh.axis_names)
-    local_out_untiled_avals = [global_mesh._global_to_local(axis, aval)
-                               for axis, aval in safe_zip(out_axes, global_out_avals)]
-    local_out_specs = [local_sharding_spec(aval, oa)
-                       for aval, oa in safe_zip(local_out_untiled_avals, out_axes)]
-    return local_avals_to_results_handler(
-        local_out_specs, local_out_untiled_avals)
+    local_out_specs, local_out_untiled_avals = _get_sharding_spec_and_avals(
+        shardings, global_out_avals)
+    return local_avals_to_results_handler(local_out_specs, local_out_untiled_avals)
 
 
 @profiler.annotate_function
@@ -2413,7 +2477,8 @@ class MeshExecutable(stages.Executable):
       assert not auto_spmd_lowering
       input_specs, input_indices, input_avals = _get_input_metadata(
         global_in_avals, mesh, in_axes, in_is_global)
-      handle_outs = global_avals_to_results_handler(global_out_avals, out_axes, mesh)  # type: ignore  # arg-type
+      handle_outs = global_avals_to_results_handler(
+          global_out_avals, _get_mesh_pspec_sharding(mesh, out_axes))  # type: ignore  # arg-type
       unsafe_call = backend.compile_replicated(
           computation, compile_options,
           input_indices, input_specs,
@@ -2429,7 +2494,8 @@ class MeshExecutable(stages.Executable):
 
       input_specs, input_indices, input_avals = _get_input_metadata(
         global_in_avals, mesh, in_axes, in_is_global)
-      handle_outs = global_avals_to_results_handler(global_out_avals, out_axes, mesh)  # type: ignore  # arg-type
+      handle_outs = global_avals_to_results_handler(
+          global_out_avals, _get_mesh_pspec_sharding(mesh, out_axes))  # type: ignore  # arg-type
       handle_args = InputsHandler(xla_executable.local_devices(), input_specs, input_indices)
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
                                       handle_outs, unordered_effects, keepalive)
@@ -2452,6 +2518,13 @@ class MeshExecutable(stages.Executable):
     # Check the GDA sharding and the input sharding.
     _check_gda_xla_sharding_match(args, self._in_axes)
     return self.unsafe_call(*args)
+
+
+def _get_mesh_pspec_sharding(mesh, out_axes):
+  from jax.experimental.sharding import MeshPspecSharding
+
+  return [MeshPspecSharding(mesh, array_mapping_to_axis_resources(o))
+          for o in out_axes]
 
 
 def _check_gda_xla_sharding_match(args, in_array_mappings):

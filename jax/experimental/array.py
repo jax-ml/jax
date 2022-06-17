@@ -213,8 +213,7 @@ def _array_shard_arg(x, devices, indices):
 pxla.shard_arg_handlers[Array] = _array_shard_arg
 
 
-def _array_result_handler(global_aval, out_axis_resources, global_mesh):
-  sharding = MeshPspecSharding(global_mesh, out_axis_resources)
-  return lambda bufs: Array(global_aval.shape, sharding, bufs, committed=True)
+def _array_result_handler(global_aval, out_sharding):
+  return lambda bufs: Array(global_aval.shape, out_sharding, bufs, committed=True)
 pxla.global_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_result_handler
 pxla.global_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_result_handler
