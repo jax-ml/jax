@@ -388,6 +388,22 @@ def remat_vmap(axis_size, axis_name, main_type, args, dims, *, jaxpr, **params):
   return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
 batching.axis_primitive_batchers[remat_p] = remat_vmap
 
+# TODO(mattjj,sharadmv): test this more
+# TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
+def remat_dce(used_outputs: List[bool], eqn: core.JaxprEqn
+              ) -> Tuple[List[bool], Optional[core.JaxprEqn]]:
+  new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
+  new_params = dict(eqn.params, jaxpr=new_jaxpr)
+  if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
+    return used_inputs, None
+  else:
+    new_eqn = pe.new_jaxpr_eqn(
+        [v for v, used in zip(eqn.invars, used_inputs) if used],
+        [v for v, used in zip(eqn.outvars, used_outputs) if used],
+        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+    return used_inputs, new_eqn
+pe.dce_rules[remat_p] = remat_dce
+
 
 def checkpoint_name(x, name):
   return name_p.bind(x, name=name)

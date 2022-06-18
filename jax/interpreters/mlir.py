@@ -997,7 +997,6 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   return f_lowered
 
 
-
 def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
                    avals_out, tokens_in, *args):
   if isinstance(call_jaxpr, core.Jaxpr):
@@ -1038,6 +1037,9 @@ def _named_call_lowering(ctx, *args, name, backend=None,
 
 register_lowering(core.named_call_p, _named_call_lowering)
 register_lowering(core.call_p, partial(_named_call_lowering, name="core_call"))
+register_lowering(core.closed_call_p,
+                  partial(_named_call_lowering, name="core_closed_call"))
+
 register_lowering(core.closed_call_p,
                   partial(_named_call_lowering, name="core_closed_call"))
 

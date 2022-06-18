@@ -36,6 +36,7 @@ from jax import tree_util
 from jax._src.util import unzip2
 from jax.experimental import maps
 from jax.interpreters import partial_eval as pe
+from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 from jax._src.lax.control_flow import for_loop
@@ -59,6 +60,17 @@ def cond_via_switch(pred, true_fun, false_fun, op, *args):
   return lax.switch(index, [false_fun, true_fun], op)
 
 
+# We wanted to try all scan tests with the scan partial evaluation rule that
+# happens under ad_checkpoint.checkpoint, so we make a scan wrapper which
+# wraps a ad_checkpoint.checkpoint around the computation.
+def scan_with_new_checkpoint(f, *args, **kwargs):
+  return new_checkpoint(partial(lax.scan, f, **kwargs),
+                        policy=checkpoint_policies.nothing_saveable)(*args)
+def scan_with_new_checkpoint2(f, *args, **kwargs):
+  return new_checkpoint(partial(lax.scan, f, **kwargs),
+                        policy=checkpoint_policies.everything_saveable)(*args)
+
+
 COND_IMPLS = [
     (lax.cond, 'cond'),
     (cond_via_switch, 'switch'),
@@ -68,6 +80,8 @@ COND_IMPLS = [
 SCAN_IMPLS = [
     (lax.scan, 'unroll1'),
     (partial(lax.scan, unroll=2), 'unroll2'),
+    (scan_with_new_checkpoint , 'new_checkpoint'),
+    (scan_with_new_checkpoint2, 'new_checkpoint2'),
 ]
 
 
@@ -1534,10 +1548,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
 
+    if scan is scan_with_new_checkpoint2:
+      rtol = {np.float64: 1e-12, np.float32: 1e-4}
+    else:
+      rtol = {np.float64: 1e-14, np.float32: 1e-4}
+
     ans = jax.linearize(lambda c, as_:                scan(f, c, as_), c, as_)[1](c, as_)
     expected = jax.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False,
-                        rtol={np.float64: 1e-14, np.float32: 1e-4})
+    self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol)
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
@@ -1569,11 +1587,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = jax.grad(lambda c, as_:      list(          scan(f, c, as_))[0].sum())(c, as_)
     expected = jax.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False,
-                        rtol={np.float32: 2e-5, np.float64: 1e-13})
+    if scan is scan_with_new_checkpoint:
+      rtol = {np.float32: 5e-5, np.float64: 1e-13}
+    else:
+      rtol = {np.float32: 2e-5, np.float64: 1e-13}
+    self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol)
 
+    rtol = 5e-3 if scan is not scan_with_new_checkpoint2 else 5e-2
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
-                    atol=1e-3, rtol=5e-3)
+                    atol=1e-3, rtol=rtol)
 
   @jtu.skip_on_devices("tpu")  # TPU lacks precision for this test.
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
@@ -1642,7 +1664,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                                   batched_inputs, batched_targets)))
     self.assertAllClose(losses, expected, check_dtypes=False, rtol=1e-2)
 
-  def testIssue711(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "_impl={}".format(scan_name), "scan": scan_impl}
+      for scan_impl, scan_name in SCAN_IMPLS)
+  def testIssue711(self, scan):
     # Tests reverse-mode differentiation through a scan for which the scanned
     # function also involves reverse-mode differentiation.
     # See https://github.com/google/jax/issues/711
@@ -1659,7 +1684,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return new_carry, _
 
       x0 = jnp.array([1., 2., 3.])
-      carry_final, _ = lax.scan(apply_carry, (0, x0), jnp.zeros((75, 0)))
+      carry_final, _ = scan(apply_carry, (0, x0), jnp.zeros((75, 0)))
       _, x_final = carry_final
       return x_final
 
@@ -1799,13 +1824,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = jax.vmap(lambda c, as_:            lax.scan(f, c, as_), in_axes)(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def testScanVmapFixpoint(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "_impl={}".format(scan_name), "scan": scan_impl}
+      for scan_impl, scan_name in SCAN_IMPLS)
+  def testScanVmapFixpoint(self, scan):
     def f(carry_init):
       def scan_body(c, x):
         # The carry is a 4-tuple, the last element starts batched,
         # and the carry is shifted left at each iteration.
         return ((c[1], c[2], c[3], 0.), None)
-      return lax.scan(scan_body, (0., 1., 2., carry_init), jnp.zeros(2))
+      return scan(scan_body, (0., 1., 2., carry_init), jnp.zeros(2))
     carry_init = jnp.array([3., 4., 5.])
     carry_out, _ = jax.vmap(f)(carry_init)
     self.assertAllClose(carry_out[3], jnp.array([0., 0., 0.]), check_dtypes=False)
@@ -2338,20 +2366,32 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     result = lax.while_loop(cond_fun, body_fun, init_weak)
     self.assertArraysEqual(result, jnp.full_like(increment, 2))
 
-  def test_scan_vjp_forwards_extensive_residuals(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', None),
+          ('new_remat', new_checkpoint),
+      ])
+  def test_scan_vjp_forwards_extensive_residuals(self, remat):
     # https://github.com/google/jax/issues/4510
     def cumprod(x):
       s = jnp.ones((2, 32), jnp.float32)
       return lax.scan(lambda s, x: (x*s, s), s, x)
+    if remat is not None:
+      cumprod = remat(cumprod)
 
     rng = self.rng()
     x = jnp.asarray(rng.randn(32, 2, 32).astype('float32'))
     _, vjp_fun = jax.vjp(cumprod, x)
 
     # Need to spelunk into vjp_fun. This is fragile, and if it causes problems
-    # just skip this test.
+    # just skip this test and make an issue for mattjj.
     *_, ext_res = vjp_fun.args[0].args[0]
     self.assertIs(ext_res, x)
+
+    if remat is not None:
+      # TODO(mattjj): make the numpy.ndarray test pass w/ remat
+      raise unittest.SkipTest("new-remat-of-scan doesn't convert numpy.ndarray")
 
     x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not DeviceArray
     _, vjp_fun = jax.vjp(cumprod, x)
