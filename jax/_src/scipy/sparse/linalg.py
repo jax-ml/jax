@@ -112,24 +112,25 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   def cond_fun(value):
     _, r, gamma, _, k = value
-    rs = gamma if M is _identity else _vdot_real_tree(r, r)
+    rs = gamma.real if M is _identity else _vdot_real_tree(r, r)
     return (rs > atol2) & (k < maxiter)
 
   def body_fun(value):
     x, r, gamma, p, k = value
     Ap = A(p)
-    alpha = gamma / _vdot_real_tree(p, Ap)
+    alpha = gamma / _vdot_real_tree(p, Ap).astype(dtype)
     x_ = _add(x, _mul(alpha, p))
     r_ = _sub(r, _mul(alpha, Ap))
     z_ = M(r_)
-    gamma_ = _vdot_real_tree(r_, z_)
+    gamma_ = _vdot_real_tree(r_, z_).astype(dtype)
     beta_ = gamma_ / gamma
     p_ = _add(z_, _mul(beta_, p))
     return x_, r_, gamma_, p_, k + 1
 
   r0 = _sub(b, A(x0))
   p0 = z0 = M(r0)
-  gamma0 = _vdot_real_tree(r0, z0)
+  dtype = jnp.result_type(*tree_leaves(p0))
+  gamma0 = _vdot_real_tree(r0, z0).astype(dtype)
   initial_value = (x0, r0, gamma0, p0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
@@ -297,13 +298,16 @@ def _safe_normalize(x, thresh=None):
   taken to be 0, and the normalized x to be the zero vector.
   """
   norm = _norm(x)
-  dtype = jnp.result_type(*tree_leaves(x))
+  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(x))
+  dtype = dtypes.canonicalize_dtype(dtype)
   if thresh is None:
     thresh = jnp.finfo(norm.dtype).eps
   thresh = thresh.astype(dtype).real
 
   use_norm = norm > thresh
-  normalized_x = tree_map(lambda y: jnp.where(use_norm, y / norm, 0.0), x)
+
+  norm_cast = lax_internal._convert_element_type(norm, dtype, weak_type)
+  normalized_x = tree_map(lambda y: jnp.where(use_norm, y / norm_cast, 0.0), x)
   norm = jnp.where(use_norm, norm, 0.0)
   return normalized_x, norm
 
@@ -396,7 +400,8 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
   subspace is declared to have been found, in which case in which case the new
   vector is taken to be the zero vector.
   """
-  eps = jnp.finfo(jnp.result_type(*tree_leaves(V))).eps
+  dtype = jnp.result_type(*tree_leaves(V))
+  eps = jnp.finfo(dtype).eps
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = M(A(v))
@@ -407,7 +412,7 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
   unit_v, v_norm_1 = _safe_normalize(v, thresh=tol)
   V = tree_map(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
 
-  h = h.at[k + 1].set(v_norm_1)
+  h = h.at[k + 1].set(v_norm_1.astype(dtype))
   H = H.at[k, :].set(h)
   breakdown = v_norm_1 == 0.
   return V, H, breakdown
@@ -427,7 +432,7 @@ def _givens_rotation(a, b):
   b_zero = abs(b) == 0
   a_lt_b = abs(a) < abs(b)
   t = -jnp.where(a_lt_b, a, b) / jnp.where(a_lt_b, b, a)
-  r = lax.rsqrt(1 + abs(t) ** 2)
+  r = lax.rsqrt(1 + abs(t) ** 2).astype(t.dtype)
   cs = jnp.where(b_zero, 1, jnp.where(a_lt_b, r * t, r))
   sn = jnp.where(b_zero, 0, jnp.where(a_lt_b, r, r * t))
   return cs, sn
@@ -473,7 +478,7 @@ def _gmres_incremental(A, b, x0, unit_residual, residual_norm, ptol, restart, M)
 
   givens = jnp.zeros((restart, 2), dtype=dtype)
   beta_vec = jnp.zeros((restart + 1), dtype=dtype)
-  beta_vec = beta_vec.at[0].set(residual_norm)
+  beta_vec = beta_vec.at[0].set(residual_norm.astype(dtype))
 
   def loop_cond(carry):
     k, err, _, _, _, _ = carry
@@ -527,6 +532,7 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
       unit_residual,
   )
   dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(b))
+  dtype = dtypes.canonicalize_dtype(dtype)
   H = lax_internal._convert_element_type(
       jnp.eye(restart, restart + 1, dtype=dtype), weak_type=weak_type)
 
@@ -542,7 +548,7 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
   carry = (V, H, False, 0)
   V, H, _, _ = lax.while_loop(loop_cond, arnoldi_process, carry)
 
-  beta_vec = jnp.zeros_like(H, shape=(restart + 1,)).at[0].set(residual_norm)
+  beta_vec = jnp.zeros_like(H, shape=(restart + 1,)).at[0].set(residual_norm.astype(dtype))
   y = _lstsq(H.T, beta_vec)
   dx = tree_map(lambda X: _dot(X[..., :-1], y), V)
 
