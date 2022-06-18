@@ -97,7 +97,7 @@ def roots(p, *, strip_zeros=True):
   else:
     roots = _roots_no_zeros(p)
     # combine roots and zero roots
-    roots = hstack((roots, zeros(trailing_zeros, p.dtype)))
+    roots = hstack((roots, zeros(trailing_zeros, roots.dtype)))
     return roots
 
 
