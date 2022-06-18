@@ -1091,10 +1091,10 @@ class BatchingTest(jtu.JaxTestCase):
         np.arange(5), 7)
 
   def testAxisIndex(self):
-    x = np.arange(10)
+    x = np.arange(10, dtype='int32')
     self.assertAllClose(
       vmap(lambda x: x - lax.axis_index('i'), axis_name='i')(x),
-      x - np.arange(x.shape[0]))
+      x - np.arange(x.shape[0], dtype='int32'))
 
   def testCollectivePdot(self):
     def f(x, y):
