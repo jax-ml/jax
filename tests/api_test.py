@@ -8924,8 +8924,8 @@ class DynamicShapeTest(jtu.JaxTestCase):
       count += 1
       return jnp.sum(x)
 
-    x = f(jnp.arange(3))
-    y = f(jnp.arange(4))
+    x = f(np.arange(3))
+    y = f(np.arange(4))
     self.assertAllClose(x, 3., check_dtypes=False)
     self.assertAllClose(y, 6., check_dtypes=False)
     self.assertEqual(count, 1)

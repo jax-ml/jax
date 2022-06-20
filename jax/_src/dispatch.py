@@ -283,8 +283,25 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
     in_type = tuple(unsafe_zip(abstract_args, itertools.repeat(True)))
     fun = lu.annotate(fun, in_type)
   else:
-    assert all(map(core.typematch, abstract_args,
-                   [a for a, k in fun.in_type if k]))
+    # Check that the provided abstract_args are consistent with in_type by first
+    # collecting values of axis size arguments, then substituting them in for
+    # DBIdx occurrences.
+    axis_sizes: Dict[core.DBIdx, int] = {}
+    abstract_args_iter = iter(abstract_args)
+    for expected_type, explicit in fun.in_type:
+      if explicit:
+        aval = next(abstract_args_iter)
+        if isinstance(expected_type, core.DShapedArray):
+          # Check the value for any DBIdx variables is consistent.
+          assert all(axis_sizes.setdefault(d1, d2) == d2
+                     for d1, d2 in zip(expected_type.shape, aval.shape)
+                     if type(d1) is core.DBIdx)
+          # Check the type matches after substitution.
+          expected_shape = [axis_sizes.get(d, d) for d in expected_type.shape]
+          expected_aval = core.ShapedArray(
+              shape=tuple(expected_shape), dtype=expected_type.dtype,
+              weak_type=expected_type.weak_type)
+          assert core.typematch(expected_aval, aval)
   with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                         "for jit in {elapsed_time} sec"):
     jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(

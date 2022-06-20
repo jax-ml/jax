@@ -2040,7 +2040,7 @@ def _collect_implicit(
     for i, name in spec.items():
       if name not in idxs and id(x.shape[i]) not in explicit_tracers:
         idxs[name] = next(counter)
-        implicit_types.append(core.get_aval(x.shape[i]))
+        implicit_types.append(raise_to_shaped(get_aval(x.shape[i])))
     if isinstance(x, Tracer):
       explicit_tracers[id(x)] = explicit_idx
 
