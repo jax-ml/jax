@@ -8,7 +8,7 @@ sphinx-autodoc-typehints==1.11.1
 sphinx-copybutton>=0.5.0
 jupyter-sphinx>=0.3.2
 # Newer versions cause build failures; see https://github.com/google/jax/pull/10502
-myst-nb==0.15.0
+myst-nb==0.16.0
 
 # Need to pin docutils to 0.16 to make bulleted lists appear correctly on
 # ReadTheDocs: https://stackoverflow.com/a/68008428
