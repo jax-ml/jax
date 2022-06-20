@@ -1454,6 +1454,14 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertGreater((r == 0).sum(), 0)
     self.assertGreater((r == 255).sum(), 0)
 
+  def test_large_prng(self):
+    # https://github.com/google/jax/issues/11010
+    def f():
+      return jax.random.uniform(jax.random.PRNGKey(3), (308000000, 128), dtype=jnp.bfloat16)
+
+    # just lower, don't run, takes too long
+    jax.jit(f).lower()
+
 
 threefry_seed = jax._src.prng.threefry_seed
 threefry_split = jax._src.prng.threefry_split

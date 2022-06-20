@@ -542,7 +542,7 @@ def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
         )
       )
     )
-    bits = lax.reshape(bits, (np.uint32(max_count * 32 // bit_width),), (1, 0))
+    bits = lax.reshape(bits, ((max_count * 32 // bit_width),), (1, 0))
     bits = lax.convert_element_type(bits, dtype)[:size]
   return lax.reshape(bits, shape)
 
