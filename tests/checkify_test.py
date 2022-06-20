@@ -24,6 +24,7 @@ from jax import lax
 import jax._src.test_util as jtu
 from jax.config import config
 from jax.experimental import checkify
+from jax._src.checkify import CheckEffect
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -628,13 +629,26 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "hi"):
       f()
 
-  def test_assert_primitive_staging(self):
+  def test_assert_primitive_lowering(self):
     @jax.jit
     def f():
       checkify.check(False, "hi")
 
     with self.assertRaisesRegex(ValueError, "Cannot abstractly evaluate"):
       f()
+
+  def test_assert_primitive_jaxpr_effects(self):
+    def f():
+      checkify.check(False, "hi")
+
+    self.assertSetEqual(jax.make_jaxpr(f)().effects, {CheckEffect})
+
+  def test_assert_primitive_eval_shape(self):
+    # The check is abstractly evaluated but not lowered.
+    def f():
+      checkify.check(False, "hi")
+
+    jax.eval_shape(f)  # does not crash.
 
   def test_assert_discharging(self):
     @checkify.checkify
@@ -674,6 +688,47 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     err, _ = g(0.)
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "must be positive")
+
+  def test_assert_discharging_scan(self):
+    def body(carry, x):
+      checkify.check(jnp.all(x > 0), "must be positive")
+      return carry, x
+
+    def f(x):
+      return jax.lax.scan(body, (None,), x)
+
+    err, _ = checkify.checkify(f)(jnp.array([-1]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "must be positive")
+
+    err, _ = checkify.checkify(f)(jnp.array([1, 0, -1]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "must be positive")
+
+  def test_assert_discharging_while_loop(self):
+    def while_cond(val):
+      i, _ = val
+      checkify.check(i < 0, "i must be negative")
+      return i < 2
+
+    def while_body(val):
+      i, x = val
+      checkify.check(x < 0, "x must be negative")
+      return i+1., x+1
+
+    @jax.jit
+    def f(init_i, init_val):
+      return lax.while_loop(while_cond, while_body, (init_i, init_val))
+
+    checked_f = checkify.checkify(f)
+
+    err, _ = checked_f(0, 1)
+    self.assertIsNotNone(err)
+    self.assertStartsWith(err.get(), "i must be negative")
+
+    err, _ = checked_f(-1, 0)
+    self.assertIsNotNone(err)
+    self.assertStartsWith(err.get(), "x must be negative")
 
   def test_check_error(self):
     def f():
