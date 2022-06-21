@@ -372,16 +372,22 @@ def _least_upper_bound(jax_numpy_dtype_promotion, *nodes):
   if len(LUB) == 1:
     return LUB.pop()
   elif len(LUB) == 0:
-    # TODO(jakevdp): surface some error about jax_numpy_rank_promotion flag.
-    raise TypePromotionError(
-      f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
-       "promotion path. Try explicitly casting inputs to the desired output type.")
+    if config.jax_numpy_dtype_promotion == 'strict':
+      msg = (
+        f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
+        "promotion path when jax_numpy_dtype_promotion=strict. Try explicitly casting "
+        "inputs to the desired output type, or set jax_numpy_dtype_promotion=standard.")
+    else:
+      msg = (
+        f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
+        "promotion path. Try explicitly casting inputs to the desired output type.")
+    raise TypePromotionError(msg)
   else:
     # If we get here, it means the lattice is ill-formed.
     raise TypePromotionError(
       f"Internal Type Promotion error: {nodes} do not have a unique least upper bound "
-      f"on the specified lattice; options are {LUB}. If you see this error, please "
-      "report it to the JAX maintainers."
+      f"on the specified lattice; options are {LUB}. This is an unexpected error in "
+      "JAX's internal logic; please report it to the JAX maintainers."
     )
 
 def promote_types(a, b):
