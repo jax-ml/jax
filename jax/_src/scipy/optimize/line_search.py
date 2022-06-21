@@ -15,6 +15,7 @@
 from typing import NamedTuple, Union
 from functools import partial
 
+from jax._src.numpy.util import _promote_dtypes_inexact
 import jax.numpy as jnp
 import jax
 from jax import lax
@@ -269,13 +270,15 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
 
   Returns: LineSearchResults
   """
+  xk, pk = _promote_dtypes_inexact(xk, pk)
   def restricted_func_and_grad(t):
+    t = jnp.array(t, dtype=pk.dtype)
     phi, g = jax.value_and_grad(f)(xk + t * pk)
     dphi = jnp.real(_dot(g, pk))
     return phi, dphi, g
 
   if old_fval is None or gfk is None:
-    phi_0, dphi_0, gfk = restricted_func_and_grad(0.)
+    phi_0, dphi_0, gfk = restricted_func_and_grad(0)
   else:
     phi_0 = old_fval
     dphi_0 = jnp.real(_dot(gfk, pk))
