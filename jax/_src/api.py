@@ -2279,10 +2279,10 @@ def jvp(
 
   >>> import jax
   >>>
-  >>> y, v = jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
-  >>> print(y)
+  >>> primals, tangents = jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
+  >>> print(primals)
   0.09983342
-  >>> print(v)
+  >>> print(tangents)
   0.19900084
   """
   _check_callable(fun)
