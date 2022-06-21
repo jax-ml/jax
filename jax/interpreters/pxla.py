@@ -1499,25 +1499,34 @@ def _get_mesh_sharding_spec_and_avals(
 
 def _get_sharding_spec_and_avals(
     shardings: Sequence[XLACompatibleSharding],
-    avals: Sequence[ShapedArray]) -> Tuple[Sequence[ShardingSpec], Sequence[ShapedArray]]:
+    avals: Sequence[ShapedArray],
+    is_global: bool) -> Tuple[Sequence[ShardingSpec], Sequence[ShapedArray]]:
+  """Returns the sharding spec and the avals required by `ResultsHandler`.
+
+  If `is_global`, then global sharding specs and global avals are returned else
+  host local sharding specs and host local avals are returned.
+  """
   from jax.experimental import sharding
 
   if not shardings:
     return [], []
 
-  if config.jax_parallel_functions_output_gda:
-    assert all(isinstance(s, sharding.MeshPspecSharding) for s in shardings)
-    return _get_mesh_sharding_spec_and_avals(
-        cast(Sequence[sharding.MeshPspecSharding], shardings), avals, is_global=True)
-  elif config.jax_array:
-    if all(isinstance(s, sharding.PmapSharding) for s in shardings):
-      # Cast for type checkers. Does not affect runtime.
-      shardings = cast(Sequence[sharding.PmapSharding], shardings)
-      return [s.sharding_spec for s in shardings], avals
-    else:
+  if is_global:
+    if config.jax_parallel_functions_output_gda:
       assert all(isinstance(s, sharding.MeshPspecSharding) for s in shardings)
       return _get_mesh_sharding_spec_and_avals(
           cast(Sequence[sharding.MeshPspecSharding], shardings), avals, is_global=True)
+    elif config.jax_array:
+      if all(isinstance(s, sharding.PmapSharding) for s in shardings):
+        # Cast for type checkers. Does not affect runtime.
+        shardings = cast(Sequence[sharding.PmapSharding], shardings)
+        return [s.sharding_spec for s in shardings], avals
+      else:
+        assert all(isinstance(s, sharding.MeshPspecSharding) for s in shardings)
+        return _get_mesh_sharding_spec_and_avals(
+            cast(Sequence[sharding.MeshPspecSharding], shardings), avals, is_global=True)
+    else:
+      raise ValueError('Option not recognized. Please file a bug against JAX.')
   else:
     assert all(isinstance(s, sharding.MeshPspecSharding) for s in shardings)
     return _get_mesh_sharding_spec_and_avals(
@@ -1528,7 +1537,8 @@ def global_avals_to_results_handler(
     global_out_avals: Sequence[ShapedArray],
     shardings: Sequence[XLACompatibleSharding]):
   if config.jax_parallel_functions_output_gda or config.jax_array:
-    global_out_specs, _ = _get_sharding_spec_and_avals(shardings, global_out_avals)
+    global_out_specs, _ = _get_sharding_spec_and_avals(
+        shardings, global_out_avals, is_global=True)
     global_out_indices = [list(s.devices_indices_map(aval.shape).values())
                           for s, aval in safe_zip(shardings, global_out_avals)]
     handlers = [
@@ -1539,7 +1549,7 @@ def global_avals_to_results_handler(
                           global_out_avals)
   else:
     local_out_specs, local_out_untiled_avals = _get_sharding_spec_and_avals(
-        shardings, global_out_avals)
+        shardings, global_out_avals, is_global=False)
     return local_avals_to_results_handler(local_out_specs, local_out_untiled_avals)
 
 
