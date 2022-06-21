@@ -13,11 +13,11 @@ pprof (<https://github.com/google/pprof>). Start by installing `pprof`,
 by following its
 [installation instructions](https://github.com/google/pprof#building-pprof).
 At the time of writing, installing `pprof` requires first installing
-[Go](https://golang.org/) and [Graphviz](http://www.graphviz.org/), and then
-running
+[Go](https://golang.org/) of version 1.16+,
+[Graphviz](http://www.graphviz.org/), and then running
 
 ```shell
-go get -u github.com/google/pprof
+go install github.com/google/pprof@latest
 ```
 
 which installs `pprof` as `$GOPATH/bin/pprof`, where `GOPATH` defaults to
