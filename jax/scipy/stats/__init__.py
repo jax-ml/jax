@@ -14,6 +14,7 @@
 
 from jax.scipy.stats import bernoulli as bernoulli
 from jax.scipy.stats import beta as beta
+from jax.scipy.stats import bootstrap as bootstrap
 from jax.scipy.stats import cauchy as cauchy
 from jax.scipy.stats import dirichlet as dirichlet
 from jax.scipy.stats import expon as expon

@@ -170,6 +170,15 @@ jax.scipy.stats.betabinom
    logpmf
    pmf
 
+jax.scipy.stats.bootstrap
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.bootstrap
+
+.. autosummary::
+  :toctree: _autosummary
+
+   bootstrap
+
 jax.scipy.stats.cauchy
 ~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.cauchy

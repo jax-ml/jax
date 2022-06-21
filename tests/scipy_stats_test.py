@@ -633,5 +633,9 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertArraysEqual(result1, result2)
 
 
+class BootstrapTest(jtu.JaxTestCase):
+  pass
+
+
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

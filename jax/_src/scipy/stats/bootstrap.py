@@ -18,25 +18,27 @@ import scipy.stats
 import textwrap
 
 import jax
-from jax import lax, random, vmap
+from jax import random, vmap
 import jax.numpy as jnp
 from jax._src.scipy.special import ndtr, ndtri
+from jax._src.random import _check_prng_key
 from jax._src.numpy.util import _wraps
 
-_no_random_state_doc = textwrap.dedent("""
+_replace_random_state_by_key_doc = textwrap.dedent("""
 Does not support the Scipy argument ``random_state=None``.
-JAX requires an explicit random key (of type PRNGKey).
+Instead we add an argument ``key`` which is a :class:`jax.random.PRNGKey` random key.
 """
 )
-_no_random_state_and_batch_and_vectorized_doc = (
-  _no_random_state_doc
-  + "\nDoes not support the Scipy argument ``batch`` and ``vectorized``"
+_replace_random_state_by_key_no_batch_jnp_statistic_doc = (
+  _replace_random_state_by_key_doc
+  + "\nDoes not support the Scipy argument ``batch``."
+    "\nIn addition, statistic is suggested to implement in JAX. Numpy implementation may lead to error."
 )
 
 
 class ConfidenceInterval(NamedTuple):
-  ci_l: jnp.ndarray
-  ci_u: jnp.ndarray
+  low: jnp.ndarray
+  high: jnp.ndarray
 
 
 class BootstrapResult(NamedTuple):
@@ -50,7 +52,7 @@ def _bootstrap_resample_and_compute_statistic(sample, statistic, n_resamples, ke
     1. last arg `key` is jax.random.PRNGKey (v.s. int `random_state`)
     2. `batch` arg is not needed because lax.scan auto parallelize the resampling
     3. to save memory, it computes statistic right after resampling
-    """
+  """
   n = sample[0].shape[-1]
 
   @vmap
@@ -58,10 +60,12 @@ def _bootstrap_resample_and_compute_statistic(sample, statistic, n_resamples, ke
     idxs = random.randint(input_key, shape=(n,), minval=0, maxval=n)
     # `sample` is a tuple of sample sets, we need to apply same indexing on each sample set
     resample = jax.tree_map(lambda data: data[..., idxs], sample)
-    return statistic(*resample)
+    return statistic(*resample, axis=-1)
 
   theta_hat_b = _resample_and_compute_once(jax.random.split(key, n_resamples))
-  return theta_hat_b
+  # if statistics return a tuple of size n_tuple, then reshape it into (n_tuple, n_resamples)
+  #return jnp.stack(theta_hat_b)
+  return theta_hat_b.T
 
 
 def _jackknife_resample_and_compute_statistic(sample, statistic):
@@ -79,11 +83,11 @@ def _jackknife_resample_and_compute_statistic(sample, statistic):
   @vmap
   def _jackknife_resample_and_compute(idx):
     resample = jnp.where(idxs >= idx, miss_first_sample, miss_last_sample)
-    return statistic(resample)
+    return statistic(resample, axis=-1)
 
   # TODO: check if it can handle `statistic` that return multiple scalars
   theta_hat_i = _jackknife_resample_and_compute(jnp.arange(n))
-  return theta_hat_i
+  return theta_hat_i.T
 
 
 def _bca_interval(data, statistic, axis, alpha, theta_hat_b):
@@ -116,24 +120,68 @@ def _bca_interval(data, statistic, axis, alpha, theta_hat_b):
 def _percentile_along_axis(theta_hat_b, alpha):
   shape = theta_hat_b.shape[:-1]
   alpha = jnp.broadcast_to(alpha, shape)
-  # QUESTION: is it good practice to use vmap here?
-  # TODO: may need to handle nan
-  # TODO: handle numeric discrepancy against scipy's _percentile_along_axis
-  vmap_percentile = vmap(jnp.percentile)  # dispatch first axis of both inputs
+  vmap_percentile = jnp.percentile
+  for i in range(theta_hat_b.ndim - 1):
+    vmap_percentile = vmap(vmap_percentile)
   percentiles = vmap_percentile(theta_hat_b, alpha)
   return percentiles[()]
 
 
+def bootstrap_iv(key, data, statistic, vectorized, paired, axis, confidence_level, n_resamples, method):
+  # TODO: add input validations
+  # TODO: handle the case for paired sample
+  # TODO: handle the case for vectorized with arb axis
+  # TODO: handle the case when axis = 0 is used for multi dim data
+  # e.g. data = (np.random.randn(3, 10, 100), ); bootstrap(data, statistic = np.std, axis = 0, confidence_level = 0.95)
+  # how axis argument is used
+  # check alpha is jax array type
+
+
+  if vectorized not in (True, False):
+    raise ValueError("`vectorized` must be `True` or `False`.")
+
+  n_samples = 0
+  try:
+    n_samples = len(data)
+  except TypeError:
+    raise ValueError("`data` must be a sequence of samples.")
+
+  if n_samples == 0:
+    raise ValueError("`data` must contain at least one sample.")
+
+  # enforce data to be jax array type
+  # else will get TracerArrayConversionError in jax.tree_map(lambda data: data[..., idxs], sample)
+  # coz of indexing a numpy array using jax array
+  data_iv = jax.tree_map(lambda data: jnp.asarray(data), data)
+
+  if paired not in (True, False):
+    raise ValueError(f"`paired` must be `True` or `False`.")
+
+  methods = ('percentile', 'basic', 'bca')
+  method = method.lower()
+  if method not in methods:
+    raise ValueError(f"`method` must be in {methods}")
+
+  if not paired and n_samples > 1 and method == 'bca':
+    raise ValueError("`method = 'BCa' is only available for one-sample statistics")
+
+  key, _ = _check_prng_key(key)
+
+  return (key, data_iv, statistic, vectorized, paired, axis,
+          confidence_level, n_resamples, method)
+
+
 @_wraps(
   scipy.stats.bootstrap,
-  lax_description=_no_random_state_and_batch_and_vectorized_doc,
-  skip_params=("batch", "vectorized"),
+  lax_description=_replace_random_state_by_key_no_batch_jnp_statistic_doc,
+  skip_params=("batch",),
 )
 def bootstrap(
-  random_state,
+  key,
   data,
   statistic,
   *,
+  vectorized=True,
   paired=False,
   axis=0,
   confidence_level=0.95,
@@ -152,17 +200,24 @@ def bootstrap(
     3. handle paired-sample correctly
     4. handle the case when sample in data are multi-dimensional (e.g. (n_trials, 100))
         (e.g. see scipy example: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html)
-    """
-  # TODO: add input validations
-  pass
 
-  key = jax.random.PRNGKey(random_state)
+    Issue tracker:
+    1. numerical difference between numpy and scipy
+    2. speed is slower for JAX bootstrap
+    3. some numpy statistic function doesn't work (e.g. np.std, scipy.stats.ttest_rel, scipy.pearsonr)
+    4. should it support multi-output statistic (depend on whether scipy version supports it)
+  """
+  args = bootstrap_iv(key, data, statistic, vectorized, paired, axis,
+                      confidence_level, n_resamples, method)
+  key, data, statistic, vectorized, paired, axis = args[:6]
+  confidence_level, n_resamples, method = args[6:]
+
   theta_hat_b = _bootstrap_resample_and_compute_statistic(
     data, statistic, n_resamples, key
   )
 
-  alpha = (1 - confidence_level) / 2
-  if method == "bca":
+  alpha = jnp.array((1 - confidence_level) / 2)
+  if method == "BCa":
     interval = _bca_interval(
       data, statistic, axis=-1, alpha=alpha, theta_hat_b=theta_hat_b
     )
@@ -173,8 +228,8 @@ def bootstrap(
     def percentile_fun(a, q):
       return jnp.percentile(a=a, q=q, axis=-1)
 
-  ci_l = percentile_fun(theta_hat_b, interval[0].repeat(100))
-  ci_u = percentile_fun(theta_hat_b, interval[1].repeat(100))
+  ci_l = percentile_fun(theta_hat_b, interval[0] * 100)
+  ci_u = percentile_fun(theta_hat_b, interval[1] * 100)
   if method == "basic":
     theta_hat = statistic(*data, axis=-1)
     ci_l = ci_u = 2 * theta_hat - ci_u, 2 * theta_hat - ci_l
