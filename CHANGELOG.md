@@ -8,7 +8,11 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.14 (Unreleased)
+## jax 0.3.15 (Unreleased)
+
+## jaxlib 0.3.15 (Unreleased)
+
+## jax 0.3.14 (June 21, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...main).
 * Breaking changes
   * {func}`jax.experimental.compilation_cache.initialize_cache` does not support
@@ -57,7 +61,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     bucket path as input.
   * Added {func}`jax.scipy.stats.gennorm`.
 
-## jaxlib 0.3.11 (Unreleased)
+## jaxlib 0.3.14 (June 21, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
   * x86-64 Mac wheels now require Mac OS 10.14 (Mojave) or newer. Mac OS 10.14
     was released in 2018, so this should not be a very onerous requirement.
