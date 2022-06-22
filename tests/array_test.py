@@ -71,6 +71,27 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertIsNone(arr._npy_value)
       self.assertIsNone(arr._arrays)
 
+  def test_device_put(self):
+    with jax._src.config.jax_array(True):
+      numpy_array = np.array([1, 2, 3])
+      arr = jax.device_put(numpy_array, jax.devices()[0])
+      self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
+      self.assertArraysEqual(arr, numpy_array)
+      self.assertEqual(arr._committed, True)
+      for i in arr.addressable_shards:
+        self.assertArraysEqual(i.data, numpy_array)
+        self.assertEqual(i.device, jax.devices()[0])
+        self.assertEqual(i.index, (slice(None),))
+
+  def test_device_put_array_delete(self):
+    with jax._src.config.jax_array(True):
+      arr = jax.device_put(np.array([1, 2, 3]), jax.devices()[0])
+      arr.delete()
+      with self.assertRaisesRegex(ValueError, 'Array has been deleted.'):
+        arr._check_if_deleted()
+      self.assertIsNone(arr._npy_value)
+      self.assertIsNone(arr._arrays)
+
   def test_array_device_get(self):
     with jax._src.config.jax_array(True):
       global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))

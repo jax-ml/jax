@@ -1034,7 +1034,13 @@ def _device_put_impl(x, device: Optional[Device] = None):
   except TypeError as err:
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
-  return aval_to_result_handler(device, a)(None, *device_put(x, device))
+  res = aval_to_result_handler(device, a)(None, *device_put(x, device))
+  if config.jax_array:
+    from jax.experimental.array import Array
+    from jax.experimental.sharding import SingleDeviceSharding
+    res = Array(res.shape, SingleDeviceSharding(res.device()), [res],
+                committed=(device is not None))
+  return res
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
