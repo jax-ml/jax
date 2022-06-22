@@ -441,7 +441,7 @@ For example, the following code raises the exception
 
 ```
 jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
-                polymorphic_shapes=["(a, b)"])(np.ones((3, 4))
+                polymorphic_shapes=["(a, b)"])(np.ones((3, 4)))
 ```
 
 Note that it would be unsound for JAX to compute `x.shape[0] + 1 == x.shape[1]`
@@ -454,7 +454,7 @@ as a JAX value, e.g., in the following code:
 
 ```
 jax2tf.convert(lambda x: jnp.prod(jnp.array(x.shape)),
-               polymorphic_shapes=["(b, ...)"])(np.ones((3, 4))
+               polymorphic_shapes=["(b, ...)"])(np.ones((3, 4)))
 ```
 
 Note that the above code would work if we replace `jnp.array` and `jnp.prod`
