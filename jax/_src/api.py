@@ -2794,7 +2794,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
   if not isinstance(shards, Sequence):
     raise ValueError("device_put_sharded `shards` input must be a sequence; "
                      f"got {type(shards)}")
-  if not len(shards) == len(devices):
+  if len(shards) != len(devices):
     raise ValueError(f"len(shards) = {len(shards)} must equal "
                      f"len(devices) = {len(devices)}.")
 
@@ -2808,7 +2808,15 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
     buffers = [buf for x, d in zip(xs, devices)
                for buf in dispatch.device_put(x, d)]
-    return pxla.make_sharded_device_array(stacked_aval, None, buffers)
+    if config.jax_array:
+      from jax.experimental import array, sharding
+      sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
+      return array.Array(
+          stacked_aval.shape,
+          sharding.PmapSharding(np.array(devices), sharding_spec),
+          buffers, committed=True)
+    else:
+      return pxla.make_sharded_device_array(stacked_aval, None, buffers)
 
   with config_explicit_device_put_scope():
     return tree_map(_device_put_sharded, *shards)
@@ -2855,7 +2863,14 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
             len(xla.aval_to_xla_shapes(aval)) == 1)
     buf, = dispatch.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
-    return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
+    if config.jax_array:
+      from jax.experimental import array, sharding
+      sharding_spec = pxla._create_pmap_sharding_spec(aval)
+      return array.Array(
+          aval.shape, sharding.PmapSharding(np.array(devices), sharding_spec),
+          [buf, *rest_bufs], committed=True)
+    else:
+      return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
 
   with config_explicit_device_put_scope():
     return tree_map(_device_put_replicated, x)
