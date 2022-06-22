@@ -53,6 +53,13 @@ class Shard:
     self._global_shape = global_shape
     self.data = data
 
+  def __repr__(self):
+    try:
+      return (f'Shard(device={repr(self.device)}, index={self.index}, '
+              f'replica_id={self.replica_id}, data={self.data})')
+    except ValueError:
+      return f'Shard(device={repr(self.device)}, data={self.data})'
+
   @property
   def index(self) -> Index:
     try:
