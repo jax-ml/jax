@@ -253,7 +253,8 @@ class GlobalAsyncCheckpointManager(GlobalAsyncCheckpointManagerBase):
     self._thread = None
     self._exception = None
 
-    if distributed.global_state.client is None:
+    if (distributed.global_state.client is None and
+        jax.default_backend() != 'cpu'):
       raise ValueError('Please initialize the distributed system via '
                        '`jax.distributed.initialize()` at the start of your '
                        'program.')
@@ -278,16 +279,20 @@ class GlobalAsyncCheckpointManager(GlobalAsyncCheckpointManagerBase):
       logging.info('Commit to storage layer has completed by process: %s',
                    current_process)
 
-      # All processes will wait at the barrier. When all processes are at the
-      # barrier, the barrier will be satisfied. If not, then it will timeout.
-      self._client.wait_at_barrier(self._final_ckpt_dir, self._timeout_in_ms)
-      logging.info('Finished waiting at barrier for process %s', current_process)
+      if self._client:
+        # All processes will wait at the barrier. When all processes are at the
+        # barrier, the barrier will be satisfied. If not, then it will timeout.
+        self._client.wait_at_barrier(self._final_ckpt_dir, self._timeout_in_ms)
+        logging.info('Finished waiting at barrier for process %s',
+                     current_process)
 
       if current_process == 0:
         logging.info('Renaming %s to %s', temp_checkpoint_dir, final_checkpoint_dir)
         epath.Path(temp_checkpoint_dir).rename(final_checkpoint_dir)
         logging.info('Finished saving GDA checkpoint to `%s`.', final_checkpoint_dir)
-        self._client.key_value_set(_get_key(self._final_ckpt_dir), _CHECKPOINT_SUCCESS)
+        if self._client:
+          self._client.key_value_set(
+              _get_key(self._final_ckpt_dir), _CHECKPOINT_SUCCESS)
     except Exception as e:
       self._exception = e
 
@@ -312,10 +317,11 @@ class GlobalAsyncCheckpointManager(GlobalAsyncCheckpointManagerBase):
     self.check_for_errors()
 
     if self._final_ckpt_dir is not None:
-      # Block until process 0 writes success value to the key value store.
-      # If it fails to write it, then `blocking_key_value_get` will time out.
-      self._client.blocking_key_value_get(_get_key(self._final_ckpt_dir),
-                                          self._timeout_in_ms)
+      if self._client:
+        # Block until process 0 writes success value to the key value store.
+        # If it fails to write it, then `blocking_key_value_get` will time out.
+        self._client.blocking_key_value_get(
+            _get_key(self._final_ckpt_dir), self._timeout_in_ms)
 
   def serialize(self, gdas, tensorstore_specs, *, temp_checkpoint_dir,
                 final_checkpoint_dir):
