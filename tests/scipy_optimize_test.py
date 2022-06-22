@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+
 from absl.testing import absltest, parameterized
 import numpy as np
+import scipy
 import scipy.optimize
 
 from jax import numpy as jnp
@@ -23,6 +26,7 @@ from jax.config import config
 import jax.scipy.optimize
 
 config.parse_flags_with_absl()
+scipy_version = tuple(map(int, scipy.version.version.split('.')[:2]))
 
 
 def rosenbrock(np):
@@ -123,12 +127,16 @@ class TestBFGS(jtu.JaxTestCase):
         x0=initial_value,
         method='BFGS',
     ).x
-    scipy_res = scipy.optimize.minimize(
-        fun=opt_fn,
-        jac=jax.grad(opt_fn),
-        method='BFGS',
-        x0=initial_value
-    ).x
+    # Scipy does type-promoting binary ops on JAX array inputs.
+    # Newer versions of scipy (1.5+) don't have this issue.
+    with (jax.numpy_dtype_promotion('standard') if scipy_version < (1, 5)
+          else contextlib.nullcontext()):
+      scipy_res = scipy.optimize.minimize(
+          fun=opt_fn,
+          jac=jax.grad(opt_fn),
+          method='BFGS',
+          x0=initial_value
+      ).x
     self.assertAllClose(scipy_res, jax_res, atol=2e-5, check_dtypes=False)
 
 
