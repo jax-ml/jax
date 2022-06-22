@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import subprocess
+import sys
 import threading
 import unittest
 
@@ -20,7 +23,7 @@ from absl.testing import parameterized
 
 import jax
 from jax.config import config
-import jax._src.distributed as distributed
+from jax._src import distributed
 import jax._src.lib
 from jax._src import test_util as jtu
 
@@ -63,6 +66,42 @@ class DistributedTest(jtu.JaxTestCase):
       thread.start()
     for thread in threads:
       thread.join()
+
+
+@unittest.skipIf(not portpicker, "Test requires portpicker")
+class MultiProcessGpuTest(jtu.JaxTestCase):
+
+  def test_gpu_distributed_initialize(self):
+    if jax.devices()[0].platform != 'gpu':
+      raise unittest.SkipTest('Tests only for GPU.')
+
+    port = portpicker.pick_unused_port()
+    num_gpus = 4
+    num_gpus_per_task = 1
+    num_tasks = num_gpus // num_gpus_per_task
+
+    os.environ["JAX_PORT"] = str(port)
+    os.environ["NUM_TASKS"] = str(num_tasks)
+
+    subprocesses = []
+    for task in range(num_tasks):
+      env = os.environ.copy()
+      env["TASK"] = str(task)
+      env["CUDA_VISIBLE_DEVICES"] = ",".join(
+          str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+      args = [
+          sys.executable,
+          "-c",
+          ('"import jax, os; '
+           'jax.distributed.initialize('
+               'f"localhost:{os.environ["JAX_PORT"]}", '
+               'os.environ["NUM_TASKS"], os.environ["TASK"])"'
+          )
+      ]
+      subprocesses.append(subprocess.Popen(args, env=env, shell=True))
+
+    for i in range(num_tasks):
+      self.assertEqual(subprocesses[i].wait(), 0)
 
 
 if __name__ == "__main__":
