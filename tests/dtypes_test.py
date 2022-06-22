@@ -14,6 +14,7 @@
 
 
 import enum
+import functools
 import itertools
 import operator
 
@@ -140,13 +141,20 @@ class DtypesTest(jtu.JaxTestCase):
 
   @jax.numpy_dtype_promotion('strict')
   def testPromoteDtypesStrict(self):
+    msg = ("Input dtypes .* have no available implicit dtype promotion "
+           "path when jax_numpy_dtype_promotion=strict")
+
+    assertTypePromotionError = functools.partial(
+      self.assertRaisesRegex, dtypes.TypePromotionError, msg,
+      dtypes.promote_types)
+
     # Check that strong types have diagonal promotion table:
     for t1 in all_dtypes:
       for t2 in all_dtypes:
         if t1 == t2:
           self.assertEqual(t1, dtypes.promote_types(t1, t2))
         else:
-          self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, t2)
+          assertTypePromotionError(t1, t2)
 
     # Promotion between weak types matches numpy promotion
     for t1 in [int, float, complex]:
@@ -158,17 +166,17 @@ class DtypesTest(jtu.JaxTestCase):
 
     # Check that weak promotion only works if strong value is not cast:
     for t1 in bool_dtypes:
-      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, int)
-      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, float)
-      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, complex)
+      assertTypePromotionError(t1, int)
+      assertTypePromotionError(t1, float)
+      assertTypePromotionError(t1, complex)
     for t1 in signed_dtypes + unsigned_dtypes:
       self.assertEqual(dtypes.promote_types(t1, int), t1)
-      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, float)
-      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, complex)
+      assertTypePromotionError(t1, float)
+      assertTypePromotionError(t1, complex)
     for t1 in float_dtypes:
       self.assertEqual(dtypes.promote_types(t1, int), t1)
       self.assertEqual(dtypes.promote_types(t1, float), t1)
-      self.assertRaises(dtypes.TypePromotionError, dtypes.promote_types, t1, complex)
+      assertTypePromotionError(t1, complex)
     for t1 in complex_dtypes:
       self.assertEqual(dtypes.promote_types(t1, int), t1)
       self.assertEqual(dtypes.promote_types(t1, float), t1)
