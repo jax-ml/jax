@@ -225,10 +225,6 @@ class Lowered(Stage):
     else:
       raise ValueError(f"Unknown dialect {dialect}")
 
-  # TODO(frostig): remove this in favor of `compiler_ir`
-  def _xla_computation(self):
-    return self._lowering.hlo()
-
 
 class Wrapped(Protocol):
   def __call__(self, *args, **kwargs):
