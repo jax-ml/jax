@@ -22,7 +22,7 @@ kernelspec:
 
 *levskaya@ mattjj@*
 
-When walking about the countryside of [Italy](https://iaml.it/blog/jax-intro), the people will not hesitate to tell you that __JAX__ has _"una anima di pura programmazione funzionale"_.
+When walking about the countryside of Italy, the people will not hesitate to tell you that __JAX__ has _"una anima di pura programmazione funzionale"_.
 
 __JAX__ is a language for __expressing__ and __composing__ __transformations__ of numerical programs. __JAX__ is also able to __compile__ numerical programs for CPU or accelerators (GPU/TPU). 
 JAX works great for many numerical and scientific programs, but __only if they are written with certain constraints__ that we describe below.
