@@ -160,6 +160,7 @@ class PmapSharding(XLACompatibleSharding):
 
   def __init__(self, devices: np.ndarray, sharding_spec: pxla.ShardingSpec):
     self.devices = devices
+    # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
 
   @pxla.maybe_cached_property
@@ -168,6 +169,13 @@ class PmapSharding(XLACompatibleSharding):
 
   def device_indices(self, device: Device, global_shape: Shape) -> Optional[Index]:
     return self.devices_indices_map(global_shape)[device]
+
+  @pxla.maybe_cached_property
+  def sharded_dim(self):
+    for i, s in enumerate(self.sharding_spec.sharding):
+      if isinstance(s, pxla.Unstacked):
+        return i
+    return None
 
   @cache()
   def devices_indices_map(
