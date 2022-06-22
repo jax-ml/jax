@@ -113,14 +113,14 @@ ignore_xmap_warning = partial(
 
 
 def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
-                                devices=None):
+                                devices=None, sharded_dim_size=None):
   dtype = np.int32
   aval = ShapedArray(input_shape, dtype)
 
   if input_data is None:
     input_data = np.arange(prod(input_shape)).reshape(input_shape)
 
-  sharding_spec = pxla._create_pmap_sharding_spec(aval, in_axes)
+  sharding_spec = pxla._create_pmap_sharding_spec(aval, in_axes, sharded_dim_size)
 
   if devices is None:
     devices = jax.devices()
@@ -2869,7 +2869,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
     dc = jax.device_count()
     input_shape = (dc, 2)
     a1, input_data = create_input_array_for_pmap(input_shape, in_axes=0)
-    a2, _ = create_input_array_for_pmap(input_shape, in_axes=None)
+    a2, _ = create_input_array_for_pmap(input_shape, in_axes=None,
+                                        sharded_dim_size=a1.shape[0])
 
     def f(x, y):
       assert x.shape == (2,)
@@ -2890,7 +2891,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
   def test_pmap_array_sharding_mismatch(self):
     input_shape = (jax.device_count(), 2)
-    a1, _ = create_input_array_for_pmap(input_shape, in_axes=None)
+    a1, _ = create_input_array_for_pmap(input_shape, in_axes=None,
+                                        sharded_dim_size=input_shape[0])
 
     f = jax.pmap(lambda x: x, in_axes=0, out_axes=0)
     with jax._src.config.jax_array(True):
