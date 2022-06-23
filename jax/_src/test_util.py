@@ -304,6 +304,7 @@ def format_test_name_suffix(opname, shapes, dtypes):
 # between NumPy scalars, Python scalars, and 0-D arrays.
 class ScalarShape:
   def __len__(self): return 0
+  def __getitem__(self, i): raise IndexError(f"index {i} out of range.")
 class _NumpyScalar(ScalarShape): pass
 class _PythonScalar(ScalarShape): pass
 NUMPY_SCALAR_SHAPE = _NumpyScalar()

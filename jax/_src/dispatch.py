@@ -620,7 +620,7 @@ def aval_to_result_handler(sticky_device: Optional[Device],
 
 def array_result_handler(sticky_device: Optional[Device],
                          aval: core.ShapedArray):
-  if aval.dtype is dtypes.float0:
+  if aval.dtype == dtypes.float0:
     return lambda _, __: np.zeros(aval.shape, dtypes.float0)
   aval = core.raise_to_shaped(aval)
   handler = lambda _, b: device_array.make_device_array(aval, sticky_device, b)
@@ -629,7 +629,7 @@ def array_result_handler(sticky_device: Optional[Device],
 
 def dynamic_array_result_handler(sticky_device: Optional[Device],
                                  aval: core.DShapedArray):
-  if aval.dtype is dtypes.float0:
+  if aval.dtype == dtypes.float0:
     return lambda _: np.zeros(aval.shape, dtypes.float0)  # type: ignore
   else:
     return partial(_dynamic_array_result_handler, sticky_device, aval)
@@ -974,7 +974,7 @@ xla.device_put = device_put
 
 def _device_put_array(x, device: Optional[Device]):
   backend = xb.get_device_backend(device)
-  if x.dtype is dtypes.float0:
+  if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   return (backend.buffer_from_pyval(x, device),)
 

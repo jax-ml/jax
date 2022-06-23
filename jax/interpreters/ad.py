@@ -62,7 +62,7 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
 @lu.transformation
 def jvpfun(instantiate, transform_stack, primals, tangents):
   tangents = [Zero.from_value(t) if not isinstance(t, Zero)
-              and dtype(t) is float0 else t for t in tangents]
+              and dtype(t) == float0 else t for t in tangents]
   ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
          else contextlib.nullcontext())
   with core.new_main(JVPTrace) as main, ctx:
@@ -155,7 +155,7 @@ def unpair_pval(pval):
     return (aval_1, const_1), (aval_2, const_2)
 
 def replace_float0s(primal, tangent):
-  if dtype(tangent) is float0:
+  if dtype(tangent) == float0:
     return zeros_like_jaxval(primal)
   else:
     return tangent
