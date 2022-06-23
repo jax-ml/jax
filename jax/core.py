@@ -1315,6 +1315,10 @@ class DShapedArray(UnshapedArray):
     else:
       raise TypeError(self, other)
 
+  def at_least_vspace(self):
+    return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
+                        self.weak_type)
+
 del AxisSize, AxisSizeForTracing, AxisSizeForJaxprType, \
     AxisSizeForJaxprTracingSpec
 
@@ -1323,8 +1327,9 @@ class ShapedArray(UnshapedArray):
   array_abstraction_level = 1
 
   def __init__(self, shape, dtype, weak_type=False, named_shape=None):
-    super().__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
+    self.dtype = np.dtype(dtype)
+    self.weak_type = weak_type
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
