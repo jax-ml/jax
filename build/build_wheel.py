@@ -251,7 +251,7 @@ def prepare_wheel(sources_path):
   patch_copy_xla_extension_stubs(jaxlib_dir)
   patch_copy_xla_client_py(jaxlib_dir)
 
-  if not _is_windows():
+  if exists("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so"):
     copy_to_jaxlib("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so")
     patch_copy_tpu_client_py(jaxlib_dir)
 
