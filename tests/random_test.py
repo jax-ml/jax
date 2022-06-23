@@ -643,7 +643,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     is_range = type(input_range_or_shape) is int
     x = (input_range_or_shape if is_range else
-         self.rng().permutation(jnp.arange(np.prod(
+         self.rng().permutation(np.arange(np.prod(
            input_range_or_shape), dtype=dtype)).reshape(input_range_or_shape))
     N = x if is_range else x.shape[axis]
     p = None if not weighted else (np.arange(N) + 1) / np.sum(np.arange(N) + 1)
@@ -678,7 +678,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     is_range = type(range_or_shape) is int
     x = (range_or_shape if is_range else
-         self.rng().permutation(jnp.arange(
+         self.rng().permutation(np.arange(
            np.prod(range_or_shape), dtype=dtype)).reshape(range_or_shape))
     shape = ((range_or_shape,) if is_range else range_or_shape)
     x_ = np.copy(x)

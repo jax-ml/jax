@@ -104,7 +104,7 @@ def _shape_and_dtypes(shapes, dtypes):
       yield (shape, dtype)
 
 def _compatible_shapes(shape):
-  if shape in scalar_shapes or np.ndim(shape) == 0:
+  if np.ndim(shape) == 0 or shape in scalar_shapes:
     return [shape]
   return (shape[n:] for n in range(len(shape) + 1))
 
@@ -2395,6 +2395,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     mask_size = np.zeros(shape).size if axis is None else np.zeros(shape).shape[axis]
     mask = jtu.rand_int(self.rng(), low=0, high=2)(mask_size, bool)
+    if numpy_version == (1, 23, 0) and mask.shape == (1,):
+      # https://github.com/numpy/numpy/issues/21840
+      self.skipTest("test fails for numpy v1.23.0")
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda arg: np.delete(arg, mask, axis=axis)
     jnp_fun = lambda arg: jnp.delete(arg, mask, axis=axis)
@@ -2622,6 +2625,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": f"_{dtype.__name__}", "dtype": dtype}
       for dtype in inexact_dtypes))
   def testUniqueNans(self, dtype):
+    if numpy_version == (1, 23, 0) and dtype == np.float16:
+      # https://github.com/numpy/numpy/issues/21838
+      self.skipTest("Known failure on numpy 1.23.0")
     def args_maker():
       x = [-0.0, 0.0, 1.0, 1.0, np.nan, -np.nan]
       if np.issubdtype(dtype, np.complexfloating):
@@ -6333,6 +6339,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
       'asarray': ['like'],
+      'average': ['keepdims'],
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
       'copy': ['subok'],
@@ -6352,6 +6359,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'tri': ['like'],
+      'unique': ['equal_nan'],
       'zeros_like': ['subok', 'order']
     }
 
