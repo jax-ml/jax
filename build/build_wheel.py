@@ -185,7 +185,9 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_sparse.py")
-  copy_to_jaxlib("__main__/jaxlib/version.py")
+
+  # The same version.py file is distributed as part of both jax and jaxlib.
+  copy_to_jaxlib("__main__/jax/version.py")
 
 
   cuda_dir = os.path.join(jaxlib_dir, "cuda")

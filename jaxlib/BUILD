@@ -79,7 +79,6 @@ py_library(
         "lapack.py",
         "mhlo_helpers.py",
         "pocketfft.py",
-        "version.py",
     ],
     deps = [
         ":_lapack",
@@ -111,8 +110,8 @@ cc_library(
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
     deps = [
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
     ],
 )
 
@@ -154,8 +153,8 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":pocketfft_flatbuffers_cc",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
         "@flatbuffers//:runtime_cc",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
         "@pocketfft",
     ],
 )
