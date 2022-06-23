@@ -2660,12 +2660,17 @@ def _broadcast_in_dim_typecheck_rule(
                                  operand.aval.weak_type)
     return [out_aval], core.no_effects
 
-def _broadcast_in_dim_transpose_rule(ct, operand, *, shape, broadcast_dimensions):
-  shape_in = operand.aval.shape
-  unit_dimensions = tuple(i for i, s in enumerate(shape_in) if core.symbolic_equal_dim(s,  1))
-  bdims = tuple(np.delete(broadcast_dimensions, unit_dimensions))
+def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
+                                     shape, broadcast_dimensions):
+  if dyn_shape:
+    raise NotImplementedError("dynamic shape broadcast transpose not implemented")
+  if type(ct) is ad_util.Zero:
+    return [ad_util.Zero(operand.aval)]
+  unit_axes = [i for i, s in enumerate(operand.aval.shape)
+               if core.symbolic_equal_dim(s, 1)]
+  bdims = tuple(np.delete(broadcast_dimensions, unit_axes))
   axes = tuple(np.delete(range(len(shape)), bdims))
-  return [expand_dims(_reduce_sum(ct, axes), unit_dimensions)]
+  return [expand_dims(_reduce_sum(ct, axes), unit_axes)]
 
 def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
                                  broadcast_dimensions):
@@ -2721,9 +2726,18 @@ def _broadcast_in_dim_padding_rule(in_avals, out_avals, x, *dyn_shape,
   return [broadcast_in_dim_p.bind(x, *new_dyn_shape, shape=new_shape,
                                   broadcast_dimensions=broadcast_dimensions)]
 
+def _broadcast_in_dim_jvp_rule(primals, tangents, *, shape, broadcast_dimensions):
+  operand, *dyn_shape = primals
+  operand_dot, *_ = tangents
+  y     = broadcast_in_dim_p.bind(operand    , *dyn_shape, shape=shape,
+                                  broadcast_dimensions=broadcast_dimensions)
+  y_dot = broadcast_in_dim_p.bind(operand_dot, *dyn_shape, shape=shape,
+                                  broadcast_dimensions=broadcast_dimensions)
+  return y, y_dot
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
-ad.deflinear2(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
+ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
+ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
