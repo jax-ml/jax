@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from functools import partial
 import itertools
 
 from absl.testing import absltest, parameterized
@@ -21,7 +22,7 @@ import numpy as np
 import scipy.stats as osp_stats
 
 import jax
-from jax._src import test_util as jtu
+from jax._src import test_util as jtu, tree_util
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
@@ -684,6 +685,206 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
     self.assertArraysEqual(result1, result2, check_dtypes=False)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+        "_inshape={}_outsize={}_weights={}_method={}_func={}".format(
+          jtu.format_shape_dtype_string(inshape, dtype),
+          outsize, weights, method, func),
+       "dtype": dtype,
+       "inshape": inshape,
+       "outsize": outsize,
+       "weights": weights,
+       "method": method,
+       "func": func}
+      for inshape in [(50,), (3, 50), (2, 12)]
+      for dtype in jtu.dtypes.floating
+      for outsize in [None, 10]
+      for weights in [False, True]
+      for method in [None, "scott", "silverman", 1.5, "callable"]
+      for func in [None, "evaluate", "logpdf", "pdf"]))
+  def testKde(self, inshape, dtype, outsize, weights, method, func):
+    if method == "callable":
+        method = lambda kde: jax.numpy.power(kde.neff, -1./(kde.d+4))
+
+    def scipy_fun(dataset, points, w):
+      w = np.abs(w) if weights else None
+      kde = osp_stats.gaussian_kde(dataset, bw_method=method, weights=w)
+      if func is None:
+        result = kde(points)
+      else:
+        result = getattr(kde, func)(points)
+      # Note: the scipy implementation _always_ returns float64
+      return result.astype(dtype)
+
+    def lax_fun(dataset, points, w):
+      w = jax.numpy.abs(w) if weights else None
+      kde = lsp_stats.gaussian_kde(dataset, bw_method=method, weights=w)
+      if func is None:
+        result = kde(points)
+      else:
+        result = getattr(kde, func)(points)
+      return result
+
+    if outsize is None:
+      outshape = inshape
+    else:
+      outshape = inshape[:-1] + (outsize,)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+      rng(inshape, dtype), rng(outshape, dtype), rng(inshape[-1:], dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            tol={np.float32: 1e-3, np.float64: 1e-14})
+    self._CompileAndCheck(
+        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (3, 15), (1, 12)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeIntegrateGaussian(self, shape, dtype):
+    def scipy_fun(dataset, weights):
+      kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
+      # Note: the scipy implementation _always_ returns float64
+      return kde.integrate_gaussian(mean, covariance).astype(dtype)
+
+    def lax_fun(dataset, weights):
+      kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
+      return kde.integrate_gaussian(mean, covariance)
+
+    # Construct a random mean and positive definite covariance matrix
+    rng = jtu.rand_default(self.rng())
+    ndim = shape[0] if len(shape) > 1 else 1
+    mean = rng(ndim, dtype)
+    L = rng((ndim, ndim), dtype)
+    L[np.triu_indices(ndim, 1)] = 0.0
+    L[np.diag_indices(ndim)] = np.exp(np.diag(L)) + 0.01
+    covariance = L @ L.T
+
+    args_maker = lambda: [
+      rng(shape, dtype), rng(shape[-1:], dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            tol={np.float32: 1e-3, np.float64: 1e-14})
+    self._CompileAndCheck(
+        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (12,)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeIntegrateBox1d(self, shape, dtype):
+    def scipy_fun(dataset, weights):
+      kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
+      # Note: the scipy implementation _always_ returns float64
+      return kde.integrate_box_1d(-0.5, 1.5).astype(dtype)
+
+    def lax_fun(dataset, weights):
+      kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
+      return kde.integrate_box_1d(-0.5, 1.5)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+      rng(shape, dtype), rng(shape[-1:], dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            tol={np.float32: 1e-3, np.float64: 1e-14})
+    self._CompileAndCheck(
+        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (3, 15), (1, 12)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeIntegrateKde(self, shape, dtype):
+    def scipy_fun(dataset, weights):
+      kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
+      other = osp_stats.gaussian_kde(
+        dataset[..., :-3] + 0.1, weights=np.abs(weights[:-3]))
+      # Note: the scipy implementation _always_ returns float64
+      return kde.integrate_kde(other).astype(dtype)
+
+    def lax_fun(dataset, weights):
+      kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
+      other = lsp_stats.gaussian_kde(
+        dataset[..., :-3] + 0.1, weights=jax.numpy.abs(weights[:-3]))
+      return kde.integrate_kde(other)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+      rng(shape, dtype), rng(shape[-1:], dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            tol={np.float32: 1e-3, np.float64: 1e-14})
+    self._CompileAndCheck(
+        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (3, 15), (1, 12)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeResampleShape(self, shape, dtype):
+    def resample(key, dataset, weights, *, shape):
+      kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
+      return kde.resample(key, shape=shape)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+      jax.random.PRNGKey(0), rng(shape, dtype), rng(shape[-1:], dtype)]
+
+    ndim = shape[0] if len(shape) > 1 else 1
+
+    args = args_maker()
+    func = partial(resample, shape=())
+    self._CompileAndCheck(
+      func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+    result = func(*args)
+    assert result.shape == (ndim,)
+
+    func = partial(resample, shape=(4,))
+    self._CompileAndCheck(
+      func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+    result = func(*args)
+    assert result.shape == (ndim, 4)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (1, 12)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeResample1d(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    dataset = rng(shape, dtype)
+    weights = jax.numpy.abs(rng(shape[-1:], dtype))
+    kde = lsp_stats.gaussian_kde(dataset, weights=weights)
+    samples = jax.numpy.squeeze(kde.resample(jax.random.PRNGKey(5), shape=(1000,)))
+
+    def cdf(x):
+      result = jax.vmap(partial(kde.integrate_box_1d, -np.inf))(x)
+      # Manually casting to numpy in order to avoid type promotion error
+      return np.array(result)
+
+    self.assertGreater(osp_stats.kstest(samples, cdf).pvalue, 0.01)
+
+  def testKdePyTree(self):
+    @jax.jit
+    def evaluate_kde(kde, x):
+      return kde.evaluate(x)
+
+    dtype = np.float32
+    rng = jtu.rand_default(self.rng())
+    dataset = rng((3, 15), dtype)
+    x = rng((3, 12), dtype)
+    kde = lsp_stats.gaussian_kde(dataset)
+    leaves, treedef = tree_util.tree_flatten(kde)
+    kde2 = tree_util.tree_unflatten(treedef, leaves)
+    tree_util.tree_map(lambda a, b: self.assertAllClose(a, b), kde, kde2)
+    self.assertAllClose(evaluate_kde(kde, x), kde.evaluate(x))
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

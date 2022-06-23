@@ -13,6 +13,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Changes
   * `JaxTestCase` and `JaxTestLoader` have been removed from `jax.test_util`. These
     classes have been deprecated since v0.3.1 ({jax-issue}`#11248`).
+  * Added {class}`jax.scipy.gaussian_kde` ({jax-issue}`#11237`).
 
 ## jaxlib 0.3.15 (Unreleased)
 
