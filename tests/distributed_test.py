@@ -40,6 +40,9 @@ config.parse_flags_with_absl()
 @unittest.skipIf(not portpicker, "Test requires portpicker")
 class DistributedTest(jtu.JaxTestCase):
 
+  # TODO(phawkins): Enable after https://github.com/google/jax/issues/11222
+  # is fixed.
+  @unittest.SkipTest
   def testInitializeAndShutdown(self):
     # Tests the public APIs. Since they use global state, we cannot use
     # concurrency to simulate multiple tasks.
