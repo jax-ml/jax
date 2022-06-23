@@ -138,6 +138,8 @@ class BatchTracer(Tracer):
   @property
   def aval(self):
     aval = raise_to_shaped(core.get_aval(self.val))
+    if self.batch_dim is not_mapped:
+      return aval
     return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
 
   def full_lower(self):
