@@ -314,7 +314,7 @@ def _check_arraylike(fun_name, *args):
 
 def _check_no_float0s(fun_name, *args):
   """Check if none of the args have dtype float0."""
-  if any(dtypes.dtype(arg) is dtypes.float0 for arg in args):
+  if any(dtypes.dtype(arg) == dtypes.float0 for arg in args):
     raise TypeError(
         f"Called {fun_name} with a float0 array. "
         "float0s do not support any operations by design because they "

@@ -80,7 +80,7 @@ def identity(x): return x
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 def _make_array_shape(a: ShapedArray) -> Sequence[XlaShape]:
-  if a.dtype is dtypes.float0:
+  if a.dtype == dtypes.float0:
     return (xc.Shape.array_shape(np.dtype('bool'), a.shape),)
   else:
     return (xc.Shape.array_shape(a.dtype, a.shape),)

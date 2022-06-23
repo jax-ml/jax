@@ -957,7 +957,7 @@ def _maybe_perturbed(x: Any) -> bool:
     # happen later, but some types always have trivial tangents.
     vspace = x.aval.at_least_vspace()
     return not (vspace is core.abstract_token or
-                getattr(vspace, 'dtype', None) is dtypes.float0)
+                getattr(vspace, 'dtype', None) == dtypes.float0)
   elif not isinstance(x, ad.JVPTracer):
     # If x is not a JVPTracer, recursively check its contents.
     return any(_maybe_perturbed(attr) for name, attr in x._contents())

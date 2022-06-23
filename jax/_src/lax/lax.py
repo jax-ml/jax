@@ -1405,7 +1405,7 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   aval_dtypes = [aval.dtype for aval in avals]
   for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
     if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
-      if aval_dtype is dtypes.float0:
+      if aval_dtype == dtypes.float0:
         raise TypeError(
             f"Called {name} with a float0 at position {i}. "
             "float0s do not support any operations by design, because they "
@@ -1446,8 +1446,8 @@ def _broadcasting_shape_rule(name, *avals):
   return tuple(result_shape)
 
 def _naryop_weak_type_rule(name, *avals, **kwargs):
-  if any(aval.dtype is dtypes.float0 for aval in avals):
-    pos = next(i for i, aval in enumerate(avals) if aval.dtype is dtypes.float0)
+  if any(aval.dtype == dtypes.float0 for aval in avals):
+    pos = next(i for i, aval in enumerate(avals) if aval.dtype == dtypes.float0)
     raise TypeError(
         f"Called {name} with a float0 at position {pos}. "
         "float0s do not support any operations by design, because they "
@@ -2206,14 +2206,14 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
   old_weak_type = dtypes.is_weakly_typed(operand)
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)]
-  elif core.primal_dtype_to_tangent_dtype(old_dtype) is dtypes.float0:
+  elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
     return [convert_element_type_p.bind(ct, new_dtype=old_dtype,
                                         weak_type=old_weak_type)]
 
 def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
-  if core.primal_dtype_to_tangent_dtype(new_dtype) is dtypes.float0:
+  if core.primal_dtype_to_tangent_dtype(new_dtype) == dtypes.float0:
     return ad_util.Zero(tangent.aval.update(dtype=dtypes.float0, weak_type=False))
   else:
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
