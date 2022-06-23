@@ -46,11 +46,8 @@ def _update_annotation(
   ) -> lu.WrappedFun:
   if orig_type is None:
     return f
-  # Implicit arguments never have tangents, so generate the tangent part of the
-  # type annotation from explicit arguments only.
-  orig_avals = [aval for aval, explicit in orig_type if explicit]
-  tan_types = [(aval.at_least_vspace(), True)
-               for nz, aval in zip(nonzeros, orig_avals) if nz]
+  tan_types = [(aval.at_least_vspace(), keep)
+               for nz, (aval, keep) in zip(nonzeros, orig_type) if nz]
   return lu.annotate(f, (*orig_type, *tan_types))
 
 def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
