@@ -891,6 +891,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # will invoke broadcast_in_dim with shape=(1, w, w)
     jax2tf.convert(image_mask_jax, polymorphic_shapes=["(b, w, w)", "(w, w)"])
 
+    jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
+                   polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
+
+    jax2tf.convert(lambda x: jnp.reshape(x, (np.prod(x.shape),)),
+                   polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
+
+    with self.assertRaisesRegex(TypeError,
+                                "Argument 'b' of type <class 'jax.experimental.jax2tf.shape_poly._DimPolynomial'> is not a valid JAX type"):
+      jax2tf.convert(lambda x: jnp.prod(x.shape),
+                     polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
+
   def test_readme_shape_error(self):
     """Some of the examples from the README."""
     with self.assertRaisesRegex(
