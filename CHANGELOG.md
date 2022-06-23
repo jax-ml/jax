@@ -9,11 +9,15 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.3.15 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.14...main).
+* Changes
+  * {func}`jax.numpy.roots` is now better behaved when `strip_zeros=False` when
+    coefficients have leading zeros ({jax-issue}`#11215`).
 
 ## jaxlib 0.3.15 (Unreleased)
 
 ## jax 0.3.14 (June 21, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...main).
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...jax-v0.3.14).
 * Breaking changes
   * {func}`jax.experimental.compilation_cache.initialize_cache` does not support
     `max_cache_size_  bytes` anymore and will not get that as an input.

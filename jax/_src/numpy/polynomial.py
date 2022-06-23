@@ -19,86 +19,81 @@ import operator
 from jax import core
 from jax import jit
 from jax import lax
+from jax._src import dtypes
 from jax._src.numpy.lax_numpy import (
-    all, arange, argmin, array, asarray, atleast_1d, concatenate, convolve, diag, dot, finfo,
-    full, hstack, maximum, ones, outer, sqrt, trim_zeros, trim_zeros_tol, true_divide, vander, zeros)
+    all, arange, argmin, array, asarray, atleast_1d, concatenate, convolve, diag, dot,
+    finfo, full, maximum, ones, outer, roll, sqrt, trim_zeros, trim_zeros_tol, true_divide,
+    vander, zeros)
 from jax._src.numpy import linalg
-from jax._src.numpy.util import _check_arraylike, _promote_dtypes, _promote_dtypes_inexact, _wraps
+from jax._src.numpy.util import _check_arraylike, _promote_dtypes, _promote_dtypes_inexact, _where, _wraps
 import numpy as np
 
 
 @jit
 def _roots_no_zeros(p):
-  # assume: p does not have leading zeros and has length > 1
-  p, = _promote_dtypes_inexact(p)
-
   # build companion matrix and find its eigenvalues (the roots)
+  if p.size < 2:
+    return array([], dtype=dtypes._to_complex_dtype(p.dtype))
   A = diag(ones((p.size - 2,), p.dtype), -1)
   A = A.at[0, :].set(-p[1:] / p[0])
-  roots = linalg.eigvals(A)
-  return roots
+  return linalg.eigvals(A)
 
 
 @jit
-def _nonzero_range(arr):
-  # return start and end s.t. arr[:start] = 0 = arr[end:] padding zeros
-  is_zero = arr == 0
-  start = argmin(is_zero)
-  end = is_zero.size - argmin(is_zero[::-1])
-  return start, end
+def _roots_with_zeros(p, num_leading_zeros):
+  # Avoid lapack errors when p is all zero
+  p = _where(len(p) == num_leading_zeros, 1.0, p)
+  # Roll any leading zeros to the end & compute the roots
+  roots = _roots_no_zeros(roll(p, -num_leading_zeros))
+  # Sort zero roots to the end.
+  roots = lax.sort_key_val(roots == 0, roots)[1]
+  # Set roots associated with num_leading_zeros to NaN
+  return _where(arange(roots.size) < roots.size - num_leading_zeros, roots, complex(np.nan, np.nan))
 
 
 @_wraps(np.roots, lax_description="""\
-If the input polynomial coefficients of length n do not start with zero,
-the polynomial is of degree n - 1 leading to n - 1 roots.
-If the coefficients do have leading zeros, the polynomial they define
-has a smaller degree and the number of roots (and thus the output shape)
-is value dependent.
+Unlike the numpy version of this function, the JAX version returns the roots in
+a complex array regardless of the values of the roots. Additionally, the jax
+version of this function adds the ``strip_zeros`` function which must be set to
+False for the function to be compatible with JIT and other JAX transformations.
+With ``strip_zeros=False``, if your coefficients have leading zeros, the
+roots will be padded with NaN values:
 
-The general implementation can therefore not be transformed with jit.
-If the coefficients are guaranteed to have no leading zeros, use the
-keyword argument `strip_zeros=False` to get a jit-compatible variant:
+>>> coeffs = jnp.array([0, 1, 2])
 
->>> from functools import partial
->>> roots_unsafe = jax.jit(partial(jnp.roots, strip_zeros=False))
->>> roots_unsafe([1, 2])     # ok
+# The default behavior matches numpy and strips leading zeros:
+>>> jnp.roots(coeffs)
 DeviceArray([-2.+0.j], dtype=complex64)
->>> roots_unsafe([0, 1, 2])  # problem
-DeviceArray([nan+nanj, nan+nanj], dtype=complex64)
->>> jnp.roots([0, 1, 2])     # use the no-jit version instead
-DeviceArray([-2.+0.j], dtype=complex64)
+
+# With strip_zeros=False, extra roots are set to NaN:
+>>> jnp.roots(coeffs, strip_zeros=False)
+DeviceArray([-2. +0.j, nan+nanj], dtype=complex64)
+""",
+extra_params="""
+strip_zeros : bool, default=True
+    If set to True, then leading zeros in the coefficients will be stripped, similar
+    to :func:`numpy.roots`. If set to False, leading zeros will not be stripped, and
+    undefined roots will be represented by NaN values in the function output.
+    ``strip_zeros`` must be set to ``False`` for the function to be compatible with
+    :func:`jax.jit` and other JAX transformations.
 """)
 def roots(p, *, strip_zeros=True):
-  # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/lib/polynomial.py#L168-L251
-  p = atleast_1d(p)
+  _check_arraylike("roots", p)
+  p = atleast_1d(*_promote_dtypes_inexact(p))
   if p.ndim != 1:
     raise ValueError("Input must be a rank-1 array.")
-
-  # strip_zeros=False is unsafe because leading zeros aren't removed
-  if not strip_zeros:
-    if p.size > 1:
-      return _roots_no_zeros(p)
-    else:
-      return array([])
-
-  if all(p == 0):
-    return array([])
-
-  # factor out trivial roots
-  start, end = _nonzero_range(p)
-  # number of trailing zeros = number of roots at 0
-  trailing_zeros = p.size - end
-
-  # strip leading and trailing zeros
-  p = p[start:end]
-
   if p.size < 2:
-    return zeros(trailing_zeros, p.dtype)
+    return array([], dtype=dtypes._to_complex_dtype(p.dtype))
+  num_leading_zeros = _where(all(p == 0), len(p), argmin(p == 0))
+
+  if strip_zeros:
+    num_leading_zeros = core.concrete_or_error(int, num_leading_zeros,
+      "The error occurred in the jnp.roots() function. To use this within a "
+      "JIT-compiled context, pass strip_zeros=False, but be aware that leading zeros "
+      "will be result in some returned roots being set to NaN.")
+    return _roots_no_zeros(p[num_leading_zeros:])
   else:
-    roots = _roots_no_zeros(p)
-    # combine roots and zero roots
-    roots = hstack((roots, zeros(trailing_zeros, roots.dtype)))
-    return roots
+    return _roots_with_zeros(p, num_leading_zeros)
 
 
 _POLYFIT_DOC = """\
