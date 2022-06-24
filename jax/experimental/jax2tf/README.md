@@ -419,6 +419,30 @@ The dimension polynomials have the following behavior for arithmetic operations:
     are overloaded, such that `+`, `*`, `np.sum`, `np.prod` work directly on
     dimension polynomials.
     These arise, e.g., in `jax.numpy.concatenate` or `jax.numpy.reshape`.
+
+For example, in the following code to flatten a 2D array, the computation
+`x.shape[0] * x.shape[1]` computes the dimension polynomial `4 * b`:
+
+```
+jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
+                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4))
+```
+
+Replacing the multiplication with `np.prod(x.shape)` would also
+work. Note that the dimension polynomials can be used only as shape arguments
+to JAX functions. If you try to use them in place of array arguments you will get
+an error:
+
+```
+jax2tf.convert(lambda x: jnp.prod(x.shape),
+                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4))
+Uncaught exception TypeError: "Argument 'b' of type <class 'jax.experimental.jax2tf.shape_poly._DimPolynomial'> is not a valid JAX type"
+```
+
+See below for how you can turn a dimension polynomial into a JAX value.
+
+More operations are partially supported for dimension polynomials:
+
   * division is a special case. It is also overloaded, but it is only partially
     supported, when either (a) there is no remainder, or (b) the divisor is a constant
     in which case there may be a constant remainder. The need for division in JAX core
@@ -448,19 +472,6 @@ Note that it would be unsound for JAX to compute `x.shape[0] + 1 == x.shape[1]`
 as `False` and produce a converted function that returns `1` just because the dimension polynomials
 are not identical: there are some concrete input shapes for which the function
 should return `0`.
-
-Note that JAX will give an error when trying to use a dimension polynomial
-as a JAX value, e.g., in the following code:
-
-```
-jax2tf.convert(lambda x: jnp.prod(jnp.array(x.shape)),
-               polymorphic_shapes=["(b, ...)"])(np.ones((3, 4)))
-```
-
-Note that the above code would work if we replace `jnp.array` and `jnp.prod`
-with `np.array`and `np.prod`, because dimension polynomials overload multiplication.
-See the next section if you do need to convert a dimension polynomials to
-a JAX value.
 
 ### Dimension variables appearing in the numeric computation
 
