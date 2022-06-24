@@ -971,7 +971,7 @@ before conversion. (This is a hypothesis, we have not yet verified it extensivel
 
 There is one know case when the performance of the converted code will be different.
 JAX programs use a [stateless
-deterministic PRNG](https://github.com/google/jax/blob/main/design_notes/prng.md)
+deterministic PRNG](https://github.com/google/jax/blob/main/docs/design_notes/prng.md)
 and it has an internal JAX primitive for it.
 This primitive is at the moment converted to a soup of tf.bitwise operations,
 which has a clear performance penalty. We plan to look into using the

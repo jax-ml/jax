@@ -723,7 +723,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     * `TraceContext` --> {func}`~jax.profiler.TraceAnnotation`
     * `StepTraceContext` --> {func}`~jax.profiler.StepTraceAnnotation`
     * `trace_function` --> {func}`~jax.profiler.annotate_function`
-  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/main/design_notes/omnistaging.md)
+  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/main/docs/design_notes/omnistaging.md)
     for more information.
   * Python integers larger than the maximum `int64` value will now lead to an overflow
     in all cases, rather than being silently converted to `uint64` in some cases ({jax-issue}`#6047`).
@@ -983,7 +983,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0).
 * Improvements:
   * Omnistaging on by default. See {jax-issue}`#3370` and
-    [omnistaging](https://github.com/google/jax/blob/main/design_notes/omnistaging.md)
+    [omnistaging](https://github.com/google/jax/blob/main/docs/design_notes/omnistaging.md)
 
 ## jax (0.1.77) (September 15 2020)
 
