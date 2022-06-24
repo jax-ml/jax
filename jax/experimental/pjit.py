@@ -386,7 +386,12 @@ def hashable_pytree(pytree):
 
 def flatten_axis_resources(what, tree, axis_resources, tupled_args):
   try:
-    return tuple(flatten_axes(what, tree, axis_resources, tupled_args=tupled_args))
+    print(f'tupled args = {tupled_args}', flush=True)
+    print(f'tree = {tree}', flush=True)
+    print(f'axis_resources = {axis_resources}', flush=True)
+    x = flatten_axes(what, tree, axis_resources, tupled_args=tupled_args)
+    print(f'flatten axis = {x}', flush=True)
+    return tuple(x)
   except ValueError:
     pass  # Raise a tree prefix error below
 
@@ -431,7 +436,10 @@ def flatten_axis_resources(what, tree, axis_resources, tupled_args):
   # Because ecause we only have the `tree` treedef and not the full pytree here,
   # we construct a dummy tree to compare against. Revise this in callers?
   dummy_tree = tree_unflatten(tree, [PytreeLeaf()] * tree.num_leaves)
+  # print(f'axis_tree = {axis_tree.opt_states}', flush=True)
+  # print(f'dummy_tree = {dummy_tree.opt_states}', flush=True)
   errors = prefix_errors(axis_tree, dummy_tree)
+  print(f'jax error = {errors}', flush=True)
   if errors:
     e = errors[0]  # Only show information about the first disagreement found.
     raise e(what)
@@ -659,11 +667,15 @@ def _check_shapes_against_resources(what: str, is_global_shape: bool,
                                     mesh_shape, flat_avals, flat_axis_resources,
                                     allow_uneven_sharding: bool):
   global_str = " global" if is_global_shape else ""
+  print(f'mesh_shape = {mesh_shape}', flush=True)
+  print(f'flat_avals = {flat_avals}', flush=True)
+  print(f'flat_axis_resources = {flat_axis_resources}', flush=True)
   for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
     if _is_unspecified_or_from_gda_or_auto(aval_axis_resources):
       continue
     shape = aval.shape
     if len(shape) < len(aval_axis_resources):
+      print(f'err shape = {shape}, aval = {aval_axis_resources}', flush=True)
       raise ValueError(f"One of {what} was given the resource assignment "
                        f"of {aval_axis_resources.user_spec}, which implies that "
                        f"it has a rank of at least {len(aval_axis_resources)}, "
