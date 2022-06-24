@@ -78,6 +78,7 @@ from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis)
+from jax.experimental.array import Array
 
 newaxis = None
 
@@ -5050,6 +5051,7 @@ def _set_device_array_base_attributes(device_array):
   setattr(device_array, "clip", _clip)
 
 _set_device_array_base_attributes(device_array.DeviceArray)
+_set_device_array_base_attributes(Array)
 
 
 def _set_device_array_attributes(device_array):
@@ -5066,3 +5068,4 @@ for t in device_array.device_array_types:
   _set_device_array_attributes(t)
 _set_device_array_attributes(pxla._ShardedDeviceArray)
 _set_device_array_attributes(pxla.pmap_lib.ShardedDeviceArray)
+_set_device_array_attributes(Array)

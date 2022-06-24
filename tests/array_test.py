@@ -18,6 +18,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.util import prod
@@ -107,6 +108,38 @@ class JaxArrayTest(jtu.JaxTestCase):
       arr, _ = create_array(
           input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
       repr(arr)  # doesn't crash
+
+  def test_jnp_array(self):
+    with jax._src.config.jax_array(True):
+      arr = jnp.array([1, 2, 3])
+      self.assertIsInstance(arr, array.Array)
+      self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
+      self.assertEqual(arr._committed, False)
+
+  def test_jnp_array_jit_add(self):
+    with jax._src.config.jax_array(True):
+      a = jnp.array([1, 2, 3])
+      b = jnp.array([4, 5, 6])
+      arr = jax.jit(lambda x, y: x + y)(a, b)
+      self.assertIsInstance(arr, array.Array)
+      self.assertArraysEqual(arr, np.array([5, 7, 9]))
+      self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
+
+  def test_jnp_array_jnp_add(self):
+    with jax._src.config.jax_array(True):
+      arr = jnp.add(jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
+      self.assertIsInstance(arr, array.Array)
+      self.assertArraysEqual(arr, np.array([5, 7, 9]))
+      self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
+
+  def test_jnp_array_normal_add(self):
+    with jax._src.config.jax_array(True):
+      a = jnp.array([1, 2, 3])
+      b = jnp.array([4, 5, 6])
+      arr = a + b
+      self.assertIsInstance(arr, array.Array)
+      self.assertArraysEqual(arr, np.array([5, 7, 9]))
+      self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
 
 
 class ShardingTest(jtu.JaxTestCase):

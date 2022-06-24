@@ -604,6 +604,16 @@ class SimpleResultHandler:
     return tuple(h(env, *bs) for h, bs in zip(self.handlers, lists_of_bufs))
 
 
+def _maybe_create_array_from_da(buf, aval, device):
+  if config.jax_array:
+    from jax.experimental.array import Array
+    from jax.experimental.sharding import SingleDeviceSharding
+    return Array(buf.shape, SingleDeviceSharding(buf.device()), [buf],
+                 committed=(device is not None))
+  else:
+    return device_array.make_device_array(aval, device, buf)
+
+
 if MYPY:
   ResultHandler = Any
 else:
@@ -623,7 +633,7 @@ def array_result_handler(sticky_device: Optional[Device],
   if aval.dtype == dtypes.float0:
     return lambda _, __: np.zeros(aval.shape, dtypes.float0)
   aval = core.raise_to_shaped(aval)
-  handler = lambda _, b: device_array.make_device_array(aval, sticky_device, b)
+  handler = lambda _, b: _maybe_create_array_from_da(b, aval, sticky_device)
   handler.args = aval, sticky_device  # for C++ dispatch path in api.py
   return handler
 
@@ -637,7 +647,7 @@ def dynamic_array_result_handler(sticky_device: Optional[Device],
 def _dynamic_array_result_handler(sticky_device, aval, env, buf):
   if all(type(d) is int for d in aval.shape):
     del env
-    return device_array.make_device_array(aval, sticky_device, buf)
+    return _maybe_create_array_from_da(buf, aval, sticky_device)
   else:
     assert env is not None
     in_env, out_env = env
@@ -645,7 +655,7 @@ def _dynamic_array_result_handler(sticky_device, aval, env, buf):
              out_env[d.val] if type(d) is core.OutDBIdx else d
              for d in aval.shape]
     aval = core.ShapedArray(tuple(shape), aval.dtype)
-    return device_array.make_device_array(aval, sticky_device, buf)
+    return _maybe_create_array_from_da(buf, aval, sticky_device)
 
 
 result_handlers: Dict[
@@ -1034,13 +1044,8 @@ def _device_put_impl(x, device: Optional[Device] = None):
   except TypeError as err:
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
-  res = aval_to_result_handler(device, a)(None, *device_put(x, device))
-  if config.jax_array:
-    from jax.experimental.array import Array
-    from jax.experimental.sharding import SingleDeviceSharding
-    res = Array(res.shape, SingleDeviceSharding(res.device()), [res],
-                committed=(device is not None))
-  return res
+  return aval_to_result_handler(device, a)(None, *device_put(x, device))
+
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
