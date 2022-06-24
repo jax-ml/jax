@@ -343,7 +343,11 @@ def main():
   add_boolean_argument(
       parser,
       "enable_tpu",
-      help_str="Should we build with Cloud TPU support enabled?")
+      help_str="Should we build with Cloud TPU VM support enabled?")
+  add_boolean_argument(
+      parser,
+      "enable_remote_tpu",
+      help_str="Should we build with remote Cloud TPU support enabled?")
   add_boolean_argument(
       parser,
       "enable_rocm",
@@ -468,6 +472,7 @@ def main():
     print("NCCL enabled: {}".format("yes" if args.enable_nccl else "no"))
 
   print("TPU enabled: {}".format("yes" if args.enable_tpu else "no"))
+  print("Remote TPU enabled: {}".format("yes" if args.enable_remote_tpu else "no"))
 
   print("ROCm enabled: {}".format("yes" if args.enable_rocm else "no"))
   if args.enable_rocm:
@@ -509,6 +514,8 @@ def main():
       config_args += ["--config=nonccl"]
   if args.enable_tpu:
     config_args += ["--config=tpu"]
+  if args.enable_remote_tpu:
+    config_args += ["--//build:enable_remote_tpu=true"]
   if args.enable_rocm:
     config_args += ["--config=rocm"]
     if not args.enable_nccl:
