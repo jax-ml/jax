@@ -22,8 +22,6 @@ from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf, logical_or, nan
 from jax._src.scipy.special import betaln
 
-scipy_version = tuple(map(int, scipy.version.version.split('.')[:2]))
-
 
 def logpmf(k, n, a, b, loc=0):
   """JAX implementation of scipy.stats.betabinom.logpmf."""
@@ -45,7 +43,5 @@ def pmf(k, n, a, b, loc=0):
   return lax.exp(logpmf(k, n, a, b, loc))
 
 
-# betabinom was added in scipy 1.4.0
-if scipy_version >= (1, 4):
-  logpmf = _wraps(osp_stats.betabinom.logpmf, update_doc=False)(logpmf)
-  pmf = _wraps(osp_stats.betabinom.pmf, update_doc=False)(pmf)
+logpmf = _wraps(osp_stats.betabinom.logpmf, update_doc=False)(logpmf)
+pmf = _wraps(osp_stats.betabinom.pmf, update_doc=False)(pmf)

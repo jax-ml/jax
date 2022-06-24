@@ -18,7 +18,6 @@ import itertools
 from absl.testing import absltest, parameterized
 
 import numpy as np
-import scipy as osp
 import scipy.stats as osp_stats
 
 import jax
@@ -31,7 +30,6 @@ config.parse_flags_with_absl()
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
-scipy_version = tuple(map(int, osp.version.version.split('.')[:2]))
 
 
 def genNamedParametersNArgs(n):
@@ -554,10 +552,9 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return [k, n, a, b, loc]
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
-      if scipy_version >= (1, 4):
-        scipy_fun = osp_stats.betabinom.logpmf
-        self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                                tol=5e-4)
+      scipy_fun = osp_stats.betabinom.logpmf
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
   def testIssue972(self):
