@@ -602,6 +602,22 @@ jax2tf_associative_scan_reductions = config.define_bool_state(
     )
 )
 
+jax_platforms = config.define_string_state(
+    name='jax_platforms',
+    default=None,
+    help=(
+        'Comma-separated list of platform names specifying which platforms jax '
+        'should initialize. If any of the platforms in this list are not successfully '
+        'initialized, an exception will be raised and the program will be aborted. '
+        'The first platform in the list will be the default platform. '
+        'For example, config.jax_platforms=cpu,tpu means that CPU and TPU backends '
+        'will be initialized, and the CPU backend will be used unless otherwise '
+        'specified. If TPU initialization fails, it will raise an exception. '
+        'By default, jax will try to initialize all available '
+        'platforms and will default to GPU or TPU if available, and fallback to CPU '
+        'otherwise.'
+        ))
+
 enable_checks = config.define_bool_state(
     name='jax_enable_checks',
     default=False,
