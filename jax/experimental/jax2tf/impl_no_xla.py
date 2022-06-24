@@ -114,6 +114,7 @@ def _conv_general_dilated(
     preferred_element_type: Optional[DType],
     _in_avals: Sequence[core.ShapedArray], _out_aval: core.ShapedArray):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
+  del lhs_shape, rhs_shape, precision  # Unused arguments.
   out_shape = jax2tf._aval_to_tf_shape(_out_aval)
 
   def error(msg):
@@ -232,7 +233,7 @@ def _conv_general_dilated(
   # To determine the right permutation, we compute the inverse permutation of
   # `output_perm`, so that when `output_perm` is applied to `output`, we obtain
   # the outpt in NCHW format.
-  inverse_perm = tuple(output_perm.index(i) for i in range(4))
+  inverse_perm = tf.math.invert_permutation(output_perm)
   output = tf.transpose(output, inverse_perm)  # "NCHW" -> desired output shape.
   return output
 
