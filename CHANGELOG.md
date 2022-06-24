@@ -14,6 +14,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `JaxTestCase` and `JaxTestLoader` have been removed from `jax.test_util`. These
     classes have been deprecated since v0.3.1 ({jax-issue}`#11248`).
   * Added {class}`jax.scipy.gaussian_kde` ({jax-issue}`#11237`).
+  * Binary operations between JAX arrays and built-in collections (`dict`, `list`, `set`, `tuple`)
+    now raise a `TypeError` in all cases. Previously some cases (particularly equality and inequality)
+    would return boolean scalars inconsistent with similar operations in NumPy ({jax-issue}`#11234`).
 
 ## jaxlib 0.3.15 (Unreleased)
 
