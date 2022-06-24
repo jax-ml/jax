@@ -42,7 +42,7 @@ setup(
         'absl-py',
         'numpy>=1.19',
         'opt_einsum',
-        'scipy>=1.2.1',
+        'scipy>=1.5',
         'typing_extensions',
         'etils[epath]'
     ],
