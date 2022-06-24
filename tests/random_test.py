@@ -1329,7 +1329,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       ('test1', 4.0, 1.0),
       ('test2', 2.0, 3.0))
   def testDoublesidedMaxwellSample(self, loc, scale):
-    num_samples = 10**5
+    num_samples = 10**4
     rng = self.seed_prng(0)
 
     rand = lambda key: random.double_sided_maxwell(
