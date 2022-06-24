@@ -1463,6 +1463,9 @@ class ResultsHandler:
   # otherwise, and also when using `pmap`.
   __slots__ = ("handlers", "out_specs", "out_indices", "out_avals")
 
+  out_specs: Sequence[ShardingSpec]
+  out_avals: Sequence[ShapedArray]
+
   def __init__(self, handlers, out_specs, out_indices, out_avals):
     self.handlers = handlers
     self.out_specs = out_specs
@@ -1474,8 +1477,8 @@ class ResultsHandler:
 
 
 def local_avals_to_results_handler(
-    local_out_specs: Sequence[Optional[ShardingSpec]],
-    unmapped_local_out_avals: Sequence[Optional[ShapedArray]]):
+    local_out_specs: Sequence[ShardingSpec],
+    unmapped_local_out_avals: Sequence[ShapedArray]):
   out_indices = [spec_to_indices(aval.shape, spec)
                  for aval, spec in safe_zip(unmapped_local_out_avals, local_out_specs)]  # pytype: disable=attribute-error
   handlers = [
