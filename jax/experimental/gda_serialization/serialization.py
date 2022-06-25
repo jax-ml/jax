@@ -124,11 +124,12 @@ async def async_serialize(gda_inp: gda.GlobalDeviceArray, tensorstore_spec,
   return await asyncio.gather(*future_write_state)
 
 
-def run_serialization(gdas, tensorstore_specs):
-  async def _run_serializer():
-    future_writer = jax.tree_map(async_serialize, gdas, tensorstore_specs)
-    return await asyncio.gather(*future_writer)
-  asyncio.run(_run_serializer())
+def run_serialization(gdas, tensorstore_specs, *, temp_checkpoint_dir,
+                      final_checkpoint_dir):
+  m = GlobalAsyncCheckpointManager()
+  m.serialize(gdas, tensorstore_specs, temp_checkpoint_dir=temp_checkpoint_dir,
+              final_checkpoint_dir=final_checkpoint_dir)
+  m.wait_until_finished()
 
 
 async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
