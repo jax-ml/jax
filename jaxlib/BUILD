@@ -17,7 +17,6 @@
 load(
     "//jaxlib:jax.bzl",
     "flatbuffer_cc_library",
-    "flatbuffer_py_library",
     "pybind_extension",
 )
 
@@ -86,7 +85,6 @@ py_library(
         ":_lapack",
         ":_pocketfft",
         ":cpu_feature_guard",
-        ":pocketfft_flatbuffers_py",
     ],
 )
 
@@ -148,11 +146,6 @@ flatbuffer_cc_library(
     srcs = ["pocketfft.fbs"],
 )
 
-flatbuffer_py_library(
-    name = "pocketfft_flatbuffers_py",
-    srcs = ["pocketfft.fbs"],
-)
-
 cc_library(
     name = "pocketfft_kernels",
     srcs = ["pocketfft_kernels.cc"],
@@ -178,7 +171,9 @@ pybind_extension(
     module_name = "_pocketfft",
     deps = [
         ":kernel_pybind11_helpers",
+        ":pocketfft_flatbuffers_cc",
         ":pocketfft_kernels",
+        "@flatbuffers//:runtime_cc",
         "@pybind11",
     ],
 )

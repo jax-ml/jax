@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import jax
-# flatbuffers needs importlib.util but fails to import it itself.
-import importlib.util  # noqa: F401
 from typing import List
 
 import jaxlib.mlir.ir as ir
@@ -23,10 +21,8 @@ import jaxlib.mlir.dialects.mhlo as mhlo
 
 from .mhlo_helpers import custom_call
 from . import _pocketfft
-from . import pocketfft_flatbuffers_py_generated as pd
 import numpy as np
 
-import flatbuffers
 from jaxlib import xla_client
 
 for _name, _value in _pocketfft.registrations().items():
@@ -34,8 +30,10 @@ for _name, _value in _pocketfft.registrations().items():
 
 FftType = xla_client.FftType
 
-flatbuffers_version_2 = hasattr(flatbuffers, "__version__")
 
+_C2C = 0
+_C2R = 1
+_R2C = 2
 
 def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
                           fft_lengths: List[int]) -> bytes:
@@ -43,43 +41,34 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
   assert len(fft_lengths) >= 1
   assert len(fft_lengths) <= n, (fft_lengths, n)
 
-  builder = flatbuffers.Builder(128)
 
   forward = fft_type in (FftType.FFT, FftType.RFFT)
+  is_double = np.finfo(dtype).dtype == np.float64
   if fft_type == FftType.RFFT:
-    pocketfft_type = pd.PocketFftType.R2C
+    pocketfft_type = _R2C
 
     assert dtype in (np.float32, np.float64), dtype
     out_dtype = np.dtype(np.complex64 if dtype == np.float32 else np.complex128)
-    pocketfft_dtype = (
-        pd.PocketFftDtype.COMPLEX64
-        if dtype == np.float32 else pd.PocketFftDtype.COMPLEX128)
 
     assert shape[-len(fft_lengths):] == fft_lengths, (shape, fft_lengths)
     out_shape = list(shape)
     out_shape[-1] = out_shape[-1] // 2 + 1
 
   elif fft_type == FftType.IRFFT:
-    pocketfft_type = pd.PocketFftType.C2R
+    pocketfft_type = _C2R
     assert np.issubdtype(dtype, np.complexfloating), dtype
 
     out_dtype = np.dtype(np.float32 if dtype == np.complex64 else np.float64)
-    pocketfft_dtype = (
-        pd.PocketFftDtype.COMPLEX64
-        if dtype == np.complex64 else pd.PocketFftDtype.COMPLEX128)
 
     assert shape[-len(fft_lengths):-1] == fft_lengths[:-1]
     out_shape = list(shape)
     out_shape[-1] = fft_lengths[-1]
     assert (out_shape[-1] // 2 + 1) == shape[-1]
   else:
-    pocketfft_type = pd.PocketFftType.C2C
+    pocketfft_type = _C2C
 
     assert np.issubdtype(dtype, np.complexfloating), dtype
     out_dtype = dtype
-    pocketfft_dtype = (
-        pd.PocketFftDtype.COMPLEX64
-        if dtype == np.complex64 else pd.PocketFftDtype.COMPLEX128)
 
     assert shape[-len(fft_lengths):] == fft_lengths, (shape, fft_lengths)
     out_shape = shape
@@ -90,54 +79,33 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
 
   # Builds a PocketFftDescriptor flatbuffer. This descriptor is passed to the
   # C++ kernel to describe the FFT to perform.
-  pd.PocketFftDescriptorStartShapeVector(builder, n)
-  for d in reversed(shape if fft_type != FftType.IRFFT else out_shape):
-    builder.PrependUint64(d)
-  if flatbuffers_version_2:
-    pocketfft_shape = builder.EndVector()
-  else:
-    pocketfft_shape = builder.EndVector(n)
-
-  pd.PocketFftDescriptorStartStridesInVector(builder, n)
+  strides_in = []
   stride = dtype.itemsize
   for d in reversed(shape):
-    builder.PrependUint64(stride)
+    strides_in.append(stride)
     stride *= d
-  if flatbuffers_version_2:
-    strides_in = builder.EndVector()
-  else:
-    strides_in = builder.EndVector(n)
-  pd.PocketFftDescriptorStartStridesOutVector(builder, n)
+
+  strides_out = []
   stride = out_dtype.itemsize
   for d in reversed(out_shape):
-    builder.PrependUint64(stride)
+    strides_out.append(stride)
     stride *= d
-  if flatbuffers_version_2:
-    strides_out = builder.EndVector()
-  else:
-    strides_out = builder.EndVector(n)
 
-  pd.PocketFftDescriptorStartAxesVector(builder, len(fft_lengths))
-  for d in range(len(fft_lengths)):
-    builder.PrependUint32(n - d - 1)
-  if flatbuffers_version_2:
-    axes = builder.EndVector()
-  else:
-    axes = builder.EndVector(len(fft_lengths))
+  axes = [n - len(fft_lengths) + d for d in range(len(fft_lengths))]
 
   scale = 1. if forward else (1. / np.prod(fft_lengths))
-  pd.PocketFftDescriptorStart(builder)
-  pd.PocketFftDescriptorAddDtype(builder, pocketfft_dtype)
-  pd.PocketFftDescriptorAddFftType(builder, pocketfft_type)
-  pd.PocketFftDescriptorAddShape(builder, pocketfft_shape)
-  pd.PocketFftDescriptorAddStridesIn(builder, strides_in)
-  pd.PocketFftDescriptorAddStridesOut(builder, strides_out)
-  pd.PocketFftDescriptorAddAxes(builder, axes)
-  pd.PocketFftDescriptorAddForward(builder, forward)
-  pd.PocketFftDescriptorAddScale(builder, scale)
-  descriptor = pd.PocketFftDescriptorEnd(builder)
-  builder.Finish(descriptor)
-  return builder.Output(), out_dtype, out_shape
+  descriptor = _pocketfft.pocketfft_descriptor(
+    shape=shape if fft_type != FftType.IRFFT else out_shape,
+    is_double=is_double,
+    fft_type=pocketfft_type,
+      fft_lengths=fft_lengths,
+    strides_in=list(reversed(strides_in)),
+    strides_out=list(reversed(strides_out)),
+    axes=axes,
+    forward=forward,
+    scale=scale)
+
+  return descriptor, out_dtype, out_shape
 
 
 def pocketfft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
