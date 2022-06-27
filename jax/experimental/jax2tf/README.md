@@ -997,6 +997,33 @@ possibly behave differently, performance-wise or even numerically,
 than either the TensorFlow native or JAX native batch normalization.
 A similar example is that of an LSTM cell.
 
+
+### Errors due to tf.Module magic conversion during attribute assignment
+
+tf.Module will automatically wrap the standard Python container data types into
+trackable classes during attribute assignment.
+Python Dict/List/Tuple are changed to _DictWrapper/_ListWrapper/_TupleWrapper
+classes.
+In most situation, these Wrapper classes work exactly as the standard
+Python data types. However, the low-level pytree data structures are different
+and this can lead to errors.
+
+In such cases, the user can use this walkaround:
+
+```python
+import tensorflow as tf
+input_data = #Any data object
+
+m = tf.Module()
+flat, tree_def = jax.tree_util.tree_flatten(input_data)
+m.input_data = {"flat": flat, "tree_def": tree_def}
+```
+
+Later the user can use tree_unflatten for the reverse process
+```
+input_data = jax.tree_util.tree_unflatten(m.input_data['tree_def'], m.input_data['flat'])
+```
+
 # Calling TensorFlow functions from JAX
 
 The function ```call_tf``` allows JAX functions to call
