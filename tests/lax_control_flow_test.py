@@ -2567,8 +2567,8 @@ class ForLoopTest(jtu.JaxTestCase):
   def test_can_represent_get_and_swap_in_jaxprs(self):
 
     def body(x):
-      x[()] = 1
-      x[()] = 2
+      x[()] = jnp.int32(1)
+      x[()] = jnp.int32(2)
       return (x[()],)
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
@@ -2581,7 +2581,7 @@ class ForLoopTest(jtu.JaxTestCase):
   def test_can_represent_addupdate_in_jaxprs(self):
 
     def body(x):
-      for_loop.ref_addupdate(x, (), 1)
+      for_loop.ref_addupdate(x, (), jnp.int32(1))
       return (x[()],)
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
@@ -2599,7 +2599,7 @@ class ForLoopTest(jtu.JaxTestCase):
 
   def test_set_custom_pretty_printing_rule(self):
     def body(x_ref):
-      x_ref[()] = 2
+      x_ref[()] = jnp.int32(2)
       return []
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
@@ -2607,7 +2607,7 @@ class ForLoopTest(jtu.JaxTestCase):
 
   def test_swap_custom_pretty_printing_rule(self):
     def body(x_ref):
-      x = for_loop.ref_swap(x_ref, (), 2)
+      x = for_loop.ref_swap(x_ref, (), jnp.int32(2))
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
@@ -2615,7 +2615,7 @@ class ForLoopTest(jtu.JaxTestCase):
 
   def test_addupdate_custom_pretty_printing_rule(self):
     def body(x_ref):
-      for_loop.ref_addupdate(x_ref, (), 2)
+      for_loop.ref_addupdate(x_ref, (), jnp.int32(2))
       return []
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
@@ -2802,6 +2802,85 @@ class ForLoopTest(jtu.JaxTestCase):
     self.assertTrue((a == inval).all())
     self.assertTrue((b == inval + 1).all())
     self.assertTrue((refval == inval).all())
+
+  def test_for_loop_impl_trivial(self):
+    out = for_loop.for_loop(5, lambda i, _: None, None)
+    self.assertEqual(out, None)
+
+  def test_for_loop_can_write_to_ref(self):
+    def body(_, x_ref):
+      x_ref[()] = jnp.float32(1.)
+    out = for_loop.for_loop(1, body, jnp.float32(0.))
+    self.assertEqual(out, 1.)
+
+    def body2(i, x_ref):
+      x_ref[()] = jnp.float32(i)
+    out = for_loop.for_loop(2, body2, jnp.float32(0.))
+    self.assertEqual(out, 1.)
+
+    def body3(i, x_ref):
+      x_ref[()] = jnp.float32(i) * 2.
+    out = for_loop.for_loop(2, body3, jnp.float32(0.))
+    self.assertEqual(out, 2.)
+
+  def test_for_loop_can_write_to_multiple_refs(self):
+    def body(_, refs):
+      x_ref, y_ref = refs
+      x_ref[()] = jnp.float32(1.)
+      y_ref[()] = jnp.float32(2.)
+    x, y = for_loop.for_loop(1, body, (jnp.float32(0.), jnp.float32(0.)))
+    self.assertEqual(x, 1.)
+    self.assertEqual(y, 2.)
+
+  def test_for_loop_can_read_from_ref(self):
+    def body(_, x_ref):
+      x_ref[()]
+    x = for_loop.for_loop(1, body, jnp.float32(0.))
+    self.assertEqual(x, 0.)
+
+  def test_for_loop_can_read_from_and_write_to_ref(self):
+    def body(_, x_ref):
+      x = x_ref[()]
+      x_ref[()] = x + jnp.float32(1.)
+    x = for_loop.for_loop(5, body, jnp.float32(0.))
+    self.assertEqual(x, 5.)
+
+  def test_for_loop_can_read_from_and_write_to_refs(self):
+    def body2(_, refs):
+      x_ref, y_ref = refs
+      x = x_ref[()]
+      y_ref[()] = x + 1.
+      x_ref[()] = x + 1.
+    x, y = for_loop.for_loop(5, body2, (0., 0.))
+    self.assertEqual(x, 5.)
+    self.assertEqual(y, 5.)
+
+  def test_for_loop_can_read_from_and_write_to_ref_slice(self):
+    def body(i, x_ref):
+      x = x_ref[i]
+      x_ref[i] = x + jnp.float32(1.)
+    x = for_loop.for_loop(4, body, jnp.ones(4, jnp.float32))
+    np.testing.assert_allclose(x, 2 * jnp.ones(4, jnp.float32))
+
+    def body2(i, x_ref):
+      x = x_ref[i, 0]
+      x_ref[i, 1] = x + x_ref[i, 1]
+    x = for_loop.for_loop(4, body2, jnp.arange(8.).reshape((4, 2)))
+    np.testing.assert_allclose(
+        x, jnp.array([[0., 1.], [2., 5.], [4., 9.], [6., 13.]]))
+
+  def test_for_loop_can_implement_cumsum(self):
+    def cumsum(x):
+      def body(i, refs):
+        x_ref, accum_ref = refs
+        accum_ref[i + 1] = accum_ref[i] + x_ref[i]
+      accum = jnp.zeros(x.shape[0] + 1, x.dtype)
+      _, accum_out = for_loop.for_loop(x.shape[0], body, (x, accum))
+      return accum_out[1:]
+
+    key = jax.random.PRNGKey(0)
+    x = jax.random.normal(key, (8,))
+    np.testing.assert_allclose(cumsum(x), jnp.cumsum(x))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
