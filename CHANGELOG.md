@@ -11,18 +11,17 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.3.15 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.14...main).
 * Changes
-  * {func}`jax.numpy.roots` is now better behaved when `strip_zeros=False` when
-    coefficients have leading zeros ({jax-issue}`#11215`).
 
 ## jaxlib 0.3.15 (Unreleased)
 
-## jax 0.3.14 (June 21, 2022)
+## jax 0.3.14 (June 27, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...jax-v0.3.14).
 * Breaking changes
   * {func}`jax.experimental.compilation_cache.initialize_cache` does not support
     `max_cache_size_  bytes` anymore and will not get that as an input.
   * `JAX_PLATFORMS` now raises an exception when platform initialization fails.
 * Changes
+  * Fixed compatibility problems with NumPy 1.23.
   * {func}`jax.numpy.linalg.slogdet` now accepts an optional `method` argument
     that allows selection between an LU-decomposition based implementation and
     an implementation based on QR decomposition.
@@ -65,11 +64,15 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.experimental.compilation_cache.initialize_cache` now supports gcs
     bucket path as input.
   * Added {func}`jax.scipy.stats.gennorm`.
+  * {func}`jax.numpy.roots` is now better behaved when `strip_zeros=False` when
+    coefficients have leading zeros ({jax-issue}`#11215`).
 
-## jaxlib 0.3.14 (June 21, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...main).
+## jaxlib 0.3.14 (June 27, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.10...jaxlib-v0.3.14).
   * x86-64 Mac wheels now require Mac OS 10.14 (Mojave) or newer. Mac OS 10.14
     was released in 2018, so this should not be a very onerous requirement.
+  * The bundled version of NCCL was updated to 2.12.12, fixing some deadlocks.
+  * The Python flatbuffers package is no longer a dependency of jaxlib.
 
 ## jax 0.3.13 (May 16, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.12...jax-v0.3.13).
