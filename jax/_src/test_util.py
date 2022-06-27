@@ -1026,38 +1026,6 @@ class _LazyDtypes:
 dtypes = _LazyDtypes()
 
 
-class DeprecatedJaxTestCase(JaxTestCase):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(textwrap.dedent("""\
-      jax.test_util.JaxTestCase is deprecated as of jax version 0.3.1:
-      The suggested replacement is to use parametrized.TestCase directly.
-      For tests that rely on custom asserts such as JaxTestCase.assertAllClose(),
-      the suggested replacement is to use standard numpy testing utilities such
-      as np.testing.assert_allclose(), which work directly with JAX arrays."""),
-      category=DeprecationWarning)
-    super().__init__(*args, **kwargs)
-
-
-class DeprecatedJaxTestLoader(JaxTestLoader):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-      "jax.test_util.JaxTestLoader is deprecated as of jax version 0.3.1. Use absltest.TestLoader directly.",
-      category=DeprecationWarning)
-    super().__init__(*args, **kwargs)
-
-
-class DeprecatedBufferDonationTestCase(BufferDonationTestCase):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(textwrap.dedent("""\
-      jax.test_util.JaxTestCase is deprecated as of jax version 0.3.1:
-      The suggested replacement is to use parametrized.TestCase directly.
-      For tests that rely on custom asserts such as JaxTestCase.assertAllClose(),
-      the suggested replacement is to use standard numpy testing utilities such
-      as np.testing.assert_allclose(), which work directly with JAX arrays."""),
-      category=DeprecationWarning)
-    super().__init__(*args, **kwargs)
-
-
 def strict_promotion_if_dtypes_match(dtypes):
   """
   Context manager to enable strict promotion if all dtypes match,
