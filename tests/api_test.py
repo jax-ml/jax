@@ -8520,20 +8520,18 @@ class DynamicShapeTest(jtu.JaxTestCase):
     def f(x, y):
       return jnp.sin(x) + y
 
-    x = jnp.ones(3)
-    y = jnp.ones(3)
-    # TODO(mattjj,dougalm): improve error message
-    with self.assertRaisesRegex(TypeError, 'Shapes must be 1D sequences'):
+    x = np.ones(3)
+    y = np.ones(3)
+    with self.assertRaisesRegex(TypeError, 'add got incompatible shapes for broadcasting'):
       _ = jax.make_jaxpr(f, abstracted_axes=({0: 'n'}, {}))(x, y)
 
   def test_shape_errors_distinct_vars(self):
     def f(x, y):
       return jnp.sin(x) + y
 
-    x = jnp.ones(3)
-    y = jnp.ones(3)
-    # TODO(mattjj,dougalm): improve error message
-    with self.assertRaisesRegex(TypeError, 'Shapes must be 1D sequences'):
+    x = np.ones(3)
+    y = np.ones(3)
+    with self.assertRaisesRegex(TypeError, 'add got incompatible shapes for broadcasting'):
       _ = jax.make_jaxpr(f, abstracted_axes=({0: 'n'}, {0: 'm'}))(x, y)
 
   def test_basic_dot(self):
@@ -9007,8 +9005,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertAllClose(f(4), np.ones(4, dtype='float32'), check_dtypes=True)
     self.assertEqual(count, 1)
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
-  @unittest.skip("TODO: need typechecking rule for concatenate")
+  @unittest.skip('TODO: need typechecking rule for concatenate')
   def test_concatenate(self):
     @partial(jax.jit, abstracted_axes=({0: 'n'},))
     def f(x):  # x: f32[n, 4]
@@ -9017,7 +9014,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((5, 4), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @unittest.skip('TODO: need typechecking rule for reshape')
   def test_reshape(self):
     @partial(jax.jit, abstracted_axes=({0: 'n'},))
     def f(x):  # x: f32[n, 4]
@@ -9026,7 +9023,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((5, 4), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @unittest.skip('TODO: need typechecking rule for reshape')
   def test_nested(self):
     @jax.jit
     def nested_f(x):  # f32[h, v] -> f32[h, v]
@@ -9039,7 +9036,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((3, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @unittest.skip('TODO: need typechecking rule for reshape')
   def test_nested_arange(self):
     def nested_f(x):  # f32[h, v] -> f32[h, v]
       # A nested call that needs to compute with shapes
@@ -9051,8 +9048,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((3, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
-  @unittest.skip("TODO: investigate failure")
+  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
   def test_transpose(self):
     @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
     def f(x):  # f32[h, w] -> f32[w, h]
@@ -9061,7 +9057,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((3, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
   def test_matmul(self):
     @partial(jax.jit, abstracted_axes=({0: 'w', 1: 'w'},))
     def f(x):  # f32[w, w] -> f32[w, w]
@@ -9070,14 +9066,15 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((5, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
   def test_matmul_shape_error(self):
     @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
     def f(x):  # f32[h, w] -> error
       return jnp.matmul(x, x)
 
+    # TODO(necula): improve error message, print actual shapes
     with self.assertRaisesRegex(TypeError,
-                                re.escape("dot_general requires contracting dimensions to have the same shape, got (w,) and (h,)")):
+                                re.escape("dot_general requires contracting dimensions to have the same shape, got")):
       f(np.ones((5, 5), dtype=np.float32))
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
@@ -9104,6 +9101,14 @@ class DynamicShapeTest(jtu.JaxTestCase):
     @partial(jax.jit, abstracted_axes=({0: 'w'},))
     def f(x):  # f32[w] -> f32[w, w]
       return jnp.broadcast_to(x, (x.shape[0], x.shape[0]))
+    f(np.ones((5,), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_zeros(self):
+    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    def f(x):  # f32[w] -> f32[w]
+      return jnp.zeros(x.shape[0], dtype=x.dtype) + x
     f(np.ones((5,), dtype=np.float32))
     # TODO: add assertions
 

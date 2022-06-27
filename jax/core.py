@@ -1605,6 +1605,12 @@ class DimensionHandler:
 _dimension_handler_int = DimensionHandler()
 _SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
 
+def _get_special_dim_handler(dim: DimSize) -> Optional[DimensionHandler]:
+  if isinstance(dim, Tracer) and not config.jax_dynamic_shapes:
+    return None
+  # TODO: look up DynamicJaxprTracer
+  return _SPECIAL_DIMENSION_HANDLERS.get(type(dim))
+
 def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple[DimSize, ...]]:
   """Finds the handler for the given dimensions; also returns the canonical dimensions.
 
@@ -1614,7 +1620,7 @@ def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple
   special_handlers = set()
   canonical = []
   for d in dlist:
-    handler = _SPECIAL_DIMENSION_HANDLERS.get(type(d))
+    handler = _get_special_dim_handler(d)
     if handler:
       special_handlers.add(handler)
       canonical.append(d)
@@ -1631,7 +1637,7 @@ def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple
 
 def is_special_dim_size(v: Any) -> bool:
   """Checks if a value is a special DimSize."""
-  handler = _SPECIAL_DIMENSION_HANDLERS.get(type(v))
+  handler = _get_special_dim_handler(v)
   return (handler is not None)
 
 def is_constant_dim(d: DimSize) -> bool:
@@ -1711,8 +1717,7 @@ def dimension_as_value(d: DimSize):
   return handler.as_value(*ds)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
-  if (type(dim) in _SPECIAL_DIMENSION_HANDLERS or
-      isinstance(dim, Tracer) and config.jax_dynamic_shapes):
+  if is_special_dim_size(dim):
     return dim
   else:
     return operator.index(dim)

@@ -159,25 +159,25 @@ def _identity(x): return x
 def _extract_tracers_dyn_shape(shape: Sequence[Union[int, core.Tracer]]
                                ) -> Tuple[Sequence[core.Tracer],
                                           Sequence[Optional[int]]]:
-  """Returns the list of tracers in `shape`, and a static versio of `shape`
+  """Returns the list of tracers in `shape`, and a static version of `shape`
    with tracers replaced with None"""
   if config.jax_dynamic_shapes:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
-    dyn_shape = [d for d in shape if isinstance(d, core.Tracer)]
-    static_shape = [d if not isinstance(d, core.Tracer) else None for d in shape]
+    dyn_shape = tuple(d for d in shape if isinstance(d, core.Tracer))
+    static_shape = tuple(d if not isinstance(d, core.Tracer) else None for d in shape)
     return dyn_shape, static_shape
   else:
-    return [], shape
+    return (), shape  # type: ignore[return-value]
 
 
 def _merge_dyn_shape(static_shape: Sequence[Optional[int]],
                      dyn_shape: Sequence[mlir.Value],
                      ) -> Sequence[mlir.Value]:
   """Returns static_shape with None values filled in from dyn_shape."""
-  dyn_shape = iter(dyn_shape)
-  shape = [next(dyn_shape) if d is None else d for d in static_shape]
-  assert next(dyn_shape, None) is None
+  dyn_shape_it = iter(dyn_shape)
+  shape = tuple(next(dyn_shape_it) if d is None else d for d in static_shape)
+  assert next(dyn_shape_it, None) is None
   return shape
 
 def _stage_with_dyn_shape(trace: core.Trace,
@@ -186,7 +186,7 @@ def _stage_with_dyn_shape(trace: core.Trace,
                           dyn_shape_args: Sequence[core.Tracer],
                           params: Dict[str, Any],
                           static_shape: Sequence[Optional[int]],
-                          out_dtype: core.Type,
+                          out_dtype: Any,
                           out_weak_type: bool,
                           ) -> core.Tracer:
   """Stages out a primitive that takes dynamic shapes.
@@ -194,7 +194,7 @@ def _stage_with_dyn_shape(trace: core.Trace,
   dyn_shape_args are the tracers corresponding to the None values in static_shape.
   """
   if not dyn_shape_args:
-    return trace.default_process_primitive(prim, args, params)
+    return trace.default_process_primitive(prim, args, params)  # type: ignore
   assert len(dyn_shape_args) == sum(d is None for d in static_shape)
   source_info = source_info_util.current()
 
@@ -203,10 +203,10 @@ def _stage_with_dyn_shape(trace: core.Trace,
       next(ds) if d is None else d for d in static_shape]
   aval = core.DShapedArray(tuple(out_shape_for_tracer), out_dtype, out_weak_type)
   out_tracer = pe.DynamicJaxprTracer(trace, aval, source_info)
-  invars = [*(trace.getvar(x) for x in args), *(trace.getvar(d) for d in dyn_shape_args)]
-  eqn = pe.new_jaxpr_eqn(invars, [trace.makevar(out_tracer)],
+  invars = [*(trace.getvar(x) for x in args), *(trace.getvar(d) for d in dyn_shape_args)]  # type: ignore
+  eqn = pe.new_jaxpr_eqn(invars, [trace.makevar(out_tracer)],  # type: ignore
                          prim, params, core.no_effects, source_info)
-  trace.frame.eqns.append(eqn)
+  trace.frame.eqns.append(eqn)  # type: ignore
 
   return out_tracer
 
@@ -1491,11 +1491,16 @@ def _broadcasting_shape_rule(name, *avals):
       result_shape.append(ds[0])
     else:
       # if all dims are equal (or 1), the result is the non-1 size
-      non_1s = {d for d in ds if not core.symbolic_equal_dim(d, 1)}
-      if len(non_1s) > 1:
-        raise TypeError(f'{name} got incompatible shapes for broadcasting: '
-                        f'{", ".join(map(str, map(tuple, shapes)))}.')
-      result_shape.append(non_1s.pop() if non_1s else 1)
+      non_1s = [d for d in ds if not core.symbolic_equal_dim(d, 1)]
+      if non_1s:
+        first_non_1 = non_1s.pop()
+        if tuple(filter(lambda d: not core.symbolic_equal_dim(d, first_non_1), non_1s)):
+          raise TypeError(f'{name} got incompatible shapes for broadcasting: '
+                          f'{", ".join(map(str, map(tuple, shapes)))}.')
+        result_shape.append(first_non_1)
+      else:
+        result_shape.append(1)
+
   return tuple(result_shape)
 
 def _naryop_weak_type_rule(name, *avals, **kwargs):
@@ -3260,7 +3265,7 @@ def _transpose_shape_rule(operand, *, permutation):
     msg = ("transpose permutation isn't a permutation of operand dimensions, "
            "got permutation {} for operand shape {}.")
     raise TypeError(msg.format(permutation, operand.shape))
-  return tuple(np.take(operand.shape, permutation))
+  return tuple(operand.shape[old_idx] for old_idx in permutation)
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args

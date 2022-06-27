@@ -302,7 +302,6 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
               shape=tuple(expected_shape), dtype=expected_type.dtype,
               weak_type=expected_type.weak_type)
           assert core.typematch(expected_aval, aval)
-
   with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                         "for jit in {elapsed_time} sec"):
     jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
