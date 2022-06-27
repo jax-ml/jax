@@ -106,8 +106,23 @@ async def async_serialize(gda_inp: gda.GlobalDeviceArray, tensorstore_spec,
   if not _spec_has_metadata(tensorstore_spec):
     tensorstore_spec['metadata'] = _get_metadata(gda_inp)
 
+  if jax.process_index() == 0:
+    open_future = ts.open(
+        ts.Spec(tensorstore_spec), create=True, open=True, context=TS_CONTEXT)
+    # Asynchronous case.
+    if commit_future is not None:
+      assert isinstance(commit_future, list)
+      commit_future.append(open_future)
+    else:
+      await open_future
+
+  # `ts.open` runs twice for process 0 because for the first time, we just get
+  # the future to be awaited upon in the background thread. The second one runs
+  # with `assume_metadata=True` which does no I/O operation and returns the
+  # tensorstore object.
+  # For every process other than `0`, we open with `assume_metadata=True`.
   t = await ts.open(
-      ts.Spec(tensorstore_spec), create=True, open=True, context=TS_CONTEXT)
+      ts.Spec(tensorstore_spec), open=True, assume_metadata=True, context=TS_CONTEXT)
 
   async def _write_array(shard):
     if shard.replica_id == 0:
