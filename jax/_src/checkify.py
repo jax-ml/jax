@@ -25,6 +25,7 @@ import jax.numpy as jnp
 from jax import core
 from jax import linear_util as lu
 from jax.api_util import flatten_fun
+from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
@@ -476,6 +477,18 @@ def assert_lowering_rule(*a, **k):
 mlir.register_lowering(assert_p, assert_lowering_rule)
 mlir.lowerable_effects.add(CheckEffect)
 cf.allowed_effects.add(CheckEffect)
+
+
+def assert_batching_rule(batched_args, batch_dims, *, msgs):
+  size = next(x.shape[dim] for x, dim in zip(batched_args, batch_dims)
+              if dim is not batching.not_mapped)
+  pred, code, payload = (batching.bdim_at_front(a, d, size)
+                         for a, d in zip(batched_args, batch_dims))
+  err = Error(jnp.logical_not(pred), code, msgs, payload)
+  check_error(err)
+  return [], []
+
+batching.primitive_batchers[assert_p] = assert_batching_rule
 
 ## checkify rules
 

@@ -723,12 +723,41 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     checked_f = checkify.checkify(f)
 
     err, _ = checked_f(0, 1)
-    self.assertIsNotNone(err)
+    self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "i must be negative")
 
     err, _ = checked_f(-1, 0)
-    self.assertIsNotNone(err)
+    self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "x must be negative")
+
+  def test_assert_batching_rule(self):
+    @jax.vmap
+    def f(x):
+      checkify.check(jnp.sum(x) == 1., "x must sum to one.")
+      return x
+
+    no_failures = jnp.array([[0.5, 0.5], [1., 0.]])
+    one_batch_fails = jnp.array([[0.5, 0.5], [1, 1]])
+    mult_batch_fail = jnp.array([[0.5, 0.5], [1, 1], [2, 2]])
+
+    f(no_failures)
+    with self.assertRaisesRegex(ValueError, "x must sum to one."):
+      f(one_batch_fails)
+
+    with self.assertRaisesRegex(ValueError, "x must sum to one."):
+      f(mult_batch_fail)
+
+    checked_f = checkify.checkify(f)
+    err, _ = checked_f(no_failures)
+    self.assertIsNone(err.get())
+
+    err, _ = checked_f(one_batch_fails)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "x must sum to one")
+
+    err, _ = checked_f(mult_batch_fail)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "x must sum to one")
 
   def test_check_error(self):
     def f():
