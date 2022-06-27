@@ -21,7 +21,7 @@ _available_cuda_versions = ['11']
 _default_cuda_version = '11'
 _available_cudnn_versions = ['82', '805']
 _default_cudnn_version = '82'
-_libtpu_version = '0.1.dev20220621'
+_libtpu_version = '0.1.dev20220627'
 
 _dct = {}
 with open('jax/version.py') as f:
