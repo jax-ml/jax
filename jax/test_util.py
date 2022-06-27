@@ -43,9 +43,5 @@ def __getattr__(attr):
     import warnings
     warnings.warn(f"jax.test_util.{attr} is deprecated and will soon be removed.", FutureWarning)
     return getattr(test_util, attr)
-  elif attr in ['JaxTestCase', 'JaxTestLoader', 'BufferDonationTestCase']:
-    # Do the TestCase imports separately, since they were previously deprecated via a different
-    # mechanism & we don't want to annoy projects who may have temporarily filtered a specific warning.
-    return getattr(test_util, 'Deprecated' + attr)
   else:
     raise AttributeError(f"module {__name__} has no attribute {attr}")
