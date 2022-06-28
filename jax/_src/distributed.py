@@ -33,6 +33,10 @@ class State:
                  coordinator_address: Optional[str] = None,
                  num_processes: Optional[int] = None,
                  process_id: Optional[int] = None):
+    if not config.jax_distributed_service:
+      logging.info('JAX distributed service is disabled. '
+                   'Set `jax_distributed_service` config to True to enable it.')
+      return
     coordinator_address = os.environ.get('JAX_COORDINATOR_ADDRESS',
                                          None) or coordinator_address
 

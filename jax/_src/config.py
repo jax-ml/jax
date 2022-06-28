@@ -887,13 +887,20 @@ config.define_bool_state(
     upgrade=True,
     help='Gate changes until after NeurIPS 2022 deadline.')
 
+config.define_bool_state(
+    name='jax_distributed_service',
+    default=True,
+    help='Enables the JAX distributed service.',
+)
+
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(
     name='jax_coordination_service',
     default=False,
     help=(
          'Use coordination service (experimental) instead of the default PjRT '
-         'distributed runtime.'
+         'distributed runtime. '
+         'Meaningful only if `jax_distributed_service` config is enabled.'
     )
 )
 
