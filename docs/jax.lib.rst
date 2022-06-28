@@ -35,5 +35,4 @@ jax.lib.xla_extension
    :toctree: _autosummary
 
    Device
-   GpuDevice
    TpuDevice
