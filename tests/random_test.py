@@ -28,12 +28,12 @@ import scipy.stats
 
 import jax
 from jax import core
-from jax import dtypes
 from jax import grad
 from jax import lax
 from jax import numpy as jnp
 from jax import prng
 from jax import random
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
@@ -639,6 +639,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis):
     # This is the function API that we test against (note that self.rng().choice differs)
     np_choice = np.random.default_rng(0).choice
+    p_dtype = dtypes._to_inexact_dtype(dtype)
 
     key = self.seed_prng(0)
     is_range = type(input_range_or_shape) is int
@@ -646,7 +647,11 @@ class LaxRandomTest(jtu.JaxTestCase):
          self.rng().permutation(np.arange(np.prod(
            input_range_or_shape), dtype=dtype)).reshape(input_range_or_shape))
     N = x if is_range else x.shape[axis]
-    p = None if not weighted else (np.arange(N) + 1) / np.sum(np.arange(N) + 1)
+    if weighted:
+      p = np.arange(N, dtype=p_dtype) + 1
+      p /= p.sum()
+    else:
+      p = None
     rand = lambda key, x: random.choice(key, x, shape, replace, p, axis)
     sample = rand(key, x)
     if not is_range:
