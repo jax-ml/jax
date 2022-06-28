@@ -13,6 +13,7 @@
 # limitations under the License.
 """Module for the `for_loop` primitive."""
 from functools import partial
+import operator
 
 from typing import Any, Callable, Dict, Generic, List, Sequence, Tuple, TypeVar
 
@@ -30,6 +31,8 @@ from jax._src import ad_util
 from jax._src import pretty_printer as pp
 from jax._src.util import safe_map, safe_zip, split_list
 import jax.numpy as jnp
+
+from jax._src.lax.control_flow import loops
 
 ## JAX utilities
 
@@ -268,7 +271,7 @@ def _swap_jvp(primals: List[Any], tangents: List[Any]):
   ref_tangent, x_tangent, *_ = tangents
   assert isinstance(ref_tangent.aval, ShapedArrayRef)
   x_tangent = ad_util.instantiate(x_tangent)
-  return (ref_swap(ref_tangent, idx, x_primal),  # type: ignore[arg-type]
+  return (ref_swap(ref_primal, idx, x_primal),  # type: ignore[arg-type]
           ref_swap(ref_tangent, idx, x_tangent))  # type: ignore[arg-type]
 ad.primitive_jvps[swap_p] = _swap_jvp
 
@@ -498,3 +501,67 @@ def _for_impl(*args, jaxpr, nsteps, reverse, which_linear):
   return state
 mlir.register_lowering(for_p, mlir.lower_fun(_for_impl, multiple_results=True))
 for_p.def_impl(partial(xla.apply_primitive, for_p))
+
+def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear):
+  nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
+  # We need to find out which `Ref`s have nonzero tangents after running the
+  # for loop. Ordinarily we do this with a fixed point on the body jaxpr but
+  # a `for` body jaxpr is stateful and has no outputs. We therefore discharge
+  # the state effect from the jaxpr and we will now have a "symmetric" jaxpr
+  # where the inputs line up with the outputs. We use this discharged jaxpr
+  # for the fixed point.
+  discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
+  for _ in range(len(nonzero_tangents)):
+    _, out_nonzero_tangents = ad.jvp_jaxpr(
+        core.ClosedJaxpr(discharged_jaxpr, body_consts),
+        [False] + nonzero_tangents, instantiate=nonzero_tangents)
+    if out_nonzero_tangents == nonzero_tangents:
+      break
+    nonzero_tangents = map(operator.or_, nonzero_tangents, out_nonzero_tangents)
+  else:
+    raise Exception("Invalid fixpoint")
+  tangents = [ad.instantiate_zeros(t) if inst else t for t, inst in
+      zip(tangents, nonzero_tangents)]
+  tangents = [t for t in tangents if type(t) is not ad_util.Zero]
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
+  jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, [False] + nonzero_tangents, [])
+  jvp_jaxpr, jvp_consts = jvp_jaxpr_.jaxpr, jvp_jaxpr_.consts
+  jvp_which_linear = ((False,) * len(jvp_consts) + which_linear
+                      + (True,) * len(tangents))
+  out_flat = for_p.bind(*jvp_consts, *primals, *tangents, jaxpr=jvp_jaxpr,
+                        nsteps=nsteps, reverse=reverse,
+                        which_linear=jvp_which_linear)
+  # `out_flat` includes constant inputs into the `for_loop` which are
+  # converted into outputs as well. We don't care about these in AD so we
+  # throw them out.
+  _, out_primals, out_tangents = split_list(out_flat,
+                                            [len(jvp_consts), len(primals)])
+  out_tangents_iter = iter(out_tangents)
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
+                  for p, nz in zip(out_primals, nonzero_tangents)]
+  return out_primals, out_tangents
+ad.primitive_jvps[for_p] = _for_jvp
+
+
+### Testing utility
+
+def discharged_for_loop(nsteps, body, init_state):
+  """A `for_loop` implementation that discharges its body right away.
+
+  Potentially useful for testing and benchmarking.
+  """
+  flat_state, state_tree = tree_flatten(init_state)
+  state_avals = map(val_to_ref_aval, flat_state)
+  idx_aval = core.ShapedArray((), jnp.dtype("int32"))
+  jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
+      body, state_tree, [idx_aval, *state_avals])
+  if out_tree != tree_structure(None):
+    raise Exception("`body` should not return anything.")
+  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
+
+  def fori_body(i, carry):
+    out_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,
+                               jnp.int32(i), *carry)
+    return out_flat
+  out_flat = loops.fori_loop(0, nsteps, fori_body, flat_state)
+  return tree_unflatten(state_tree, out_flat)
