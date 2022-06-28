@@ -286,16 +286,16 @@ def _mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 
 @_wraps(np.average)
 def average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
-            returned=False):
-  return _average(a, _ensure_optional_axes(axis), weights, returned)
+            returned=False, keepdims=False):
+  return _average(a, _ensure_optional_axes(axis), weights, returned, keepdims)
 
-@partial(api.jit, static_argnames=('axis', 'returned'), inline=True)
+@partial(api.jit, static_argnames=('axis', 'returned', 'keepdims'), inline=True)
 def _average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
-             returned=False):
+             returned=False, keepdims=False):
   if weights is None: # Treat all weights as 1
     _check_arraylike("average", a)
     a, = _promote_dtypes_inexact(a)
-    avg = mean(a, axis=axis)
+    avg = mean(a, axis=axis, keepdims=keepdims)
     if axis is None:
       weights_sum = lax.full((), core.dimension_as_value(a.size), dtype=avg.dtype)
     else:
@@ -324,8 +324,8 @@ def _average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None
       weights = _broadcast_to(weights, (a_ndim - 1) * (1,) + weights_shape)
       weights = _moveaxis(weights, -1, axis)
 
-    weights_sum = sum(weights, axis=axis)
-    avg = sum(a * weights, axis=axis) / weights_sum
+    weights_sum = sum(weights, axis=axis, keepdims=keepdims)
+    avg = sum(a * weights, axis=axis, keepdims=keepdims) / weights_sum
 
   if returned:
     if avg.shape != weights_sum.shape:
