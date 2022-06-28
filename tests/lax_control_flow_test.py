@@ -70,6 +70,8 @@ def scan_with_new_checkpoint2(f, *args, **kwargs):
   return new_checkpoint(partial(lax.scan, f, **kwargs),
                         policy=checkpoint_policies.everything_saveable)(*args)
 
+def scan_with_for(f, *args, **kwargs):
+  return for_loop.scan(f, *args, **kwargs)
 
 COND_IMPLS = [
     (lax.cond, 'cond'),
@@ -82,6 +84,14 @@ SCAN_IMPLS = [
     (partial(lax.scan, unroll=2), 'unroll2'),
     (scan_with_new_checkpoint , 'new_checkpoint'),
     (scan_with_new_checkpoint2, 'new_checkpoint2'),
+]
+
+SCAN_IMPLS_WITH_FOR = [
+    (lax.scan, 'unroll1'),
+    (partial(lax.scan, unroll=2), 'unroll2'),
+    (scan_with_new_checkpoint , 'new_checkpoint'),
+    (scan_with_new_checkpoint2, 'new_checkpoint2'),
+    (scan_with_for, 'for'),
 ]
 
 
@@ -1454,11 +1464,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
           jit_scan, jit_f, scan_name),
-       "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
+       "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl,
+       "impl_name": scan_name}
       for jit_scan in [False, True]
       for jit_f in [False, True]
-      for scan_impl, scan_name in SCAN_IMPLS)
-  def testScanImpl(self, jit_scan, jit_f, scan):
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
+  def testScanImpl(self, jit_scan, jit_f, scan, impl_name):
     rng = self.rng()
 
     d = rng.randn(2)
@@ -1480,12 +1491,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans =                scan(f, c, as_)
     expected = scan_reference(f, c, as_)
+    rtol = {np.float64: 1.4e-15}
+    atol = {np.float64: 8e-15}
+    if impl_name == "for":
+      rtol[np.float32] = 8e-5
+      atol[np.float32] = 3e-5
     self.assertAllClose(
         ans,
         expected,
         check_dtypes=False,
-        rtol={np.float64: 1.4e-15},
-        atol={np.float64: 8e-15})
+        rtol=rtol,
+        atol=atol)
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
@@ -1493,7 +1509,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
        "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def testScanJVP(self, jit_scan, jit_f, scan):
     rng = self.rng()
 
@@ -2141,7 +2157,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{scan_name}",
        "scan": scan_impl}
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def test_scan_reverse(self, scan):
     def cumsum(x, reverse):
       return scan(lambda c, x: (c + x, c + x), 0, x, reverse=reverse)[1]
