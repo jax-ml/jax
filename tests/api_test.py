@@ -21,6 +21,7 @@ import enum
 from functools import partial
 import inspect
 import operator
+import platform
 import re
 import subprocess
 import sys
@@ -8332,6 +8333,8 @@ class NamedCallTest(jtu.JaxTestCase):
 class BackendsTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not sys.executable, "test requires sys.executable")
+  @unittest.skipIf(platform.system() == "Darwin",
+                   "Warning doesn't apply on Mac")
   @jtu.skip_on_devices("gpu", "tpu")
   def test_cpu_warning_suppression(self):
     warning_expected = (
