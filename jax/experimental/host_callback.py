@@ -1011,8 +1011,7 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
   use_outfeed = _use_outfeed(ctx.platform)
   # TODO(sharadmv): Delete non-outfeed path when jaxlib minimum version is
   # bumped past 0.3.8.
-  assert use_outfeed or jaxlib.version < (0, 3, 8), (
-      'Should be using MLIR path for `CustomCall` lowering')
+  assert use_outfeed, 'Should be using MLIR path for `CustomCall` lowering'
   send_infeed = use_outfeed and need_callback_results_on_device
   generated_infeed = False  # Keep track if we emitted an infeed op
   if use_outfeed:
@@ -1198,8 +1197,7 @@ def _outside_call_lowering(
       f"identity = {identity}")
   return results + [next_token, next_itoken]
 
-if jaxlib.version >= (0, 3, 8):
-  mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="cpu")
+mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="cpu")
 
 def _outside_call_run_callback(
     arrays, device, *,

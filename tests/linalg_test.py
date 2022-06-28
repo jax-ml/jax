@@ -41,8 +41,6 @@ T = lambda x: np.swapaxes(x, -1, -2)
 float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 
-jaxlib_version = jax._src.lib.version
-
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
@@ -739,7 +737,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       qr = partial(jnp.linalg.qr, mode=mode)
       jtu.check_jvp(qr, partial(jvp, qr), (a,), atol=3e-3)
 
-  @unittest.skipIf(jaxlib_version < (0, 3, 8), "test requires jaxlib>=0.3.8")
   @jtu.skip_on_devices("tpu")
   def testQrInvalidDtypeCPU(self, shape=(5, 6), dtype=np.float16):
     # Regression test for https://github.com/google/jax/issues/10530

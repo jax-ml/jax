@@ -401,11 +401,5 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       lines = [f"{i}\n" for i in range(40)]
       self._assertLinesEqual(output(), "".join(lines))
 
-if jaxlib.version < (0, 3, 8):
-  # No lowering for `emit_python_callback` in older jaxlibs.
-  del DebugPrintTest
-  del DebugPrintControlFlowTest
-  del DebugPrintParallelTest
-
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

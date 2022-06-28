@@ -646,14 +646,8 @@ def _select_and_gather_add_lowering(
   const = lambda dtype, x: mlir.ir_constant(np.array(x, dtype=dtype),
                                             canonicalize_types=False)
 
-  if jax._src.lib.mlir_api_version >= 9:
-    def _broadcast(x, dims):
-      return mhlo.BroadcastOp(x, mlir.dense_int_elements(dims))
-  else:
-    def _broadcast(x, dims):
-      etype = ir.RankedTensorType(x.type).element_type
-      return mhlo.BroadcastOp(ir.RankedTensorType(dims, etype), x,
-                              mlir.dense_int_elements(dims))
+  def _broadcast(x, dims):
+    return mhlo.BroadcastOp(x, mlir.dense_int_elements(dims))
 
   if double_word_reduction:
     # TODO(b/73062247): XLA doesn't yet implement ReduceWindow on tuples, so
