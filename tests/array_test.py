@@ -141,6 +141,23 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertArraysEqual(arr, np.array([5, 7, 9]))
       self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
 
+  def test_array_sharded_astype(self):
+    with jax._src.config.jax_array(True):
+      global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+      input_shape = (8, 2)
+      arr, input_data = create_array(
+          input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+      arr_float32 = arr.astype(jnp.float32)
+      self.assertEqual(arr_float32.dtype, np.float32)
+      self.assertArraysEqual(arr_float32, input_data.astype(np.float32))
+
+  def test_jnp_array_astype(self):
+    with jax._src.config.jax_array(True):
+      arr = jnp.array([1, 2, 3])
+      arr_float32 = arr.astype(jnp.float32)
+      self.assertEqual(arr_float32.dtype, np.float32)
+      self.assertArraysEqual(arr_float32, arr.astype(np.float32))
+
 
 class ShardingTest(jtu.JaxTestCase):
 

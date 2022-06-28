@@ -246,8 +246,16 @@ xla.canonicalize_dtype_handlers[Array] = pxla.identity
 
 
 def _device_put_array(x, device: Optional[Device]):
-  x = dispatch._copy_device_array_to_device(pxla._set_aval(x._arrays[0]), device)
-  return (x,)
+  # TODO(yashkatariya): Remove this restriction and the round trip via host
+  # once lowering to XLA goes through `lower_mesh_computation`.
+  assert x.is_fully_addressable()
+  if isinstance(x.sharding, SingleDeviceSharding):
+    x = dispatch._copy_device_array_to_device(pxla._set_aval(x._arrays[0]), device)
+    return (x,)
+  else:
+    # Round trip via host if x is sharded. SDA also does a round trip via host.
+    return dispatch._device_put_array(x._value, device)
+
 dispatch.device_put_handlers[Array] = _device_put_array
 
 
