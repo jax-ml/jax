@@ -76,8 +76,6 @@ class Config:
     self._contextmanager_flags = set()
     self._update_hooks = {}
 
-    self.omnistaging_enabled = True  # TODO(mattjj): remove this
-
   def update(self, name, val):
     if self.use_absl:
       setattr(self.absl_flags.FLAGS, name, val)
@@ -171,22 +169,6 @@ class Config:
       absl.flags.FLAGS(jax_argv, known_only=True)
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
-
-      if not FLAGS.jax_omnistaging:
-        raise Exception(
-          "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
-          "see https://github.com/google/jax/blob/main/docs/design_notes/omnistaging.md.\n"
-          "To remove this warning, unset the JAX_OMNISTAGING environment variable.")
-
-  def enable_omnistaging(self):
-    warnings.warn(
-        "enable_omnistaging() is a no-op in JAX versions 0.2.12 and higher;\n"
-        "see https://github.com/google/jax/blob/main/docs/design_notes/omnistaging.md")
-
-  def disable_omnistaging(self):
-    raise Exception(
-      "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
-      "see https://github.com/google/jax/blob/main/docs/design_notes/omnistaging.md.")
 
   def define_bool_state(
     self, name: str, default: bool, help: str, *,
@@ -532,14 +514,6 @@ def update_thread_local_jit_state(**kw):
   tmp = context._replace(**kw)
   tls.extra_jit_context = _thread_local_state_cache.canonicalize(tmp)
 
-
-# TODO(mattjj): remove all uses of this flag
-flags.DEFINE_bool(
-    'jax_omnistaging',
-    bool_env('JAX_OMNISTAGING', True),
-    help=('Deprecated. Setting this flag to False raises an error. Setting it '
-          'to True has no effect.'),
-)
 
 flags.DEFINE_integer(
     'jax_tracer_error_num_traceback_frames',
