@@ -23,19 +23,23 @@ import numpy as np
 from jax import lax
 from jax import core
 from jax import numpy as jnp
-from jax._src import dtypes
-from jax._src import prng
 from jax.config import config
 from jax.core import NamedShape
-from jax._src.api import jit, vmap
-from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_bridge
-from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
-from jax._src.util import prod, canonicalize_axis
+
+from jax._src import dtypes
+from jax._src import prng
+from jax._src.api import jit, vmap
+from jax._src.config import prng_impl_names as config_prng_impl_names
+from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_bridge
+from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer
+from jax._src.util import memoize, prod, canonicalize_axis
+
+from jax._src.prng_snapshots import threefry_v0_3_13
 
 
 Array = Any
@@ -85,12 +89,17 @@ def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> jnp.ndarray:
   key, _ = _check_prng_key(key)
   return key._random_bits(bit_width, shape)
 
-
-PRNG_IMPLS = {
-    'threefry2x32': prng.threefry_prng_impl,
-    'rbg': prng.rbg_prng_impl,
-    'unsafe_rbg': prng.unsafe_rbg_prng_impl,
-}
+@memoize
+def prng_impls():
+  impls = {
+      'threefry2x32': prng.threefry_prng_impl,
+      'threefry2x32@v0.3.13': threefry_v0_3_13.threefry_prng_impl,
+      'rbg': prng.rbg_prng_impl,
+      'unsafe_rbg': prng.unsafe_rbg_prng_impl,
+  }
+  assert sorted(config_prng_impl_names) == sorted(impls.keys()), (
+      sorted(config_prng_impl_names), sorted(impls.keys()))
+  return impls
 
 def default_prng_impl():
   """Get the default PRNG implementation.
@@ -100,8 +109,11 @@ def default_prng_impl():
   ``jax.prng.PRNGImpl`` instance.
   """
   impl_name = config.jax_default_prng_impl
-  assert impl_name in PRNG_IMPLS, impl_name
-  return PRNG_IMPLS[impl_name]
+  assert impl_name in prng_impls(), impl_name
+  if impl_name == 'threefry2x32@v0.3.13':
+    warnings.warn(f'using deprecated snapshot PRNG implementation {impl_name}',
+                  DeprecationWarning)
+  return prng_impls()[impl_name]
 
 
 ### key operations

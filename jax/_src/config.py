@@ -684,9 +684,12 @@ enable_custom_prng = config.define_bool_state(
     help=('Enables an internal upgrade that allows one to define custom '
           'pseudo-random number generator implementations.'))
 
+prng_impl_names = [
+    'threefry2x32', 'rbg', 'unsafe_rbg', 'threefry2x32@v0.3.13']
+
 default_prng_impl = config.define_enum_state(
     name='jax_default_prng_impl',
-    enum_values=['threefry2x32', 'rbg', 'unsafe_rbg'],
+    enum_values=prng_impl_names,
     default='threefry2x32',
     help=('Select the default PRNG implementation, used when one is not '
           'explicitly provided at seeding time.'))
