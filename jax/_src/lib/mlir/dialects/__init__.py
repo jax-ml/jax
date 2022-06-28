@@ -21,7 +21,7 @@ import jaxlib.mlir.dialects.func as func
 try:
   import jaxlib.mlir.dialects.ml_program as ml_program
 except (ModuleNotFoundError, ImportError):
-  # TODO(ajcbik,phawkins): make this unconditional when jaxlib > 0.3.7
+  # TODO(phawkins): make this unconditional when jaxlib > 0.3.14
   #                        is the minimum version.
   pass
 
