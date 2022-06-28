@@ -180,7 +180,6 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib(f"__main__/jaxlib/_lapack.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/mhlo_helpers.py")
   copy_to_jaxlib(f"__main__/jaxlib/_pocketfft.{pyext}")
-  copy_to_jaxlib("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py")
   copy_to_jaxlib("__main__/jaxlib/pocketfft.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_prng.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
