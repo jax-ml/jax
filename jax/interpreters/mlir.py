@@ -208,7 +208,6 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
   if canonicalize_types:
     x = np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
   element_type = dtype_to_ir_type(x.dtype)
-  ir_type = ir.RankedTensorType.get(x.shape, element_type)
   shape = x.shape
   if x.dtype == np.bool_:
     nelems = x.size
@@ -222,15 +221,9 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
   if jax._src.lib.mlir_api_version < 21:
-    if jax._src.lib.xla_extension_version >= 64:
-      return (mhlo.ConstOp(attr).result,)
-    else:
-      return (mhlo.ConstOp(ir_type, attr).result,)
+    return (mhlo.ConstOp(attr).result,)
   else:
-    if jax._src.lib.xla_extension_version >= 64:
-      return (mhlo.ConstantOp(attr).result,)
-    else:
-      return (mhlo.ConstantOp(ir_type, attr).result,)
+    return (mhlo.ConstantOp(attr).result,)
 
 
 
@@ -1047,11 +1040,7 @@ register_lowering(core.closed_call_p,
 def full_like_aval(value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
   zero = ir_constant(np.array(value, aval.dtype))
-  if jax._src.lib.mlir_api_version < 9:
-    return mhlo.BroadcastOp(aval_to_ir_type(aval), zero,
-                            dense_int_elements(aval.shape)).result
-  else:
-    return mhlo.BroadcastOp(zero, dense_int_elements(aval.shape)).result
+  return mhlo.BroadcastOp(zero, dense_int_elements(aval.shape)).result
 
 
 def zeros_like_lowering(ctx, x):

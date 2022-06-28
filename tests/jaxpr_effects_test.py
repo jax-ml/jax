@@ -578,11 +578,8 @@ class EffectOrderingTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_execute_python_callback(self):
-    # TODO(sharadmv): remove jaxlib check when minimum version is bumped
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported
-    if jaxlib.version < (0, 3, 8):
-      raise unittest.SkipTest("`emit_python_callback` only supported in jaxlib >= 0.3.8")
     log = []
     def log_value(x):
       log.append(x)
@@ -600,11 +597,8 @@ class EffectOrderingTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_ordered_effect_remains_ordered_across_multiple_devices(self):
-    # TODO(sharadmv): remove jaxlib check when minimum version is bumped
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported
-    if jaxlib.version < (0, 3, 8):
-      raise unittest.SkipTest("`emit_python_callback` only supported in jaxlib >= 0.3.8")
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
     log = []
@@ -636,11 +630,8 @@ class EffectOrderingTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_different_threads_get_different_tokens(self):
-    # TODO(sharadmv): remove jaxlib check when minimum version is bumped
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported
-    if jaxlib.version < (0, 3, 8):
-      raise unittest.SkipTest("`emit_python_callback` only supported in jaxlib >= 0.3.8")
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
     tokens = []
@@ -693,11 +684,8 @@ class ParallelEffectsTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_pmap_unordered_callback(self):
-    # TODO(sharadmv): remove jaxlib check when minimum version is bumped
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported
-    if jaxlib.version < (0, 3, 8):
-      raise unittest.SkipTest("`emit_python_callback` only supported in jaxlib >= 0.3.8")
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
     log = set()
