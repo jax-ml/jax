@@ -2974,6 +2974,15 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
     jtu.check_grads(partial(for_, n, f), (args,), order=3, modes=["fwd"])
 
+  def test_caches_depend_on_axis_env(self):
+    # https://github.com/google/jax/issues/9187
+    scanned_f = lambda _, __: (lax.psum(1, 'i'), None)
+    f = lambda: lax.scan(scanned_f, 0, None, length=1)[0]
+    ans = jax.vmap(f, axis_name='i', axis_size=2, out_axes=None)()
+    self.assertEqual(ans, 2)
+    ans = jax.vmap(f, axis_name='i', axis_size=3, out_axes=None)()
+    self.assertEqual(ans, 3)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

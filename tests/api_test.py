@@ -1106,6 +1106,28 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     finally:
       xla.xla_call_p.def_impl(jit_impl)
 
+  def test_caches_depend_on_axis_env(self):
+    # https://github.com/google/jax/issues/9187
+    f = lambda: lax.psum(1, "i")
+    g = jax.jit(f)
+    expected = jax.vmap(f, axis_name="i", axis_size=2, out_axes=None)()
+    ans = jax.vmap(g, axis_name="i", axis_size=2, out_axes=None)()
+    self.assertEqual(ans, expected)
+
+    # This second call to g could erroneously get a cache hit.
+    expected = jax.vmap(f, axis_name="i", axis_size=3, out_axes=None)()
+    ans = jax.vmap(g, axis_name="i", axis_size=3, out_axes=None)()
+    self.assertEqual(ans, expected)
+
+  def test_caches_dont_depend_on_unnamed_axis_env(self):
+    # https://github.com/google/jax/issues/9187
+    f = jax.jit(lambda: jnp.sin(1))
+    expected = f()
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      ans = jax.vmap(f, axis_size=2, out_axes=None)()
+    self.assertEqual(count[0], 0)  # no compiles
+    self.assertArraysAllClose(ans, expected, check_dtypes=True)
+
 
 class PythonJitTest(CPPJitTest):
 
