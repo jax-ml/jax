@@ -30,7 +30,7 @@ from jax.core import NamedShape
 from jax._src.api import jit, vmap
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_bridge
-from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer
+from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer, _promote_dtypes_inexact
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -492,15 +492,17 @@ def choice(key: KeyArray,
       slices = (slice(None),) * axis + (slice(n_draws),)
       result = permutation(key, a, axis)[slices]
   else:
+    _check_arraylike("choice", p)
+    p, = _promote_dtypes_inexact(p)
     if p.shape != (n_inputs,):
       raise ValueError("p must be None or match the shape of a")
     if replace:
       p_cuml = jnp.cumsum(p)
-      r = p_cuml[-1] * (1 - uniform(key, shape))
+      r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
       ind = jnp.searchsorted(p_cuml, r)
     else:
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
-      g = -gumbel(key, (n_inputs,)) - jnp.log(p)
+      g = -gumbel(key, (n_inputs,), dtype=p.dtype) - jnp.log(p)
       ind = jnp.argsort(g)[:n_draws]
     result = ind if np.ndim(a) == 0 else jnp.take(a, ind, axis)
 
