@@ -106,7 +106,7 @@ or [Miniconda](https://docs.conda.io/en/latest/miniconda.html#windows-installers
 to set up a Python environment.
 
 Some targets of Bazel use bash utilities to do scripting, so [MSYS2](https://www.msys2.org)
-is needed. See [Installing Bazel on Windows](https://docs.bazel.build/versions/master/install-windows.html#installing-compilers-and-language-runtimes)
+is needed. See [Installing Bazel on Windows](https://bazel.build/install/windows#install-compilers)
 for more details. Install the following packages:
 
 ```
