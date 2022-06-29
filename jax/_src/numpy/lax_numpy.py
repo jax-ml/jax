@@ -2101,8 +2101,12 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
   dtype = _jnp_dtype(dtype)
   if stop is None and step is None:
     if (jax.config.jax_dynamic_shapes and
+        not isinstance(core.get_aval(start), core.AbstractBInt) and
         not isinstance(core.get_aval(start), core.ConcreteArray)):
       start = ceil(start).astype(int)  # note using jnp here
+    elif (isinstance(start, core.BInt) or isinstance(start, core.Tracer) and
+          isinstance(core.get_aval(start), core.AbstractBInt)):
+      pass
     else:
       start = require(start, msg("stop"))
       start = np.ceil(start).astype(int)

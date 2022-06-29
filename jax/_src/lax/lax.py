@@ -1440,6 +1440,7 @@ def unop(result_dtype, accepted_dtypes, name):
                             weak_type_rule=weak_type_rule)
   batching.defvectorized(prim)
   masking.defvectorized(prim)
+  pe.padding_rules[prim] = lambda _, __, x, **kw: [prim.bind(x, **kw)]
   return prim
 standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -1515,6 +1516,7 @@ def naryop(result_dtype, accepted_dtypes, name):
                             weak_type_rule=weak_type_rule)
   batching.defbroadcasting(prim)
   masking.defnaryop(prim)
+  pe.padding_rules[prim] = lambda _, __, *xs, **kw: [prim.bind(*xs, **kw)]
   return prim
 standard_naryop = partial(naryop, _input_dtype)
 
@@ -2080,7 +2082,6 @@ add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 mlir.register_lowering(add_p, partial(_nary_lower_mhlo, mhlo.AddOp))
-pe.padding_rules[add_p] = lambda _, __, x, y: [add(x, y)]
 
 def _sub_jvp(primals, tangents):
   x, y = primals
@@ -2110,7 +2111,6 @@ sub_p = standard_naryop([_num, _num], 'sub')
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubOp))
-pe.padding_rules[sub_p] = lambda _, __, x, y: [sub(x, y)]
 
 
 def _mul_transpose(ct, x, y):
@@ -2137,7 +2137,6 @@ ad.defjvp(mul_p,
           lambda ydot, x, y: mul(x, ydot))
 ad.primitive_transposes[mul_p] = _mul_transpose
 mlir.register_lowering(mul_p, partial(_nary_lower_mhlo, mhlo.MulOp))
-pe.padding_rules[mul_p] = lambda _, __, x, y: [mul(x, y)]
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
@@ -2174,7 +2173,6 @@ ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
 mlir.register_lowering(max_p, partial(_nary_lower_mhlo, mlir.max_mhlo))
-pe.padding_rules[max_p] = lambda _, __, x, y: [max(x, y)]
 
 min_p: core.Primitive = standard_naryop([_any, _any], 'min')
 ad.defjvp2(min_p,
@@ -2297,9 +2295,13 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
   printed_params = {}
   if eqn.params['weak_type']:
     printed_params['weak_type'] = True
-  return [pp.text(eqn.primitive.name),
-          core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-          pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
+  rhs = [pp.text(eqn.primitive.name),
+         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
+         pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
+  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
 
 
 convert_element_type_p = Primitive('convert_element_type')
@@ -2756,7 +2758,7 @@ def _broadcast_in_dim_padding_rule(in_avals, out_avals, x, *dyn_shape,
       assert isinstance(d, core.Tracer)
       new_shape.append(None)
       new_dyn_shape.append(d)
-  return [broadcast_in_dim_p.bind(x, *new_dyn_shape, shape=new_shape,
+  return [broadcast_in_dim_p.bind(x, *new_dyn_shape, shape=tuple(new_shape),
                                   broadcast_dimensions=broadcast_dimensions)]
 
 def _broadcast_in_dim_jvp_rule(primals, tangents, *, shape, broadcast_dimensions):
@@ -2820,8 +2822,18 @@ def _broadcast_in_dim_pp_rule(eqn, context, settings):
                 if settings.source_info else None)
   return [lhs, pp.text(" = ", annotation=annotation), *rhs]
 
+def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
+  if not any(isinstance(d, core.BInt) for d in shape):
+    shape = _broadcast_in_dim_shape_rule(  # error checking
+        x, shape=shape, broadcast_dimensions=broadcast_dimensions)
+    return core.ShapedArray(shape, x.dtype, x.weak_type, x.named_shape)
+  # If any BInts in shape, produce a DShapedArray (even if x is a ShapedArray)
+  # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
+  return core.DShapedArray(shape, x.dtype, x.weak_type)
+
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
+broadcast_in_dim_p.def_abstract_eval(_broadcast_in_dim_abstract_eval)
 ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
 ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
@@ -3605,8 +3617,8 @@ def _reduce_sum_padding_rule(in_avals, out_avals, operand, *, axes):
 
 def _replace_masked_values(x, val, padded_axes):
   if not padded_axes: return x
-  masks = [broadcasted_iota(np.dtype('int32'), x.shape, i) < d
-           for i, d in padded_axes]
+  dtype = dtypes._scalar_type_to_dtype(int)
+  masks = [broadcasted_iota(dtype, x.shape, i) < d for i, d in padded_axes]
   return select(_reduce(operator.and_, masks), x, full_like(x, val))
 
 
@@ -4384,7 +4396,10 @@ def _iota_abstract_eval(*, dtype, shape, dimension):
   if not 0 <= dimension < len(shape):
     raise ValueError("iota dimension must be between 0 and len(shape), got "
                      f"dimension={dimension} for shape {shape}")
-  return ShapedArray(shape, dtype)
+  if not any(isinstance(d, core.BInt) for d in shape):
+    return ShapedArray(shape, dtype)
+  # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
+  return core.DShapedArray(shape, dtype, False)
 
 iota_p = Primitive('iota')
 iota_p.def_impl(partial(xla.apply_primitive, iota_p))
@@ -4425,11 +4440,45 @@ def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension):
                        mlir.i64_attr(dimension)).results
 mlir.register_lowering(iota_p, _iota_lower)
 
+def _iota_pp_rule(eqn, context, settings):
+  printed_params = {}
+  if len(eqn.params['shape']) > 1:
+    printed_params['dimension'] = eqn.params['dimension']
+  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
+  rhs = [pp.text(eqn.primitive.name),
+         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
+         pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
+  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+# core.pp_eqn_rules[iota_p] = _iota_pp_rule
+
+def _iota_padding_rule(in_avals, out_avals, *dyn_shape, dtype, shape, dimension):
+  out_aval, = out_avals
+  new_shape = []
+  new_dyn_shape = []
+  for d in out_aval.shape:
+    if type(d) is pe.BoundedAxisSize:
+      new_shape.append(d.bound)
+    elif type(d) is int:
+      new_shape.append(d)
+    else:
+      assert isinstance(d, core.Tracer)
+      new_shape.append(None)
+      new_dyn_shape.append(d)
+  return [iota_p.bind(*new_dyn_shape, shape=tuple(new_shape),
+                      dtype=dtype, dimension=dimension)]
+pe.padding_rules[iota_p] = _iota_padding_rule
+
 
 def make_bint(i, bd: int):
   return bint_p.bind(i, bd=bd)
 
 bint_p = core.Primitive('bint')
+
+@bint_p.def_impl
+def _bint_impl(i, *, bd):
+  return core.BInt(i, bd)
 
 @bint_p.def_abstract_eval
 def bint_abstract_eval(_, *, bd: int):
@@ -4566,7 +4615,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
   if not len(obj):  # pylint: disable=g-explicit-length-test
     return
   if (config.jax_dynamic_shapes and isinstance(obj, (tuple, list)) and
-      any(isinstance(d, core.Tracer) for d in obj)):
+      any(isinstance(d, (core.Tracer, core.BInt)) for d in obj)):
     return  # TODO(mattjj): handle more checks in the dynamic shape case
   obj_arr = np.array(obj)
   if obj_arr.ndim != 1:
