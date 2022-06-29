@@ -15,24 +15,27 @@
 from functools import partial
 import operator
 
-from typing import Any, Callable, Dict, Generic, List, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, Tuple, TypeVar
 
 from jax import core
 from jax import lax
 from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
+from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_structure, tree_unflatten,
-                           treedef_tuple, PyTreeDef)
+                           treedef_tuple, tree_map, tree_leaves, PyTreeDef)
 from jax._src import ad_util
+from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src.util import safe_map, safe_zip, split_list
 import jax.numpy as jnp
 
 from jax._src.lax.control_flow import loops
+from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
 
 ## JAX utilities
 
@@ -433,7 +436,8 @@ def val_to_ref_aval(x) -> ShapedArrayRef:
     raise Exception(f"can't make ref from {x}")
   return ShapedArrayRef(aval.shape, aval.dtype)
 
-def for_loop(nsteps: int, body: Callable[[Array, Ref[S]], None], init_state: S) -> S:
+def for_loop(nsteps: int, body: Callable[[Array, Ref[S]], None], init_state: S,
+             *, reverse: bool = False) -> S:
   """A for-loop combinator that allows read/write semantics in the loop body.
 
   `for_loop` is a higher-order function that enables writing loops that can be
@@ -476,11 +480,80 @@ def for_loop(nsteps: int, body: Callable[[Array, Ref[S]], None], init_state: S) 
   jaxpr = _hoist_consts_to_refs(jaxpr)
   which_linear = (False,) * (len(consts) + len(flat_state))
   out_flat = for_p.bind(*consts, *flat_state, jaxpr=jaxpr, nsteps=int(nsteps),
-                        reverse=False, which_linear=which_linear)
+                        reverse=reverse, which_linear=which_linear)
   # Consts are `Ref`s so they are both inputs and outputs. We remove them from
   # the outputs.
   out_flat = out_flat[len(consts):]
   return tree_unflatten(state_tree, out_flat)
+
+Carry = TypeVar('Carry')
+X = TypeVar('X')
+Y = TypeVar('Y')
+
+def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+         init: Carry,
+         xs: X,
+         length: Optional[int] = None,
+         reverse: bool = False,
+         unroll: int = 1) -> Tuple[Carry, Y]:
+  if unroll != 1:
+    raise NotImplementedError("Unroll not implemented")
+  if not callable(f):
+    raise TypeError("scan: f argument should be a callable.")
+  xs_flat, xs_tree = tree_flatten(xs)
+
+  try:
+    lengths = [x.shape[0] for x in xs_flat]
+  except AttributeError as err:
+    msg = "scan got value with no leading axis to scan over: {}."
+    raise ValueError(
+      msg.format(', '.join(str(x) for x in xs_flat
+                           if not hasattr(x, 'shape')))) from err
+
+  if length is not None:
+    length = int(length)
+    if not all(length == l for l in lengths):
+      msg = ("scan got `length` argument of {} which disagrees with "
+             "leading axis sizes {}.")
+      raise ValueError(msg.format(length, [x.shape[0] for x in xs_flat]))
+  else:
+    unique_lengths = set(lengths)
+    if len(unique_lengths) > 1:
+      msg = "scan got values with different leading axis sizes: {}."
+      raise ValueError(msg.format(', '.join(str(x.shape[0]) for x in xs_flat)))
+    elif len(unique_lengths) == 0:
+      msg = "scan got no values to scan over and `length` not provided."
+      raise ValueError(msg)
+    else:
+      length, = unique_lengths
+
+  x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
+  x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
+  x_avals = tuple(map(core.ShapedArray, x_shapes, x_dtypes))
+
+  def _create_jaxpr(init):
+    init_flat = tree_leaves(init)
+    _, in_tree = tree_flatten((init, xs))
+
+    carry_avals = tuple(map(_abstractify, init_flat))
+    jaxpr, _, out_tree = _initial_style_jaxpr(
+        f, in_tree, carry_avals + x_avals, "scan")
+    return jaxpr, out_tree
+  jaxpr, out_tree = _create_jaxpr(init)
+  _, ys_avals = tree_unflatten(out_tree, jaxpr.out_avals)
+  ys = tree_map(lambda aval: jnp.zeros([length, *aval.shape], aval.dtype),
+                ys_avals)
+  def for_body(i, refs):
+    carry_refs, xs_refs, ys_refs = refs
+    carry = tree_map(lambda x: x[()], carry_refs)
+    x = tree_map(lambda x: x[i], xs_refs)
+    carry, y = f(carry, x)
+    tree_map(lambda c_ref, c: ref_set(c_ref, (), c), carry_refs, carry)
+    tree_map(lambda y_ref, y: ref_set(y_ref, (i,), y), ys_refs, y)
+  assert isinstance(length, int)
+  init, _, ys = for_loop(length, for_body, (init, xs, ys), reverse=reverse)
+  return init, ys
+
 
 @for_p.def_abstract_eval
 def _for_abstract_eval(*avals, jaxpr, **__):
@@ -545,7 +618,7 @@ ad.primitive_jvps[for_p] = _for_jvp
 
 ### Testing utility
 
-def discharged_for_loop(nsteps, body, init_state):
+def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   """A `for_loop` implementation that discharges its body right away.
 
   Potentially useful for testing and benchmarking.
@@ -560,8 +633,11 @@ def discharged_for_loop(nsteps, body, init_state):
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
 
   def fori_body(i, carry):
+    i = jnp.int32(i)
+    if reverse:
+      i = nsteps - i - 1
     out_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,
-                               jnp.int32(i), *carry)
+                               i, *carry)
     return out_flat
   out_flat = loops.fori_loop(0, nsteps, fori_body, flat_state)
   return tree_unflatten(state_tree, out_flat)
