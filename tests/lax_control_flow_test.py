@@ -1543,7 +1543,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
        "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def testScanLinearize(self, jit_scan, jit_f, scan):
     rng = self.rng()
 
@@ -1943,6 +1943,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     python_should_be_executing = False
     lax.while_loop(cond, body, 0)
+
+  def test_caches_depend_on_axis_env(self):
+    # https://github.com/google/jax/issues/9187
+    scanned_f = lambda _, __: (lax.psum(1, 'i'), None)
+    f = lambda: lax.scan(scanned_f, 0, None, length=1)[0]
+    ans = jax.vmap(f, axis_name='i', axis_size=2, out_axes=None)()
+    self.assertEqual(ans, 2)
+    ans = jax.vmap(f, axis_name='i', axis_size=3, out_axes=None)()
+    self.assertEqual(ans, 3)
 
   def testWhileCondConstant(self):
     out = lax.while_loop(lambda _: False, lambda _: (), ())  # doesn't crash
@@ -2990,15 +2999,36 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
     jtu.check_grads(partial(for_, n, f), (args,), order=3, modes=["fwd"])
 
-  def test_caches_depend_on_axis_env(self):
-    # https://github.com/google/jax/issues/9187
-    scanned_f = lambda _, __: (lax.psum(1, 'i'), None)
-    f = lambda: lax.scan(scanned_f, 0, None, length=1)[0]
-    ans = jax.vmap(f, axis_name='i', axis_size=2, out_axes=None)()
-    self.assertEqual(ans, 2)
-    ans = jax.vmap(f, axis_name='i', axis_size=3, out_axes=None)()
-    self.assertEqual(ans, 3)
+  @parameterized.named_parameters(
+      {"testcase_name": "_jit_for={}_f={}_nsteps={}".format(
+        jit_for, for_body_name, nsteps),
+        "jit_for": jit_for, "f": for_body, "body_shapes": body_shapes,
+        "ref": ref, "n": nsteps}
+      for jit_for in [False, True]
+      for for_body_name, for_body, ref, body_shapes, nsteps in [
+        ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
+        ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
+        ("sincos", for_body_sincos, sincos_ref, [(4,), (4,)], 4),
+        ("sincostan", for_body_sincostan, sincostan_ref, [(4,), (4,)], 4),
+        ("accum", for_body_accum, accum_ref, [(4,), (4,)], 3),
+        ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
+        ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
+      ])
+  def test_for_linearize(self, jit_for, f, ref, body_shapes, n):
+    for_ = for_loop.for_loop
+    rng = self.rng()
 
+    args = [rng.randn(*s) for s in body_shapes]
+
+    if jit_for:
+      for_ = jax.jit(for_, static_argnums=(0, 1))
+    tol = {np.float64: 1e-12, np.float32: 1e-4}
+    ans = jax.linearize(lambda *args: for_(         n, f, args), *args)[1](*args)
+    ans_discharged = jax.linearize(lambda *args: for_reference(n, f, args),
+                                   *args)[1](*args)
+    expected = jax.linearize(ref, *args)[1](*args)
+    self.assertAllClose(ans, ans_discharged, check_dtypes=True, rtol=tol, atol=tol)
+    self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
