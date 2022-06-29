@@ -18,8 +18,8 @@ import functools
 from functools import partial
 import itertools
 import operator
-from typing import (Any, Callable, Dict, Optional, Sequence, Tuple,
-                    List, TypeVar, Union, cast as type_cast)
+from typing import (Any, Callable, Optional, Sequence, Tuple, List, Dict,
+                    TypeVar, Union, cast as type_cast)
 import warnings
 
 import numpy as np
@@ -106,13 +106,20 @@ def _try_broadcast_shapes(
   rank, *others = {len(shape) for shape in shapes}
   if others: return None  # must have consistent rank
   if not rank: return ()  # scalar case
-  result_shape = [-1] * rank
-  for i, sizes in enumerate(zip(*shapes)):
-    non_1s = {d for d in sizes if not core.symbolic_equal_dim(d, 1)}
-    if len(non_1s) > 1:
-      return None  # must have equal sizes other than 1-sized axes
-    result_shape[i] = next(iter(non_1s), 1)
-
+  result_shape = []
+  for ds in unsafe_zip(*shapes):
+    if all(core.same_referent(d, ds[0]) for d in ds[1:]):
+      # if all axes are identical objects, the resulting size is the object
+      result_shape.append(ds[0])
+    else:
+      # if all dims are equal (or 1), the result is the non-1 size (or 1)
+      non_1s = [d for d in ds if not core.symbolic_equal_dim(d, 1)]
+      if not non_1s:
+        result_shape.append(1)
+      elif all(core.symbolic_equal_dim(non_1s[0], d) for d in non_1s[1:]):
+        result_shape.append(non_1s[0])
+      else:
+        return None
   return tuple(result_shape)
 
 def broadcast_shapes(*shapes: Tuple[Union[int, core.Tracer], ...]
@@ -156,59 +163,38 @@ def _broadcast_ranks(s1, s2):
 
 def _identity(x): return x
 
-def _extract_tracers_dyn_shape(shape: Sequence[Union[int, core.Tracer]]
-                               ) -> Tuple[Sequence[core.Tracer],
-                                          Sequence[Optional[int]]]:
-  """Returns the list of tracers in `shape`, and a static version of `shape`
-   with tracers replaced with None"""
+def _extract_tracers_dyn_shape(
+    shape: Sequence[Union[int, core.Tracer]]
+  ) -> Tuple[List[core.Tracer], List[Optional[int]]]:
+  # Given a sequence representing a shape, pull out Tracers, replacing with None
   if config.jax_dynamic_shapes:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
-    dyn_shape = tuple(d for d in shape if isinstance(d, core.Tracer))
-    static_shape = tuple(d if not isinstance(d, core.Tracer) else None for d in shape)
+    dyn_shape = [d for d in shape if isinstance(d, core.Tracer)]
+    static_shape = [None if isinstance(d, core.Tracer) else d for d in shape]
     return dyn_shape, static_shape
   else:
-    return (), shape  # type: ignore[return-value]
+    return [], list(shape)  # type: ignore
 
-
-def _merge_dyn_shape(static_shape: Sequence[Optional[int]],
-                     dyn_shape: Sequence[mlir.Value],
-                     ) -> Sequence[mlir.Value]:
-  """Returns static_shape with None values filled in from dyn_shape."""
+def _merge_dyn_shape(
+    static_shape: Sequence[Optional[int]],
+    dyn_shape: Sequence[Any],
+  ) -> Tuple[Union[int, mlir.Value], ...]:
+  # Replace Nones in static_shape with elements of dyn_shape, in order
   dyn_shape_it = iter(dyn_shape)
   shape = tuple(next(dyn_shape_it) if d is None else d for d in static_shape)
   assert next(dyn_shape_it, None) is None
   return shape
 
-def _stage_with_dyn_shape(trace: core.Trace,
-                          prim: core.Primitive,
-                          args: Sequence[core.Tracer],
-                          dyn_shape_args: Sequence[core.Tracer],
-                          params: Dict[str, Any],
-                          static_shape: Sequence[Optional[int]],
-                          out_dtype: Any,
-                          out_weak_type: bool,
-                          ) -> core.Tracer:
-  """Stages out a primitive that takes dynamic shapes.
-
-  dyn_shape_args are the tracers corresponding to the None values in static_shape.
-  """
-  if not dyn_shape_args:
-    return trace.default_process_primitive(prim, args, params)  # type: ignore
-  assert len(dyn_shape_args) == sum(d is None for d in static_shape)
+def _dyn_shape_staging_rule(trace, prim, out_aval, *args, **params):
   source_info = source_info_util.current()
-
-  ds = iter(dyn_shape_args)
-  out_shape_for_tracer: List[Union[int, core.Tracer]] = [
-      next(ds) if d is None else d for d in static_shape]
-  aval = core.DShapedArray(tuple(out_shape_for_tracer), out_dtype, out_weak_type)
-  out_tracer = pe.DynamicJaxprTracer(trace, aval, source_info)
-  invars = [*(trace.getvar(x) for x in args), *(trace.getvar(d) for d in dyn_shape_args)]  # type: ignore
-  eqn = pe.new_jaxpr_eqn(invars, [trace.makevar(out_tracer)],  # type: ignore
+  out_tracer = pe.DynamicJaxprTracer(trace, out_aval, source_info)
+  eqn = pe.new_jaxpr_eqn([trace.getvar(x) for x in args],
+                         [trace.makevar(out_tracer)],
                          prim, params, core.no_effects, source_info)
-  trace.frame.eqns.append(eqn)  # type: ignore
-
+  trace.frame.add_eqn(eqn)
   return out_tracer
+
 
 ### traceables
 
@@ -794,7 +780,12 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
       and isinstance(operand, (device_array.DeviceArray, core.Tracer))):
     return operand
-  dyn_shape, static_shape = _extract_tracers_dyn_shape(shape)
+  if config.jax_dynamic_shapes:
+    # We must gate this behavior under a flag because otherwise the errors
+    # raised are different (and have worse source provenance information).
+    dyn_shape, static_shape = _extract_tracers_dyn_shape(shape)
+  else:
+    dyn_shape, static_shape = [], shape  # type: ignore
   return broadcast_in_dim_p.bind(
       operand, *dyn_shape, shape=tuple(static_shape),
       broadcast_dimensions=tuple(broadcast_dimensions))
@@ -858,7 +849,7 @@ def reshape(operand: Array, new_sizes: Shape,
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
 
     return reshape_p.bind(
-      operand, *dyn_shape, new_sizes=static_new_sizes,
+      operand, *dyn_shape, new_sizes=tuple(static_new_sizes),
       dimensions=None if dims is None or same_dims else dims)
 
 def pad(operand: Array, padding_value: Array,
@@ -1165,18 +1156,18 @@ def iota(dtype: DType, size: int) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  dtype = dtypes.canonicalize_dtype(dtype)
-  size, = canonicalize_shape((size,))
-  dyn_shape, static_shape = _extract_tracers_dyn_shape((size,))
-  return iota_p.bind(*dyn_shape, dtype=dtype, shape=static_shape, dimension=0)
+  return broadcasted_iota(dtype, (size,), 0)
 
 def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = canonicalize_shape(shape)
+  dynamic_shape = [d for d in shape if isinstance(d, core.Tracer)]
+  static_shape = [None if isinstance(d, core.Tracer) else d for d in shape]
   dimension = core.concrete_or_error(
       int, dimension, "dimension argument of lax.broadcasted_iota")
-  return iota_p.bind(dtype=dtype, shape=shape, dimension=dimension)
+  return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
+                     dimension=dimension)
 
 def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
@@ -1484,6 +1475,7 @@ def _broadcasting_shape_rule(name, *avals):
   if len({len(shape) for shape in shapes}) != 1:
     msg = '{}: arrays must have same number of dimensions, got {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
+  # TODO(mattjj): de-duplicate with _try_broadcast_shapes
   result_shape = []
   for ds in zip(*shapes):
     if all(core.same_referent(d, ds[0]) for d in ds[1:]):
@@ -1492,14 +1484,13 @@ def _broadcasting_shape_rule(name, *avals):
     else:
       # if all dims are equal (or 1), the result is the non-1 size
       non_1s = [d for d in ds if not core.symbolic_equal_dim(d, 1)]
-      if non_1s:
-        first_non_1 = non_1s.pop()
-        if tuple(filter(lambda d: not core.symbolic_equal_dim(d, first_non_1), non_1s)):
-          raise TypeError(f'{name} got incompatible shapes for broadcasting: '
-                          f'{", ".join(map(str, map(tuple, shapes)))}.')
-        result_shape.append(first_non_1)
-      else:
+      if not non_1s:
         result_shape.append(1)
+      elif all(core.symbolic_equal_dim(non_1s[0], d) for d in non_1s[1:]):
+        result_shape.append(non_1s[0])
+      else:
+        raise TypeError(f'{name} got incompatible shapes for broadcasting: '
+                        f'{", ".join(map(str, map(tuple, shapes)))}.')
 
   return tuple(result_shape)
 
@@ -1582,9 +1573,14 @@ def broadcast_mhlo(
       assert len(aval.shape) <= len(aval_out.shape), (aval, aval_out)
       dims = mlir.dense_int_elements(
           range(len(aval_out.shape) - len(aval.shape), len(aval_out.shape)))
-      arg = mhlo.BroadcastInDimOp(
-          mlir.aval_to_ir_type(aval.update(shape=aval_out.shape)), arg,
-          dims).result
+      if any(isinstance(d, ir.Value) for d in aval_out.shape):
+        arg = mhlo.DynamicBroadcastInDimOp(
+            mlir.aval_to_ir_type(aval_out), arg,
+            mlir.shape_tensor(aval_out.shape), dims).result
+      else:
+        arg = mhlo.BroadcastInDimOp(
+            mlir.aval_to_ir_type(aval.update(shape=aval_out.shape)), arg,
+            dims).result
     out.append(arg)
   return out
 
@@ -1598,12 +1594,22 @@ def _nary_lower_mhlo(op: Callable, ctx,
       provided?
   """
   del params
-  aval_out, = ctx.avals_out
-  broadcasted_args = broadcast_mhlo(aval_out, ctx.avals_in, args)
+  avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
+  if config.jax_dynamic_shapes:
+    substitute = partial(_substitute_axis_sizes_in_aval, ctx.axis_size_env)
+    avals_in = map(substitute, avals_in)
+    aval_out = substitute(aval_out)
+  broadcasted_args = broadcast_mhlo(aval_out, avals_in, args)
   if explicit_type:
     return op(mlir.aval_to_ir_type(aval_out), *broadcasted_args).results
   else:
     return op(*broadcasted_args).results
+
+def _substitute_axis_sizes_in_aval(
+    env: Dict[core.Var, ir.Value], a: core.AbstractValue) -> core.AbstractValue:
+  if isinstance(a, core.DShapedArray):
+    return a.update(shape=tuple(env.get(d, d) for d in a.shape))  # type: ignore
+  return a
 
 
 _float = {np.floating}
@@ -2727,11 +2733,13 @@ def _broadcast_in_dim_fwd_rule(eqn):
     return [None], eqn
 
 def _broadcast_in_dim_staging_rule(
-    trace, x, *dyn_shape, shape, broadcast_dimensions):
+    trace, x, *dyn, shape, broadcast_dimensions):
   params = dict(shape=shape, broadcast_dimensions=broadcast_dimensions)
-  return _stage_with_dyn_shape(trace, broadcast_in_dim_p,
-                               (x,), dyn_shape, params,
-                               shape, x.dtype, x.weak_type)
+  if not dyn:
+    return trace.default_process_primitive(broadcast_in_dim_p, (x,), params)
+  aval = core.DShapedArray(_merge_dyn_shape(shape, dyn), x.dtype, x.weak_type)
+  return _dyn_shape_staging_rule(trace, broadcast_in_dim_p, aval, x, *dyn,
+                                 **params)
 
 def _broadcast_in_dim_padding_rule(in_avals, out_avals, x, *dyn_shape,
                                    shape, broadcast_dimensions):
@@ -2791,7 +2799,6 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
         mlir.aval_to_ir_type(aval_out), x,
         mlir.shape_tensor(shape),
         mlir.dense_int_elements(broadcast_dimensions),
-        None, None,
     ).results
   else:
     return mhlo.BroadcastInDimOp(
@@ -2824,6 +2831,7 @@ pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+# TODO(mattjj): un-comment the next line
 # core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
 
 
@@ -3154,7 +3162,8 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   # TODO(necula): re-enable this check
-  if not config.jax_dynamic_shapes and not core.same_shape_sizes(np.shape(operand), new_sizes):
+  if (not config.jax_dynamic_shapes and
+      not core.same_shape_sizes(np.shape(operand), new_sizes)):
     msg = 'reshape total size must be unchanged, got new_sizes {} for shape {}.'
     raise TypeError(msg.format(new_sizes, np.shape(operand)))
   if dimensions is not None:
@@ -3201,12 +3210,6 @@ def _reshape_masking_rule(padded_args, logical_shapes, polymorphic_shapes,
                  new_sizes=masking.padded_shape_as_value(new_sizes),
                  dimensions=dimensions)
 
-reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
-                               'reshape')
-ad.deflinear2(reshape_p, _reshape_transpose_rule)
-batching.primitive_batchers[reshape_p] = _reshape_batch_rule
-masking.masking_rules[reshape_p] = _reshape_masking_rule
-
 def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions):
   aval_out, = ctx.avals_out
   if dimensions is not None:
@@ -3220,16 +3223,22 @@ def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions):
   else:
     return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), x).results
 
-mlir.register_lowering(reshape_p, _reshape_lower)
-
 def _reshape_staging_rule(
-    trace, x, *dyn_shape, new_sizes, dimensions):
+    trace, x, *dyn, new_sizes, dimensions):
   params = dict(new_sizes=new_sizes, dimensions=dimensions)
-  # TODO(necula): shouldn't this include the same checks as in reshape_shape_rule?
-  return _stage_with_dyn_shape(trace, reshape_p, (x,), dyn_shape, params,
-                               new_sizes, x.dtype, x.weak_type)
+  if not dyn:
+    return trace.default_process_primitive(reshape_p, (x,), params)
+  av = core.DShapedArray(_merge_dyn_shape(new_sizes, dyn), x.dtype, x.weak_type)
+  return _dyn_shape_staging_rule(trace, reshape_p, av, x, *dyn, **params)
 
+reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
+                               'reshape')
+ad.deflinear2(reshape_p, _reshape_transpose_rule)
+batching.primitive_batchers[reshape_p] = _reshape_batch_rule
+masking.masking_rules[reshape_p] = _reshape_masking_rule
+mlir.register_lowering(reshape_p, _reshape_lower)
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule
+
 
 def _rev_shape_rule(operand, *, dimensions):
   _check_shapelike('rev', 'dimensions', dimensions)
@@ -4381,11 +4390,12 @@ iota_p = Primitive('iota')
 iota_p.def_impl(partial(xla.apply_primitive, iota_p))
 iota_p.def_abstract_eval(_iota_abstract_eval)
 
-def _iota_staging_rule(
-    trace, *dyn_shape, dtype, shape, dimension):
+def _iota_staging_rule(trace, *dyn_shape, dtype, shape, dimension):
   params = dict(dtype=dtype, shape=shape, dimension=dimension)
-  return _stage_with_dyn_shape(trace, iota_p, (), dyn_shape, params,
-                               shape, dtype, False)
+  if not dyn_shape:
+    return trace.default_process_primitive(iota_p, (), params)
+  aval = core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)
+  return _dyn_shape_staging_rule(trace, iota_p, aval, *dyn_shape, **params)
 pe.custom_staging_rules[iota_p] = _iota_staging_rule
 
 def _iota_typecheck_rule(*dyn_shape, dtype, shape, dimension):

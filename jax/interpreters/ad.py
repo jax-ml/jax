@@ -315,34 +315,33 @@ class JVPTrace(Trace):
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
     primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
-    nonzero_tangents, tangent_tree_def = tree_flatten(tangents)
-    nz_tangents = [type(t) is not Zero for t in tangents]
+    which_nz = [     type(t) is not Zero           for t in tangents]
+    tangents = [t if type(t) is not Zero else None for t in tangents]
+    args, in_tree = tree_flatten((primals, tangents))
     if 'name' in params and not config.jax_experimental_name_stack:
       params = dict(params, name=wrap_name(params['name'], 'jvp'))
     f_jvp = jvp_subtrace(f, self.main)
-    f_jvp, nz_tangents_out = nonzero_tangent_outputs(f_jvp)
+    f_jvp, which_nz_out = nonzero_tangent_outputs(f_jvp)
     if isinstance(call_primitive, core.MapPrimitive):
       in_axes = params['in_axes']
-      tangent_in_axes = [ax for ax, nz in zip(in_axes, nz_tangents) if nz]
+      tangent_in_axes = [ax for ax, nz in zip(in_axes, which_nz) if nz]
       out_axes_thunk = params['out_axes_thunk']
-      # The new thunk depends deterministically on the old thunk and the wrapped function.
-      # Any caching already has to include the wrapped function as part of the key, so we
-      # only use the previous thunk for equality checks.
-      # NOTE: This assumes that the output tangents being zero is a deterministic
-      #       function of which input tangents were zero.
-      @as_hashable_function(closure=(tuple(nz_tangents), out_axes_thunk))
+      # NOTE: This assumes that the output tangents being zero is a
+      # deterministic function of which input tangents were zero.
+      @as_hashable_function(closure=out_axes_thunk)
       def new_out_axes_thunk():
-        out_axes = out_axes_thunk()
-        return (*out_axes, *(ax for ax, nz in zip(out_axes, nz_tangents_out()) if nz))
-      params = dict(params,
-                    in_axes=(*in_axes, *tangent_in_axes),
+        out_ax = out_axes_thunk()
+        return (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out()) if nz))
+      params = dict(params, in_axes=(*in_axes, *tangent_in_axes),
                     out_axes_thunk=new_out_axes_thunk)
-    f_jvp, out_tree_def = traceable(f_jvp, len(primals), tangent_tree_def)
+    f_jvp, out_tree = traceable(f_jvp, in_tree)
     update_params = call_param_updaters.get(call_primitive)
-    new_params = update_params(params, nz_tangents) if update_params else params
-    f_jvp = _update_annotation(f_jvp, f.in_type, nz_tangents)
-    result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
-    primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
+    new_params = update_params(params, which_nz) if update_params else params
+    result = call_primitive.bind(_update_annotation(f_jvp, f.in_type, which_nz),
+                                 *args, **new_params)
+    primal_out, tangent_out = tree_unflatten(out_tree(), result)
+    tangent_out = [Zero(get_aval(p).at_least_vspace()) if t is None else t
+                   for p, t in zip(primal_out, tangent_out)]
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
 
   def post_process_call(self, call_primitive, out_tracers, params):
@@ -588,13 +587,14 @@ def instantiate_zeros_aval(aval, tangent):
     return tangent
 
 @lu.transformation_with_aux
-def traceable(num_primals, in_tree_def, *primals_and_tangents):
-  new_primals  = primals_and_tangents[:num_primals]
-  new_tangents = primals_and_tangents[num_primals:]
-  new_tangents = tree_unflatten(in_tree_def, new_tangents)
-  primal_out, tangent_out = yield (new_primals, new_tangents), {}
-  out_flat, tree_def = tree_flatten((primal_out, tangent_out))
-  yield out_flat, tree_def
+def traceable(in_tree, *primals_and_tangents):
+  primals, tangents = tree_unflatten(in_tree, primals_and_tangents)
+  tangents = [Zero(get_aval(p).at_least_vspace()) if t is None else t
+              for p, t in zip(primals, tangents)]
+  primals_out, tangents_out = yield (primals, tangents), {}
+  tangents_out = [None if type(t) is Zero else t for t in tangents_out]
+  out_flat, out_tree = tree_flatten((primals_out, tangents_out))
+  yield out_flat, out_tree
 
 
 def call_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
