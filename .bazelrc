@@ -99,6 +99,7 @@ build:windows --host_linkopt=/OPT:ICF
 build:windows --experimental_strict_action_env=true
 
 build:linux --config=posix
+build:linux --copt=-Wno-unknown-warning-option
 # Workaround for gcc 10+ warnings related to upb.
 # See https://github.com/tensorflow/tensorflow/issues/39467
 build:linux --copt=-Wno-stringop-truncation
