@@ -2586,6 +2586,18 @@ class APITest(jtu.JaxTestCase):
     ans = vfun(lambda x: x + 1, jnp.arange(3))
     self.assertAllClose(ans, np.arange(1, 4), check_dtypes=False)
 
+  def test_vmap_mismatched_keyword(self):
+    # https://github.com/google/jax/issues/10193
+    @jax.vmap
+    def f(x, y):
+      return x + y
+
+    with self.assertRaisesRegex(
+        ValueError, "vmap got inconsistent sizes for array axes to be mapped:\n"
+        "the tree of axis sizes is:\n"
+        r"\(\(1,\), \{'y': 2\}\)"):
+      f(jnp.array([1]), y=jnp.array([1, 2]))
+
   def test_vmap_mismatched_axis_sizes_error_message_issue_705(self):
     # https://github.com/google/jax/issues/705
     def h(a, b):
