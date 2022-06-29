@@ -71,8 +71,8 @@ class TestBFGS(jtu.JaxTestCase):
     {"testcase_name": f"_func={func_and_init[0].__name__}_maxiter={maxiter}",
      "maxiter": maxiter, "func_and_init": func_and_init}
     for maxiter in [None]
-    for func_and_init in [(rosenbrock, np.zeros(2)),
-                          (himmelblau, np.ones(2)),
+    for func_and_init in [(rosenbrock, np.zeros(2, dtype='float32')),
+                          (himmelblau, np.ones(2, dtype='float32')),
                           (matyas, np.ones(2) * 6.),
                           (eggholder, np.ones(2) * 100.)]))
   def test_minimize(self, maxiter, func_and_init):
