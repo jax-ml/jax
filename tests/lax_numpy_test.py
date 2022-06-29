@@ -642,6 +642,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck( fun, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": f"{rec.test_name}_{othertype}", "name": rec.name, "othertype": othertype}
+    for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2
+    for othertype in [dict, list, tuple, set]))
+  def testOperatorOverloadErrors(self, name, othertype):
+    # Test that binary operators with builtin collections raise a TypeError
+    # and report the types in the correct order.
+    data = [(1, 2), (2, 3)]
+    arr = jnp.array(data)
+    other = othertype(data)
+
+    msg = f"unsupported operand type.* 'DeviceArray' and '{othertype.__name__}'"
+    with self.assertRaisesRegex(TypeError, msg):
+      getattr(arr, name)(other)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": f"{rec.test_name}_{othertype}", "name": rec.name, "othertype": othertype}
+    for rec in JAX_RIGHT_OPERATOR_OVERLOADS if rec.nargs == 2
+    for othertype in [dict, list, tuple, set]))
+  def testRightOperatorOverloadErrors(self, name, othertype):
+    # Test that binary operators with builtin collections raise a TypeError
+    # and report the types in the correct order.
+    data = [(1, 2), (2, 3)]
+    arr = jnp.array(data)
+    other = othertype(data)
+
+    msg = f"unsupported operand type.* '{othertype.__name__}' and 'DeviceArray'"
+    with self.assertRaisesRegex(TypeError, msg):
+      getattr(arr, name)(other)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": rec.test_name + f"_{dtype}",
        "rng_factory": rec.rng_factory,
        "op_name": rec.name, "dtype": dtype}

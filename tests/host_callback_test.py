@@ -941,8 +941,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
               identity=True
               transforms=()
             ] b
-            _:f32[] = mul c 2.00
-            d:f32[] = mul 1.00 2.00
+            _:f32[] = mul 2.00 c
+            d:f32[] = mul 2.00 1.00
             e:f32[] = outside_call[
               arg_treedef={treedef}
               callback=...
@@ -960,8 +960,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
               callback=...
               identity=True
             ] b
-            _:f32[] = mul c 2.00
-            d:f32[] = mul 1.00 2.00
+            _:f32[] = mul 2.00 c
+            d:f32[] = mul 2.00 1.00
             e:f32[] = mul d 3.00
           in (e,) }}""", jaxpr)
     assertMultiLineStrippedEqual(self, "", testing_stream.output)
