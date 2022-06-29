@@ -30,7 +30,8 @@ easy, even if at the cost of making C++ changes slightly harder.
 
 ## How are `jax` and `jaxlib` versioned?
 
-Summary: `jax`'s version must be greater than or equal to `jaxlib`'s version,
+Summary: `jax` and `jaxlib` share the same version number in the JAX source tree, but are released as separate Python packages.
+When installed, the `jax` package version must be greater than or equal to `jaxlib`'s version,
 and `jaxlib`'s version must be greater than or equal to the minimum `jaxlib`
 version specified by `jax`.
 
@@ -54,9 +55,7 @@ the following must hold:
 
 These constraints imply the following rules for releases:
 * `jax` may be released on its own at any time, without updating `jaxlib`.
-* If a new `jaxlib` is released, a `jax` release whose version is equal to or
-  greater than version the `jaxlib`'s version number must be made at the same
-  time.
+* If a new `jaxlib` is released, a `jax` release must be made at the same time.
 
 These
 [version constraints](https://github.com/google/jax/blob/main/jax/version.py)

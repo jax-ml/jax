@@ -79,7 +79,6 @@ py_library(
         "lapack.py",
         "mhlo_helpers.py",
         "pocketfft.py",
-        "version.py",
     ],
     deps = [
         ":_lapack",

@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# This file is included as part of both jax and jaxlib. It is also
+# eval()-ed by setup.py, so it should not have any dependencies.
+
+__version__ = "0.3.15"
+_minimum_jaxlib_version = "0.3.10"
+
 def _version_as_tuple(version_str):
   return tuple(int(i) for i in version_str.split(".") if i.isdigit())
 
-__version__ = "0.3.15"
 __version_info__ = _version_as_tuple(__version__)
-
-_minimum_jaxlib_version = "0.3.10"
 _minimum_jaxlib_version_info = _version_as_tuple(_minimum_jaxlib_version)
