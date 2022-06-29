@@ -4553,6 +4553,10 @@ def _view(arr, dtype=None, type=None):
     return lax.bitcast_convert_type(arr_bytes, uint8).astype(dtype)
   return lax.bitcast_convert_type(arr_bytes, dtype)
 
+def _notimplemented_flat(self):
+  raise NotImplementedError("JAX DeviceArrays do not implement the arr.flat property: "
+                            "consider arr.flatten() instead.")
+
 ### track unimplemented functions
 
 _NOT_IMPLEMENTED_DESC = """
@@ -5010,6 +5014,7 @@ def _set_shaped_array_attributes(shaped_array):
   setattr(shaped_array, "reshape", core.aval_method(_reshape))
   setattr(shaped_array, "transpose", core.aval_method(_transpose))
   setattr(shaped_array, "flatten", core.aval_method(ravel))
+  setattr(shaped_array, "flat", core.aval_property(_notimplemented_flat))
   setattr(shaped_array, "T", core.aval_property(transpose))
   setattr(shaped_array, "real", core.aval_property(real))
   setattr(shaped_array, "imag", core.aval_property(imag))
@@ -5043,6 +5048,7 @@ def _set_device_array_base_attributes(device_array):
   setattr(device_array, "reshape", _reshape)
   setattr(device_array, "transpose", _transpose)
   setattr(device_array, "flatten", ravel)
+  setattr(device_array, "flat", property(_notimplemented_flat))
   setattr(device_array, "T", property(transpose))
   setattr(device_array, "real", property(real))
   setattr(device_array, "imag", property(imag))
