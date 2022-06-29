@@ -144,7 +144,7 @@ def minimize_bfgs(
     rho_k = jnp.reciprocal(_dot(y_k, s_k))
 
     sy_k = s_k[:, jnp.newaxis] * y_k[jnp.newaxis, :]
-    w = jnp.eye(d) - rho_k * sy_k
+    w = jnp.eye(d, dtype=rho_k.dtype) - rho_k * sy_k
     H_kp1 = (_einsum('ij,jk,lk', w, state.H_k, w)
              + rho_k * s_k[:, jnp.newaxis] * s_k[jnp.newaxis, :])
     H_kp1 = jnp.where(jnp.isfinite(rho_k), H_kp1, state.H_k)
