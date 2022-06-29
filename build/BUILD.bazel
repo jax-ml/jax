@@ -48,6 +48,7 @@ py_binary(
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:mhlo_dialect",
         "//jaxlib/mlir:func_dialect",
+        "//jaxlib/mlir:ml_program_dialect",
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:transforms",
