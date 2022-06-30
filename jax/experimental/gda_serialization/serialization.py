@@ -282,11 +282,12 @@ class AsyncManager:
 
   def _thread_func(self, temp_checkpoint_dir, final_checkpoint_dir):
     try:
+      current_process = jax.process_index()
+      logging.info('Starting commit to storage layer by process: %s',
+                   current_process)
       for future in self._commit_futures:
         future.result()
-
-      current_process = jax.process_index()
-      logging.info('Commit to storage layer has completed by process: %s',
+      logging.info('Finished committing to storage layer by process: %s',
                    current_process)
 
       # All processes will wait at the barrier. When all processes are at the
