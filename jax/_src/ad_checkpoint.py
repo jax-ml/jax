@@ -232,7 +232,7 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
     return f(*args, **kwargs)
 
   jaxpr = jax.make_jaxpr(lambda *args: jax.linearize(f_, *args)[1])(*args).jaxpr
-  res_lits = [x for x in jaxpr.outvars if isinstance(x, core.Literal)]
+  res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
   results = []

@@ -36,7 +36,7 @@ from jax._src.lax.utils import (
 )
 from jax._src.lax import lax
 from jax._src import util
-from jax._src.util import safe_zip
+from jax._src.util import safe_map, safe_zip
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_bridge
@@ -47,6 +47,9 @@ xc = xla_client
 
 Array = Any
 Shape = core.Shape
+
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 
 def slice(operand: Array, start_indices: Sequence[int],
@@ -764,8 +767,8 @@ def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
       start_indices,
       np.where(np.array(t.shape) == 0, 0,
                np.add(1, np.multiply(np.subtract(t.shape, 1), strides))))
-    pads = safe_zip(start_indices, np.subtract(operand_shape, real_limits),
-                    np.subtract(strides, 1))
+    pads = zip(start_indices, np.subtract(operand_shape, real_limits),
+               np.subtract(strides, 1))
   result = lax.pad(t, lax._const(t, 0), pads)
   assert result.shape == operand_shape, (
     f"result.shape={result.shape} operand_shape={operand_shape}")

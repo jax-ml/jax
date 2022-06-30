@@ -28,7 +28,8 @@ from jax.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_aval, zeros_like_p, Zero)
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
-                           as_hashable_function, weakref_lru_cache)
+                           as_hashable_function, weakref_lru_cache,
+                           partition_list)
 from jax.tree_util import register_pytree_node
 from jax import linear_util as lu
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
@@ -116,7 +117,7 @@ def linearize(traceable, *primals, **kwargs):
 
   in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
               + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
-                    for p in primals))
+                      for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr_nounits(jvpfun_flat, in_pvals)
@@ -191,10 +192,11 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
     if axes_to_reduce:
       ct = jax.lax.psum(ct, axis_name=axes_to_reduce)
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
-    if config.jax_enable_checks:
-      ct_aval = core.get_aval(ct_env[v])
-      joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type().strip_named_shape()
-      assert v.aval.strip_weak_type().strip_named_shape() == joined_aval, (prim, v.aval, ct_aval)
+    # TODO(mattjj): add back these checks for dynamic shapes
+    # if config.jax_enable_checks:
+    #   ct_aval = core.get_aval(ct_env[v])
+    #   joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type().strip_named_shape()
+    #   assert v.aval.strip_weak_type().strip_named_shape() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.pop(v, Zero(v.aval))
@@ -203,7 +205,11 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
     if type(v) is Literal:
       return v.val
     else:
-      return primal_env.get(v, UndefinedPrimal(v.aval))
+      a = v.aval
+      if type(a) is core.DShapedArray:
+        shape = [primal_env[d] if type(d) is core.Var else d for d in a.shape]
+        a = a.update(shape=tuple(shape))
+      return primal_env.get(v, UndefinedPrimal(a))
 
   def write_primal(v, val):
     if not is_undefined_primal(val):
@@ -461,7 +467,7 @@ def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
     primal_aval = raise_to_shaped(get_aval(primal), weak_type=False)
     tangent_aval = raise_to_shaped(get_aval(tangent), weak_type=False)
-    assert primal_aval.shape == tangent_aval.shape, (primal_aval.shape, tangent_aval.shape)
+    assert core.symbolic_equal_shape(primal_aval.shape, tangent_aval.shape)
     expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
     assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
 
@@ -607,7 +613,13 @@ def call_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
     params = update_params(params, map(is_undefined_primal, args),
                            [type(x) is not Zero for x in ct])
   if config.jax_dynamic_shapes:
-    in_type = [(core.raise_to_shaped(core.get_aval(x)), True) for x in all_args]
+    # TODO(mattjj,dougalm): handle consts, for now assume just args
+    which_lin = [is_undefined_primal(x) for x in args]
+    res_invars, _ = partition_list(which_lin, call_jaxpr.invars)
+    new_invars = [*res_invars, *call_jaxpr.outvars]
+    dbidx_map = {v: core.DBIdx(i) for i, v in enumerate(new_invars)}
+    in_type = [(v.aval.update(shape=tuple(dbidx_map.get(d, d) for d in v.aval.shape))
+                if type(v.aval) is core.DShapedArray else v.aval, True) for v in new_invars]
     fun = lu.annotate(fun, tuple(in_type))
   out_flat = primitive.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)

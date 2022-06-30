@@ -167,9 +167,10 @@ def toposort(end_nodes):
         childless_nodes.append(parent)
       else:
         child_counts[id(parent)] -= 1
+  sorted_nodes = sorted_nodes[::-1]
 
-  check_toposort(sorted_nodes[::-1])
-  return sorted_nodes[::-1]
+  check_toposort(sorted_nodes)
+  return sorted_nodes
 
 def check_toposort(nodes):
   visited = set()
