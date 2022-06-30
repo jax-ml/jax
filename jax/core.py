@@ -2066,21 +2066,51 @@ aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
 @contextmanager
 def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
   frame = AxisEnvFrame(axis_name, size, tag)
-  thread_local_state.trace_state.axis_env.append(frame)
+  ts = thread_local_state.trace_state
+  ts.axis_env.append(frame)
+  jax_config.update_thread_local_jit_state(
+      axis_env_state=tuple(f for f in ts.axis_env
+                           if f.name is not no_axis_name))
   try:
     yield
   finally:
-    thread_local_state.trace_state.axis_env.pop()
+    ts.axis_env.pop()
+    jax_config.update_thread_local_jit_state(
+        axis_env_state=tuple(f for f in ts.axis_env
+                             if f.name is not no_axis_name))
 
 @contextmanager
 def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]]):
   frames = [AxisEnvFrame(axis_name, size, None) for axis_name, size in axes]
-  thread_local_state.trace_state.axis_env.extend(frames)
+  ts = thread_local_state.trace_state
+  ts.axis_env.extend(frames)
+  jax_config.update_thread_local_jit_state(
+      axis_env_state=tuple(f for f in ts.axis_env
+                           if f.name is not no_axis_name))
   try:
     yield
   finally:
-    for _ in frames:
-      thread_local_state.trace_state.axis_env.pop()
+    for _ in frames: ts.axis_env.pop()
+    jax_config.update_thread_local_jit_state(
+        axis_env_state=tuple(f for f in ts.axis_env
+                             if f.name is not no_axis_name))
+
+
+@contextmanager
+def stash_axis_env():
+  "Promise that a function or with-suite does not depend implicitly on axis env"
+  # If the promise is broken, then a NameError about an unbound axis name will
+  # be raised.
+  ts = thread_local_state.trace_state
+  prev_axis_env, ts.axis_env = ts.axis_env, []
+  jax_config.update_thread_local_jit_state(axis_env_state=())
+  try:
+    yield
+  finally:
+    ts.axis_env = prev_axis_env
+    jax_config.update_thread_local_jit_state(
+        axis_env_state=tuple(f for f in ts.axis_env
+                             if f.name is not no_axis_name))
 
 
 # When a mapped function is given no axis name, we generate a name object based
@@ -2617,7 +2647,8 @@ def _compact_eqn_should_include(k: str, v: Any) -> bool:
   if k == 'branches': return False
   if isinstance(v, (Jaxpr, ClosedJaxpr)): return False
   if (isinstance(v, tuple) and
-      any(isinstance(e, (Jaxpr, ClosedJaxpr)) for e in v)): return False
+      any(isinstance(e, (Jaxpr, ClosedJaxpr)) for e in v)):
+    return False
   return True
 
 def str_eqn_compact(primitive_name: str, params: Dict) -> str:

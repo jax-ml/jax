@@ -1949,8 +1949,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(count[0], 2)  # one for fwd, one for bwd
 
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
-      _  = jax.vjp(f, x)
+      _, f_bwd2  = jax.vjp(f, x)
       _ = f_bwd(x)
+      _ = f_bwd2(x)
     self.assertEqual(count[0], 0)  # cache hits on fwd and bwd
 
   def testSizeOverflow(self):

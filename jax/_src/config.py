@@ -21,7 +21,7 @@ import itertools
 import os
 import sys
 import threading
-from typing import Any, List, Callable, NamedTuple, Iterator, Optional
+from typing import Any, List, Callable, Hashable, NamedTuple, Iterator, Optional
 import warnings
 
 from absl import logging
@@ -374,7 +374,12 @@ class Config:
 
     Values included in this set should also most likely be included in
     the C++ JIT state, which is handled separately."""
-    return (self.x64_enabled, self.jax_numpy_rank_promotion,
+    tls = jax_jit.thread_local_state()
+    axis_env_state = ()
+    context = tls.extra_jit_context
+    if context and context.axis_env_state is not None:
+      axis_env_state = context.axis_env_state
+    return (axis_env_state, self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision, self.jax_dynamic_shapes,
             self.jax_numpy_dtype_promotion, self.jax_default_device)
 
@@ -483,6 +488,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   `_update_thread_local_jit_state` in core.py to prevent circular imports.
   """
   dynamic_trace_state: Optional[Any] = None
+  axis_env_state: Optional[Hashable] = None
   numpy_rank_promotion: Optional[str] = None
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
