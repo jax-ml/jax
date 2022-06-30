@@ -2889,8 +2889,19 @@ for batch_group_count, feature_group_count in [
         feature_group_count=feature_group_count,
         batch_group_count=batch_group_count)
 
+#--- BEGIN Tests for conv_general_dilated with works_without_xla=True ---
 
-#--- BEGIN Tests for conv_general_dilated with works_for_xla=True ---
+# Validate Conv1D.
+_make_conv_harness(
+    "conv1d",
+    lhs_shape=(2, 3, 10),
+    rhs_shape=(3, 3, 5),
+    window_strides=(1,),
+    padding=((0, 0),),
+    lhs_dilation=(1,),
+    rhs_dilation=(1,),
+    dimension_numbers=("NCH", "OIH", "NCH"),
+    works_without_xla=True)
 
 
 # feature_group_count is supported for enable_xla=False only if we are doing a
@@ -2902,6 +2913,39 @@ _make_conv_harness(
     lhs_shape=(2, 3, 9, 9),  # "NCHW": in_channels == 3
     rhs_shape=(12, 1, 3, 3),  # "OIHW": channel_multiplier = 12/3 = 4
     feature_group_count=3,
+    works_without_xla=True)
+
+_make_conv_harness(
+    "depthwise2d_dilated",
+    lhs_shape=(2, 3, 9, 9),  # "NCHW": in_channels == 3
+    rhs_shape=(12, 1, 3, 3),  # "OIHW": channel_multiplier = 12/3 = 4
+    feature_group_count=3,
+    lhs_dilation=(1, 1),
+    rhs_dilation=(2, 1),
+    works_without_xla=True)
+
+_make_conv_harness(
+    "depthwise1d",
+    lhs_shape=(2, 3, 9),  # "NCH": in_channels == 3
+    rhs_shape=(12, 1, 3),  # "OIH": channel_multiplier = 12/3 = 4
+    feature_group_count=3,
+    lhs_dilation=(1,),
+    rhs_dilation=(1,),
+    window_strides=(1, ),
+    padding=((0, 0),),
+    dimension_numbers=("NCH", "OIH", "NCH"),
+    works_without_xla=True)
+
+_make_conv_harness(
+    "depthwise1d_dilated",
+    lhs_shape=(2, 3, 9),  # "NCH": in_channels == 3
+    rhs_shape=(12, 1, 3),  # "OIH": channel_multiplier = 12/3 = 4
+    feature_group_count=3,
+    lhs_dilation=(1,),
+    rhs_dilation=(2,),
+    window_strides=(1,),
+    padding=((0, 0),),
+    dimension_numbers=("NCH", "OIH", "NCH"),
     works_without_xla=True)
 
 # Validate variations of window_strides
@@ -2936,6 +2980,39 @@ _make_conv_harness(
     window_strides=(1, 1),
     lhs_dilation=(2, 2),
     padding=((1, 1), (2, 2)),
+    dimension_numbers=("NHWC", "HWIO", "NHWC"),
+    works_without_xla=True)
+
+# Simulate a call from lax.conv_transpose.
+_make_conv_harness(
+    "conv_tranpose1d_valid_padding",
+    lhs_shape=(1, 16, 2),
+    rhs_shape=(3, 2, 2),
+    window_strides=(1,),
+    lhs_dilation=(2,),
+    rhs_dilation=(1,),
+    padding=((2, 2), ),
+    dimension_numbers=("NHC", "HIO", "NHC"),
+    works_without_xla=True)
+
+_make_conv_harness(
+    "conv_tranpose1d_same_padding",
+    lhs_shape=(1, 16, 2),
+    rhs_shape=(3, 2, 2),
+    window_strides=(1,),
+    lhs_dilation=(2,),
+    rhs_dilation=(1,),
+    padding=((2, 1), ),
+    dimension_numbers=("NHC", "HIO", "NHC"),
+    works_without_xla=True)
+
+_make_conv_harness(
+    "conv_tranpose2d_same_padding",
+    lhs_shape=(1, 16, 16, 2),
+    rhs_shape=(2, 3, 2, 2),
+    window_strides=(1, 1),
+    lhs_dilation=(2, 2),
+    padding=((1, 1), (2, 1)),
     dimension_numbers=("NHWC", "HWIO", "NHWC"),
     works_without_xla=True)
 
@@ -3008,7 +3085,7 @@ for padding, lhs_dilation, rhs_dilation in [
         rhs_dilation=rhs_dilation,
         works_without_xla=True)
 
-#--- END Tests for conv_general_dilated with works_for_xla=True ---
+#--- END Tests for conv_general_dilated with works_without_xla=True ---
 
 
 for lhs_dilation, rhs_dilation in [
