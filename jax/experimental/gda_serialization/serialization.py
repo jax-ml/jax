@@ -187,7 +187,7 @@ def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
 
 
 def _get_key(key: str):
-  return f'checkpoint_{key}'
+  return f'gda_checkpoint_{key}'
 
 
 class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
@@ -271,7 +271,7 @@ class AsyncManager:
                        '`jax.distributed.initialize()` at the start of your '
                        'program.')
     self._client = distributed.global_state.client
-    self._final_checkpoint_dir = None
+    self._ckpt_count = None
 
   def __del__(self):
     if self._thread is not None and self._thread.is_alive():
@@ -291,24 +291,25 @@ class AsyncManager:
 
       # All processes will wait at the barrier. When all processes are at the
       # barrier, the barrier will be satisfied. If not, then it will timeout.
-      self._client.wait_at_barrier(self._final_checkpoint_dir,
+      self._client.wait_at_barrier(_get_key(self._ckpt_count),
                                    self._timeout_in_ms)
       logging.info('Finished waiting at barrier for process %s',
                    current_process)
 
       if current_process == 0:
-        logging.info('Renaming %s to %s', temp_checkpoint_dir,
-                     final_checkpoint_dir)
+        logging.info('Renaming %s to %s', temp_checkpoint_dir, final_checkpoint_dir)
         epath.Path(temp_checkpoint_dir).rename(final_checkpoint_dir)
-        logging.info('Finished saving checkpoint to `%s`.',
-                     final_checkpoint_dir)
-        self._client.key_value_set(
-            _get_key(self._final_checkpoint_dir), _CHECKPOINT_SUCCESS)
+        logging.info('Finished saving checkpoint to `%s`.', final_checkpoint_dir)
+        self._client.key_value_set(_get_key(self._ckpt_count),
+                                   _CHECKPOINT_SUCCESS)
     except Exception as e:
       self._exception = e
 
   def _start_async_commit(self, temp_checkpoint_dir, final_checkpoint_dir):
-    self._final_checkpoint_dir = final_checkpoint_dir
+    if self._ckpt_count is None:
+      self._ckpt_count = 0
+    else:
+      self._ckpt_count += 1
     self._thread = threading.Thread(
         target=self._thread_func,
         args=(temp_checkpoint_dir, final_checkpoint_dir))
@@ -328,11 +329,11 @@ class AsyncManager:
 
     self.check_for_errors()
 
-    if self._final_checkpoint_dir is not None:
+    if self._ckpt_count is not None:
       # Block until process 0 writes success value to the key value store.
       # If it fails to write it, then `blocking_key_value_get` will time out.
       self._client.blocking_key_value_get(
-          _get_key(self._final_checkpoint_dir), self._timeout_in_ms)
+          _get_key(self._ckpt_count), self._timeout_in_ms)
 
   def _add_futures(self, futures: Sequence[asyncio.Future]):
     self._commit_futures = futures
