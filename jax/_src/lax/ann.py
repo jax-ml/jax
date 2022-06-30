@@ -91,6 +91,8 @@ def approx_max_k(operand: Array,
                  aggregate_to_topk: bool = True) -> Tuple[Array, Array]:
   """Returns max ``k`` values and their indices of the ``operand`` in an approximate manner.
 
+  See https://arxiv.org/abs/2206.14286 for the algorithm details.
+
   Args:
     operand : Array to search for max-k. Must be a floating number type.
     k : Specifies the number of max-k.
@@ -149,6 +151,8 @@ def approx_min_k(operand: Array,
                  reduction_input_size_override: int = -1,
                  aggregate_to_topk: bool = True) -> Tuple[Array, Array]:
   """Returns min ``k`` values and their indices of the ``operand`` in an approximate manner.
+
+  See https://arxiv.org/abs/2206.14286 for the algorithm details.
 
   Args:
     operand : Array to search for min-k. Must be a floating number type.
