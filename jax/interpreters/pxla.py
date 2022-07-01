@@ -2246,6 +2246,14 @@ class PartitionSpec(tuple):
   UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
 
+def _get_mesh_from_sharding(shardings):
+  if not shardings:
+    return thread_resources.env.physical_mesh
+  fm = shardings[0].mesh
+  assert all(hasattr(s, 'mesh') and s.mesh == fm for s in shardings)
+  return fm
+
+
 @profiler.annotate_function
 def lower_mesh_computation(
     fun: lu.WrappedFun,
