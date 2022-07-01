@@ -117,15 +117,6 @@ def patch_copy_xla_extension_stubs(dst_dir):
       f.write(src)
 
 
-def patch_copy_xla_client_py(dst_dir):
-  with open(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_client.py")) as f:
-    src = f.read()
-    src = src.replace("from tensorflow.compiler.xla.python import xla_extension as _xla",
-                      "from . import xla_extension as _xla")
-    with open(os.path.join(dst_dir, "xla_client.py"), "w") as f:
-      f.write(src)
-
-
 def patch_copy_tpu_client_py(dst_dir):
   with open(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.py")) as f:
     src = f.read()
@@ -186,6 +177,8 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_sparse.py")
   copy_to_jaxlib("__main__/jaxlib/version.py")
+  copy_to_jaxlib("__main__/jaxlib/xla_client.py")
+  copy_to_jaxlib(f"__main__/jaxlib/xla_extension.{pyext}")
 
   cuda_dir = os.path.join(jaxlib_dir, "cuda")
   if exists(f"__main__/jaxlib/cuda/_cusolver.{pyext}"):
@@ -242,7 +235,6 @@ def prepare_wheel(sources_path):
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirTransforms.{pyext}", dst_dir=mlir_libs_dir)
-  copy_to_jaxlib(f"org_tensorflow/tensorflow/compiler/xla/python/xla_extension.{pyext}")
   if _is_windows():
     copy_file("__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll", dst_dir=mlir_libs_dir)
   elif _is_mac():
@@ -250,7 +242,6 @@ def prepare_wheel(sources_path):
   else:
     copy_file("__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.so", dst_dir=mlir_libs_dir)
   patch_copy_xla_extension_stubs(jaxlib_dir)
-  patch_copy_xla_client_py(jaxlib_dir)
 
   if exists("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so"):
     copy_to_jaxlib("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so")

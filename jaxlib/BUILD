@@ -18,6 +18,7 @@ load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
     "flatbuffer_cc_library",
+    "if_windows",
     "pybind_extension",
 )
 
@@ -37,7 +38,9 @@ py_library(
         "mhlo_helpers.py",
         "pocketfft.py",
         ":version",
+        ":xla_client",
     ],
+    data = [":xla_extension"],
     deps = [
         ":_lapack",
         ":_pocketfft",
@@ -57,6 +60,23 @@ py_library(
 symlink_files(
     name = "version",
     srcs = ["//jax:version.py"],
+    dst = ".",
+    flatten = True,
+)
+
+symlink_files(
+    name = "xla_client",
+    srcs = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
+    dst = ".",
+    flatten = True,
+)
+
+symlink_files(
+    name = "xla_extension",
+    srcs = if_windows(
+        ["@org_tensorflow//tensorflow/compiler/xla/python:xla_extension.pyd"],
+        ["@org_tensorflow//tensorflow/compiler/xla/python:xla_extension.so"],
+    ),
     dst = ".",
     flatten = True,
 )

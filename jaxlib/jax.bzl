@@ -15,7 +15,7 @@
 """Bazel macros used by the JAX build."""
 
 load("@org_tensorflow//tensorflow/core/platform/default:build_config.bzl", _pyx_library = "pyx_library")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", _pybind_extension = "pybind_extension")
+load("@org_tensorflow//tensorflow:tensorflow.bzl", _if_windows = "if_windows", _pybind_extension = "pybind_extension")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
@@ -29,6 +29,7 @@ pyx_library = _pyx_library
 pybind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
+if_windows = _if_windows
 flatbuffer_cc_library = _flatbuffer_cc_library
 
 def py_extension(name, srcs, copts, deps):

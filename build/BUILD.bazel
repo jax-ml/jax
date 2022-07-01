@@ -17,7 +17,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", "if_windows")
+load("//jaxlib:jax.bzl", "if_windows")
 
 licenses(["notice"])  # Apache 2
 
