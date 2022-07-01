@@ -101,6 +101,8 @@ def all_leaves(iterable, is_leaf: Optional[Callable[[Any], bool]] = None):
 
   Args:
     iterable: Iterable of leaves.
+    is_leaf: An optional function which should return True when a non-leaf
+      object should be considered as a leaf (and False otherwise).
 
   Returns:
     A boolean indicating if all elements in the input are leaves.

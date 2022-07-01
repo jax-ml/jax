@@ -305,6 +305,12 @@ class TreeTest(jtu.JaxTestCase):
   def testAllLeavesWithLeaves(self, leaf):
     self.assertTrue(tree_util.all_leaves([leaf]))
 
+  def testAllLeavesWithIsLeaf(self):
+    leaf = object()
+    self.assertFalse(tree_util.all_leaves([leaf, None]))
+    self.assertTrue(tree_util.all_leaves([leaf, None],
+                                         is_leaf=lambda x: x is None))
+
   @parameterized.parameters(*TREES)
   def testCompose(self, tree):
     treedef = tree_util.tree_structure(tree)
