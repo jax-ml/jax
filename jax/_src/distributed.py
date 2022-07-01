@@ -28,6 +28,7 @@ from jax._src.lib import xla_extension
 class State:
   service: Optional[Any] = None
   client: Optional[Any] = None
+  preemption_sync_manager: Optional[Any] = None
 
   def initialize(self,
                  coordinator_address: Optional[str] = None,
@@ -81,6 +82,9 @@ class State:
     logging.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
+    if xla_client._version >= 77 and config.jax_coordination_service:
+      self.initialize_preemption_sync_manager()
+
   def shutdown(self):
     if self.client:
       self.client.shutdown()
@@ -88,6 +92,14 @@ class State:
     if self.service:
       self.service.shutdown()
       self.service = None
+
+  def initialize_preemption_sync_manager(self):
+    if self.preemption_sync_manager is not None:
+      raise RuntimeError(
+          'Preemption sync manager should only be initialized once.')
+    self.preemption_sync_manager = (
+        xla_extension.create_preemption_sync_manager())
+    self.preemption_sync_manager.initialize(self.client)
 
 global_state = State()
 
