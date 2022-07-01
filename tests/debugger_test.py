@@ -274,6 +274,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     \(jaxdb\) array\(.*, dtype=float32\)
     \(jaxdb\) """)
     g(jnp.arange(2., dtype=jnp.float32))
+    jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
 if __name__ == '__main__':
