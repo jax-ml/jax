@@ -208,9 +208,19 @@ show_example(Special(1., 2.))
 ```
 
 The set of Python types that are considered internal pytree nodes is extensible,
-through a global registry of types, and values of registered types are traversed
-recursively. To register a new type, you can use
-{func}`~jax.tree_util.register_pytree_node`:
+through a global registry of types. Values of registered types are traversed
+recursively, so a custom pytree type can itself contain pytrees.
+
+To register a new type, you can use {func}`~jax.tree_util.register_pytree_node`
+to specify how to flatten and unflatten instances of the new type. That is, you
+register two functions: the first function accepts instances of the new type and
+returns a pair where the first element is an iterable of children (for example,
+the values of a dictionary) and the second element is auxiliary metadata needed
+to reconstruct the instance (for example, the sorted keys of a dictionary). The
+second function goes the other way: given the auxiliary data and children, it
+constructs an instance of the new type.
+
+Here's an example:
 
 ```{code-cell}
 from jax.tree_util import register_pytree_node
@@ -258,8 +268,22 @@ register_pytree_node(
 show_example(RegisteredSpecial(1., 2.))
 ```
 
-Alternatively, you can define appropriate `tree_flatten` and `tree_unflatten` methods
-on your class and decorate it with {func}`~jax.tree_util.register_pytree_node_class`:
+In this example, `aux_data` isn't needed. But for classes like dicts it may be
+necessary. For example, registering a `dict` as a PyTree might look like:
+```{code-cell}
+def dict_flatten(dct):
+  sorted_keys = sorted(dct)
+  return [dct[k] for k in sorted_keys], sorted_keys
+
+def dict_unflatten(sorted_keys, sorted_vals):
+  return dict(zip(sorted_keys, sorted_vals))
+
+register_pytree_node(dict, dict_flatten, dict_unflatten)
+```
+
+Alternatively, you can define appropriate `tree_flatten` and `tree_unflatten`
+methods on your class and decorate it with
+{func}`~jax.tree_util.register_pytree_node_class`:
 
 ```{code-cell}
 from jax.tree_util import register_pytree_node_class

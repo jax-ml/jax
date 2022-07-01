@@ -120,7 +120,8 @@ def register_pytree_node(nodetype: Type[T],
                          unflatten_func: Callable[[_AuxData, _Children], T]):
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  See `example usage <pytrees.html>`_.
+  See `example usage
+  <https://jax.readthedocs.io/en/latest/pytrees.html#extending-pytrees>`_.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node.
@@ -153,6 +154,9 @@ def register_pytree_node_class(cls):
       @classmethod
       def tree_unflatten(cls, aux_data, children):
         return cls(*children)
+
+  For an example that uses nontrivial ``aux_data``, see `extending pytrees
+  <https://jax.readthedocs.io/en/latest/pytrees.html#extending-pytrees>`_.
   """
   register_pytree_node(cls, op.methodcaller('tree_flatten'), cls.tree_unflatten)
   return cls
