@@ -24,6 +24,39 @@ licenses(["notice"])
 
 package(default_visibility = ["//:__subpackages__"])
 
+py_library(
+    name = "jaxlib",
+    srcs = [
+        "gpu_linalg.py",
+        "gpu_prng.py",
+        "gpu_solver.py",
+        "gpu_sparse.py",
+        "init.py",
+        "lapack.py",
+        "mhlo_helpers.py",
+        "pocketfft.py",
+    ],
+    deps = [
+        ":_lapack",
+        ":_pocketfft",
+        ":cpu_feature_guard",
+        "//jaxlib/mlir",
+        "//jaxlib/mlir:builtin_dialect",
+        "//jaxlib/mlir:func_dialect",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:mhlo_dialect",
+        "//jaxlib/mlir:ml_program_dialect",
+        "//jaxlib/mlir:pass_manager",
+        "//jaxlib/mlir:sparse_tensor_dialect",
+        "//jaxlib/mlir:transforms",
+    ],
+)
+
+exports_files([
+    "setup.py",
+    "setup.cfg",
+])
+
 cc_library(
     name = "kernel_pybind11_helpers",
     hdrs = ["kernel_pybind11_helpers.h"],
@@ -67,30 +100,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
     ],
 )
-
-py_library(
-    name = "jaxlib",
-    srcs = [
-        "gpu_linalg.py",
-        "gpu_prng.py",
-        "gpu_solver.py",
-        "gpu_sparse.py",
-        "init.py",
-        "lapack.py",
-        "mhlo_helpers.py",
-        "pocketfft.py",
-    ],
-    deps = [
-        ":_lapack",
-        ":_pocketfft",
-        ":cpu_feature_guard",
-    ],
-)
-
-exports_files([
-    "setup.py",
-    "setup.cfg",
-])
 
 # CPU kernels
 
