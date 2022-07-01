@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//jaxlib/mlir:symlink_files.bzl", "symlink_files", "symlink_inputs")
+load("//jaxlib:symlink_files.bzl", "symlink_inputs")
 
 package(
     default_visibility = [
@@ -20,19 +20,12 @@ package(
     ],
 )
 
-# TODO: symlink_inputs currently doesn't support multiple entries in the nested
-# dictionary of symlinked_inputs. Use symlink_files directly instead.
-symlink_files(
-    name = "dialect_core_py_files",
-    srcs = ["@llvm-project//mlir/python:DialectCorePyFiles"],
-    dst = "dialects",
-)
-
-py_library(
+symlink_inputs(
     name = "core",
-    srcs = [
-        ":dialect_core_py_files",
-    ],
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@llvm-project//mlir/python:DialectCorePyFiles"],
+    }},
 )
 
 symlink_inputs(

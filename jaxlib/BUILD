@@ -14,6 +14,7 @@
 
 # JAX is Autograd and XLA
 
+load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
     "flatbuffer_cc_library",
@@ -35,6 +36,7 @@ py_library(
         "lapack.py",
         "mhlo_helpers.py",
         "pocketfft.py",
+        ":version",
     ],
     deps = [
         ":_lapack",
@@ -50,6 +52,13 @@ py_library(
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:transforms",
     ],
+)
+
+symlink_files(
+    name = "version",
+    srcs = ["//jax:version.py"],
+    dst = ".",
+    flatten = True,
 )
 
 exports_files([

@@ -40,7 +40,6 @@ py_binary(
     srcs = ["build_wheel.py"],
     data = [
         "LICENSE.txt",
-        "//:jax/version.py",
         "//jaxlib",
         "//jaxlib:setup.py",
         "//jaxlib:setup.cfg",
