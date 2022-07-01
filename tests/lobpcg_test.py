@@ -366,6 +366,7 @@ class F32LobpcgTest(LobpcgTest):
       linalg.lobpcg_standard(A[:50, :50], X[:50])
 
   @parameterized.named_parameters(_make_concrete_cases(f64=False))
+  @jtu.skip_on_devices("gpu")
   def testLobpcgConsistencyF32(self, matrix_name, n, k, m):
     self.checkLobpcgConsistency(matrix_name, n, k, m, jnp.float32)
 
