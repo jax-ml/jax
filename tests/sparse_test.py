@@ -1063,6 +1063,7 @@ class BCOOTest(jtu.JaxTestCase):
           [(5, 3), (5, 2), [0], [0]],
       ]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  @jtu.skip_on_devices("rocm")
   def test_bcoo_dot_general_cusparse(
     self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting):
     rng = jtu.rand_small(self.rng())
