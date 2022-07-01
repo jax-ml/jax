@@ -32,6 +32,26 @@ if_rocm_is_configured = _if_rocm_is_configured
 if_windows = _if_windows
 flatbuffer_cc_library = _flatbuffer_cc_library
 
+jax_internal_packages = []
+jax_test_util_visibility = []
+loops_visibility = []
+sharded_jit_visibility = []
+
+absl_logging_py_deps = []
+absl_testing_py_deps = []
+cloudpickle_py_deps = []
+numpy_py_deps = []
+pil_py_deps = []
+portpicker_py_deps = []
+scipy_py_deps = []
+tensorflow_py_deps = []
+
+jax_extra_deps = []
+jax2tf_deps = []
+
+def py_library_providing_imports_info(*, name, lib_rule = native.py_library, **kwargs):
+    lib_rule(name = name, **kwargs)
+
 def py_extension(name, srcs, copts, deps):
     pybind_extension(name, srcs = srcs, copts = copts, deps = deps, module_name = name)
 
@@ -100,3 +120,37 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         interface_library = interface_library_file,
         shared_library = out,
     )
+
+def jax_test(
+        name,
+        srcs,
+        args = [],
+        shard_count = None,
+        deps = [],
+        disable_backends = None,  # buildifier: disable=unused-variable
+        backend_tags = {},  # buildifier: disable=unused-variable
+        disable_configs = None,  # buildifier: disable=unused-variable
+        enable_configs = None,  # buildifier: disable=unused-variable
+        tags = [],
+        main = None):
+    if shard_count == None or type(shard_count) == type(0):
+        shards = shard_count
+    else:
+        shards = shard_count.get("cpu", None)
+    native.py_test(
+        name = name,
+        srcs = srcs,
+        args = args,
+        deps = [
+            "//jax",
+            "//jax:test_util",
+        ] + deps,
+        shard_count = shards,
+        tags = tags,
+        main = main,
+    )
+
+def jax_generate_backend_suites():
+    pass
+
+jax_test_file_visibility = []

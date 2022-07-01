@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,30 +14,35 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "jax2tf_deps",
+    "numpy_py_deps",
     "tensorflow_py_deps",
 )
 
-licenses(["notice"])
+licenses(["notice"])  # Apache 2
 
-package(default_visibility = ["//visibility:public"])
-
-py_library(
-    name = "jax_to_ir",
-    srcs = ["jax_to_ir.py"],
-    tags = [
-        "ignore_for_dep=third_party.py.jax.experimental.jax2tf",
-        "ignore_for_dep=third_party.py.tensorflow",
-    ],
-    deps = [
-        "//jax",
-    ],
+package(
+    default_visibility = ["//visibility:private"],
 )
 
 py_library(
-    name = "jax_to_ir_with_tensorflow",
-    srcs = ["jax_to_ir.py"],
+    name = "jax2tf",
+    srcs = ["__init__.py"],
+    srcs_version = "PY3",
+    visibility = ["//visibility:public"],
+    deps = [":jax2tf_internal"],
+)
+
+py_library(
+    name = "jax2tf_internal",
+    srcs = [
+        "call_tf.py",
+        "impl_no_xla.py",
+        "jax2tf.py",
+        "shape_poly.py",
+    ],
+    srcs_version = "PY3",
     deps = [
         "//jax",
-        "//jax/experimental/jax2tf",
-    ] + tensorflow_py_deps,
+    ] + numpy_py_deps + tensorflow_py_deps + jax2tf_deps,
 )
