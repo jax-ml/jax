@@ -129,6 +129,30 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m1.local_shards:
       self.assertArraysEqual(l.data.to_py(), expected_data[l.device.id])
 
+  def test_checkpointing_scalar(self):
+    global_mesh = jtu.create_global_mesh((2,), ('x'))
+    global_input_shape = ()
+    data = np.array(4)
+    gda1 = GlobalDeviceArray.from_callback(global_input_shape, global_mesh,
+                                           P(None), lambda idx: data[idx])
+    ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
+
+    ckpt_paths = [str(ckpt_dir1)]
+    tspecs = jax.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+
+    serialization.run_serialization([gda1], tspecs)
+
+    m1, = serialization.run_deserialization(
+        [jtu.create_global_mesh((2,), ('x'))],
+        [P(None)],
+        tspecs,
+        [()],
+        [np.float32]
+    )
+
+    for l in m1.local_shards:
+      self.assertArraysEqual(l.data.to_py(), data.astype(np.float32))
+
   def test_spec_has_metadata(self):
     spec = {
         'a': {
