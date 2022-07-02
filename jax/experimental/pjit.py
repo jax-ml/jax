@@ -72,7 +72,7 @@ class PjitCompiled(stages.Compiled):
 
   @pxla.maybe_cached_property
   def input_shardings(self) -> Sequence[pxla.PartitionSpec]:
-    args, kwargs = self.in_tree.unflatten([
+    args, kwargs = tree_unflatten(self.in_tree, [
         pxla.array_mapping_to_axis_resources(i)
         for i in self._executable._in_axes
     ])  # pytype: disable=attribute-error
@@ -81,7 +81,7 @@ class PjitCompiled(stages.Compiled):
 
   @pxla.maybe_cached_property
   def output_shardings(self):
-    return self.out_tree.unflatten([
+    return tree_unflatten(self.out_tree, [
         pxla.array_mapping_to_axis_resources(o)
         for o in self._executable._out_axes
     ])  # pytype: disable=attribute-error

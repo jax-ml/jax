@@ -1101,7 +1101,7 @@ def lower_parallel_callable(
                          keepalive=keepalive)
 
 
-class PmapComputation(stages.Computation):
+class PmapComputation(stages.XlaLowering):
   _hlo: Union[ir.Module, xc.XlaComputation]
   _executable: Optional[PmapExecutable]
 
@@ -1110,7 +1110,9 @@ class PmapComputation(stages.Computation):
     self._hlo = hlo
     self.compile_args = compile_args
 
-  def hlo(self):
+  # -- stages.XlaLowering overrides
+
+  def hlo(self) -> xc.XlaComputation:
     # this is a method for api consistency with dispatch.XlaComputation
     if isinstance(self._hlo, xc.XlaComputation):
       return self._hlo
@@ -1133,7 +1135,7 @@ class PmapComputation(stages.Computation):
     return self._executable
 
 
-class PmapExecutable(stages.Executable):
+class PmapExecutable(stages.XlaExecutable):
   __slots__ = ['xla_executable', 'unsafe_call', 'fingerprint', 'in_avals']
 
   def __init__(self, xla_executable, unsafe_call, fingerprint, in_avals):
@@ -1277,13 +1279,10 @@ class PmapExecutable(stages.Executable):
 
     return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
 
-  # -- stages.Executable protocol
+  # -- stages.XlaExecutable overrides
 
-  def runtime_executable(self):
+  def xla_extension_executable(self):
     return self.xla_executable
-
-  def hlo_modules(self):
-    return self.xla_executable.hlo_modules()
 
   @profiler.annotate_function
   def call(self, *args):
@@ -2365,7 +2364,7 @@ def lower_mesh_computation(
       keepalive=keepalive)
 
 
-class MeshComputation(stages.Computation):
+class MeshComputation(stages.XlaLowering):
   _hlo: Union[ir.Module, xc.XlaComputation]
   _executable: Optional[MeshExecutable]
 
@@ -2377,7 +2376,9 @@ class MeshComputation(stages.Computation):
     self.compile_args = compile_args
     self._executable = None
 
-  def hlo(self):
+  # -- stages.XlaLowering overrides
+
+  def hlo(self) -> xc.XlaComputation:
     # this is a method for api consistency with dispatch.XlaComputation
     if isinstance(self._hlo, xc.XlaComputation):
       return self._hlo
@@ -2440,7 +2441,7 @@ def _get_array_mapping_from_executable(
   return in_axes, out_axes
 
 
-class MeshExecutable(stages.Executable):
+class MeshExecutable(stages.XlaExecutable):
   __slots__ = ['xla_executable', 'unsafe_call', '_input_avals',
                '_in_axes', '_out_axes', '_auto_spmd_lowering']
 
@@ -2525,13 +2526,10 @@ class MeshExecutable(stages.Executable):
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
                           in_axes, out_axes, auto_spmd_lowering)
 
-  # -- stages.Executable protocol
+  # -- stages.XlaExecutable overrides
 
-  def runtime_executable(self):
+  def xla_extension_executable(self):
     return self.xla_executable
-
-  def hlo_modules(self):
-    return self.xla_executable.hlo_modules()
 
   def call(self, *args):
     arg_avals = map(xla.abstractify, args)

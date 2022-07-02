@@ -253,6 +253,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f_exe(x, y)
     self.assertAllClose(ans, expected)
 
+  def testLowerAsText(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x)
+    self.assertIsInstance(f.as_text(), str)
+    self.assertIsInstance(f.as_text(dialect='hlo'), str)
+    self.assertIsInstance(f.as_text(dialect='mhlo'), str)
+
   def testLowerCompilerIR(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
@@ -262,12 +271,35 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def testLowerCompileCompilerIR(self):
+    # TODO(frostig): remove (deprecated)
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x).compile()
     self.assertIsNotNone(f.compiler_ir())
+
+  def testLowerCompileAsText(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    self.assertIsInstance(f.as_text(), (str, type(None)))
+
+  def testLowerCompileCostAnalysis(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    f.cost_analysis()  # doesn't raise
+
+  def testLowerCompileMemoryAnalysis(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x).compile()
+    f.memory_analysis()  # doesn't raise
 
   def testLowerCompileExecutable(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')

@@ -780,6 +780,21 @@ class PJitTest(jtu.BufferDonationTestCase):
         lambda: exe(x_i32, x_i32))
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerAsText(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    f = f.lower(x, x + 1)
+    self.assertIsInstance(f.as_text(), str)
+    self.assertIsInstance(f.as_text(dialect='hlo'), str)
+    self.assertIsInstance(f.as_text(dialect='mhlo'), str)
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompilerIR(self):
     @partial(pjit,
              in_axis_resources=P(('x', 'y'),),
@@ -794,8 +809,10 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileCompilerIR(self):
+    # TODO(frostig): remove (deprecated)
     @partial(pjit,
              in_axis_resources=P(('x', 'y'),),
              out_axis_resources=P(('x', 'y'),))
@@ -806,6 +823,45 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = jnp.arange(np.prod(shape)).reshape(shape)
     f = f.lower(x, x + 1).compile()
     self.assertIsNotNone(f.compiler_ir())
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompileAsText(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    f = f.lower(x, x + 1).compile()
+    self.assertIsInstance(f.as_text(), (str, type(None)))
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompileCostAnalysis(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    f = f.lower(x, x + 1).compile()
+    f.cost_analysis()  # doesn't raise
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompileMemoryAnalysis(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    f = f.lower(x, x + 1).compile()
+    f.memory_analysis()  # doesn't raise
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileExecutable(self):

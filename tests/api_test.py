@@ -1009,25 +1009,23 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         "for a particular signature. Detected .*BatchTracer",
         err)
 
+  def test_jit_lower_as_text(self):
+    f = self.jit(lambda x: x + 4).lower(1.)
+    self.assertIsInstance(f.as_text(), str)
+    self.assertIsInstance(f.as_text(dialect='hlo'), str)
+    self.assertIsInstance(f.as_text(dialect='mhlo'), str)
+
   def test_jit_lower_compiler_ir(self):
     f = self.jit(lambda x: x + 4).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
 
-  def test_jit_lower_compile_compiler_ir(self):
-    f = self.jit(lambda x: x + 4).lower(1.).compile()
-    self.assertIsNotNone(f.compiler_ir())
-
   def test_jit_lower_trivial_compiler_ir(self):
     f = self.jit(lambda x: x).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
-
-  def test_jit_lower_trivial_compile_compiler_ir(self):
-    f = self.jit(lambda x: x).lower(1.).compile()
-    self.assertIsNotNone(f.compiler_ir())
 
   def test_jit_lower_no_prunning(self):
     compiled = self.jit(lambda x, y: x + y).lower(1., 2.).compile()
@@ -1048,9 +1046,41 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       _ = jitted_f(1, 2)
     self.assertEqual(count[0], 1)
 
-  def test_jit_lower_compile_executable(self):
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_jit_lower_compile_compiler_ir(self):
+    # TODO(frostig): remove (deprecated)
     f = self.jit(lambda x: x + 4).lower(1.).compile()
+    self.assertIsNotNone(f.compiler_ir())
+
+  @jtu.ignore_warning(category=DeprecationWarning)
+  def test_jit_lower_trivial_compile_compiler_ir(self):
+    # TODO(frostig): remove (deprecated)
+    f = self.jit(lambda x: x).lower(1.).compile()
+    self.assertIsNotNone(f.compiler_ir())
+
+  def test_jit_lower_compile_as_text(self):
+    f = self.jit(lambda x: x).lower(1.).compile()
+    g = self.jit(lambda x: x + 4).lower(1.).compile()
+    self.assertIsInstance(f.as_text(), (str, type(None)))
+    self.assertIsInstance(g.as_text(), (str, type(None)))
+
+  def test_jit_lower_compile_cost_analysis(self):
+    f = self.jit(lambda x: x).lower(1.).compile()
+    g = self.jit(lambda x: x + 4).lower(1.).compile()
+    f.cost_analysis()  # doesn't raise
+    g.cost_analysis()  # doesn't raise
+
+  def test_jit_lower_compile_memory_analysis(self):
+    f = self.jit(lambda x: x).lower(1.).compile()
+    g = self.jit(lambda x: x + 4).lower(1.).compile()
+    f.memory_analysis()  # doesn't raise
+    g.memory_analysis()  # doesn't raise
+
+  def test_jit_lower_compile_executable(self):
+    f = self.jit(lambda x: x).lower(1.).compile()
+    g = self.jit(lambda x: x + 4).lower(1.).compile()
     self.assertIsNotNone(f.runtime_executable())
+    self.assertIsNotNone(g.runtime_executable())
 
   def test_jit_enum_as_dict_keys_fails(self):
     class E(enum.Enum):

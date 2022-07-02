@@ -778,7 +778,7 @@ def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
           else h(None, *device_put(x, device)) for h, x in zip(handlers, outs)]
 
 
-class XlaComputation(stages.Computation):
+class XlaComputation(stages.XlaLowering):
   name: str
   _is_trivial: bool
   _executable: Optional[XlaCompiledComputation]
@@ -800,6 +800,8 @@ class XlaComputation(stages.Computation):
 
   def is_trivial(self):
     return self._is_trivial
+
+  # -- stages.XlaLowering overrides
 
   def hlo(self) -> xc.XlaComputation:
     if self.is_trivial():
@@ -892,7 +894,7 @@ def compile_or_get_cached(backend, computation, compile_options):
   return backend_compile(backend, computation, compile_options)
 
 
-class XlaCompiledComputation(stages.Executable):
+class XlaCompiledComputation(stages.XlaExecutable):
   def __init__(self, xla_executable, in_avals, kept_var_idx, unsafe_call,
                keepalive: Any):
     self._xla_executable = xla_executable
@@ -963,13 +965,10 @@ class XlaCompiledComputation(stages.Executable):
     return XlaCompiledComputation(None, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 
-  # -- stages.Executable protocol
+  # -- stages.XlaExecutable overrides
 
-  def runtime_executable(self):
+  def xla_extension_executable(self):
     return self.xla_executable
-
-  def hlo_modules(self):
-    return self.xla_executable.hlo_modules()
 
   def call(self, *args):
     arg_specs = unsafe_map(arg_spec, args)

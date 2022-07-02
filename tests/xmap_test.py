@@ -657,6 +657,14 @@ class XMapTest(XMapTestCase):
         "called with:\n.*int32.*",
         lambda: f_exe(x_i32))
 
+  def testLowerAsText(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f = f.lower(x)
+    self.assertIsInstance(f.as_text(), str)
+    self.assertIsInstance(f.as_text(dialect='hlo'), str)
+    self.assertIsInstance(f.as_text(dialect='mhlo'), str)
+
   def testLowerCompilerIR(self):
     f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
@@ -665,11 +673,31 @@ class XMapTest(XMapTestCase):
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
 
+  @jtu.ignore_warning(category=DeprecationWarning)
   def testLowerCompileCompilerIR(self):
+    # TODO(frostig): remove (deprecated)
     f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
     f = f.lower(x).compile()
     self.assertIsNotNone(f.compiler_ir())
+
+  def testLowerCompileAsText(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f = f.lower(x).compile()
+    self.assertIsInstance(f.as_text(), (str, type(None)))
+
+  def testLowerCompileCostAnalysis(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f = f.lower(x).compile()
+    f.cost_analysis()  # doesn't raise
+
+  def testLowerCompileMemoryAnalysis(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f = f.lower(x).compile()
+    f.memory_analysis()  # doesn't raise
 
   def testLowerCompileExecutable(self):
     f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])

@@ -11,26 +11,225 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Interfaces to JAX's compilation steps, and utilities for conforming to them.
+
+This module defines a set of public-facing types that reflect the output of
+intermediate stages in the process of compilation. Currently there are two
+stages modeled: lowering (which produces compiler input), and compilation
+(which produces compiler output).
+
+It also defines some internal-facing types to guide what JAX can present in
+this common form: an internal ``Lowering`` suffices to back a public-facing
+``Lowered`` and an internal ``Executable`` suffices to back a public-facing
+``Compiled``.
+
+Finally, this module defines a couple more classes to commonly adapt our
+various internal XLA-backed lowerings and executables into the lowering and
+executable protocols described above.
+"""
+
+import warnings
 
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from typing_extensions import Protocol
 
 from jax import core
 from jax import tree_util
+from jax.lib import xla_client as xc
 
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src.lib import mlir
 
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
 
 
+xla_extension = xc._xla
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
+
+# -- Internal protocols
+
+class Executable(Protocol):
+  """Protocol for executables, which a user-facing ``Compiled`` encapsulates."""
+
+  def call(self, *args_flat) -> Sequence[Any]:
+    """Execute on the flat list of arguments, returning flat outputs."""
+    # TODO(frostig): improve annotation (sequences of arrays/buffers)
+    raise NotImplementedError
+
+  def as_text(self) -> str:
+    """A human-readable text representation of this executable.
+
+    Intended for visualization and debugging purposes. This need not be a valid
+    nor reliable serialization. It is relayed directly to external callers.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
+    raise NotImplementedError
+
+  def cost_analysis(self) -> Any:
+    """A summary of execution cost estimates.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it need not be consistent across versions of JAX
+    and jaxlib, or even across invocations. It is relayed directly to external
+    callers.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
+    # TODO(frostig): improve annotation (arbitrary pytree)
+    raise NotImplementedError
+
+  def memory_analysis(self) -> Any:
+    """A summary of estimated memory requirements.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it need not be consistent across versions of JAX
+    and jaxlib, or even across invocations. It is relayed directly to external
+    callers.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
+    # TODO(frostig): improve annotation (arbitrary pytree)
+    raise NotImplementedError
+
+  def runtime_executable(self) -> Any:
+    """An arbitrary object representation of this executable.
+
+    Intended for debugging purposes. This need not be a valid nor reliable
+    serialization. It is relayed directly to external callers, with no
+    guarantee on type, structure, or consistency across invocations.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend or
+    compiler.
+    """
+    raise NotImplementedError
+
+
+class Lowering(Protocol):
+  """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
+
+  def compile(self) -> Executable:
+    """Compile and return a corresponding ``Executable``."""
+    raise NotImplementedError
+
+  def as_text(self, dialect: Optional[str] = None) -> str:
+    """A human-readable text representation of this lowering.
+
+    Intended for visualization and debugging purposes. This need not be a valid
+    nor reliable serialization. It is relayed directly to external callers.
+    """
+    raise NotImplementedError
+
+  def compiler_ir(self, dialect: Optional[str] = None) -> Any:
+    """An arbitrary object representation of this lowering.
+
+    Intended for debugging purposes. This need not be a valid nor reliable
+    serialization. It is relayed directly to external callers, with no
+    guarantee on type, structure, or consistency across invocations.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend or
+    compiler.
+
+    Args:
+      dialect: Optional string specifying a representation dialect (e.g. "mhlo")
+    """
+    raise NotImplementedError
+
+
+# -- Internal adapters from XLA-related objects to the above protocols
+
+class XlaExecutable(Executable):
+
+  def xla_extension_executable(self) -> xla_extension.Executable:
+    raise NotImplementedError("must override")
+
+  def call(self, *args_flat) -> Sequence[Any]:
+    raise NotImplementedError("must override")
+
+  def as_text(self) -> str:
+    xla_ext_exe = self.xla_extension_executable()
+    err_msg = ("text view unsupported on current XLA backend: "
+               f"{type(xla_ext_exe)}")
+    if not hasattr(xla_ext_exe, "hlo_modules"):
+      raise NotImplementedError(err_msg)
+    return "\n\n".join([m.to_string() for m in xla_ext_exe.hlo_modules()])
+
+  def cost_analysis(self) -> List[Dict[str, float]]:
+    xla_ext_exe = self.xla_extension_executable()
+    err_msg = ("cost analysis unsupported on current XLA backend: "
+               f"{type(xla_ext_exe)}")
+    if not hasattr(xla_ext_exe, "client"):
+      raise NotImplementedError(err_msg)
+    return [xla_extension.hlo_module_cost_analysis(xla_ext_exe.client, m)
+            for m in xla_ext_exe.hlo_modules()]
+
+  def memory_analysis(self) -> Any:
+    xla_ext_exe = self.xla_extension_executable()
+    err_msg = ("memory analysis unsupported on current XLA backend: "
+               f"{type(xla_ext_exe)}")
+    if not hasattr(xla_ext_exe, "get_compiled_memory_stats"):
+      raise NotImplementedError(err_msg)
+    try:
+      return xla_ext_exe.get_compiled_memory_stats()
+    except xla_extension.XlaRuntimeError as e:
+      msg, *_ = e.args
+      if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
+        raise NotImplementedError(err_msg) from e
+      else:
+        raise
+
+  def runtime_executable(self) -> Any:
+    return self.xla_extension_executable()
+
+
+class XlaLowering(Lowering):
+  """Adapts our various internal XLA-backed computations into a ``Lowering``."""
+
+  def hlo(self) -> xc.XlaComputation:
+    """Return an HLO representation of this computation."""
+    raise NotImplementedError("must override")
+
+  def mhlo(self) -> mlir.ir.Module:
+    """Return an MHLO representation of this computation."""
+    raise NotImplementedError("must override")
+
+  def compile(self) -> Executable:
+    raise NotImplementedError("must override")
+
+  def as_text(self, dialect: Optional[str] = None) -> str:
+    if dialect is None or dialect == "mhlo":
+      return str(self.mhlo())
+    elif dialect == "hlo":
+      return self.hlo().as_hlo_text()
+    else:
+      raise ValueError(f"unknown dialect: {dialect}")
+
+  def compiler_ir(self, dialect: Optional[str] = None) -> Any:
+    if dialect is None or dialect == "mhlo":
+      return self.mhlo()
+    elif dialect == "hlo":
+      return self.hlo()
+    else:
+      raise ValueError(f"unknown dialect: {dialect}")
+
+
+
+# -- Public-facing API, plus helpers
 
 @dataclass
 class ArgInfo:
@@ -42,8 +241,8 @@ class Stage:
   args_info: Any                # PyTree of ArgInfo
 
   @property
-  def in_tree(self):
-    """``PyTreeDef`` of the pair (positional arguments, keyword arguments)."""
+  def in_tree(self) -> tree_util.PyTreeDef:
+    """Tree structure of the pair (positional arguments, keyword arguments)."""
     return tree_util.tree_structure(self.args_info)
 
   @property
@@ -65,38 +264,6 @@ def make_args_info(in_tree, in_avals, donate_argnums):
   return in_tree.unflatten([
       ArgInfo(aval, i in donate_argnums)
       for i, aval in enumerate(flat_avals)])
-
-
-class Executable(Protocol):
-  """Protocol for compiled executable, which a ``Compiled`` encapsulates."""
-
-  def call(*args_flat) -> Sequence[Any]:
-    """Invoke this on the flat list of arguments, returning flat outputs."""
-    raise NotImplementedError
-
-  def hlo_modules(self) -> Sequence[Any]:
-    """Return a sequence of HLO modules representing this computation."""
-    raise NotImplementedError
-
-  def runtime_executable(self) -> Any:
-    """Return an opaque reference to the executable known to the runtime."""
-    raise NotImplementedError
-
-
-class Computation(Protocol):
-  """Protocol for lowered computation, which a ``Lowered`` encapsulates."""
-
-  def compile(self) -> Executable:
-    """Compile and return a corresponding ``Exectuable``."""
-    raise NotImplementedError
-
-  def hlo(self) -> Any:
-    """Return an HLO representation of this computation."""
-    raise NotImplementedError
-
-  def mhlo(self) -> Any:
-    """Return an MHLO representation of this computation."""
-    raise NotImplementedError
 
 
 class Compiled(Stage):
@@ -128,9 +295,73 @@ class Compiled(Stage):
     representation of the program after such passes, whenever
     possible.
     """
-    return self._executable.hlo_modules()
+    # TODO(frostig): remove (deprecated)
+    warnings.warn(
+        "compiler_ir() is deprecated, consider runtime_executable() instead",
+        DeprecationWarning)
+    exe = self.runtime_executable()
+    return exe.hlo_modules() if exe is not None else None
 
-  def runtime_executable(self):
+  def as_text(self) -> Optional[str]:
+    """A human-readable text representation of this executable.
+
+    Intended for visualization and debugging purposes. This is not a valid nor
+    reliable serialization.
+
+    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
+    runtime.
+    """
+    try:
+      return self._executable.as_text()
+    except NotImplementedError:
+      return None
+
+  def cost_analysis(self) -> Optional[Any]:
+    """A summary of execution cost estimates.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it may be inconsistent across versions of JAX
+    and jaxlib, or even across invocations.
+
+    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
+    runtime.
+    """
+    # TODO(frostig): improve annotation (basic pytree of arbitrary structure)
+    try:
+      return self._executable.cost_analysis()
+    except NotImplementedError:
+      return None
+
+  def memory_analysis(self) -> Optional[Any]:
+    """A summary of estimated memory requirements.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it may be inconsistent across versions of JAX
+    and jaxlib, or even across invocations.
+
+    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
+    runtime.
+    """
+    # TODO(frostig): improve annotation (basic pytree of arbitrary structure)
+    try:
+      return self._executable.memory_analysis()
+    except NotImplementedError:
+      return None
+
+  def runtime_executable(self) -> Optional[Any]:
+    """An arbitrary object representation of this executable.
+
+    Intended for debugging purposes. This is not valid nor reliable
+    serialization. The output has no guarantee of consistency across
+    invocations.
+
+    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
+    runtime.
+    """
     return self._executable.runtime_executable()
 
   def __call__(self, *args, **kwargs):
@@ -147,7 +378,7 @@ class Compiled(Stage):
           f"function compiled for {self.in_tree}, called with {in_tree}")
     try:
       out_flat = self._executable.call(*args_flat)
-    except TypeError:
+    except TypeError as e:
       # We can't transform ahead-of-time compiled calls, since we've
       # lowered and compiled for a fixed function signature, and JAX
       # transformations change signatures. We interpret a Tracer
@@ -161,7 +392,7 @@ class Compiled(Stage):
           raise TypeError(
               "Cannot apply JAX transformations to a function lowered and "
               "compiled for a particular signature. Detected argument of "
-              f"Tracer type {type(arg)}.")
+              f"Tracer type {type(arg)}.") from e
       else:
         raise
     return tree_util.tree_unflatten(self.out_tree, out_flat)
@@ -180,11 +411,11 @@ class Lowered(Stage):
 
   args_info: Any                # PyTree of ArgInfo
   out_tree: tree_util.PyTreeDef
-  _lowering: Computation
+  _lowering: XlaLowering
   _no_kwargs: bool
 
   def __init__(self,
-               lowering: Computation,
+               lowering: XlaLowering,
                args_info,       # PyTreee of ArgInfo
                out_tree: tree_util.PyTreeDef,
                no_kwargs: bool = False):
@@ -195,7 +426,7 @@ class Lowered(Stage):
 
   @classmethod
   def from_flat_info(cls,
-                     lowering: Computation,
+                     lowering: XlaLowering,
                      in_tree: tree_util.PyTreeDef,
                      in_avals,
                      donate_argnums: Tuple[int],
@@ -214,16 +445,38 @@ class Lowered(Stage):
                out_tree, no_kwargs=no_kwargs)
 
   def compile(self) -> Compiled:
+    """Compile, returning a corresponding ``Compiled`` instance."""
     return Compiled(self._lowering.compile(), self.args_info,
                     self.out_tree, no_kwargs=self._no_kwargs)
 
-  def compiler_ir(self, dialect: Optional[str] = None):
-    if dialect is None or dialect == "mhlo":
-      return self._lowering.mhlo()
-    elif dialect == "hlo":
-      return self._lowering.hlo()
-    else:
-      raise ValueError(f"Unknown dialect {dialect}")
+  def as_text(self, dialect: Optional[str] = None) -> str:
+    """A human-readable text representation of this lowering.
+
+    Intended for visualization and debugging purposes. This need not be a valid
+    nor reliable serialization. It is relayed directly to external callers.
+
+    Args:
+      dialect: Optional string specifying a lowering dialect (e.g. "mhlo")
+    """
+    return self._lowering.as_text(dialect)
+
+  def compiler_ir(self, dialect: Optional[str] = None) -> Optional[Any]:
+    """An arbitrary object representation of this lowering.
+
+    Intended for debugging purposes. This is not a valid nor reliable
+    serialization. The output has no guarantee of consistency across
+    invocations.
+
+    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
+    runtime.
+
+    Args:
+      dialect: Optional string specifying a lowering dialect (e.g. "mhlo")
+    """
+    try:
+      return self._lowering.compiler_ir(dialect)
+    except NotImplementedError:
+      return None
 
 
 class Wrapped(Protocol):
@@ -232,7 +485,7 @@ class Wrapped(Protocol):
     raise NotImplementedError
 
   def lower(self, *args, **kwargs) -> Lowered:
-    """Lower this function for the given arguments.
+    """Lower this function explicitly for the given arguments.
 
     A lowered function is staged out of Python and translated to a
     compiler's input language, possibly in a backend-dependent
