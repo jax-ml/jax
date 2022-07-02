@@ -172,6 +172,8 @@ def reached_preemption_sync_point(step_id: int) -> bool:
   Raises:
     RuntimeError: if preemption sync manager has not been inititialized.
   """
+  if distributed.global_state.client is None:
+    return False
   sync_manager = distributed.global_state.preemption_sync_manager
   if sync_manager is None:
     raise RuntimeError("Preemption sync manager has not been initialized.")
