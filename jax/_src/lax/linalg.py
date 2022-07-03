@@ -1812,7 +1812,8 @@ if solver_apis is not None:
 mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 
 def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b, *, m, n, ldb, t):
-  return [lowering(dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
+  return [lowering(dl, d, du, b, m=m, n=n, ldb=ldb,
+                   t=dtypes.canonicalize_dtype(t))]
 
 tridiagonal_solve_p = Primitive('tridiagonal_solve')
 tridiagonal_solve_p.multiple_results = False
