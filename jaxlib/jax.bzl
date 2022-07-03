@@ -77,6 +77,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         linkshared = 1,
         linkstatic = 1,
         deps = deps,
+        target_compatible_with = ["@platforms//os:windows"],
     )
 
     # .def file with all symbols, not usable
@@ -85,6 +86,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         name = full_def_name,
         srcs = [dummy_library_name],
         output_group = "def_file",
+        target_compatible_with = ["@platforms//os:windows"],
     )
 
     # filtered def_file, only the needed symbols are included
@@ -95,6 +97,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         srcs = [full_def_name],
         outs = [filtered_def_file],
         cmd = """echo 'LIBRARY {}\nEXPORTS ' > $@ && grep '^\\W*mlir' $(location :{}) >> $@""".format(out, full_def_name),
+        target_compatible_with = ["@platforms//os:windows"],
     )
 
     # create the desired library
@@ -103,6 +106,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         linkshared = 1,
         deps = deps,
         win_def_file = filtered_def_file,
+        target_compatible_with = ["@platforms//os:windows"],
     )
 
     # however, the created cc_library (a shared library) cannot be correctly
@@ -112,6 +116,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         name = interface_library_file,
         srcs = [out],
         output_group = "interface_library",
+        target_compatible_with = ["@platforms//os:windows"],
     )
 
     # but this one can be correctly consumed, this is our final product
@@ -119,6 +124,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         name = name,
         interface_library = interface_library_file,
         shared_library = out,
+        target_compatible_with = ["@platforms//os:windows"],
     )
 
 def jax_test(

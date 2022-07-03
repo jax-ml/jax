@@ -147,24 +147,68 @@ sets up symbolic links from site-packages into the repository.
 
 # Running the tests
 
-To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
-parallel. First, install `pytest-xdist` and `pytest-benchmark` by running
-`pip install -r build/test-requirements.txt`.
+There are two supported mechanisms for running the JAX tests, either using Bazel
+or using pytest.
+
+## Using Bazel
+
+First, configure the JAX build by running:
+```
+python build/build.py --configure_only
+```
+
+You may pass additional options to `build.py` to configure the build; see the
+`jaxlib` build documentation for details.
+
+By default the Bazel build runs the JAX tests using `jaxlib` built form source.
+To run JAX tests, run:
+
+```
+bazel test //tests/...
+```
+
+To use a preinstalled `jaxlib` instead of building `jaxlib` from source, run
+
+```
+bazel test --//jax:build_jaxlib=false //tests/...
+```
+
+
+A number of test behaviors can be controlled using environment variables (see
+below). Environment variables may be passed to JAX tests using the
+`--test_env=FLAG=value` flag to Bazel.
+
+## Using pytest
+
+To run all the JAX tests using `pytest`, we recommend using `pytest-xdist`,
+which can run tests in parallel. First, install `pytest-xdist` and
+`pytest-benchmark` by running `pip install -r build/test-requirements.txt`.
 Then, from the repository root directory run:
 
 ```
 pytest -n auto tests
 ```
 
-JAX generates test cases combinatorially, and you can control the number of
-cases that are generated and checked for each test (default is 10). The automated tests
-currently use 25:
+## Controlling test behavior
 
+JAX generates test cases combinatorially, and you can control the number of
+cases that are generated and checked for each test (default is 10) using the
+`JAX_NUM_GENERATED_CASES` environment variable. The automated tests
+currently use 25 by default.
+
+For example, one might write
 ```
+# Bazel
+bazel test //tests/... --test_env=JAX_NUM_GENERATED_CASES=25`
+```
+or
+```
+# pytest
 JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
 ```
 
-The automated tests also run the tests with default 64-bit floats and ints:
+The automated tests also run the tests with default 64-bit floats and ints
+(`JAX_ENABLE_X64`):
 
 ```
 JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
@@ -179,7 +223,7 @@ file directly to see more detailed information about the cases being run:
 python tests/lax_numpy_test.py --num_generated_cases=5
 ```
 
-You can skip a few tests known as slow, by passing environment variable
+You can skip a few tests known to be slow, by passing environment variable
 JAX_SKIP_SLOW_TESTS=1.
 
 To specify a particular set of tests to run from a test file, you can pass a string
@@ -191,16 +235,6 @@ python tests/lax_numpy_test.py --test_targets="testPad"
 ```
 
 The Colab notebooks are tested for errors as part of the documentation build.
-
-Note that to run the full pmap tests on a (multi-core) CPU-only machine, you
-can run:
-
-```
-pytest tests/pmap_tests.py
-```
-
-I.e. don't use the `-n auto` option, since that effectively runs each test on a
-single-core worker.
 
 ## Doctests
 JAX uses pytest in doctest mode to test the code examples within the documentation.

@@ -35,4 +35,5 @@ tf_cc_binary(
         "@org_tensorflow//tensorflow/core/platform:logging",
         "@org_tensorflow//tensorflow/core/platform:platform_port",
     ],
+    tags = ["manual"],
 )

@@ -29,9 +29,24 @@ load(
     "sharded_jit_visibility",
 )
 
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+
 licenses(["notice"])
 
 package(default_visibility = [":internal"])
+
+bool_flag(
+    name = "build_jaxlib",
+    build_setting_default = True,
+)
+
+
+config_setting(
+    name = "enable_jaxlib_build",
+    flag_values = {
+        ":build_jaxlib": "True",
+    },
+)
 
 exports_files([
     "LICENSE",
@@ -104,9 +119,11 @@ py_library_providing_imports_info(
     ],
     lib_rule = pytype_library,
     visibility = ["//visibility:public"],
-    deps = [
-        "//jaxlib",
-    ] + numpy_py_deps + scipy_py_deps + jax_extra_deps,
+    deps = select({
+               ":enable_jaxlib_build": ["//jaxlib"],
+               "//conditions:default": [],
+           }) +
+           numpy_py_deps + scipy_py_deps + jax_extra_deps,
 )
 
 py_library_providing_imports_info(
