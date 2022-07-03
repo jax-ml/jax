@@ -1607,7 +1607,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       rtol = {np.float32: 5e-5, np.float64: 1e-13}
     else:
       rtol = {np.float32: 2e-5, np.float64: 1e-13}
-    self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol)
+    self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol, atol=1e-5)
 
     rtol = 5e-3 if scan is not scan_with_new_checkpoint2 else 5e-2
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
