@@ -41,7 +41,7 @@ disabled in JAX versions 0.2.12 and higher*
 
 It is temporarily possible to disable omnistaging by
 1. setting the shell environment variable `JAX_OMNISTAGING` to something falsey;
-2. setting the boolean flag `jax_omnistaging` to soething falsey if your code
+2. setting the boolean flag `jax_omnistaging` to something falsey if your code
    parses flags with absl;
 3. using this statement near the top of your main file:
 ```python
@@ -296,7 +296,7 @@ abstract tracer value caused a problem (the `jnp.reshape` line in the full stack
 trace, on omni.py:10), we also explain why this value became a tracer in the
 first place by pointing to the upstream primitive operation that caused it to
 become an abstract tracer (the `reduce_prod` from `jnp.prod` on omni.py:9) and to
-which `jit`-decorated function the tracer belongs (`ex` on omni.py:7).
+which `jit`-decorated function the tracer belongs (`ex1` on omni.py:6).
 
 
 ### Side-effects
