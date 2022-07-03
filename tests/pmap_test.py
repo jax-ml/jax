@@ -692,7 +692,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     ans = grad(lambda x: jnp.sum(test_fun(x)))(x)
     expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
-    self.assertAllClose(ans, expected, atol=1e-3)
+    self.assertAllClose(ans, expected, atol=1e-3, rtol=1e-3)
 
   def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
