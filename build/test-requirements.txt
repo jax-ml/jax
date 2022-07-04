@@ -1,7 +1,7 @@
 cloudpickle
 colorama>=0.4.4
 # TODO(jakevdp): fix use of deprecated NEAREST resampling for more recent pillow.
-pillow>=8.3.1,<9.1.0
+pillow>=8.3.1,<9.3.0
 pytest-benchmark
 pytest-xdist
 wheel
