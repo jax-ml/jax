@@ -22,23 +22,7 @@ from jax.experimental import array
 import numpy as np
 
 
-class ArrayMeta(abc.ABCMeta):
-  """Metaclass for overriding ndarray isinstance checks."""
-
-  def __instancecheck__(self, instance):
-    # Allow tracer instances with avals that are instances of UnshapedArray.
-    # We could instead just declare Tracer an instance of the ndarray type, but
-    # there can be traced values that are not arrays. The main downside here is
-    # that isinstance(x, ndarray) might return true but
-    # issubclass(type(x), ndarray) might return false for an array tracer.
-    try:
-      return (hasattr(instance, "aval") and
-              isinstance(instance.aval, core.UnshapedArray))
-    except AttributeError:
-      super().__instancecheck__(instance)
-
-
-class ndarray(metaclass=ArrayMeta):
+class ndarray(metaclass=abc.ABCMeta):
   dtype: np.dtype
   ndim: int
   shape: Tuple[int, ...]
@@ -292,3 +276,13 @@ for t in device_array.device_array_types:
   ndarray.register(t)
 ndarray.register(pxla._SDA_BASE_CLASS)
 ndarray.register(array.Array)
+ndarray.register(core.UnshapedArray)
+# We override Tracer.__class__ to return aval.__class__ to allow
+# tracer instances with avals that are instances of UnshapedArray
+# Note: there can be traced values that are not arrays.
+# The main downside here is that isinstance(x, ndarray) and issubclass(x.__class__, ndarray) return true
+# but issubclass(type(x), ndarray) might return false for an array tracer.
+# This is better than overriding ndarray isinstance checks,
+# which can not support `functools.singledispatch` based on x.__class__.
+# Theoretically, well written code should use x.__class__ rather than type(x)
+# except for capturing proxy type(e.g. Tracer). Unfortunately, many users prefer type(x).

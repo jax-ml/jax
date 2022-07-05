@@ -9606,6 +9606,13 @@ class DynamicShapeTest(jtu.JaxTestCase):
     mhlo = f_lowered.compiler_ir('mhlo')
     self.assertIn('tensor<?xi32>', str(mhlo))
 
+  def test_functools_singledispatch(self):
+    @functools.singledispatch
+    def foo(_):
+      raise NotImplementedError()
+    foo.register(jnp.ndarray, lambda x: x)
+    jax.make_jaxpr(foo)(0)
+
   def test_vmap_abstracted_axis(self):
     def foo(x, y):
       z = jax.vmap(jnp.sin)(x) * y

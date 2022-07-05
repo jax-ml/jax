@@ -549,6 +549,14 @@ class Tracer:
   def aval(self):
     raise NotImplementedError("must override")
 
+  @property
+  def __class__(self):
+    return self.aval.__class__
+
+  @__class__.setter
+  def __class__(self, _): # noqa: F811
+    raise NotImplementedError()
+
   def _assert_live(self) -> None:
     pass  # Override for liveness checking
 
