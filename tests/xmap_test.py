@@ -552,6 +552,12 @@ class XMapTest(XMapTestCase):
     y = rng.randn(*yshape)
     self.assertAllClose(fm(x, y), fref(x, y))
 
+  def testBatchingPostProcess(self):
+    x = jnp.arange(10).reshape(5, 2)
+    f = jax.vmap(lambda y: xmap(lambda x: x + y, in_axes=['i', ...], out_axes=['i', ...])(x))
+    ref = jax.vmap(lambda y: jax.vmap(lambda x: x + y)(x))
+    self.assertAllClose(f(x * 2), ref(x * 2))
+
   def testAutodiffBroadcast(self):
     f = xmap(lambda x, y: jnp.cos(lax.dot(x, jnp.sin(y),
                                           precision=lax.Precision.HIGHEST)),
