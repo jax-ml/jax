@@ -365,6 +365,19 @@ class XMapTest(XMapTestCase):
       xmap(f, in_axes=['a', ...], out_axes=['a', ...],
            axis_resources={'a': 'x'})(x)
 
+  def testNoTracerLeak(self):
+    @jax.jit
+    def xmap_linearize(xs):
+      eye = jnp.eye(xs.shape[0], dtype=jnp.float32)
+      primal, grad_f = jax.linearize(jnp.sin, xs)
+      return maps.xmap(
+          grad_f,
+          in_axes=['i', ...],
+          out_axes=['i', ...],
+          axis_resources={'i': maps.SerialLoop(1)})(eye)
+    xs = jnp.arange(1, 4, step=1).astype(jnp.float32)
+    xmap_linearize(xs)  # Doesn't raise a tracer leak error
+
   @parameterized.named_parameters(
     {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
     for name, mesh, axis_resources in (
