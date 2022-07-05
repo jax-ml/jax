@@ -54,6 +54,8 @@ zip, unsafe_zip = util.safe_zip, zip
 
 T = typing.TypeVar("T")
 
+Value = Any  # = ir.Value
+
 # mypy implicitly sets this variable to true when type checking.
 MYPY = False
 

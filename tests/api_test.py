@@ -8520,20 +8520,18 @@ class DynamicShapeTest(jtu.JaxTestCase):
     def f(x, y):
       return jnp.sin(x) + y
 
-    x = jnp.ones(3)
-    y = jnp.ones(3)
-    # TODO(mattjj,dougalm): improve error message
-    with self.assertRaisesRegex(TypeError, 'Shapes must be 1D sequences'):
+    x = np.ones(3)
+    y = np.ones(3)
+    with self.assertRaisesRegex(TypeError, 'add got incompatible shapes for broadcasting'):
       _ = jax.make_jaxpr(f, abstracted_axes=({0: 'n'}, {}))(x, y)
 
   def test_shape_errors_distinct_vars(self):
     def f(x, y):
       return jnp.sin(x) + y
 
-    x = jnp.ones(3)
-    y = jnp.ones(3)
-    # TODO(mattjj,dougalm): improve error message
-    with self.assertRaisesRegex(TypeError, 'Shapes must be 1D sequences'):
+    x = np.ones(3)
+    y = np.ones(3)
+    with self.assertRaisesRegex(TypeError, 'add got incompatible shapes for broadcasting'):
       _ = jax.make_jaxpr(f, abstracted_axes=({0: 'n'}, {0: 'm'}))(x, y)
 
   def test_basic_dot(self):
@@ -8986,8 +8984,8 @@ class DynamicShapeTest(jtu.JaxTestCase):
       count += 1
       return jnp.sum(x)
 
-    x = f(jnp.arange(3))
-    y = f(jnp.arange(4))
+    x = f(np.arange(3))
+    y = f(np.arange(4))
     self.assertAllClose(x, 3., check_dtypes=False)
     self.assertAllClose(y, 6., check_dtypes=False)
     self.assertEqual(count, 1)
@@ -9003,9 +9001,125 @@ class DynamicShapeTest(jtu.JaxTestCase):
       count += 1
       return jnp.ones(i, dtype='float32')
 
-    self.assertAllClose(f(3), jnp.ones(3, dtype='float32'), check_dtypes=True)
-    self.assertAllClose(f(4), jnp.ones(4, dtype='float32'), check_dtypes=True)
+    self.assertAllClose(f(3), np.ones(3, dtype='float32'), check_dtypes=True)
+    self.assertAllClose(f(4), np.ones(4, dtype='float32'), check_dtypes=True)
     self.assertEqual(count, 1)
+
+  @unittest.skip('TODO: need typechecking rule for concatenate')
+  def test_concatenate(self):
+    @partial(jax.jit, abstracted_axes=({0: 'n'},))
+    def f(x):  # x: f32[n, 4]
+      return jnp.concatenate([x, x, x], axis=0)
+
+    f(np.ones((5, 4), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skip('TODO: need typechecking rule for reshape')
+  def test_reshape(self):
+    @partial(jax.jit, abstracted_axes=({0: 'n'},))
+    def f(x):  # x: f32[n, 4]
+      return jnp.reshape(x, (2, -1))
+
+    f(np.ones((5, 4), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skip('TODO: need typechecking rule for reshape')
+  def test_nested(self):
+    @jax.jit
+    def nested_f(x):  # f32[h, v] -> f32[h, v]
+      # A nested call that needs shape variables
+      return jnp.sin(x)
+
+    @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'v'},))
+    def f(x):  # f32[h, w] -> f32[h, w]
+      return jnp.sin(x) + jax.jit(nested_f)(x)
+    f(np.ones((3, 5), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skip('TODO: need typechecking rule for reshape')
+  def test_nested_arange(self):
+    def nested_f(x):  # f32[h, v] -> f32[h, v]
+      # A nested call that needs to compute with shapes
+      return jnp.arange(x.shape[0] * x.shape[1], dtype=x.dtype).reshape(x.shape)
+
+    @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
+    def f(x):  # f32[h, w] -> f32[h, w]
+      return x + jax.jit(nested_f)(x)
+    f(np.ones((3, 5), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
+  def test_transpose(self):
+    @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
+    def f(x):  # f32[h, w] -> f32[w, h]
+      return x.T
+
+    f(np.ones((3, 5), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
+  def test_matmul(self):
+    @partial(jax.jit, abstracted_axes=({0: 'w', 1: 'w'},))
+    def f(x):  # f32[w, w] -> f32[w, w]
+      return jnp.matmul(x, x)
+
+    f(np.ones((5, 5), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
+  def test_matmul_shape_error(self):
+    @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
+    def f(x):  # f32[h, w] -> error
+      return jnp.matmul(x, x)
+
+    # TODO(necula): improve error message, print actual shapes
+    with self.assertRaisesRegex(TypeError,
+                                re.escape("dot_general requires contracting dimensions to have the same shape, got")):
+      f(np.ones((5, 5), dtype=np.float32))
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @unittest.skip("TODO: investigate failure")
+  def test_cond(self):
+    @partial(jax.jit, abstracted_axes=({0: 'w', 1: 'w'},))
+    def f(x):  # f32[w, w] -> f32[w, w]
+      return lax.cond(True,
+                      lambda x: jnp.sin(x),
+                      lambda x: jnp.matmul(x, x), x)
+    f(np.ones((5, 5), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_arange(self):
+    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    def f(x):  # f32[w] -> f32[w]
+      return jnp.arange(x.shape[0], dtype=x.dtype) + x
+    f(np.ones((5,), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_broadcast(self):
+    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    def f(x):  # f32[w] -> f32[w, w]
+      return jnp.broadcast_to(x, (x.shape[0], x.shape[0]))
+    f(np.ones((5,), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_zeros(self):
+    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    def f(x):  # f32[w] -> f32[w]
+      return jnp.zeros(x.shape[0], dtype=x.dtype) + x
+    f(np.ones((5,), dtype=np.float32))
+    # TODO: add assertions
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_stack(self):
+    @partial(jax.jit, abstracted_axes=({0: 'w'},))
+    def f(x):
+      return jnp.stack([jnp.sin(x), jnp.cos(x)])
+
+    f(np.ones((5,), dtype=np.float32))
+    # TODO: add assertions
 
   def test_slicing_basic(self):
     f = jax.jit(lambda x, n: jnp.sum(x[:n]))

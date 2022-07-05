@@ -2365,6 +2365,44 @@ def _substitute_vars_in_type(
   else:
     return a
 
+
+class DimensionHandlerTracer(core.DimensionHandler):
+  """See core.DimensionHandler.
+
+  Most methods are inherited.
+  """
+  def is_constant(self, d: core.DimSize) -> bool:
+    assert isinstance(d, Tracer)
+    return False
+
+  def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
+    return d1 is d2
+
+  def greater_equal(self, d1: core.DimSize, d2: core.DimSize):
+    raise core.InconclusiveDimensionOperation("TODO")
+
+  def divide_shape_sizes(self, s1: core.Shape, s2: core.Shape) -> core.DimSize:
+    """Computes integer "i" such that i  * size(s2) == size(s1).
+
+    Raise InconclusiveDimensionOperation if there is no such integer for all
+    contexts.
+    """
+    s1_size = functools.reduce(op.mul, s1, 1)
+    s2_size = functools.reduce(op.mul, s2, 1)
+    q, r = divmod(s1_size, s2_size)
+    # TODO(necula): must check that r == 0!
+    return q
+
+  def stride(self, d: core.DimSize, window_size: core.DimSize, window_stride: core.DimSize) -> core.DimSize:
+    """Implements `(d - window_size) // window_stride + 1`"""
+    raise core.InconclusiveDimensionOperation("TODO")
+
+  def as_value(self, d: core.DimSize):
+    """Turns a dimension size into a Jax value that we can compute with."""
+    raise core.InconclusiveDimensionOperation("TODO")
+
+core._SPECIAL_DIMENSION_HANDLERS[DynamicJaxprTracer] = DimensionHandlerTracer()
+
 Const = Any
 Val = Any
 
