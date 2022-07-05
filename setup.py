@@ -39,10 +39,10 @@ setup(
     package_data={"jax": ["py.typed"]},
     python_requires=">=3.7",
     install_requires=[
-        "absl-py>=1.1.0",
-        "numpy<1.23.0",
+        "absl-py<1.1.0",
+        "numpy>=1.19.0",
         "opt_einsum<3.3.0",
-        "scipy>=1.8.0",
+        "scipy>=1.5.0",
         "typing_extensions>=4.3.0",
         "etils[epath]",
     ],
