@@ -1718,16 +1718,159 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   poly_axes=[0, None, 0]),
 ]
 
+
+def _test_one_harness(tst: tf_test_util.JaxToTfTestCase, harness: Harness):
+  args = harness.dyn_args_maker(tst.rng())
+  poly_axes = harness.params["poly_axes"]  # type: Sequence[Sequence[int]]
+  assert len(args) == len(poly_axes)
+  # Make the polymorphic_shapes and input_signature
+  polymorphic_shapes: List[Optional[str]] = []
+  input_signature: List[tf.TensorSpec] = []
+  for arg, poly_axis in zip(args, poly_axes):
+    if poly_axis is None:
+      polymorphic_shapes.append(None)
+      input_signature.append(tf.TensorSpec(np.shape(arg), arg.dtype))
+    else:
+      def make_arg_polymorphic_shapes(poly_axis: Sequence[int]) -> Tuple[str, tf.TensorSpec]:
+        idx = -1
+        dims = []
+        tensorspec_dims: List[Optional[int]] = []
+        for i, d in enumerate(arg.shape):
+          if i in poly_axis:
+            idx += 1
+            dims.append(f"b{idx}")
+            tensorspec_dims.append(None)
+          else:
+            dims.append(str(d))
+            tensorspec_dims.append(d)
+        return ", ".join(dims), tf.TensorSpec(tensorspec_dims, arg.dtype)
+
+      arg_polymorphic_shapes, arg_tensorspec = make_arg_polymorphic_shapes(poly_axis)
+      polymorphic_shapes.append(arg_polymorphic_shapes)
+      input_signature.append(arg_tensorspec)
+
+  skip_jax_run = harness.params["skip_jax_run"]
+  if not skip_jax_run:
+    res_jax = harness.dyn_fun(*args)
+
+  enable_xla = harness.params.get("enable_xla", True)
+  expect_error_type, expect_error_regex = harness.params["expect_error"]
+  if expect_error_type is not None:
+    with tst.assertRaisesRegex(expect_error_type, expect_error_regex):
+      f_tf = tst.CheckShapePolymorphism(
+          harness.dyn_fun,
+          input_signature=input_signature,
+          polymorphic_shapes=polymorphic_shapes,
+          expected_output_signature=None,
+          enable_xla=enable_xla)
+  else:
+    f_tf = tst.CheckShapePolymorphism(
+        harness.dyn_fun,
+        input_signature=input_signature,
+        polymorphic_shapes=polymorphic_shapes,
+        expected_output_signature=None,
+        enable_xla=enable_xla)
+
+  if not skip_jax_run and expect_error_type is None and harness.params["check_result"]:
+    tol = harness.params["tol"]
+    tst.assertAllClose(res_jax, f_tf(*args), atol=tol, rtol=tol)
+
+
+def _get_jax2tf_limitations(
+    device, h: primitive_harness.Harness) -> Sequence[Jax2TfLimitation]:
+  # And the jax2tf limitations
+  def applicable_jax2tf_limitation(l: Jax2TfLimitation) -> bool:
+    # The CheckShapePolymorphism uses tf.function, so we care about "graph"
+    return l.filter(device=device, dtype=h.dtype, mode="graph")
+
+  limitations = Jax2TfLimitation.limitations_for_harness(h)
+  return tuple(filter(applicable_jax2tf_limitation, limitations))
+
+
+def _flatten_harnesses(harnesses):
+  res = []
+  for h in harnesses:
+    if isinstance(h, Sequence):
+      res.extend(h)
+    else:
+      res.append(h)
+  return res
+
+class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
+  """Tests for primitives that take shape values as parameters."""
+
+  # This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES.
+
+  # For each primitive "xxx" the test will be called "test_prim_xxx_...".
+  # If you want to run this test for only one harness that includes "foo"
+  # in the name (after test_prim), add parameter `one_containing="foo"`
+  # to parameterized below.
+  @primitive_harness.parameterized(
+      _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
+      #one_containing="take_along_axis_1_poly_axes=[0, 0]"
+  )
+  def test_prim(self, harness: Harness):
+    _test_one_harness(self, harness)
+
+  def test_vmap_while(self):
+    def cond_func(x):  # x: f32[3]
+      return jnp.sum(x) >= 0.
+    def body_func(x):  # x: f32[3]
+      return x - 1.
+    def f_jax(x):
+      return lax.while_loop(cond_func, body_func, x)
+
+    self.CheckShapePolymorphism(
+        jax.vmap(f_jax),
+        input_signature=[tf.TensorSpec((None, 3), dtype=tf.float32)],
+        polymorphic_shapes=["b, ..."],
+        expected_output_signature=tf.TensorSpec((None, 3), dtype=tf.float32)
+    )
+
+  def test_reshape_compiled(self):
+    # We compile the result of conversion for two shapes, hence we need to
+    # involve the TF compiler twice, but we trace only once with shape polymorphism
+    traced = False
+
+    def f_jax(x):
+      nonlocal traced
+      traced = True
+      y = jnp.sin(x)
+      return y.reshape([x.shape[0], -1])
+
+    x = self.rng().rand(4, 2, 3)
+    res_jax = f_jax(x)
+
+    traced = False
+    # If we get_concrete_function we trace once
+    f_tf = tf.function(
+        jax2tf.convert(f_jax, polymorphic_shapes=[PS("b", ...)]),
+        autograph=False,
+        jit_compile=True).get_concrete_function(
+            tf.TensorSpec([None, 2, 3], x.dtype))
+    self.assertTrue(traced)
+    traced = False
+    self.assertAllClose(res_jax, f_tf(x))
+    self.assertFalse(traced)  # We are not tracing again
+
+    x = self.rng().rand(6, 2, 3)
+    res_jax = f_jax(x)
+    traced = False
+
+    self.assertAllClose(res_jax, f_tf(x))
+    self.assertFalse(traced)  # We are not tracing again
+
 ### We add to the test harnesses some that are obtained from the
 ### primitive harnesses by applying vmap to the function and then asserting
 ### that we can convert shape polymorphically the result.
 
-def _add_vmap_primitive_harnesses():
+def _make_vmap_primitive_harnesses():
   """For each harness group, pick a single dtype.
 
   Ignore harnesses that fail in graph mode in jax2tf.
   """
   all_h = primitive_harness.all_harnesses
+  res = []
 
   # Index by group
   harness_groups: Dict[
@@ -1800,154 +1943,33 @@ def _add_vmap_primitive_harnesses():
     # We do not check the result of harnesses that require custom assertions.
     check_result = all(not l.custom_assert and not l.skip_comparison and l.tol is None
                        for l in _get_jax2tf_limitations(device, h))
-    vmap_harness = _make_harness(h.group_name, f"vmap_{h.name}",
+    vmap_harness = _make_harness(h.group_name, h.name,
                                  jax.vmap(h.dyn_fun, in_axes=0, out_axes=0),
                                  new_args,
                                  poly_axes=[0] * len(new_args),
                                  check_result=check_result,
                                  **h.params)
-    _POLY_SHAPE_TEST_HARNESSES.append(vmap_harness)
-
-
-def _get_jax2tf_limitations(
-    device, h: primitive_harness.Harness) -> Sequence[Jax2TfLimitation]:
-  # And the jax2tf limitations
-  def applicable_jax2tf_limitation(l: Jax2TfLimitation) -> bool:
-    # The CheckShapePolymorphism uses tf.function, so we care about "graph"
-    return l.filter(device=device, dtype=h.dtype, mode="graph")
-
-  limitations = Jax2TfLimitation.limitations_for_harness(h)
-  return tuple(filter(applicable_jax2tf_limitation, limitations))
-
-
-_add_vmap_primitive_harnesses()
-
-def _flatten_harnesses(harnesses):
-  res = []
-  for h in harnesses:
-    if isinstance(h, Sequence):
-      res.extend(h)
-    else:
-      res.append(h)
+    res.append(vmap_harness)
   return res
 
-class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
-  """Tests for primitives that take shape values as parameters."""
+_POLY_SHAPE_VMAP_TEST_HARNESSES = _make_vmap_primitive_harnesses()
 
-  # This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES.
 
-  # For each primitive "xxx" the test will be called "test_prim_xxx_...".
+class ShapePolyVmapPrimitivesTest(tf_test_util.JaxToTfTestCase):
+  """Tests that we can handle batch polymorphism for vmapped primitives."""
+
+  # This test runs for all _POLY_SHAPE_VMAP_PRIMITIVE_HARNESSES.
+
+  # For each primitive "xxx" the test will be called "test_vmap_prim_xxx_...".
   # If you want to run this test for only one harness that includes "foo"
   # in the name (after test_prim), add parameter `one_containing="foo"`
   # to parameterized below.
   @primitive_harness.parameterized(
-      _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="take_along_axis_1_poly_axes=[0, 0]"
+      _flatten_harnesses(_POLY_SHAPE_VMAP_TEST_HARNESSES),
+      #one_containing="eig_shape=float32[0,0]_computelefteigenvectors=False_computerighteigenvectors=False_poly_axes=[0]"
   )
-  def test_prim(self, harness: Harness):
-    args = harness.dyn_args_maker(self.rng())
-    poly_axes = harness.params["poly_axes"]  # type: Sequence[Sequence[int]]
-    assert len(args) == len(poly_axes)
-    # Make the polymorphic_shapes and input_signature
-    polymorphic_shapes: List[Optional[str]] = []
-    input_signature: List[tf.TensorSpec] = []
-    for arg, poly_axis in zip(args, poly_axes):
-      if poly_axis is None:
-        polymorphic_shapes.append(None)
-        input_signature.append(tf.TensorSpec(np.shape(arg), arg.dtype))
-      else:
-        def make_arg_polymorphic_shapes(poly_axis: Sequence[int]) -> Tuple[str, tf.TensorSpec]:
-          idx = -1
-          dims = []
-          tensorspec_dims: List[Optional[int]] = []
-          for i, d in enumerate(arg.shape):
-            if i in poly_axis:
-              idx += 1
-              dims.append(f"b{idx}")
-              tensorspec_dims.append(None)
-            else:
-              dims.append(str(d))
-              tensorspec_dims.append(d)
-          return ", ".join(dims), tf.TensorSpec(tensorspec_dims, arg.dtype)
-
-        arg_polymorphic_shapes, arg_tensorspec = make_arg_polymorphic_shapes(poly_axis)
-        polymorphic_shapes.append(arg_polymorphic_shapes)
-        input_signature.append(arg_tensorspec)
-
-    skip_jax_run = harness.params["skip_jax_run"]
-    if not skip_jax_run:
-      res_jax = harness.dyn_fun(*args)
-
-    enable_xla = harness.params.get("enable_xla", True)
-    expect_error_type, expect_error_regex = harness.params["expect_error"]
-    if expect_error_type is not None:
-      with self.assertRaisesRegex(expect_error_type, expect_error_regex):
-        f_tf = self.CheckShapePolymorphism(
-            harness.dyn_fun,
-            input_signature=input_signature,
-            polymorphic_shapes=polymorphic_shapes,
-            expected_output_signature=None,
-            enable_xla=enable_xla)
-    else:
-      f_tf = self.CheckShapePolymorphism(
-          harness.dyn_fun,
-          input_signature=input_signature,
-          polymorphic_shapes=polymorphic_shapes,
-          expected_output_signature=None,
-          enable_xla=enable_xla)
-
-    if not skip_jax_run and expect_error_type is None and harness.params["check_result"]:
-      tol = harness.params["tol"]
-      self.assertAllClose(res_jax, f_tf(*args), atol=tol, rtol=tol)
-
-
-  def test_vmap_while(self):
-    def cond_func(x):  # x: f32[3]
-      return jnp.sum(x) >= 0.
-    def body_func(x):  # x: f32[3]
-      return x - 1.
-    def f_jax(x):
-      return lax.while_loop(cond_func, body_func, x)
-
-    self.CheckShapePolymorphism(
-        jax.vmap(f_jax),
-        input_signature=[tf.TensorSpec((None, 3), dtype=tf.float32)],
-        polymorphic_shapes=["b, ..."],
-        expected_output_signature=tf.TensorSpec((None, 3), dtype=tf.float32)
-    )
-
-  def test_reshape_compiled(self):
-    # We compile the result of conversion for two shapes, hence we need to
-    # involve the TF compiler twice, but we trace only once with shape polymorphism
-    traced = False
-
-    def f_jax(x):
-      nonlocal traced
-      traced = True
-      y = jnp.sin(x)
-      return y.reshape([x.shape[0], -1])
-
-    x = self.rng().rand(4, 2, 3)
-    res_jax = f_jax(x)
-
-    traced = False
-    # If we get_concrete_function we trace once
-    f_tf = tf.function(
-        jax2tf.convert(f_jax, polymorphic_shapes=[PS("b", ...)]),
-        autograph=False,
-        jit_compile=True).get_concrete_function(
-            tf.TensorSpec([None, 2, 3], x.dtype))
-    self.assertTrue(traced)
-    traced = False
-    self.assertAllClose(res_jax, f_tf(x))
-    self.assertFalse(traced)  # We are not tracing again
-
-    x = self.rng().rand(6, 2, 3)
-    res_jax = f_jax(x)
-    traced = False
-
-    self.assertAllClose(res_jax, f_tf(x))
-    self.assertFalse(traced)  # We are not tracing again
+  def test_vmap_prim(self, harness: Harness):
+    return _test_one_harness(self, harness)
 
 
 if __name__ == "__main__":

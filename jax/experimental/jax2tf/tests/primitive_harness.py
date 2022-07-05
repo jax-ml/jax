@@ -1648,9 +1648,8 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
       define(
           lax.linalg.qr_p,
           f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
-          lax.linalg.qr,
-          [RandArg(shape, dtype),
-           StaticArg(full_matrices)],
+          partial(lax.linalg.qr, full_matrices=full_matrices),
+          [RandArg(shape, dtype)],
           # See jax._src.lib.lapack.geqrf for the list of compatible types
           jax_unimplemented=[
               Limitation(
@@ -1758,10 +1757,9 @@ for dtype in jtu.dtypes.all_inexact:
         define(
             lax.linalg.eig_p,
             f"shape={jtu.format_shape_dtype_string(shape, dtype)}_computelefteigenvectors={compute_left_eigenvectors}_computerighteigenvectors={compute_right_eigenvectors}",
-            lax.linalg.eig, [
+            partial(lax.linalg.eig, compute_left_eigenvectors=compute_left_eigenvectors, compute_right_eigenvectors=compute_right_eigenvectors),
+            [
                 RandArg(shape, dtype),
-                StaticArg(compute_left_eigenvectors),
-                StaticArg(compute_right_eigenvectors)
             ],
             jax_unimplemented=[
                 Limitation(
@@ -1795,8 +1793,7 @@ for dtype in jtu.dtypes.all_inexact:
           # Make operand lower/upper triangular
           lambda operand, lower, symmetrize_input: (lax.linalg.eigh(
               jnp.tril(operand)
-              if lower else jnp.triu(operand), lower, symmetrize_input)),
-          # lax.linalg.eigh,
+              if lower else jnp.triu(operand), lower=lower, symmetrize_input=symmetrize_input)),
           [
               CustomArg(
                   partial(_make_triangular_eigh_operand, shape, dtype, lower)),
