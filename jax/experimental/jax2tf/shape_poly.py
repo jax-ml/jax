@@ -57,6 +57,13 @@ TfVal = Any
 ShapeEnv = Dict[str, Any]
 DType = Any
 
+# If turned on, then comparisons are only defined for identical polynomials
+_EXPERIMENTAL_STRICT_EQ = False
+
+# If turned on, then we do not assume that a dimension variable is >= 1, but we
+# assume it is >= 0.
+_EXPERIMENTAL_DIMVARS_GE_0 = False
+
 class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
 
@@ -190,6 +197,7 @@ class _DimPolynomial():
     return _DimPolynomial(new_coeffs)
 
   @classmethod
+  @functools.lru_cache(maxsize=None)  # Try to get the same polynomial for equal variables
   def from_var(cls, v: str) -> '_DimPolynomial':
     return _DimPolynomial({_DimMon.from_var(v): 1})
 
@@ -228,6 +236,8 @@ class _DimPolynomial():
 
   # We overload , -, *, because they are fully defined for _DimPolynomial.
   def __add__(self, other: DimSize) -> DimSize:
+    if core.is_constant_dim(other) and op.index(other) == 0:
+      return self
     coeffs = self._coeffs.copy()
     for mon, coeff in _ensure_poly(other).monomials():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
@@ -240,6 +250,8 @@ class _DimPolynomial():
     return _DimPolynomial({mon: -coeff for mon, coeff in self.monomials()})
 
   def __mul__(self, other: DimSize) -> DimSize:
+    if core.is_constant_dim(other) and op.index(other) == 1:
+      return self
     other = _ensure_poly(other)
     coeffs: Dict[_DimMon, int] = {}
     for (mon1, coeff1), (mon2, coeff2) in itertools.product(self.monomials(), other.monomials()):
@@ -265,6 +277,11 @@ class _DimPolynomial():
     return _ensure_poly(other) - self
 
   def eq(self, other: DimSize) -> bool:
+    if _EXPERIMENTAL_STRICT_EQ:
+      if self is other:
+        return True
+      else:
+        raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' == '{other}' is inconclusive")
     lb, ub = _ensure_poly(self - other).bounds()
     if lb == ub == 0:
       return True
@@ -390,10 +407,10 @@ class _DimPolynomial():
       if mon.degree == 0: continue
       if coeff > 0:
         ub = None  # type: ignore
-        lb = None if lb is None else lb + coeff
+        lb = None if lb is None else (lb if _EXPERIMENTAL_DIMVARS_GE_0 else lb + coeff)
       else:
         lb = None  # type: ignore
-        ub = None if ub is None else ub + coeff
+        ub = None if ub is None else (ub if _EXPERIMENTAL_DIMVARS_GE_0 else ub + coeff)
     return lb, ub
 
   @property
@@ -446,6 +463,11 @@ class DimensionHandlerPoly(core.DimensionHandler):
     return _ensure_poly(d1) >= d2
 
   def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
+    """Computes dimension "d" such that size(s1) = d * size(s2).
+
+    Raise InconclusiveDimensionOperation if there is no such "d" for all
+    contexts.
+    """
     sz1 = np.prod(s1)
     sz2 = np.prod(s2)
     if core.symbolic_equal_dim(sz1, sz2):  # Takes care also of sz1 == sz2 == 0

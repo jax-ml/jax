@@ -739,7 +739,6 @@ def isrealobj(x):
   return not iscomplexobj(x)
 
 
-
 @_wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a, newshape, order="C"):
   _stackable(a) or _check_arraylike("reshape", a)
@@ -750,16 +749,20 @@ def reshape(a, newshape, order="C"):
 
 def _compute_newshape(a, newshape):
   """Fixes a -1 value in newshape, if present."""
-  # other errors, like having more than one -1, are caught downstream, in
-  # reshape_shape_rule.
   try: iter(newshape)
   except: iterable = False
   else: iterable = True
   newshape = core.canonicalize_shape(newshape if iterable else [newshape])
-  return tuple(- core.divide_shape_sizes(np.shape(a), newshape)
-               if core.symbolic_equal_dim(d, -1) else d
-               for d in newshape)
-
+  # One dimension in newshape can be -1
+  newshape_without_m1 = [d for d in newshape if not core.symbolic_equal_dim(d, -1)]
+  if len(newshape_without_m1) == len(newshape):
+    return newshape
+  elif len(newshape_without_m1) < len(newshape) - 1:
+    raise TypeError(f"reshape new_sizes must have at most one -1: {newshape}")
+  else:
+    return tuple(core.divide_shape_sizes(np.shape(a), tuple(newshape_without_m1))
+                 if core.symbolic_equal_dim(d, -1) else d
+                 for d in newshape)
 
 def _reshape(a, *args, order="C"):
   newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)

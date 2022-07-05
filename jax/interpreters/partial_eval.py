@@ -2414,10 +2414,14 @@ class DimensionHandlerTracer(core.DimensionHandler):
     return d1 is d2
 
   def greater_equal(self, d1: core.DimSize, d2: core.DimSize):
+    if d1 is d2:
+      return True
+    if core.symbolic_equal_dim(d2, 0):
+      return True
     raise core.InconclusiveDimensionOperation("TODO")
 
   def divide_shape_sizes(self, s1: core.Shape, s2: core.Shape) -> core.DimSize:
-    """Computes integer "i" such that i  * size(s2) == size(s1).
+    """Computes dimension "d" such that size(s1) = d * size(s2).
 
     Raise InconclusiveDimensionOperation if there is no such integer for all
     contexts.

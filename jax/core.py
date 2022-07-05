@@ -1625,15 +1625,13 @@ class DimensionHandler:
     return d1 - d2
 
   def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
-    """Computes integer "i" such that i  * size(s2) == size(s1).
+    """Computes dimension "d" such that size(s1) = d * size(s2).
 
-    Raise InconclusiveDimensionOperation if there is no such integer for all
-    contexts,
+    Raise InconclusiveDimensionOperation if there is no such "d" for all
+    contexts.
     """
     sz1 = int(np.prod(s1))
     sz2 = int(np.prod(s2))
-    if sz1 == 0 and sz2 == 0:
-      return 1
     if sz1 % sz2:
       raise InconclusiveDimensionOperation(f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}")
     return sz1 // sz2
@@ -1732,10 +1730,49 @@ def diff_shape(s1: Shape, s2: Shape) -> Shape:
   return tuple(map(diff_dim, s1, s2))
 
 def divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
-  """Returns an integer "i" s.t., i * size(s2) == size(s1).
-  Raises if there is no such integer."""
+  """Returns a dimension "d" s.t., size(s1) = d * size(s2).
+  Raises if there is no such dimension.
+
+  Used in core.same_shape_size and for computing the -1 dimension in reshape.
+  """
   s1 = s1 or (1,)
   s2 = s2 or (1,)
+  # Special case when the non-constant dimensions in s2 are a subset of those in s1
+  def split_constants(s1: Shape) -> Tuple[int, Sequence[DimSize]]:
+    """Split a shape into the product of constant dimensions and list of non constant ones."""
+    prod_constant = 1
+    non_constant = []
+    for d in s1:
+      if is_constant_dim(d):
+        prod_constant *= operator.index(d)
+      else:
+        non_constant.append(d)
+    return prod_constant, non_constant
+  s1_const, s1_non_const = split_constants(s1)
+  s2_const, s2_non_const = split_constants(s2)
+  if s1_const == s2_const == 0:
+    return 1
+  for s2_d in s2_non_const:
+    def remove_first(s1_non_const):
+      # Like s1_non_const.remove(s2_d) but uses symbolic_equal_dim instead of __eq__
+      acc = []
+      removed_one = False
+      for s1_d in s1_non_const:
+        if not removed_one and symbolic_equal_dim(s1_d, s2_d):
+          removed_one = True
+        else:
+          acc.append(s1_d)
+      return removed_one, acc
+    removed_one, s1_non_const = remove_first(s1_non_const)
+    if not removed_one:
+      break  # Fall-through to the handler
+  else:
+    q, r = divmod(s1_const, s2_const)
+    if r == 0:
+      return np.prod(s1_non_const) * q if s1_non_const else q
+    else:
+      raise InconclusiveDimensionOperation(f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}")
+
   handler, ds = _dim_handler_and_canonical(*s1, *s2)
   return handler.divide_shape_sizes(ds[:len(s1)], ds[len(s1):])
 
@@ -1746,7 +1783,8 @@ def is_empty_shape(s: Shape) -> bool:
   return any(symbolic_equal_dim(d, 0) for d in s)
 
 def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
-  """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
+  """0 if d == 0 else 1 + dilation * (d - 1))"""
+  if is_constant_dim(dilation) and operator.index(dilation) == 1: return d
   handler, ds = _dim_handler_and_canonical(d, dilation)
   return handler.dilate(*ds)
 
@@ -1754,6 +1792,9 @@ def dilate_shape(s: Shape, dilations: Sequence[int]) -> Shape:
   return tuple(map(dilate_dim, s, dilations))
 
 def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
+  """(d - window_size) // window_stride + 1"""
+  if is_constant_dim(window_stride) and is_constant_dim(window_size) and operator.index(window_stride) == operator.index(window_size) == 1:
+    return d
   handler, ds = _dim_handler_and_canonical(d, window_size, window_stride)
   return handler.stride(*ds)
 
