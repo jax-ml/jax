@@ -37,8 +37,22 @@ FLAGS = flags.FLAGS
 
 
 flags.DEFINE_string(
-    'jax_iree_backend', os.getenv('JAX_IREE_BACKEND', 'dylib'),
+    'jax_iree_backend', os.getenv('JAX_IREE_BACKEND', 'cpu'),
     'IREE compiler backend to use.')
+
+iree_compiler_map = {
+  "cpu" : "dylib",
+  "cuda" : "cuda",
+  "vmvx" : "vmvx",
+  "vulkan" : "vulkan-spirv"
+}
+
+iree_runtime_map = {
+  "cpu" : "local-task",
+  "cuda" : "cuda",
+  "vmvx" : "local-task",
+  "vulkan" : "vulkan"
+}
 
 class IreeDevice:
 
@@ -122,12 +136,14 @@ class IreeClient:
 
   def __init__(self,
                *,
-               runtime_driver: str = None):
+               iree_backend: str = None):
     self.platform = "iree"
     self.platform_version = "0.0.1"
     self.runtime_type = "iree"
-    self.runtime_driver = (FLAGS.jax_iree_backend if runtime_driver is None
-                           else runtime_driver)
+    self.iree_backend = (FLAGS.jax_iree_backend if iree_backend is None
+                        else iree_backend)
+    self.compiler_driver = iree_compiler_map[self.iree_backend]
+    self.runtime_driver = iree_runtime_map[self.iree_backend]
     self.iree_config = iree.runtime.system_api.Config(self.runtime_driver)
     self._devices = [IreeDevice(self)]
 
@@ -162,7 +178,7 @@ class IreeClient:
     if platform.system() == "Darwin" and platform.machine() == "arm64":
       extra_args += ["--iree-llvm-target-triple=arm64-apple-darwin21.5.0"]
     iree_binary = iree.compiler.compile_str(
-        computation, target_backends=[self.runtime_driver], input_type="mhlo",
+        computation, target_backends=[self.compiler_driver], input_type="mhlo",
         # extended_diagnostics=True,
         extra_args=extra_args,
     )
