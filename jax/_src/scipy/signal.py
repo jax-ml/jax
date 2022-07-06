@@ -26,8 +26,7 @@ from jax._src import dtypes
 from jax._src.numpy.lax_numpy import _check_arraylike
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg
-from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
 from jax._src.third_party.scipy import signal_helper
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
 
@@ -180,6 +179,8 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
   result = detrend_func(result)
 
   # Apply window by multiplication
+  if jnp.iscomplexobj(win):
+    result, = _promote_dtypes_complex(result)
   result = win.reshape((1,) * len(batch_shape) + (1, nperseg)) * result
 
   # Perform the fft on last axis. Zero-pads automatically
@@ -286,7 +287,7 @@ def _spectral_helper(x, y,
       raise ValueError('nperseg must be a positive integer')
   # parse window; if array like, then set nperseg = win.shape
   win, nperseg = signal_helper._triage_segments(
-      window, nperseg, input_length=x.shape[axis], dtype=result_dtype)
+      window, nperseg, input_length=x.shape[axis], dtype=x.dtype)
 
   if noverlap is None:
     noverlap = nperseg // 2
@@ -369,6 +370,7 @@ def _spectral_helper(x, y,
     raise ValueError(f'Unknown scaling: {scaling}')
   if mode == 'stft':
     scale = jnp.sqrt(scale)
+  scale, = _promote_dtypes_complex(scale)
 
   # Determine onesided/ two-sided
   if return_onesided:
@@ -386,12 +388,12 @@ def _spectral_helper(x, y,
     freqs = jax.numpy.fft.rfftfreq(nfft, 1/fs).astype(freq_dtype)
 
   # Perform the windowed FFTs
-  result = _fft_helper(x.astype(result_dtype), win, detrend_func,
+  result = _fft_helper(x, win, detrend_func,
                        nperseg, noverlap, nfft, sides)
 
   if y is not None:
     # All the same operations on the y data
-    result_y = _fft_helper(y.astype(result_dtype), win, detrend_func,
+    result_y = _fft_helper(y, win, detrend_func,
                            nperseg, noverlap, nfft, sides)
     result = jnp.conjugate(result) * result_y
   elif mode == 'psd':
