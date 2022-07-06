@@ -24,12 +24,15 @@ from jax._src.config import config
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.ndarray import ndarray
-from jax._src.util import safe_zip
+from jax._src.util import safe_zip, safe_map
 from jax._src import api
 from jax import core
 from jax._src.lax import lax
 
 import numpy as np
+
+zip, unsafe_zip = safe_zip, zip
+map, unsafe_map = safe_map, map
 
 _T = TypeVar("_T")
 
@@ -219,20 +222,21 @@ def _promote_shapes(fun_name, *args):
     return args
   else:
     shapes = [np.shape(arg) for arg in args]
-    if all(len(shapes[0]) == len(s) for s in shapes[1:]):
-      return args  # no need for rank promotion, so rely on lax promotion
-    nonscalar_ranks = {len(shp) for shp in shapes if shp}
-    if len(nonscalar_ranks) < 2:
-      return args
+    if config.jax_dynamic_shapes:
+      # With dynamic shapes we don't support singleton-dimension broadcasting;
+      # we instead broadcast out to the full shape as a temporary workaround.
+      # TODO(mattjj): revise this workaround
+      res_shape = lax.broadcast_shapes(*shapes)  # Can raise an error!
+      return [_broadcast_to(arg, res_shape) for arg, shp in zip(args, shapes)]
     else:
-      if config.jax_numpy_rank_promotion != "allow":
-        _rank_promotion_warning_or_error(fun_name, shapes)
-      if config.jax_dynamic_shapes:
-        # With dynamic shapes we don't support singleton-dimension broadcasting;
-        # we instead broadcast out to the full shape as a temporary workaround.
-        res_shape = lax.broadcast_shapes(*shapes)
-        return [_broadcast_to(arg, res_shape) for arg, shp in zip(args, shapes)]
+      if all(len(shapes[0]) == len(s) for s in shapes[1:]):
+        return args  # no need for rank promotion, so rely on lax promotion
+      nonscalar_ranks = {len(shp) for shp in shapes if shp}
+      if len(nonscalar_ranks) < 2:
+        return args  # rely on lax scalar promotion
       else:
+        if config.jax_numpy_rank_promotion != "allow":
+          _rank_promotion_warning_or_error(fun_name, shapes)
         result_rank = len(lax.broadcast_shapes(*shapes))
         return [_broadcast_to(arg, (1,) * (result_rank - len(shp)) + shp)
                 for arg, shp in zip(args, shapes)]

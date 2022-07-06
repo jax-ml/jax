@@ -667,7 +667,7 @@ def trace_to_subjaxpr_nounits_dyn(
   out_type = [(a.update(shape=tuple(idx_map.get(d, d) for d in a.shape))  # type: ignore
                if type(a) is DShapedArray else a, True) for a in out_avals]
 
-  # Which residuals  are just forwarded inputs? Check obj id, then prune.
+  # Which residuals are just forwarded inputs? Check obj id, then prune.
   id_map = {id(c.recipe.val): i for i, c in enumerate(in_consts_full)  # type: ignore
             if c is not None}
   fwds: List[Optional[int]] = [id_map.get(id(c)) for c in res]

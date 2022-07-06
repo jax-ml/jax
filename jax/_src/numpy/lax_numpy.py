@@ -71,9 +71,10 @@ from jax._src.numpy.ufuncs import (  # noqa: F401
   reciprocal, remainder, right_shift, rint, sign, signbit, sin, sinc, sinh, sqrt,
   square, subtract, tan, tanh, true_divide)
 from jax._src.numpy.util import (  # noqa: F401
-  _arraylike, _broadcast_arrays, _broadcast_to, _check_arraylike, _complex_elem_type, _promote_args,
-  _promote_args_inexact, _promote_dtypes, _promote_dtypes_inexact, _promote_shapes, _register_stackable,
-  _stackable, _where, _wraps)
+  _arraylike, _broadcast_arrays, _broadcast_to, _check_arraylike,
+  _complex_elem_type, _promote_args, _promote_args_inexact, _promote_dtypes,
+  _promote_dtypes_inexact, _promote_shapes, _register_stackable, _stackable,
+  _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
@@ -2099,8 +2100,12 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = _jnp_dtype(dtype)
   if stop is None and step is None:
-    start = require(start, msg("stop"))
-    start = np.ceil(start).astype(int)
+    if (jax.config.jax_dynamic_shapes and
+        not isinstance(core.get_aval(start), core.ConcreteArray)):
+      start = ceil(start).astype(int)  # note using jnp here
+    else:
+      start = require(start, msg("stop"))
+      start = np.ceil(start).astype(int)
     return lax.iota(dtype, start)
   else:
     start = require(start, msg("start"))
