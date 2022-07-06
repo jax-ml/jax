@@ -77,12 +77,12 @@ flags.DEFINE_bool(
 )
 
 flags.DEFINE_string(
-  'test_targets', '',
+  'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
   'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
 flags.DEFINE_string(
-  'exclude_test_targets', '',
+  'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )

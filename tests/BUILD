@@ -159,6 +159,7 @@ jax_test(
         "cpu": 10,
         "tpu": 4,
     },
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:maps",
     ],
@@ -167,6 +168,7 @@ jax_test(
 jax_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
     ],
@@ -175,6 +177,7 @@ jax_test(
 jax_test(
     name = "global_device_array_test",
     srcs = ["global_device_array_test.py"],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
     ],
@@ -183,6 +186,7 @@ jax_test(
 jax_test(
     name = "array_test",
     srcs = ["array_test.py"],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
     ],
@@ -195,6 +199,7 @@ jax_test(
         "gpu",
         "cpu",
     ],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
     ],
@@ -502,6 +507,7 @@ jax_test(
         "gpu": 5,
         "tpu": 5,
     },
+    tags = ["multiaccelerator"],
     deps = [
         ":lax_test_lib",
         ":lax_vmap_test_lib",
@@ -634,6 +640,7 @@ jax_test(
         "tpu",
         "iree",
     ],
+    tags = ["multiaccelerator"],
     deps = ["//jax:experimental"],
 )
 
