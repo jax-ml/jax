@@ -59,23 +59,24 @@ lax.conv_general_dilated(
 
 We provide support for convolutions as follows:
 
-* Only 2D convolutions, i.e. `lhs.ndim == 4`.
-* Regular convolutions and atrous convolutions
+* Only 1D and 2D convolutions, i.e. `lhs.ndim == 3 or 4`.
+* Regular convolutions and atrous (aka, dilated) convolutions
   (i.e., `rhs_dilation != (1, 1, ...)`) are supported through the TF op
   [`tf.nn.conv2d`](https://www.tensorflow.org/api_docs/python/tf/nn/conv2d).
 * Transposed convolutions (i.e., `lhs_dilation != (1, 1, ...)`) are supported
   through
-  [`tf.nn.conv2d_transpose`](https://www.tensorflow.org/api_docs/python/tf/nn/conv2d_transpose).
-  If using transposed convolutions, then `padding == 'VALID'`.
+  [`tf.nn.conv2d_transpose`](https://www.tensorflow.org/api_docs/python/tf/nn/conv2d_transpose),
+  with either 'SAME' or 'VALID' padding.
 * Depthwise convolutions (i.e.
   `in_channels == feature_group_count and feature_group_count > 1`) are
   supported through
   [`tf.nn.depthwise_conv2d`](https://www.tensorflow.org/api_docs/python/tf/nn/depthwise_conv2d).
+  Note that atrous depthwise convolutions are supported.
 * No support for batch groups, i.e. `batch_group_count == 1`.
 * No support for feature groups, except for depth-wise convolutions.
 * Input may be provided in any order (specified using `dimension_numbers`).
-* Only one of depthwise, atrous and tranposed convolutions may be used at the
-  same time.
+* Only one of depthwise, atrous and transposed convolutions may be used at the
+  same time, though depthwise atrous convolutions are supported.
 
 ### XlaGather
 
@@ -144,7 +145,7 @@ lax.reduce_window_{sum,max}(
 We support these ops with the following limitations:
 
 * For `reduce_window_sum_p`, dtypes `jnp.bool`, `jnp.uint32`, `jnp.uint64`,
-  `jnp.complex64`, and `jnp.complex128` are not supported. 
+  `jnp.complex64`, and `jnp.complex128` are not supported.
 * For `reduce_window_max_p`, dtype `jnp.float16`, `jnp.float32`, and
   `jnp.float64` are not supported.
 * We support at most 3 spatial dimension.
@@ -156,10 +157,10 @@ We support these ops with the following limitations:
 
 ### XlaScatter
 
-This op is called by `lax.scatter`, `lax.scatter_min`, `lax.scatter_max`, 
-`lax.scatter_mul` and `lax.scatter_add`. 
+This op is called by `lax.scatter`, `lax.scatter_min`, `lax.scatter_max`,
+`lax.scatter_mul` and `lax.scatter_add`.
 
-We support all these ops for unique indices. For non-unique indices we 
+We support all these ops for unique indices. For non-unique indices we
 support (min,max,mul,add) for single depth scatters.
 
 There are a few more limitations:
