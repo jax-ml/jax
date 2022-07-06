@@ -3233,6 +3233,20 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f()
 
+  def test_concrete_error_with_nested_call(self):
+    @jax.jit
+    def f(x, y):
+      if y:
+        return x
+
+    @jax.jit
+    def g(x):
+      return f(x, True)
+
+    msg = r"on the value of the argument 'y'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      g(1)
+
   def test_xla_computation_zeros_doesnt_device_put(self):
     with jtu.count_device_put() as count:
       api.xla_computation(lambda: jnp.zeros(3))()
