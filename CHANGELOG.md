@@ -16,6 +16,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     See {jax-issue}`#11557`.
   * {mod}`jax.experimental.loops` has been removed. See {jax-issue}`#10278`
     for an alternative API. 
+  * {func}`jax.tree_util.tree_multimap` has been removed. It has been deprecated since
+    JAX release 0.3.5, and {func}`jax.tree_util.tree_map` is a direct replacement.
 
 ## jaxlib 0.3.16 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.15...main).

@@ -41,7 +41,7 @@ from jax import stages
 from jax.core import eval_jaxpr
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
-                           tree_multimap, treedef_is_leaf, treedef_children,
+                           treedef_is_leaf, treedef_children,
                            Partial, PyTreeDef, all_leaves, treedef_tuple)
 
 from jax._src import device_array
