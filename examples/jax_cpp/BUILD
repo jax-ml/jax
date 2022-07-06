@@ -22,6 +22,7 @@ licenses(["notice"])
 tf_cc_binary(
     name = "main",
     srcs = ["main.cc"],
+    tags = ["manual"],
     deps = [
         "@org_tensorflow//tensorflow/compiler/xla:literal",
         "@org_tensorflow//tensorflow/compiler/xla:literal_util",
