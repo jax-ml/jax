@@ -333,7 +333,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
         name, None, True, None, None, None, jaxpr=jaxpr, consts=consts,
         device=device, in_avals=abstract_args, out_avals=out_avals,
         has_unordered_effects=False, ordered_effects=[],
-        kept_var_idx=kept_var_idx, keepalive=None)
+        kept_var_idx=kept_var_idx, keepalive=None, host_callbacks=[])
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -372,17 +372,20 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
                        if eff not in core.ordered_effects]
   ordered_effects = [eff for eff in closed_jaxpr.effects
                      if eff in core.ordered_effects]
-  module, keepalive = mlir.lower_jaxpr_to_module(
-      module_name, closed_jaxpr, unordered_effects, ordered_effects,
-      backend.platform, mlir.ReplicaAxisContext(axis_env), name_stack,
-      donated_invars)
+  lowering_result = mlir.lower_jaxpr_to_module(
+      module_name, closed_jaxpr,
+      unordered_effects, ordered_effects, backend.platform,
+      mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
+  module, keepalive, host_callbacks = (
+      lowering_result.module, lowering_result.keepalive,
+      lowering_result.host_callbacks)
   return XlaComputation(
       name, module, False, donated_invars, fun.in_type, out_type, nreps=nreps,
       device=device, backend=backend, tuple_args=tuple_args,
       in_avals=abstract_args, out_avals=out_avals,
       has_unordered_effects=bool(unordered_effects),
       ordered_effects=ordered_effects, kept_var_idx=kept_var_idx,
-      keepalive=keepalive)
+      keepalive=keepalive, host_callbacks=host_callbacks)
 
 
 def _backend_supports_unbounded_dynamic_shapes(backend: Backend) -> bool:
@@ -751,7 +754,8 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
                      has_unordered_effects: bool,
-                     ordered_effects: List[core.Effect], kept_var_idx, *args):
+                     ordered_effects: List[core.Effect], kept_var_idx,
+                     host_callbacks, *args):
   env: Dict[core.Var, Any]  = {}
   pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
   map(env.setdefault, jaxpr.invars, pruned_args)
@@ -818,9 +822,15 @@ class XlaComputation(stages.XlaLowering):
     return self._executable
 
 @profiler.annotate_function
-def backend_compile(backend, built_c, options):
+def backend_compile(backend, built_c, options, host_callbacks):
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results
+  if host_callbacks:
+    return backend.compile(built_c, compile_options=options,
+                           host_callbacks=host_callbacks)
+  # Some backends don't have `host_callbacks` option yet
+  # TODO(sharadmv): remove this fallback when all backends allow `compile`
+  # to take in `host_callbacks`
   return backend.compile(built_c, compile_options=options)
 
 # TODO(phawkins): update users.
@@ -838,7 +848,8 @@ def _dump_ir_to_file(name: str, ir: str):
   name.write_text(ir)
 
 
-def compile_or_get_cached(backend, computation, compile_options):
+def compile_or_get_cached(backend, computation, compile_options,
+                          host_callbacks):
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
 
@@ -861,7 +872,8 @@ def compile_or_get_cached(backend, computation, compile_options):
       logging.info('Persistent compilation cache hit for %s.', module_name)
       return cached_executable
     else:
-      compiled = backend_compile(backend, computation, compile_options)
+      compiled = backend_compile(backend, computation, compile_options,
+                                 host_callbacks)
       cc.put_executable(module_name, computation, compile_options, compiled,
                         backend)
       return compiled
@@ -875,7 +887,7 @@ def compile_or_get_cached(backend, computation, compile_options):
       assert isinstance(computation, str)
       ir_str = computation
     _dump_ir_to_file(module_name, ir_str)
-  return backend_compile(backend, computation, compile_options)
+  return backend_compile(backend, computation, compile_options, host_callbacks)
 
 
 class XlaCompiledComputation(stages.XlaExecutable):
@@ -890,21 +902,17 @@ class XlaCompiledComputation(stages.XlaExecutable):
     self.unsafe_call.keepalive = keepalive
 
   @staticmethod
-  def from_xla_computation(
-      name: str,
-      xla_computation: Optional[ir.Module],
-      in_type: Optional[pe.InputType],
-      out_type: Optional[pe.OutputType],
-      nreps: int,
-      device: Optional[Device],
-      backend: Backend,
-      tuple_args: bool,
-      in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue],
-      has_unordered_effects: bool,
-      ordered_effects: List[core.Effect],
-      kept_var_idx: Set[int],
-      keepalive: Optional[Any]) -> XlaCompiledComputation:
+  def from_xla_computation(name: str, xla_computation: Optional[ir.Module],
+                           in_type: Optional[pe.InputType],
+                           out_type: Optional[pe.OutputType], nreps: int,
+                           device: Optional[Device], backend: Backend,
+                           tuple_args: bool,
+                           in_avals: Sequence[core.AbstractValue],
+                           out_avals: Sequence[core.AbstractValue],
+                           has_unordered_effects: bool,
+                           ordered_effects: List[core.Effect],
+                           kept_var_idx: Set[int], keepalive: Optional[Any],
+                           host_callbacks: List[Any]) -> XlaCompiledComputation:
     sticky_device = device
     input_handler = _input_handler(backend, in_type, out_type)
     result_handler = _result_handler(backend, sticky_device, out_type)
@@ -914,7 +922,8 @@ class XlaCompiledComputation(stages.XlaExecutable):
     options.parameter_is_tupled_arguments = tuple_args
     with log_elapsed_time(f"Finished XLA compilation of {name} "
                           "in {elapsed_time} sec"):
-      compiled = compile_or_get_cached(backend, xla_computation, options)
+      compiled = compile_or_get_cached(backend, xla_computation, options,
+                                       host_callbacks)
     buffer_counts = [aval_to_num_buffers(aval) for aval in out_avals]
     if ordered_effects or has_unordered_effects:
       num_output_tokens = len(ordered_effects) + has_unordered_effects
@@ -937,15 +946,15 @@ class XlaCompiledComputation(stages.XlaExecutable):
     return self._xla_executable
 
   @staticmethod
-  def from_trivial_jaxpr(
-      jaxpr, consts, device, in_avals, out_avals, has_unordered_effects,
-      ordered_effects, kept_var_idx, keepalive: Optional[Any]
-    ) -> XlaCompiledComputation:
+  def from_trivial_jaxpr(jaxpr, consts, device, in_avals, out_avals,
+                         has_unordered_effects, ordered_effects, kept_var_idx,
+                         keepalive: Optional[Any],
+                         host_callbacks: List[Any]) -> XlaCompiledComputation:
     assert keepalive is None
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
-    unsafe_call = partial(_execute_trivial, jaxpr, device, consts,
-                          out_avals, result_handlers, has_unordered_effects,
-                          ordered_effects, kept_var_idx)
+    unsafe_call = partial(_execute_trivial, jaxpr, device, consts, out_avals,
+                          result_handlers, has_unordered_effects,
+                          ordered_effects, kept_var_idx, host_callbacks)
     return XlaCompiledComputation(None, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 

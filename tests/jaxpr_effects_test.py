@@ -61,9 +61,13 @@ lcf.allowed_effects.add('while2')
 
 # TODO(sharadmv): remove jaxlib guards for GPU tests when jaxlib minimum
 #                 version is >= 0.3.11
-disabled_backends = ['tpu']
+# TODO(sharadmv): remove jaxlib guards for TPU tests when jaxlib minimum
+#                 version is >= 0.3.15
+disabled_backends = []
 if jaxlib.version < (0, 3, 11):
   disabled_backends.append('gpu')
+if jaxlib.version < (0, 3, 15):
+  disabled_backends.append('tpu')
 
 
 def trivial_effect_lowering(ctx, *, effect):
@@ -108,23 +112,16 @@ def _(*avals, callback, out_avals, effect):
 
 def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out_avals, effect):
   del out_avals
+  token_in = None
   if effect in core.ordered_effects:
-    def _token_callback(token, *args):
-      out = callback(*args)
-      flat_out = jax.tree_util.tree_leaves(out)
-      return (token, *flat_out)
     token_in = ctx.tokens_in.get(effect)[0]
-    (token_out, *out_op), keep_alive = mlir.emit_python_callback(
-        ctx.module_context.platform, _token_callback,
-        [token_in, *args], [core.abstract_token, *ctx.avals_in],
-        [core.abstract_token, *ctx.avals_out], True)
+
+  out_op, token_out, keep_alive = mlir.emit_python_callback(
+      ctx, callback, token_in, list(args), list(ctx.avals_in),
+      list(ctx.avals_out), True)
+  if token_out:
     ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
       token_out})))
-  else:
-    out_op, keep_alive = mlir.emit_python_callback(
-        ctx.module_context.platform, callback,
-        list(args), list(ctx.avals_in),
-        list(ctx.avals_out), True)
   ctx.module_context.add_keepalive(keep_alive)
   return out_op
 
@@ -297,6 +294,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       ctx.set_tokens_out(ctx.tokens_in)
       return []
     mlir.register_lowering(effect_p, _effect_lowering)
+    jax.effects_barrier()
     dispatch.runtime_tokens.clear()
 
   def tearDown(self):
@@ -590,10 +588,11 @@ class EffectOrderingTest(jtu.JaxTestCase):
       return callback_p.bind(x, callback=log_value, effect='log', out_avals=[])
 
     f(2.)
+    jax.effects_barrier()
     self.assertListEqual(log, [2.])
     f(3.)
+    jax.effects_barrier()
     self.assertListEqual(log, [2., 3.])
-    dispatch.runtime_tokens.block_until_ready()
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_ordered_effect_remains_ordered_across_multiple_devices(self):
@@ -623,15 +622,14 @@ class EffectOrderingTest(jtu.JaxTestCase):
     g(3.)
     f(jnp.ones((500, 500)))
     g(3.)
-    dispatch.runtime_tokens.block_until_ready()
+    jax.effects_barrier()
     x_, y_ = float(jnp.log(1.25e8)), 3.
     expected_log = [x_, y_, x_, y_, x_, y_]
     self.assertListEqual(log, expected_log)
 
+  @jtu.skip_on_devices("tpu")
   @jtu.skip_on_devices(*disabled_backends)
   def test_different_threads_get_different_tokens(self):
-    # TODO(sharadmv): enable this test on GPU and TPU when backends are
-    # supported
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
     tokens = []

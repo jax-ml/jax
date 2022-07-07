@@ -1089,16 +1089,19 @@ def lower_parallel_callable(
       raise ValueError("Ordered effects not supported in `pmap`.")
     unordered_effects = [eff for eff in closed_jaxpr.effects
                          if eff not in core.ordered_effects]
-    module, keepalive = mlir.lower_jaxpr_to_module(
+    lowering_result = mlir.lower_jaxpr_to_module(
         module_name, closed_jaxpr, unordered_effects, [],
         backend.platform, mlir.ReplicaAxisContext(axis_env),
         name_stack, donated_invars, replicated_args=replicated_args,
         arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
         result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
+    module, keepalive, host_callbacks = (
+        lowering_result.module, lowering_result.keepalive,
+        lowering_result.host_callbacks)
   return PmapComputation(module, pci=pci, replicas=replicas, parts=parts,
                          shards=shards, tuple_args=tuple_args,
                          unordered_effects=unordered_effects,
-                         keepalive=keepalive)
+                         keepalive=keepalive, host_callbacks=host_callbacks)
 
 
 class PmapComputation(stages.XlaLowering):
@@ -1152,6 +1155,7 @@ class PmapExecutable(stages.XlaExecutable):
                shards: ShardInfo,
                tuple_args: bool,
                unordered_effects: List[core.Effect],
+               host_callbacks: List[Any],
                keepalive: Any):
     devices = pci.devices
     if devices is None:
@@ -1270,7 +1274,7 @@ class PmapExecutable(stages.XlaExecutable):
     with dispatch.log_elapsed_time(
         f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec"):
       compiled = dispatch.compile_or_get_cached(
-          pci.backend, xla_computation, compile_options)
+          pci.backend, xla_computation, compile_options, host_callbacks)
     handle_args = InputsHandler(
         compiled.local_devices(), input_sharding_specs, input_indices)
     execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args,
@@ -2350,17 +2354,19 @@ def lower_mesh_computation(
       raise ValueError("Ordered effects not supported in mesh computations.")
     unordered_effects = [eff for eff in closed_jaxpr.effects
                          if eff not in core.ordered_effects]
-    module, keepalive = mlir.lower_jaxpr_to_module(
+    lowering_result = mlir.lower_jaxpr_to_module(
         module_name, closed_jaxpr, unordered_effects, [], backend.platform,
         axis_ctx, name_stack, donated_invars, replicated_args=replicated_args,
         arg_shardings=in_partitions, result_shardings=out_partitions)
-
+    module, keepalive, host_callbacks = (
+        lowering_result.module, lowering_result.keepalive,
+        lowering_result.host_callbacks)
   return MeshComputation(
       str(name_stack), module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,
       global_out_avals=global_out_avals, in_axes=in_axes, out_axes=out_axes,
       spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_global=in_is_global,
       auto_spmd_lowering=auto_spmd_lowering,
-      unordered_effects=unordered_effects,
+      unordered_effects=unordered_effects, host_callbacks=host_callbacks,
       keepalive=keepalive)
 
 
@@ -2471,6 +2477,7 @@ class MeshExecutable(stages.XlaExecutable):
                _allow_propagation_to_outputs: bool,
                _allow_compile_replicated: bool,
                unordered_effects: List[core.Effect],
+               host_callbacks: List[Any],
                keepalive: Any) -> MeshExecutable:
     assert not mesh.empty
     backend = xb.get_device_backend(mesh.devices.flat[0])
@@ -2510,7 +2517,8 @@ class MeshExecutable(stages.XlaExecutable):
     else:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
                                      "in {elapsed_time} sec"):
-        xla_executable = dispatch.compile_or_get_cached(backend, computation, compile_options)
+        xla_executable = dispatch.compile_or_get_cached(
+            backend, computation, compile_options, host_callbacks)
 
       if auto_spmd_lowering or (out_axes and all(_is_unspecified(o) for o in out_axes)):
         in_axes, out_axes = _get_array_mapping_from_executable(xla_executable, mesh)

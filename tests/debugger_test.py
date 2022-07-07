@@ -51,9 +51,13 @@ def tearDownModule():
 
 # TODO(sharadmv): remove jaxlib guards for GPU tests when jaxlib minimum
 #                 version is >= 0.3.11
-disabled_backends = ["tpu"]
+# TODO(sharadmv): remove jaxlib guards for TPU tests when jaxlib minimum
+#                 version is >= 0.3.15
+disabled_backends = []
 if jaxlib.version < (0, 3, 11):
   disabled_backends.append("gpu")
+if jaxlib.version < (0, 3, 15):
+  disabled_backends.append("tpu")
 
 class CliDebuggerTest(jtu.JaxTestCase):
 
@@ -67,6 +71,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return y
     with self.assertRaises(SystemExit):
       f(2.)
+      jax.effects_barrier()
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_can_continue(self):
@@ -77,6 +82,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
       debugger.breakpoint(stdin=stdin, stdout=stdout)
       return y
     f(2.)
+    jax.effects_barrier()
     expected = _format_multiline(r"""
     Entering jaxdb:
     (jaxdb) """)
@@ -95,6 +101,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     (jaxdb) DeviceArray(2., dtype=float32)
     (jaxdb) """)
     f(jnp.array(2., jnp.float32))
+    jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -111,6 +118,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     (jaxdb) array(2., dtype=float32)
     (jaxdb) """)
     f(jnp.array(2., jnp.float32))
+    jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -127,6 +135,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     (jaxdb) (array(2., dtype=float32), array(3., dtype=float32))
     (jaxdb) """)
     f(jnp.array(2., jnp.float32))
+    jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -139,6 +148,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
       debugger.breakpoint(stdin=stdin, stdout=stdout)
       return y
     f(2.)
+    jax.effects_barrier()
     expected = _format_multiline(r"""
     Entering jaxdb:
     \(jaxdb\) > .*debugger_test\.py\([0-9]+\)
@@ -165,6 +175,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     \(jaxdb\) Traceback:.*
     """)
     f(2.)
+    jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -203,6 +214,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     .*
     \(jaxdb\) """)
     g(jnp.array(2., jnp.float32))
+    jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -232,10 +244,14 @@ class CliDebuggerTest(jtu.JaxTestCase):
   @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_works_with_vmap(self):
     stdin, stdout = make_fake_stdin_stdout(["p y", "c", "p y", "c"])
+    # On TPU, the breakpoints can be reordered inside of vmap but can be fixed
+    # by ordering sends.
+    # TODO(sharadmv): change back to ordered = False when sends are ordered
+    ordered = jax.default_backend() == "tpu"
 
     def f(x):
       y = x + 1.
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=ordered)
       return 2. * y
 
     @jax.jit
@@ -250,6 +266,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     (jaxdb) array(2., dtype=float32)
     (jaxdb) """)
     g(jnp.arange(2., dtype=jnp.float32))
+    jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)

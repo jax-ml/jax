@@ -843,16 +843,28 @@ jax_test(
 jax_test(
     name = "jaxpr_effects_test",
     srcs = ["jaxpr_effects_test.py"],
+    enable_configs = [
+        "gpu",
+        "cpu",
+    ],
 )
 
 jax_test(
     name = "debugging_primitives_test",
     srcs = ["debugging_primitives_test.py"],
+    enable_configs = [
+        "gpu",
+        "cpu",
+    ],
 )
 
 jax_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
+    enable_configs = [
+        "gpu",
+        "cpu",
+    ],
 )
 
 exports_files(

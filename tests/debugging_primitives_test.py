@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import collections
 import functools
 import io
 import textwrap
@@ -59,9 +60,13 @@ def tearDownModule():
 
 # TODO(sharadmv): remove jaxlib guards for GPU tests when jaxlib minimum
 #                 version is >= 0.3.11
-disabled_backends = ["tpu"]
+# TODO(sharadmv): remove jaxlib guards for TPU tests when jaxlib minimum
+#                 version is >= 0.3.15
+disabled_backends = []
 if jaxlib.version < (0, 3, 11):
   disabled_backends.append("gpu")
+if jaxlib.version < (0, 3, 15):
+  disabled_backends.append("tpu")
 
 class DebugPrintTest(jtu.JaxTestCase):
 
@@ -193,6 +198,13 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
 
 class DebugPrintControlFlowTest(jtu.JaxTestCase):
 
+  def _assertLinesEqual(self, text1, text2):
+
+    def _count(lines):
+      return collections.Counter(lines)
+
+    self.assertDictEqual(_count(text1.split("\n")), _count(text2.split("\n")))
+
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
@@ -220,19 +232,29 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   def test_can_print_inside_for_loop(self, ordered):
     def f(x):
       def _body(i, x):
+        debug_print("i: {i}", i=i, ordered=ordered)
         debug_print("x: {x}", x=x, ordered=ordered)
         return x + 1
       return lax.fori_loop(0, 5, _body, x)
     with capture_stdout() as output:
       f(2)
       jax.effects_barrier()
-    self.assertEqual(output(), _format_multiline("""
+    expected = _format_multiline("""
+      i: 0
       x: 2
+      i: 1
       x: 3
+      i: 2
       x: 4
+      i: 3
       x: 5
+      i: 4
       x: 6
-      """))
+      """)
+    if ordered:
+      self.assertEqual(output(), expected)
+    else:
+      self._assertLinesEqual(output(), expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
@@ -333,6 +355,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       return lax.switch(x, (b1, b2, b3), x)
     with capture_stdout() as output:
       f(0)
+      jax.effects_barrier()
     self.assertEqual(output(), _format_multiline("""
       b1: 0
       """))
@@ -352,7 +375,11 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
 class DebugPrintParallelTest(jtu.JaxTestCase):
 
   def _assertLinesEqual(self, text1, text2):
-    self.assertSetEqual(set(text1.split("\n")), set(text2.split("\n")))
+
+    def _count(lines):
+      return collections.Counter(lines)
+
+    self.assertDictEqual(_count(text1.split("\n")), _count(text2.split("\n")))
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_ordered_print_not_supported_in_pmap(self):
@@ -394,12 +421,35 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       debug_print("{}", x, ordered=False)
     f = maps.xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
                   axis_resources={'a': 'dev'})
-    with maps.Mesh(np.array(jax.devices(backend='cpu')), ['dev']):
+    with maps.Mesh(np.array(jax.devices()), ['dev']):
       with capture_stdout() as output:
         f(jnp.arange(40))
         jax.effects_barrier()
       lines = [f"{i}\n" for i in range(40)]
       self._assertLinesEqual(output(), "".join(lines))
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_unordered_print_works_in_pmap_of_while(self):
+
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices.")
+
+    @jax.pmap
+    def f(x):
+      def cond(x):
+        return x < 3
+      def body(x):
+        debug_print("hello: {}", x, ordered=False)
+        return x + 1
+      return lax.while_loop(cond, body, x)
+
+    with capture_stdout() as output:
+      f(jnp.arange(2))
+      jax.effects_barrier()
+
+    self._assertLinesEqual(
+        output(), "hello: 0\nhello: 1\nhello: 2\n"
+        "hello: 1\nhello: 2\n")
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

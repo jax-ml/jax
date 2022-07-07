@@ -141,7 +141,7 @@ def _sharded_callable(
                        if eff not in core.ordered_effects]
   ordered_effects = [eff for eff in jaxpr.effects
                      if eff in core.ordered_effects]
-  module, _ = mlir.lower_jaxpr_to_module(
+  lowering_result = mlir.lower_jaxpr_to_module(
       f"spjit_{fun.__name__}",
       core.ClosedJaxpr(jaxpr, consts),
       unordered_effects, ordered_effects,
@@ -151,6 +151,8 @@ def _sharded_callable(
       donated_args=[False]*len(in_parts),
       arg_shardings=safe_map(xla.sharding_to_proto, in_parts),
       result_shardings=safe_map(xla.sharding_to_proto, out_parts))
+  module, host_callbacks = (lowering_result.module,
+                            lowering_result.host_callbacks)
   built = xc._xla.mlir.mlir_module_to_xla_computation(
       mlir.module_to_string(module), use_tuple_args=False,
       return_tuple=True)
@@ -166,7 +168,8 @@ def _sharded_callable(
 
   compiled = dispatch.backend_compile(
       xb.get_backend(), built,
-      xb.get_compile_options(nrep, nparts, device_assignment))
+      xb.get_compile_options(nrep, nparts, device_assignment),
+      host_callbacks)
 
   input_specs = [
       pxla.partitioned_sharding_spec(local_nparts, parts, aval)

@@ -91,30 +91,20 @@ def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
   raise ValueError("Transpose doesn't support debugging callbacks.")
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
-def _ordered_effect_lowering(ctx, token, *args, **params):
-  avals_in = [core.abstract_token, *ctx.avals_in]
-  avals_out = [core.abstract_token, *ctx.avals_out]
-  args = (token, *args)
-  def _callback(token, *flat_args):
-    out = debug_callback_p.impl(*flat_args, **params)
-    return (token, *out)
-  (token, *result), keepalive = mlir.emit_python_callback(
-      ctx.module_context.platform, _callback, list(args), avals_in, avals_out,
-      True)
-  return result, keepalive, token
-
 def debug_callback_lowering(ctx, *args, effect, callback, **params):
+
+  def _callback(*flat_args):
+    return tuple(
+        debug_callback_p.impl(
+            *flat_args, effect=effect, callback=callback, **params))
   if effect in core.ordered_effects:
     token = ctx.tokens_in.get(effect)[0]
-    result, keepalive, token = _ordered_effect_lowering(ctx, token,
-        *args, effect=effect, callback=callback, **params)
+    result, token, keepalive = mlir.emit_python_callback(
+        ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out, True)
     ctx.set_tokens_out(mlir.TokenSet({effect: (token,)}))
   else:
-    def _callback(*flat_args):
-      return tuple(debug_callback_p.impl(
-        *flat_args, effect=effect, callback=callback, **params))
-    result, keepalive = mlir.emit_python_callback(ctx.module_context.platform,
-      _callback, list(args), ctx.avals_in, ctx.avals_out,  True)
+    result, token, keepalive = mlir.emit_python_callback(
+        ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out, True)
   ctx.module_context.add_keepalive(keepalive)
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
@@ -122,6 +112,9 @@ mlir.register_lowering(debug_callback_p, debug_callback_lowering,
 if jaxlib.version >= (0, 3, 11):
   mlir.register_lowering(
       debug_callback_p, debug_callback_lowering, platform="gpu")
+if jaxlib.version >= (0, 3, 15):
+  mlir.register_lowering(
+      debug_callback_p, debug_callback_lowering, platform="tpu")
 
 def debug_callback(callback: Callable[..., Any], effect: DebugEffect, *args,
                    **kwargs):

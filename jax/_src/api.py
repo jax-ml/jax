@@ -891,7 +891,7 @@ def xla_computation(fun: Callable,
                            if eff not in core.ordered_effects]
       ordered_effects = [eff for eff in jaxpr.effects
                          if eff in core.ordered_effects]
-      m, _ = mlir.lower_jaxpr_to_module(
+      lowering_result = mlir.lower_jaxpr_to_module(
           f"xla_computation_{fun_name}",
           core.ClosedJaxpr(jaxpr, consts),
           unordered_effects=unordered_effects,
@@ -906,7 +906,8 @@ def xla_computation(fun: Callable,
                             map(xla.sharding_to_proto, out_parts_flat)))
       should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
       built = xc._xla.mlir.mlir_module_to_xla_computation(
-          mlir.module_to_string(m), use_tuple_args=should_tuple,
+          mlir.module_to_string(lowering_result.module),
+          use_tuple_args=should_tuple,
           return_tuple=True)
     out_shapes_flat = [
         ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]

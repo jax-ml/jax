@@ -1159,16 +1159,16 @@ def _outside_call_lowering(
   # inside pmap, but does not work when we just execute on a single device,
   # because in such executions we always get replica_id == 0.
   replica_id = mhlo.ReplicaIdOp()
-  callback_operands = [current_token, replica_id, *args_to_outfeed]
+  callback_operands = [replica_id, *args_to_outfeed]
   callback_operand_avals = [
-      core.abstract_token, core.ShapedArray((), np.uint32), *ctx.avals_in[:-2]]
+      core.ShapedArray((), np.uint32), *ctx.avals_in[:-2]]
   if identity:
-    callback_flat_results_aval = [core.abstract_token]
+    callback_flat_results_aval = []
   else:
-    callback_flat_results_aval = [core.abstract_token, *flat_results_aval]
+    callback_flat_results_aval = [*flat_results_aval]
 
   def wrapped_callback(*args):
-    token, replica_id, *arrays = args
+    replica_id, *arrays = args
     result_arrays = _outside_call_run_callback(
         arrays,
         xb.local_devices()[replica_id],
@@ -1180,13 +1180,13 @@ def _outside_call_lowering(
     if identity:
       # For identity, we do not pass the any results back to the device
       result_arrays = ()
-    return (token,) + result_arrays
+    return result_arrays
 
-  results, keep_alive = mlir.emit_python_callback(platform, wrapped_callback,
-      callback_operands, callback_operand_avals, callback_flat_results_aval,  # type: ignore[arg-type]
+  results, next_token, keep_alive = mlir.emit_python_callback(ctx,
+      wrapped_callback, current_token, callback_operands,
+      callback_operand_avals, callback_flat_results_aval,  # type: ignore[arg-type]
       has_side_effect=True)
   _callback_handler_data.keep_alives.append(keep_alive)
-  next_token, *results = results
   # We must put the two tokens at the end
   if identity:
     results = list(args_to_outfeed)
