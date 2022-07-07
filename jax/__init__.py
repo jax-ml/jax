@@ -105,16 +105,6 @@ from jax._src.api import (
   shapecheck as shapecheck,
   ShapedArray as ShapedArray,
   ShapeDtypeStruct as ShapeDtypeStruct,
-  # TODO(phawkins): hide tree* functions from jax, update callers to use
-  # jax.tree_util.
-  treedef_is_leaf,
-  tree_flatten,
-  tree_leaves,
-  tree_map,
-  tree_multimap,
-  tree_structure,
-  tree_transpose,
-  tree_unflatten,
   value_and_grad as value_and_grad,
   vjp as vjp,
   vmap as vmap,
@@ -124,6 +114,18 @@ from jax._src.api import (
 from jax.experimental.maps import soft_pmap as soft_pmap
 from jax.version import __version__ as __version__
 from jax.version import __version_info__ as __version_info__
+
+# TODO(jakevdp): remove these deprecated routines after October 2022
+from jax._src.tree_util import (
+  _deprecated_treedef_is_leaf as treedef_is_leaf,
+  _deprecated_tree_flatten as tree_flatten,
+  _deprecated_tree_leaves as tree_leaves,
+  _deprecated_tree_map as tree_map,
+  _deprecated_tree_multimap as tree_multimap,
+  _deprecated_tree_structure as tree_structure,
+  _deprecated_tree_transpose as tree_transpose,
+  _deprecated_tree_unflatten as tree_unflatten,
+)
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.

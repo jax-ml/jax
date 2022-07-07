@@ -1,3 +1,5 @@
+(api-compatibility)=
+
 # API compatibility
 
 JAX is constantly evolving, and we want to be able to make improvements to its
