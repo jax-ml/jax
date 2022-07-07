@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from typing_extensions import Protocol
 
+import jax
 from jax import core
 from jax import tree_util
 from jax.lib import xla_client as xc
@@ -247,7 +248,7 @@ class XlaLowering(Lowering):
 
 @dataclass
 class ArgInfo:
-  aval: core.ShapedArray
+  aval: core.AbstractValue
   donated: bool
 
 
@@ -379,6 +380,8 @@ class Compiled(Stage):
     return self._executable.runtime_executable()
 
   def __call__(self, *args, **kwargs):
+    if jax.config.jax_dynamic_shapes:
+      raise NotImplementedError
     if self._no_kwargs and kwargs:
       kws = ', '.join(kwargs.keys())
       raise NotImplementedError(

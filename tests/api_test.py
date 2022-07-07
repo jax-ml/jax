@@ -9602,6 +9602,15 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertEqual(y, 6)
     self.assertEqual(count, 2)
 
+  def test_lower_abstracted_axes(self):
+    @partial(jax.jit, abstracted_axes=('n',))
+    def f(x):
+      return x.sum()
+
+    f_lowered = f.lower(np.arange(3, dtype='int32'))
+    mhlo = f_lowered.compiler_ir('mhlo')
+    self.assertIn('tensor<?xi32>', str(mhlo))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -382,13 +382,15 @@ def _jit(
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   if use_cpp_jit:
-    return _cpp_jit(fun, static_argnums=static_argnums, static_argnames=static_argnames,
-                    device=device, backend=backend,
-                    donate_argnums=donate_argnums, inline=inline, keep_unused=keep_unused)
+    return _cpp_jit(
+        fun, static_argnums=static_argnums, static_argnames=static_argnames,
+        device=device, backend=backend, donate_argnums=donate_argnums,
+        inline=inline, keep_unused=keep_unused)
 
-  return _python_jit(fun, static_argnums=static_argnums, static_argnames=static_argnames,
-                      device=device, backend=backend, donate_argnums=donate_argnums,
-                      inline=inline, keep_unused=keep_unused, abstracted_axes=abstracted_axes)
+  return _python_jit(
+      fun, static_argnums=static_argnums, static_argnames=static_argnames,
+      device=device, backend=backend, donate_argnums=donate_argnums,
+      inline=inline, keep_unused=keep_unused, abstracted_axes=abstracted_axes)
 
 def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
                  args, kwargs):
@@ -434,7 +436,7 @@ def _python_jit(
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     for arg in args_flat:
       _check_arg(arg)
-    if config.jax_dynamic_shapes:
+    if jax.config.jax_dynamic_shapes:
       axes_specs = (None if abstracted_axes is None else
                     _flat_axes_specs(abstracted_axes, *args, **kwargs))
       in_type = pe.infer_lambda_input_type(axes_specs, args_flat)
@@ -447,7 +449,8 @@ def _python_jit(
     return tree_unflatten(out_tree(), out_flat)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
-                              backend, donate_argnums, inline, keep_unused)
+                              backend, donate_argnums, inline, keep_unused,
+                              abstracted_axes)
 
   def clear_cache():
     dispatch.xla_callable.evict_function(fun)
@@ -597,7 +600,8 @@ def _cpp_jit(
   f_jitted = wraps(fun)(cpp_jitted_f)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
-                              backend, donate_argnums, inline, keep_unused)
+                              backend, donate_argnums, inline, keep_unused,
+                              None)
   f_jitted._fun = fun
   type(f_jitted).clear_cache = _cpp_jit_clear_cache
 
@@ -605,7 +609,8 @@ def _cpp_jit(
 
 
 def _jit_lower(fun, static_argnums, static_argnames, device, backend,
-               donate_argnums, inline,  keep_unused: bool):
+               donate_argnums, inline,  keep_unused: bool,
+               abstracted_axes: Optional[PytreeOfAbstractedAxesSpec]):
   """Make a ``lower`` method for jitted functions."""
   # If the function we returned from ``jit`` were a class instance,
   # this might naturally be a method, with ``fun`` as a ``self`` and
@@ -613,11 +618,9 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
 
   def arg_spec(x):
     # like xla.arg_spec but duck-types on x.shape and x.dtype
-    aval = shaped_abstractify(x)
-    try:
-      return aval, x._device
-    except:
-      return aval, None
+    aval = None if jax.config.jax_dynamic_shapes else shaped_abstractify(x)
+    device = getattr(x, '_device', None)
+    return aval, device
 
   @api_boundary
   def lower(*args, **kwargs) -> stages.Lowered:
@@ -633,19 +636,20 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
-    name = flat_fun.__name__
-    arg_specs_and_device = list(unsafe_map(arg_spec, args_flat))
-    # Only do this if the list is not empty
-    if arg_specs_and_device:
-      arg_specs = zip(*arg_specs_and_device)[0]
+    arg_specs_and_devices = map(arg_spec, args_flat)
+    if jax.config.jax_dynamic_shapes:
+      axes_specs = (None if abstracted_axes is None else
+                    _flat_axes_specs(abstracted_axes, *args, **kwargs))
+      in_type = pe.infer_lambda_input_type(axes_specs, args_flat)
+      flat_fun = lu.annotate(flat_fun, in_type)
+      in_avals = [aval for aval, explicit in in_type if explicit]
     else:
-      arg_specs = []
-    computation = dispatch.lower_xla_callable(flat_fun, device, backend, name,
-                                              donated_invars, True,
-                                              keep_unused,
-                                              *arg_specs_and_device)
+      in_avals, _ = unzip2(arg_specs_and_devices)
+    computation = dispatch.lower_xla_callable(
+        flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
+        keep_unused, *arg_specs_and_devices)
     return stages.Lowered.from_flat_info(
-        computation, in_tree, arg_specs, donate_argnums, out_tree())
+        computation, in_tree, in_avals, donate_argnums, out_tree())
 
   return lower
 
