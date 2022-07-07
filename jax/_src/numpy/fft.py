@@ -25,7 +25,7 @@ from jax._src.numpy import lax_numpy as jnp
 
 
 def _fft_norm(s, func_name, norm):
-  if norm is None or norm == "backward":
+  if norm == "backward":
     return 1
   elif norm == "ortho":
     return jnp.sqrt(jnp.prod(s)) if func_name.startswith('i') else 1/jnp.sqrt(jnp.prod(s))
@@ -88,7 +88,9 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
     else:
       s = [a.shape[axis] for axis in axes]
   transformed = lax.fft(a, fft_type, tuple(s))
-  transformed *= _fft_norm(jnp.array(s, dtype=transformed.dtype), func_name, norm)
+  if norm is not None:
+    transformed *= _fft_norm(
+        jnp.array(s, dtype=transformed.dtype), func_name, norm)
 
   if orig_axes is not None:
     transformed = jnp.moveaxis(transformed, axes, orig_axes)
