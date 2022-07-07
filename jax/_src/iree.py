@@ -110,6 +110,9 @@ class IreeBuffer(xla_client.DeviceArrayBase):
   def _value(self):
     return np.asarray(self)
 
+  def copy_to_host_async(self):
+    return self
+
 class IreeExecutable:
 
   def __init__(self, client, devices, module_object, function_name):
