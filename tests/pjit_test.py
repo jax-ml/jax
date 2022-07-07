@@ -724,7 +724,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     for obj in [lowered, compiled]:
       self.assertTrue(obj._no_kwargs, True)
-      self.assertEqual(obj.in_tree, jax.tree_flatten(((0, 0), {}))[1])
+      self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0, 0), {}))[1])
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileWithKwargs(self):
@@ -1455,7 +1455,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         def f(tree):
           return tree
         out_tree = f((a1, (a2, (a3, a4))))
-        (out1, out2, out3, out4), _ = jax.tree_flatten(out_tree)
+        (out1, out2, out3, out4), _ = jax.tree_util.tree_flatten(out_tree)
 
         self.assertIsInstance(out1, array.Array)
         self.assertEqual(out1.shape, (8, 2))
@@ -1822,7 +1822,7 @@ class UtilTest(jtu.JaxTestCase):
       ("mix_4", (pjit_lib._UNSPECIFIED, P('x'), pjit_lib._UNSPECIFIED), ValueError),
   )
   def test_all_or_non_unspecified(self, axis_resources, error=None):
-    entries, _ = jax.tree_flatten(axis_resources, is_leaf=lambda x: x is None)
+    entries, _ = jax.tree_util.tree_flatten(axis_resources, is_leaf=lambda x: x is None)
     if error is not None:
       with self.assertRaises(error):
         pjit_lib._check_all_or_none_unspecified(entries, 'test axis resources')

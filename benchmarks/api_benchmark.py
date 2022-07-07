@@ -319,7 +319,7 @@ def pmap_simple_8_devices_100_args(state):
 
   while state:
     out = f(*args)
-    jax.tree_map(lambda x: x.block_until_ready(), out)
+    jax.tree_util.tree_map(lambda x: x.block_until_ready(), out)
 
 
 def _run_sda_index_bench(state, num_devices):

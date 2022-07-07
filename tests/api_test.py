@@ -931,7 +931,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(
           obj.in_avals,
           ((jax.ShapedArray([], expected_dtype, weak_type=True),), {}))
-      self.assertEqual(obj.in_tree, jax.tree_flatten(((0,), {}))[1])
+      self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0,), {}))[1])
 
   def test_jit_lower_duck_typing(self):
     f_jit = self.jit(lambda x: 2 * x)
