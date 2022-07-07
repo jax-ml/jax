@@ -32,6 +32,7 @@ logging._warn_preinit_stderr = 0
 
 import jax._src.lib
 from jax._src.config import flags, bool_env, int_env
+from jax._src import distributed
 from jax._src.lib import tpu_driver_client
 from jax._src.lib import xla_client
 from jax._src import util, traceback_util
@@ -210,17 +211,23 @@ register_backend_factory('cpu',
 register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
 
+
+def _make_gpu_client(platform_name=None):
+  return xla_client.make_gpu_client(
+    distributed_client=distributed.global_state.client,
+    node_id=distributed.global_state.process_id,
+    platform_name=platform_name)
+
 if hasattr(xla_client, "make_gpu_client"):
   if xla_client._version >= 65:
     register_backend_factory(
-        'cuda', partial(xla_client.make_gpu_client, platform_name='cuda'),
+        'cuda', partial(_make_gpu_client, platform_name='cuda'),
         priority=200)
     register_backend_factory(
-        'rocm', partial(xla_client.make_gpu_client, platform_name='rocm'),
+        'rocm', partial(_make_gpu_client, platform_name='rocm'),
         priority=200)
   else:
-    register_backend_factory('gpu', xla_client.make_gpu_client,
-                             priority=200)
+    register_backend_factory('gpu', _make_gpu_client, priority=200)
 
 if hasattr(xla_client, "make_tpu_client"):
   register_backend_factory(

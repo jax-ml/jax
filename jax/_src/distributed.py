@@ -26,6 +26,7 @@ from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 
 class State:
+  process_id: int = 0
   service: Optional[Any] = None
   client: Optional[Any] = None
   preemption_sync_manager: Optional[Any] = None
@@ -34,8 +35,8 @@ class State:
                  coordinator_address: Optional[str] = None,
                  num_processes: Optional[int] = None,
                  process_id: Optional[int] = None):
-    coordinator_address = os.environ.get('JAX_COORDINATOR_ADDRESS',
-                                         None) or coordinator_address
+    coordinator_address = (coordinator_address or
+                           os.environ.get('JAX_COORDINATOR_ADDRESS', None))
 
     if cloud_tpu_init.running_in_cloud_tpu_vm:
       worker_endpoints = cloud_tpu_init.get_metadata(
@@ -58,6 +59,8 @@ class State:
       raise ValueError('Number of processes must be defined.')
     if process_id is None:
       raise ValueError('The process id of the current process must be defined.')
+
+    self.process_id = process_id
 
     if process_id == 0:
       if self.service is not None:
@@ -149,26 +152,6 @@ def initialize(coordinator_address: Optional[str] = None,
   """
   global_state.initialize(coordinator_address, num_processes, process_id)
   atexit.register(shutdown)
-  if xla_client._version >= 65:
-    factory = functools.partial(
-        xla_client.make_gpu_client,
-        global_state.client,
-        process_id,
-        platform_name='cuda')
-    xla_bridge.register_backend_factory('cuda', factory, priority=300)
-    factory = functools.partial(
-        xla_client.make_gpu_client,
-        global_state.client,
-        process_id,
-        platform_name='rocm')
-    xla_bridge.register_backend_factory('rocm', factory, priority=300)
-  else:
-    factory = functools.partial(
-        xla_client.make_gpu_client,
-        global_state.client,
-        process_id)
-    xla_bridge.register_backend_factory('gpu', factory, priority=300)
-
 
 
 def shutdown():
