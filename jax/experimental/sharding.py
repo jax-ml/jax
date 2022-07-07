@@ -14,12 +14,12 @@
 
 import abc
 from collections import Counter
-from typing import Sequence, Tuple, Optional, Mapping, Dict, Set
+from typing import Sequence, Tuple, Optional, Mapping, Dict, Set, Union
 
 from jax._src.util import cache, safe_zip
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax.interpreters import pxla
+from jax.interpreters import pxla, mlir
 
 import numpy as np
 
@@ -63,6 +63,10 @@ class XLACompatibleSharding(Sharding):
     raise NotImplementedError('Subclasses should implement this method.')
 
   @abc.abstractmethod
+  def normalize(self):
+    raise NotImplementedError('Subclasses should implement this method.')
+
+  @abc.abstractmethod
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -72,15 +76,56 @@ class XLACompatibleSharding(Sharding):
     return [d for d in self._device_assignment() if d.process_index == process_index]
 
   @abc.abstractmethod
-  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
+  def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
     raise NotImplementedError('Subclasses should implement this method.')
 
 
 class MeshPspecSharding(XLACompatibleSharding):
 
-  def __init__(self, mesh: pxla.Mesh, spec: pxla.PartitionSpec):
+  def __init__(
+      self, mesh: pxla.Mesh,
+      spec: Union[pxla.PartitionSpec, pxla._AUTOAxisResource],
+      _parsed_pspec = None):
+
     self.mesh = mesh
     self.spec = spec
+
+    # This split exists because you can pass `_parsed_pspec` that has been
+    # modified from the original. For example: Adding extra dimension to
+    # axis_resources for vmap handlers. In such cases you need to preserve the
+    # `sync` attribute of parsed pspecs.
+    # PartitionSpec is inferred from the parsed pspec in this case.
+    # TODO(yaskatariya): Remove this and replace this with a normalized
+    # representation of Parsed Pspec
+    if _parsed_pspec is None:
+      from jax.experimental import pjit
+      self._parsed_pspec, _, _, _ = pjit._prepare_axis_resources(
+          self.spec, "MeshPspecSharding spec")
+    else:
+      self._parsed_pspec = _parsed_pspec
+
+  def __repr__(self):
+    return f'MeshPspecSharding(\n  mesh={self.mesh},\n  partition_spec={self.spec})'
+
+  def __hash__(self):
+    return hash((self.mesh, self.spec))
+
+  def __eq__(self, other):
+    return self.mesh == other.mesh and self.spec == other.spec
+
+  def normalize(self):
+    from jax.experimental import pjit
+    cp = (self._parsed_pspec if pjit._is_auto(self._parsed_pspec) else
+          pjit.CanonicalizedParsedPartitionSpec(self._parsed_pspec))
+    return MeshPspecSharding._from_parsed_pspec(self.mesh, cp)
+
+  @classmethod
+  def _from_parsed_pspec(cls, mesh, parsed_pspec):
+    from jax.experimental import pjit
+    parsed_pspec, spec = ((parsed_pspec, parsed_pspec)
+                          if pjit._is_auto(parsed_pspec) else
+                          (parsed_pspec, pjit._get_single_pspec(parsed_pspec)))
+    return cls(mesh, spec, parsed_pspec)
 
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:
@@ -93,6 +138,11 @@ class MeshPspecSharding(XLACompatibleSharding):
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
     # TODO(yashkatariya): Remove this when utilities are moved to pxla.py.
     from jax.experimental import global_device_array
+
+    if pxla._is_auto(self.spec):
+      raise ValueError('Getting indices when the sharding is not known is not '
+                       'possible. Please get the sharding from XLA and then '
+                       'create the Array with that sharding.')
 
     # `get_shard_indices` is cached.
     return global_device_array.get_shard_indices(global_shape, self.mesh, self.spec)
@@ -114,8 +164,13 @@ class MeshPspecSharding(XLACompatibleSharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.mesh.devices.flat)
 
-  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
+  @cache()
+  def _to_xla_op_sharding(
+      self, num_dimensions: int,
+      axis_ctx: Optional[mlir.SPMDAxisContext] = None) -> Optional[xc.OpSharding]:
     from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
+
+    assert not pxla._is_auto(self.spec)
 
     parsed_spec, _, _, _ = _prepare_axis_resources(self.spec, "spec")
     array_mapping = get_array_mapping(parsed_spec)
@@ -123,13 +178,33 @@ class MeshPspecSharding(XLACompatibleSharding):
     # since we don't really need sharding spec.
     sharding_spec = pxla.new_mesh_sharding_specs(
         self.mesh.shape, self.mesh.axis_names)(num_dimensions, array_mapping)
-    return sharding_spec.sharding_proto()
+    # Used in `with_sharding_constraint`.
+    special_axes = {}
+    if axis_ctx is not None:
+      axis_names = self.mesh.axis_names
+      for manual_axis in axis_ctx.manual_axes:
+        special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
+    return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
 class SingleDeviceSharding(XLACompatibleSharding):
 
   def __init__(self, device: Device):
     self._device = device
+
+  def __repr__(self):
+    return f"SingleDeviceSharding(device={self._device})"
+
+  def __hash__(self):
+    return hash(self._device)
+
+  def __eq__(self, other):
+    if not isinstance(other, SingleDeviceSharding):
+      return False
+    return self._device == other._device
+
+  def normalize(self):
+    return SingleDeviceSharding(self._device)
 
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:
@@ -150,7 +225,8 @@ class SingleDeviceSharding(XLACompatibleSharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     return [self._device]
 
-  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
+  @cache()
+  def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
     proto = xc.OpSharding()
     proto.type = xc.OpSharding.Type.REPLICATED
     return proto
@@ -162,6 +238,9 @@ class PmapSharding(XLACompatibleSharding):
     self.devices = devices
     # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
+
+  def normalize(self):
+    return PmapSharding(self.devices, self.sharding_spec)
 
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:

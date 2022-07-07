@@ -505,10 +505,10 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(jax.vmap(h, in_axes=(None, 0)))(x, y).jaxpr
     eqn = jaxpr.eqns[0]
     self.assertIs(eqn.primitive, pjit_p)
-    x_sync, y_sync = (spec.sync for spec in eqn.params['in_axis_resources'])
+    x_sync, y_sync = (s._parsed_pspec.sync for s in eqn.params['in_shardings'])
     self.assertEqual(x_sync, SpecSync.IN_SYNC)
     self.assertEqual(y_sync, SpecSync.DIM_PERMUTE)
-    x_sync, y_sync, z_sync = (spec.sync for spec in eqn.params['out_axis_resources'])
+    x_sync, y_sync, z_sync = (s._parsed_pspec.sync for s in eqn.params['out_shardings'])
     self.assertEqual(x_sync, SpecSync.DIM_PERMUTE)
     self.assertEqual(y_sync, SpecSync.IN_SYNC)
     self.assertEqual(z_sync, SpecSync.DIM_PERMUTE)
@@ -546,9 +546,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     def _test_rule(*args, **kwargs):
       nonlocal test_rule_called
       test_rule_called = True
-      in_axis_resources = kwargs['in_axis_resources']
-      self.assertEqual(len(in_axis_resources), 1)
-      self.assertIn(('y',), in_axis_resources[0].partitions)
+      in_shardings = kwargs['in_shardings']
+      self.assertEqual(len(in_shardings), 1)
+      self.assertIn(('y',), in_shardings[0]._parsed_pspec.partitions)
       return rule(*args, **kwargs)
     try:
       mlir._lowerings[pjit_p] = _test_rule
@@ -1116,9 +1116,8 @@ class GDAPjitTest(jtu.JaxTestCase):
         "Got an input GDA to pjit with different partitioning than specified "
         'in the in_axis_resources argument to pjit. The partitioning must match, or '
         'use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. '
-        'Leave in_axis_resources empty for Array. '
         "Got GDA spec: PartitionSpec('x',) and "
-        "pjit spec: PartitionSpec('x', 'y') "
+        "pjit spec: PartitionSpec(('x',), ('y',)) "
         'for GDA: GlobalDeviceArray(shape=(8, 2), dtype=float32)'):
       @partial(pjit, in_axis_resources=P('x', 'y'), out_axis_resources=P('x', 'y'))
       def f(x):
@@ -1378,7 +1377,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jax._src.config.jax_array(True):
       with global_mesh:
-        f = pjit(lambda x: x @ x.T, out_axis_resources=out_axis_resources)
+        f = pjit(lambda x: x @ x.T, out_axis_resources=MeshPspecSharding(
+            global_mesh, out_axis_resources))
         expected_matrix_mul = input_data @ input_data.T
 
         out = f(input_array)
@@ -1398,7 +1398,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jax._src.config.jax_array(True):
       with global_mesh:
         f = pjit(lambda x: x,
-                 out_axis_resources=P('x', 'y'))
+                 out_axis_resources=MeshPspecSharding(
+                     global_mesh, P('x', 'y')))
         with self.assertRaisesRegex(
             ValueError, ('All arguments to pjit when `config.jax_array` is '
                          'enabled should be `Array`s.')):
@@ -1480,34 +1481,28 @@ class ArrayPjitTest(jtu.JaxTestCase):
         for s in out4.addressable_shards:
           self.assertArraysEqual(s.data._arrays[0], input_data)
 
-  def test_in_axis_resources_mismatch_error(self):
-    global_input_shape = (8, 2)
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    mesh_axes = P('x', 'y')
-
-    input_array, _ = create_array(global_input_shape, global_mesh, mesh_axes)
-
+  def test_in_axis_resources_error(self):
     with jax._src.config.jax_array(True):
-      with global_mesh:
-        f = pjit(lambda x: x, in_axis_resources=P('x'))
-        with self.assertRaisesRegex(
+      with self.assertRaisesRegex(
             ValueError,
-            ('Got an input Array to pjit with different partitioning '
-             'than specified in the in_axis_resources argument to pjit')):
-          f(input_array)
+            ('in_axis_resources should be empty for Array. The sharding '
+             'should be specified on the arguments as pjit follows '
+             'computation follows data semantics.')):
+        pjit(lambda x: x, in_axis_resources=P('x'))
 
-  def test_in_axis_resources_same_as_array_sharding(self):
-    global_input_shape = (8, 2)
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    mesh_axes = P('x', 'y')
-
-    input_array, _ = create_array(global_input_shape, global_mesh, mesh_axes)
-
+  def test_out_axis_resources_error(self):
     with jax._src.config.jax_array(True):
-      with global_mesh:
-        out = pjit(lambda x: x, in_axis_resources=P('x' ,'y'))(input_array)
-        self.assertIsInstance(out, array.Array)
+      with self.assertRaisesRegex(
+            ValueError,
+            ('When `config.jax_array` flag is enabled, '
+             'out_axis_resources should contain instances of `Sharding`.')):
+        pjit(lambda x: x, out_axis_resources=P('x'))
 
+  def test_no_input_output(self):
+    with jax._src.config.jax_array(True):
+      def f():
+        pass
+      pjit(f)
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

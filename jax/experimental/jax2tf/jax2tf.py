@@ -17,7 +17,7 @@ import contextlib
 import os
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union, cast
 
 import jax
 from jax import lax
@@ -28,6 +28,7 @@ from jax import random, tree_util
 from jax import numpy as jnp
 from jax.experimental import maps
 from jax.experimental import pjit
+from jax.experimental import sharding
 from jax.interpreters import ad
 from jax.interpreters import partial_eval
 from jax.interpreters import pxla
@@ -2670,13 +2671,13 @@ def split_to_logical_devices(tensor: TfVal,
   return xla_sharding.tile(tensor, tile_assignment, use_sharding_op=True)
 
 
-def _shard_value(mesh: maps.Mesh,
-                 val: TfVal,
+def _shard_value(val: TfVal,
                  aval: core.ShapedArray,
-                 axis_resources: pjit.ParsedPartitionSpec) -> TfVal:
+                 sd: sharding.XLACompatibleSharding) -> TfVal:
   """Apply sharding to a TfVal."""
-  sharding_proto: xla_client.OpSharding = pjit.get_aval_sharding_proto(
-      aval, axis_resources, mesh)
+  sharding_proto: xla_client.OpSharding = cast(
+      xla_client.OpSharding, sd._to_xla_op_sharding(aval.ndim))
+
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
   xla_sharding_proto: xla_data_pb2.OpSharding = (
       xla_data_pb2.OpSharding(
@@ -2691,8 +2692,8 @@ def _shard_value(mesh: maps.Mesh,
 
 def _pjit(*args: TfVal,
           jaxpr: core.ClosedJaxpr,
-          in_axis_resources: Sequence[pjit.ParsedPartitionSpec],
-          out_axis_resources: Sequence[pjit.ParsedPartitionSpec],
+          in_shardings: Sequence[sharding.XLACompatibleSharding],
+          out_shardings: Sequence[sharding.XLACompatibleSharding],
           resource_env: maps.ResourceEnv,
           donated_invars,
           name: str,
@@ -2704,15 +2705,13 @@ def _pjit(*args: TfVal,
   if resource_env.physical_mesh.is_multi_process:
     raise NotImplementedError("jax2tf translation for pjit over multi-process "
                               "meshes is not supported yet")
-  # TODO: add `name` to the name stack
-  shard_value_for_mesh = partial(_shard_value, resource_env.physical_mesh)
   # Apply sharding annotation to the arguments
   sharded_args: Sequence[TfVal] = tuple(
-      map(shard_value_for_mesh, args, _in_avals, in_axis_resources))
+      map(_shard_value, args, _in_avals, in_shardings))
   results = _interpret_jaxpr(jaxpr, *sharded_args,
                              extra_name_stack=util.wrap_name(name, "pjit"))
   sharded_results: Sequence[TfVal] = tuple(
-      map(shard_value_for_mesh, results, _out_aval, out_axis_resources))
+      map(_shard_value, results, _out_aval, out_shardings))
   return tuple(sharded_results)
 
 
@@ -2725,7 +2724,9 @@ def _pjit_sharding_constraint(arg: TfVal, *,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
                               **kwargs) -> TfVal:
-  return _shard_value(resource_env.physical_mesh, arg, _in_avals[0], axis_resources)
+  ms = sharding.MeshPspecSharding._from_parsed_pspec(
+      resource_env.physical_mesh, axis_resources)
+  return _shard_value(arg, _in_avals[0], ms)
 
 
 tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint
