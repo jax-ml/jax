@@ -122,15 +122,19 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
         f"No dtype_to_ir_type handler for dtype: {dtype}") from err
   return ir_type_factory()
 
-def _array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
+def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
+                    ) -> Sequence[ir.Type]:
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
-  shape = [d if type(d) is int else -1 for d in aval.shape]
+  # in the MHLO builder, -1 indicates a '?' axis size
+  shape = [d if type(d) is int else d.bound if type(d) is core.BInt else -1
+           for d in aval.shape]
   return (ir.RankedTensorType.get(shape, dtype_to_ir_type(aval.dtype)),)
 
 def _bint_ir_types(aval: core.AbstractBInt) -> Sequence[ir.Type]:
-  return (ir.RankedTensorType.get((), dtype_to_ir_type(dtypes.dtype('int32'))),)
+  dtype = dtypes._scalar_type_to_dtype(int)
+  return (ir.RankedTensorType.get((), dtype_to_ir_type(dtype)),)
 
 ir_type_handlers: Dict[Type[core.AbstractValue],
                         Callable[[Any], Sequence[ir.Type]]] = {}

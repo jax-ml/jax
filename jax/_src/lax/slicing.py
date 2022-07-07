@@ -903,7 +903,7 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
     weak_type_rule=_argnum_weak_type(0))
-ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp  # TODO
+ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 

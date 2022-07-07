@@ -104,8 +104,8 @@ class IreeBuffer(xla_client.DeviceArrayBase):
     return self  # no async
 
   # overrides repr on base class which expects _value and aval attributes
-  def __repr__(self):
-    return f'IreeBuffer({self.to_py()})'
+  def __repr__(self): return f'IreeBuffer({self.to_py()})'
+  _value = property(to_py)
 
 class IreeExecutable:
 

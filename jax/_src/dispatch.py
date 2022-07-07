@@ -299,6 +299,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   if config.jax_dynamic_shapes:
     keep_unused = True
     has_outfeed = False
+    donated_invars = [False] * len(fun.in_type)
   else:
     has_outfeed = core.jaxpr_uses_outfeed(jaxpr)
     jaxpr = apply_outfeed_rewriter(jaxpr)
@@ -318,8 +319,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   device = _xla_callable_device(nreps, backend, device, arg_devices)
   backend = xb.get_device_backend(device) if device else xb.get_backend(backend)
 
-  if (config.jax_dynamic_shapes and jaxpr_has_bints(jaxpr) and
-      not _backend_supports_unbounded_dynamic_shapes(backend)):
+  if config.jax_dynamic_shapes and jaxpr_has_bints(jaxpr):
     jaxpr, consts = pe.pad_jaxpr(jaxpr, consts)
 
   map(prefetch, itertools.chain(consts, jaxpr_literals(jaxpr)))
@@ -520,6 +520,7 @@ num_buffers_handlers[core.AbstractToken] = lambda _: 1
 num_buffers_handlers[core.ShapedArray] = lambda _: 1
 num_buffers_handlers[core.DShapedArray] = lambda _: 1
 num_buffers_handlers[core.ConcreteArray] = lambda _: 1
+num_buffers_handlers[core.AbstractBInt] = lambda _: 1
 
 
 def _input_handler(backend: Backend,
@@ -652,17 +653,22 @@ def dynamic_array_result_handler(sticky_device: Optional[Device],
     return partial(_dynamic_array_result_handler, sticky_device, aval)
 
 def _dynamic_array_result_handler(sticky_device, aval, env, buf):
-  if all(type(d) is int for d in aval.shape):
-    del env
-    return _maybe_create_array_from_da(buf, aval, sticky_device)
-  else:
-    assert env is not None
-    in_env, out_env = env
-    shape = [in_env[d.val] if type(d) is core.InDBIdx else
-             out_env[d.val] if type(d) is core.OutDBIdx else d
-             for d in aval.shape]
+  in_env, out_env = env or (None, None)
+  shape = [in_env[d.val] if type(d) is core.InDBIdx else
+           out_env[d.val] if type(d) is core.OutDBIdx else d
+           for d in aval.shape]
+  if all(type(d) is int for d in shape):
     aval = core.ShapedArray(tuple(shape), aval.dtype)
     return _maybe_create_array_from_da(buf, aval, sticky_device)
+  elif any(type(d) is core.BInt for d in shape):
+    padded_shape = [d.bound if type(d) is core.BInt else d for d in shape]
+    buf_aval = core.ShapedArray(tuple(padded_shape), aval.dtype, aval.weak_type)
+    data = _maybe_create_array_from_da(buf, buf_aval, sticky_device)
+    return core.PaddedArray(aval.update(shape=tuple(shape)), data)
+  else:
+    aval = core.ShapedArray(tuple(shape), aval.dtype)
+    return _maybe_create_array_from_da(buf, aval, sticky_device)
+
 
 
 result_handlers: Dict[
@@ -672,6 +678,8 @@ result_handlers[core.AbstractToken] = lambda _, __: lambda _, __: core.token
 result_handlers[core.ShapedArray] = array_result_handler
 result_handlers[core.DShapedArray] = dynamic_array_result_handler
 result_handlers[core.ConcreteArray] = array_result_handler
+result_handlers[core.AbstractBInt] = \
+    lambda _, a: lambda _, b: core.BInt(int(b), a.bound)
 
 
 def needs_check_special():
@@ -1014,6 +1022,7 @@ device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]], Tuple[Any]]] = 
 device_put_handlers.update((t, _device_put_array) for t in array_types)
 device_put_handlers.update((t, _device_put_scalar) for t in _scalar_types)
 device_put_handlers[core.Token] = _device_put_token
+device_put_handlers[core.BInt] = lambda x, d: _device_put_scalar(x.val, d)
 
 
 def _device_put_device_array(x: Union[device_array.DeviceArrayProtocol, device_array._DeviceArray], device: Optional[Device]):
@@ -1021,6 +1030,7 @@ def _device_put_device_array(x: Union[device_array.DeviceArrayProtocol, device_a
   return (x.device_buffer,)
 for t in device_array.device_array_types:
   device_put_handlers[t] = _device_put_device_array
+device_put_handlers[core.PaddedArray] = lambda x, d: device_put(x._data, d)
 
 def _copy_device_array_to_device(
     x: Union[device_array.DeviceArrayProtocol, device_array._DeviceArray],

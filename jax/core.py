@@ -1104,22 +1104,9 @@ def _jaxpr_type_to_callable_annotation(jaxpr: Jaxpr) -> InputType:
          for v in jaxpr.invars]
   return tuple(out)
 
-
 class Bot(AbstractValue): pass
-
 bot = Bot()
 
-class AbstractBInt(AbstractValue):
-  __slots__ = ['bound']
-  bound: int
-  def __init__(self, bound):
-    self.bound = bound
-  def str_short(self, short_dtypes=False) -> str:
-    return f'bint{{≤{self.bound}}}[]'
-  def __eq__(self, other):
-    return type(other) is AbstractBInt and self.bound == other.bound
-  def __hash__(self) -> int:
-    return hash((type(self), self.bound))
 
 def lattice_join(x: Optional[AbstractValue],
                  y: Optional[AbstractValue]) -> AbstractValue:
@@ -1171,9 +1158,6 @@ def get_aval(x):
     return concrete_aval(x)
 
 
-pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
-
-
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
   fname_context = f"The problem arose with the `{fname}` function. "
@@ -1204,7 +1188,7 @@ def _short_dtype_name(dtype):
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
-  array_abstraction_level = 3
+  array_abstraction_level = 4
 
   def __init__(self, dtype, weak_type=False):
     self.dtype = np.dtype(dtype)
@@ -1269,77 +1253,9 @@ class UnshapedArray(AbstractValue):
     raise TypeError(msg)
 
 
-# We have a convention of reusing AbsractValues as types, in particular reusing
-# ShapedArrays as types, even though we could make a distinction and use
-# abstract values during tracing only. This reuse becomes a bit more extreme
-# with DShapedArrays. A DShapedArray's shape attribute is a tuple which can
-# contain several different types: ints, other AbstractValues (specifically at
-# the input and output to pe.trace_to_jaxpr_dynamic), Tracers (while tracing),
-# or Vars (when used as jaxpr type annotations). We could reduce this
-# polymorphism if it seems cleaner, though it's kind of convenient!
-AxisSizeForTracing = Union[int, Tracer]
-AxisSizeForJaxprType = Union[int, Var]
-AxisSizeForJaxprTracingSpec = Union[int, AbstractValue]
-AxisSize = Union[AxisSizeForTracing, AxisSizeForJaxprType,
-                 AxisSizeForJaxprTracingSpec]
-
-class DShapedArray(UnshapedArray):
-  __slots__ = ['shape']
-  shape: Tuple[AxisSize, ...]  # noqa: F821
-  array_abstraction_level: int = 2
-
-  def __init__(self, shape, dtype, weak_type):
-    self.shape = shape
-    self.dtype = dtype
-    self.weak_type = weak_type
-
-  ndim = property(lambda self: len(self.shape))
-  size = property(lambda self: prod(self.shape))
-
-  def str_short(self, short_dtypes=False) -> str:
-    del short_dtypes  # ignored
-    shape = f'{",".join(str(d) for d in self.shape)}' if self.shape else ''
-    dtype = _short_dtype_name(self.dtype)
-    return f'{dtype}[{shape}]'
-  __str__ = __repr__ = str_short
-
-  def update(self, shape=None, dtype=None, weak_type=None):
-    if shape is None:
-      shape = self.shape
-    if dtype is None:
-      dtype = self.dtype
-    if weak_type is None:
-      weak_type = self.weak_type
-    return DShapedArray(shape, dtype, weak_type)
-
-  def __eq__(self, other):
-    return (type(self) is type(other)
-            and self.dtype == other.dtype and self.shape == other.shape
-            and self.weak_type == other.weak_type)
-
-  def __hash__(self):
-    return hash((self.shape, self.dtype, self.weak_type))
-
-  def join(self, other):
-    if (symbolic_equal_shape(self.shape, other.shape) and
-        self.dtype == other.dtype):
-      weak_type = self.weak_type and other.weak_type
-      return self.update(weak_type=weak_type)
-    elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype)
-    else:
-      raise TypeError(self, other)
-
-  def at_least_vspace(self):
-    return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                        self.weak_type)
-
-del AxisSize, AxisSizeForTracing, AxisSizeForJaxprType, \
-    AxisSizeForJaxprTracingSpec
-
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'named_shape']
-  array_abstraction_level = 1
+  array_abstraction_level = 2
 
   def __init__(self, shape, dtype, weak_type=False, named_shape=None):
     self.shape = canonicalize_shape(shape)
@@ -1415,6 +1331,7 @@ class ShapedArray(UnshapedArray):
 def _forward_to_value(self, fun, ignored_tracer, *args):
   return fun(self.val, *args)
 
+
 class ConcreteArray(ShapedArray):
   __slots__ = ['val']
   array_abstraction_level = 0
@@ -1477,6 +1394,135 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
   else:
     return primal_dtype
 
+
+# Dynamic shape stuff below here! We keep the abstract values distinct just so
+# as not to interfere with any static shape machinery.
+
+# We have a convention of reusing AbsractValues as types, even though we could
+# make a distinction and use abstract values during tracing only. This reuse
+# becomes a bit more extreme with DShapedArrays. A DShapedArray's shape
+# attribute is a tuple which can contain several different types: int, BInt,
+# Tracer (while tracing), Var (when used as jaxpr type annotations), or
+# DBIdx/InDBIdx/OutDBIdx (when used in InputType or OutputType). We could reduce
+# this polymorphism if it seems cleaner, though it's kind of convenient!
+AxisSize = Any
+
+class DShapedArray(UnshapedArray):
+  __slots__ = ['shape']
+  shape: Tuple[AxisSize, ...]  # noqa: F821
+  array_abstraction_level: int = 3
+
+  def __init__(self, shape, dtype, weak_type):
+    self.shape = shape
+    self.dtype = dtype
+    self.weak_type = weak_type
+
+  ndim = property(lambda self: len(self.shape))
+  size = property(lambda self: prod(self.shape))
+
+  def str_short(self, short_dtypes=False) -> str:
+    del short_dtypes  # ignored
+    shape = f'{",".join(str(d) for d in self.shape)}' if self.shape else ''
+    dtype = _short_dtype_name(self.dtype)
+    return f'{dtype}[{shape}]'
+  __str__ = __repr__ = str_short
+
+  def update(self, shape=None, dtype=None, weak_type=None):
+    if shape is None:
+      shape = self.shape
+    if dtype is None:
+      dtype = self.dtype
+    if weak_type is None:
+      weak_type = self.weak_type
+    return DShapedArray(shape, dtype, weak_type)
+
+  def __eq__(self, other):
+    return (type(self) is type(other)
+            and self.dtype == other.dtype and self.shape == other.shape
+            and self.weak_type == other.weak_type)
+
+  def __hash__(self):
+    return hash((self.shape, self.dtype, self.weak_type))
+
+  def join(self, other):
+    if (symbolic_equal_shape(self.shape, other.shape) and
+        self.dtype == other.dtype):
+      weak_type = self.weak_type and other.weak_type
+      return self.update(weak_type=weak_type)
+    elif self.dtype == other.dtype:
+      return UnshapedArray(self.dtype)
+    else:
+      raise TypeError(self, other)
+
+  def at_least_vspace(self):
+    return DShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
+                        self.weak_type)
+
+class DConcreteArray(DShapedArray):
+  __slots__ = ['val']
+  array_abstraction_level = 1
+  def __init__(self, shape, dtype, weak_type, val):
+    super().__init__(shape, dtype, weak_type)
+    self.val = val
+
+
+pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
+
+
+class AbstractBInt(AbstractValue):
+  __slots__ = ['bound']
+  bound: int
+  def __init__(self, bound):
+    self.bound = bound
+  def str_short(self, short_dtypes=False) -> str:
+    return f'bint{{≤{self.bound}}}[]'
+  __repr__ = str_short
+  def __eq__(self, other):
+    return type(other) is AbstractBInt and self.bound == other.bound
+  def __hash__(self) -> int:
+    return hash((type(self), self.bound))
+
+class BInt:
+  val: Any  # Union[int, Array]
+  bound: int
+  def __init__(self, val, bound):
+    self.val = val
+    self.bound = bound
+  def __repr__(self) -> str:
+    return f'{self.val}{{≤{self.bound}}}'
+  def __int__(self) -> int:
+    return self.val
+  def __eq__(self, other) -> bool:
+    return (isinstance(other, BInt) and
+            (self.val, self.bound) == (other.val, other.bound))
+  def __hash__(self):
+    return hash((self.val, self.bound))
+pytype_aval_mappings[BInt] = lambda x: AbstractBInt(x.bound)
+
+
+# DShapedArray w/ BInt in shapes => PaddedArray runtime representation
+class PaddedArray:
+  _aval: DShapedArray
+  _data: Any  # standard array type
+  def __init__(self, aval, data):
+    padded_shape = tuple(d.bound if type(d) is BInt else d for d in aval.shape)
+    assert data.shape == padded_shape
+    self._aval = aval
+    self._data = data
+  shape = property(lambda self: self._aval.shape)
+  dtype = property(lambda self: self._aval.dtype)
+  def __repr__(self) -> str:
+    dtypestr = _short_dtype_name(self._aval.dtype)
+    shapestr = ','.join(map(str, self.shape))
+    slices = tuple(slice(d.val) if type(d) is BInt else slice(None)
+                   for d in self.shape)
+    data = self._data[slices]
+    return f'{dtypestr}[{shapestr}] with value:\n{data}'
+pytype_aval_mappings[PaddedArray] = \
+    lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,
+                             x._data)
+
+
 class AbstractToken(AbstractValue):
   def join(self, other):
     if isinstance(other, AbstractToken):
@@ -1485,7 +1531,6 @@ class AbstractToken(AbstractValue):
       assert False, f"Cannot join {self} with {other}"
   def str_short(self, short_dtypes=False): return 'Tok'
   def at_least_vspace(self): return self
-
 abstract_token: AbstractToken = AbstractToken()
 
 # Concrete token object
@@ -1758,6 +1803,21 @@ def _invalid_shape_error(shape: Shape, context: str=""):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
   return TypeError(msg)
+
+class BIntDimensionHandler(DimensionHandler):
+  def symbolic_equal(self, d1, d2) -> bool:
+    return isinstance(d2, BInt) and d1.val == d2.val and d1.bound == d2.bound
+  def sum(self, *ds) -> BInt:
+    if not all(isinstance(d, BInt) for d in ds):
+      raise InconclusiveDimensionOperation
+    if len({d.bound for d in ds}) != 1:
+      raise InconclusiveDimensionOperation
+    return BInt(sum(d.val for d in ds), ds[0].bound)
+  def fail(self, *_): raise InconclusiveDimensionOperation
+  great_equal = diff = divide_shape_sizes = stride = dilate = as_value = fail
+_SPECIAL_DIMENSION_HANDLERS[BInt] = BIntDimensionHandler()
+
+
 
 # ------------------- Named shapes -------------------
 
@@ -2436,7 +2496,7 @@ def check_type(
   if isinstance(ty, DShapedArray):
     # Check all elements in the shape tuple are well-typed.
     for d in ty.shape:
-      if isinstance(d, int):
+      if isinstance(d, (int, BInt)):
         continue
       elif isinstance(d, Var):
         if d not in env:
