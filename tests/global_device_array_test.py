@@ -364,6 +364,20 @@ class GDATest(jtu.JaxTestCase):
 
     self.assertIs(gda.block_until_ready(), gda)
 
+  @parameterized.named_parameters(
+      ("mesh_x_y", P("x", "y")),
+      ("mesh_x", P("x")),
+      ("mesh_y", P("y")),
+      ("mesh_none_y", P(None, "y")),
+      ("mesh_xy", P(("x", "y"))),
+      ("mesh_fully_replicated", P()),
+  )
+  def test_gda_value(self, mesh_axes):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    gda, global_data = create_gda(input_shape, global_mesh, mesh_axes)
+    self.assertArraysEqual(gda._value, global_data)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
