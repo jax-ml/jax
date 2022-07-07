@@ -2719,14 +2719,12 @@ tf_impl_with_avals[pjit.pjit_p] = _pjit
 
 
 def _pjit_sharding_constraint(arg: TfVal, *,
-                              axis_resources: pjit.ParsedPartitionSpec,
+                              sharding: sharding.MeshPspecSharding,
                               resource_env: maps.ResourceEnv,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
                               **kwargs) -> TfVal:
-  ms = sharding.MeshPspecSharding._from_parsed_pspec(
-      resource_env.physical_mesh, axis_resources)
-  return _shard_value(arg, _in_avals[0], ms)
+  return _shard_value(arg, _in_avals[0], sharding)
 
 
 tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint

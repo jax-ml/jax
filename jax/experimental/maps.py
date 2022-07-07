@@ -1858,6 +1858,7 @@ def _check_no_loop_collectives(jaxpr, loop_axis_resources):
 
 def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
   from jax.experimental.pjit import sharding_constraint_p, ParsedPartitionSpec
+  from jax.experimental.sharding import MeshPspecSharding
   rec = lambda jaxpr: _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name)
   if isinstance(jaxpr, core.ClosedJaxpr):
     return jaxpr.map_jaxpr(rec)
@@ -1871,10 +1872,13 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
     new_eqns.append(eqn.replace(
       outvars=tmp_outvars, params=dict(eqn.params, **new_jaxpr_params)))
     for outvar, tmpvar in zip(eqn.outvars, tmp_outvars):
-      new_eqns.append(core.JaxprEqn([tmpvar], [outvar], sharding_constraint_p,
-                      dict(resource_env=resource_env, axis_resources=ParsedPartitionSpec((), ())),
-                      set(),
-                      eqn.source_info))
+      new_eqns.append(core.JaxprEqn(
+          [tmpvar], [outvar], sharding_constraint_p,
+          dict(resource_env=resource_env,
+               sharding=MeshPspecSharding._from_parsed_pspec(
+                   resource_env.physical_mesh, ParsedPartitionSpec((), ()))),
+          set(),
+          eqn.source_info))
   return jaxpr.replace(eqns=new_eqns)
 
 def _flatten_axes(what, tree, axes, tupled_args):

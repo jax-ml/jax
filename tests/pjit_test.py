@@ -532,8 +532,10 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(jax.vmap(f))(x)
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
-    self.assertEqual(constraint_eqn.params['axis_resources'].partitions, (None, ('x',)))
-    self.assertEqual(constraint_eqn.params['axis_resources'].sync, SpecSync.DIM_PERMUTE)
+    self.assertEqual(constraint_eqn.params['sharding']._parsed_pspec.partitions,
+                     (None, ('x',)))
+    self.assertEqual(constraint_eqn.params['sharding']._parsed_pspec.sync,
+                     SpecSync.DIM_PERMUTE)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingInXMap(self):
@@ -1757,7 +1759,7 @@ class UtilTest(jtu.JaxTestCase):
     dims = 5
     aval = jax.core.ShapedArray((len(devices),) * dims, jnp.float32)
     def roundtrip(spec):
-      op_sharding = pjit_lib.get_aval_sharding_proto(aval, spec, mesh)
+      op_sharding = MeshPspecSharding(mesh, spec)._to_xla_op_sharding(aval.ndim)
       parsed_spec = pjit_lib.parse_flatten_op_sharding(op_sharding, mesh)[0].partitions
       self.assertEqual(parsed_spec[:len(spec)], spec)
       self.assertEqual(parsed_spec[len(spec):], ((),) * (len(parsed_spec) - len(spec)))
