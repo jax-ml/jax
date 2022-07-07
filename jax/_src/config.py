@@ -863,7 +863,7 @@ config.define_bool_state(
 # TODO(mattjj): remove after May 19 2022, NeurIPS submission deadline
 config.define_bool_state(
     name='after_neurips',
-    default=False,
+    default=True,
     upgrade=True,
     help='Gate changes until after NeurIPS 2022 deadline.')
 
