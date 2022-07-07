@@ -9611,6 +9611,23 @@ class DynamicShapeTest(jtu.JaxTestCase):
     mhlo = f_lowered.compiler_ir('mhlo')
     self.assertIn('tensor<?xi32>', str(mhlo))
 
+  def test_vmap_abstracted_axis(self):
+    def foo(x, y):
+      z = jax.vmap(jnp.sin)(x) * y
+      return jax.vmap(jnp.add)(x, z)
+
+    x = jnp.arange(3.)
+    jaxpr = jax.make_jaxpr(foo, abstracted_axes=('n',))(x, x).jaxpr
+    self.assertLen(jaxpr.invars, 3)
+    a, b, c = jaxpr.invars
+    self.assertEqual(a.aval.shape, ())
+    self.assertEqual(b.aval.shape, (a,))
+    self.assertEqual(c.aval.shape, (a,))
+    self.assertLen(jaxpr.eqns, 3)
+    self.assertLen(jaxpr.outvars, 1)
+    f, = jaxpr.outvars
+    self.assertEqual(f.aval.shape, (a,))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
