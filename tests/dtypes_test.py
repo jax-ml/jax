@@ -329,6 +329,23 @@ class TestPromotionTables(jtu.JaxTestCase):
     else:
       self.assertIs(jax_type, np.dtype(bool))
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{typ}", "typ": typ}
+       for typ in [bool, int, float, complex])
+  def testScalarWeakTypes(self, typ):
+    # Regression test for https://github.com/google/jax/issues/11377
+    val = typ(0)
+
+    result1 = jnp.array(val)
+    result2 = jax.jit(jnp.array)(val)
+    self.assertEqual(result1.aval, result2.aval)
+
+    with jax.numpy_dtype_promotion('standard'):
+      f = lambda x: x / 2
+      result1 = jnp.array(f(val))
+      result2 = jax.jit(f)(val)
+    self.assertEqual(result1.aval, result2.aval)
+
   def testResultTypeNone(self):
     # This matches the behavior of np.result_type(None) => np.float_
     self.assertEqual(dtypes.result_type(None), dtypes.canonicalize_dtype(dtypes.float_))
