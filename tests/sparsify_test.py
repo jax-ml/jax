@@ -524,6 +524,45 @@ class SparsifyTest(jtu.JaxTestCase):
       check_dtypes=True,
     )
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{op.__name__}", "op": op, "dtype": dtype, "kwds": kwds}
+      for op, dtype, kwds in [
+        (lax.abs, jnp.float32, {}),
+        (lax.asin, jnp.float32, {}),
+        (lax.asinh, jnp.float32, {}),
+        (lax.atan, jnp.float32, {}),
+        (lax.atanh, jnp.float32, {}),
+        (lax.bessel_i1e, jnp.float32, {}),
+        (lax.expm1, jnp.float32, {}),
+        (lax.log1p, jnp.float32, {}),
+        (lax.neg, jnp.float32, {}),
+        (lax.real, jnp.complex64, {}),
+        (lax.imag, jnp.complex64, {}),
+        (lax.sign, jnp.float32, {}),
+        (lax.sin, jnp.float32, {}),
+        (lax.sinh, jnp.float32, {}),
+        (lax.sqrt, jnp.float32, {}),
+        (lax.tan, jnp.float32, {}),
+        (lax.tanh, jnp.float32, {}),
+        (lax.convert_element_type, jnp.float32, {"new_dtype": np.dtype('complex64')})])
+  def testUnaryOperationsNonUniqueIndices(self, op, dtype, kwds):
+    shape = (10,)
+    nse = 5
+
+    # Note: we deliberately test non-unique indices here.
+    rng_idx = jtu.rand_int(self.rng(), low=0, high=10)
+    rng_data = jtu.rand_default(self.rng())
+
+    data = rng_data((nse,), dtype)
+    indices = rng_idx((nse, len(shape)), jnp.int32)
+    mat = BCOO((data, indices), shape=shape)
+
+    sparse_result = self.sparsify(partial(op, **kwds))(mat).todense()
+    dense_result = op(mat.todense(), **kwds)
+
+    self.assertArraysAllClose(sparse_result, dense_result)
+
+
 class SparsifyTracerTest(SparsifyTest):
   @classmethod
   def sparsify(cls, f):

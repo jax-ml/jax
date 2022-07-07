@@ -187,6 +187,9 @@ class SparsifyValue(NamedTuple):
   def is_sparse(self):
     return self.indices_ref is not None
 
+  def is_dense(self):
+    return self.indices_ref is None
+
 
 _is_bcoo = lambda arg: isinstance(arg, BCOO)
 _is_spvalue = lambda arg: isinstance(arg, SparsifyValue)
@@ -453,23 +456,32 @@ def sparsify(f, use_tracer=False):
 #------------------------------------------------------------------------------
 # Sparse rules for various primitives
 
+def _ensure_unique_indices(spenv, spvalue):
+  """Return an spvalue representation with deduplicated indices."""
+  if spvalue.is_dense() or spvalue.unique_indices:
+    return spvalue
+  arr = spvalues_to_arrays(spenv, spvalue)
+  arr = arr.sum_duplicates(nse=arr.nse)
+  return arrays_to_spvalues(spenv, arr)
+
 def _zero_preserving_unary_op(prim):
   def func(spenv, *spvalues, **kwargs):
     assert len(spvalues) == 1
-    buf = spenv.data(spvalues[0])
+    # Since unary operations don't commute with addition, we need to ensure
+    # that indices are unique before applying the operator elementwise.
+    spvalue = _ensure_unique_indices(spenv, spvalues[0])
+    buf = spenv.data(spvalue)
     buf_out = prim.bind(buf, **kwargs)
     if spvalues[0].is_sparse():
-      out_spvalue = spenv.sparse(spvalues[0].shape, buf_out,
-                                 indices_ref=spvalues[0].indices_ref,
-                                 indices_sorted=spvalues[0].indices_sorted,
-                                 unique_indices=spvalues[0].unique_indices)
+      out_spvalue = spenv.sparse(spvalue.shape, buf_out,
+                                 indices_ref=spvalue.indices_ref,
+                                 indices_sorted=spvalue.indices_sorted,
+                                 unique_indices=spvalue.unique_indices)
     else:
       out_spvalue = spenv.dense(buf)
     return (out_spvalue,)
   return func
 
-# TODO(jakevdp): some of these will give incorrect results when there are duplicated indices.
-#                how should we handle this?
 for _prim in _zero_preserving_unary_primitives:
   sparse_rules[_prim] = _zero_preserving_unary_op(_prim)
 
