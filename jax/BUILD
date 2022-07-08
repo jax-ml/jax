@@ -159,7 +159,10 @@ pytype_library(
         "experimental/sparse/*.py",
     ]),
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [
+        ":jax",
+        "//third_party/py/numpy",
+    ],
 )
 
 # sharded_jit is deprecated. Please do not add any more projects to the visibility.

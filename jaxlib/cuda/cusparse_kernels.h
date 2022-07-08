@@ -137,6 +137,18 @@ struct CooMatmatDescriptor {
 
 void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status);
+
+// CooMatmatBatched: CooMatmat with batched COO matrix.
+
+struct CooMatmatBatchedDescriptor {
+  SparseMatDescriptor A;
+  DenseMatDescriptor B, C;
+  cusparseOperation_t op_A;
+  int CooBatchCount;
+};
+
+void CooMatmatBatched(cudaStream_t stream, void** buffers, const char* opaque,
+                      size_t opaque_len, XlaCustomCallStatus* status);
 #endif  // if JAX_CUSPARSE_11300
 
 struct Gtsv2Descriptor {

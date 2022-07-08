@@ -513,6 +513,70 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   return {buffer_size, PackDescriptor(CooMatmatDescriptor{A, B, C, op_A})};
 }
 
+// CooMatmatBatched: CooMatmat with batched COO matrix.
+
+// Returns the descriptor for a CooMatmatBatched operation.
+std::pair<size_t, py::bytes> BuildCooMatmatBatchedDescriptor(
+    const py::dtype& data_dtype, const py::dtype& b_dtype,
+    const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
+    int cols, int BCcols, int nnz_per_batch, bool transpose, int batch_count) {
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
+  SparseMatDescriptor A =
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols,
+                               nnz_per_batch);
+  DenseMatDescriptor B =
+      BuildDenseMatDescriptor(b_dtype, transpose ? rows : cols, BCcols);
+  DenseMatDescriptor C =
+      BuildDenseMatDescriptor(compute_dtype, transpose ? cols : rows, BCcols);
+  cusparseOperation_t op_A = transpose ? CUSPARSE_OPERATION_TRANSPOSE
+                                       : CUSPARSE_OPERATION_NON_TRANSPOSE;
+
+  cusparseSpMatDescr_t mat_a = 0;
+  cusparseDnMatDescr_t mat_b = 0;
+  cusparseDnMatDescr_t mat_c = 0;
+
+  // bufferSize does not reference these pointers, but does error on NULL.
+  int val = 0;
+  void* empty = &val;
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+      cusparseCreateCoo(&mat_a, A.rows, A.cols, A.nnz, empty, empty, empty,
+                        A.index_type, CUSPARSE_INDEX_BASE_ZERO, A.value_type)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+    cusparseCooSetStridedBatch(mat_a, /*batchCount=*/batch_count,
+                               /*batchStride=*/A.nnz)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+    cusparseCreateDnMat(&mat_b, B.rows, B.cols, /*ld=*/B.cols, empty, B.type,
+                        CUSPARSE_ORDER_ROW)));
+  int size_B = B.rows * B.cols;
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+    cusparseDnMatSetStridedBatch(
+      mat_b, /*batchCount=*/batch_count,
+      /*batchStride=*/static_cast<int64_t>(size_B))));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+    cusparseCreateDnMat(&mat_c, C.rows, C.cols, /*ld=*/C.cols, empty, C.type,
+                        CUSPARSE_ORDER_ROW)));
+  int size_C = C.rows * C.cols;
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+    cusparseDnMatSetStridedBatch(
+      mat_c, /*batchCount=*/batch_count,
+      /*batchStride=*/static_cast<int64_t>(size_C))));
+  size_t buffer_size;
+  CudaConst alpha = CudaOne(C.type);
+  CudaConst beta = CudaZero(C.type);
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSpMM_bufferSize(
+      handle.get(), op_A, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mat_a,
+      mat_b, &beta, mat_c, C.type, CUSPARSE_SPMM_COO_ALG4, &buffer_size)));
+
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
+
+  return {buffer_size, PackDescriptor(
+    CooMatmatBatchedDescriptor{A, B, C, op_A, batch_count})};
+}
+
 #endif  // if JAX_CUSPARSE_11300
 
 py::bytes BuildGtsv2Descriptor(int m, int n, int ldb) {
@@ -550,6 +614,7 @@ py::dict Registrations() {
   dict["cusparse_coo_fromdense"] = EncapsulateFunction(CooFromDense);
   dict["cusparse_coo_matvec"] = EncapsulateFunction(CooMatvec);
   dict["cusparse_coo_matmat"] = EncapsulateFunction(CooMatmat);
+  dict["cusparse_coo_matmat_batched"] = EncapsulateFunction(CooMatmatBatched);
 #endif
   dict["cusparse_gtsv2_f32"] = EncapsulateFunction(gtsv2_f32);
   dict["cusparse_gtsv2_f64"] = EncapsulateFunction(gtsv2_f64);
@@ -569,6 +634,8 @@ PYBIND11_MODULE(_cusparse, m) {
   m.def("build_coo_fromdense_descriptor", &BuildCooFromDenseDescriptor);
   m.def("build_coo_matvec_descriptor", &BuildCooMatvecDescriptor);
   m.def("build_coo_matmat_descriptor", &BuildCooMatmatDescriptor);
+  m.def("build_coo_matmat_batched_descriptor",
+        &BuildCooMatmatBatchedDescriptor);
 #endif
   m.def("gtsv2_f32_buffer_size", &Gtsv2BufferSizeF32);
   m.def("gtsv2_f64_buffer_size", &Gtsv2BufferSizeF64);

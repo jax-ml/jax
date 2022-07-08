@@ -313,6 +313,44 @@ cuda_coo_matmat = partial(_coo_matmat_mhlo, "cu", _cusparse)
 rocm_coo_matmat = partial(_coo_matmat_mhlo, "hip", _hipsparse)
 
 
+def _coo_matmat_batched_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
+                             transpose=False, compute_dtype=None,
+                             compute_type=None, x_dtype, data_dtype,
+                             index_dtype):
+  """Product of a batched COO matrix and a dense matrix."""
+  data_type, _, nnz_batches = _validate_coo_mhlo(data, row, col)
+  batch_count, rows, cols = shape
+  nnz_per_batch = nnz_batches // batch_count
+  B_shape = ir.RankedTensorType(B.type).shape
+  _, Ccols = B_shape
+
+  if compute_dtype is None:
+    compute_dtype = data_dtype
+    compute_type = data_type
+
+  buffer_size, opaque = gpu_sparse.build_coo_matmat_batched_descriptor(
+      data_dtype, x_dtype, compute_dtype, index_dtype,
+      rows, cols, Ccols, nnz_per_batch, transpose, batch_count)
+  out_size = cols if transpose else rows
+
+  out = custom_call(
+      f"{platform}sparse_coo_matmat_batched",
+      [
+          ir.RankedTensorType.get([batch_count, out_size, Ccols], compute_type),
+          ir.RankedTensorType.get([buffer_size],
+                                  ir.IntegerType.get_signless(8)),
+      ],
+      [data, row, col, B],
+      backend_config=opaque,
+      operand_layouts=[[0], [0], [0], [1, 0]],
+      result_layouts=[[2, 1, 0], [0]])
+  return out[0]
+
+cuda_coo_matmat_batched = partial(_coo_matmat_batched_mhlo, "cu", _cusparse)
+# TODO(tianjianlu): Add batched coo matmat lowering to hipsparse.
+rocm_coo_matmat_batched = partial(_coo_matmat_batched_mhlo, "hip", _hipsparse)
+
+
 def _gtsv2_mhlo(platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t):
   """Calls `cusparse<t>gtsv2(dl, d, du, B, m, n, ldb)`."""
   f32 = (t == np.float32)

@@ -726,7 +726,7 @@ def _collapse_mhlo(x, start, end):
   return mhlo.ReshapeOp(
       ir.RankedTensorType.get(shape, x_type.element_type), x).result
 
-def _bcoo_dot_general_cuda_lowering(
+def _coo_dot_general_cuda_lowering(
     coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
     *, dimension_numbers, lhs_spinfo: BCOOInfo):
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
@@ -810,8 +810,96 @@ def _bcoo_dot_general_cuda_lowering(
   else:
     raise ValueError(f"lhs has to be 1d or 2d; get {props.n_sparse}d.")
 
+def _bcoo_matmat_cuda_lowering(
+    bcoo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
+    *, dimension_numbers, lhs_spinfo: BCOOInfo):
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
+  props = _validate_bcoo_indices(lhs_indices_aval, lhs_spinfo.shape)
+  rhs_ndim = len(ir.RankedTensorType(rhs.type).shape)
+
+  # Checks the shapes of lhs and rhs.
+  assert props.n_dense == 0
+  assert props.n_batch == 1
+  assert props.n_sparse == 2
+  assert rhs_ndim == 2
+
+  # Checks the operation dimensions.
+  assert len(lhs_batch) == 0
+  assert len(rhs_batch) == 0
+  assert len(lhs_contract) == 1
+  assert len(rhs_contract) == 1
+  assert lhs_contract[0] in [1, 2]
+  assert rhs_contract[0] == 0
+
+  # Checks the dtype.
+  assert lhs_data_aval.dtype in [np.float32, np.float64, np.complex64,
+                                 np.complex128]
+  assert lhs_data_aval.dtype == rhs_aval.dtype
+  assert lhs_indices_aval.dtype == np.int32
+
+  lhs_indices_shape = ir.RankedTensorType(lhs_indices.type).shape
+  lhs_data_shape = ir.RankedTensorType(lhs_data.type).shape
+  batch_count, _, _ = lhs_indices_shape
+  rhs_shape = ir.RankedTensorType(rhs.type).shape
+
+  # Squeeze the batch dimension of bcoo indices and data.
+  lhs_indices_2d_shape = (np.prod(np.array(lhs_indices_shape)[:-1]),
+                          lhs_indices_shape[-1])
+  lhs_data_1d_shape = (np.prod(np.array(lhs_data_shape)), )
+
+  lhs_indices_2d = mhlo.ReshapeOp(
+      ir.RankedTensorType.get(
+          lhs_indices_2d_shape,
+          ir.RankedTensorType(lhs_indices.type).element_type),
+      lhs_indices).result
+
+  lhs_data_1d = mhlo.ReshapeOp(
+      ir.RankedTensorType.get(
+          lhs_data_1d_shape,
+          ir.RankedTensorType(lhs_data.type).element_type),
+       lhs_data).result
+
+  row = _collapse_mhlo(
+      mhlo.SliceOp(
+          lhs_indices_2d,
+          start_indices=mlir.dense_int_elements([0, 0]),
+          limit_indices=mlir.dense_int_elements([lhs_indices_2d_shape[0], 1]),
+          strides=mlir.dense_int_elements([1, 1])).result,
+      start=0, end=1)
+
+  col = _collapse_mhlo(
+      mhlo.SliceOp(
+          lhs_indices_2d,
+          start_indices=mlir.dense_int_elements([0, 1]),
+          limit_indices=mlir.dense_int_elements([lhs_indices_2d_shape[0], 2]),
+          strides=mlir.dense_int_elements([1, 1])).result,
+      start=0, end=1)
+
+  # Broadcast rhs so it has a matched batch dimension as lhs.
+  batched_rhs_shape = (batch_count,) + tuple(rhs_shape)
+  batched_rhs = mhlo.BroadcastInDimOp(
+      ir.RankedTensorType.get(batched_rhs_shape,
+                              ir.RankedTensorType(rhs.type).element_type),
+      rhs,
+      broadcast_dimensions=mlir.dense_int_elements([1, 2])).result
+  batched_rhs_2d_shape = (np.prod(np.array(batched_rhs_shape)[:-1]), batched_rhs_shape[-1])
+  batched_rhs_2d = mhlo.ReshapeOp(
+      ir.RankedTensorType.get(
+          batched_rhs_2d_shape,
+          ir.RankedTensorType(batched_rhs.type).element_type),
+      batched_rhs).result
+
+  lhs_transpose = True if lhs_contract[0] == props.n_batch else False
+
+  return [bcoo_matmat_lowering(
+      lhs_data_1d, row, col, batched_rhs_2d, shape=lhs_spinfo.shape,
+      transpose=lhs_transpose, data_dtype=lhs_data_aval.dtype,
+      index_dtype=lhs_indices_aval.dtype,
+      x_dtype=rhs_aval.dtype)]
+
 def _bcoo_dot_general_gpu_lowering(
-    coo_matvec_lowering, coo_matmat_lowering,
+    coo_matvec_lowering, coo_matmat_lowering, bcoo_matmat_lowering,
     ctx, lhs_data, lhs_indices, rhs, *, dimension_numbers,
     lhs_spinfo: BCOOInfo):
 
@@ -834,25 +922,31 @@ def _bcoo_dot_general_gpu_lowering(
       ctx, lhs_data, lhs_indices, rhs,
       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
-  if (n_batch or n_dense or
-      n_sparse not in [1, 2] or rhs_aval.ndim not in [1, 2] or
-      lhs_batch or rhs_batch or len(lhs_contract) != 1):
-    return _bcoo_dot_general_default_lowering(
-      ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+  if (n_batch == 1 and n_sparse == 2 and rhs_aval.ndim == 2 and
+      lhs_spinfo.indices_sorted):
+    return _bcoo_matmat_cuda_lowering(
+        bcoo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
   else:
-    if not lhs_spinfo.indices_sorted:
-      warnings.warn("bcoo_dot_general GPU lowering requires matrices with "
-                    "sorted indices. To sort the rows in your matrix, use e.g. "
-                    "mat = mat.sort_indices(). Falling back to the default "
-                    "implementation.", CuSparseEfficiencyWarning)
+    if (n_batch or n_dense or n_sparse not in [1, 2] or
+        rhs_aval.ndim not in [1, 2] or lhs_batch or rhs_batch or
+        len(lhs_contract) != 1):
       return _bcoo_dot_general_default_lowering(
         ctx, lhs_data, lhs_indices, rhs,
         dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+    else:
+      if not lhs_spinfo.indices_sorted:
+        warnings.warn("bcoo_dot_general GPU lowering requires matrices with "
+                      "sorted indices. To sort the rows in your matrix, use e.g. "
+                      "mat = mat.sort_indices(). Falling back to the default "
+                      "implementation.", CuSparseEfficiencyWarning)
+        return _bcoo_dot_general_default_lowering(
+          ctx, lhs_data, lhs_indices, rhs,
+          dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
-    return _bcoo_dot_general_cuda_lowering(
-      coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+      return _coo_dot_general_cuda_lowering(
+        coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
 def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: BCOOInfo):
   return _bcoo_dot_general(lhs_data_dot, lhs_indices, rhs, dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
@@ -923,18 +1017,21 @@ batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 mlir.register_lowering(
     bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(bcoo_dot_general_p,
-                          partial(_bcoo_dot_general_gpu_lowering,
-                                  gpu_sparse.cuda_coo_matvec,
-                                  gpu_sparse.cuda_coo_matmat),
-                          platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(bcoo_dot_general_p,
-                          partial(_bcoo_dot_general_gpu_lowering,
-                                  gpu_sparse.rocm_coo_matvec,
-                                  gpu_sparse.rocm_coo_matmat),
-                          platform='rocm')
+if gpu_sparse:
+  if gpu_sparse.cuda_is_supported:
+    mlir.register_lowering(bcoo_dot_general_p,
+                           partial(_bcoo_dot_general_gpu_lowering,
+                                   gpu_sparse.cuda_coo_matvec,
+                                   gpu_sparse.cuda_coo_matmat,
+                                   gpu_sparse.cuda_coo_matmat_batched),
+                           platform='cuda')
+  if gpu_sparse.rocm_is_supported:
+    mlir.register_lowering(bcoo_dot_general_p,
+                           partial(_bcoo_dot_general_gpu_lowering,
+                                   gpu_sparse.rocm_coo_matvec,
+                                   gpu_sparse.rocm_coo_matmat,
+                                   gpu_sparse.rocm_coo_matmat_batched),
+                           platform='rocm')
 
 #----------------------------------------------------------------------
 # bcoo_dot_general_sampled

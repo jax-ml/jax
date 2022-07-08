@@ -536,6 +536,71 @@ void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
                                   s.message().length());
   }
 }
+
+// CooMatmatBatched: CooMatmat with batched COO matrix.
+
+static absl::Status CooMatmatBatched_(cudaStream_t stream, void** buffers,
+                                      const char* opaque, size_t opaque_len) {
+  auto s = UnpackDescriptor<CooMatmatBatchedDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const CooMatmatBatchedDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
+
+  void* coo_values = buffers[0];
+  void* coo_row_ind = buffers[1];
+  void* coo_col_ind = buffers[2];
+  void* Bbuf = buffers[3];
+  void* Cbuf = buffers[4];
+  void* buf = buffers[5];
+
+  // Make alpha and beta constants. See CooMatmat.
+  CudaConst alpha = CudaOne(d.C.type);
+  CudaConst beta = CudaZero(d.C.type);
+
+  cusparseSpMatDescr_t mat_a = 0;
+  cusparseDnMatDescr_t mat_b = 0;
+  cusparseDnMatDescr_t mat_c = 0;
+
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateCoo(
+      &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
+      d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCooSetStridedBatch(
+      mat_a, /*batchCount=*/d.CooBatchCount,
+      /*batchStride=*/d.A.nnz)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_b, d.B.rows, d.B.cols,
+      /*ld=*/d.B.cols, Bbuf, d.B.type, CUSPARSE_ORDER_ROW)));
+  int size_B = d.B.rows * d.B.cols;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDnMatSetStridedBatch(
+      mat_b, /*batchCount=*/d.CooBatchCount,
+      /*batchStride=*/static_cast<int64_t>(size_B))));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_c, d.C.rows, d.C.cols,
+      /*ld=*/d.C.cols, Cbuf, d.C.type, CUSPARSE_ORDER_ROW)));
+  int size_C = d.C.rows * d.C.cols;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDnMatSetStridedBatch(
+      mat_c, /*batchCount=*/d.CooBatchCount,
+      /*batchStride=*/static_cast<int64_t>(size_C))));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSpMM(
+      handle.get(), d.op_A, /*opB=*/CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+      mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_COO_ALG4, buf)));
+
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
+  return absl::OkStatus();
+}
+
+void CooMatmatBatched(cudaStream_t stream, void** buffers, const char* opaque,
+                      size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CooMatmatBatched_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
+  }
+}
 #endif  // if JAX_CUSPARSE_11300
 
 template <typename T, typename F>
