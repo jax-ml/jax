@@ -275,7 +275,10 @@ def abstractify(x) -> core.AbstractValue:
   raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
 
 def _make_abstract_python_scalar(typ, val):
-  return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val), weak_type=True)
+  # Note: all python scalar types are weak except bool, because bool only
+  # comes in a single width.
+  return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val),
+                     weak_type=typ is not bool)
 
 pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {}
 for t in device_array.device_array_types:
