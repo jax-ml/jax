@@ -1710,7 +1710,10 @@ mlir.register_lowering(tanh_p, partial(_nary_lower_mhlo, mhlo.TanhOp))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
-mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SinOp))
+if jax._src.lib.mlir_api_version < 27:
+  mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SinOp))
+else:
+  mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SineOp))
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
