@@ -195,7 +195,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # It's a pair of: (positional args, as a tuple of their structures, kwargs).
     for obj in [lowered, compiled]:
       self.assertFalse(obj._no_kwargs)
-      self.assertEqual(obj.in_tree, jax.tree_flatten(((0,), {}))[1])
+      self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0,), {}))[1])
       self.assertEqual(obj.in_avals, ((jax.ShapedArray(x.shape, x.dtype),), {}))
 
   def testLowerCompileInTreeMismatch(self):

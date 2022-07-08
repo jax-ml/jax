@@ -60,7 +60,7 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir3 = pathlib.Path(self.create_tempdir('third').full_path)
 
     ckpt_paths = [str(ckpt_dir1), str(ckpt_dir2), str(ckpt_dir3)]
-    tspecs = jax.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
 
     serialization.run_serialization([gda1, gda2, gda3], tspecs)
 
@@ -103,7 +103,7 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
 
     ckpt_paths = [str(ckpt_dir1)]
-    tspecs = jax.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
 
     serialization.run_serialization([gda1], tspecs)
 
@@ -138,7 +138,7 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
 
     ckpt_paths = [str(ckpt_dir1)]
-    tspecs = jax.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
 
     serialization.run_serialization([gda1], tspecs)
 

@@ -690,9 +690,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertNotEqual(type(m.a), list)
     self.assertNotEqual(type(m.b), tuple)
     self.assertNotEqual(type(m.c), dict)
-    self.assertLen(jax.tree_leaves(m.a), 2)
-    self.assertLen(jax.tree_leaves(m.b), 2)
-    self.assertLen(jax.tree_leaves(m.c), 2)
+    self.assertLen(jax.tree_util.tree_leaves(m.a), 2)
+    self.assertLen(jax.tree_util.tree_leaves(m.b), 2)
+    self.assertLen(jax.tree_util.tree_leaves(m.c), 2)
 
   def test_issue_10586(self):
 

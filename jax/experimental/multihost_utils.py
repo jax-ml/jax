@@ -67,9 +67,9 @@ def broadcast_one_to_all(in_tree: PyTreeDef,
   def post_pmap(x):
     return jax.device_get(x)[0]
 
-  in_tree = jax.tree_map(pre_pmap, in_tree)
+  in_tree = jax.tree_util.tree_map(pre_pmap, in_tree)
   in_tree = jax.device_get(_psum(in_tree))
-  return jax.tree_map(post_pmap, in_tree)
+  return jax.tree_util.tree_map(post_pmap, in_tree)
 
 
 def sync_global_devices(name: str):
@@ -121,14 +121,14 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
     return out.local_data(0).to_py()
 
   with jax._src.config.parallel_functions_output_gda(True):
-    return jax.tree_map(_pjit, in_tree)
+    return jax.tree_util.tree_map(_pjit, in_tree)
 
 
 def assert_equal(in_tree, fail_message: str = ''):
   """Verifies that all the hosts have the same tree of values."""
   expected = broadcast_one_to_all(in_tree)
   if not jax.tree_util.tree_all(
-      jax.tree_map(lambda *x: np.all(np.equal(*x)), in_tree, expected)):
+      jax.tree_util.tree_map(lambda *x: np.all(np.equal(*x)), in_tree, expected)):
     raise AssertionError(
         f'{fail_message} Expected: {expected}; got: {in_tree}.')
 

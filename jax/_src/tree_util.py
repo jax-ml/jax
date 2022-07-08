@@ -92,7 +92,7 @@ def all_leaves(iterable, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Tests whether all elements in the given iterable are all leaves.
 
   >>> tree = {"a": [1, 2, 3]}
-  >>> assert all_leaves(jax.tree_leaves(tree))
+  >>> assert all_leaves(jax.tree_util.tree_leaves(tree))
   >>> assert not all_leaves([tree])
 
   This function is useful in advanced cases, for example if a library allows
@@ -518,3 +518,21 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
     f"equal pytree nodes gave differing keys: {keys} and {keys_}"
   for k, t1, t2 in zip(keys, prefix_tree_children, full_tree_children):
     yield from _prefix_error(key_path + k, t1, t2)
+
+
+# TODO(jakevdp) remove these deprecated wrappers & their imports in jax/__init__.py
+def _deprecate(f):
+  @functools.wraps(f)
+  def wrapped(*args, **kwargs):
+    warnings.warn(f"jax.{f.__name__} is deprecated, and will be removed in a future release. "
+                  f"Use jax.tree_util.{f.__name__} instead.")
+    return f(*args, **kwargs)
+  return wrapped
+
+def __getattr__(name):
+  prefix = "_deprecated_"
+  if name.startswith(prefix):
+    name = name[len(prefix):]
+    return _deprecate(globals()[name])
+  else:
+    raise AttributeError(f"module {__name__} has no attribute {name!r}")

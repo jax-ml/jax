@@ -163,7 +163,7 @@ async def async_serialize(gda_inp: gda.GlobalDeviceArray, tensorstore_spec,
 
 def run_serialization(gdas, tensorstore_specs):
   async def _run_serializer():
-    future_writer = jax.tree_map(async_serialize, gdas, tensorstore_specs)
+    future_writer = jax.tree_util.tree_map(async_serialize, gdas, tensorstore_specs)
     return await asyncio.gather(*future_writer)
   asyncio.run(_run_serializer())
 
@@ -235,7 +235,7 @@ def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
     # Object should be created once per process.
     byte_limiter = _LimitInFlightBytes(concurrent_bytes)
 
-    future_gdas = jax.tree_map(
+    future_gdas = jax.tree_util.tree_map(
         partial(async_deserialize, byte_limiter=byte_limiter),
         global_meshes, mesh_axes, tensorstore_specs,
         [None] * len(tensorstore_specs) if global_shapes is None else global_shapes,
@@ -427,13 +427,13 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     commit_futures = [[] for _ in range(len(tensorstore_specs))]
 
     async def _run_serializer():
-      future_writer = jax.tree_map(async_serialize, gdas, tensorstore_specs,
+      future_writer = jax.tree_util.tree_map(async_serialize, gdas, tensorstore_specs,
                                    commit_futures)
       return await asyncio.gather(*future_writer)
 
     asyncio.run(_run_serializer())
 
-    self._add_futures(jax.tree_flatten(commit_futures)[0])
+    self._add_futures(jax.tree_util.tree_flatten(commit_futures)[0])
 
     # Used in wait_until_finished to check on process != 0, if the checkpoint
     # has finished writing.
