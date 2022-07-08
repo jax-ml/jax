@@ -226,10 +226,7 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
     x = x.view(np.uint16)
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
-  if jax._src.lib.mlir_api_version < 21:
-    return (mhlo.ConstOp(attr).result,)
-  else:
-    return (mhlo.ConstantOp(attr).result,)
+  return (mhlo.ConstantOp(attr).result,)
 
 
 
@@ -1371,9 +1368,6 @@ def emit_python_callback(
     has_side_effect: bool) -> Tuple[List[ir.Value], Any, Any]:
   """Creates an MHLO `CustomCallOp` that calls back to the provided function."""
   platform = ctx.module_context.platform
-  if platform in {"cuda", "rocm"} and jax._src.lib.version < (0, 3, 11):
-    raise ValueError(
-        "`EmitPythonCallback` on CUDA only supported on jaxlib >= 0.3.11")
   if platform in {"tpu"} and jax._src.lib.version < (0, 3, 15):
     raise ValueError(
         "`EmitPythonCallback` on TPU only supported on jaxlib >= 0.3.15")

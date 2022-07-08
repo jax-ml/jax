@@ -654,9 +654,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
            ".*while trying to hash an object of type "
            "<class 'numpy\\.ndarray'>, 1. The error was:\nTypeError: "
            "unhashable type: 'numpy\\.ndarray'")
-    # Typo was fixed in newer jaxlib
-    if jax._src.lib.xla_extension_version < 66:
-      msg = msg.replace('occurred', 'occured')
 
     with self.assertRaisesRegex(ValueError, msg):
       jitted_f(1, np.asarray(1))
@@ -9167,13 +9164,11 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
-  @unittest.skipIf(jaxlib_version < (0, 3, 11), "test requires jaxlib>=0.3.11")
   def test_jit_of_broadcast(self):
     x = jax.jit(jnp.ones)(3)
     self.assertAllClose(x, jnp.ones(3))
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
-  @unittest.skipIf(jaxlib_version < (0, 3, 11), "test requires jaxlib>=0.3.11")
   def test_jit_of_broadcast2(self):
     x = jax.jit(lambda n: jnp.ones(2 * n))(3)
     self.assertAllClose(x, jnp.ones(2 * 3))

@@ -1436,9 +1436,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
                                                s2_shape, s3_shape, s4_shape):
     # Disable on SE runtime type because XLA sharding propagation is not
     # supported.
-    if xla_client._version < 74 or xla_bridge.get_backend().runtime_type == 'se':
-      raise unittest.SkipTest('Needs xla_extension_version >= 74 or '
-                              'TFRT runtime.')
+    if xla_bridge.get_backend().runtime_type == 'se':
+      raise unittest.SkipTest('Needs TFRT runtime.')
     global_mesh = jtu.create_global_mesh(mesh_shape, ('x', 'y'))
     global_input_shape = (8, 2)
 

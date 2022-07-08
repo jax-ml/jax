@@ -66,22 +66,14 @@ class State:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
       logging.info('Starting JAX distributed service on %s', coordinator_address)
-      if xla_client._version >= 72:
-        self.service = xla_extension.get_distributed_runtime_service(
-            coordinator_address, num_processes, config.jax_coordination_service)
-      else:
-        self.service = xla_extension.get_distributed_runtime_service(
-            coordinator_address, num_processes)
+      self.service = xla_extension.get_distributed_runtime_service(
+          coordinator_address, num_processes, config.jax_coordination_service)
 
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
 
-    if xla_client._version >= 72:
-      self.client = xla_extension.get_distributed_runtime_client(
-          coordinator_address, process_id, config.jax_coordination_service)
-    else:
-      self.client = xla_extension.get_distributed_runtime_client(
-          coordinator_address, process_id)
+    self.client = xla_extension.get_distributed_runtime_client(
+        coordinator_address, process_id, config.jax_coordination_service)
     logging.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 

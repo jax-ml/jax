@@ -59,13 +59,9 @@ lcf.allowed_effects.add('while')
 lcf.allowed_effects.add('while1')
 lcf.allowed_effects.add('while2')
 
-# TODO(sharadmv): remove jaxlib guards for GPU tests when jaxlib minimum
-#                 version is >= 0.3.11
 # TODO(sharadmv): remove jaxlib guards for TPU tests when jaxlib minimum
 #                 version is >= 0.3.15
 disabled_backends = []
-if jaxlib.version < (0, 3, 11):
-  disabled_backends.append('gpu')
 if jaxlib.version < (0, 3, 15):
   disabled_backends.append('tpu')
 

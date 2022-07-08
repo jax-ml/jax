@@ -35,8 +35,6 @@ except ImportError:
 config.parse_flags_with_absl()
 
 
-@unittest.skipIf(jax._src.lib.xla_extension_version < 73,
-                 "Test requires jaxlib 0.3.12 or newer.")
 @unittest.skipIf(not portpicker, "Test requires portpicker")
 class DistributedTest(jtu.JaxTestCase):
 

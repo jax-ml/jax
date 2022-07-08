@@ -1932,12 +1932,6 @@ def _ensure_spmd_and(f):
     return f(v)
   return update
 
-def _ensure_supports_manual_and(f):
-  def update(v):
-    if v and not hasattr(xc.OpSharding.Type, "MANUAL"):
-      raise RuntimeError("This flag requires a version of jaxlib that supports MANUAL sharding type")
-    return f(v)
-  return update
 
 try:
   config.define_bool_state(
@@ -1955,7 +1949,7 @@ try:
             "the MANUAL partitioning feature of the XLA SPMD partitioner instead of "
             "sharding constraints on vectorized code. "
             "Requires experimental_xmap_spmd_lowering!"),
-      update_global_hook=_ensure_supports_manual_and(_ensure_spmd_and(_clear_compilation_cache)),
+      update_global_hook=_ensure_spmd_and(_clear_compilation_cache),
       update_thread_local_hook=_thread_local_flag_unsupported)
   config.define_bool_state(
       name="experimental_xmap_ensure_fixed_sharding",
