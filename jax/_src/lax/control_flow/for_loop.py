@@ -673,9 +673,39 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   # to output residual values (none of them should be `Ref`s). We'll need to
   # convert the output residual values into `Ref`s that are initially empty
   # `Ref`s that are written to at the end of the jaxpr.
-  # TODO(sharadmv,mattjj): detect which residuals are loop-invariant
+
+  # # Loop-invariant residual optimization
+  # Here we are interested in finding out which of the residuals are *not*
+  # dependent on the loop index. If a residual is not dependent on the loop
+  # index, we don't need add an extra loop dimension we're reading from when we
+  # convert it from an output into a write.
+
+  # In order to detect which residuals are loop-invariant, we need to run a
+  # fixpoint. This is because the residual could be dependent on a `Ref` that
+  # changes each iteration of the loop so we need to first detect which `Ref`s
+  # are loop-varying. We can do this by discharging the state from the jaxpr and
+  # running partial_eval with initially only the loop-index being loop-varying.
+  # The fixpoint will eventually propagate the loop-varying-ness over the
+  # inputs/outputs and we will converge.
+  loop_var_res = [False] * len(jaxpr_known_resout.outvars)
+  loop_var_refs = [False] * (len(jaxpr_known_resout.invars) - 1)
+  discharged_jaxpr_known_resout = core.ClosedJaxpr(
+      *discharge_state(jaxpr_known_resout, ()))
+  for _ in range(len(discharged_jaxpr_known_resout.jaxpr.invars)):
+    (_, _, loop_var_outputs, _) = pe.partial_eval_jaxpr_nounits(
+          discharged_jaxpr_known_resout, [True] + loop_var_refs, False)
+    loop_var_res, loop_var_refs_ = split_list(
+        loop_var_outputs, [len(loop_var_res)])
+    if loop_var_refs == loop_var_refs_:
+      break
+    loop_var_refs = map(operator.or_, loop_var_refs, loop_var_refs_)
+  # Now that the fixpoint is complete, we know which residuals are
+  # loop-invariant.
+  loop_invar_res = map(operator.not_, loop_var_res)
+
   jaxpr_known, res_avals = _convert_outputs_to_writes(nsteps,
-                                                      jaxpr_known_resout)
+                                                      jaxpr_known_resout,
+                                                      loop_invar_res)
   # We now run the known jaxpr to obtain our residual values.
   known_tracers, _ = partition_list(in_unknowns, tracers)
   known_vals = [t.pval.get_known() for t in known_tracers]
@@ -699,7 +729,8 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   # To make it compatible with `for`, we need to convert those residual values
   # into `Ref`s.
   jaxpr_unknown = _convert_inputs_to_reads(nsteps, len(res_avals),
-                                           jaxpr_unknown_resin)
+                                           jaxpr_unknown_resin,
+                                           loop_invar_res)
   # Since not all inputs are used in jaxpr_unknown, we filter the input tracers
   # down using the output of `dce_jaxpr`.
   _, used_tracers = partition_list(used_refs, tracers)
@@ -725,8 +756,8 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
 pe.custom_partial_eval_rules[for_p] = _for_partial_eval
 
 def _convert_outputs_to_writes(
-    nsteps: int, jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr,
-                                             List[core.ShapedArray]]:
+    nsteps: int, jaxpr: core.Jaxpr, loop_invar_res: Sequence[bool]
+    ) -> Tuple[core.Jaxpr, List[core.ShapedArray]]:
   assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
 
   in_avals = [v.aval for v in jaxpr.invars]  # [i, *orig_ref_avals]
@@ -736,12 +767,17 @@ def _convert_outputs_to_writes(
     # refs.
     orig_refs, residual_refs = split_list(refs, [len(in_avals) - 1])
     residual_vals = core.eval_jaxpr(jaxpr, (), i, *orig_refs)
-    for res_ref, res_val in zip(residual_refs, residual_vals):
-      # TODO(sharadmv): loop-invariant residuals should not be an indexed write
-      res_ref[i] = res_val
+    for res_ref, res_val, loop_invar in zip(residual_refs, residual_vals,
+                                            loop_invar_res):
+      if loop_invar:
+        res_ref[()] = res_val
+      else:
+        res_ref[i] = res_val
     return []
-  res_ref_avals = [ShapedArrayRef((nsteps, *v.aval.shape), v.aval.dtype)  # pytype: disable=attribute-error
-                   for v in jaxpr.outvars]
+  res_ref_avals = [ShapedArrayRef(v.aval.shape, v.aval.dtype)  # pytype: disable=attribute-error
+                   if loop_invar else
+                   ShapedArrayRef((nsteps, *v.aval.shape), v.aval.dtype)
+                   for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [*in_avals, *res_ref_avals])
   assert not consts
@@ -749,21 +785,22 @@ def _convert_outputs_to_writes(
 
 def _convert_inputs_to_reads(
     nsteps: int, num_res: int, jaxpr: core.Jaxpr,
-  ) -> core.Jaxpr:
+    loop_invar_res: Sequence[bool]) -> core.Jaxpr:
   assert not jaxpr.constvars, "Jaxpr should not have constvars"
 
   @lu.wrap_init
   def eval_jaxpr(i, *refs):
     residual_refs, orig_refs = split_list(refs, [num_res])
-    # TODO(sharadmv): don't do an indexed read for loop-invariant residuals
-    residual_vals = [r[i] for r in residual_refs]
+    residual_vals = [r[()] if loop_invar else r[i] for r, loop_invar
+                     in zip(residual_refs, loop_invar_res)]
     () = core.eval_jaxpr(jaxpr, (), *residual_vals, i, *orig_refs)
     return []
 
   res_val_avals, (i_aval,), orig_ref_avals = \
       split_list([v.aval for v in jaxpr.invars], [num_res, 1])
-  res_ref_avals = [ShapedArrayRef((nsteps, *aval.shape), aval.dtype)  # pytype: disable=attribute-error
-                   for aval in res_val_avals]
+  res_ref_avals = [ShapedArrayRef(aval.shape, aval.dtype) if loop_invar else
+                   ShapedArrayRef((nsteps, *aval.shape), aval.dtype)  # pytype: disable=attribute-error
+                   for aval, loop_invar in zip(res_val_avals, loop_invar_res)]
 
   jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [i_aval, *res_ref_avals, *orig_ref_avals])

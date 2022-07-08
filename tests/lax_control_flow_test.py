@@ -3030,5 +3030,20 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     self.assertAllClose(ans, ans_discharged, check_dtypes=True, rtol=tol, atol=tol)
     self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
 
+  def test_for_loop_invar(self):
+    def f(x):
+      s = jnp.ones((2, 32), x.dtype)
+      def body(i, refs):
+        x_ref, y_ref = refs
+        y_ref[i] = s * x_ref[i] * jnp.cos(s)
+        # We should save `s` and `jnp.cos(s)` as residuals and not broadcast
+        # them.
+      return for_loop.for_loop(x.shape[0], body, (x, jnp.zeros_like(x)))
+    _, f_vjp = jax.linearize(f, jnp.ones((5, 2, 32)))
+    jaxpr = jax.make_jaxpr(f_vjp)(jnp.ones((5, 2, 32)))
+    consts = [v.aval for v in jaxpr.jaxpr.constvars
+              if v.aval.shape == (2, 32)]
+    self.assertLen(consts, 2)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
