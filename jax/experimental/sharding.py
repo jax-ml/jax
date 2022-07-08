@@ -14,7 +14,7 @@
 
 import abc
 from collections import Counter
-from typing import Sequence, Tuple, Optional, Mapping, Dict, Set, Union
+from typing import Sequence, Tuple, Optional, Mapping, Dict, Set
 
 from jax._src.util import cache, safe_zip
 from jax._src.lib import xla_bridge as xb
@@ -83,9 +83,7 @@ class XLACompatibleSharding(Sharding):
 class MeshPspecSharding(XLACompatibleSharding):
 
   def __init__(
-      self, mesh: pxla.Mesh,
-      spec: Union[pxla.PartitionSpec, pxla._AUTOAxisResource],
-      _parsed_pspec = None):
+      self, mesh: pxla.Mesh, spec: pxla.PartitionSpec, _parsed_pspec = None):
 
     self.mesh = mesh
     self.spec = spec
@@ -115,17 +113,13 @@ class MeshPspecSharding(XLACompatibleSharding):
 
   def normalize(self):
     from jax.experimental import pjit
-    cp = (self._parsed_pspec if pjit._is_auto(self._parsed_pspec) else
-          pjit.CanonicalizedParsedPartitionSpec(self._parsed_pspec))
+    cp = pjit.CanonicalizedParsedPartitionSpec(self._parsed_pspec)
     return MeshPspecSharding._from_parsed_pspec(self.mesh, cp)
 
   @classmethod
   def _from_parsed_pspec(cls, mesh, parsed_pspec):
     from jax.experimental import pjit
-    parsed_pspec, spec = ((parsed_pspec, parsed_pspec)
-                          if pjit._is_auto(parsed_pspec) else
-                          (parsed_pspec, pjit._get_single_pspec(parsed_pspec)))
-    return cls(mesh, spec, parsed_pspec)
+    return cls(mesh, pjit._get_single_pspec(parsed_pspec), parsed_pspec)
 
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:
@@ -138,11 +132,6 @@ class MeshPspecSharding(XLACompatibleSharding):
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
     # TODO(yashkatariya): Remove this when utilities are moved to pxla.py.
     from jax.experimental import global_device_array
-
-    if pxla._is_auto(self.spec):
-      raise ValueError('Getting indices when the sharding is not known is not '
-                       'possible. Please get the sharding from XLA and then '
-                       'create the Array with that sharding.')
 
     # `get_shard_indices` is cached.
     return global_device_array.get_shard_indices(global_shape, self.mesh, self.spec)
@@ -161,6 +150,7 @@ class MeshPspecSharding(XLACompatibleSharding):
       out[device] = replica_id
     return out
 
+  @cache()
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.mesh.devices.flat)
 
@@ -169,8 +159,6 @@ class MeshPspecSharding(XLACompatibleSharding):
       self, num_dimensions: int,
       axis_ctx: Optional[mlir.SPMDAxisContext] = None) -> Optional[xc.OpSharding]:
     from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
-
-    assert not pxla._is_auto(self.spec)
 
     parsed_spec, _, _, _ = _prepare_axis_resources(self.spec, "spec")
     array_mapping = get_array_mapping(parsed_spec)
@@ -277,6 +265,7 @@ class PmapSharding(XLACompatibleSharding):
       out[device] = replica_id
     return out
 
+  @cache()
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.devices.flat)
 

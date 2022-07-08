@@ -15,7 +15,7 @@
 from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
-from typing import Callable, Sequence, Tuple, Union, Optional, cast, List, Iterable
+from typing import Callable, Sequence, Tuple, Union, Optional, cast, List
 import itertools as it
 from functools import partial
 
@@ -265,20 +265,24 @@ def pjit(fun: Callable,
     out_axis_resources, _, _, _ = _prepare_axis_resources(
         out_axis_resources, "out_axis_resources")
   else:
-    # TODO(yashkatariya): Relax this restriction once the transition to
-    # sharding instances finishes.
     if not _is_unspecified(in_axis_resources):
-      raise ValueError('in_axis_resources should be empty for Array. The sharding '
-                       'should be specified on the arguments as pjit follows '
-                       'computation follows data semantics.')
+      # `pjit.AUTO` is allowed partially in `in_axis_resources` i.e. you can
+      # put sharding instances and `pjit.AUTO` together.
+      if not all(isinstance(s, Sharding) or _is_auto(s)
+                 for s in tree_flatten(in_axis_resources)[0]):
+        raise ValueError('When `config.jax_array` flag is enabled, '
+                         'in_axis_resources should contain instances of '
+                         '`Sharding` or `pjit.AUTO`.')
+
     # `out_axis_resources` should be instances of `Sharding` if it's not
     # unspecified. For `AUTO` sharding, it can only be used with
     # MeshPspecSharding.
     if not _is_unspecified(out_axis_resources):
-      if not all(isinstance(s, Sharding) for s in tree_flatten(out_axis_resources)[0]):
+      if not all(isinstance(s, Sharding) or _is_auto(s)
+                 for s in tree_flatten(out_axis_resources)[0]):
         raise ValueError('When `config.jax_array` flag is enabled, '
                          'out_axis_resources should contain instances of '
-                         '`Sharding`.')
+                         '`Sharding` or `pjit.AUTO`.')
 
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
@@ -311,14 +315,10 @@ def pjit(fun: Callable,
       donated_invars = (False,) * len(args_flat)
 
     if config.jax_array:
-      if any(not isinstance(a, Array) for a in args_flat):
-        raise ValueError('All arguments to pjit when `config.jax_array` is '
-                         'enabled should be `Array`s.')
-      # tree_map over `dyn_args` to preserve the pytree structure of args.
-      in_shardings = tree_map(lambda x: x.sharding, dyn_args)
+      in_shardings = _get_and_check_in_shardings(
+          dyn_args, in_axis_resources, pjit_mesh, in_tree)
+      # TODO(yashkatariya): Add a device assignment check for out_shardings too.
       out_shardings = out_axis_resources
-      # This function is cached which is an improvement over the old codepath.
-      _check_array_device_assignment(pjit_mesh, tuple(tree_flatten(in_shardings)[0]))
     else:
       in_shardings = tree_map(lambda x: _create_mesh_pspec_sharding(pjit_mesh, x),
                               in_axis_resources)
@@ -406,10 +406,38 @@ def hashable_pytree(pytree):
                           closure=(treedef, vals))
 
 
+def _get_and_check_in_shardings(args, pjit_in_shardings, pjit_mesh, in_tree):
+  try:
+    # tree_map over `args` to preserve the pytree structure of args.
+    arg_in_shardings = tree_map(lambda x: x.sharding, args)
+  except AttributeError:
+    arg_in_shardings = None
+
+  arg_in_shardings_flat = tuple(tree_flatten(arg_in_shardings)[0])
+
+  if _is_unspecified(pjit_in_shardings):
+    if arg_in_shardings is None:
+      raise ValueError('Please specify sharding either on the args or on pjit.')
+    else:
+      # This function is cached.
+      _check_array_device_assignment(pjit_mesh, arg_in_shardings_flat)
+      return arg_in_shardings
+  else:
+    if arg_in_shardings is None:
+      # TODO(yashkatariya): Add a check here to check against the device
+      # assignment of all pjit_in_shardings.
+      return pjit_in_shardings
+    else:
+      # This function is cached.
+      _check_pjit_arg_shardings(
+          hashable_pytree(pjit_in_shardings), arg_in_shardings_flat, in_tree)
+      return arg_in_shardings
+
+  assert False, "Please open a bug report!"  # This should be unreachable.
+
+
 def _create_mesh_pspec_sharding(mesh, x):
-  if _is_unspecified(x):
-    return x
-  if _is_from_gda(x):
+  if _is_unspecified_or_from_gda_or_auto(x):
     return x
   return MeshPspecSharding._from_parsed_pspec(mesh, x)
 
@@ -486,17 +514,20 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
   # complexity below.
   if config.jax_array:
     for aval, i in safe_zip(local_in_avals, in_shardings_flat):
+      if _is_auto(i): continue
       pjit_check_aval_sharding(i, aval, "pjit arguments",
                                allow_uneven_sharding=False)
     global_in_avals = local_in_avals
-    return tuple(global_in_avals), tuple(i.normalize() for i in in_shardings_flat)
+    return tuple(global_in_avals), tuple(i if _is_auto(i) else i.normalize()
+                                         for i in in_shardings_flat)
 
   if not local_in_avals:
     assert not in_shardings_flat
     return (), ()
 
-  in_axis_resources_flat = tuple(i if _is_from_gda(i) else i._parsed_pspec
-                                 for i in in_shardings_flat)
+  in_axis_resources_flat = tuple(
+      i if _is_from_gda(i) or _is_auto(i) else i._parsed_pspec
+      for i in in_shardings_flat)
 
   # This check should be above local_to_global call below otherwise if
   # `FROM_GDA` is passed to any input other than GDA, a ugly error message
@@ -518,17 +549,17 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     # For example, partitions of () and ((),) are not equivalent, since the
     # first one is a valid spec for a scalar value, while the second is not!
     for aval, i in safe_zip(local_in_avals, in_shardings_flat):
-      if _is_from_gda(i): continue
+      if _is_from_gda(i) or _is_auto(i): continue
       pjit_check_aval_sharding(i, aval, "pjit arguments",
                                allow_uneven_sharding=False)
   else:
     for aval, i in safe_zip(local_in_avals, in_shardings_flat):
-      if _is_from_gda(i): continue
+      if _is_from_gda(i) or _is_auto(i): continue
       pjit_check_aval_sharding(i, aval, "pjit arguments",
                                allow_uneven_sharding=False, local=True)
 
   normalized_in_shardings_flat = tuple(
-      i if _is_from_gda(i) else i.normalize() for i in in_shardings_flat)
+      i if _is_from_gda(i) or _is_auto(i) else i.normalize() for i in in_shardings_flat)
 
   global_in_avals = local_to_global(in_positional_semantics,
                                     local_in_avals, normalized_in_shardings_flat)
@@ -551,11 +582,11 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
       "pjit out_axis_resources", out_tree(), out_shardings_thunk(), tupled_args=False)
 
   for aval, o in safe_zip(global_out_avals, out_shardings_flat):
-    if _is_unspecified(o): continue
+    if _is_unspecified(o) or _is_auto(o): continue
     pjit_check_aval_sharding(o, aval, "pjit outputs", allow_uneven_sharding=False)
 
   normalized_out_shardings_flat = tuple(
-      o if _is_unspecified(o) else o.normalize()
+      o if _is_unspecified(o) or _is_auto(o) else o.normalize()
       for o in out_shardings_flat
   )
 
@@ -778,7 +809,7 @@ def _pjit_call_impl(*args, jaxpr,
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
-    pxla._check_gda_xla_sharding_match(args, compiled._in_axes)
+    pxla._check_gda_or_array_xla_sharding_match(args, compiled._in_axes)
   if config.jax_distributed_debug:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this
@@ -808,8 +839,9 @@ def _pjit_lower(
   # recompilation (since pjit_lower is cached) if its compiled with `None` but
   # in the next call `P(None)` is passed. Those are the same thing so should be
   # treat as equivalent and pjit_lower's cache shouldn't be invalidated.
-  in_axes = [get_array_mapping(i._parsed_pspec) for i in in_shardings]
-  out_axes = [get_array_mapping(o if _is_unspecified(o) else o._parsed_pspec)
+  in_axes = [get_array_mapping(i if _is_auto(i) else i._parsed_pspec)
+             for i in in_shardings]
+  out_axes = [get_array_mapping(o if _is_unspecified(o) or _is_auto(o) else o._parsed_pspec)
               for o in out_shardings]
   pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
   f = core.jaxpr_as_fun(jaxpr)
@@ -1259,6 +1291,8 @@ def _get_in_positional_semantics(arg) -> maps._PositionalSemantics:
 def _maybe_replace_from_gda_with_pspec(
     in_sharding_flat, arg) -> MeshPspecSharding:
   if isinstance(arg, GDA):
+    if _is_auto(in_sharding_flat):
+      return in_sharding_flat
     gda_cpspec = CanonicalizedParsedPartitionSpec(
         ParsedPartitionSpec.from_user_input(arg.mesh_axes, arg_name="GDA spec"))
     if (not _is_from_gda(in_sharding_flat) and
@@ -1295,6 +1329,23 @@ def _check_array_device_assignment(pjit_mesh, in_shardings):
         raise ValueError("Pjit's devices and Array's devices should be equal. "
                          f"Got Pjit devices: {list(pjit_mesh.devices.flat)},\n "
                          f"Array devices: {arr_device_assignment}")
+
+@cache()
+def _check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
+                              in_tree):
+  pjit_in_shardings_flat = flatten_axis_resources(
+      "pjit in_shardings", in_tree, pjit_in_shardings(), tupled_args=True)
+
+  if pxla._check_if_any_auto(pjit_in_shardings_flat):
+    raise ValueError('Passing sharding on pjit and on args while using the '
+                     'auto spmd partitioner is not allowed. Please call the '
+                     'compiled object on the inputs.')
+
+  for p, a in safe_zip(pjit_in_shardings_flat, arg_in_shardings_flat):
+    if p.normalize() != a.normalize():
+      raise ValueError('Sharding passed to pjit does not match the sharding '
+                       'on the respective arg. '
+                       f'Got pjit sharding: {p},\narg sharding: {a}')
 
 
 def _maybe_check_pjit_gda_mesh(args, mesh):

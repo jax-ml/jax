@@ -2534,7 +2534,7 @@ class MeshExecutable(stages.XlaExecutable):
     ref_avals = self._input_avals
     dispatch.check_arg_avals_for_call(ref_avals, arg_avals)
     # Check the GDA sharding and the input sharding.
-    _check_gda_xla_sharding_match(args, self._in_axes)
+    _check_gda_or_array_xla_sharding_match(args, self._in_axes)
     return self.unsafe_call(*args)
 
 
@@ -2545,18 +2545,25 @@ def _get_mesh_pspec_sharding(mesh, out_axes):
           for o in out_axes]
 
 
-def _check_gda_xla_sharding_match(args, in_array_mappings):
+def _check_gda_or_array_xla_sharding_match(args, in_array_mappings):
   from jax.experimental.global_device_array import GlobalDeviceArray, _get_array_mapping
+  from jax.experimental.array import Array
 
   for arg, inp_array_mapping in safe_zip(args, in_array_mappings):
-    if not isinstance(arg, GlobalDeviceArray):
+    if not isinstance(arg, (GlobalDeviceArray, Array)):
       continue
-    gda_array_mapping = _get_array_mapping(arg.mesh_axes)
-    if inp_array_mapping != gda_array_mapping:
+    # TODO(yashkatariya): For `Array` check the `sharding` directly when pxla
+    # takes sharding instances.
+    arr_type, arr_mapping = (
+        ('GDA', _get_array_mapping(arg.mesh_axes)) if isinstance(arg, GlobalDeviceArray)
+        else ('Array', _get_array_mapping(arg.sharding.spec))
+    )
+    if inp_array_mapping != arr_mapping:
       raise ValueError(
-          "GDA sharding does not match the input sharding. "
-          f"Got GDA spec: {array_mapping_to_axis_resources(gda_array_mapping)} and "
-          f"auto sharding spec: {array_mapping_to_axis_resources(inp_array_mapping)} for GDA: {arg}")
+          f"{arr_type} sharding does not match the input sharding. "
+          f"Got {arr_type} spec: {array_mapping_to_axis_resources(arr_mapping)} and "
+          f"auto sharding spec: {array_mapping_to_axis_resources(inp_array_mapping)} "
+          f"for {arr_type}: {arg}")
 
 
 _forbidden_primitives = {
