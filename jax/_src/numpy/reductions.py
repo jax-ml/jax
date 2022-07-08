@@ -20,7 +20,6 @@ import warnings
 
 import numpy as np
 
-import jax
 from jax import core
 from jax import lax
 from jax._src import api
@@ -132,8 +131,6 @@ def _reduction_init_val(a, init_val):
   # This function uses np.* functions because lax pattern matches against the
   # specific concrete values of the reduction inputs.
   a_dtype = dtypes.canonicalize_dtype(dtypes.dtype(a))
-  if a_dtype == 'bool':
-    return np.array(init_val > 0, dtype=a_dtype)
   try:
     return np.array(init_val, dtype=a_dtype)
   except OverflowError:

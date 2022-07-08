@@ -23,12 +23,15 @@ from textwrap import dedent
 
 import numpy as np
 
-from jax._src.api import jit, custom_jvp
+import jax
+from jax._src.api import jit, custom_jvp, vmap
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
+from jax._src.numpy import reductions
 from jax._src.numpy.util import (
-   _check_arraylike, _promote_args, _promote_args_inexact,
-   _promote_dtypes_inexact, _promote_shapes, _where, _wraps)
+   _broadcast_to, _check_arraylike, _eliminate_deprecated_list_indexing, _promote_args,
+   _promote_args_inexact, _promote_dtypes_inexact, _promote_shapes, _where, _wraps)
+from jax._src.util import canonicalize_axis, moveaxis
 from jax import core
 from jax import lax
 
@@ -41,8 +44,28 @@ _INT_DTYPES = {
 }
 
 
+_AT_INPLACE_WARNING = """\
+Because JAX arrays are immutable, jnp.ufunc.at() cannot operate inplace like
+np.ufunc.at(). Instead, you can pass inplace=False and capture the result; e.g.
+>>> arr = jnp.add.at(arr, ind, val, inplace=False)
+"""
+
+
 def _constant_like(x, const):
   return np.array(const, dtype=dtypes.dtype(x))
+
+
+def _asarray(a, dtype=None):
+  # simplified version of jnp.asarray() for local use. This will not
+  # properly handle list inputs, so it should only be used after calling
+  # _check_arraylike.
+  return lax.convert_element_type(a, dtype or dtypes.dtype(a, canonicalize=True))
+
+
+def _result_dtype(op, *args):
+  """Compute result dtype of applying op to arguments with given dtypes."""
+  args = [np.ones((0,) * np.ndim(arg), dtypes.dtype(arg)) for arg in args]
+  return dtypes.dtype(op(*args))
 
 
 def _replace_inf(x):
@@ -113,14 +136,17 @@ def _logical_op(np_op, bitwise_op):
     return bitwise_op(*_promote_args(np_op.__name__, *args))
   return op
 
+# Note: functions with preceding underscores here are used in ufunc definitions below.
+# TODO(jakevdp): convert more of these to ufuncs.
 
-fabs = _one_to_one_unop(np.fabs, lax.abs, True)
-bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
-invert = _one_to_one_unop(np.invert, lax.bitwise_not)
-negative = _one_to_one_unop(np.negative, lax.neg)
-positive = _one_to_one_unop(np.positive, lambda x: x)
-floor = _one_to_one_unop(np.floor, lax.floor, True)
-ceil = _one_to_one_unop(np.ceil, lax.ceil, True)
+# Unary Functions
+_fabs = _one_to_one_unop(np.fabs, lax.abs, True)
+_bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
+_invert = _one_to_one_unop(np.invert, lax.bitwise_not)
+_negative = _one_to_one_unop(np.negative, lax.neg)
+_positive = _one_to_one_unop(np.positive, lambda x: x)
+_floor = _one_to_one_unop(np.floor, lax.floor, True)
+_ceil = _one_to_one_unop(np.ceil, lax.ceil, True)
 exp = _one_to_one_unop(np.exp, lax.exp, True)
 log = _one_to_one_unop(np.log, lax.log, True)
 expm1 = _one_to_one_unop(np.expm1, lax.expm1, True)
@@ -139,26 +165,29 @@ arctanh = _one_to_one_unop(np.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(np.sqrt, lax.sqrt, True)
 cbrt = _one_to_one_unop(np.cbrt, lax.cbrt, True)
 
-add = _maybe_bool_binop(np.add, lax.add, lax.bitwise_or)
-bitwise_and = _one_to_one_binop(np.bitwise_and, lax.bitwise_and)
-bitwise_or = _one_to_one_binop(np.bitwise_or, lax.bitwise_or)
-bitwise_xor = _one_to_one_binop(np.bitwise_xor, lax.bitwise_xor)
+# Binary Functions
+_add = _maybe_bool_binop(np.add, lax.add, lax.bitwise_or)
+_bitwise_and = _one_to_one_binop(np.bitwise_and, lax.bitwise_and)
+_bitwise_or = _one_to_one_binop(np.bitwise_or, lax.bitwise_or)
+_bitwise_xor = _one_to_one_binop(np.bitwise_xor, lax.bitwise_xor)
 left_shift = _one_to_one_binop(np.left_shift, lax.shift_left)
 equal = _one_to_one_binop(np.equal, lax.eq)
-multiply = _maybe_bool_binop(np.multiply, lax.mul, lax.bitwise_and)
+_multiply = _maybe_bool_binop(np.multiply, lax.mul, lax.bitwise_and)
 not_equal = _one_to_one_binop(np.not_equal, lax.ne)
-subtract = _one_to_one_binop(np.subtract, lax.sub)
+_subtract = _one_to_one_binop(np.subtract, lax.sub)
 arctan2 = _one_to_one_binop(np.arctan2, lax.atan2, True)
-minimum = _one_to_one_binop(np.minimum, lax.min)
-maximum = _one_to_one_binop(np.maximum, lax.max)
+_minimum = _one_to_one_binop(np.minimum, lax.min)
+_maximum = _one_to_one_binop(np.maximum, lax.max)
 float_power = _one_to_one_binop(np.float_power, lax.pow, True)
 nextafter = _one_to_one_binop(np.nextafter, lax.nextafter, True, True)
 
+# Comparison Functions
 greater_equal = _comparison_op(np.greater_equal, lax.ge)
 greater = _comparison_op(np.greater, lax.gt)
 less_equal = _comparison_op(np.less_equal, lax.le)
 less = _comparison_op(np.less, lax.lt)
 
+# Logical Functions
 logical_and = _logical_op(np.logical_and, lax.bitwise_and)
 logical_not = _logical_op(np.logical_not, lax.bitwise_not)
 logical_or = _logical_op(np.logical_or, lax.bitwise_or)
@@ -229,16 +258,14 @@ def copysign(x1, x2):
 
 @_wraps(np.true_divide)
 @partial(jit, inline=True)
-def true_divide(x1, x2):
+def _true_divide(x1, x2):
   x1, x2 = _promote_args_inexact("true_divide", x1, x2)
   return lax.div(x1, x2)
-
-divide = true_divide
 
 
 @_wraps(np.floor_divide)
 @jit
-def floor_divide(x1, x2):
+def _floor_divide(x1, x2):
   x1, x2 = _promote_args("floor_divide", x1, x2)
   dtype = dtypes.dtype(x1)
   if dtypes.issubdtype(dtype, np.integer):
@@ -711,3 +738,254 @@ def _sinc_maclaurin(k, x):
 def _sinc_maclaurin_jvp(k, primals, tangents):
   (x,), (t,) = primals, tangents
   return _sinc_maclaurin(k, x), _sinc_maclaurin(k + 1, x) * t
+
+
+class ufunc:
+  """Functions that operate element-by-element on whole arrays.
+
+  This is a class for LAX-backed implementations of numpy ufuncs.
+  """
+  identity = None
+  nargs = None
+  nin = None
+  nout = None
+  _call = None
+  _reduce = None
+  _accumulate = None
+  _at = None
+  _reduceat = None
+
+  def __init__(self, name):
+    self.__name__ = name
+
+  def __repr__(self):
+    return f"<jnp.ufunc '{self.__name__}'>"
+
+  def __call__(self, *args, **kwargs):
+    return self._call(*args, **kwargs)
+
+  @_wraps(np.ufunc.reduce)
+  def reduce(self, a, axis=0, dtype=None, out=None, keepdims=False, initial=None, where=True):
+    if self.nin != 2:
+      raise ValueError("reduce only supported for binary ufuncs")
+    if self.nout != 1:
+      raise ValueError("reduce only supported for functions returning a single value")
+    if out is not None:
+      raise NotImplementedError(f"out argument of {self.__name__}.reduce()")
+    _reduce = self._reduce or self._reduce_via_scan
+    return _reduce(a, axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, where=where)
+
+  @partial(jit, static_argnames=['self', 'axis', 'dtype', 'keepdims', 'where'])
+  def _reduce_via_scan(self, arr, axis=0, dtype=None, keepdims=False, initial=None, where=True):
+    assert self.nin == 2 and self.nout == 1
+    _check_arraylike(f"{self.__name__}.reduce", arr)
+    arr = _asarray(arr)
+    if initial is None:
+      initial = self.identity
+    if dtype is None:
+      dtype = jax.eval_shape(self, lax_internal._one(arr), lax_internal._one(arr)).dtype
+
+    if isinstance(axis, tuple):
+      axis = tuple(canonicalize_axis(a, arr.ndim) for a in axis)
+      raise NotImplementedError("tuple of axes")
+    elif axis is None:
+      if keepdims:
+        final_shape = (1,) * arr.ndim
+      else:
+        final_shape = ()
+      arr = arr.ravel()
+      axis = 0
+    else:
+      axis = canonicalize_axis(axis, arr.ndim)
+      if keepdims:
+        final_shape = (*arr.shape[:axis], 1, *arr.shape[axis + 1:])
+      else:
+        final_shape = (*arr.shape[:axis], *arr.shape[axis + 1:])
+
+    # TODO: handle without transpose?
+    if axis != 0:
+      arr = moveaxis(arr, axis, 0)
+
+    if where is not True:
+      raise NotImplementedError("where argument")
+    if initial is None and arr.shape[0] == 0:
+      raise ValueError("zero-size array to reduction operation {self.__name__} which has no ideneity")
+
+    def body_fun(i, val):
+      return self(val, arr[i].astype(dtype))
+
+    if initial is None:
+      start = 1
+      initial = arr[0]
+    else:
+      _check_arraylike(f"{self.__name__}.reduce", arr)
+      start = 0
+
+    initial = _broadcast_to(_asarray(initial, dtype=dtype), arr.shape[1:])
+
+    result = lax.fori_loop(start, arr.shape[0], body_fun, initial)
+    if keepdims:
+      result = result.reshape(final_shape)
+    return result
+
+  @_wraps(np.ufunc.accumulate)
+  def accumulate(self, a, axis=0, dtype=None, out=None):
+    if self.nin != 2:
+      raise ValueError("accumulate only supported for binary ufuncs")
+    if self.nout != 1:
+      raise ValueError("accumulate only supported for functions returning a single value")
+    if out is not None:
+      raise NotImplementedError(f"out argument of {self.__name__}.accumulate()")
+    _accumulate = self._accumulate or self._accumulate_via_scan
+    return _accumulate(a, axis=axis, dtype=dtype)
+
+  @partial(jit, static_argnames=['self', 'axis', 'dtype'])
+  def _accumulate_via_scan(self, arr, axis=0, dtype=None):
+    assert self.nin == 2 and self.nout == 1
+    _check_arraylike(f"{self.__name__}.accumulate", arr)
+    arr = _asarray(arr)
+
+    if dtype is None:
+      dtype = jax.eval_shape(self, lax_internal._one(arr), lax_internal._one(arr)).dtype
+
+    if axis is None or isinstance(axis, tuple):
+      raise ValueError("accumulate does not allow multiple axes")
+    axis = canonicalize_axis(axis, np.ndim(arr))
+
+    arr = moveaxis(arr, axis, 0)
+    def scan_fun(carry, _):
+      i, x = carry
+      y = _where(i == 0, arr[0].astype(dtype), self(x.astype(dtype), arr[i].astype(dtype)))
+      return (i + 1, y), y
+    _, result = lax.scan(scan_fun, (0, arr[0].astype(dtype)), None, length=arr.shape[0])
+    return moveaxis(result, 0, axis)
+
+  @_wraps(np.ufunc.accumulate)
+  def at(self, a, indices, b=None, inplace=True):
+    if inplace:
+      raise NotImplementedError(_AT_INPLACE_WARNING)
+    _at = self._at or self._at_via_scan
+    if b is None:
+      return _at(a, indices)
+    else:
+      return _at(a, indices, b)
+
+  def _at_via_scan(self, a, indices, *args):
+    _check_arraylike(f"{self.__name__}.at", a, *args)
+    dtype = jax.eval_shape(self, lax_internal._one(a), *(lax_internal._one(arg) for arg in args)).dtype
+    a = _asarray(a, dtype=dtype)
+    args = tuple(_asarray(arg, dtype=dtype) for arg in args)
+    indices = _eliminate_deprecated_list_indexing(indices)
+    if not indices:
+      return a
+
+    shapes = [np.shape(i) for i in indices if not isinstance(i, slice)]
+    shape = shapes and lax.broadcast_shapes(*shapes)
+    if not shape:
+      return a.at[indices].set(self(a.at[indices].get(), *args))
+
+    args = tuple(_broadcast_to(arg, shape).ravel() for arg in args)
+    indices = [idx if isinstance(idx, slice) else _broadcast_to(idx, shape).ravel() for idx in indices]
+
+    def scan_fun(carry, x):
+      i, a = carry
+      idx = tuple(ind if isinstance(ind, slice) else ind[i] for ind in indices)
+      a = a.at[idx].set(self(a.at[idx].get(), *(arg[i] for arg in args)))
+      return (i + 1, a), x
+    carry, _ = lax.scan(scan_fun, (0, a), None, len(indices[0]))
+    return carry[1]
+
+  @_wraps(np.ufunc.reduceat)
+  def reduceat(self, a, indices, axis=0, dtype=None, out=None):
+    if self.nin != 2:
+      raise ValueError("reduceat only supported for binary ufuncs")
+    if self.nout != 1:
+      raise ValueError("reduceat only supported for functions returning a single value")
+    if self._reduceat is None:
+      raise NotImplementedError(f"reduceat() method of {self}")
+    if out is not None:
+      raise NotImplementedError(f"out argument of {self.__name__}.reduceat()")
+    return self._reduceat(a, indices, axis=axis, dtype=dtype)
+
+  @_wraps(np.ufunc.outer)
+  def outer(self, A, B, **kwargs):
+    if self.nin != 2:
+      raise ValueError("outer only supported for binary ufuncs")
+    if self.nout != 1:
+      raise ValueError("outer only supported for functions returning a single value")
+    _check_arraylike(f"{self.__name__}.outer", A, B)
+    _ravel = lambda A: lax.reshape(A, (np.size(A),))
+    result = vmap(vmap(partial(self, **kwargs), (None, 0)), (0, None))(_ravel(A), _ravel(B))
+    return result.reshape(*np.shape(A), *np.shape(B))
+
+def _make_reduceat(name, segment_op, promote_bool):
+  def reduceat(a, indices, axis, dtype):
+    int_ = dtypes.canonicalize_dtype(dtypes.int_)
+    if a.ndim != 1:
+      # TODO(jakevdp) implement this
+      raise NotImplementedError(f"jnp.{name}.reduceat(a) for a.ndim > 1")
+    assert axis in [-1, 0]
+    segments = lax.full((a.shape[axis],), 0, dtype=int_).at[indices].add(1).cumsum()
+    if dtype is not None:
+      a = a.astype(dtype)
+    elif promote_bool and a.dtype == bool:
+      a = a.astype(int_)
+    return getattr(jax.ops, segment_op)(a, segments, num_segments=len(indices) + 1)[1:]
+  return reduceat
+
+def _make_at(name):
+  def at(a, indices, b):
+    _check_arraylike(f"{name}.at", a, b)
+    return getattr(_asarray(a).at[indices], name)(b)
+  return at
+
+def _make_ufunc(name, *, nargs, nin, nout, call, identity=None, reduce=None,
+                accumulate=None, at=None, reduceat=None):
+  uf = ufunc(name)
+  uf.nargs = nargs
+  uf.nin = nin
+  uf.nout = nout
+  uf.identity = identity
+  uf._call = call
+  uf._reduce = reduce
+  uf._accumulate = accumulate
+  uf._at = at
+  uf._reduceat = reduceat
+  return _wraps(getattr(np, name))(uf)
+
+def _min_with_dtype(a, *, axis, dtype, keepdims, initial, where):
+  if dtype is not None: a = a.astype(dtype)
+  if where is True: where = None  # Ensure default where is not traced
+  return reductions.min(a, axis=axis, keepdims=keepdims, initial=initial, where=where)
+
+def _max_with_dtype(a, *, axis, dtype, keepdims, initial, where):
+  if dtype is not None: a = a.astype(dtype)
+  if where is True: where = None  # Ensure default where is not traced
+  return reductions.max(a, axis=axis, keepdims=keepdims, initial=initial, where=where)
+
+bitwise_not = _make_ufunc('invert', nargs=1, nin=1, nout=1, call=_bitwise_not)
+fabs = _make_ufunc('fabs', nargs=1, nin=1, nout=1, call=_fabs)
+invert = _make_ufunc('invert', nargs=1, nin=1, nout=1, call=_invert)
+negative = _make_ufunc('negative', nargs=1, nin=1, nout=1, call=_negative)
+positive = _make_ufunc('negative', nargs=1, nin=1, nout=1, call=_positive)
+floor = _make_ufunc('negative', nargs=1, nin=1, nout=1, call=_floor)
+ceil = _make_ufunc('negative', nargs=1, nin=1, nout=1, call=_ceil)
+
+add = _make_ufunc('add', nargs=2, nin=2, nout=1, identity=0,
+                  call=_add, accumulate=reductions.cumsum, reduce=reductions.sum,
+                  at=_make_at('add'), reduceat=_make_reduceat('add', 'segment_sum', True))
+# TODO(jakevdp): use fast monoidal reductions for bitwise_and, bitwise_or, bitwise_xor.
+bitwise_and = _make_ufunc('bitwise_and', nargs=2, nin=2, nout=1, identity=-1, call=_bitwise_and)
+bitwise_or = _make_ufunc('bitwise_or', nargs=2, nin=2, nout=1, identity=0, call=_bitwise_or)
+bitwise_xor = _make_ufunc('bitwise_xor', nargs=2, nin=2, nout=1, identity=0, call=_bitwise_xor)
+subtract = _make_ufunc('subtract', nargs=2, nin=2, nout=1, call=_subtract)
+maximum = _make_ufunc('maximum', nargs=2, nin=2, nout=1, call=_maximum, reduce=_max_with_dtype,
+                      at=_make_at('max'), reduceat=_make_reduceat('max', 'segment_max', False))
+minimum = _make_ufunc('minimum', nargs=2, nin=2, nout=1, call=_minimum, reduce=_min_with_dtype,
+                      at=_make_at('min'), reduceat=_make_reduceat('min', 'segment_min', False))
+multiply = _make_ufunc('multiply', nargs=2, nin=2, nout=1, identity=1,
+                       call=_multiply, accumulate=reductions.cumprod, reduce=reductions.prod,
+                       at=_make_at('mul'), reduceat=_make_reduceat('multiply', 'segment_prod', True))
+true_divide = _make_ufunc('divide', nargs=2, nin=2, nout=1, call=_true_divide)
+divide = true_divide
+floor_divide = _make_ufunc('floor_divide', nargs=2, nin=2, nout=1, call=_floor_divide)

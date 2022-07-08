@@ -11,6 +11,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.3.15 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.14...main).
 * Changes
+  * Several {mod}`jax.numpy` functions now have support for {class}`numpy.ufunc` style methods,
+    such as {func}`ufunc.reduce`, {func}`ufunc.accumulate`, {func}`ufunc.outer`, etc.
   * `JaxTestCase` and `JaxTestLoader` have been removed from `jax.test_util`. These
     classes have been deprecated since v0.3.1 ({jax-issue}`#11248`).
   * Added {class}`jax.scipy.gaussian_kde` ({jax-issue}`#11237`).

@@ -69,12 +69,12 @@ from jax._src.numpy.ufuncs import (  # noqa: F401
   logical_and, logical_not, logical_or, logical_xor, maximum, minimum, mod, modf,
   multiply, negative, nextafter, not_equal, positive, power, rad2deg, radians, real,
   reciprocal, remainder, right_shift, rint, sign, signbit, sin, sinc, sinh, sqrt,
-  square, subtract, tan, tanh, true_divide)
+  square, subtract, tan, tanh, true_divide, ufunc)
 from jax._src.numpy.util import (  # noqa: F401
   _arraylike, _broadcast_arrays, _broadcast_to, _check_arraylike,
-  _complex_elem_type, _promote_args, _promote_args_inexact, _promote_dtypes,
-  _promote_dtypes_inexact, _promote_shapes, _register_stackable, _stackable,
-  _where, _wraps)
+  _complex_elem_type, _eliminate_deprecated_list_indexing, _promote_args,
+  _promote_args_inexact, _promote_dtypes, _promote_dtypes_inexact, _promote_shapes,
+  _register_stackable, _stackable, _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
@@ -3906,35 +3906,6 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     unique_indices=advanced_indexes is None,
     indices_are_sorted=advanced_indexes is None)
 
-def _should_unpack_list_index(x):
-  """Helper for _eliminate_deprecated_list_indexing."""
-  return (isinstance(x, (np.ndarray, ndarray)) and np.ndim(x) != 0
-          or isinstance(x, (Sequence, slice))
-          or x is Ellipsis or x is None)
-
-def _eliminate_deprecated_list_indexing(idx):
-  # "Basic slicing is initiated if the selection object is a non-array,
-  # non-tuple sequence containing slice objects, [Ellipses, or newaxis
-  # objects]". Detects this and raises a TypeError.
-  if not isinstance(idx, tuple):
-    if isinstance(idx, Sequence) and not isinstance(idx, (ndarray, np.ndarray)):
-      # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
-      # others are converted to arrays, based on a set of somewhat convoluted heuristics
-      # (See https://github.com/numpy/numpy/blob/v1.19.2/numpy/core/src/multiarray/mapping.c#L179-L343)
-      # In JAX, we raise an informative TypeError for *all* non-tuple sequences.
-      if _any(_should_unpack_list_index(i) for i in idx):
-        msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
-               "use `arr[tuple(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/google/jax/issues/4564 for more information.")
-      else:
-        msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
-               "use `arr[array(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/google/jax/issues/4564 for more information.")
-      raise TypeError(msg)
-    else:
-      idx = (idx,)
-  return idx
-
 def _is_boolean_index(i):
   try:
     abstract_i = core.get_aval(i)
@@ -5046,13 +5017,21 @@ _set_shaped_array_attributes(ShapedArray)
 _set_shaped_array_attributes(DShapedArray)
 
 
+def _maybe_wrap_ufunc(fun):
+  # This is necessary when setting a DeviceArray method to a ufunc to prevent
+  # the DeviceArray from being passed as the `self` argument of `ufunc.__call__`.
+  if isinstance(fun, ufunc):
+    return functools_wraps(fun)(lambda *a, **k: fun(*a, **k))
+  return fun
+
+
 def _set_device_array_base_attributes(device_array):
   # Forward operators, methods, and properties on DeviceArray to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
   for operator_name, function in _operators.items():
-    setattr(device_array, f"__{operator_name}__", function)
+    setattr(device_array, f"__{operator_name}__", _maybe_wrap_ufunc(function))
   for method_name in _nondiff_methods + _diff_methods:
-    setattr(device_array, method_name, globals()[method_name])
+    setattr(device_array, method_name, _maybe_wrap_ufunc(globals()[method_name]))
   # TODO(jakevdp): remove tile method after August 2022
   setattr(device_array, "tile", _deprecate_function(tile, "arr.tile(...) is deprecated and will be removed. Use jnp.tile(arr, ...) instead."))
   setattr(device_array, "reshape", _reshape)

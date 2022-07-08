@@ -408,6 +408,7 @@ from jax._src.numpy.ufuncs import (
     tan as tan,
     tanh as tanh,
     true_divide as true_divide,
+    ufunc as ufunc,
 )
 
 from jax._src.numpy.vectorize import vectorize as vectorize
