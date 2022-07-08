@@ -127,6 +127,8 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         target_compatible_with = ["@platforms//os:windows"],
     )
 
+ALL_BACKENDS = ["cpu", "gpu", "tpu"]
+
 def jax_test(
         name,
         srcs,
@@ -139,24 +141,53 @@ def jax_test(
         enable_configs = None,  # buildifier: disable=unused-variable
         tags = [],
         main = None):
-    if shard_count == None or type(shard_count) == type(0):
-        shards = shard_count
-    else:
-        shards = shard_count.get("cpu", None)
-    native.py_test(
-        name = name,
-        srcs = srcs,
-        args = args,
-        deps = [
-            "//jax",
-            "//jax:test_util",
-        ] + deps,
-        shard_count = shards,
-        tags = tags,
-        main = main,
-    )
+    if main == None:
+        if len(srcs) == 1:
+            main = srcs[0]
+        else:
+            fail("Must set a main file to test multiple source files.")
 
-def jax_generate_backend_suites():
-    pass
+    for backend in ALL_BACKENDS:
+        if shard_count == None or type(shard_count) == type(0):
+            test_shards = shard_count
+        else:
+            test_shards = shard_count.get(backend, 1)
+        test_args = list(args) + [
+            "--jax_test_dut=" + backend,
+            "--jax_platform_name=" + backend,
+        ]
+        test_tags = list(tags) + ["jax_test_%s" % backend] + backend_tags.get(backend, [])
+        if disable_backends and backend in disable_backends:
+            test_tags += ["manual"]
+        native.py_test(
+            name = name + "_" + backend,
+            srcs = srcs,
+            args = test_args,
+            deps = [
+                "//jax",
+                "//jax:test_util",
+            ] + deps,
+            shard_count = test_shards,
+            tags = test_tags,
+            main = main,
+        )
+
+def jax_generate_backend_suites(backends = []):
+    """Generates test suite targets named cpu_tests, gpu_tests, etc.
+
+    Args:
+      backends: the set of backends for which rules should be generated. Defaults to all backends.
+    """
+    if not backends:
+        backends = ALL_BACKENDS
+    for backend in backends:
+        native.test_suite(
+            name = "%s_tests" % backend,
+            tags = ["jax_test_%s" % backend, "-manual"],
+        )
+    native.test_suite(
+        name = "backend_independent_tests",
+        tags = ["-jax_test_%s" % backend for backend in backends] + ["-manual"],
+    )
 
 jax_test_file_visibility = []
