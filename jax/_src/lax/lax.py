@@ -1717,7 +1717,10 @@ else:
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
-mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosOp))
+if jax._src.lib.mlir_api_version < 28:
+  mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosOp))
+else:
+  mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosineOp))
 
 @_upcast_fp16_for_computation
 def _tan_impl(x):
