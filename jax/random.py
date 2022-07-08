@@ -113,8 +113,12 @@ Here is a short summary:
    always correct w/ remat              ✅                 ✅
    identical across CPU/GPU/TPU         ✅                 ✅
    identical across JAX/XLA versions    ✅
-   identical across shardings           ✅
+   identical across shardings           ✅                 ✅   ✅
    =================================   =================  ===  ==========
+
+  NOTE: RNGs are currently identical across shardings because the random value
+  is first materialized replicated on each device and then the slice that each
+  device needs is later sliced out.
 
 """
 
