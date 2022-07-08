@@ -721,12 +721,8 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
       _replica_groups(ctx.module_context.axis_env, named_axes,
                       axis_index_groups))
   def all_reduce(x_dtype, x):
-    if jax._src.lib.mlir_api_version >= 17:
-      op = mhlo.AllReduceOp(
-          x.type, x, replica_groups=replica_groups, channel_handle=None)
-    else:
-      op = mhlo.AllReduceOp(
-          x, replica_groups=replica_groups, channel_handle=None)
+    op = mhlo.AllReduceOp(
+        x.type, x, replica_groups=replica_groups, channel_handle=None)
     scalar_aval = core.ShapedArray((), x_dtype)
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
@@ -741,22 +737,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
       mhlo.ReturnOp(util.flatten(out_nodes))
     return op.result
 
-  outs = []
-  for aval, x in zip(ctx.avals_in, args):
-    # TODO(phawkins): remove this special case when jaxlib > 0.3.10 is the
-    # minimum.
-    if (jax._src.lib.xla_extension_version < 75 and prim is lax.add_p
-        and dtypes.issubdtype(aval.dtype, np.complexfloating)):
-      real_dtype = np.finfo(aval.dtype).dtype
-      outs.append(
-          mhlo.ComplexOp(
-              all_reduce(real_dtype,
-                         mhlo.RealOp(x).result),
-              all_reduce(real_dtype,
-                         mhlo.ImagOp(x).result)).result)
-    else:
-      outs.append(all_reduce(aval.dtype, x))
-  return outs
+  return [all_reduce(aval.dtype, x) for aval, x in zip(ctx.avals_in, args)]
 
 
 def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
@@ -947,17 +928,10 @@ def _all_to_all_lowering(ctx, x, *,
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
-    if jax._src.lib.mlir_api_version < 19:
-      return mhlo.AllToAllOp(mlir.aval_to_ir_type(ctx.avals_out[0]),
-                             x, mlir.i64_attr(split_axis),
-                             mlir.i64_attr(concat_axis),
-                             mlir.i64_attr(split_count),
-                             _replica_groups_mhlo(replica_groups)).results
-    else:
-      return mhlo.AllToAllOp(x, mlir.i64_attr(split_axis),
-                             mlir.i64_attr(concat_axis),
-                             mlir.i64_attr(split_count),
-                             _replica_groups_mhlo(replica_groups)).results
+    return mhlo.AllToAllOp(x, mlir.i64_attr(split_axis),
+                            mlir.i64_attr(concat_axis),
+                            mlir.i64_attr(split_count),
+                            _replica_groups_mhlo(replica_groups)).results
   else:
     warnings.warn(
         "all_to_all (and pswapaxes) are only implemented properly for TPUs and GPUs (if "

@@ -219,15 +219,12 @@ def make_gpu_client(platform_name=None):
     platform_name=platform_name)
 
 if hasattr(xla_client, "make_gpu_client"):
-  if xla_client._version >= 65:
-    register_backend_factory(
-        'cuda', partial(make_gpu_client, platform_name='cuda'),
-        priority=200)
-    register_backend_factory(
-        'rocm', partial(make_gpu_client, platform_name='rocm'),
-        priority=200)
-  else:
-    register_backend_factory('gpu', make_gpu_client, priority=200)
+  register_backend_factory(
+      'cuda', partial(make_gpu_client, platform_name='cuda'),
+      priority=200)
+  register_backend_factory(
+      'rocm', partial(make_gpu_client, platform_name='rocm'),
+      priority=200)
 
 if hasattr(xla_client, "make_tpu_client"):
   register_backend_factory(
@@ -310,16 +307,7 @@ def backends():
     for platform, priority in platforms_and_priorites:
       try:
         backend = _init_backend(platform)
-
-        if platform == "gpu" and xla_client._version <= 64:
-          # TODO(phawkins): remove this special handling when jaxlib v0.3.11
-          # is the minimum.
-          if "rocm" in backend.platform_version:
-            _backends["rocm"] = backend
-          else:
-            _backends["cuda"] = backend
-        else:
-          _backends[platform] = backend
+        _backends[platform] = backend
 
         if priority > default_priority:
           _default_backend = backend

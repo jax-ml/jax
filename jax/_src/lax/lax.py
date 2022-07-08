@@ -3070,17 +3070,10 @@ masking.masking_rules[pad_p] = _pad_masking_rule
 
 def _pad_lower(ctx, x, padding_value, *, padding_config):
   low, high, interior = util.unzip3(padding_config)
-  if jax._src.lib.mlir_api_version < 15:
-    aval_out, = ctx.avals_out
-    return mhlo.PadOp(mlir.aval_to_ir_type(aval_out), x, padding_value,
-                      mlir.dense_int_elements(low),
-                      mlir.dense_int_elements(high),
-                      mlir.dense_int_elements(interior)).results
-  else:
-    return mhlo.PadOp(x, padding_value,
-                      mlir.dense_int_elements(low),
-                      mlir.dense_int_elements(high),
-                      mlir.dense_int_elements(interior)).results
+  return mhlo.PadOp(x, padding_value,
+                    mlir.dense_int_elements(low),
+                    mlir.dense_int_elements(high),
+                    mlir.dense_int_elements(interior)).results
 mlir.register_lowering(pad_p, _pad_lower)
 
 
@@ -3817,13 +3810,8 @@ masking.defvectorized(reduce_precision_p)
 
 def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
-  if jax._src.lib.mlir_api_version >= 21:
-    return mhlo.ReducePrecisionOp(operand, mlir.i32_attr(exponent_bits),
-                                  mlir.i32_attr(mantissa_bits)).results
-  else:
-    return mhlo.ReducePrecisionOp(mlir.aval_to_ir_type(aval_out), operand,
-                                  mlir.i32_attr(exponent_bits),
-                                  mlir.i32_attr(mantissa_bits)).results
+  return mhlo.ReducePrecisionOp(operand, mlir.i32_attr(exponent_bits),
+                                mlir.i32_attr(mantissa_bits)).results
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
 
@@ -4059,12 +4047,9 @@ top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(xla.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
-if jax._src.lib.mlir_api_version >= 16:
-  def _top_k_lower(ctx, operand, k):
-    return chlo.TopKOp(operand, mlir.i64_attr(k)).results
-  mlir.register_lowering(top_k_p, _top_k_lower)
-else:
-  xla.register_translation(top_k_p, _top_k_translation_rule)
+def _top_k_lower(ctx, operand, k):
+  return chlo.TopKOp(operand, mlir.i64_attr(k)).results
+mlir.register_lowering(top_k_p, _top_k_lower)
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
@@ -4315,9 +4300,7 @@ def _rng_bit_generator_lowering(
     key = mhlo.BitcastConvertOp(
         ir.RankedTensorType.get([2], u64_type),
         mhlo.ReshapeOp(ir.RankedTensorType.get([2, 2], u32_type), key)).result
-  algorithm_attr = (
-      _rng_algorithm(algorithm) if jax._src.lib.mlir_api_version >= 14
-      else mlir.i32_attr(algorithm))
+  algorithm_attr = _rng_algorithm(algorithm)
   out_key, out_vals = mhlo.RngBitGeneratorOp(
       key.type,
       ir.RankedTensorType.get(shape, rbg_etype),

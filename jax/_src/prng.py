@@ -38,11 +38,7 @@ from jax._src.numpy.lax_numpy import (
 import jax._src.pretty_printer as pp
 from jax._src.util import canonicalize_axis, prod
 
-# TODO(phawkins): make gpu_prng unconditional after jaxlib >= 0.3.11
-# becomes the minimum; remove cuda_prng and hip_prng.
 from jax._src.lib import gpu_prng
-from jax._src.lib import cuda_prng
-from jax._src.lib import hip_prng
 
 
 UINT_DTYPES = {
@@ -416,27 +412,14 @@ mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
 mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=True),
     multiple_results=True), platform='cpu')
-
-if gpu_prng:
-  mlir.register_lowering(
-      threefry2x32_p,
-      partial(_threefry2x32_gpu_lowering, gpu_prng.cuda_threefry2x32),
-      platform='cuda')
-  mlir.register_lowering(
-      threefry2x32_p,
-      partial(_threefry2x32_gpu_lowering, gpu_prng.rocm_threefry2x32),
-      platform='rocm')
-
-if cuda_prng:
-  mlir.register_lowering(
-      threefry2x32_p,
-      partial(_threefry2x32_gpu_lowering, cuda_prng.threefry2x32_lowering),
-      platform='cuda')
-if hip_prng:
-  mlir.register_lowering(
-      threefry2x32_p,
-      partial(_threefry2x32_gpu_lowering, hip_prng.threefry2x32_lowering),
-      platform='rocm')
+mlir.register_lowering(
+    threefry2x32_p,
+    partial(_threefry2x32_gpu_lowering, gpu_prng.cuda_threefry2x32),
+    platform='cuda')
+mlir.register_lowering(
+    threefry2x32_p,
+    partial(_threefry2x32_gpu_lowering, gpu_prng.rocm_threefry2x32),
+    platform='rocm')
 
 
 @partial(jit, inline=True)

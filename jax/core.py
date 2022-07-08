@@ -830,10 +830,8 @@ def _initialize_jax_jit_thread_local_state():
         dynamic_trace_state=copy)
 
 
-# TODO(phawkins): remove after minimum jaxlib version is > 0.3.11
-if lib.xla_extension_version >= 70:
-  jax_jit.set_thread_local_state_initialization_callback(
-      _initialize_jax_jit_thread_local_state)
+jax_jit.set_thread_local_state_initialization_callback(
+    _initialize_jax_jit_thread_local_state)
 
 def trace_state_clean() -> bool:
   trace_state = thread_local_state.trace_state

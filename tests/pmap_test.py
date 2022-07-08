@@ -2014,10 +2014,6 @@ class CppPmapTest(PythonPmapTest):
     self.assertEqual(f._cache_size(), size+1)
 
   def test_cache_hits_across_threads(self):
-    # TODO(phawkins): remove after minimum jaxlib version is > 0.3.11
-    if xla_bridge.xla_client._version < 70:
-      raise unittest.SkipTest("This test requires jaxlib version >= 0.3.11")
-
     f = lambda x: x+1
     inputs = np.zeros([jax.device_count()], dtype=np.float32)
     pmaped_f = self.pmap(f)
@@ -2035,10 +2031,6 @@ class CppPmapTest(PythonPmapTest):
     self.assertEqual(pmaped_f._cache_size, 1)
 
   def test_cache_uses_jax_key(self):
-    # TODO(parkers): remove after minimum jaxlib version is > 0.3.11
-    if xla_bridge.xla_client._version < 74:
-      raise unittest.SkipTest("This test requires jaxlib version >= 0.3.11")
-
     f = lambda x: x+1
     inputs = np.zeros([jax.device_count()], dtype=np.float32)
     pmaped_f = self.pmap(f)

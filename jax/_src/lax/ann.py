@@ -132,8 +132,6 @@ def approx_max_k(operand: Array,
   >>> db = jax.numpy.array(np.random.rand(1024, 64))
   >>> dot_products, neighbors = mips(qy, db, k=10)
   """
-  if xc._version < 45:
-    aggregate_to_topk = True
   return approx_top_k_p.bind(
       operand,
       k=k,
@@ -197,8 +195,6 @@ def approx_min_k(operand: Array,
   ``qy^2 - 2 dot(qy, db^T) + db^2`` for performance reason. The former uses less
   arithmetics and produces the same set of neighbors.
   """
-  if xc._version < 45:
-    aggregate_to_topk = True
   return approx_top_k_p.bind(
       operand,
       k=k,
@@ -225,13 +221,10 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
             dims[reduction_dimension], k))
   if not dtypes.issubdtype(operand.dtype, np.floating):
     raise ValueError('operand must be a floating type')
-  if xc._version >= 45:
-    reduction_input_size = dims[reduction_dimension]
-    dims[reduction_dimension] = xc.ops.ApproxTopKReductionOutputSize(
-        reduction_input_size, len(dims), k, recall_target, aggregate_to_topk,
-        reduction_input_size_override)[0]
-  else:
-    dims[reduction_dimension] = k
+  reduction_input_size = dims[reduction_dimension]
+  dims[reduction_dimension] = xc.ops.ApproxTopKReductionOutputSize(
+      reduction_input_size, len(dims), k, recall_target, aggregate_to_topk,
+      reduction_input_size_override)[0]
   return (operand.update(
       shape=dims, dtype=operand.dtype, weak_type=operand.weak_type),
           operand.update(shape=dims, dtype=np.dtype(np.int32)))

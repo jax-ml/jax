@@ -31,7 +31,6 @@ from jax import lax
 from jax import tree_util
 from jax._src.lax.lax import _const
 from jax._src.lib import gpu_sparse
-from jax._src.lib import sparse_apis
 from jax._src.numpy.lax_numpy import _promote_dtypes
 import jax.numpy as jnp
 
@@ -241,23 +240,17 @@ def _csr_todense_transpose(ct, data, indices, indptr, *, shape):
 ad.defjvp(csr_todense_p, _csr_todense_jvp, None, None)
 ad.primitive_transposes[csr_todense_p] = _csr_todense_transpose
 mlir.register_lowering(csr_todense_p, _csr_todense_lowering)
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(
-        csr_todense_p,
-        partial(_csr_todense_gpu_lowering, gpu_sparse.cuda_csr_todense),
-        platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(
-        csr_todense_p,
-        partial(_csr_todense_gpu_lowering, gpu_sparse.rocm_csr_todense),
-        platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
+if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       csr_todense_p,
-      partial(_csr_todense_gpu_lowering, sparse_apis.csr_todense_mhlo),
-      platform='gpu')
+      partial(_csr_todense_gpu_lowering, gpu_sparse.cuda_csr_todense),
+      platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(
+      csr_todense_p,
+      partial(_csr_todense_gpu_lowering, gpu_sparse.rocm_csr_todense),
+      platform='rocm')
+
 
 #--------------------------------------------------------------------
 # csr_fromdense
@@ -349,23 +342,16 @@ def _csr_fromdense_transpose(ct, M, *, nse, index_dtype):
 ad.primitive_jvps[csr_fromdense_p] = _csr_fromdense_jvp
 ad.primitive_transposes[csr_fromdense_p] = _csr_fromdense_transpose
 mlir.register_lowering(csr_fromdense_p, _csr_fromdense_lowering)
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(
-        csr_fromdense_p,
-        partial(_csr_fromdense_gpu_lowering, gpu_sparse.cuda_csr_fromdense),
-        platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(
-        csr_fromdense_p,
-        partial(_csr_fromdense_gpu_lowering, gpu_sparse.rocm_csr_fromdense),
-        platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
+if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       csr_fromdense_p,
-      partial(_csr_fromdense_gpu_lowering, sparse_apis.csr_fromdense_mhlo),
-      platform='gpu')
+      partial(_csr_fromdense_gpu_lowering, gpu_sparse.cuda_csr_fromdense),
+      platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(
+      csr_fromdense_p,
+      partial(_csr_fromdense_gpu_lowering, gpu_sparse.rocm_csr_fromdense),
+      platform='rocm')
 
 #--------------------------------------------------------------------
 # csr_matvec
@@ -446,23 +432,16 @@ ad.defjvp(csr_matvec_p, _csr_matvec_jvp_mat, None, None, _csr_matvec_jvp_vec)
 ad.primitive_transposes[csr_matvec_p] = _csr_matvec_transpose
 mlir.register_lowering(csr_matvec_p, _csr_matvec_lowering)
 
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(
-        csr_matvec_p,
-        partial(_csr_matvec_gpu_lowering, gpu_sparse.cuda_csr_matvec),
-        platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(
-        csr_matvec_p,
-        partial(_csr_matvec_gpu_lowering, gpu_sparse.rocm_csr_matvec),
-        platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
+if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       csr_matvec_p,
-      partial(_csr_matvec_gpu_lowering, sparse_apis.csr_matvec_mhlo),
-      platform='gpu')
+      partial(_csr_matvec_gpu_lowering, gpu_sparse.cuda_csr_matvec),
+      platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(
+      csr_matvec_p,
+      partial(_csr_matvec_gpu_lowering, gpu_sparse.rocm_csr_matvec),
+      platform='rocm')
 
 
 #--------------------------------------------------------------------
@@ -555,9 +534,3 @@ if gpu_sparse:
         csr_matmat_p,
         partial(_csr_matmat_gpu_lowering, gpu_sparse.rocm_csr_matmat),
         platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
-  mlir.register_lowering(
-      csr_matmat_p,
-      partial(_csr_matmat_gpu_lowering, sparse_apis.csr_matmat_mhlo),
-      platform='gpu')

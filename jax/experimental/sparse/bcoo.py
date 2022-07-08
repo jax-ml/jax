@@ -46,7 +46,6 @@ from jax._src.lib.mlir.dialects import mhlo
 from jax._src.numpy.setops import _unique
 
 from jax._src.lib import gpu_sparse
-from jax._src.lib import sparse_apis
 
 Dtype = Any
 Shape = Tuple[int, ...]
@@ -924,26 +923,18 @@ batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 mlir.register_lowering(
     bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
 
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(bcoo_dot_general_p,
-                           partial(_bcoo_dot_general_gpu_lowering,
-                                   gpu_sparse.cuda_coo_matvec,
-                                   gpu_sparse.cuda_coo_matmat),
-                           platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(bcoo_dot_general_p,
-                           partial(_bcoo_dot_general_gpu_lowering,
-                                   gpu_sparse.rocm_coo_matvec,
-                                   gpu_sparse.rocm_coo_matmat),
-                           platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
+if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(bcoo_dot_general_p,
-                         partial(_bcoo_dot_general_gpu_lowering,
-                                 sparse_apis.coo_matvec_mhlo,
-                                 sparse_apis.coo_matmat_mhlo),
-                         platform='gpu')
+                          partial(_bcoo_dot_general_gpu_lowering,
+                                  gpu_sparse.cuda_coo_matvec,
+                                  gpu_sparse.cuda_coo_matmat),
+                          platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(bcoo_dot_general_p,
+                          partial(_bcoo_dot_general_gpu_lowering,
+                                  gpu_sparse.rocm_coo_matvec,
+                                  gpu_sparse.rocm_coo_matmat),
+                          platform='rocm')
 
 #----------------------------------------------------------------------
 # bcoo_dot_general_sampled

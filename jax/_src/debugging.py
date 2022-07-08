@@ -109,9 +109,8 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
-if jaxlib.version >= (0, 3, 11):
-  mlir.register_lowering(
-      debug_callback_p, debug_callback_lowering, platform="gpu")
+mlir.register_lowering(
+    debug_callback_p, debug_callback_lowering, platform="gpu")
 if jaxlib.version >= (0, 3, 15):
   mlir.register_lowering(
       debug_callback_p, debug_callback_lowering, platform="tpu")

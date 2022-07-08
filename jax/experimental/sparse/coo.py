@@ -31,7 +31,6 @@ from jax import tree_util
 from jax._src.lax.lax import _const
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import gpu_sparse
-from jax._src.lib import sparse_apis
 from jax._src.numpy.lax_numpy import _promote_dtypes
 import jax.numpy as jnp
 
@@ -230,23 +229,16 @@ def _coo_todense_transpose(ct, data, row, col, *, spinfo):
 ad.defjvp(coo_todense_p, _coo_todense_jvp, None, None)
 ad.primitive_transposes[coo_todense_p] = _coo_todense_transpose
 mlir.register_lowering(coo_todense_p, _coo_todense_lowering)
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(
-        coo_todense_p,
-        partial(_coo_todense_gpu_lowering, gpu_sparse.cuda_coo_todense),
-        platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(
-        coo_todense_p,
-        partial(_coo_todense_gpu_lowering, gpu_sparse.rocm_coo_todense),
-        platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
+if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       coo_todense_p,
-      partial(_coo_todense_gpu_lowering, sparse_apis.coo_todense_mhlo),
-      platform='gpu')
+      partial(_coo_todense_gpu_lowering, gpu_sparse.cuda_coo_todense),
+      platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(
+      coo_todense_p,
+      partial(_coo_todense_gpu_lowering, gpu_sparse.rocm_coo_todense),
+      platform='rocm')
 
 #--------------------------------------------------------------------
 # coo_fromdense
@@ -356,23 +348,16 @@ ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
 
 mlir.register_lowering(coo_fromdense_p, _coo_fromdense_lowering)
 
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(
-        coo_fromdense_p,
-        partial(_coo_fromdense_gpu_lowering, gpu_sparse.cuda_coo_fromdense),
-        platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(
-        coo_fromdense_p,
-        partial(_coo_fromdense_gpu_lowering, gpu_sparse.rocm_coo_fromdense),
-        platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
+if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       coo_fromdense_p,
-      partial(_coo_fromdense_gpu_lowering, sparse_apis.coo_fromdense_mhlo),
-      platform='gpu')
+      partial(_coo_fromdense_gpu_lowering, gpu_sparse.cuda_coo_fromdense),
+      platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(
+      coo_fromdense_p,
+      partial(_coo_fromdense_gpu_lowering, gpu_sparse.rocm_coo_fromdense),
+      platform='rocm')
 
 #--------------------------------------------------------------------
 # coo_matvec
@@ -486,23 +471,17 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, spinfo, transpose):
 ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
 ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
 mlir.register_lowering(coo_matvec_p, _coo_matvec_lowering)
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(
-        coo_matvec_p,
-        partial(_coo_matvec_gpu_lowering, gpu_sparse.cuda_coo_matvec),
-        platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(
-        coo_matvec_p,
-        partial(_coo_matvec_gpu_lowering, gpu_sparse.rocm_coo_matvec),
-        platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
+if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       coo_matvec_p,
-      partial(_coo_matvec_gpu_lowering, sparse_apis.coo_matvec_mhlo),
-      platform='gpu')
+      partial(_coo_matvec_gpu_lowering, gpu_sparse.cuda_coo_matvec),
+      platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(
+      coo_matvec_p,
+      partial(_coo_matvec_gpu_lowering, gpu_sparse.rocm_coo_matvec),
+      platform='rocm')
+
 
 #--------------------------------------------------------------------
 # coo_matmat
@@ -611,20 +590,13 @@ def _coo_matmat_transpose(ct, data, row, col, B, *, spinfo, transpose):
 ad.defjvp(coo_matmat_p, _coo_matmat_jvp_left, None, None, _coo_matmat_jvp_right)
 ad.primitive_transposes[coo_matmat_p] = _coo_matmat_transpose
 mlir.register_lowering(coo_matmat_p, _coo_matmat_lowering)
-if gpu_sparse:
-  if gpu_sparse.cuda_is_supported:
-    mlir.register_lowering(
-        coo_matmat_p,
-        partial(_coo_matmat_gpu_lowering, gpu_sparse.cuda_coo_matmat),
-        platform='cuda')
-  if gpu_sparse.rocm_is_supported:
-    mlir.register_lowering(
-        coo_matmat_p,
-        partial(_coo_matmat_gpu_lowering, gpu_sparse.rocm_coo_matmat),
-        platform='rocm')
-
-if sparse_apis and sparse_apis.is_supported:
+if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       coo_matmat_p,
-      partial(_coo_matmat_gpu_lowering, sparse_apis.coo_matmat_mhlo),
-      platform='gpu')
+      partial(_coo_matmat_gpu_lowering, gpu_sparse.cuda_coo_matmat),
+      platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(
+      coo_matmat_p,
+      partial(_coo_matmat_gpu_lowering, gpu_sparse.rocm_coo_matmat),
+      platform='rocm')

@@ -183,9 +183,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                      else ["lu", "qr"])
       ))
   def testSlogdet(self, shape, dtype, method):
-    if (method == 'qr' and jax._src.lib.xla_extension_version < 69 and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest('qr decomposition is not supported.')
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     slogdet = partial(jnp.linalg.slogdet, method=method)
