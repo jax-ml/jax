@@ -1614,6 +1614,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
             ValueError, 'Array sharding does not match the input sharding'):
           compiled(a2, a2)
 
+  def test_array_device_assignment_mismatch_out_shardings(self):
+    input_shape = (8, 2)
+    m1 = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    m2 = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    spec = P('x', 'y')
+
+    a1, _ = create_array(input_shape, m1, spec)
+
+    with jax._src.config.jax_array(True):
+      with m1:
+        with self.assertRaisesRegex(
+            ValueError, "Pjit's devices and Array's devices should be equal"):
+          pjit(lambda x, y: (x, y),
+               out_axis_resources=(MeshPspecSharding(m1, spec),
+                                   MeshPspecSharding(m2, spec)))(a1, a1)
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

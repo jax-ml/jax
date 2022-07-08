@@ -15,13 +15,12 @@
 from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
-from typing import Callable, Sequence, Tuple, Union, Optional, cast, List
+from typing import Callable, Sequence, Tuple, Union, cast, List
 import itertools as it
 from functools import partial
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
-from jax.experimental.array import Array
 from jax.experimental.sharding import MeshPspecSharding, Sharding
 from jax import core
 from jax import linear_util as lu
@@ -317,8 +316,9 @@ def pjit(fun: Callable,
     if config.jax_array:
       in_shardings = _get_and_check_in_shardings(
           dyn_args, in_axis_resources, pjit_mesh, in_tree)
-      # TODO(yashkatariya): Add a device assignment check for out_shardings too.
       out_shardings = out_axis_resources
+      _check_array_device_assignment(
+          pjit_mesh, tuple(tree_flatten(out_shardings)[0]))
     else:
       in_shardings = tree_map(lambda x: _create_mesh_pspec_sharding(pjit_mesh, x),
                               in_axis_resources)
@@ -424,8 +424,8 @@ def _get_and_check_in_shardings(args, pjit_in_shardings, pjit_mesh, in_tree):
       return arg_in_shardings
   else:
     if arg_in_shardings is None:
-      # TODO(yashkatariya): Add a check here to check against the device
-      # assignment of all pjit_in_shardings.
+      _check_array_device_assignment(
+          pjit_mesh, tuple(tree_flatten(pjit_in_shardings)[0]))
       return pjit_in_shardings
     else:
       # This function is cached.
@@ -1308,12 +1308,18 @@ def _maybe_replace_from_gda_with_pspec(
 
 
 @cache()
-def _check_array_device_assignment(pjit_mesh, in_shardings):
-  if not in_shardings:
+def _check_array_device_assignment(pjit_mesh, shardings):
+  if not shardings:
     return
-  first_device_assignment = in_shardings[0]._device_assignment()
+  first_device_assignment = None
   mesh_devices = list(pjit_mesh.devices.flat)
-  for i in in_shardings:
+  for i in shardings:
+    if _is_auto(i) or _is_unspecified(i):
+      continue
+    # Assign `first_device_assignment` after `AUTO` and `UNSPECIFIED` have been
+    # skipped.
+    if first_device_assignment is None:
+      first_device_assignment = i._device_assignment()
     arr_device_assignment = i._device_assignment()
     if pjit_mesh.empty:
       # If mesh is empty, then check if all devices across shardings are
