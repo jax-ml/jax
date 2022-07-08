@@ -171,8 +171,6 @@ def run_serialization(gdas, tensorstore_specs):
 def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
   rank = t.rank
   num_bytes = t.dtype.numpy_dtype.itemsize
-  if rank == 0:
-    return num_bytes
   chunk_template = t.chunk_layout.read_chunk_template
   origin = t.domain.origin
   shape = t.domain.shape
