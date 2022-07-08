@@ -21,13 +21,6 @@ import os
 import warnings
 from typing import Optional, Tuple
 
-__all__ = [
-  'cuda_linalg', 'cuda_prng', 'cusolver', 'gpu_linalg', 'gpu_prng',
-  'gpu_sparse', 'hip_linalg', 'hip_prng',
-  'hipsolver','jaxlib', 'lapack', 'pocketfft', 'pytree',
-   'tpu_driver_client', 'version', 'xla_client', 'xla_extension',
-]
-
 # This apparently-unused import is to work around
 # https://github.com/google/jax/issues/9218#issuecomment-1016949739
 # If the user is using Conda, we want to ensure that Conda's libstdc++ is chosen
@@ -123,9 +116,6 @@ import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
 # number that can be used to perform changes without breaking the main
 # branch on the Jax github.
 xla_extension_version = getattr(xla_client, '_version', 0)
-
-# TODO(phawkins): remove old name
-_xla_extension_version = xla_extension_version
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version
