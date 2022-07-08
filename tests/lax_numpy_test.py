@@ -542,6 +542,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       with self.assertRaises(NotImplementedError):
         func()
 
+  @parameterized.named_parameters(
+    {"testcase_name": f"_{dtype.__name__}", "dtype": dtype}
+    for dtype in [jnp.bool_, jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+                  jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+                  jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
+                  jnp.complex64, jnp.complex128]
+    if dtype == dtypes.canonicalize_dtype(dtype))
+  def testDtypeWrappers(self, dtype):
+    arr = dtype(0)
+    self.assertIsInstance(arr, jnp.ndarray)
+    self.assertEqual(arr.dtype, np.dtype(dtype))
+    self.assertArraysEqual(arr, 0, check_dtypes=False)
+
+    # No copy primitive is generated
+    jaxpr = jax.make_jaxpr(dtype)(0)
+    prims = [eqn.primitive for eqn in jaxpr.eqns]
+    self.assertEqual(prims, [lax.convert_element_type_p])  # No copy generated.
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{dtype}_allow_picke={allow_pickle}",
        "dtype": dtype, "allow_pickle": allow_pickle}
