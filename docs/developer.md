@@ -164,13 +164,15 @@ By default the Bazel build runs the JAX tests using `jaxlib` built form source.
 To run JAX tests, run:
 
 ```
-bazel test //tests/...
+bazel test //tests:cpu_tests //tests:backend_independent_tests
 ```
+
+`//tests:gpu_tests` and `//tests:tpu_tests` are also available, if you have the necessary hardware.
 
 To use a preinstalled `jaxlib` instead of building `jaxlib` from source, run
 
 ```
-bazel test --//jax:build_jaxlib=false //tests/...
+bazel test --//jax:build_jaxlib=false //tests:cpu_tests //tests:backend_independent_tests
 ```
 
 
