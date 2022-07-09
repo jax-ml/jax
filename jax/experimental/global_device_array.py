@@ -38,16 +38,8 @@ Index = Tuple[slice, ...]
 _hashed_index = lambda x: hash(tuple((v.start, v.stop) for v in x))
 
 
-def _get_array_mapping(mesh_axes):
-  # Import here to avoid cyclic import error when importing gda in pjit.py.
-  from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
-
-  parsed_pspec, _, _, _ = _prepare_axis_resources(mesh_axes, "GDA mesh_axes")
-  return get_array_mapping(parsed_pspec)
-
-
 def _get_sharding_spec(global_shape, global_mesh, mesh_axes):
-  array_mapping = _get_array_mapping(mesh_axes)
+  array_mapping = pxla._get_array_mapping(mesh_axes)
   # The dtype doesn't matter for creating sharding specs.
   aval = core.ShapedArray(global_shape, np.float32)
   return pxla.mesh_sharding_specs(global_mesh.shape,

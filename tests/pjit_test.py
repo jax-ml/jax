@@ -1929,7 +1929,7 @@ class UtilTest(jtu.JaxTestCase):
 
   def test_mesh_sharding_spec(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    array_mapping = global_device_array._get_array_mapping(P('x', 'y'))
+    array_mapping = pxla._get_array_mapping(P('x', 'y'))
     aval = jax.ShapedArray((1, 1), jnp.int32)
     with self.assertRaisesRegex(
         ValueError,

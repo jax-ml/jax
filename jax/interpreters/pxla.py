@@ -1492,8 +1492,6 @@ def local_avals_to_results_handler(
 def _get_mesh_sharding_spec_and_avals(
     shardings: Sequence[MeshPspecSharding], avals: Sequence[ShapedArray],
     is_global: bool) -> Tuple[Sequence[ShardingSpec], Sequence[ShapedArray]]:
-  from jax.experimental.global_device_array import _get_array_mapping
-
   global_mesh = shardings[0].mesh
   if is_global:
     global_sharding_spec = mesh_sharding_specs(
@@ -2430,11 +2428,11 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_global):
 
 def _get_array_mapping_from_executable(
     xla_executable, mesh) -> Tuple[Sequence[ArrayMapping], Sequence[ArrayMapping]]:
-  from jax.experimental import pjit, global_device_array
+  from jax.experimental import pjit
   in_pspec, out_pspec = pjit._get_sharding_from_executable(xla_executable, mesh)
-  in_axes = [global_device_array._get_array_mapping(ip) for ip in in_pspec]
-  out_axes = [global_device_array._get_array_mapping(op) for op in out_pspec]
-  return in_axes, out_axes
+  in_axes = [_get_array_mapping(ip) for ip in in_pspec]
+  out_axes = [_get_array_mapping(op) for op in out_pspec]
+  return cast(Sequence[ArrayMapping], in_axes), cast(Sequence[ArrayMapping], out_axes)
 
 
 class MeshExecutable(stages.XlaExecutable):
@@ -2546,7 +2544,7 @@ def _get_mesh_pspec_sharding(mesh, out_axes):
 
 
 def _check_gda_or_array_xla_sharding_match(args, in_array_mappings):
-  from jax.experimental.global_device_array import GlobalDeviceArray, _get_array_mapping
+  from jax.experimental.global_device_array import GlobalDeviceArray
   from jax.experimental.array import Array
 
   for arg, inp_array_mapping in safe_zip(args, in_array_mappings):
@@ -2564,6 +2562,14 @@ def _check_gda_or_array_xla_sharding_match(args, in_array_mappings):
           f"Got {arr_type} spec: {array_mapping_to_axis_resources(arr_mapping)} and "
           f"auto sharding spec: {array_mapping_to_axis_resources(inp_array_mapping)} "
           f"for {arr_type}: {arg}")
+
+
+def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
+  # Import here to avoid cyclic import error when importing gda in pjit.py.
+  from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
+
+  parsed_pspec, _, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
+  return get_array_mapping(parsed_pspec)
 
 
 _forbidden_primitives = {

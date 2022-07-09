@@ -40,7 +40,7 @@ from jax._src import traceback_util
 from jax._src.config import config
 from jax.errors import JAXTypeError
 from jax.experimental.array import Array
-from jax.experimental.global_device_array import GlobalDeviceArray, _get_array_mapping
+from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
@@ -1828,7 +1828,7 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
                          f"Got xmap mesh: {resource_env.physical_mesh},\n"
                          f"{arr_flavor} mesh: {mesh}")
 
-      array_mapping = _get_array_mapping(
+      array_mapping = pxla._get_array_mapping(
           arg.mesh_axes if arr_flavor == 'GDA' else arg.sharding.spec)
       if array_mapping != xmap_array_mapping:
         raise ValueError(
