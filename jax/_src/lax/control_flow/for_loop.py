@@ -216,7 +216,7 @@ pp_ref = partial(pp.color, intensity=pp.Intensity.NORMAL,
                  foreground=pp.Color.GREEN)
 
 def _get_pp_rule(eqn, context, settings):
-  # Pretty prints `a = get x i` as `x[i] <- a`
+  # Pretty prints `a = get x i` as `a <- x[i]`
   y, = eqn.outvars
   x, *idx = eqn.invars
   idx = ','.join(core.pp_var(i, context) for i in idx)
