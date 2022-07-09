@@ -537,6 +537,8 @@ def _inline_host_callback() -> bool:
 
 
 def _use_outfeed(platform: str) -> bool:
+  if jaxlib.version >= (0, 3, 15):
+    return platform == "tpu" or FLAGS.jax_host_callback_outfeed
   return (platform in ("tpu", "gpu", "cuda", "rocm") or FLAGS.jax_host_callback_outfeed)
 
 xops = xla_client._xla.ops
@@ -1198,6 +1200,8 @@ def _outside_call_lowering(
   return results + [next_token, next_itoken]
 
 mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="cpu")
+if jaxlib.version >= (0, 3, 15):
+  mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="gpu")
 
 def _outside_call_run_callback(
     arrays, device, *,
