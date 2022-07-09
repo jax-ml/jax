@@ -439,5 +439,6 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
 
   def deserialize(self, global_meshes, mesh_axes, tensorstore_specs,
                   global_shapes=None, dtypes=None):
+    self.wait_until_finished()
     return run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
                                global_shapes, dtypes)
