@@ -36,15 +36,18 @@ from jax.interpreters import partial_eval as pe
 map = safe_map
 
 def _update_annotation(
-    f: lu.WrappedFun,
-    orig_type: Optional[Tuple[Tuple[core.AbstractValue, bool], ...]],
-    axis_size: int, axis_name: core.AxisName, in_dims: Sequence[Optional[int]]
-  ) -> lu.WrappedFun:
-  if orig_type is None:
-    return f
-  batched_in_type = [(core.unmapped_aval(axis_size, axis_name, dim, aval), keep)
-                     for dim, (aval, keep) in zip(in_dims, orig_type)]
-  return lu.annotate(f, tuple(batched_in_type))
+    f: lu.WrappedFun, orig_type: Optional[core.InputType],
+    axis_size: core.AxisSize, axis_name: core.AxisName,
+    in_dims: Sequence[Optional[int]]) -> lu.WrappedFun:
+  if orig_type is None: return f
+  if isinstance(axis_size, core.Tracer):
+    in_type_ = [(core.unmapped_aval(core.DBIdx(0), axis_name, dim, aval), keep)
+                for dim, (aval, keep) in zip(in_dims, orig_type)]
+    in_type = [(axis_size.aval, False), *in_type_]
+  else:
+    in_type = [(core.unmapped_aval(axis_size, axis_name, dim, aval), keep)
+               for dim, (aval, keep) in zip(in_dims, orig_type)]
+  return lu.annotate(f, tuple(in_type))
 
 ### vmappable typeclass
 
@@ -187,7 +190,8 @@ class BatchTrace(Trace):
     if self.axis_name is core.no_axis_name:
       # If axis name is `no_axis_name` we can't find it via `core.axis_name` so
       # we reconstruct it from the information we have available
-      axis_size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
+      axis_size, = core.dedup_referents(x.shape[d] for x, d in zip(vals, dims)
+                                        if d is not not_mapped)
       return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
     return core.axis_frame(self.axis_name)
 
@@ -223,8 +227,9 @@ class BatchTrace(Trace):
       return call_primitive.bind(f, *vals, **params)
     else:
       f_, dims_out = batch_subtrace(f, self.main, dims)
-      ax_size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
-      f_ = _update_annotation(f_, f.in_type, ax_size, self.axis_name, dims)
+      axis_size, = core.dedup_referents(x.shape[d] for x, d in zip(vals, dims)
+                                        if d is not not_mapped)
+      f_ = _update_annotation(f_, f.in_type, axis_size, self.axis_name, dims)
       vals_out = call_primitive.bind(f_, *vals, **params)
       src = source_info_util.current()
       return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
@@ -610,12 +615,14 @@ def broadcast_batcher(prim, args, dims, **params):
       either an int indicating the batch dimension, or else `not_mapped`
       indicating no batching.
   """
-  shapes = {(x.shape, d) for x, d in zip(args, dims) if np.ndim(x)}
-  if len(shapes) == 1:
+  assert len(args) > 1
+  shape, dim = next((x.shape, d) for x, d in zip(args, dims)
+                    if d is not not_mapped)
+  if all(core.symbolic_equal_shape(shape, x.shape) and d == dim
+         for x, d in zip(args, dims) if np.ndim(x)):
     # if there's only agreeing batch dims and scalars, just call the primitive
-    d = next(d for d in dims if d is not not_mapped)
     out = prim.bind(*args, **params)
-    return (out, (d,) * len(out)) if prim.multiple_results else (out, d)
+    return (out, (dim,) * len(out)) if prim.multiple_results else (out, dim)
   else:
     # We pass size of 1 here because (1) at least one argument has a real batch
     # dimension and (2) all unmapped axes can have a singleton axis inserted and

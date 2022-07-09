@@ -43,7 +43,7 @@ from jax import linear_util as lu
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,
                         tuple_delete, as_hashable_function,
-                        HashableFunction, weakref_lru_cache)
+                        HashableFunction, HashableWrapper, weakref_lru_cache)
 import jax._src.pretty_printer as pp
 from jax._src import lib
 from jax._src.lib import jax_jit
@@ -1037,6 +1037,9 @@ def get_referent(x: Any) -> Any:
 def same_referent(x: Any, y: Any) -> bool:
   return get_referent(x) is get_referent(y)
 
+def dedup_referents(itr: Iterable[Any]) -> List[Any]:
+  return list({HashableWrapper(get_referent(x)):x for x in itr}.values())
+
 
 # -------------------- abstract values --------------------
 
@@ -1403,7 +1406,7 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
 # Tracer (while tracing), Var (when used as jaxpr type annotations), or
 # DBIdx/InDBIdx/OutDBIdx (when used in InputType or OutputType). We could reduce
 # this polymorphism if it seems cleaner, though it's kind of convenient!
-AxisSize = Any
+AxisSize = Union[int, 'BInt', Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 class DShapedArray(UnshapedArray):
   __slots__ = ['shape']
@@ -2068,16 +2071,16 @@ def process_env_traces_map(primitive: MapPrimitive, level: int,
   yield outs, (tuple(todo), tuple(out_axes_transforms))
 
 
-def mapped_aval(size: int, axis: Optional[int], aval: AbstractValue
-                ) -> AbstractValue:
+def mapped_aval(size: AxisSize, axis: Optional[int],
+                aval: AbstractValue) -> AbstractValue:
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis, aval)
   else:
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
-def unmapped_aval(size: int, axis_name, axis: Optional[int], aval: AbstractValue
-                  ) -> AbstractValue:
+def unmapped_aval(size: AxisSize, axis_name, axis: Optional[int],
+                  aval: AbstractValue) -> AbstractValue:
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
     return handler(size, axis_name, axis, aval)
@@ -2101,19 +2104,18 @@ def _unmap_shaped_array(size: int, axis_name, axis: Optional[int],
   return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                      named_shape=named_shape, weak_type=aval.weak_type)
 
-def _map_dshaped_array(size: Union[int, Tracer], axis: Optional[int],
-                       aval: ShapedArray) -> ShapedArray:
-  assert False  # TODO(mattjj, dougalm)
+def _map_dshaped_array(size: AxisSize, axis: Optional[int],
+                       aval: DShapedArray) -> DShapedArray:
+  if axis is None: return aval
+  return DShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
+                      aval.weak_type)
 
 def _unmap_dshaped_array(
-    size: Union[int, Tracer], axis_name, axis: Optional[int],
+    size: AxisSize, axis_name, axis: Optional[int],
     aval: DShapedArray) -> DShapedArray:
-  if isinstance(size, int):
-    if axis is None: return aval
-    return DShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                        weak_type=aval.weak_type)
-  else:
-    assert False  # TODO(mattjj, dougalm)
+  if axis is None: return aval
+  return DShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
+                      weak_type=aval.weak_type)
 
 AvalMapHandlerPair = Tuple[Callable, Callable]
 aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
