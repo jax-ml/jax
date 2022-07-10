@@ -181,7 +181,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     self._device = device
 
   def __repr__(self):
-    return f"SingleDeviceSharding(device={self._device})"
+    return f"SingleDeviceSharding(device={repr(self._device)})"
 
   def __hash__(self):
     return hash(self._device)
