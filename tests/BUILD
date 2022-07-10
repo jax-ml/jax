@@ -783,6 +783,7 @@ jax_test(
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=false"],
     disable_backends = [
+        "gpu",
         "tpu",  # On TPU we always use outfeed
     ],
     main = "host_callback_test.py",

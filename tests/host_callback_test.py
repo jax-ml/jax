@@ -2456,8 +2456,6 @@ class HostCallbackCallTest(jtu.JaxTestCase):
                                    expected_exc_txt: str):
     """Calls thunk() and checks for expected exceptions.
     """
-    if not FLAGS.jax_host_callback_outfeed:
-      raise SkipTest("TODO: implement error handling for customcall")
     if jtu.device_under_test() == "cpu":
       # On CPU the runtime crashes, and the tests are all aborted
       raise SkipTest("TODO: CPU runtime crashes on unexpected infeed")
