@@ -308,7 +308,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
             autograph=False,
             jit_compile=True,
             input_signature=tf_args_signature)
-        tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
+        tf_hlo = tf_func_compiled.get_compiler_ir(*tf_args_no_scalars)(
                     stage="hlo")
         logging.info("[%s] TF NON OPT HLO\n{%s}", self._testMethodName,
                      tf_hlo)
@@ -323,9 +323,9 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         if (jtu.device_under_test() == "gpu" and
             "dot_general" in self._testMethodName):
           print(f"[{self._testMethodName}] Not logging TF OPT HLO because of "
-                f"crash in tf.experimental_get_compiler_ir (b/189265364)")
+                f"crash in tf.get_compiler_ir (b/189265364)")
         else:
-          tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
+          tf_opt_hlo = tf_func_compiled.get_compiler_ir(*tf_args_no_scalars)(
                       stage="optimized_hlo")
           logging.info("[%s] TF OPT HLO\n%s", self._testMethodName, tf_opt_hlo)
 

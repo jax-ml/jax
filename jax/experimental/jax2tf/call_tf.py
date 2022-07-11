@@ -315,7 +315,7 @@ def _code_generator_and_avals(
     # Grab it now, so that we don't have to construct `args_tf_flat` only to
     # get a cache hit.
     try:
-      func_tf_hlo = function_flat_tf.experimental_get_compiler_ir(*args_tf_flat)(
+      func_tf_hlo = function_flat_tf.get_compiler_ir(*args_tf_flat)(
             stage="hlo_serialized", device_name=tf_device_name)
     except Exception as e:
       # TODO(b/193754660): This is a workaround. Use a more robust mechanism

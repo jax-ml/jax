@@ -102,14 +102,14 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f_jax)
     device_name = f"/device:{jtu.device_under_test().upper()}:0"
     tf_hlo = (tf.function(f_tf, jit_compile=True, autograph=False)
-              .experimental_get_compiler_ir(*args)(stage="hlo",
+              .get_compiler_ir(*args)(stage="hlo",
                                                    device_name=device_name))
     if LOG_HLO:
       logging.info("[%s] got TF HLO %s", self._testMethodName, tf_hlo)
     self.AssertShardingAnnotations("TF before optimizations", tf_hlo, expected)
     tf_optimized_hlo = (
         tf.function(f_tf, jit_compile=True)
-        .experimental_get_compiler_ir(*args)(stage="optimized_hlo",
+        .get_compiler_ir(*args)(stage="optimized_hlo",
                                              device_name=device_name))
     if LOG_HLO:
       logging.info("[%s] got TF optimized HLO for %s: %s", self._testMethodName,
