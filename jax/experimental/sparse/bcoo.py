@@ -1603,24 +1603,6 @@ def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error
   return BCOO((new_data, new_indices), shape=shape)
 
 
-def bcoo_add_batch_dim(M):
-  """Convert a sparse dimension to a batch dimension
-
-  Please note that this function may result in a far less efficient storage scheme
-  for the matrix (storage required will increase by a factor of `M.shape[0] * M.nse`).
-  This utility is provided for convenience, e.g. to allow vmapping over non-batched
-  matrices.
-
-  Args:
-    M: BCOO matrix
-
-  Returns:
-    M2: BCOO matrix with n_batch = M.n_batch + 1 and n_sparse = M.n_sparse - 1
-  """
-  warnings.warn("bcoo_add_batch_dim is deprecated; use bcoo_update_layout instead", DeprecationWarning)
-  return bcoo_update_layout(M, n_batch=M.n_batch + 1, on_inefficient=None)
-
-
 def bcoo_broadcast_in_dim(mat, *, shape, broadcast_dimensions):
   """Expand the size and rank of a BCOO array by duplicating the data.
 
