@@ -1935,6 +1935,15 @@ def ones_like(a, dtype=None, shape=None):
   return lax.full_like(a, 1, dtype, shape)
 
 
+@_wraps(np.empty_like, lax_description="""\
+Because XLA cannot create uninitialized arrays, the JAX version will
+return an array initialized with zeros.""")
+def empty_like(prototype, dtype=None, shape=None):
+  _check_arraylike("empty_like", prototype)
+  lax_internal._check_user_dtype_supported(dtype, "empty_like")
+  return zeros_like(prototype, dtype=dtype, shape=shape)
+
+
 @_wraps(np.full)
 def full(shape, fill_value, dtype=None):
   lax_internal._check_user_dtype_supported(dtype, "full")
@@ -1977,6 +1986,14 @@ def ones(shape, dtype=None):
   return lax.full(shape, 1, _jnp_dtype(dtype))
 
 
+@_wraps(np.empty, lax_description="""\
+Because XLA cannot create uninitialized arrays, the JAX version will
+return an array initialized with zeros.""")
+def empty(shape, dtype=None):
+  lax_internal._check_user_dtype_supported(dtype, "empty")
+  return zeros(shape, dtype)
+
+
 @_wraps(np.array_equal)
 def array_equal(a1, a2, equal_nan=False):
   try:
@@ -2003,11 +2020,6 @@ def array_equiv(a1, a2):
     # shapes are not broadcastable
     return False
   return all(eq)
-
-
-# We can't create uninitialized arrays in XLA; use zeros for empty.
-empty_like = zeros_like
-empty = zeros
 
 
 # General np.from* style functions mostly delegate to numpy.
