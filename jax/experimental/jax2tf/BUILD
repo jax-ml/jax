@@ -43,5 +43,6 @@ py_library(
     srcs_version = "PY3",
     deps = [
         "//jax",
-    ] + py_deps("numpy") + py_deps("tensorflow") + jax2tf_deps,
+        "@org_tensorflow//tensorflow/python:jax2tf_support",
+    ] + py_deps("numpy") + jax2tf_deps,
 )

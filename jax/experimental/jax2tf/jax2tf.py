@@ -14,7 +14,6 @@
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 from functools import partial
 import contextlib
-import os
 import re
 import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union, cast
@@ -59,7 +58,6 @@ from jax.experimental.jax2tf import shape_poly
 from jax.experimental.jax2tf import impl_no_xla
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
 
 # These don't have public equivalents.
 # pylint: disable=g-direct-tensorflow-import
@@ -68,7 +66,37 @@ from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 from tensorflow.core.framework import attr_value_pb2  # type: ignore[import]
 from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # type: ignore[import]
 from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
+
+from tensorflow.python.framework import versions as tf_versions
+from tensorflow.python.framework import dtypes as tf_dtypes
+from tensorflow.python.framework.ops import Tensor as tf_Tensor, convert_to_tensor as tf_convert_to_tensor, name_scope as tf_name_scope
+from tensorflow.python.framework.ops import enable_eager_execution
+from tensorflow.python.module.module import Module as tf_Module
+from tensorflow.python.framework.tensor_shape import Dimension as tf_v1_Dimension, TensorShape as tf_TensorShape
+from tensorflow.python.framework.tensor_spec import TensorSpec as tf_TensorSpec
+from tensorflow.python.ops.variables import Variable as tf_Variable
+from tensorflow.python.ops import bitwise_ops as tf_bitwise
+from tensorflow.python.ops import math_ops as tf_math
+from tensorflow.python.ops.clip_ops import clip_by_value as tf_clip_by_value
+from tensorflow.python.ops import array_ops as tf_array_ops
+from tensorflow.python.ops.control_flow_ops import switch_case as tf_switch_case, while_loop_v2 as tf_while_loop
+from tensorflow.python.framework.constant_op import constant as tf_constant
+from tensorflow.python.ops.custom_gradient import custom_gradient as tf_custom_gradient
+from tensorflow.python.eager.context import device as tf_device
+from tensorflow.python.eager.def_function import function as tf_function
+from tensorflow.python.ops.linalg import linalg_impl as tf_linalg
+from tensorflow.python.ops import linalg_ops as tf_linalg_ops
+from tensorflow.python.util import nest as tf_nest
+from tensorflow.python.ops.stateless_random_ops import Algorithm as tf_random_Algorithm
+from tensorflow.python.ops import random_ops as tf_random
+from tensorflow.python.ops.signal import fft_ops as tf_signal
+from tensorflow.python.ops.special_math_ops import bessel_i0e as tf_bessel_i0e, bessel_i1e as tf_bessel_i1e
+from tensorflow.python.ops import nn_ops as tf_nn
+# from tensorflow.python.compat.v2_compat import enable_v2_behavior
 # pylint: enable=g-direct-tensorflow-import
+
+from pathlib import Path
+
 
 NameStack = source_info_util.NameStack
 PolyShape = shape_poly.PolyShape
@@ -88,6 +116,11 @@ _INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/-]")
 map = util.safe_map
 zip = util.safe_zip
 
+# We should call enable_eager_execution() manually to avoid raising an error
+# when a client import TF after jax2tf, which will also try calling this but
+# raise an error if it hasn't been ran before.
+enable_eager_execution()
+
 
 def _sanitize_scope_name(name):
   scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
@@ -103,12 +136,12 @@ DType = Any
 PrecisionType = int  # Enum xla_data.PrecisionConfig.Precision
 
 def _is_tfval(v: TfVal) -> bool:
-  if isinstance(v, (tf.Tensor, tf.Variable)):
+  if isinstance(v, (tf_Tensor, tf_Variable)):
     return True
   try:
     # Include all convertible types, even if not supported on accelerators.
-    with tf.device("CPU"):
-      tf.constant(v)
+    with tf_device("CPU"):
+      tf_constant(v)
     return True
   except:
     return False
@@ -304,7 +337,7 @@ def convert(fun: Callable,
     def check_arg(a):
       if not _is_tfval(a):
         msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
-               "be NumPy array, scalar, tf.Variable, or tf.Tensor")
+               "be NumPy array, scalar, tf_Variable, or tf_Tensor")
         raise TypeError(msg)
 
     tree_util.tree_map(check_arg, args)
@@ -315,7 +348,7 @@ def convert(fun: Callable,
     args_flat, arg_dtypes_flat = util.unzip2(args_and_dtypes_flat)
     # Name input tensors; do this after we have cast the arguments
     def _apply_name(a: TfVal, suffix) -> TfVal:
-      return tf.identity(a, f"jax2tf_arg_{suffix}")
+      return tf_array_ops.identity(a, f"jax2tf_arg_{suffix}")
     args_flat = tuple(_apply_name(a, i) for i, a in enumerate(args_flat))
 
     if polymorphic_shapes is None:
@@ -336,7 +369,7 @@ def convert(fun: Callable,
 
     def fix_tf1_shape(arg: TfVal) -> Sequence[Optional[int]]:
       tf_arg_shape = np.shape(arg)
-      return tuple(d.value if isinstance(d, tf.compat.v1.Dimension) else d for d in tf_arg_shape)
+      return tuple(d.value if isinstance(d, tf_v1_Dimension) else d for d in tf_arg_shape)
     args_shapes_flat = tuple(fix_tf1_shape(a) for a in args_flat)
 
     # Construct the abstract values for the flat arguments, possibly based on
@@ -419,7 +452,7 @@ def convert(fun: Callable,
         return in_cts_fixed_flat_jax
 
       # TODO: enable higher-order gradients
-      with tf.name_scope("jax2tf_vjp"):
+      with tf_name_scope("jax2tf_vjp"):
         in_cts_flat = convert(
             fun_vjp_jax,
             with_gradient=False,
@@ -442,12 +475,12 @@ def convert(fun: Callable,
       _thread_local_state.shape_env = shape_env
       global _has_registered_tf_source_path
       if not _has_registered_tf_source_path:
-        source_info_util.register_exclusion(os.path.dirname(tf.__file__))
+        source_info_util.register_exclusion(str(Path(tf_versions.__file__).parents[1]))
         _has_registered_tf_source_path = True
 
       if with_gradient:
 
-        @tf.custom_gradient
+        @tf_custom_gradient
         def converted_fun_flat_with_custom_gradient(*args_flat: TfVal) -> TfVal:
           out_with_avals = _interpret_fun(flat_fun, args_flat, args_avals_flat,
                                           name_stack,
@@ -465,7 +498,7 @@ def convert(fun: Callable,
                    "Use `with_gradient` parameter to enable gradients")
         # We use PreventGradient, which is propagated through a SavedModel.
         out_flat = [
-            tf.raw_ops.PreventGradient(input=o, message=message)
+            tf_array_ops.prevent_gradient(input=o, message=message)
             for o in outs
         ]
     finally:
@@ -474,7 +507,7 @@ def convert(fun: Callable,
       _thread_local_state.experimental_native_lowering = prev_experimental_native_lowering
       _thread_local_state.include_xla_op_metadata = prev_include_xla_op_metadata
 
-    out_flat = [tf.identity(x, "jax2tf_out") for x in out_flat]
+    out_flat = [tf_array_ops.identity(x, "jax2tf_out") for x in out_flat]
     out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
     return out
 
@@ -484,7 +517,7 @@ def convert(fun: Callable,
 def dtype_of_val(val: TfVal) -> DType:
   """Computes the TensorFlow dtype using JAX's typing rules.
 
-  If the value is a tf.Tensor, it starts with its dtype. If the value is a
+  If the value is a tf_Tensor, it starts with its dtype. If the value is a
   constant it uses JAX to infer its dtype. The resulting dtype follows the
   JAX type inference rules, and depends on the value of the
   JAX_ENABLE_X64 flag.
@@ -655,7 +688,7 @@ def _lower_native(fun: lu.WrappedFun, in_vals: Sequence[TfVal],
   def _convert_res(res_val, res_jax_type):
     conversion_dtype = _to_tf_dtype(res_jax_type)
     if conversion_dtype != res_jax_type:
-      return tf.cast(res_val, conversion_dtype)
+      return tf_math.cast(res_val, conversion_dtype)
     else:
       return res_val
 
@@ -751,7 +784,7 @@ def _interpret_subtrace(main: core.MainTrace,
 
 def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal,
                      extra_name_stack: Optional[str]) -> Sequence[TfVal]:
-  """Evaluates a Jaxpr with tf.Tensor arguments.
+  """Evaluates a Jaxpr with tf_Tensor arguments.
 
   The output is a sequence of TfVal, suitable for use with TF.
   """
@@ -773,7 +806,7 @@ def _to_tf_dtype(jax_dtype):
   # due to float0 and 64-bit behavior.
   if jax_dtype == dtypes.float0:
     jax_dtype = _tf_np_dtype_for_float0
-  return tf.dtypes.as_dtype(jax_dtype)
+  return tf_dtypes.as_dtype(jax_dtype)
 
 
 def _to_jax_dtype(tf_dtype):
@@ -800,11 +833,11 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
   Returns:
     a tuple with a tf.Tensor with the type as needed by JAX, and the JAX type.
   """
-  if isinstance(val, (tf.Tensor, tf.Variable)):
+  if isinstance(val, (tf_Tensor, tf_Variable)):
     jax_dtype = jax_dtype or _to_jax_dtype(val.dtype)  # Give JAX a chance to pick the type
     conversion_dtype = _to_tf_dtype(jax_dtype)
     if conversion_dtype != val.dtype:
-      return tf.cast(val, conversion_dtype), jax_dtype
+      return tf_math.cast(val, conversion_dtype), jax_dtype
     else:
       return val, jax_dtype
   else:  # A constant
@@ -828,7 +861,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       # The float0 type is not known to TF.
       if jax_dtype == dtypes.float0:
         val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
-      tf_val = tf.convert_to_tensor(val, dtype=conversion_dtype)
+      tf_val = tf_convert_to_tensor(val, dtype=conversion_dtype)
       if do_memoize:
         _thread_local_state.constant_cache[const_key] = (val, tf_val)
     return tf_val, jax_dtype
@@ -879,7 +912,7 @@ class TensorFlowTracer(core.Tracer):
                aval: core.AbstractValue):
     self._trace = trace
     self._aval = aval
-    if isinstance(val, (tf.Tensor, tf.Variable)):
+    if isinstance(val, (tf_Tensor, tf_Variable)):
       val_shape = val.shape
 
       if config.jax_enable_checks:
@@ -989,7 +1022,7 @@ class TensorFlowTrace(core.Trace):
     # to interpret it as an absolute scope, not a relative scope.
     scope = scope + '/'
     name_scope = (
-        tf.name_scope(_sanitize_scope_name(scope)) if
+        tf_name_scope(_sanitize_scope_name(scope)) if
         config.jax_experimental_name_stack else contextlib.nullcontext())
 
     with name_scope:
@@ -1045,7 +1078,7 @@ class TensorFlowTrace(core.Trace):
     with _extended_name_stack(extra_name_stack):
       with core.new_sublevel():
         if call_primitive == core.named_call_p:
-          with tf.name_scope(_sanitize_scope_name(params["name"])):
+          with tf_name_scope(_sanitize_scope_name(params["name"])):
             vals_out: Sequence[Tuple[TfVal, core.ShapedArray]] = \
                 interpreted_fun.call_wrapped(*vals)
         elif call_primitive == xla.xla_call_p:
@@ -1060,7 +1093,7 @@ class TensorFlowTrace(core.Trace):
               tf_res_vals, tf_res_avals = util.unzip2(tf_res_out)
               store_tf_res_avals = tf_res_avals
               return tf_res_vals
-            tf_vals_out = tf.function(f_tf, autograph=False, jit_compile=True)(*vals)
+            tf_vals_out = tf_function(f_tf, autograph=False, jit_compile=True)(*vals)
             vals_out = zip(tf_vals_out, store_tf_res_avals)
           else:
             vals_out = interpreted_fun.call_wrapped(*vals)
@@ -1183,12 +1216,12 @@ tf_not_yet_impl = [
     "eigh_jacobi",
 ]
 
-tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
-tf_impl[ad_util.zeros_like_p] = tf.zeros_like
+tf_impl[ad_util.stop_gradient_p] = tf_array_ops.stop_gradient
+tf_impl[ad_util.zeros_like_p] = tf_array_ops.zeros_like
 
 
 def _add(x: TfVal, y: TfVal) -> TfVal:
-  return tf.raw_ops.AddV2(x=x, y=y)
+  return tf_math.add(x=x, y=y)
 
 
 tf_impl[ad_util.add_jaxvals_p] = _add
@@ -1198,11 +1231,11 @@ tf_impl[lax_internal.copy_p] = lambda x: x
 def _neg(x: TfVal) -> TfVal:
   if x.dtype.is_unsigned:
     signed_dtype = _UNSIGNED_TO_SIGNED_TABLE[x.dtype]
-    x_signed = tf.cast(x, signed_dtype)
-    res_signed = tf.math.negative(x_signed)
-    return tf.cast(res_signed, x.dtype)
+    x_signed = tf_math.cast(x, signed_dtype)
+    res_signed = tf_math.negative(x_signed)
+    return tf_math.cast(res_signed, x.dtype)
   else:
-    return tf.math.negative(x)
+    return tf_math.negative(x)
 
 tf_impl[lax.neg_p] = _neg
 
@@ -1210,16 +1243,16 @@ tf_impl[lax.neg_p] = _neg
 def _sign(x: TfVal) -> TfVal:
   if x.dtype.is_unsigned:
     # TF and XLA do not support tf.math.sign for unsigned types.
-    return tf.where(
-        tf.math.equal(x, 0), tf.constant(0, dtype=x.dtype),
-        tf.constant(1, dtype=x.dtype))
+    return tf_array_ops.where_v2(
+        tf_math.equal(x, 0), tf_constant(0, dtype=x.dtype),
+        tf_constant(1, dtype=x.dtype))
   else:
-    return tf.math.sign(x)
+    return tf_math.sign(x)
 
 
 tf_impl[lax.sign_p] = _sign
-tf_impl[lax.floor_p] = tf.math.floor
-tf_impl[lax.ceil_p] = tf.math.ceil
+tf_impl[lax.floor_p] = tf_math.floor
+tf_impl[lax.ceil_p] = tf_math.ceil
 
 
 def _round(operand, *, rounding_method,
@@ -1229,67 +1262,67 @@ def _round(operand, *, rounding_method,
     # JAX uses a single HLO op Round here
     sign = _sign(operand)
     operand *= sign
-    floor = tf.math.floor(operand)
+    floor = tf_math.floor(operand)
     operand -= floor
-    cond = tf.math.equal(operand, tf.constant(np.array(0.5), operand.dtype))
+    cond = tf_math.equal(operand, tf_constant(np.array(0.5), operand.dtype))
     return sign * (
-        tf.where(cond, tf.constant(np.array(1), operand.dtype),
-                 tf.math.round(operand)) + floor)
+        tf_array_ops.where_v2(cond, tf_constant(np.array(1), operand.dtype),
+                 tf_math.round(operand)) + floor)
   else:  # rounding_method is RoundingMethod.TO_NEAREST_EVEN
-    return tf.math.round(operand)
+    return tf_math.round(operand)
 
 tf_impl_with_avals[lax.round_p] = _round
-tf_impl[lax.nextafter_p] = tf.math.nextafter
+tf_impl[lax.nextafter_p] = tf_math.nextafter
 
 
 def _population_count(x):
   orig_dtype = x.dtype
-  return tf.cast(tf.raw_ops.PopulationCount(x=x), orig_dtype)
+  return tf_math.cast(tf_bitwise.population_count(x=x), orig_dtype)
 
 
 tf_impl[lax.population_count_p] = _population_count
-tf_impl[lax.is_finite_p] = tf.math.is_finite
+tf_impl[lax.is_finite_p] = tf_math.is_finite
 
 
 def _abs(x: TfVal) -> TfVal:
   # TF and XLA do not support tf.math.abs for unsigned types.
-  return tf.math.abs(x) if not x.dtype.is_unsigned else x
+  return tf_math.abs(x) if not x.dtype.is_unsigned else x
 
 
 tf_impl[lax.abs_p] = _abs
-tf_impl[lax.pow_p] = tf.math.pow
+tf_impl[lax.pow_p] = tf_math.pow
 
 
 def _integer_pow(x, *, y: int, _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   # Follows the implementation in lax._integer_pow_translation_rule
   if y == 0:
-    return tf.broadcast_to(
-        tf.constant(1, dtype=x.dtype, shape=()), _eval_shape(_out_aval.shape))
+    return tf_array_ops.broadcast_to(
+        tf_constant(1, dtype=x.dtype, shape=()), _eval_shape(_out_aval.shape))
   is_reciprocal = y < 0
   if is_reciprocal:
     y = -y
   acc = None
   while y > 0:
     if y & 1:
-      acc = x if acc is None else tf.math.multiply(acc, x)
+      acc = x if acc is None else tf_math.multiply(acc, x)
     y >>= 1
     if y > 0:
-      x = tf.math.multiply(x, x)
-  return tf.math.reciprocal(acc) if is_reciprocal else acc
+      x = tf_math.multiply(x, x)
+  return tf_math.reciprocal(acc) if is_reciprocal else acc
 
 
 tf_impl_with_avals[lax.integer_pow_p] = _integer_pow
-tf_impl[lax.exp_p] = tf.math.exp
-tf_impl[lax.expm1_p] = tf.math.expm1
-tf_impl[lax.log_p] = tf.math.log
-tf_impl[lax.log1p_p] = tf.math.log1p
-tf_impl[lax.tan_p] = tf.math.tan
-tf_impl[lax.tanh_p] = tf.math.tanh
-tf_impl[lax.sin_p] = tf.math.sin
-tf_impl[lax.sinh_p] = tf.math.sinh
-tf_impl[lax.cos_p] = tf.math.cos
-tf_impl[lax.cosh_p] = tf.math.cosh
+tf_impl[lax.exp_p] = tf_math.exp
+tf_impl[lax.expm1_p] = tf_math.expm1
+tf_impl[lax.log_p] = tf_math.log
+tf_impl[lax.log1p_p] = tf_math.log1p
+tf_impl[lax.tan_p] = tf_math.tan
+tf_impl[lax.tanh_p] = tf_math.tanh
+tf_impl[lax.sin_p] = tf_math.sin
+tf_impl[lax.sinh_p] = tf_math.sinh
+tf_impl[lax.cos_p] = tf_math.cos
+tf_impl[lax.cosh_p] = tf_math.cosh
 tf_impl_with_avals[lax.acos_p] = _convert_jax_impl(
     lax_internal.acos_impl, multiple_results=False)
 tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(
@@ -1300,62 +1333,62 @@ tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(
 def _atan2(y, x, **kwargs):
   if x.dtype.is_complex or y.dtype.is_complex:
     complex_component_dtype = {
-      tf.complex64: tf.float32,
-      tf.complex128: tf.float64
+      tf_dtypes.complex64: tf_dtypes.float32,
+      tf_dtypes.complex128: tf_dtypes.float64
     }.get(y.dtype)
-    zero = tf.constant(0, complex_component_dtype)
-    one = tf.constant(1, complex_component_dtype)
-    i = tf.complex(zero, one)
-    return -i * tf.math.log((x + i * y)/tf.math.sqrt(x * x + y * y))
+    zero = tf_constant(0, complex_component_dtype)
+    one = tf_constant(1, complex_component_dtype)
+    i = tf_math.complex(zero, one)
+    return -i * tf_math.log((x + i * y)/tf_math.sqrt(x * x + y * y))
   else:
-    return tf.math.atan2(y, x)
+    return tf_math.atan2(y, x)
 
 
 tf_impl[lax.atan2_p] = _atan2
-tf_impl[lax.acosh_p] = tf.math.acosh
-tf_impl[lax.atanh_p] = tf.math.atanh
-tf_impl[lax.asinh_p] = tf.math.asinh
+tf_impl[lax.acosh_p] = tf_math.acosh
+tf_impl[lax.atanh_p] = tf_math.atanh
+tf_impl[lax.asinh_p] = tf_math.asinh
 
-tf_impl[lax.sqrt_p] = tf.math.sqrt
-tf_impl[lax.rsqrt_p] = tf.math.rsqrt
+tf_impl[lax.sqrt_p] = tf_math.sqrt
+tf_impl[lax.rsqrt_p] = tf_math.rsqrt
 
 def _cbrt(x):
-  return tf.math.sign(x) * tf.math.pow(tf.math.abs(x), 1/3)
+  return tf_math.sign(x) * tf_math.pow(tf_math.abs(x), 1/3)
 
 tf_impl[lax.cbrt_p] = _cbrt
 
-tf_impl[lax.lgamma_p] = tf.math.lgamma
-tf_impl[lax.digamma_p] = tf.math.digamma
-tf_impl[lax.igamma_p] = tf.math.igamma
-tf_impl[lax.igammac_p] = tf.math.igammac
-tf_impl[lax.regularized_incomplete_beta_p] = tf.math.betainc
-tf_impl[lax.erf_p] = tf.math.erf
-tf_impl[lax.erfc_p] = tf.math.erfc
-tf_impl[lax.erf_inv_p] = tf.math.erfinv
-tf_impl[lax.bessel_i0e_p] = tf.math.bessel_i0e
-tf_impl[lax.bessel_i1e_p] = tf.math.bessel_i1e
+tf_impl[lax.lgamma_p] = tf_math.lgamma
+tf_impl[lax.digamma_p] = tf_math.digamma
+tf_impl[lax.igamma_p] = tf_math.igamma
+tf_impl[lax.igammac_p] = tf_math.igammac
+tf_impl[lax.regularized_incomplete_beta_p] = tf_math.betainc
+tf_impl[lax.erf_p] = tf_math.erf
+tf_impl[lax.erfc_p] = tf_math.erfc
+tf_impl[lax.erf_inv_p] = tf_math.erfinv
+tf_impl[lax.bessel_i0e_p] = tf_bessel_i0e
+tf_impl[lax.bessel_i1e_p] = tf_bessel_i1e
 
-tf_impl[lax.complex_p] = tf.complex
+tf_impl[lax.complex_p] = tf_math.complex
 
 
 def _conj(x, **kwargs):
   # The only dtypes that are allowed are: float32, float64, complex64, and
   # complex128.
-  if x.dtype == tf.float32:
-    return tf.cast(x, tf.complex64)
-  elif x.dtype == tf.float64:
-    return tf.cast(x, tf.complex128)
+  if x.dtype == tf_dtypes.float32:
+    return tf_math.cast(x, tf_dtypes.complex64)
+  elif x.dtype == tf_dtypes.float64:
+    return tf_math.cast(x, tf_dtypes.complex128)
   else:
-    return tf.math.conj(x)
+    return tf_math.conj(x)
 
 
 tf_impl[lax.conj_p] = _conj
-tf_impl[lax.real_p] = tf.math.real
-tf_impl[lax.imag_p] = tf.math.imag
+tf_impl[lax.real_p] = tf_math.real
+tf_impl[lax.imag_p] = tf_math.imag
 
 tf_impl[lax.add_p] = _add
-tf_impl[lax.sub_p] = tf.math.subtract
-tf_impl[lax.mul_p] = tf.math.multiply
+tf_impl[lax.sub_p] = tf_math.subtract
+tf_impl[lax.mul_p] = tf_math.multiply
 
 
 def _iota(*, dtype, shape, dimension):
@@ -1363,9 +1396,9 @@ def _iota(*, dtype, shape, dimension):
   # Some dtypes are unsupported, like uint32, so we just fall back to int32.
   # TODO(mattjj, necula): improve tf.range dtype handling
   shape_tf = _eval_shape(shape)
-  vec = tf.range(tf.cast(shape_tf[dimension], tf.int32), dtype=tf.int32)
+  vec = tf_math.range(tf_math.cast(shape_tf[dimension], tf_dtypes.int32), dtype=tf_dtypes.int32)
   vec_shape = [-1 if i == dimension else 1 for i in range(len(shape))]
-  return tf.cast(tf.broadcast_to(tf.reshape(vec, vec_shape), shape_tf), dtype)
+  return tf_math.cast(tf_array_ops.broadcast_to(tf_array_ops.reshape(vec, vec_shape), shape_tf), dtype)
 
 
 tf_impl[lax.iota_p] = _iota
@@ -1373,17 +1406,17 @@ tf_impl[lax.iota_p] = _iota
 
 def _div(lhs, rhs):
   if lhs.dtype.is_integer:
-    quotient = tf.math.floordiv(lhs, rhs)
-    select = tf.math.logical_and(
-        tf.not_equal(_sign(lhs), _sign(rhs)),
-        tf.not_equal(tf.math.floormod(lhs, rhs), 0))
-    return tf.where(select, quotient + 1, quotient)
+    quotient = tf_math.floordiv(lhs, rhs)
+    select = tf_math.logical_and(
+        tf_math.not_equal(_sign(lhs), _sign(rhs)),
+        tf_math.not_equal(tf_math.floormod(lhs, rhs), 0))
+    return tf_array_ops.where_v2(select, quotient + 1, quotient)
   else:
-    return tf.math.truediv(lhs, rhs)
+    return tf_math.truediv(lhs, rhs)
 
 
 def _rem(lhs, rhs):
-  return _sign(lhs) * tf.math.floormod(_abs(lhs), _abs(rhs))
+  return _sign(lhs) * tf_math.floormod(_abs(lhs), _abs(rhs))
 
 
 tf_impl[lax.div_p] = _div
@@ -1400,9 +1433,9 @@ def _minmax(x: TfVal, y: TfVal, *, is_min: bool,
                 lax_cmp_pick_x=lax.lt if is_min else lax.gt),
         multiple_results=False)(x, y, _in_avals=_in_avals, _out_aval=_out_aval)
   elif x.dtype.as_numpy_dtype == np.bool_:
-    return (tf.math.logical_and if is_min else tf.math.logical_or)(x, y)
+    return (tf_math.logical_and if is_min else tf_math.logical_or)(x, y)
   else:
-    return (tf.math.minimum if is_min else tf.math.maximum)(x, y)
+    return (tf_math.minimum if is_min else tf_math.maximum)(x, y)
 
 def _minmax_scalar(x: TfVal, y: TfVal, *, is_min: bool) -> TfVal:
   # For reducers we will need min/max for scalars only. In that case we
@@ -1418,10 +1451,10 @@ tf_impl_with_avals[lax.min_p] = partial(_minmax, is_min=True)
 
 # Map from TF signed types to TF unsigned types.
 _SIGNED_TO_UNSIGNED_TABLE = {
-    tf.int8: tf.uint8,
-    tf.int16: tf.uint16,
-    tf.int32: tf.uint32,
-    tf.int64: tf.uint64,
+    tf_dtypes.int8: tf_dtypes.uint8,
+    tf_dtypes.int16: tf_dtypes.uint16,
+    tf_dtypes.int32: tf_dtypes.uint32,
+    tf_dtypes.int64: tf_dtypes.uint64,
 }
 
 # Map from TF unsigned types to TF signed types.
@@ -1435,12 +1468,12 @@ def _shift_right_arithmetic_raw(x, y):
     assert x.dtype == y.dtype
     orig_dtype = x.dtype
     signed_dtype = _UNSIGNED_TO_SIGNED_TABLE[orig_dtype]
-    x = tf.cast(x, signed_dtype)
-    y = tf.cast(y, signed_dtype)
-    res = tf.bitwise.right_shift(x, y)
-    return tf.cast(res, orig_dtype)
+    x = tf_math.cast(x, signed_dtype)
+    y = tf_math.cast(y, signed_dtype)
+    res = tf_bitwise.right_shift(x, y)
+    return tf_math.cast(res, orig_dtype)
   else:
-    return tf.bitwise.right_shift(x, y)
+    return tf_bitwise.right_shift(x, y)
 
 
 def _shift_right_arithmetic(x, y):
@@ -1449,7 +1482,7 @@ def _shift_right_arithmetic(x, y):
   # semantics to return the shift by the max value (x_bits - 1).
   # TODO: it is likely better to add XlaOps for shifts
   x_bits = 8 * x.dtype.size
-  clamp_y = tf.where(_shift_in_bounds(x, y), y, x_bits - 1)
+  clamp_y = tf_array_ops.where_v2(_shift_in_bounds(x, y), y, x_bits - 1)
   return _shift_right_arithmetic_raw(x, clamp_y)
 
 
@@ -1458,15 +1491,15 @@ tf_impl[lax.shift_right_arithmetic_p] = _shift_right_arithmetic
 
 def _shift_right_logical_raw(x, y):
   if x.dtype.is_unsigned:
-    return tf.bitwise.right_shift(x, y)
+    return tf_bitwise.right_shift(x, y)
   else:
     assert x.dtype == y.dtype
     orig_dtype = x.dtype
     unsigned_dtype = _SIGNED_TO_UNSIGNED_TABLE[orig_dtype]
-    x = tf.cast(x, unsigned_dtype)
-    y = tf.cast(y, unsigned_dtype)
-    res = tf.bitwise.right_shift(x, y)
-    return tf.cast(res, orig_dtype)
+    x = tf_math.cast(x, unsigned_dtype)
+    y = tf_math.cast(y, unsigned_dtype)
+    res = tf_bitwise.right_shift(x, y)
+    return tf_math.cast(res, orig_dtype)
 
 
 def _shift_right_logical(x, y):
@@ -1474,8 +1507,8 @@ def _shift_right_logical(x, y):
   # or larger or equal to the size of the value. We implement the XLA semantics
   # to return 0.
   # TODO: it is likely better to add XlaOps for shifts
-  return tf.where(
-      _shift_in_bounds(x, y), _shift_right_logical_raw(x, y), tf.zeros_like(x))
+  return tf_array_ops.where_v2(
+      _shift_in_bounds(x, y), _shift_right_logical_raw(x, y), tf_array_ops.zeros_like(x))
 
 
 tf_impl[lax.shift_right_logical_p] = _shift_right_logical
@@ -1486,8 +1519,8 @@ def _shift_left(x, y):
   # or larger or equal to the size of the value. We implement the XLA semantics
   # to return 0.
   # TODO: it is likely better to add XlaOps for shifts
-  return tf.where(
-      _shift_in_bounds(x, y), tf.bitwise.left_shift(x, y), tf.zeros_like(x))
+  return tf_array_ops.where_v2(
+      _shift_in_bounds(x, y), tf_bitwise.left_shift(x, y), tf_array_ops.zeros_like(x))
 
 
 tf_impl[lax.shift_left_p] = _shift_left
@@ -1498,11 +1531,11 @@ def _shift_in_bounds(x: TfVal, y: TfVal) -> TfVal:
   x_bits = 8 * x.dtype.size
   # TF does not have comparisons for uint16 and uint32 (despite what the
   # documentation says)
-  y_comp = tf.cast(
+  y_comp = tf_math.cast(
       y, _UNSIGNED_TO_SIGNED_TABLE[y.dtype]) if y.dtype.is_unsigned else y
-  y_lt_x_bits = tf.math.less(y_comp, x_bits)
-  y_ge_0 = tf.math.greater_equal(y_comp, 0)
-  return tf.logical_and(y_lt_x_bits, y_ge_0)
+  y_lt_x_bits = tf_math.less(y_comp, x_bits)
+  y_ge_0 = tf_math.greater_equal(y_comp, 0)
+  return tf_math.logical_and(y_lt_x_bits, y_ge_0)
 
 
 def _not(x):
@@ -1517,10 +1550,10 @@ def _not(x):
     jnp.bitwise_not(jnp.array([True, False]).astype(np.int32)).astype(bool)
     >> DeviceArray([True,  True], dtype=bool)
   """
-  if x.dtype == tf.bool:
-    return tf.logical_not(x)
+  if x.dtype == tf_dtypes.bool:
+    return tf_math.logical_not(x)
   else:
-    return tf.bitwise.invert(x)
+    return tf_bitwise.invert(x)
 
 
 tf_impl[lax.not_p] = _not
@@ -1544,11 +1577,11 @@ def handle_boolean_args(f, argnums: Sequence[int], boolean_f=None):
     it calls `boolean_f` if defined. Otherwise, casts the boolean
     arguments to `int8`, calls `f`, then casts the result to `bool`.
   """
-  argnums = tf.nest.flatten(argnums)
+  argnums = tf_nest.flatten(argnums)
 
   def wrapper(*args: TfVal, **kwargs):
     argnum_types = {args[i].dtype for i in argnums}
-    if tf.bool not in argnum_types:
+    if tf_dtypes.bool not in argnum_types:
       return f(*args, **kwargs)
     else:
       # All argnums should be boolean
@@ -1556,7 +1589,7 @@ def handle_boolean_args(f, argnums: Sequence[int], boolean_f=None):
       if boolean_f != None:
         return boolean_f(*args, **kwargs)
       else:
-        args_cast = [(tf.cast(a, tf.int8) if i in argnums else a)
+        args_cast = [(tf_math.cast(a, tf_dtypes.int8) if i in argnums else a)
                     for i, a in enumerate(args)]
         if "_in_avals" in kwargs:
 
@@ -1568,46 +1601,46 @@ def handle_boolean_args(f, argnums: Sequence[int], boolean_f=None):
               cast_aval(aval) if i in argnums else aval
               for i, aval in enumerate(kwargs["_in_avals"])
           ]
-          _out_aval_cast = tf.nest.map_structure(cast_aval, kwargs["_out_aval"])
+          _out_aval_cast = tf_nest.map_structure(cast_aval, kwargs["_out_aval"])
           kwargs = dict(
               kwargs, _in_avals=_in_avals_cast, _out_aval=_out_aval_cast)
         out = f(*args_cast, **kwargs)
-        return tf.nest.map_structure(lambda o: tf.cast(o, tf.bool), out)
+        return tf_nest.map_structure(lambda o: tf_math.cast(o, tf_dtypes.bool), out)
 
   return wrapper
 
 
-tf_impl[lax.or_p] = handle_boolean_args(tf.bitwise.bitwise_or, argnums=(0, 1), boolean_f=tf.logical_or)
-tf_impl[lax.and_p] = handle_boolean_args(tf.bitwise.bitwise_and, argnums=(0, 1), boolean_f=tf.logical_and)
-tf_impl[lax.xor_p] = handle_boolean_args(tf.bitwise.bitwise_xor, argnums=(0, 1), boolean_f=tf.math.logical_xor)
+tf_impl[lax.or_p] = handle_boolean_args(tf_bitwise.bitwise_or, argnums=(0, 1), boolean_f=tf_math.logical_or)
+tf_impl[lax.and_p] = handle_boolean_args(tf_bitwise.bitwise_and, argnums=(0, 1), boolean_f=tf_math.logical_and)
+tf_impl[lax.xor_p] = handle_boolean_args(tf_bitwise.bitwise_xor, argnums=(0, 1), boolean_f=tf_math.logical_xor)
 
-tf_impl[lax.eq_p] = tf.math.equal
-tf_impl[lax.ne_p] = tf.math.not_equal
+tf_impl[lax.eq_p] = tf_math.equal
+tf_impl[lax.ne_p] = tf_math.not_equal
 
-boolean_greater = lambda x,y: tf.logical_and(x, tf.logical_not(y)) # Only one combo: T,F -> T
-boolean_less = lambda x,y: tf.logical_and(tf.logical_not(x), y) # Only one combo: F,T -> T
-boolean_greater_or_equal = lambda x, y: tf.logical_not(boolean_less(x,y)) # All cases except F,T
-boolean_less_or_equal = lambda x, y: tf.logical_not(boolean_greater(x,y)) # All cases except T,F
+boolean_greater = lambda x,y: tf_math.logical_and(x, tf_math.logical_not(y)) # Only one combo: T,F -> T
+boolean_less = lambda x,y: tf_math.logical_and(tf_math.logical_not(x), y) # Only one combo: F,T -> T
+boolean_greater_or_equal = lambda x, y: tf_math.logical_not(boolean_less(x,y)) # All cases except F,T
+boolean_less_or_equal = lambda x, y: tf_math.logical_not(boolean_greater(x,y)) # All cases except T,F
 
-tf_impl[lax.gt_p] = handle_boolean_args(tf.math.greater, argnums=(0, 1), boolean_f=boolean_greater)
-tf_impl[lax.lt_p] = handle_boolean_args(tf.math.less, argnums=(0, 1), boolean_f=boolean_less)
-tf_impl[lax.ge_p] = handle_boolean_args(tf.math.greater_equal, argnums=(0, 1), boolean_f=boolean_greater_or_equal)
-tf_impl[lax.le_p] = handle_boolean_args(tf.math.less_equal, argnums=(0, 1), boolean_f=boolean_less_or_equal)
+tf_impl[lax.gt_p] = handle_boolean_args(tf_math.greater, argnums=(0, 1), boolean_f=boolean_greater)
+tf_impl[lax.lt_p] = handle_boolean_args(tf_math.less, argnums=(0, 1), boolean_f=boolean_less)
+tf_impl[lax.ge_p] = handle_boolean_args(tf_math.greater_equal, argnums=(0, 1), boolean_f=boolean_greater_or_equal)
+tf_impl[lax.le_p] = handle_boolean_args(tf_math.less_equal, argnums=(0, 1), boolean_f=boolean_less_or_equal)
 
-tf_impl[lax.linalg.cholesky_p] = tf.linalg.cholesky
+tf_impl[lax.linalg.cholesky_p] = tf_linalg.cholesky
 
 
 def _convert_element_type(operand, *, new_dtype, weak_type=False):
   old_dtype = operand.dtype.as_numpy_dtype
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
-    operand = tf.math.real(operand)
+    operand = tf_math.real(operand)
   if (dtypes.issubdtype(old_dtype, np.floating) and
       not (dtypes.issubdtype(new_dtype, np.floating) or dtypes.issubdtype(
           new_dtype, np.complexfloating) or new_dtype == np.bool_)):
     sign = _sign(operand)
-    operand = sign * tf.math.floor(sign * operand)
-  return tf.dtypes.cast(operand, _to_tf_dtype(new_dtype))
+    operand = sign * tf_math.floor(sign * operand)
+  return tf_math.cast(operand, _to_tf_dtype(new_dtype))
 
 
 tf_impl[lax.convert_element_type_p] = _convert_element_type
@@ -1616,7 +1649,7 @@ tf_impl[lax.convert_element_type_p] = _convert_element_type
 def _bitcast_convert_type(operand, new_dtype):
   if operand.dtype == new_dtype:
     return operand
-  return tf.bitcast(operand, _to_tf_dtype(new_dtype))
+  return tf_array_ops.bitcast(operand, _to_tf_dtype(new_dtype))
 
 
 tf_impl[lax.bitcast_convert_type_p] = _bitcast_convert_type
@@ -1625,16 +1658,16 @@ tf_impl[lax.bitcast_convert_type_p] = _bitcast_convert_type
 def _clamp(minval, operand, maxval, *, _in_avals, _out_aval):
   # The below permits mirroring the behavior of JAX when maxval < minval
   op_shape_tf_val = _eval_shape(_in_avals[1].shape)
-  maxval = tf.broadcast_to(maxval, op_shape_tf_val)
-  minval = tf.math.minimum(tf.broadcast_to(minval, op_shape_tf_val), maxval)
-  return tf.clip_by_value(operand, minval, maxval)
+  maxval = tf_array_ops.broadcast_to(maxval, op_shape_tf_val)
+  minval = tf_math.minimum(tf_array_ops.broadcast_to(minval, op_shape_tf_val), maxval)
+  return tf_clip_by_value(operand, minval, maxval)
 
 
 tf_impl_with_avals[lax.clamp_p] = _clamp
 
 
 def _concatenate(*operands, dimension):
-  return tf.concat(operands, axis=dimension)
+  return tf_array_ops.concat(operands, axis=dimension)
 
 
 tf_impl[lax.concatenate_p] = _concatenate
@@ -1687,7 +1720,7 @@ def _conv_general_dilated(lhs, rhs, *,
   precision_config_proto = _precision_config_proto(precision)
 
   def gen_conv(lhs, rhs, preferred_element_type: Optional[DType]):
-    tf_version = tuple(int(v) for v in tf.__version__.split(".")[:2])
+    tf_version = tuple(int(v) for v in tf_versions.__version__.split(".")[:2])
     if tf_version >= (2, 8):
       # TODO(necula): remove when 2.8.0 is the stable TF version (and supports
       # batch_group_count.
@@ -1714,7 +1747,7 @@ def _conv_general_dilated(lhs, rhs, *,
     # TODO: implement shape inference for XlaConv
     out.set_shape(out_tf_shape)
     if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-      out = tf.stop_gradient(out)  # See #7839
+      out = tf_array_ops.stop_gradient(out)  # See #7839
     return out
 
   # Follow the lowering for complex convolutions from
@@ -1729,13 +1762,13 @@ def _conv_general_dilated(lhs, rhs, *,
           np.float64 if preferred_element_type == np.complex128 else np.float32)
     else:
       preferred_float_et = None
-    lhs_real, lhs_imag = tf.math.real(lhs), tf.math.imag(lhs)
-    rhs_real, rhs_imag = tf.math.real(rhs), tf.math.imag(rhs)
+    lhs_real, lhs_imag = tf_math.real(lhs), tf_math.imag(lhs)
+    rhs_real, rhs_imag = tf_math.real(rhs), tf_math.imag(rhs)
     k1 = gen_conv(_add(lhs_real, lhs_imag), rhs_real, preferred_float_et)
-    k2 = gen_conv(lhs_real, tf.math.subtract(rhs_imag, rhs_real),
+    k2 = gen_conv(lhs_real, tf_math.subtract(rhs_imag, rhs_real),
                   preferred_float_et)
     k3 = gen_conv(lhs_imag, _add(rhs_real, rhs_imag), preferred_float_et)
-    return tf.complex(tf.math.subtract(k1, k3), _add(k1, k2))
+    return tf_math.complex(tf_math.subtract(k1, k3), _add(k1, k2))
   else:
     return gen_conv(lhs, rhs, preferred_element_type)
 
@@ -1748,7 +1781,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
                  preferred_element_type: Optional[DType],
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
-  """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
+  """Implementation of lax.dot_general_p in terms of tf_linalg.einsum."""
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   dnums_proto = xla_data_pb2.DotDimensionNumbers()
   dnums_proto.lhs_contracting_dimensions.extend(lhs_contracting)
@@ -1764,7 +1797,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
       preferred_element_type=preferred_element_type,
       use_v2=True)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    res = tf.stop_gradient(res)  # See #7839
+    res = tf_array_ops.stop_gradient(res)  # See #7839
   return res
 
 
@@ -1782,8 +1815,8 @@ def _broadcast_in_dim(operand, *, shape, broadcast_dimensions,
   add_1s_shape = [1] * len(shape)
   for i, broadcast_dim_i in enumerate(broadcast_dimensions):
     add_1s_shape[broadcast_dim_i] = op_shape[i]
-  with_1s = tf.reshape(operand, _eval_shape(add_1s_shape))
-  return tf.broadcast_to(with_1s, _eval_shape(shape))
+  with_1s = tf_array_ops.reshape(operand, _eval_shape(add_1s_shape))
+  return tf_array_ops.broadcast_to(with_1s, _eval_shape(shape))
 
 
 tf_impl_with_avals[lax.broadcast_in_dim_p] = _broadcast_in_dim
@@ -1792,7 +1825,7 @@ tf_impl_with_avals[lax.broadcast_in_dim_p] = _broadcast_in_dim
 def _empty(*, eltype):
   if type(eltype) in core.custom_eltypes:
     raise NotImplementedError  # TODO(frostig,mattjj): jax2tf handlers
-  return tf.constant(np.array(0, dtype=eltype))
+  return tf_constant(np.array(0, dtype=eltype))
 
 
 tf_impl[lax_internal.empty_p] = _empty
@@ -1800,9 +1833,9 @@ tf_impl[lax_internal.empty_p] = _empty
 
 def _reshape(operand, *, new_sizes, dimensions):
   if dimensions is None:
-    dimensions = tf.range(tf.rank(operand))
+    dimensions = tf_math.range(tf_array_ops.rank(operand))
   new_sizes_tf = _eval_shape(new_sizes)
-  return tf.reshape(tf.transpose(operand, dimensions), new_sizes_tf)
+  return tf_array_ops.reshape(tf_array_ops.transpose(operand, dimensions), new_sizes_tf)
 
 
 tf_impl[lax.reshape_p] = _reshape
@@ -1812,7 +1845,7 @@ def _squeeze(operand, *, dimensions, _in_avals, _out_aval):
   op_shape = _in_avals[0].shape
   new_shape = tuple(d for i, d in enumerate(op_shape) if i not in dimensions)
   new_shape_tf = _eval_shape(new_shape)
-  return tf.reshape(operand, new_shape_tf)
+  return tf_array_ops.reshape(operand, new_shape_tf)
 
 
 tf_impl_with_avals[lax.squeeze_p] = _squeeze
@@ -1824,7 +1857,7 @@ def _pad(operand, padding_value, *, padding_config,
   low, high, interior = util.unzip3(padding_config)
   out = tfxla.pad(operand, padding_value, low, high, interior)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    out = tf.stop_gradient(out)  # See #7839
+    out = tf_array_ops.stop_gradient(out)  # See #7839
   return out
 
 
@@ -1832,23 +1865,23 @@ tf_impl_with_avals[lax.pad_p] = _pad
 
 
 def _rev(operand, *, dimensions):
-  return tf.reverse(operand, dimensions)
+  return tf_array_ops.reverse(operand, dimensions)
 
 
 tf_impl[lax.rev_p] = _rev
 
 
 def _where(which, *cases):
-  if which.dtype == tf.bool:
+  if which.dtype == tf_dtypes.bool:
     assert len(cases) <= 2
-    return cases if len(cases) == 1 else tf.where(which, cases[1], cases[0])
+    return cases if len(cases) == 1 else tf_array_ops.where_v2(which, cases[1], cases[0])
 
   def _select(offset, cases):
     assert len(cases) > 0
     if len(cases) == 1:
       return cases[0]
     mid = len(cases) // 2
-    return tf.where(tf.less(which, offset + mid),
+    return tf_array_ops.where_v2(tf_math.less(which, offset + mid),
                     _select(offset, cases[:mid]),
                     _select(mid, cases[mid:]))
 
@@ -1859,7 +1892,7 @@ tf_impl[lax.select_n_p] = _where
 
 
 def _transpose(operand, *, permutation):
-  return tf.transpose(operand, perm=permutation)
+  return tf_array_ops.transpose(operand, perm=permutation)
 
 
 tf_impl[lax.transpose_p] = _transpose
@@ -1867,16 +1900,16 @@ tf_impl[lax.transpose_p] = _transpose
 axes_to_axis = lambda func: lambda operand, axes: func(operand, axis=axes)
 
 # reduce_sum and reduce_prod are not supported for bool
-tf_impl[lax.reduce_sum_p] = axes_to_axis(tf.reduce_sum)
-tf_impl[lax.reduce_prod_p] = axes_to_axis(tf.reduce_prod)
+tf_impl[lax.reduce_sum_p] = axes_to_axis(tf_math.reduce_sum)
+tf_impl[lax.reduce_prod_p] = axes_to_axis(tf_math.reduce_prod)
 tf_impl[lax.reduce_max_p] = handle_boolean_args(
-  axes_to_axis(tf.reduce_max), argnums=[0],
-  boolean_f=axes_to_axis(tf.reduce_any)) # Max is T if any one is T
+  axes_to_axis(tf_math.reduce_max), argnums=[0],
+  boolean_f=axes_to_axis(tf_math.reduce_any)) # Max is T if any one is T
 tf_impl[lax.reduce_min_p] = handle_boolean_args(
-  axes_to_axis(tf.reduce_min), argnums=[0],
-  boolean_f=axes_to_axis(tf.reduce_all)) # Min is F if not all are T
-tf_impl[lax.reduce_or_p] = axes_to_axis(tf.reduce_any)
-tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
+  axes_to_axis(tf_math.reduce_min), argnums=[0],
+  boolean_f=axes_to_axis(tf_math.reduce_all)) # Min is F if not all are T
+tf_impl[lax.reduce_or_p] = axes_to_axis(tf_math.reduce_any)
+tf_impl[lax.reduce_and_p] = axes_to_axis(tf_math.reduce_all)
 
 
 def _argminmax(is_min: bool, operand: TfVal, axes: Sequence[int],
@@ -1909,8 +1942,8 @@ tf_impl_with_avals[lax.argmin_p] = partial(_argminmax, True)
 tf_impl_with_avals[lax.argmax_p] = partial(_argminmax, False)
 
 
-_add_fn = tf.function(_add, autograph=False)
-_ge_fn = tf.function(tf.math.greater_equal, autograph=False)
+_add_fn = tf_function(_add, autograph=False)
+_ge_fn = tf_function(tf_math.greater_equal, autograph=False)
 
 
 def _select_and_gather_add(
@@ -1931,7 +1964,7 @@ def _select_and_gather_add(
   assert nbits <= max_bits
   double_word_reduction = nbits * 2 <= max_bits
 
-  const = lambda dtype, x: tf.constant(np.array(x), dtype)
+  const = lambda dtype, x: tf_constant(np.array(x), dtype)
 
   if double_word_reduction:
     word_dtype = lax_internal._UINT_DTYPES[nbits]
@@ -1943,8 +1976,8 @@ def _select_and_gather_add(
       b = _bitcast_convert_type(b, word_dtype)
       a = _convert_element_type(a, new_dtype=double_word_dtype)
       b = _convert_element_type(b, new_dtype=double_word_dtype)
-      a = tf.bitwise.left_shift(a, const(double_word_dtype, nbits))
-      return tf.bitwise.bitwise_or(a, b)
+      a = tf_bitwise.left_shift(a, const(double_word_dtype, nbits))
+      return tf_bitwise.bitwise_or(a, b)
 
     # Unpacks the first element of a tuple.
     def fst(t):
@@ -1991,7 +2024,7 @@ tf_impl_with_avals[lax.select_and_gather_add_p] = _select_and_gather_add
 
 
 def _get_shape_from_tensor_or_array(x):
-  if isinstance(x.shape, tf.TensorShape):
+  if isinstance(x.shape, tf_TensorShape):
     return tuple(x.shape.as_list())
   return tuple(x.shape)
 
@@ -1999,12 +2032,12 @@ def _get_shape_from_tensor_or_array(x):
 def _common_reduce_window(operand, init_val, reducer, window_dimensions,
                           window_strides, padding, base_dilation,
                           window_dilation, _in_avals, _out_aval):
-  o_spec = tf.TensorSpec((), dtype=operand.dtype)
-  reducer_fn = tf.function(
+  o_spec = tf_TensorSpec((), dtype=operand.dtype)
+  reducer_fn = tf_function(
       reducer, autograph=False).get_concrete_function(o_spec, o_spec)
 
-  if not isinstance(init_val, (tf.Tensor, tf.Variable)):
-    init_val = tf.constant(init_val, operand.dtype)
+  if not isinstance(init_val, (tf_Tensor, tf_Variable)):
+    init_val = tf_constant(init_val, operand.dtype)
   out = tfxla.reduce_window(
       operand,
       init_val,
@@ -2017,7 +2050,7 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
   # TODO: implement shape inference for XlaReduceWindow
   out.set_shape(_aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    out = tf.stop_gradient(out)  # See #7839
+    out = tf_array_ops.stop_gradient(out)  # See #7839
   return out
 
 
@@ -2100,7 +2133,7 @@ def _specialized_reduce_window(reducer,
 
 def _get_max_identity(tf_dtype):
   numpy_tf_dtype = tf_dtype.as_numpy_dtype
-  if tf_dtype == tf.bfloat16 or dtypes.issubdtype(numpy_tf_dtype, np.inexact):
+  if tf_dtype == tf_dtypes.bfloat16 or dtypes.issubdtype(numpy_tf_dtype, np.inexact):
     return numpy_tf_dtype(-np.inf)
   elif dtypes.issubdtype(numpy_tf_dtype, np.integer):
     return dtypes.iinfo(numpy_tf_dtype).min
@@ -2112,7 +2145,7 @@ def _get_max_identity(tf_dtype):
 
 def _get_min_identity(tf_dtype):
   numpy_tf_dtype = tf_dtype.as_numpy_dtype
-  if tf_dtype == tf.bfloat16 or dtypes.issubdtype(numpy_tf_dtype, np.inexact):
+  if tf_dtype == tf_dtypes.bfloat16 or dtypes.issubdtype(numpy_tf_dtype, np.inexact):
     return numpy_tf_dtype(np.inf)
   elif dtypes.issubdtype(numpy_tf_dtype, np.integer):
     return dtypes.iinfo(numpy_tf_dtype).max
@@ -2155,7 +2188,7 @@ def _reduce(*operands: TfVal,
   init_vals = operands[nr_operands:]
   operands = operands[0:nr_operands]
 
-  reducer_arg_spec = tuple([tf.TensorSpec((), op.dtype) for op in init_vals] * 2)
+  reducer_arg_spec = tuple([tf_TensorSpec((), op.dtype) for op in init_vals] * 2)
 
   def reducer_computation(*args: TfVal) -> TfVal:
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
@@ -2163,14 +2196,14 @@ def _reduce(*operands: TfVal,
     return res
 
   xla_reducer_computation = (
-      tf.function(reducer_computation,
+      tf_function(reducer_computation,
                   autograph=False).get_concrete_function(*reducer_arg_spec))
 
   outs = tfxla.variadic_reduce(operands, init_vals,
                                dimensions_to_reduce=dimensions,
                                reducer=xla_reducer_computation)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    outs = tuple(tf.stop_gradient(out) for out in outs)  # See #7839
+    outs = tuple(tf_array_ops.stop_gradient(out) for out in outs)  # See #7839
   return outs
 
 tf_impl_with_avals[lax.reduce_p] = _reduce
@@ -2225,9 +2258,9 @@ tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 @partial(handle_boolean_args, argnums=(0, 1))
 def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
                             window_strides, padding, _in_avals, _out_aval):
-  init_value = tf.zeros((), operand.dtype)
+  init_value = tf_array_ops.zeros((), operand.dtype)
   select_fn = (
-      tf.function(tf_impl[select_prim], autograph=False).get_concrete_function(
+      tf_function(tf_impl[select_prim], autograph=False).get_concrete_function(
           init_value, init_value))
   scatter_fn = _add_fn.get_concrete_function(init_value, init_value)
   out = tfxla.select_and_scatter(operand, window_dimensions, window_strides,
@@ -2235,7 +2268,7 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
                                  scatter_fn)
   out.set_shape(_aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    out = tf.stop_gradient(out)  # See #7839
+    out = tf_array_ops.stop_gradient(out)  # See #7839
   return out
 
 
@@ -2262,27 +2295,27 @@ tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
 def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm) -> Sequence[TfVal]:
   is_uint32_key = key.dtype == _to_tf_dtype(jnp.uint32)
   if is_uint32_key:
-    key = tf.reshape(key, (2, 2))
+    key = tf_array_ops.reshape(key, (2, 2))
     key = tfxla.bitcast_convert_type(key, _to_tf_dtype(jnp.uint64))
   shape_tf = _eval_shape(shape)
   # JAX uses XLA algorithm enums; tfxla uses tf.random.Algorithm
   if algorithm == lax.RandomAlgorithm.RNG_THREE_FRY:
-    algorithm_tf = tf.random.Algorithm.THREEFRY
+    algorithm_tf = tf_random_Algorithm.THREEFRY
   elif algorithm == lax.RandomAlgorithm.RNG_PHILOX:
-    algorithm_tf = tf.random.Algorithm.PHILOX
+    algorithm_tf = tf_random_Algorithm.PHILOX
   elif algorithm == lax.RandomAlgorithm.RNG_DEFAULT:
-    algorithm_tf = tf.random.Algorithm.AUTO_SELECT
+    algorithm_tf = tf_random_Algorithm.AUTO_SELECT
   else:
     assert False
   (new_key, res) = tfxla.rng_bit_generator(algorithm_tf.value, key, shape_tf,
                                            dtype=_to_tf_dtype(dtype))
   if is_uint32_key:
     new_key = tfxla.bitcast_convert_type(new_key, _to_tf_dtype(jnp.uint32))
-    new_key = tf.reshape(new_key, (4,))
+    new_key = tf_array_ops.reshape(new_key, (4,))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
     # See #7839
-    new_key = tf.stop_gradient(new_key)
-    res = tf.stop_gradient(res)
+    new_key = tf_array_ops.stop_gradient(new_key)
+    res = tf_array_ops.stop_gradient(res)
   return new_key, res
 
 
@@ -2291,7 +2324,7 @@ tf_impl[lax.rng_bit_generator_p] = _rng_bit_generator
 
 def _rng_uniform(minval: TfVal, maxval: TfVal, *, shape) -> TfVal:
   shape_tf = _eval_shape(shape)
-  return tf.random.uniform(shape_tf, minval=minval, maxval=maxval, dtype=minval.dtype)
+  return tf_random.random_uniform(shape_tf, minval=minval, maxval=maxval, dtype=minval.dtype)
 
 tf_impl[lax.rng_uniform_p] = _rng_uniform
 
@@ -2307,8 +2340,8 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
 
 
 def _maybe_cast_to_int64(x: TfVal) -> TfVal:
-  if x.dtype != tf.int32 and x.dtype != tf.int64:
-    return tf.cast(x, tf.int64)
+  if x.dtype != tf_dtypes.int32 and x.dtype != tf_dtypes.int64:
+    return tf_math.cast(x, tf_dtypes.int64)
   return x
 
 
@@ -2334,7 +2367,7 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
                      indices_are_sorted)
   out.set_shape(_aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    out = tf.stop_gradient(out)  # See #7839
+    out = tf_array_ops.stop_gradient(out)  # See #7839
   return out
 
 
@@ -2361,12 +2394,12 @@ tf_impl_with_avals[lax.slice_p] = _slice
 def _dynamic_slice(operand, *start_indices, slice_sizes: core.Shape,
                    _in_avals: Sequence[core.ShapedArray],
                    _out_aval: core.ShapedArray):
-  start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
+  start_indices = _maybe_cast_to_int64(tf_array_ops.stack(start_indices))
   slice_sizes_tf = _eval_shape(slice_sizes)
 
   res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes_tf)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    res = tf.stop_gradient(res)  # See #7839
+    res = tf_array_ops.stop_gradient(res)  # See #7839
   return res
 
 
@@ -2376,10 +2409,10 @@ tf_impl_with_avals[lax.dynamic_slice_p] = _dynamic_slice
 def _dynamic_update_slice(operand, update, *start_indices,
                           _in_avals: Sequence[core.ShapedArray],
                           _out_aval: core.ShapedArray):
-  start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
+  start_indices = _maybe_cast_to_int64(tf_array_ops.stack(start_indices))
   out = tfxla.dynamic_update_slice(operand, update, start_indices)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    out = tf.stop_gradient(out)  # See #7839
+    out = tf_array_ops.stop_gradient(out)  # See #7839
   return out
 
 
@@ -2419,9 +2452,9 @@ def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
     res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2, extra_name_stack=None)
     return res
 
-  o_spec = tf.TensorSpec((), dtype=operand.dtype)
+  o_spec = tf_TensorSpec((), dtype=operand.dtype)
   xla_update_computation = (
-      tf.function(update_computation,
+      tf_function(update_computation,
                   autograph=False).get_concrete_function(o_spec, o_spec))
   out = tfxla.scatter(
       operand,
@@ -2431,7 +2464,7 @@ def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
       proto,
       indices_are_sorted=indices_are_sorted)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    out = tf.stop_gradient(out)  # See #7839
+    out = tf_array_ops.stop_gradient(out)  # See #7839
   return out
 
 
@@ -2457,7 +2490,7 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
     # Same name stack as XLA translation of cond_p
     branches_tf = list(map(source_info_util.extend_name_stack("cond"),
         branches_tf))
-  return tf.switch_case(index, branches_tf)
+  return tf_switch_case(index, branches_tf)
 
 
 tf_impl[lax.cond_p] = _cond
@@ -2485,7 +2518,7 @@ def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
 
   body_tf_func = partial(_interpret_jaxpr, body_jaxpr, *body_consts,
                                    extra_name_stack="while/body")
-  return tf.while_loop(cond_tf_func, body_tf_func, init_carry)
+  return tf_while_loop(cond_tf_func, body_tf_func, init_carry)
 
 
 def _batched_cond_while(*args: TfVal, cond_nconsts: int,
@@ -2502,7 +2535,7 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
   condition. We prepend to the loop the first calculation of the tensor boolean
   condition. The loop condition will use a "reduce_any" to calculate a scalar
   boolean from the tensor boolean condition. The end of the loop body will
-  compute the new carry using a "tf.where", and we compute the new tensor
+  compute the new carry using a "tf_array_ops.where", and we compute the new tensor
   boolean condition.
   """
   cond_consts, body_consts, init_carry = util.split_list(
@@ -2512,7 +2545,7 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
                                   extra_name_stack="while/body_pred")
 
   def new_cond_tf_func(pred_b: TfVal, *carry: TfVal) -> TfVal:
-    pred = tf.reduce_any(pred_b, axis=list(range(len(pred_b.shape))))
+    pred = tf_math.reduce_any(pred_b, axis=list(range(len(pred_b.shape))))
     return pred
 
   def new_body_tf_func(pred_b: TfVal, *carry: TfVal) -> Sequence[TfVal]:
@@ -2527,14 +2560,14 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
           broadcast_dimensions=list(range(len(pred_b.shape))),
           _in_avals=cond_jaxpr.out_avals,
           _out_aval=core.ShapedArray(c_aval.shape, np.bool_))
-      return tf.where(pred_b_bcast, new_c, c)
+      return tf_array_ops.where_v2(pred_b_bcast, new_c, c)
 
     selected_carry: Sequence[TfVal] = list(map(select_one_carry, new_carry, carry, body_jaxpr.out_avals))
     next_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *selected_carry,
                                     extra_name_stack="body_pred")
     return (next_pred_b, *selected_carry)
 
-  _, *res_carry = tf.while_loop(new_cond_tf_func, new_body_tf_func,
+  _, *res_carry = tf_while_loop(new_cond_tf_func, new_body_tf_func,
                                 (init_pred_b, *init_carry))
   return res_carry
 
@@ -2563,21 +2596,21 @@ def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted
   # to a compatible type without loss of precision.
   def promote_tf_dtype(tf_dtype):
-    if tf_dtype in [tf.bool, tf.uint8, tf.uint16]:
-      return tf.uint32
-    if tf_dtype in [tf.int8, tf.int16]:
-      return tf.int32
-    if tf_dtype is tf.float16:
-      return tf.float32
+    if tf_dtype in [tf_dtypes.bool, tf_dtypes.uint8, tf_dtypes.uint16]:
+      return tf_dtypes.uint32
+    if tf_dtype in [tf_dtypes.int8, tf_dtypes.int16]:
+      return tf_dtypes.int32
+    if tf_dtype is tf_dtypes.float16:
+      return tf_dtypes.float32
     return None
 
   conversion_dtype = promote_tf_dtype(operand.dtype)
   if conversion_dtype:
-    values, indices = tf.math.top_k(
-        tf.dtypes.cast(operand, conversion_dtype), k=k, sorted=True)
-    return tf.dtypes.cast(values, operand.dtype), indices
+    values, indices = tf_nn.top_k(
+        tf_math.cast(operand, conversion_dtype), k=k, sorted=True)
+    return tf_math.cast(values, operand.dtype), indices
   else:
-    return tf.math.top_k(operand, k=k, sorted=True)
+    return tf_nn.top_k(operand, k=k, sorted=True)
 
 
 tf_impl[lax.top_k_p] = _top_k
@@ -2588,11 +2621,11 @@ def _approx_top_k(operand: TfVal, k: int, reduction_dimension: int,
                   reduction_input_size_override: int,
                   aggregate_to_topk: bool) -> Tuple[TfVal, TfVal]:
   if is_max_k:
-    return tf.math.approx_max_k(operand, k, reduction_dimension, recall_target,
+    return tf_math.approx_max_k(operand, k, reduction_dimension, recall_target,
                                 reduction_input_size_override,
                                 aggregate_to_topk)
   else:
-    return tf.math.approx_min_k(operand, k, reduction_dimension, recall_target,
+    return tf_math.approx_min_k(operand, k, reduction_dimension, recall_target,
                                 reduction_input_size_override,
                                 aggregate_to_topk)
 
@@ -2607,10 +2640,10 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
       operands[0].shape
   ), f"Invalid {dimension} for ndim {len(operands[0].shape)}"
 
-  comparator_spec: List[tf.TensorSpec] = []
+  comparator_spec: List[tf_TensorSpec] = []
   comparator_jax_in_avals: List[core.ShapedArray] = []
   for op in operands:
-    o_spec = tf.TensorSpec((), dtype=op.dtype)
+    o_spec = tf_TensorSpec((), dtype=op.dtype)
     comparator_spec.extend([o_spec, o_spec])
     o_aval = core.ShapedArray((), _to_jax_dtype(op.dtype))
     comparator_jax_in_avals.extend([o_aval, o_aval])
@@ -2628,7 +2661,7 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
             num_keys=num_keys)
 
   xla_comparator_computation = (
-      tf.function(lexicographic_comparator,
+      tf_function(lexicographic_comparator,
                   autograph=False).get_concrete_function(*comparator_spec))
   results = tfxla.variadic_sort(
       operands,
@@ -2636,7 +2669,7 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
       is_stable=is_stable,
       comparator=xla_comparator_computation)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-    results = tuple(tf.stop_gradient(out) for out in results)  # See #7839
+    results = tuple(tf_array_ops.stop_gradient(out) for out in results)  # See #7839
   return results
 
 
@@ -2654,10 +2687,10 @@ def _fft(x, fft_type, fft_lengths):
         f"Unsupported fft_lengths={fft_lengths} for fft_type={fft_type} of "
         f"array with shape={x.shape}.")
   tf_funcs = {
-      FFT: [tf.signal.fft, tf.signal.fft2d, tf.signal.fft3d],
-      IFFT: [tf.signal.ifft, tf.signal.ifft2d, tf.signal.ifft3d],
-      RFFT: [tf.signal.rfft, tf.signal.rfft2d, tf.signal.rfft3d],
-      IRFFT: [tf.signal.irfft, tf.signal.irfft2d, tf.signal.irfft3d]
+      FFT: [tf_signal.fft, tf_signal.fft2d, tf_signal.fft3d],
+      IFFT: [tf_signal.ifft, tf_signal.ifft2d, tf_signal.ifft3d],
+      RFFT: [tf_signal.rfft, tf_signal.rfft2d, tf_signal.rfft3d],
+      IRFFT: [tf_signal.irfft, tf_signal.irfft2d, tf_signal.irfft3d]
   }
   return tf_funcs[fft_type][len(fft_lengths) - 1](x)
 
@@ -2666,18 +2699,18 @@ tf_impl[lax.fft_p] = _fft
 
 
 def _qr(operand, full_matrices):
-  return tf.linalg.qr(operand, full_matrices=full_matrices)
+  return tf_linalg.qr(operand, full_matrices=full_matrices)
 
 
 tf_impl[lax.linalg.qr_p] = _qr
 
 
 def _svd(operand, full_matrices, compute_uv):
-  result = tf.linalg.svd(operand, full_matrices, compute_uv)
+  result = tf_linalg.svd(operand, full_matrices, compute_uv)
   if not compute_uv:
     return result,
   s, u, v = result
-  return s, u, tf.linalg.adjoint(v)
+  return s, u, tf_linalg.adjoint(v)
 
 
 tf_impl[lax.linalg.svd_p] = _svd
@@ -2695,12 +2728,12 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
            "to True.")
     raise NotImplementedError(msg)
   elif not (compute_left_eigenvectors or compute_right_eigenvectors):
-    return tuple([tf.linalg.eigvals(operand)])
+    return tuple([tf_linalg_ops.eigvals(operand)])
   elif compute_right_eigenvectors:
-    return tuple(tf.linalg.eig(operand))
+    return tuple(tf_linalg_ops.eig(operand))
   else:  # compute_left_eigenvectors == True
-    wH, vl = tf.linalg.eig(tf.linalg.adjoint(operand))
-    wHH = tf.math.conj(wH)
+    wH, vl = tf_linalg_ops.eig(tf_linalg.adjoint(operand))
+    wHH = tf_math.conj(wH)
     return tuple([wHH, vl])
 
 
@@ -2711,17 +2744,17 @@ def _eigh(operand: TfVal, lower: bool, sort_eigenvalues: bool, _in_avals,
           _out_aval):
   del sort_eigenvalues
   if operand.shape[-1] == 0:
-    v, w = operand, tf.reshape(operand, _eval_shape(_in_avals[0].shape[:-1]))
+    v, w = operand, tf_array_ops.reshape(operand, _eval_shape(_in_avals[0].shape[:-1]))
   else:
     if not lower:
-      operand = tf.linalg.adjoint(operand)
-    w, v = tf.linalg.eigh(operand)
+      operand = tf_linalg.adjoint(operand)
+    w, v = tf_linalg.eigh(operand)
   cast_type = {
-      tf.complex64: tf.float32,
-      tf.complex128: tf.float64
+      tf_dtypes.complex64: tf_dtypes.float32,
+      tf_dtypes.complex128: tf_dtypes.float64
   }.get(operand.dtype)
   if cast_type is not None:
-    w = tf.cast(w, cast_type)
+    w = tf_math.cast(w, cast_type)
   return v, w
 
 
@@ -2743,21 +2776,21 @@ def _triangular_solve(a: TfVal, b: TfVal, *, left_side: bool, lower: bool,
   if unit_diagonal:
     a_aval, _ = _in_avals
     a_shape = _eval_shape(a_aval.shape)
-    a = tf.linalg.set_diag(a, tf.ones(a_shape[:-1], dtype=a.dtype))
+    a = tf_linalg.set_diag(a, tf_array_ops.ones(a_shape[:-1], dtype=a.dtype))
   if not left_side:
     rank = len(a.shape)
     transpose_dimensions = list(range(rank - 2)) + [rank - 1, rank - 2]
-    a = tf.transpose(a, transpose_dimensions)
-    b = tf.transpose(b, transpose_dimensions)
+    a = tf_array_ops.transpose(a, transpose_dimensions)
+    b = tf_array_ops.transpose(b, transpose_dimensions)
     lower = not lower
   # adjoint == transpose for real dtypes, so special care need only be taken
   # for complex types.
-  if a.dtype in [tf.complex64, tf.complex128]:
+  if a.dtype in [tf_dtypes.complex64, tf_dtypes.complex128]:
     if (transpose_a and not conjugate_a) or (not transpose_a and conjugate_a):
-      a = tf.math.conj(a)
-  result = tf.linalg.triangular_solve(a, b, lower=lower, adjoint=transpose_a)
+      a = tf_math.conj(a)
+  result = tf_linalg.triangular_solve(a, b, lower=lower, adjoint=transpose_a)
   if not left_side:
-    result = tf.transpose(result, transpose_dimensions)
+    result = tf_array_ops.transpose(result, transpose_dimensions)
   return result
 
 
@@ -2903,7 +2936,7 @@ def _pjit_sharding_constraint(arg: TfVal, *,
 tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint
 
 def _dimension_size_jax2tf(op: TfVal, *, dimension):
-  return tf.shape(op)[dimension]
+  return tf_array_ops.shape(op)[dimension]
 
 tf_impl[shape_poly.dimension_size_p] = _dimension_size_jax2tf
 
@@ -2915,12 +2948,12 @@ tf_impl[shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""
-  m = tf.Module()
+  m = tf_Module()
   # The types here are automagically changed by TensorFlow's checkpointing
   # infrastructure.
-  m.a = (tf.Module(), tf.Module())
-  m.b = [tf.Module(), tf.Module()]
-  m.c = {"a": tf.Module()}
+  m.a = (tf_Module(), tf_Module())
+  m.b = [tf_Module(), tf_Module()]
+  m.c = {"a": tf_Module()}
   tuple_wrapper = type(m.a)
   list_wrapper = type(m.b)
   dict_wrapper = type(m.c)

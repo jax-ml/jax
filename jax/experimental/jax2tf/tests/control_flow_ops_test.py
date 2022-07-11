@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for the jax2tf conversion for control-flow primitives."""
-
 from absl.testing import absltest
 
 import jax
-import jax.lax as lax
+from jax import lax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 import numpy as np

@@ -13,8 +13,8 @@
 # limitations under the License.
 """Tests for JAX2TF converted.
 
-Specific JAX primitive conversion tests are in primitives_test."""
-
+Specific JAX primitive conversion tests are in primitives_test.
+"""
 import unittest
 from typing import Callable, Dict, Optional, Tuple
 
@@ -34,7 +34,7 @@ from jax._src import test_util as jtu
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
-import jax.interpreters.mlir as mlir
+from jax.interpreters import mlir
 from jax._src import source_info_util
 from jax._src import lib as jaxlib
 import jax._src.lib.xla_bridge

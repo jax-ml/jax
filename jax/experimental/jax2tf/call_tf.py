@@ -42,7 +42,20 @@ from jax._src.lib import xla_client
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+
+from tensorflow.python.framework import dtypes as tf_dtypes
+from tensorflow.python.framework.ops import Tensor as tf_Tensor
+from tensorflow.python.framework.tensor_spec import TensorSpec as tf_TensorSpec
+from tensorflow.python.ops import array_ops as tf_array_ops
+from tensorflow.python.framework.constant_op import constant as tf_constant
+from tensorflow.python.eager.def_function import function as tf_function
+from tensorflow.python.util import nest as tf_nest
+from tensorflow.python.framework.device_spec import DeviceSpecV2 as tf_DeviceSpec
+from tensorflow.python.eager.backprop import GradientTape as tf_GradientTape
+from tensorflow.python.ops.unconnected_gradients import UnconnectedGradients as tf_UnconnectedGradients
+from tensorflow.python.dlpack.dlpack import from_dlpack as tf_from_dlpack
+from tensorflow.python.dlpack.dlpack import to_dlpack as tf_to_dlpack
+
 
 map = util.safe_map
 zip = util.safe_zip
@@ -107,7 +120,7 @@ def call_tf(callable_tf: Callable) -> Callable:
                "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
         raise ValueError(msg)
 
-      return tf.TensorSpec(a_jax.shape, a_tf_dtype)
+      return tf_TensorSpec(a_jax.shape, a_tf_dtype)
     args_flat_sig_tf = tuple(map(make_tensorspec, args_flat_jax))
 
     res_treedef = None  # We'll store here the result treedef
@@ -124,7 +137,7 @@ def call_tf(callable_tf: Callable) -> Callable:
 
     # Prepare a tf.function ahead of time, to cache the concrete functions. This
     # won't be used in op-by-op execution mode.
-    function_flat_tf = tf.function(callable_flat_tf, autograph=False, jit_compile=True)
+    function_flat_tf = tf_function(callable_flat_tf, autograph=False, jit_compile=True)
 
     res_jax_flat = call_tf_p.bind(
         *args_flat_jax,
@@ -153,21 +166,21 @@ def call_tf(callable_tf: Callable) -> Callable:
           # When watched, this will be ignored. When use in results it will
           # result in a floating 0. gradient, which JAX will ignore (and
           # replace it with a float0)
-          return tf.zeros((), dtype=tf.float32)
+          return tf_array_ops.zeros((), dtype=tf_dtypes.float32)
 
-      watched_args_tf = tf.nest.map_structure(replace_non_float, args_tf)
-      with tf.GradientTape(persistent=True) as tape:
+      watched_args_tf = tf_nest.map_structure(replace_non_float, args_tf)
+      with tf_GradientTape(persistent=True) as tape:
         tape.watch(watched_args_tf)
         res = callable_tf(*args_tf)
 
-      tf.nest.assert_same_structure(res, ct_res_tf)
+      tf_nest.assert_same_structure(res, ct_res_tf)
       dres_darg = tape.gradient(
-          tf.nest.map_structure(replace_non_float, res),
+          tf_nest.map_structure(replace_non_float, res),
           sources=watched_args_tf,
           output_gradients=ct_res_tf,
-          unconnected_gradients=tf.UnconnectedGradients.ZERO)
+          unconnected_gradients=tf_UnconnectedGradients.ZERO)
 
-      tf.nest.assert_same_structure(dres_darg, args_tf)
+      tf_nest.assert_same_structure(dres_darg, args_tf)
       return dres_darg
 
     # Use call_tf to call the VJP function
@@ -199,11 +212,11 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
         arg_jax.device_buffer.client.platform in _DLPACK_PLATFORMS and
         arg_jax.dtype in dlpack.SUPPORTED_DTYPES):
       arg_dlpack = jax.dlpack.to_dlpack(arg_jax, take_ownership=False)
-      return tf.experimental.dlpack.from_dlpack(arg_dlpack)
+      return tf_from_dlpack(arg_dlpack)
     # The following avoids copies to the host on CPU, always for DeviceArray
     # and even for ndarray if they are sufficiently aligned.
     # TODO(necula): on TPU this copies to the host!
-    return tf.constant(np.asarray(arg_jax))
+    return tf_constant(np.asarray(arg_jax))
 
   args_tf_flat = tuple(map(_arg_jax_to_tf, args_jax_flat))
   with jax2tf_internal.inside_call_tf():
@@ -212,11 +225,11 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
 
   def _res_tf_to_jax(res_tf: TfVal):
     res_tf, _ = jax2tf_internal._tfval_to_tensor_jax_dtype(res_tf)
-    if isinstance(res_tf, tf.Tensor) and res_tf.dtype in dlpack.SUPPORTED_DTYPES:
-      res_tf_platform = tf.DeviceSpec.from_string(res_tf.backing_device).device_type
+    if isinstance(res_tf, tf_Tensor) and res_tf.dtype in dlpack.SUPPORTED_DTYPES:
+      res_tf_platform = tf_DeviceSpec.from_string(res_tf.backing_device).device_type
       res_jax_platform = res_tf_platform.lower()
       if res_jax_platform in _DLPACK_PLATFORMS:
-        res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
+        res_dlpack = tf_to_dlpack(res_tf)
         return jax.dlpack.from_dlpack(res_dlpack)
 
     return jax.device_put(np.asarray(res_tf))
@@ -277,7 +290,7 @@ def _code_generator_and_avals(
   # affect shapes in the computation. In those cases, however, those tensors
   # are inlined in the computation, which we detect below.
   args_tf_flat = [
-      tf.constant((0 if a.dtype != tf.bool else False),
+      tf_constant((0 if a.dtype != tf_dtypes.bool else False),
                   shape=a.shape,
                   dtype=a.dtype) for a in args_flat_sig_tf]
 
@@ -303,7 +316,7 @@ def _code_generator_and_avals(
         f"The following captures were found {concrete_function_flat_tf.captured_inputs}")
     logging.warning(msg)
     for inp in concrete_function_flat_tf.captured_inputs:
-      if inp.dtype == tf.resource:  # A variable; lookup by handle
+      if inp.dtype == tf_dtypes.resource:  # A variable; lookup by handle
         inp_vars = [v for v in concrete_function_flat_tf.variables if inp is v.handle]
         assert len(inp_vars) == 1, f"Found {inp_vars}"
         captured_inputs.append(inp_vars[0])

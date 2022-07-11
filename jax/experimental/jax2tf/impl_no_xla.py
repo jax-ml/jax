@@ -27,7 +27,17 @@ from jax._src import util
 from jax.experimental.jax2tf import jax2tf
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+
+from tensorflow.python.framework import dtypes as tf_dtypes
+from tensorflow.python.ops import math_ops as tf_math
+from tensorflow.python.ops.clip_ops import clip_by_value as tf_clip_by_value
+from tensorflow.python.ops import array_ops as tf_array_ops
+from tensorflow.python.framework.constant_op import constant as tf_constant
+from tensorflow.python.ops.linalg import linalg_impl as tf_linalg
+from tensorflow.python.util import nest as tf_nest
+from tensorflow.python.ops import nn_ops as tf_nn
+from tensorflow.python.ops.map_fn import map_fn as tf_map_fn
+from tensorflow.python.ops.nn_impl import depthwise_conv2d as tf_depthwise_conv2d
 
 
 # Implementation rules for primitives when XLA is not linked in. These
@@ -73,7 +83,7 @@ def _transpose_with_shape(x: TfVal, x_shape: core.Shape, permutation) -> Tuple[T
   x_shape matches x.shape in the known dimensions, and it has dimension
   polynomials elsewhere, while x.shape has None.
   """
-  return tf.transpose(x, perm=permutation), tuple(x_shape[i] for i in permutation)
+  return tf_array_ops.transpose(x, perm=permutation), tuple(x_shape[i] for i in permutation)
 
 
 def _transpose_for_tf_conv(lhs, lhs_shape: core.Shape,
@@ -125,7 +135,7 @@ def _pad_spatial_dims(x, x_shape, padding):
     # If necessary, add empty padding for batch and feature dimensions.
     no_pad = ((0, 0),)
     padding = no_pad + padding + no_pad
-  x = tf.pad(x, padding)
+  x = tf_array_ops.pad(x, padding)
   assert len(x.shape) == len(padding)
   x_shape = tuple(p0 + xs + p1 for xs, (p0, p1) in zip(x_shape, padding))
   jax2tf._assert_matching_abstract_shape(x, x_shape)
@@ -291,7 +301,7 @@ def _conv_general_dilated(
     # If the input shape is smaller than the filter shape in a spatial dimension,
     # lax returns only zeros while tf.conv2d returns an error.
     # We thus return zeros to make sure the behavior is consistent.
-    return tf.broadcast_to(tf.constant(0, dtype=tf.float32),
+    return tf_array_ops.broadcast_to(tf_constant(0, dtype=tf_dtypes.float32),
                            jax2tf._eval_shape(out_shape))
 
   if is_depthwise:
@@ -300,17 +310,17 @@ def _conv_general_dilated(
     # [filter_height, filter_width, in_channels, channel_multiplier].
     new_rhs_shape = tuple(rhs_spatial_shapes) + (in_channels,
                                                  rhs_out_channel // in_channels)
-    output = tf.nn.depthwise_conv2d(
+    output = tf_depthwise_conv2d(
         input=lhs,
-        filter=tf.reshape(rhs, jax2tf._eval_shape(new_rhs_shape)),
+        filter=tf_array_ops.reshape(rhs, jax2tf._eval_shape(new_rhs_shape)),
         strides=tf_window_strides,
         padding=padding_type,
         dilations=rhs_dilation)
 
   elif is_transpose:
     # tf.nn.conv2d_transpose requires a transposed filter.
-    rhs_t = tf.reverse(rhs, [0, 1])
-    rhs_t = tf.transpose(rhs_t, (0, 1, 3, 2))
+    rhs_t = tf_array_ops.reverse(rhs, [0, 1])
+    rhs_t = tf_array_ops.transpose(rhs_t, (0, 1, 3, 2))
 
     # We should transpose `out_shape` to "NHWC", which is what TF expects.
     # First transpose to "NCHW".
@@ -320,7 +330,7 @@ def _conv_general_dilated(
       tf_out_shape = tuple(out_shape[i] for i in output_perm)
     # Then transpose "NCHW" to "NHWC".
     tf_out_shape = tuple(tf_out_shape[i] for i in (0, 2, 3, 1))
-    output = tf.nn.conv2d_transpose(
+    output = tf_nn.conv2d_transpose(
         input=lhs,
         filters=rhs_t,
         output_shape=jax2tf._eval_shape(tf_out_shape),
@@ -328,7 +338,7 @@ def _conv_general_dilated(
         padding=padding_type)
 
   else:
-    output = tf.nn.conv2d(
+    output = tf_nn.conv2d(
         input=lhs,
         filters=rhs,
         strides=tf_window_strides,
@@ -337,14 +347,14 @@ def _conv_general_dilated(
 
   # TF outputs in format "NHWC", so convert to "NCHW", which is lax's default
   # format.
-  output = tf.transpose(output, (0, 3, 1, 2))  # "NHWC" --> "NCHW"
+  output = tf_array_ops.transpose(output, (0, 3, 1, 2))  # "NHWC" --> "NCHW"
   if is_conv1d:
     output = output[:, :, :, 0]
   # To determine the right permutation, we compute the inverse permutation of
   # `output_perm`, so that when `output_perm` is applied to `output`, we obtain
   # the outpt in NCHW format.
   inverse_perm = _invert_permutation(output_perm)
-  output = tf.transpose(output, inverse_perm)  # "NCHW" -> desired output shape.
+  output = tf_array_ops.transpose(output, inverse_perm)  # "NCHW" -> desired output shape.
   return output
 
 
@@ -356,7 +366,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
                  preferred_element_type: Optional[DType],
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
-  """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
+  """Implementation of lax.dot_general_p in terms of tf_linalg.einsum."""
   # Unused arguments.
   del precision
   del preferred_element_type
@@ -398,15 +408,15 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
     #     tf.linalg.matmul as it will have shape [1, 1].
     squeeze_idxs = []
     if lhs_ndim - len(lhs_batch) == 1:
-      lhs = tf.expand_dims(lhs, lhs_ndim - 1)
+      lhs = tf_array_ops.expand_dims(lhs, lhs_ndim - 1)
       squeeze_idxs.append(len(lhs.shape) - 2)
     if rhs_ndim - len(rhs_batch) == 1:
-      rhs = tf.expand_dims(rhs, rhs_ndim)
+      rhs = tf_array_ops.expand_dims(rhs, rhs_ndim)
       squeeze_idxs.append(len(rhs.shape) - 1)
-    result = tf.linalg.matmul(lhs, rhs)
+    result = tf_linalg.matmul(lhs, rhs)
     if len(squeeze_idxs) != 0:
       assert all([result.shape[i] == 1 for i in squeeze_idxs])
-      result = tf.squeeze(result, squeeze_idxs)
+      result = tf_array_ops.squeeze(result, squeeze_idxs)
     return result
 
   new_id = iter(string.ascii_letters)
@@ -437,7 +447,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
   assert lhs.dtype == rhs.dtype
   spec = "{},{}->{}".format("".join(lhs_axis_ids), "".join(rhs_axis_ids),
                             "".join(out_axis_ids))
-  return tf.linalg.einsum(spec, lhs, rhs)
+  return tf_linalg.einsum(spec, lhs, rhs)
 
 
 tf_impl_no_xla[lax.dot_general_p] = _dot_general
@@ -460,17 +470,17 @@ def _interior_padding(operand, padding_value, padding_config, operand_shape):
   for d, (dsz, (_, _, i)) in enumerate(zip(operand_shape, padding_config)):
     dilation_factor = i + 1
     output_shape.append(dsz * dilation_factor - i)
-    indices = tf.range(dsz) * dilation_factor
+    indices = tf_math.range(dsz) * dilation_factor
     expansion = [None] * (1 + len(operand_shape))
     expansion[d] = slice(None, None, None)
-    indices_by_dim.append(tf.broadcast_to(indices[expansion], indices_shape))
+    indices_by_dim.append(tf_array_ops.broadcast_to(indices[expansion], indices_shape))
 
-  indices_cartesian = tf.concat(indices_by_dim, axis=len(operand_shape))
-  scattered = tf.scatter_nd(indices_cartesian, operand, output_shape)
+  indices_cartesian = tf_array_ops.concat(indices_by_dim, axis=len(operand_shape))
+  scattered = tf_array_ops.scatter_nd(indices_cartesian, operand, output_shape)
   # What elements from the output array we use from
-  mask = tf.scatter_nd(indices_cartesian, tf.ones_like(operand, dtype=np.bool_),
+  mask = tf_array_ops.scatter_nd(indices_cartesian, tf_array_ops.ones_like(operand, dtype=np.bool_),
                        output_shape)
-  return tf.where(mask, scattered, padding_value)
+  return tf_array_ops.where_v2(mask, scattered, padding_value)
 
 
 def _pad(operand, padding_value, *, padding_config,
@@ -483,7 +493,7 @@ def _pad(operand, padding_value, *, padding_config,
   # Now do the non-negative edge padding. This is the common case, use tf.pad.
   non_negative_padding = [((lo if lo >= 0 else 0), (hi if hi >= 0 else 0))
                           for lo, hi, _ in padding_config]
-  operand = tf.pad(
+  operand = tf_array_ops.pad(
       operand,
       non_negative_padding,
       mode="CONSTANT",
@@ -492,7 +502,7 @@ def _pad(operand, padding_value, *, padding_config,
   if any(lo < 0 or hi < 0 for lo, hi, _ in padding_config):
     output_shape = jax2tf._eval_shape(_out_aval.shape)
     begins = [(-lo if lo < 0 else 0) for lo, _, _ in padding_config]
-    operand = tf.slice(operand, begins, output_shape)
+    operand = tf_array_ops.slice(operand, begins, output_shape)
 
   return operand
 
@@ -505,13 +515,13 @@ def _argminmax(is_min: bool, operand: TfVal, axes: Sequence[int],
                _out_aval: core.ShapedArray):
   # The following is known to diverge from JAX behavior for NaN.
   axis, = axes
-  output_type = tf.int32
+  output_type = tf_dtypes.int32
   if dtypes.iinfo(index_dtype).bits > 32:
-    output_type = tf.int64
+    output_type = tf_dtypes.int64
   # TODO(phawkins): handle axes larger than 2^31.
-  fn = tf.math.argmin if is_min else tf.math.argmax
+  fn = tf_math.argmin if is_min else tf_math.argmax
   result = fn(operand, axis=axis, output_type=output_type)
-  return tf.cast(result, jax2tf._to_tf_dtype(index_dtype))
+  return tf_math.cast(result, jax2tf._to_tf_dtype(index_dtype))
 
 
 tf_impl_no_xla[lax.argmin_p] = partial(_argminmax, True)
@@ -524,17 +534,17 @@ def _validate_reduce_window_inputs(operand_shape, computation_name, dtype,
   if computation_name not in ["min", "max", "add"]:
     raise _reduce_error("Reduction function should be either min, max, or add.")
   if computation_name in ["min", "max"] and dtype in [
-      tf.bool, tf.uint32, tf.uint64, tf.complex64, tf.complex128
+      tf_dtypes.bool, tf_dtypes.uint32, tf_dtypes.uint64, tf_dtypes.complex64, tf_dtypes.complex128
   ]:
     raise _reduce_error("Min/max pool does not support operands of type "
                         f"{dtype}")
-  if computation_name == "min" and dtype in [tf.uint8, tf.uint16]:
+  if computation_name == "min" and dtype in [tf_dtypes.uint8, tf_dtypes.uint16]:
     # TODO(marcvanzee): We currently implement min pooling by negating the
     # input, but this doesn't work for uint. We could work around it using
     # tf.math.reduce_min.
     raise _reduce_error(f"Min pool does not support operands of type {dtype}")
   if computation_name == "add" and dtype not in [
-      tf.float16, tf.float32, tf.float64
+      tf_dtypes.float16, tf_dtypes.float32, tf_dtypes.float64
   ]:
     raise _reduce_error("Add pooling does not support operands of type "
                         f"{dtype}")
@@ -595,7 +605,7 @@ def _reshape_reduce_window(operand, operand_shape, window_dimensions,
     # not know what to do with polynomials in the shape.
     operand_shape = jax2tf._eval_shape(operand_shape)
     # Add batch and channel dimensions to operand.
-    operand = tf.reshape(operand, (1,) + operand_shape + (1,))
+    operand = tf_array_ops.reshape(operand, (1,) + operand_shape + (1,))
   else:
     # This branch assumes operand.shape = (batch, spatial_dims, ..., channel),
     # and dimensions, strides, dilation are all (1, spatial_values, ..., 1).
@@ -635,7 +645,7 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
       has_only_spatial_dims=has_only_spatial_dims)
 
   def tf_pool(inputs, pooling_type):
-    result = tf.nn.pool(
+    result = tf_nn.pool(
         inputs,
         window_shape=window_dimensions,
         pooling_type=pooling_type,
@@ -646,12 +656,12 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
     if has_only_spatial_dims:
       # If the input only had spatial dimensions we need to contract the batch
       # and channel dimensions before returning the output.
-      result = tf.squeeze(result, [0, -1])
+      result = tf_array_ops.squeeze(result, [0, -1])
 
     jax2tf._assert_matching_abstract_shape(result, _out_aval.shape)
     return result
 
-  negate = lambda x: tf.multiply(x, tf.constant(-1, dtype))
+  negate = lambda x: tf_math.multiply(x, tf_constant(-1, dtype))
   if computation_name == "max":
     return tf_pool(operand, "MAX")
   elif computation_name == "min":
@@ -660,7 +670,7 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
     # TODO(marcvanzee): This may give very large deviations on TPU when using
     # floats as inputs. Alternatively, we could implement this using a
     # convolution with an all-1's kernel.
-    return tf.multiply(tf_pool(operand, "AVG"), np.prod(window_dimensions))
+    return tf_math.multiply(tf_pool(operand, "AVG"), np.prod(window_dimensions))
 
 
 def _reduce_window(*args, jaxpr, consts, window_dimensions,
@@ -694,9 +704,9 @@ def _reduce_window(*args, jaxpr, consts, window_dimensions,
                           _out_aval=_out_aval[0])     # Returns single value.
 
   reduce_fn = {
-      "min": tf.minimum,
-      "max": tf.maximum,
-      "add": tf.add,
+      "min": tf_math.minimum,
+      "max": tf_math.maximum,
+      "add": tf_math.add,
   }[computation_name]
   result = reduce_fn(result, init_value)
 
@@ -738,8 +748,8 @@ def _clip(max_indices: Sequence[TfVal], start_indices: Sequence[TfVal],
   # We cast both arguments to `tf.clip_by_value` to int32. Otherwise, this
   # function may return uint32 which is not always compatible with TF ops, so
   # this may result in type errors.
-  max_start = tf.cast(tf.subtract(max_indices, slice_sizes), dtype=tf.int32)
-  return tf.clip_by_value(tf.cast(start_indices, dtype=tf.int32), 0, max_start)
+  max_start = tf_math.cast(tf_math.subtract(max_indices, slice_sizes), dtype=tf_dtypes.int32)
+  return tf_clip_by_value(tf_math.cast(start_indices, dtype=tf_dtypes.int32), 0, max_start)
 
 
 @dataclasses.dataclass
@@ -796,11 +806,11 @@ def _pre_gather_for_scalar_indexing(args: GatherArgs):
 
 @gather_precondition(_pre_gather_for_scalar_indexing)
 def _gather_for_scalar_indexing(args: GatherArgs):
-  """Implements 'scalar indexing into arrays' cases of lax.gather using tf.slice.
+  """Implements 'scalar indexing into arrays' cases of lax.gather using tf_array_ops.slice.
 
   E.g., op[2], op[:, :5, :], jnp.take(op, 0, axis=0).
   """
-  indices = tf.expand_dims(args.dnums.start_index_map, 1)
+  indices = tf_array_ops.expand_dims(args.dnums.start_index_map, 1)
   # lax.gather uses an "index map" which maps `start_indices` to the right axes
   # in `operand`. Since tf.strided_slice uses a single array for specifying the
   # start indices, we use a scatter to map the start indices to the right axes.
@@ -808,7 +818,7 @@ def _gather_for_scalar_indexing(args: GatherArgs):
   slice_sizes_tf = jax2tf._eval_shape(args.slice_sizes)
   # TODO(marcvanzee): Consider transposing `operand`, which is probably more
   # optimization friendly.
-  begin = tf.scatter_nd(indices, args.start_indices, [len(op_shape)])
+  begin = tf_array_ops.scatter_nd(indices, args.start_indices, [len(op_shape)])
   begin = _clip(op_shape, begin, slice_sizes_tf)
   end = slice_sizes_tf + begin
 
@@ -818,7 +828,7 @@ def _gather_for_scalar_indexing(args: GatherArgs):
   # which is 5 in decimals. The following line converts the lax representation
   # to the one used by `tf.strided_slice`.
   shrink_mask = sum(2**x for x in args.dnums.collapsed_slice_dims)
-  res = tf.strided_slice(args.operand, begin, end, shrink_axis_mask=shrink_mask)
+  res = tf_array_ops.strided_slice(args.operand, begin, end, shrink_axis_mask=shrink_mask)
   # Shape inference doesn't work for tf.strided_slice.
   res.set_shape(jax2tf._aval_to_tf_shape(args.out_aval))
   return res
@@ -867,16 +877,16 @@ def _pre_gather_for_multidim_indexing(args: GatherArgs):
 
 @gather_precondition(_pre_gather_for_multidim_indexing)
 def _gather_for_multidim_indexing(args: GatherArgs):
-  """Implements 'multi-dimensional indexing into arrays' cases of lax.gather using tf.gather.
+  """Implements 'multi-dimensional indexing into arrays' cases of lax.gather using tf_array_ops.gather.
 
   E.g., jnp.take(op, [[0], [1]], axis=0).
   """
   # Guess the axis.
   axis = args.dnums.collapsed_slice_dims[0]
-  squeezed_indices = tf.squeeze(args.start_indices, -1)
+  squeezed_indices = tf_array_ops.squeeze(args.start_indices, -1)
   op_shape = jax2tf._eval_shape(args.op_shape)
   start_indices = _clip((op_shape[axis],), squeezed_indices, (1,))
-  return tf.gather(args.operand, start_indices, axis=axis, batch_dims=0)
+  return tf_array_ops.gather(args.operand, start_indices, axis=axis, batch_dims=0)
 
 
 def _pre_gather_with_batch_dims(args: GatherArgs):
@@ -914,12 +924,12 @@ def _gather_with_batch_dims(args: GatherArgs):
   """
   op_shape = jax2tf._eval_shape(args.op_shape)
   start_indices = _clip(op_shape, args.start_indices, args.slice_sizes)
-  result = tf.map_fn(
-    lambda idxs: tf.slice(args.operand, begin=idxs, size=args.slice_sizes),
+  result = tf_map_fn(
+    lambda idxs: tf_array_ops.slice(args.operand, begin=idxs, size=args.slice_sizes),
     start_indices,
     fn_output_signature=jax2tf._to_tf_dtype(args.operand.dtype)
   )
-  result = tf.squeeze(result, axis=1)
+  result = tf_array_ops.squeeze(result, axis=1)
   return result
 
 
@@ -971,12 +981,12 @@ tf_impl_no_xla[lax.gather_p] = _gather
 def _dynamic_slice(operand, *start_indices, slice_sizes: core.Shape,
                    _in_avals: Sequence[core.ShapedArray],
                    _out_aval: core.ShapedArray):
-  start_indices = tf.stack(start_indices)
+  start_indices = tf_array_ops.stack(start_indices)
   slice_sizes_tf = jax2tf._eval_shape(slice_sizes)
 
   operand_shape = jax2tf._eval_shape(_in_avals[0].shape)
   start_indices = _clip(operand_shape, start_indices, slice_sizes_tf)
-  return tf.slice(operand, start_indices, size=slice_sizes_tf)
+  return tf_array_ops.slice(operand, start_indices, size=slice_sizes_tf)
 
 
 tf_impl_no_xla[lax.dynamic_slice_p] = _dynamic_slice
@@ -985,32 +995,32 @@ tf_impl_no_xla[lax.dynamic_slice_p] = _dynamic_slice
 def _dynamic_update_slice(operand, update, *start_indices,
                           _in_avals: Sequence[core.ShapedArray],
                           _out_aval: core.ShapedArray):
-  start_indices = tf.stack(start_indices)
+  start_indices = tf_array_ops.stack(start_indices)
 
   op_shape = jax2tf._eval_shape(_in_avals[0].shape)
-  op_size = tf.size(operand)
+  op_size = tf_array_ops.size(operand)
   update_shape_tf = jax2tf._eval_shape(_in_avals[1].shape)
 
   start_indices = _clip(op_shape, start_indices, update_shape_tf)
-  end_indices = tf.add(start_indices, update_shape_tf)
+  end_indices = tf_math.add(start_indices, update_shape_tf)
 
   # Get the cells to update in `operand` as an array of ids.
-  id_tensor = tf.reshape(tf.range(op_size), op_shape)
-  scattered_indices = tf.strided_slice(id_tensor, start_indices, end_indices)
+  id_tensor = tf_array_ops.reshape(tf_math.range(op_size), op_shape)
+  scattered_indices = tf_array_ops.strided_slice(id_tensor, start_indices, end_indices)
 
   # Create an array containing updates at scattered_indices and zeros otherwise.
-  flat_indices = tf.expand_dims(tf.nest.flatten(scattered_indices), -1)
-  flat_update = tf.nest.flatten(update)
-  update = tf.scatter_nd(flat_indices, flat_update, (op_size,))
-  update = tf.reshape(update, op_shape)
+  flat_indices = tf_array_ops.expand_dims(tf_nest.flatten(scattered_indices), -1)
+  flat_update = tf_nest.flatten(update)
+  update = tf_array_ops.scatter_nd(flat_indices, flat_update, (op_size,))
+  update = tf_array_ops.reshape(update, op_shape)
 
   # Create a bool mask that is True only where `operand` should be updated.
-  update_mask = tf.ones_like(flat_update, dtype=tf.bool)
-  update_mask = tf.scatter_nd(flat_indices, update_mask, (op_size,))
-  update_mask = tf.reshape(update_mask, op_shape)
+  update_mask = tf_array_ops.ones_like(flat_update, dtype=tf_dtypes.bool)
+  update_mask = tf_array_ops.scatter_nd(flat_indices, update_mask, (op_size,))
+  update_mask = tf_array_ops.reshape(update_mask, op_shape)
 
   # Use the mask to only update `operand` with `update`.
-  return tf.where(update_mask, update, operand)
+  return tf_array_ops.where_v2(update_mask, update, operand)
 
 
 tf_impl_no_xla[lax.dynamic_update_slice_p] = _dynamic_update_slice
@@ -1022,7 +1032,7 @@ def shift_axes_forward(operand, axes: tuple, inverse: bool=False,
   other_axes = tuple([i for i in range(len(operand.shape)) if i not in axes])
   fwd_order = axes + other_axes if forward else other_axes + axes
   order = fwd_order if not inverse else _invert_permutation(fwd_order)
-  return tf.transpose(operand, order)
+  return tf_array_ops.transpose(operand, order)
 
 def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
   def error(msg):
@@ -1047,7 +1057,7 @@ def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
     front axes. This covers unique indices and non-unique indices
     of single depth.
 
-    Note on unique indices: `tf.tensor_scatter_nd_update` interprets
+    Note on unique indices: `tf_array_ops.tensor_scatter_nd_update` interprets
     indices thusly: every axis except the final one encodes a batch
     dimension, the final axis encoding the actual indices to scatter in to.
     It enforces, at least one, batch dimension so we add an empty
@@ -1060,17 +1070,17 @@ def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
     # Infer unique indices from lack of batch dimension
     unique_indices = unique_indices or (len(scatter_indices.shape) == 1)
     if unique_indices:
-      suboperand = tf.gather_nd(operand, scatter_indices)
+      suboperand = tf_array_ops.gather_nd(operand, scatter_indices)
       updated_suboperand = update_op(suboperand, updates)
       # add a batch dim if none exist
       if len(scatter_indices.shape) == 1:
         scatter_indices = scatter_indices[None]
         updated_suboperand = updated_suboperand[None]
-      y = tf.tensor_scatter_nd_update(operand, scatter_indices, updated_suboperand)
+      y = tf_array_ops.tensor_scatter_nd_update(operand, scatter_indices, updated_suboperand)
     else:
       if (scatter_indices.shape[-1] == 1) and (unsorted_segment_op != None):
         # If only indexing into the first dimension, it's a segment op
-        operand_update = unsorted_segment_op(updates, tf.squeeze(scatter_indices, -1), operand.shape[0])
+        operand_update = unsorted_segment_op(updates, tf_array_ops.squeeze(scatter_indices, -1), operand.shape[0])
         y = update_op(operand, operand_update)
       else:
         raise error("Scatter supports unique indices. Scatter also supports non-unique indices with indexing into only one dimension for (add, mul, min, max)")
@@ -1107,7 +1117,7 @@ def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
     wd = dimension_numbers.inserted_window_dims
     sd = dimension_numbers.scatter_dims_to_operand_dims
     dtype = operand.dtype # assume updates has same dtype as operand
-    if dtype in [tf.bool, tf.complex64]:
+    if dtype in [tf_dtypes.bool, tf_dtypes.complex64]:
       raise error(f"Scatter does not support operands of type {dtype}")
     if not (wd == sd):
       raise error("Complex scatters are not supported")
@@ -1134,9 +1144,9 @@ def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
   return sparse_scatter
 
 tf_impl_no_xla[lax.scatter_p] = convert_scatter_jax_to_tf(lambda x,y: y) # just replace with the update
-tf_impl_no_xla[lax.scatter_add_p] = convert_scatter_jax_to_tf(tf.add,      tf.math.unsorted_segment_sum)
-tf_impl_no_xla[lax.scatter_mul_p] = convert_scatter_jax_to_tf(tf.multiply, tf.math.unsorted_segment_prod)
-tf_impl_no_xla[lax.scatter_min_p] = convert_scatter_jax_to_tf(tf.minimum,  tf.math.unsorted_segment_min)
-tf_impl_no_xla[lax.scatter_max_p] = convert_scatter_jax_to_tf(tf.maximum,  tf.math.unsorted_segment_max)
+tf_impl_no_xla[lax.scatter_add_p] = convert_scatter_jax_to_tf(tf_math.add,      tf_math.unsorted_segment_sum)
+tf_impl_no_xla[lax.scatter_mul_p] = convert_scatter_jax_to_tf(tf_math.multiply, tf_math.unsorted_segment_prod)
+tf_impl_no_xla[lax.scatter_min_p] = convert_scatter_jax_to_tf(tf_math.minimum,  tf_math.unsorted_segment_min)
+tf_impl_no_xla[lax.scatter_max_p] = convert_scatter_jax_to_tf(tf_math.maximum,  tf_math.unsorted_segment_max)
 
 tf_impl_no_xla[lax.sort_p] = _unimplemented("sort")
