@@ -1,16 +1,10 @@
 sphinx >=3
-sphinx_rtd_theme
+sphinx-autodoc-typehints==1.11.1  # Unpin after jaxlib 0.3.15 is released (#11455)
 sphinx-book-theme
-sphinx-remove-toctrees
-# Newer versions cause issues; see https://github.com/google/jax/pull/6449
-sphinx-autodoc-typehints==1.11.1
 sphinx-copybutton>=0.5.0
+sphinx-remove-toctrees
 jupyter-sphinx>=0.3.2
 myst-nb
-
-# Need to pin docutils to 0.16 to make bulleted lists appear correctly on
-# ReadTheDocs: https://stackoverflow.com/a/68008428
-docutils==0.16.0
 
 # Packages used for CI tests.
 pytest
