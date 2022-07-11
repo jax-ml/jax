@@ -2516,6 +2516,8 @@ def diag_indices_from(arr):
 def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
   _check_arraylike("diagonal", a)
   a_shape = shape(a)
+  if ndim(a) < 2:
+    raise ValueError("diagonal requires an array of at least two dimensions.")
   offset = core.concrete_or_error(operator.index, offset, "'offset' argument of jnp.diagonal()")
 
   a = moveaxis(a, (axis1, axis2), (-2, -1))
