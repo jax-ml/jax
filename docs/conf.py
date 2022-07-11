@@ -201,8 +201,9 @@ nb_execution_excludepatterns = [
     'notebooks/Neural_Network_and_Data_Loading.*',
     # Strange error apparently due to asynchronous cell execution
     'notebooks/thinking_in_jax.*',
-    # TODO(jakevdp): enable execution on these
+    # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
     'design_notes/type_promotion.*',
+    # TODO(jakevdp): enable execution on the following if possible:
     'jax-101/*',
     'notebooks/xmap_tutorial.*',
 ]
