@@ -56,7 +56,7 @@ import pandas as pd
 types = [int, float, complex]
 name = lambda t: t.__name__
 pd.DataFrame([[name(type(t1(1) + t2(1))) for t1 in types] for t2 in types],
-             index=map(name, types), columns=map(name, types))
+             index=[name(t) for t in types], columns=[name(t) for t in types])
 ```
 
 +++ {"id": "Z9-VjJKHQ45U"}
