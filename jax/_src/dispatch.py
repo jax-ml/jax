@@ -357,7 +357,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
         f"compiling computation `{name}` that requires {nreps} replicas, but "
         f"only {xb.device_count(backend)} XLA devices are available.")
 
-  if xb.process_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
+  if xb.process_count() > 1 and (nreps > 1 or
+                                 jaxpr_has_primitive(jaxpr, "xla_pmap")):
     raise NotImplementedError(
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")
@@ -408,13 +409,13 @@ def jaxpr_literals(jaxpr):
     yield from jaxpr_literals(subjaxpr)
 
 
-def jaxpr_has_pmap(jaxpr):
-  """Whether there is an xla_pmap primitive anywhere inside a Jaxpr."""
+def jaxpr_has_primitive(jaxpr, prim_name: str):
+  """Whether there is a primitive given by user anywhere inside a Jaxpr."""
   for eqn in jaxpr.eqns:
-    if 'xla_pmap' in eqn.primitive.name:
+    if prim_name in eqn.primitive.name:
       return True
   for subjaxpr in core.subjaxprs(jaxpr):
-    if jaxpr_has_pmap(subjaxpr):
+    if jaxpr_has_primitive(subjaxpr, prim_name):
       return True
   return False
 
