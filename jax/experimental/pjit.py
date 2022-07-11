@@ -314,11 +314,8 @@ def pjit(fun: Callable,
       donated_invars = (False,) * len(args_flat)
 
     if config.jax_array:
-      in_shardings = _get_and_check_in_shardings(
-          dyn_args, in_axis_resources, pjit_mesh, in_tree)
-      out_shardings = out_axis_resources
-      _check_array_device_assignment(
-          pjit_mesh, tuple(tree_flatten(out_shardings)[0]))
+      in_shardings, out_shardings = _get_and_check_in_and_out_shardings(
+          args_flat, in_axis_resources, out_axis_resources, pjit_mesh, in_tree)
     else:
       in_shardings = tree_map(lambda x: _create_mesh_pspec_sharding(pjit_mesh, x),
                               in_axis_resources)
@@ -406,34 +403,32 @@ def hashable_pytree(pytree):
                           closure=(treedef, vals))
 
 
-def _get_and_check_in_shardings(args, pjit_in_shardings, pjit_mesh, in_tree):
-  try:
-    # tree_map over `args` to preserve the pytree structure of args.
-    arg_in_shardings = tree_map(lambda x: x.sharding, args)
-  except AttributeError:
-    arg_in_shardings = None
-
-  arg_in_shardings_flat = tuple(tree_flatten(arg_in_shardings)[0])
+def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardings,
+                                        pjit_mesh, in_tree):
+  arg_in_shardings_flat = tuple(a.sharding if hasattr(a, 'sharding') else _UNSPECIFIED
+                                for a in args_flat)
+  arg_ndims = tuple(a.ndim for a in args_flat)
 
   if _is_unspecified(pjit_in_shardings):
-    if arg_in_shardings is None:
-      raise ValueError('Please specify sharding either on the args or on pjit.')
-    else:
-      # This function is cached.
-      _check_array_device_assignment(pjit_mesh, arg_in_shardings_flat)
-      return arg_in_shardings
+    # If pjit_in_shardings is unspecified, then arg_in_shardings cannot have
+    # unspecified in them.
+    for a in arg_in_shardings_flat:
+      if _is_unspecified(a):
+        raise ValueError('Please specify sharding either on the arg or on '
+                         f'pjit. Found sharding {a} which is invalid.')
+    in_shardings_flat = arg_in_shardings_flat
   else:
-    if arg_in_shardings is None:
-      _check_array_device_assignment(
-          pjit_mesh, tuple(tree_flatten(pjit_in_shardings)[0]))
-      return pjit_in_shardings
-    else:
-      # This function is cached.
-      _check_pjit_arg_shardings(
-          hashable_pytree(pjit_in_shardings), arg_in_shardings_flat, in_tree)
-      return arg_in_shardings
+    # This function is cached.
+    in_shardings_flat = _get_and_check_pjit_arg_shardings(
+        hashable_pytree(pjit_in_shardings), arg_in_shardings_flat, arg_ndims,
+        in_tree)
 
-  assert False, "Please open a bug report!"  # This should be unreachable.
+  out_shardings_flat = tuple(tree_flatten(out_shardings)[0])
+  # Check if the device assignment is the same across inputs and outputs.
+  # This function is cached.
+  _check_array_device_assignment(pjit_mesh, in_shardings_flat + out_shardings_flat)
+
+  return tree_unflatten(in_tree, in_shardings_flat), out_shardings
 
 
 def _create_mesh_pspec_sharding(mesh, x):
@@ -1325,7 +1320,8 @@ def _check_array_device_assignment(pjit_mesh, shardings):
       # If mesh is empty, then check if all devices across shardings are
       # equal
       if first_device_assignment != arr_device_assignment:
-        raise ValueError("Devices of all `Array` inputs should be the same. "
+        raise ValueError("Devices of all `Array` inputs and outputs should be "
+                         "the same. "
                          f"Got array devices: {first_device_assignment},\n "
                          f"another array devices: {arr_device_assignment}")
     else:
@@ -1337,21 +1333,32 @@ def _check_array_device_assignment(pjit_mesh, shardings):
                          f"Array devices: {arr_device_assignment}")
 
 @cache()
-def _check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
-                              in_tree):
+def _get_and_check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
+                                      arg_ndims, in_tree):
   pjit_in_shardings_flat = flatten_axis_resources(
       "pjit in_shardings", in_tree, pjit_in_shardings(), tupled_args=True)
 
-  if pxla._check_if_any_auto(pjit_in_shardings_flat):
-    raise ValueError('Passing sharding on pjit and on args while using the '
-                     'auto spmd partitioner is not allowed. Please call the '
-                     'compiled object on the inputs.')
+  out = []
+  for pjit_sharding, arg_sharding, ndim in safe_zip(
+      pjit_in_shardings_flat, arg_in_shardings_flat, arg_ndims):
+    # If the sharding of the arg is not known, replace it with the sharding on
+    # pjit.
+    if _is_unspecified(arg_sharding):
+      out.append(pjit_sharding)
+    elif _is_auto(pjit_sharding):
+      raise ValueError('Passing sharding on pjit and on args while using the '
+                       'auto spmd partitioner is not allowed. Please call the '
+                       'compiled object on the inputs.')
+    else:
+      if pjit_sharding._to_xla_op_sharding(ndim) != arg_sharding._to_xla_op_sharding(ndim):
+        raise ValueError('Sharding passed to pjit does not match the sharding '
+                         'on the respective arg. '
+                         f'Got pjit sharding: {pjit_sharding},\n'
+                         f'arg sharding: {arg_sharding}')
+      out.append(pjit_sharding)
 
-  for p, a in safe_zip(pjit_in_shardings_flat, arg_in_shardings_flat):
-    if p.normalize() != a.normalize():
-      raise ValueError('Sharding passed to pjit does not match the sharding '
-                       'on the respective arg. '
-                       f'Got pjit sharding: {p},\narg sharding: {a}')
+  assert not any(_is_unspecified(o) for o in out)
+  return tuple(out)
 
 
 def _maybe_check_pjit_gda_mesh(args, mesh):
