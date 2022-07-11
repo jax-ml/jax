@@ -104,7 +104,7 @@ def call_tf(callable_tf: Callable) -> Callable:
       if any(not core.is_constant_dim(d) for d in a_jax.shape):
         msg = ("call_tf cannot be applied to shape-polymorphic arguments. "
                f"Found argument shape: {a_jax.shape}. "
-               "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+               "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
         raise ValueError(msg)
 
       return tf.TensorSpec(a_jax.shape, a_tf_dtype)
@@ -299,7 +299,7 @@ def _code_generator_and_avals(
     msg = (
         "call_tf works best with a TensorFlow function that does not capture "
         "variables or tensors from the context. "
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion. "
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion. "
         f"The following captures were found {concrete_function_flat_tf.captured_inputs}")
     logging.warning(msg)
     for inp in concrete_function_flat_tf.captured_inputs:
@@ -341,7 +341,7 @@ def _code_generator_and_avals(
       msg = ("Error compiling TensorFlow function. call_tf can used " +
              "in a staged context (under jax.jit, lax.scan, etc.) only with " +
              "compileable functions with static output shapes. " +
-             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
       raise ValueError(msg) from e
 
   xla_comp = xla_client.XlaComputation(func_tf_hlo)
@@ -365,7 +365,7 @@ def _code_generator_and_avals(
            f"{expected_parameter_avals}. Perhaps the TensorFlow function " +
            "has shape-influencing inputs, and thus needs to be recompiled " +
            "for each value of some inputs. " +
-           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
     raise ValueError(msg)
 
   # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
@@ -375,7 +375,7 @@ def _code_generator_and_avals(
              f"{res_shape}. call_tf can used " +
              "in a staged context (under jax.jit, lax.scan, etc.) only with " +
              "compileable functions with static output shapes. " +
-             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
       raise ValueError(msg)
 
     res_dtype = res_shape.numpy_dtype()
