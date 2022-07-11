@@ -19,6 +19,7 @@ import operator
 from typing import Any, Callable, List, Optional, Sequence, Tuple, TypeVar
 
 import jax
+import weakref
 from jax import core
 from jax import linear_util as lu
 from jax.config import config
@@ -51,6 +52,7 @@ from jax._src.util import (
     safe_zip,
     split_list,
     unzip2,
+    weakref_lru_cache,
     )
 import numpy as np
 
@@ -1497,18 +1499,20 @@ def _fori_cond_fun(loop_carry):
   i, upper, _ = loop_carry
   return lax.lt(i, upper)
 
-@cache()
+@weakref_lru_cache
 def _fori_body_fun(body_fun):
+  body_fun = weakref.ref(body_fun)
   def while_body_fun(loop_carry):
     i, upper, x = loop_carry
-    return lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)
+    return lax.add(i, lax._const(i, 1)), upper, body_fun()(i, x)
   return while_body_fun
 
-@cache()
+@weakref_lru_cache
 def _fori_scan_body_fun(body_fun):
+  body_fun = weakref.ref(body_fun)
   def scanned_fun(loop_carry, _):
     i, x = loop_carry
-    return (i + 1, body_fun(i, x)), None
+    return (i + 1, body_fun()(i, x)), None
   return scanned_fun
 
 @api_boundary
