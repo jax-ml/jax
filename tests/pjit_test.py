@@ -1451,9 +1451,27 @@ class ArrayPjitTest(jtu.JaxTestCase):
                  out_axis_resources=MeshPspecSharding(
                      global_mesh, P('x', 'y')))
         with self.assertRaisesRegex(
-            ValueError, ('Please specify sharding either on the args or on '
-                         'pjit.')):
+            ValueError, 'Please specify sharding either on the arg or on pjit'):
           f(input_data)
+
+  def test_numpy_array_input(self):
+    input_shape = (8, 2)
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_data = np.arange(
+        prod(input_shape), dtype=np.float32).reshape(input_shape)
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = pjit(lambda x: x,
+                 in_axis_resources=MeshPspecSharding(
+                     global_mesh, P(None)),
+                 out_axis_resources=MeshPspecSharding(
+                     global_mesh, P('x', 'y')))
+        out = f(input_data)
+        self.assertIsInstance(out, array.Array)
+        for s in out.addressable_shards:
+          self.assertEqual(s.data.shape, (2, 1))
+          self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
+        self.assertArraysEqual(out._value, input_data)
 
   def test_unspecified_out_axis_resources(self):
     global_input_shape = (8, 2)
@@ -1561,13 +1579,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
             in_axis_resources=MeshPspecSharding(global_mesh, P('x' ,'y')))(input_array)
         self.assertIsInstance(out, array.Array)
 
+  def test_in_axis_resources_error(self):
+    mesh = jtu.create_global_mesh((2,), ('x'))
+    with jax._src.config.jax_array(True):
+      with self.assertRaisesRegex(
+            ValueError,
+            ('When `config.jax_array` flag is enabled, '
+             'in_axis_resources should contain instances of `Sharding` '
+             'or `pjit.AUTO`.')):
+        pjit(lambda x: x,
+             in_axis_resources=(MeshPspecSharding(mesh, P('x')),
+                                pjit_lib._UNSPECIFIED))
 
   def test_out_axis_resources_error(self):
     with jax._src.config.jax_array(True):
       with self.assertRaisesRegex(
             ValueError,
             ('When `config.jax_array` flag is enabled, '
-             'out_axis_resources should contain instances of `Sharding`.')):
+             'out_axis_resources should contain instances of `Sharding` '
+             'or `pjit.AUTO`.')):
         pjit(lambda x: x, out_axis_resources=P('x'))
 
   def test_no_input_output(self):
@@ -1629,6 +1659,39 @@ class ArrayPjitTest(jtu.JaxTestCase):
           pjit(lambda x, y: (x, y),
                out_axis_resources=(MeshPspecSharding(m1, spec),
                                    MeshPspecSharding(m2, spec)))(a1, a1)
+
+  def test_array_device_assignment_mismatch_in_and_out_shardings(self):
+    input_shape = (8, 2)
+    m1 = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    m2 = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    spec = P('x', 'y')
+
+    a1, _ = create_array(input_shape, m2, spec)
+
+    with jax._src.config.jax_array(True):
+      with m1:
+        with self.assertRaisesRegex(
+            ValueError, "Pjit's devices and Array's devices should be equal"):
+          pjit(lambda x, y: (x, y),
+               in_axis_resources=MeshPspecSharding(m2, spec),
+               out_axis_resources=MeshPspecSharding(m1, spec))(a1, a1)
+
+  def test_mixed_inputs(self):
+    input_shape = (8, 2)
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    spec = P('x', 'y')
+
+    a1, input_data = create_array(input_shape, global_mesh, spec)
+
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = pjit(lambda x, y: (x, y),
+                 in_axis_resources=MeshPspecSharding(global_mesh, P(None)))
+        with self.assertRaisesRegex(
+            ValueError,
+            ('Sharding passed to pjit does not match the sharding on the '
+             'respective arg')):
+          f(input_data, a1)
 
 
 def spec_regex(s):
