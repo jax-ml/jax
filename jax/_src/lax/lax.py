@@ -2161,7 +2161,7 @@ rem_p = standard_naryop([_int | _float, _int | _float], 'rem')
 ad.defjvp(
     rem_p,
     lambda g, x, y: _maybe_broadcast(broadcast_shapes(np.shape(x), np.shape(y)), g),
-    lambda g, x, y: mul(neg(g), floor(div(x, y))))
+    lambda g, x, y: mul(neg(g), mul(sign(div(x, y)), floor(abs(div(x, y))))))
 mlir.register_lowering(rem_p, partial(_nary_lower_mhlo, mhlo.RemOp))
 
 def _minmax_complex_lowering(x, y, *, lax_cmp_pick_x):
