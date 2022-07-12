@@ -1372,11 +1372,8 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
     mlir.lower_fun(partial(_tile, in_axes=arg_in_axes,
                            axis_sizes=local_mesh_shape),
                    multiple_results=False)(
-          mlir.LoweringRuleContext(module_context=ctx.module_context,
-                                   primitive=None,
-                                   avals_in=[aval], avals_out=None,
-                                   tokens_in=ctx.tokens_in,
-                                   tokens_out=ctx.tokens_out),
+          ctx.replace(primitive=None,
+                      avals_in=[aval], avals_out=None),
           in_node)[0]
     for v, aval, in_node, arg_in_axes
     in zip(call_jaxpr.invars, ctx.avals_in, in_nodes, mesh_in_axes))
@@ -1398,12 +1395,9 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
           partial(_untile, out_axes=ans_out_axes, axis_sizes=local_mesh_shape,
                   platform=ctx.module_context.platform),
           multiple_results=False)(
-              mlir.LoweringRuleContext(module_context=ctx.module_context,
-                                       primitive=None,
-                                       avals_in=[vectorized_outvar.aval],
-                                       avals_out=None,
-                                       tokens_in=ctx.tokens_in,
-                                       tokens_out=ctx.tokens_out), tiled_out)[0]
+              ctx.replace(primitive=None,
+                          avals_in=[vectorized_outvar.aval],
+                          avals_out=None), tiled_out)[0]
       for v, vectorized_outvar, tiled_out, ans_out_axes
       in zip(call_jaxpr.outvars, vectorized_jaxpr.outvars, tiled_outs,
              mesh_out_axes)]
