@@ -3977,13 +3977,9 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   with ir.InsertionPoint(comparator):
     lower_comparator = mlir.lower_fun(partial(_sort_lt_comparator),
                                       multiple_results=False)
-    sub_ctx = mlir.LoweringRuleContext(
-        module_context = ctx.module_context,
-        primitive=None,
-        avals_in=util.flatten(zip(scalar_avals, scalar_avals)),
-        avals_out=[core.ShapedArray((), np.bool_)],
-        tokens_in=ctx.tokens_in,
-        tokens_out=ctx.tokens_out)
+    sub_ctx = ctx.replace(primitive=None,
+                          avals_in=util.flatten(zip(scalar_avals, scalar_avals)),
+                          avals_out=[core.ShapedArray((), np.bool_)])
 
     out = lower_comparator(sub_ctx, *[[a] for a in comparator.arguments],
                            num_keys=num_keys)

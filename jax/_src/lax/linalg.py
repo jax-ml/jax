@@ -1199,12 +1199,7 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
                                   ir.IntegerType.get_signless(1)),
           ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
       lu, _nan_like_mhlo(out_aval))
-  sub_ctx = mlir.LoweringRuleContext(module_context=ctx.module_context,
-                                     primitive=None,
-                                     avals_in=[pivot_aval],
-                                     avals_out=[perm_aval],
-                                     tokens_in=ctx.tokens_in,
-                                     tokens_out=ctx.tokens_out)
+  sub_ctx = ctx.replace(primitive=None, avals_in=[pivot_aval], avals_out=[perm_aval])
   perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
                            multiple_results=False)
   perm, = perm_fn(sub_ctx, pivot)
