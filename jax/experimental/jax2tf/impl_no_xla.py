@@ -71,29 +71,41 @@ def _invert_permutation(perm):
   return tuple(perm.index(i) for i in range(len(perm)))
 
 
-def _transpose_for_tf_conv(lhs, rhs, dimension_numbers):
-  """Tranposes lhs and rhs to respectively NHWC and HWIO so they can be passed to TF functions."""
+def _transpose_with_shape(x: TfVal, x_shape: core.Shape, permutation) -> Tuple[TfVal, core.Shape]:
+  """Computes transposition of x and its shape.
+  x_shape matches x.shape in the known dimensions, and it has dimension
+  polynomials elsewhere, while x.shape has None."""
+  return tf.transpose(x, perm=permutation), tuple(x_shape[i] for i in permutation)
+
+def _transpose_for_tf_conv(lhs, lhs_shape: core.Shape,
+                           rhs, rhs_shape: core.Shape, dimension_numbers):
+  """Tranposes lhs and rhs to respectively NHWC and HWIO so they can be passed to TF functions.
+
+  The shapes passed in and returned may contain polynomials, and thus may
+  be different than lhs.shape and rhs.shape."""
   # TODO(marcvanzee): Add tests for this ops for shape polymorphism.
   lhs_perm, rhs_perm, _ = dimension_numbers
 
   # TODO(marcvanzee): Consider merging tranposes if we want to optimize.
   # For `lhs_perm` / `output_perm`, perm (0, 1, 2, 3) corresponds to "NCHW".
-  lhs = tf.transpose(lhs, lhs_perm)  # lhs --> "NCHW"
+  lhs, lhs_shape = _transpose_with_shape(lhs, lhs_shape, lhs_perm)  # lhs --> "NCHW"
   if len(lhs_perm) == 3:
     # For 1D convolution, we add a trivial "W" dimension, so that 2D Convolution
     # logic can be applied downstream.
     lhs = lhs[:, :, :, np.newaxis]
+    lhs_shape = tuple(lhs_shape) + (1,)
   # However, the TF ops only support "NHWC" on CPU, so we transpose again.
-  lhs = tf.transpose(lhs, (0, 2, 3, 1))  # "NCHW" --> "NHWC"
+  lhs, lhs_shape = _transpose_with_shape(lhs, lhs_shape, (0, 2, 3, 1))  # "NCHW" --> "NHWC"
 
   # For `rhs_perm`, perm (0, 1, 2, 3) corresponds to "OIHW".
-  rhs = tf.transpose(rhs, rhs_perm)  # rhs --> "OIHW"
+  rhs, rhs_shape = _transpose_with_shape(rhs, rhs_shape, rhs_perm)  # rhs --> "OIHW"
   # Handle conv1d case.
   if len(rhs_perm) == 3:
     rhs = rhs[:, :, :, np.newaxis]
+    rhs_shape = tuple(rhs_shape) + (1,)
   # For the tf ops, rhs is expected to be "OIHW".
-  rhs = tf.transpose(rhs, (2, 3, 1, 0))  # "OIHW" --> "HWIO"
-  return lhs, rhs
+  rhs, rhs_shape = _transpose_with_shape(rhs, rhs_shape, (2, 3, 1, 0))  # "OIHW" --> "HWIO"
+  return lhs, lhs_shape, rhs, rhs_shape
 
 
 def pads_to_padtype(in_shape, window_shape, window_strides, padding) -> str:
@@ -104,18 +116,22 @@ def pads_to_padtype(in_shape, window_shape, window_strides, padding) -> str:
   return "EXPLICIT"
 
 
-def _pad_spatial_dims(in_shape, padding, is_conv1d):
-  """Pads `in_shape` using `padding`, which specifies padding for the spatial dimensions."""
+def _pad_spatial_dims(x, x_shape, padding, is_conv1d):
+  """Pads `x` using `padding`, which specifies padding for the spatial dimensions."""
   # Add empty padding for batch and feature dimensions.
-  no_pad = tf.constant([[0, 0]])
+  no_pad = ((0, 0),)
+  padding = tuple(padding)
   if is_conv1d:
-    padding = tf.concat([no_pad, padding, no_pad], 0)
+    padding = no_pad + padding + no_pad
     # Add empty padding for dummy dimension, too.
-    padding = tf.concat([no_pad, padding, no_pad, no_pad], 0)
+    padding = no_pad + padding + no_pad + no_pad
   else:
-    padding = tf.concat([no_pad, padding, no_pad], 0)
-    in_shape = tf.pad(in_shape, padding)
-  return in_shape
+    padding = no_pad + padding + no_pad
+  x = tf.pad(x, padding)
+  assert len(x.shape) == len(padding)
+  x_shape = tuple(p0 + xs + p1 for xs, (p0, p1) in zip(x_shape, padding))
+  jax2tf._assert_matching_abstract_shape(x, x_shape)
+  return x, x_shape
 
 
 def _conv_transpose_pads_to_padtype(kernel_sdims, lhs_dilation, padding):
@@ -224,19 +240,27 @@ def _conv_general_dilated(
     preferred_element_type: Optional[DType],
     _in_avals: Sequence[core.ShapedArray], _out_aval: core.ShapedArray):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
+  # In presence of shape polymorphism, lhs.shape and rhs.shape may contain
+  # None. The actual dimension polynomial shapes are in _in_avals.
   del lhs_shape, rhs_shape, precision  # Unused arguments.
-  out_shape = jax2tf._aval_to_tf_shape(_out_aval)
-  _validate_spatial_dimensions(len(lhs.shape) - 2)
-  is_conv1d = len(lhs.shape) - 2 == 1
+  lhs_shape, rhs_shape = _in_avals[0].shape, _in_avals[1].shape
+  jax2tf._assert_matching_abstract_shape(lhs, lhs_shape)
+  jax2tf._assert_matching_abstract_shape(rhs, rhs_shape)
+  out_shape = _out_aval.shape
+  _validate_spatial_dimensions(len(lhs_shape) - 2)
+  is_conv1d = len(lhs_shape) - 2 == 1
 
   tf_window_strides = _normalize_window_strides(window_strides)
   padding, lhs_dilation, rhs_dilation = _normalize_padding_and_dilations(
       padding, lhs_dilation, rhs_dilation, is_conv1d)
 
-  lhs, rhs = _transpose_for_tf_conv(lhs, rhs, dimension_numbers)
-
-  in_channels = lhs.shape[-1]
-  *rhs_spatial_shapes, _, rhs_out_channel = rhs.shape
+  lhs, lhs_shape, rhs, rhs_shape = _transpose_for_tf_conv(lhs, lhs_shape,
+                                                          rhs, rhs_shape,
+                                                          dimension_numbers)
+  jax2tf._assert_matching_abstract_shape(lhs, lhs_shape)
+  jax2tf._assert_matching_abstract_shape(rhs, rhs_shape)
+  in_channels = lhs_shape[-1]
+  *rhs_spatial_shapes, _, rhs_out_channel = rhs_shape
 
   is_transpose = any([d != 1 for d in lhs_dilation])
   is_atrous = any([d != 1 for d in rhs_dilation])
@@ -255,18 +279,18 @@ def _conv_general_dilated(
         rhs_spatial_shapes, lhs_dilation, padding)
   else:
     padding_type = pads_to_padtype(
-      lhs.shape[1:3], rhs_dilated_shape, window_strides, padding)
+      lhs_shape[1:3], rhs_dilated_shape, window_strides, padding)
     # We only manually pad if we aren't using a tranposed convolutions.
     if padding_type == "EXPLICIT":
-      lhs = _pad_spatial_dims(lhs, padding, is_conv1d)
+      lhs, lhs_shape = _pad_spatial_dims(lhs, lhs_shape, padding, is_conv1d)
       padding_type = "VALID"
 
-  if any(r > l for l, r in zip(lhs.shape[1:3], rhs_dilated_shape)
-        ) and padding_type != "SAME":
-    # If the filter shape is bigger than the input shape in a spatial dimension,
+  if padding_type != "SAME" and any(l < r for l, r in zip(lhs_shape[1:3], rhs_dilated_shape)):
+    # If the input shape is smaller than the filter shape in a spatial dimension,
     # lax returns only zeros while tf.conv2d returns an error.
     # We thus return zeros to make sure the behavior is consistent.
-    return tf.broadcast_to(tf.constant(0, dtype=tf.float32), out_shape)
+    return tf.broadcast_to(tf.constant(0, dtype=tf.float32),
+                           jax2tf._eval_shape(out_shape))
 
   if is_depthwise:
     # Reshape filter from
@@ -276,7 +300,7 @@ def _conv_general_dilated(
                                                  rhs_out_channel // in_channels)
     output = tf.nn.depthwise_conv2d(
         input=lhs,
-        filter=tf.reshape(rhs, new_rhs_shape),
+        filter=tf.reshape(rhs, jax2tf._eval_shape(new_rhs_shape)),
         strides=tf_window_strides,
         padding=padding_type,
         dilations=rhs_dilation)
@@ -286,7 +310,7 @@ def _conv_general_dilated(
     rhs_t = tf.reverse(rhs, [0, 1])
     rhs_t = tf.transpose(rhs_t, (0, 1, 3, 2))
 
-    # We should tranpose `out_shape` to "NHWC", which is what TF expects.
+    # We should transpose `out_shape` to "NHWC", which is what TF expects.
     # First transpose to "NCHW".
     if is_conv1d:
       tf_out_shape = tuple(out_shape[i] for i in output_perm) + (1,)
@@ -297,7 +321,7 @@ def _conv_general_dilated(
     output = tf.nn.conv2d_transpose(
         input=lhs,
         filters=rhs_t,
-        output_shape=tf_out_shape,
+        output_shape=jax2tf._eval_shape(tf_out_shape),
         strides=lhs_dilation,
         padding=padding_type)
 
