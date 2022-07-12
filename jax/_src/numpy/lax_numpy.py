@@ -4508,17 +4508,7 @@ def _itemsize(arr):
     return _dtype(arr).itemsize
 
 
-def _clip(number, min=None, max=None, out=None, *, a_min=None, a_max=None):  # noqa: F811
-  # ndarray.clip has a slightly different API from clip (min -> a_min, max -> a_max)
-  # TODO: remove after deprecation window
-  if a_min is not None or a_max is not None:
-    warnings.warn('`a_min` and `a_max` keyword arguments to ndarray.clip are deprecated '
-                  'in favor of `min` and `max` for compatibility with numpy. '
-                  'They will be removed in JAX 0.22.2', FutureWarning)
-  if min is None and a_min is not None:
-    min = a_min
-  if max is None and a_max is not None:
-    max = a_max
+def _clip(number, min=None, max=None, out=None):  # noqa: F811
   return clip(number, a_min=min, a_max=max, out=out)
 
 
