@@ -847,15 +847,14 @@ def _dynamic_update_slice(operand, update, *start_indices,
 
   start_indices = _clip(op_shape, start_indices, update_shape_tf)
   end_indices = tf.add(start_indices, update_shape_tf)
-  flatten = tf.keras.backend.flatten
 
   # Get the cells to update in `operand` as an array of ids.
   id_tensor = tf.reshape(tf.range(op_size), op_shape)
   scattered_indices = tf.strided_slice(id_tensor, start_indices, end_indices)
 
   # Create an array containing updates at scattered_indices and zeros otherwise.
-  flat_indices = tf.expand_dims(flatten(scattered_indices), -1)
-  flat_update = flatten(update)
+  flat_indices = tf.expand_dims(tf.nest.flatten(scattered_indices), -1)
+  flat_update = tf.nest.flatten(update)
   update = tf.scatter_nd(flat_indices, flat_update, (op_size,))
   update = tf.reshape(update, op_shape)
 
