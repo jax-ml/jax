@@ -1189,7 +1189,11 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
   m = operand_aval.shape[-2]
   lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = mhlo.SubOp(pivot, mlir.full_like_aval(1, pivot_aval)).result
+  if jax._src.lib.mlir_api_version < 29:
+    op = mhlo.SubOp
+  else:
+    op = mhlo.SubtractOp
+  pivot = op(pivot, mlir.full_like_aval(1, pivot_aval)).result
   ok = mlir.compare_mhlo(
       info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "GE", "SIGNED")

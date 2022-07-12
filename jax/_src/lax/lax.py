@@ -2116,7 +2116,10 @@ def _sub_transpose(t, x, y):
 sub_p = standard_naryop([_num, _num], 'sub')
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
-mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubOp))
+if jax._src.lib.mlir_api_version < 29:
+  mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubOp))
+else:
+  mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubtractOp))
 
 
 def _mul_transpose(ct, x, y):
