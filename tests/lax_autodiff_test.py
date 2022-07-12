@@ -1060,19 +1060,24 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   # TODO(mattjj): make this a more systematic test
   def testRemainder(self):
-    rng = self.rng()
-    x = rng.uniform(-0.9, 9, size=(3, 4))
-    y = rng.uniform(0.7, 1.9, size=(3, 1))
-    assert not set(np.unique(x)) & set(np.unique(y))
-    # TODO(jakevdp) try to make these tolerances tighter.
-    tol = 1e-1
-    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
+    def gen_x(rng, size):
+      return rng.uniform(-9, 9, size=size)
+
+    def gen_y(rng, size):
+      # avoid values near zero because gradients diverge
+      return rng.uniform(0.1, 5, size=size) * rng.choice([-1, 1], size=size)
 
     rng = self.rng()
-    x = rng.uniform(-0.9, 9, size=(1, 4))
-    y = rng.uniform(0.7, 1.9, size=(3, 4))
+    x = gen_x(rng, (5, 8))
+    y = gen_y(rng, (1, 8))
     assert not set(np.unique(x)) & set(np.unique(y))
-    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
+    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"])
+
+    rng = self.rng()
+    x = gen_x(rng, (1, 8))
+    y = gen_y(rng, (5, 8))
+    assert not set(np.unique(x)) & set(np.unique(y))
+    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"])
 
   def testHigherOrderGradientOfReciprocal(self):
     # Regression test for https://github.com/google/jax/issues/3136
