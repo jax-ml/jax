@@ -884,6 +884,7 @@ exports_files(
     [
         "api_test.py",
         "pmap_test.py",
+        "compilation_cache_test.py",
         "sharded_jit_test.py",
         "pjit_test.py",
         "transfer_guard_test.py",
