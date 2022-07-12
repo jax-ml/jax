@@ -20,7 +20,7 @@ import re
 import threading
 from typing import Callable, Sequence, Optional
 from absl import logging
-
+import optax
 import jax
 from jax._src import distributed
 from jax._src.util import prod
@@ -192,6 +192,9 @@ def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
 async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
                             global_shape=None, dtype=None,
                             byte_limiter: Optional[_LimitInFlightBytes] = None):
+  tleaves, _ = jax.tree_flatten(tensorstore_spec, is_leaf=lambda x: isinstance(x, optax.MaskedNode))
+  if optax.MaskedNode() in tleaves:
+    return optax.MaskedNode()
   t = await ts.open(ts.Spec(tensorstore_spec), open=True, context=TS_CONTEXT)
   shape = t.shape if global_shape is None else global_shape
   new_shard_shape = gda.get_shard_shape(tuple(shape), mesh, mesh_axes)
