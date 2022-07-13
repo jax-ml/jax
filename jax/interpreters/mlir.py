@@ -81,9 +81,13 @@ def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 
 def shape_tensor(sizes: Sequence[Union[int, ir.RankedTensorType]]
                  ) -> ir.RankedTensorType:
-  int1d = aval_to_ir_type(core.ShapedArray((1,), np.dtype('int32')))
-  d, *ds = [ir_constant(np.array([d], np.dtype('int32'))) if type(d) is int
-            else mhlo.ReshapeOp(int1d, d) for d in sizes]
+  int1d = aval_to_ir_type(core.ShapedArray((1,), np.int32))
+  def lower_dim(d):
+    if type(d) is int:
+      return ir_constant(np.array([d], np.int32))
+    else:
+      return mhlo.ReshapeOp(int1d, mhlo.ConvertOp(aval_to_ir_type(core.ShapedArray((), np.int32)), d))
+  d, *ds = map(lower_dim, sizes)
   if not ds:
     return d
   else:
@@ -964,9 +968,9 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
           avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
           tokens_out=None)
       if config.jax_dynamic_shapes:
-        axis_size_env = {d: read(d)[0] for a in avals_in
-                         if type(a) is core.DShapedArray for d in a.shape
-                         if type(d) is core.Var}
+        axis_size_env = {d: read(d)[0]
+                         for a in avals_in if type(a) is core.DShapedArray
+                         for d in a.shape if type(d) is core.Var}
         rule_ctx = rule_ctx.replace(axis_size_env=axis_size_env)
       ans = rule(rule_ctx, *map(_unwrap_singleton_ir_values, in_nodes),
                  **eqn.params)
