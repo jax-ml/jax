@@ -23,7 +23,7 @@ from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax._src import ad_util
 from jax._src import util
-from jax._src.util import cache, safe_map, unzip3
+from jax._src.util import cache, weakref_lru_cache, safe_map, unzip3
 from jax.tree_util import tree_map, tree_unflatten, tree_structure
 
 map, unsafe_map = safe_map, map
@@ -43,7 +43,7 @@ def _typecheck_param(prim, param, name, msg_required, pred):
     msg = sep.join([msg, param_str])
     raise core.JaxprTypeError(msg)
 
-@cache()
+@weakref_lru_cache
 def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
                               primitive_name: Optional[str] = None):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
@@ -51,7 +51,7 @@ def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals, debug)
   return jaxpr, consts, out_tree()
 
-@cache()
+@weakref_lru_cache
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals,
                          primitive_name: Optional[str] = None):
   jaxpr, consts, out_tree = _initial_style_open_jaxpr(
