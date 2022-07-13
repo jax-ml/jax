@@ -1148,8 +1148,7 @@ def _make_harness(group_name: str, name: str,
                       func, args, poly_axes=poly_axes,
                       check_result=check_result, tol=tol, enable_xla=enable_xla,
                       enable_and_disable_xla=False, skip_jax_run=skip_jax_run,
-                      expect_error=expect_error,
-                      **params)
+                      expect_error=expect_error)
         for enable_xla in [True, False]
     ]
   poly_axes_name = f"poly_axes={repr(poly_axes)}"
@@ -1167,8 +1166,7 @@ def _make_harness(group_name: str, name: str,
                  dtype=np.float32,
                  poly_axes=poly_axes, check_result=check_result,
                  skip_jax_run=skip_jax_run, expect_error=expect_error,
-                 tol=tol,
-                 **params)
+                 tol=tol)
 
 
 _f32 = np.float32
