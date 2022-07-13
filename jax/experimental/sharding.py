@@ -106,10 +106,17 @@ class MeshPspecSharding(XLACompatibleSharding):
     return f'MeshPspecSharding(\n  mesh={self.mesh},\n  partition_spec={self.spec})'
 
   def __hash__(self):
-    return hash((self.mesh, self.spec))
+    if not hasattr(self, '_hash'):
+      self._hash = hash((self.mesh, self._parsed_pspec))
+    return self._hash
 
   def __eq__(self, other):
-    return self.mesh == other.mesh and self.spec == other.spec
+    if not isinstance(other, MeshPspecSharding):
+      return False
+
+    if id(self.mesh) == id(other.mesh) and self._parsed_pspec == other._parsed_pspec:
+      return True
+    return self.mesh == other.mesh and self._parsed_pspec == other._parsed_pspec
 
   def normalize(self):
     from jax.experimental import pjit
@@ -158,10 +165,9 @@ class MeshPspecSharding(XLACompatibleSharding):
   def _to_xla_op_sharding(
       self, num_dimensions: int,
       axis_ctx: Optional[mlir.SPMDAxisContext] = None) -> Optional[xc.OpSharding]:
-    from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
+    from jax.experimental.pjit import get_array_mapping
 
-    parsed_spec, _, _, _ = _prepare_axis_resources(self.spec, "spec")
-    array_mapping = get_array_mapping(parsed_spec)
+    array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in MeshPspecSharding
     # since we don't really need sharding spec.
     sharding_spec = pxla.new_mesh_sharding_specs(
