@@ -11,4 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from jax._src.debugger.cli_debugger import breakpoint
+from jax._src.debugger.core import breakpoint
+from jax._src.debugger import cli_debugger
+
+del cli_debugger  # For registration only
