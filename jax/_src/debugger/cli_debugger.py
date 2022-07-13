@@ -21,7 +21,6 @@ from typing import Any, IO, List, Optional
 
 from jax._src.debugger import core as debugger_core
 
-
 DebuggerFrame = debugger_core.DebuggerFrame
 
 class CliDebugger(cmd.Cmd):
