@@ -105,6 +105,8 @@ def _transpose_for_tf_conv(lhs, lhs_shape: core.Shape,
     rhs_shape = tuple(rhs_shape) + (1,)
   # For the tf ops, rhs is expected to be "OIHW".
   rhs, rhs_shape = _transpose_with_shape(rhs, rhs_shape, (2, 3, 1, 0))  # "OIHW" --> "HWIO"
+  jax2tf._assert_matching_abstract_shape(lhs, lhs_shape)
+  jax2tf._assert_matching_abstract_shape(rhs, rhs_shape)
   return lhs, lhs_shape, rhs, rhs_shape
 
 
@@ -169,8 +171,13 @@ def _conv_transpose_pads_to_padtype(kernel_sdims, lhs_dilation, padding):
   raise ValueError('Transpose convolution padding mode must be '
                    '`SAME` or `VALID`.')
 
-def _validate_spatial_dimensions(nr_spatial_dimensions):
+def _validate_spatial_dimensions(lhs: TfVal, lhs_shape: core.Shape,
+                                 rhs: TfVal, rhs_shape: core.Shape):
   """Check spatial dimension support."""
+  jax2tf._assert_matching_abstract_shape(lhs, lhs_shape)
+  jax2tf._assert_matching_abstract_shape(rhs, rhs_shape)
+
+  nr_spatial_dimensions = len(lhs_shape) - 2
   # Currently we only support 1D+2D convolutions because it keeps the code
   # relatively simple and covers most cases.
   if nr_spatial_dimensions > 2:
@@ -244,10 +251,8 @@ def _conv_general_dilated(
   # None. The actual dimension polynomial shapes are in _in_avals.
   del lhs_shape, rhs_shape, precision  # Unused arguments.
   lhs_shape, rhs_shape = _in_avals[0].shape, _in_avals[1].shape
-  jax2tf._assert_matching_abstract_shape(lhs, lhs_shape)
-  jax2tf._assert_matching_abstract_shape(rhs, rhs_shape)
   out_shape = _out_aval.shape
-  _validate_spatial_dimensions(len(lhs_shape) - 2)
+  _validate_spatial_dimensions(lhs, lhs_shape, rhs, rhs_shape)
   is_conv1d = len(lhs_shape) - 2 == 1
 
   tf_window_strides = _normalize_window_strides(window_strides)
@@ -257,8 +262,6 @@ def _conv_general_dilated(
   lhs, lhs_shape, rhs, rhs_shape = _transpose_for_tf_conv(lhs, lhs_shape,
                                                           rhs, rhs_shape,
                                                           dimension_numbers)
-  jax2tf._assert_matching_abstract_shape(lhs, lhs_shape)
-  jax2tf._assert_matching_abstract_shape(rhs, rhs_shape)
   in_channels = lhs_shape[-1]
   *rhs_spatial_shapes, _, rhs_out_channel = rhs_shape
 
