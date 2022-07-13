@@ -321,7 +321,10 @@ def pjit(fun: Callable,
                               in_axis_resources)
       out_shardings = tree_map(lambda x: x if _is_unspecified(x) else
                                _create_mesh_pspec_sharding(pjit_mesh, x), out_axis_resources)
-      _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
+      # This check fails extrememly rarely and has a huge cost in the dispatch
+      # path. So hide it behind the jax_enable_checks flag.
+      if config.jax_enable_checks:
+        _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
 
     if not config.jax_array and in_any_auto and not _global_avals:
       raise ValueError('Auto sharding is only enabled for global inputs. '
@@ -431,6 +434,7 @@ def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardi
   return tree_unflatten(in_tree, in_shardings_flat), out_shardings
 
 
+@cache()
 def _create_mesh_pspec_sharding(mesh, x):
   if _is_unspecified_or_from_gda_or_auto(x):
     return x
