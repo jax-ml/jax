@@ -29,10 +29,15 @@ with open('jax/version.py') as f:
 __version__ = _dct['__version__']
 _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 
+with open('README.md') as f:
+  _long_description = f.read()
+
 setup(
     name='jax',
     version=__version__,
     description='Differentiate, compile, and transform Numpy code.',
+    long_description=_long_description,
+    long_description_content_type='text/markdown',
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
