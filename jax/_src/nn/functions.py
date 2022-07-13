@@ -200,7 +200,7 @@ def celu(x: Array, alpha: Array = 1.0) -> Array:
     x : input array
     alpha : array or scalar (default: 1.0)
   """
-  return jnp.where(x > 0, x, alpha * jnp.expm1(x / alpha))
+  return jnp.maximum(x, 0.0) + alpha * jnp.expm1(jnp.minimum(x, 0.0) / alpha)
 
 @jax.jit
 def selu(x: Array) -> Array:
