@@ -82,6 +82,7 @@ symlink_files(
 )
 
 exports_files([
+    "README.md",
     "setup.py",
     "setup.cfg",
 ])
