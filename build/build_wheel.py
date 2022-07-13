@@ -163,6 +163,7 @@ def prepare_wheel(sources_path):
 
   verify_mac_libraries_dont_reference_chkstack()
   copy_file("__main__/build/LICENSE.txt", dst_dir=sources_path)
+  copy_file("__main__/jaxlib/README.md", dst_dir=sources_path)
   copy_file("__main__/jaxlib/setup.py", dst_dir=sources_path)
   copy_file("__main__/jaxlib/setup.cfg", dst_dir=sources_path)
   copy_to_jaxlib("__main__/jaxlib/init.py", dst_filename="__init__.py")

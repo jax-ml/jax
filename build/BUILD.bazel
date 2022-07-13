@@ -41,6 +41,7 @@ py_binary(
     data = [
         "LICENSE.txt",
         "//jaxlib",
+        "//jaxlib:README.md",
         "//jaxlib:setup.py",
         "//jaxlib:setup.cfg",
         "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",

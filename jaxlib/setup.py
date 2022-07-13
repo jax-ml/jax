@@ -21,6 +21,9 @@ project_name = 'jaxlib'
 with open('jaxlib/version.py') as f:
   exec(f.read(), globals())
 
+with open('README.md') as f:
+  _long_description = f.read()
+
 cuda_version = os.environ.get("JAX_CUDA_VERSION")
 cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
 if cuda_version and cudnn_version:
@@ -34,6 +37,8 @@ setup(
     name=project_name,
     version=__version__,
     description='XLA library for JAX',
+    long_description=_long_description,
+    long_description_content_type='text/markdown',
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=['jaxlib', 'jaxlib.xla_extension'],
