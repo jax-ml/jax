@@ -20,11 +20,13 @@ from absl.testing import absltest, parameterized
 
 import numpy as np
 import scipy.stats as osp_stats
+import pytest
 
 import jax
 from jax._src import test_util as jtu, tree_util
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
+import jax.numpy as jnp
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -888,6 +890,111 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     kde2 = tree_util.tree_unflatten(treedef, leaves)
     tree_util.tree_map(lambda a, b: self.assertAllClose(a, b), kde, kde2)
     self.assertAllClose(evaluate_kde(kde, x), kde.evaluate(x))
+
+  @parameterized.named_parameters(
+    jtu.cases_from_list(
+      {
+        "testcase_name":
+          f"""{x_shape};{x_dtype};{axis};{nan_policy};{contains_nans} """,
+        "x_shape": x_shape,
+        "x_dtype": x_dtype,
+        "axis": axis,
+        "nan_policy": nan_policy,
+        "contains_nans": contains_nans
+      }
+      # Just using np.float32 since we get limited tests.
+      for (x_dtype, x_shape, axis, nan_policy, contains_nans) in [
+        (np.float32, (0,), None, 'propagate', False),
+        (np.float32, (17,), None, 'propagate', False),
+        (np.float32, (17,), 0, 'propagate', True),
+        (np.float32, (37, 5), 0, 'omit', True),
+        (np.float32, (37, 5), 1, 'propagate', False),
+        (np.float32, (37, 5, 3), None, 'propagate', True),
+        (np.float32, (37, 5, 3), 0, 'raise', False),
+        (np.float32, (37, 5, 3), 1, 'banana', False),
+        (np.float32, (37, 5, 3), 2, 'propagate', True)
+      ]
+    )
+  )
+  def testMode(self, x_shape, x_dtype, axis, nan_policy, contains_nans):
+    """Tests the main `jax.scipy.stats` `mode` function."""
+    # The function that is jit-compilable.
+    from jax._src.scipy.stats._core import _mode as lax_jit_fun
+    lax_fun = lsp_stats.mode
+    scipy_fun = osp_stats.mode
+
+    def _check_against_scipy_mode(
+      scipy_reference_op,
+      lax_op,
+      args_maker,
+      check_dtypes=True,
+      tol=None,
+      atol=None,
+      rtol=None,
+      canonicalize_dtypes=True
+    ):
+      """
+      Hacky(ish) reimplementation of `jax._src.test_util`'s `_CheckAgainstNumpy`.
+      The `scipy.stats.mode` function returns a tuple:
+       `namedtuple("ModeResult", ("mode", "count"))`
+      So, we need to check both parts.
+      """
+      _args = args_maker()
+      lax_ans = lax_op(*_args)
+      scipy_ans = scipy_reference_op(*_args)
+      self.assertAllClose(
+        scipy_ans[0],
+        lax_ans[0],
+        check_dtypes=check_dtypes,
+        atol=atol or tol, rtol=rtol or tol,
+        canonicalize_dtypes=canonicalize_dtypes
+      )
+      self.assertAllClose(
+        scipy_ans[1],
+        lax_ans[1],
+        check_dtypes=check_dtypes,
+        atol=atol or tol,
+        rtol=rtol or tol,
+        canonicalize_dtypes=canonicalize_dtypes
+      )
+      # Also checking the tuple.
+      assert(len(scipy_ans) == len(lax_ans))
+
+    if contains_nans:
+      # Logic to add nans.
+      rng = jtu.rand_some_nan(self.rng())
+    else:
+      rng = jtu.rand_default(self.rng())
+    # Rounding to create common values more probable
+    args_maker = lambda: [jnp.round(rng(x_shape, x_dtype)), axis, nan_policy]
+    # Check on nanpolicy in {'omit'}
+    if nan_policy == "omit":
+      with pytest.raises(NotImplementedError):
+        _ = lax_fun(*args_maker())
+      return None
+    # 'raise' that does not contain nans should work.
+    if nan_policy == "raise" and contains_nans:
+      with pytest.raises(ValueError):
+        _ = lax_fun(*args_maker())
+      return None
+    # Checking faiilures on nan_policy not in set below. 'rasie' can occur if
+    # not contains nans
+    if nan_policy not in {"propagate", "raise"}:
+      with pytest.raises(ValueError):
+        _ = lax_fun(*args_maker())
+      return None
+    tol_spec = {np.float32: 2e-4}
+    tol = jtu.tolerance(x_dtype, tol_spec)
+    _check_against_scipy_mode(
+      scipy_fun,
+      lax_fun,
+      args_maker,
+      check_dtypes=False,
+      tol=tol
+    )
+    args_maker = lambda: [jnp.round(rng(x_shape, x_dtype))]
+    self._CompileAndCheck(partial(lax_jit_fun, axis=axis), args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

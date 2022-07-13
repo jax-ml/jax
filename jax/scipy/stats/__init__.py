@@ -32,3 +32,4 @@ from jax.scipy.stats import chi2 as chi2
 from jax.scipy.stats import betabinom as betabinom
 from jax.scipy.stats import gennorm as gennorm
 from jax._src.scipy.stats.kde import gaussian_kde as gaussian_kde
+from jax._src.scipy.stats._core import mode as mode
