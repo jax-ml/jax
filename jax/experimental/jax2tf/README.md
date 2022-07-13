@@ -448,6 +448,7 @@ More operations are partially supported for dimension polynomials:
     in which case there may be a constant remainder. The need for division in JAX core
     arises in a couple of specific situations, e.g.,
     `jax.numpy.reshape(-1)` and operations involving striding.
+    See [#division-of-shape-polynomials-is-partially-supported](below) for a discussion.
   * equality and disequality are partially supported. They result in a boolean value only when
     the same result would be obtained for any valuation of the dimension variables. In
     other situations, an exception `core.InconclusiveDimensionOperation` is raised.
@@ -549,18 +550,34 @@ that `v == 4`, the shape checking rules fail with the above error.
 Since the converted function works only for square matrices, the correct
 `polymorphic_shapes` is `["(v, v)"]`.
 
-You would also encounter shape errors if the code attempts to use the
-dimension variables in unsupported arithmetic operations, such as in the code
-below that fails to compute the inferred dimension for a `reshape` operations:
+
+Certain codes that use shapes in the actual computation may not yet work
+if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
+will have the value of the dimension variable `v`. This case is not yet implemented:
+
+```
+jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
+               polymorphic_shapes=["(v, _)"])(np.ones((4, 4)))
+```
+
+### Division of shape polynomials is partially supported
+
+Unlike addition and multiplication, which are fully supported on
+shape polynomials, division is supported when either (a) there
+is no remainder, or (b) the divisor is a constant
+in which case there may be a constant remainder.
+For example, the code below results in a division error when trying to
+compute the inferred dimension for a `reshape` operation:
 
 ```
 jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
                polymorphic_shapes=["(b, ...)"])(np.ones((4, 5, 7)))
 ```
 
-In this case you will see the error `Cannot divide evenly the sizes of shapes (b, 5, 7) and (2, -1)`.
-This is because the shape of `x` is `(b, 5, 7)`, with a total size represented as the
-dimension polynomial `35 b`, which is not divisible by `2`.
+In this case you will see the error `Cannot divide evenly the sizes of shapes (b, 5, 7) and (2, -1)`,
+with a further `Details: Cannot divide '35*b' by '-2'`.
+The polynomial `35*b` represents the total size of the input tensor.
+
 Note that the following will succeed:
 
 ```
@@ -573,13 +590,18 @@ jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
                polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 ```
 
-Finally, certain codes that use shapes in the actual computation may not yet work
-if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
-will have the value of the dimension variable `v`. This case is not yet implemented:
+You may also encounter division errors when working with strides, such as
+when computing the padding in a strided convolution.
+
+In some cases you may know that one of the dimension variables
+is a multiple of the divisor,
+e.g., `b` in the above example of dividing `35*b` by `-2` may
+be known to be a multiple of `2`. You can specify that by replacing
+`b` with `2*b` in the polymorphic shape specification:
 
 ```
-jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
-               polymorphic_shapes=["(v, _)"])(np.ones((4, 4)))
+jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+               polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
 ```
 
 ## Known issues
