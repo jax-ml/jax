@@ -434,7 +434,7 @@ def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardi
 def _create_mesh_pspec_sharding(mesh, x):
   if _is_unspecified_or_from_gda_or_auto(x):
     return x
-  return MeshPspecSharding._from_parsed_pspec(mesh, x)
+  return MeshPspecSharding(mesh, x.user_spec, x)
 
 
 def flatten_axis_resources(what, tree, shardings, tupled_args):
@@ -1298,7 +1298,11 @@ def _maybe_replace_from_gda_with_pspec(
           "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. "
           f"Got GDA spec: {gda_cpspec.user_spec} and "
           f"pjit spec: {in_sharding_flat.spec} for GDA: {arg}")
-    return MeshPspecSharding._from_parsed_pspec(arg.mesh, gda_cpspec)
+    # This is an optimization to return the original sharding if its not
+    # FROM_GDA.
+    if not _is_from_gda(in_sharding_flat):
+      return in_sharding_flat
+    return MeshPspecSharding(arg.mesh, arg.mesh_axes).normalize()
   return in_sharding_flat
 
 
