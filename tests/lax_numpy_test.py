@@ -6404,7 +6404,10 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'einsum': ['kwargs'],
       'einsum_path': ['einsum_call'],
       'eye': ['order', 'like'],
+      'hstack': ['dtype', 'casting'],
       'identity': ['like'],
+      'in1d': ['kind'],
+      'isin': ['kind'],
       'full': ['order', 'like'],
       'full_like': ['subok', 'order'],
       'fromfunction': ['like'],
@@ -6413,8 +6416,11 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogramdd': ['normed'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
+      'row_stack': ['dtype', 'casting'],
+      'stack': ['dtype', 'casting'],
       'tri': ['like'],
       'unique': ['equal_nan'],
+      'vstack': ['dtype', 'casting'],
       'zeros_like': ['subok', 'order']
     }
 
@@ -6436,6 +6442,10 @@ class NumpySignaturesTest(jtu.JaxTestCase):
         continue
       if numpy_version < (1, 22) and name in ['quantile', 'nanquantile',
                                               'percentile', 'nanpercentile']:
+        continue
+      if numpy_version >= (1, 24) and name in ['histogram', 'histogram2d', 'histogramdd']:
+        # numpy 1.24 re-orders the density and weights arguments.
+        # TODO(jakevdp): migrate histogram APIs to match newer numpy versions.
         continue
       # Note: can't use inspect.getfullargspec due to numpy issue
       # https://github.com/numpy/numpy/issues/12225
