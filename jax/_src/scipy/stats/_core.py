@@ -66,8 +66,6 @@ def mode(x: jnp.ndarray, axis: int = 0, nan_policy: str = "propagate") -> ModeRe
     x = lax.reshape(x, (np.size(x),))
     axis = 0
   x_shape = list(np.shape(x))
-  num_dims = len(x_shape)
-  axis = canonicalize_axis(axis, num_dims)
   x_shape[axis] = 1
   x = jnp.moveaxis(x, axis, 0).reshape(x.shape[axis], -1)
   vals, counts = vmap(_mode_helper, in_axes=(1,))(x)

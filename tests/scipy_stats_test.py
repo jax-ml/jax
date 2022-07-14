@@ -907,7 +907,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
         (np.float32, (17,), None, 'propagate', False),
         (np.float32, (17,), 0, 'propagate', True),
         (np.float32, (37, 5), 0, 'omit', True),
-        (np.float32, (37, 5), 1, 'propagate', False),
+        (np.float32, (37, 5), -1, 'propagate', False),
         (np.float32, (37, 5, 3), None, 'propagate', True),
         (np.float32, (37, 5, 3), 0, 'raise', False),
         (np.float32, (37, 5, 3), 1, 'banana', False),
