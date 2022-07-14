@@ -482,7 +482,6 @@ def flatten_lowering_ir_args(
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
-_module_unique_id = itertools.count()
 _module_name_regex = re.compile(r"[^\w.-]")
 
 def sharded_aval(aval: core.ShapedArray,
@@ -577,10 +576,7 @@ def lower_jaxpr_to_module(
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
     module_name = _module_name_regex.sub("_", module_name)
-    # Some clients expect modules to have unique names, e.g., in trace data.
-    # This may or may not be a reasonable assumption.
-    ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
-        f"{module_name}.{next(_module_unique_id)}")
+    ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(module_name)
     unlowerable_effects = {eff for eff in jaxpr.effects
                            if eff not in lowerable_effects}
     if unlowerable_effects:
