@@ -64,6 +64,13 @@ def _unimplemented(name):
   return op
 
 
+# TODO(marcvanzee): Remove this function and use `tf.math.invert_permutation`
+# once it is implemented by TFjs:
+# https://github.com/tensorflow/tfjs/issues/6395.
+def _invert_permutation(perm):
+  return tuple(perm.index(i) for i in range(len(perm)))
+
+
 def _transpose_for_tf_conv(lhs, rhs, dimension_numbers):
   """Tranposes lhs and rhs to respectively NHWC and HWIO so they can be passed to TF functions."""
   # TODO(marcvanzee): Add tests for this ops for shape polymorphism.
@@ -310,7 +317,7 @@ def _conv_general_dilated(
   # To determine the right permutation, we compute the inverse permutation of
   # `output_perm`, so that when `output_perm` is applied to `output`, we obtain
   # the outpt in NCHW format.
-  inverse_perm = tf.math.invert_permutation(output_perm)
+  inverse_perm = _invert_permutation(output_perm)
   output = tf.transpose(output, inverse_perm)  # "NCHW" -> desired output shape.
   return output
 
@@ -875,7 +882,7 @@ def shift_axes_forward(operand, axes: tuple, inverse: bool=False,
   """Shifts the tuple of axes to the front of an array"""
   other_axes = tuple([i for i in range(len(operand.shape)) if i not in axes])
   fwd_order = axes + other_axes if forward else other_axes + axes
-  order = fwd_order if not inverse else tf.math.invert_permutation(fwd_order)
+  order = fwd_order if not inverse else _invert_permutation(fwd_order)
   return tf.transpose(operand, order)
 
 def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
