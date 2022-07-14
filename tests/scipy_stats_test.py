@@ -20,10 +20,9 @@ from absl.testing import absltest, parameterized
 
 import numpy as np
 import scipy.stats as osp_stats
-import pytest
 
 import jax
-from jax._src import test_util as jtu, tree_util
+from jax._src import errors, test_util as jtu, tree_util
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 import jax.numpy as jnp
@@ -912,53 +911,15 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
         (np.float32, (37, 5, 3), None, 'propagate', True),
         (np.float32, (37, 5, 3), 0, 'raise', False),
         (np.float32, (37, 5, 3), 1, 'banana', False),
-        (np.float32, (37, 5, 3), 2, 'propagate', True)
+        (np.float32, (37, 5, 3), 2, 'propagate', True),
+        (np.float32, (37, 5, 3), 2, 'raise', True)
       ]
     )
   )
   def testMode(self, x_shape, x_dtype, axis, nan_policy, contains_nans):
     """Tests the main `jax.scipy.stats` `mode` function."""
-    # The function that is jit-compilable.
-    from jax._src.scipy.stats._core import _mode as lax_jit_fun
     lax_fun = lsp_stats.mode
     scipy_fun = osp_stats.mode
-
-    def _check_against_scipy_mode(
-      scipy_reference_op,
-      lax_op,
-      args_maker,
-      check_dtypes=True,
-      tol=None,
-      atol=None,
-      rtol=None,
-      canonicalize_dtypes=True
-    ):
-      """
-      Hacky(ish) reimplementation of `jax._src.test_util`'s `_CheckAgainstNumpy`.
-      The `scipy.stats.mode` function returns a tuple:
-       `namedtuple("ModeResult", ("mode", "count"))`
-      So, we need to check both parts.
-      """
-      _args = args_maker()
-      lax_ans = lax_op(*_args)
-      scipy_ans = scipy_reference_op(*_args)
-      self.assertAllClose(
-        scipy_ans[0],
-        lax_ans[0],
-        check_dtypes=check_dtypes,
-        atol=atol or tol, rtol=rtol or tol,
-        canonicalize_dtypes=canonicalize_dtypes
-      )
-      self.assertAllClose(
-        scipy_ans[1],
-        lax_ans[1],
-        check_dtypes=check_dtypes,
-        atol=atol or tol,
-        rtol=rtol or tol,
-        canonicalize_dtypes=canonicalize_dtypes
-      )
-      # Also checking the tuple.
-      assert(len(scipy_ans) == len(lax_ans))
 
     if contains_nans:
       # Logic to add nans.
@@ -966,34 +927,46 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     else:
       rng = jtu.rand_default(self.rng())
     # Rounding to create common values more probable
-    args_maker = lambda: [jnp.round(rng(x_shape, x_dtype)), axis, nan_policy]
+    args_maker = lambda: [jnp.round(rng(x_shape, x_dtype))]
     # Check on nanpolicy in {'omit'}
     if nan_policy == "omit":
-      with pytest.raises(NotImplementedError):
-        _ = lax_fun(*args_maker())
+      with self.assertRaisesRegex(
+        NotImplementedError,
+        "Logic for `nan_policy` *"
+      ):
+        _ = partial(lax_fun, axis=axis, nan_policy=nan_policy)(*args_maker())
+      # We're done, don't need to continue.
       return None
-    # 'raise' that does not contain nans should work.
-    if nan_policy == "raise" and contains_nans:
-      with pytest.raises(ValueError):
-        _ = lax_fun(*args_maker())
+    # 'raise' can not be used as it would require knowing the state of `x`
+    # (ie; that it contains nans). Knowing this would defeat the purpose of jit
+    # compiling.
+    elif nan_policy == "raise":
+      with self.assertRaisesRegex(
+        errors.ConcretizationTypeError,
+        "In order to best JIT*"
+      ):
+        _ = partial(lax_fun, axis=axis, nan_policy=nan_policy)(*args_maker())
       return None
-    # Checking faiilures on nan_policy not in set below. 'rasie' can occur if
-    # not contains nans
-    if nan_policy not in {"propagate", "raise"}:
-      with pytest.raises(ValueError):
-        _ = lax_fun(*args_maker())
+    # Make sure it fails when `nan_policy` not in {'propagate', 'omit', 'raise'}.
+    elif nan_policy != "propagate":
+      with self.assertRaisesRegex(
+        ValueError,
+        "Illegal nan_policy value*"
+      ):
+        _ = partial(lax_fun, axis=axis, nan_policy=nan_policy)(*args_maker())
       return None
     tol_spec = {np.float32: 2e-4}
     tol = jtu.tolerance(x_dtype, tol_spec)
-    _check_against_scipy_mode(
-      scipy_fun,
-      lax_fun,
+    self._CheckAgainstNumpy(
+      partial(scipy_fun, axis=axis, nan_policy=nan_policy),
+      partial(lax_fun, axis=axis, nan_policy=nan_policy),
       args_maker,
-      check_dtypes=False,
-      tol=tol
+      tol
     )
-    args_maker = lambda: [jnp.round(rng(x_shape, x_dtype))]
-    self._CompileAndCheck(partial(lax_jit_fun, axis=axis), args_maker)
+    self._CompileAndCheck(
+     partial(lax_fun, axis=axis, nan_policy=nan_policy),
+     args_maker
+    )
 
 
 if __name__ == "__main__":
