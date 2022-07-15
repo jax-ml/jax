@@ -97,21 +97,25 @@ jobs:
       - uses: actions/download-artifact@v3
         with:
           path: /tmp/workspace/logs
+      - name: install requirements
+        run: |
+          python -m pip install pytest
       - name: Move all log files into a single directory
         run: |
           rsync -a /tmp/workspace/logs/output-*/ ./logs
           ls -R ./logs
           cat logs/*.jsonl > pytest-logs.txt
+          python .github/workflows/parse_logs.py pytest-logs.txt --outfile=parsed-logs.txt
       - name: Report failures
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const pytest_logs = fs.readFileSync('pytest-logs.txt', 'utf8');
+            const parsed_logs = fs.readFileSync('parsed-logs.txt', 'utf8');
             const title = "⚠️ Nightly upstream-dev CI failed ⚠️"
             const workflow_url = `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-            const issue_body = `[Workflow Run URL](${workflow_url})`
+            const issue_body = `[Workflow Run URL](${workflow_url})\n${parsed_logs}`
             // Run GraphQL query against GitHub API to find the most recent open issue used for reporting failures
             const query = `query($owner:String!, $name:String!, $creator:String!, $label:String!){
               repository(owner: $owner, name: $name) {
