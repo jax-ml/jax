@@ -50,12 +50,7 @@ def mode(x: jnp.ndarray, axis: int = 0, nan_policy: str = "propagate") -> ModeRe
       f"Logic for `nan_policy` of {nan_policy} is not implemented"
     )
   if nan_policy == "raise":
-    # This will always fail with a `nan_policy` of 'raise'. Use a `nan_policy` of
-    # 'propagate' or 'omit' instead. We cannot both JIT compile a function and
-    # have branching logic that depends on its state.
-    _ = core.concrete_or_error(
-      None,
-      x,
+    raise NotImplementedError(
       "In order to best JIT compile `mode`, we cannot know whether `x` contains nans. "
       "Please check if nans exist in `x` outside of the `mode` function."
     )

@@ -894,32 +894,32 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     jtu.cases_from_list(
       {
         "testcase_name":
-          f"""{x_shape};{x_dtype};{axis};{nan_policy};{contains_nans} """,
+          f"{jtu.format_test_name_suffix('', [x_shape], [x_dtype])}_axis={axis}"
+          f"_contains_nans={contains_nans}",
         "x_shape": x_shape,
         "x_dtype": x_dtype,
         "axis": axis,
-        "nan_policy": nan_policy,
         "contains_nans": contains_nans
       }
-      # Just using np.float32 since we get limited tests.
-      for (x_dtype, x_shape, axis, nan_policy, contains_nans) in [
-        (np.float32, (0,), None, 'propagate', False),
-        (np.float32, (17,), None, 'propagate', False),
-        (np.float32, (17,), 0, 'propagate', True),
-        (np.float32, (37, 5), 0, 'omit', True),
-        (np.float32, (37, 5), -1, 'propagate', False),
-        (np.float32, (37, 5, 3), None, 'propagate', True),
-        (np.float32, (37, 5, 3), 0, 'raise', False),
-        (np.float32, (37, 5, 3), 1, 'banana', False),
-        (np.float32, (37, 5, 3), 2, 'propagate', True),
-        (np.float32, (37, 5, 3), 2, 'raise', True)
+      for x_shape, axis in [
+        ((0,), None),
+        ((17,), None),
+        ((17,), 0),
+        ((37, 5), 0),
+        ((37, 5), -1),
+        ((37, 5, 3), None),
+        ((37, 5, 3), 0),
+        ((37, 5, 3), 1),
+        ((37, 5, 3), 2),
       ]
+      for x_dtype in jtu.dtypes.floating
+      for contains_nans in [True, False]
     )
   )
-  def testMode(self, x_shape, x_dtype, axis, nan_policy, contains_nans):
+  def testMode(self, x_shape, x_dtype, axis, contains_nans):
     """Tests the main `jax.scipy.stats` `mode` function."""
-    lax_fun = lsp_stats.mode
-    scipy_fun = osp_stats.mode
+    lax_fun = partial(lsp_stats.mode, axis=axis, nan_policy="propagate")
+    scipy_fun = partial(osp_stats.mode, axis=axis, nan_policy="propagate")
 
     if contains_nans:
       # Logic to add nans.
@@ -928,44 +928,17 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       rng = jtu.rand_default(self.rng())
     # Rounding to create common values more probable
     args_maker = lambda: [jnp.round(rng(x_shape, x_dtype))]
-    # Check on nanpolicy in {'omit'}
-    if nan_policy == "omit":
-      with self.assertRaisesRegex(
-        NotImplementedError,
-        "Logic for `nan_policy` *"
-      ):
-        _ = partial(lax_fun, axis=axis, nan_policy=nan_policy)(*args_maker())
-      # We're done, don't need to continue.
-      return None
-    # 'raise' can not be used as it would require knowing the state of `x`
-    # (ie; that it contains nans). Knowing this would defeat the purpose of jit
-    # compiling.
-    elif nan_policy == "raise":
-      with self.assertRaisesRegex(
-        errors.ConcretizationTypeError,
-        "In order to best JIT*"
-      ):
-        _ = partial(lax_fun, axis=axis, nan_policy=nan_policy)(*args_maker())
-      return None
-    # Make sure it fails when `nan_policy` not in {'propagate', 'omit', 'raise'}.
-    elif nan_policy != "propagate":
-      with self.assertRaisesRegex(
-        ValueError,
-        "Illegal nan_policy value*"
-      ):
-        _ = partial(lax_fun, axis=axis, nan_policy=nan_policy)(*args_maker())
-      return None
     tol_spec = {np.float32: 2e-4}
     tol = jtu.tolerance(x_dtype, tol_spec)
     self._CheckAgainstNumpy(
-      partial(scipy_fun, axis=axis, nan_policy=nan_policy),
-      partial(lax_fun, axis=axis, nan_policy=nan_policy),
+      lax_fun,
+      scipy_fun,
       args_maker,
       tol
     )
     self._CompileAndCheck(
-     partial(lax_fun, axis=axis, nan_policy=nan_policy),
-     args_maker
+      lax_fun,
+      args_maker
     )
 
 
