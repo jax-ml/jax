@@ -17,12 +17,12 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Binary operations between JAX arrays and built-in collections (`dict`, `list`, `set`, `tuple`)
     now raise a `TypeError` in all cases. Previously some cases (particularly equality and inequality)
     would return boolean scalars inconsistent with similar operations in NumPy ({jax-issue}`#11234`).
-  * {mod}`jax.tree_util` routines accessed as top-level JAX package imports are now deprecated, and
-    will be removed in a future JAX release in accordance with the {ref}`api-compatibility` policy:
+  * Several {mod}`jax.tree_util` routines accessed as top-level JAX package imports are now
+    deprecated, and will be removed in a future JAX release in accordance with the
+    {ref}`api-compatibility` policy:
     * {func}`jax.treedef_is_leaf` is deprecated in favor of {func}`jax.tree_util.treedef_is_leaf`
     * {func}`jax.tree_flatten` is deprecated in favor of {func}`jax.tree_util.tree_flatten`
     * {func}`jax.tree_leaves` is deprecated in favor of {func}`jax.tree_util.tree_leaves`
-    * {func}`jax.tree_map` is deprecated in favor of {func}`jax.tree_util.tree_map`
     * {func}`jax.tree_structure` is deprecated in favor of {func}`jax.tree_util.tree_structure`
     * {func}`jax.tree_transpose` is deprecated in favor of {func}`jax.tree_util.tree_transpose`
     * {func}`jax.tree_unflatten` is deprecated in favor of {func}`jax.tree_util.tree_unflatten`
