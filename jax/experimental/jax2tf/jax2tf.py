@@ -687,6 +687,15 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
                                                dim_values, dim_avals, ""))  # type: ignore
   return shape_values
 
+def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize]):
+  """Asserts that shape matches x.shape in the known dimensions and has
+  dimension polynomials elsewhere."""
+  # Ensures that the shape does not contain None; it should contain polynomials
+  assert (len(x.shape) == len(shape) and
+          all((xd is None and isinstance(sd, shape_poly._DimPolynomial) or
+               core.is_constant_dim(sd) and xd == sd)
+              for xd, sd in zip(x.shape, shape))), \
+    f"Shape {shape} does not match x.shape {x.shape}"
 
 # TODO(b/26854495): pylint doesn't understand slots and inheritance.
 # pylint: disable=assigning-non-slot

@@ -1117,7 +1117,7 @@ def _make_harness(group_name: str, name: str,
                   check_result=True,
                   skip_jax_run=True,
                   tol=None,
-                  enable_and_diable_xla=False,
+                  enable_and_disable_xla=False,
                   expect_error=(None, None),
                   **params) -> Union[Harness, Sequence[Harness]]:
   """The `poly_axes` must correspond to the non-static arguments, and for each
@@ -1139,17 +1139,16 @@ def _make_harness(group_name: str, name: str,
   `expect_error` is a pair of an Exception type and a regular expression to
   match the expected exception string.
 
-  enable_and_diable_xla=True means that we generate two harnesses,
+  enable_and_disable_xla=True means that we generate two harnesses,
   one with enable_xla=False.
   """
-  if enable_and_diable_xla:
+  if enable_and_disable_xla:
     return [
         _make_harness(group_name, name + ("" if enable_xla else "_noxla"),  # type: ignore
                       func, args, poly_axes=poly_axes,
                       check_result=check_result, tol=tol, enable_xla=enable_xla,
-                      enable_and_diable_xla=False, skip_jax_run=skip_jax_run,
-                      expect_error=expect_error,
-                      **params)
+                      enable_and_disable_xla=False, skip_jax_run=skip_jax_run,
+                      expect_error=expect_error)
         for enable_xla in [True, False]
     ]
   poly_axes_name = f"poly_axes={repr(poly_axes)}"
@@ -1167,8 +1166,7 @@ def _make_harness(group_name: str, name: str,
                  dtype=np.float32,
                  poly_axes=poly_axes, check_result=check_result,
                  skip_jax_run=skip_jax_run, expect_error=expect_error,
-                 tol=tol,
-                 **params)
+                 tol=tol)
 
 
 _f32 = np.float32
@@ -1187,7 +1185,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda op: jnp.arange(2 * op.shape[0], dtype=_f32),
                   [RandArg((3,), _f32)],
                   poly_axes=[0],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     _make_harness("arange", "start_no_dtype",
                   lambda op: jnp.arange(op.shape[0]),
                   [RandArg((3,), _f32)],
@@ -1212,13 +1210,13 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[0],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     # Reduce the non-poly dimension
     _make_harness("argmax", "1",
                   lambda op: lax.argmax(op, axis=1, index_dtype=np.int32),
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[0],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     [
         _make_harness("average",
                       f"axis={axis}_weights=None",
@@ -1276,18 +1274,55 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   jax.grad(lambda x: jnp.sum(jnp.concatenate([x, x], axis=0))),
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[(0, 1)]),
+
+    # Issue #11402 InconclusiveDimensionOperation: Dimension polynomial '-1*t' is not a multiple of '2'
+    # TODO(still fails)
+    # _make_harness("conv_general_dilated", "1d_1",
+    #               lambda lhs, rhs: lax.conv_general_dilated(
+    #                   lhs, rhs,
+    #                   window_strides=(2,),
+    #                   padding="SAME",
+    #                   rhs_dilation=None,
+    #                   dimension_numbers=lax.ConvDimensionNumbers(lhs_spec=(0, 2, 1),
+    #                                                              rhs_spec=(2, 1, 0),
+    #                                                              out_spec=(0, 2, 1))),
+    #               [RandArg((1, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
+    #               poly_axes=[1, None],
+    #               enable_and_disable_xla=True),
+    # Issue #11402
+    _make_harness("conv_general_dilated", "1d_2",
+                  lambda lhs, rhs: lax.conv_transpose(lhs, rhs,
+                                                      strides=(2,),
+                                                      padding="SAME",
+                                                      rhs_dilation=None,
+                                                      transpose_kernel=False),
+                  [RandArg((5, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
+                  poly_axes=[0, None],
+                  enable_and_disable_xla=True),
+    # Issue #11402
+    _make_harness("conv_general_dilated", "1d_3",
+                  lambda lhs, rhs: lax.conv_transpose(lhs, rhs,
+                                                      strides=(2,),
+                                                      padding="SAME",
+                                                      rhs_dilation=None,
+                                                      transpose_kernel=False),
+                  [RandArg((5, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
+                  poly_axes=[1, None],
+                  enable_and_disable_xla=True),
     _make_harness("conv_general_dilated", "",
-                  lambda lhs, rhs: lax.conv_general_dilated(lhs, rhs,
-                                                            window_strides=(2, 3),
-                                                            padding=((0, 0), (0, 0)),
-                                                            lhs_dilation=(1, 1),
-                                                            rhs_dilation=(1, 2),
-                                                            dimension_numbers=("NCHW", "OIHW", "NCHW"),
-                                                            feature_group_count=1,
-                                                            batch_group_count=1,
-                                                            precision=None),
+                  lambda lhs, rhs: lax.conv_general_dilated(
+                      lhs, rhs,
+                      window_strides=(2, 3),
+                      padding=((0, 0), (0, 0)),
+                      lhs_dilation=(1, 1),
+                      rhs_dilation=(1, 2),
+                      dimension_numbers=("NCHW", "OIHW", "NCHW"),
+                      feature_group_count=1,
+                      batch_group_count=1,
+                      precision=None),
                   [RandArg((7, 3, 9, 10), _f32), RandArg((3, 3, 4, 5), _f32)],
-                  poly_axes=[0, None]),
+                  poly_axes=[0, None],
+                  enable_and_disable_xla=True),
     _make_harness("cummax", "",
                   lambda x: lax_control_flow.cummax(x, axis=1, reverse=False),
                   [RandArg((3, 4, 5), _f32)],
@@ -1306,43 +1341,43 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     _make_harness("dynamic_slice", "idx=tuple_arg",
                   # x:shape: (b, 4)
                   lambda x, i0: lax.dynamic_slice(x, (i0, np.int32(1)), (x.shape[0], 2)),
                   [RandArg((3, 4), _f32), np.array(-2, dtype=np.int32)],
                   poly_axes=[0, None],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     _make_harness("dynamic_slice", "idx=array",
                   # x:shape: (b, 4)
                   lambda x, idx: lax.dynamic_slice(x, idx, (x.shape[0], 2)),
                   [RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
                   poly_axes=[0, None],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     _make_harness("dynamic_slice_in_dim", "idx=0",
                   # x:shape: (b, 4)
                   lambda x: lax.dynamic_slice_in_dim(x, 0, x.shape[0], axis=0),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     _make_harness("dynamic_update_slice", "idx=tuple_int",
                   # x:shape: (b, 4)
                   lambda x: lax.dynamic_update_slice(x, x, (0, 0)),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     _make_harness("dynamic_update_slice", "idx=tuple_arg",
                   # x:shape: (b, 4)
                   lambda x, i0: lax.dynamic_update_slice(x, x, (i0, np.int32(0))),
                   [RandArg((3, 4), _f32), np.array(-2, dtype=np.int32)],
                   poly_axes=[0, None],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     _make_harness("dynamic_update_slice", "idx=array",
                   # x:shape: (b, 4)
                   lambda x, idx: lax.dynamic_update_slice(x, x, idx),
                   [RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
                   poly_axes=[0, None],
-                  enable_and_diable_xla=True),
+                  enable_and_disable_xla=True),
     _make_harness("einsum", "0",
                   lambda x: jnp.einsum("...i->...", x),
                   [RandArg((3, 4), _f32)],
@@ -1417,45 +1452,45 @@ _POLY_SHAPE_TEST_HARNESSES = [
     _make_harness("getitem", "op=static_idx=poly",
                   lambda a, i: a[i],
                   [RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
-                  poly_axes=[None, 0], enable_and_diable_xla=True),
+                  poly_axes=[None, 0], enable_and_disable_xla=True),
     # operand is poly, index is integer
     _make_harness("getitem", "op=poly_idx=const",
                   lambda a: a[1],
                   [RandArg((3, 4), _f32)],
-                  poly_axes=[0], enable_and_diable_xla=True),
+                  poly_axes=[0], enable_and_disable_xla=True),
     # operand is poly, index is dim poly
     _make_harness("getitem", "op=poly_idx=dim",
                   lambda a: a[jax.core.dimension_as_value(a.shape[0] - 2)],
                   [RandArg((3, 4), _f32)],
-                  poly_axes=[0], enable_and_diable_xla=True),
+                  poly_axes=[0], enable_and_disable_xla=True),
     # Both the operand and the index are poly
     _make_harness("getitem", "op=poly_idx=poly",
                   lambda a, i: a[i],
                   [RandArg((3, 4), _f32), np.array([1, 2, 0], np.int32)],
-                  poly_axes=[0, 0], enable_and_diable_xla=True),
+                  poly_axes=[0, 0], enable_and_disable_xla=True),
     # op is poly and index is an entire slice
     _make_harness("getitem", "op=poly_idx=slice-all",
                   lambda a: a[:],
                   [RandArg((3, 4), _f32)],
-                  poly_axes=[0], enable_and_diable_xla=True),
+                  poly_axes=[0], enable_and_disable_xla=True),
     # op is poly and index is a partial slice
     _make_harness("getitem", "op=poly_idx=slice-ct-1",
                   lambda a: a[:2],
                   [RandArg((3, 4), _f32)],
-                  poly_axes=[0], enable_and_diable_xla=True,
+                  poly_axes=[0], enable_and_disable_xla=True,
                   expect_error=(IndexError, "Cannot use NumPy slice indexing on an array dimension")),
     _make_harness("getitem", "op=poly_idx=slice-ct-2",
                   lambda a: a[:, :2],
                   [RandArg((3, 4), _f32)],
-                  poly_axes=[0], enable_and_diable_xla=True),
+                  poly_axes=[0], enable_and_disable_xla=True),
     _make_harness("getitem", "op=poly_idx=slice-None-1",
                   lambda a: a[:a.shape[0]],
                   [RandArg((3, 4), _f32)],
-                  poly_axes=[0], enable_and_diable_xla=True),
+                  poly_axes=[0], enable_and_disable_xla=True),
     _make_harness("getitem", "op=poly_idx=slice-poly",
                   lambda a: a[:a.shape[0] - 1],
                   [RandArg((3, 4), _f32)],
-                  poly_axes=[0], enable_and_diable_xla=True,
+                  poly_axes=[0], enable_and_disable_xla=True,
                   expect_error=(IndexError, "Array slice indices must have static")),
     _make_harness("image_resize", "linear_0",
                   lambda x: jax.image.resize(x, (x.shape[0], 2 * x.shape[1], 2 * x.shape[2], x.shape[3]),
@@ -1668,7 +1703,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     _make_harness("take", "",
                   lambda a, i: jnp.take(a, i, axis=1),
                   [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
-                  poly_axes=[0, None], enable_and_diable_xla=True),
+                  poly_axes=[0, None], enable_and_disable_xla=True),
     _make_harness("take_along_axis", "0",
                   lambda x, y: jnp.take_along_axis(x, y, axis=0),
                   [RandArg((5, 2), _f32), RandArg((5, 1), np.int32)],
@@ -1807,7 +1842,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="take_along_axis_1_poly_axes=[0, 0]"
+      #one_containing="conv_general_dilated_1d_2_noxla_poly_axes=[0, None]"
   )
   def test_prim(self, harness: Harness):
     _test_one_harness(self, harness)
