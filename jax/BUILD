@@ -259,3 +259,12 @@ pytype_library(
         ":jax",
     ],
 )
+
+pytype_library(
+    name = "clear_backends",
+    srcs = [
+        "experimental/clear_backends.py",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":jax"],
+)
