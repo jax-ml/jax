@@ -2074,6 +2074,15 @@ class SparseGradTest(jtu.JaxTestCase):
 class SparseObjectTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
+    {"testcase_name": f"_{cls.__name__}", "cls": cls}
+    for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
+  def test_jit_lower(self, cls):
+    sparse_format = cls.__name__.lower()
+    M = sparse.empty((2, 4), sparse_format=sparse_format)
+    self.assertIsInstance(M, cls)
+    jax.jit(lambda x: x).lower(M)  # doesn't crash
+
+  @parameterized.named_parameters(
     {"testcase_name": f"_{cls.__name__}{shape}", "cls": cls, "shape": shape}
     for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]
     for shape in ([2, 5], [5, 3]))
