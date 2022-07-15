@@ -18,10 +18,9 @@ from typing import Any, List, Optional, Tuple
 import scipy
 import numpy as np
 
-from jax import core, jit, lax, vmap
+from jax import jit, lax, vmap
 import jax.numpy as jnp
 from jax._src.numpy.lax_numpy import _check_arraylike
-from jax._src.numpy.reductions import _isscalar
 from jax._src.numpy.util import _wraps
 from jax._src.util import canonicalize_axis
 
@@ -57,10 +56,13 @@ def mode(x: jnp.ndarray, axis: int = 0, nan_policy: str = "propagate") -> ModeRe
 
   if x.size == 0:
     return ModeResult(jnp.array([]), jnp.array([]))
-  if axis is None or _isscalar(x):
+  if axis is None:
+    #  We don't need to validate axis is None.
     x = lax.reshape(x, (np.size(x),))
     axis = 0
   x_shape = list(np.shape(x))
+  num_dims = len(x_shape)
+  axis = canonicalize_axis(axis, num_dims)
   x_shape[axis] = 1
   x = jnp.moveaxis(x, axis, 0).reshape(x.shape[axis], -1)
   vals, counts = vmap(_mode_helper, in_axes=(1,))(x)
