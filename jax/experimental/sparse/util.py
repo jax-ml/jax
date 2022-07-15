@@ -18,6 +18,7 @@ import numpy as np
 import jax
 from jax import core
 from jax._src import dtypes
+from jax._src import stages
 import jax.numpy as jnp
 
 class SparseEfficiencyError(ValueError):
@@ -54,12 +55,15 @@ def _is_pytree_placeholder(*args):
 def _is_aval(*args):
   return all(isinstance(arg, core.AbstractValue) for arg in args)
 
+def _is_arginfo(*args):
+  return all(isinstance(arg, stages.ArgInfo) for arg in args)
+
 def _asarray_or_float0(arg):
   if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
     return arg
   return jnp.asarray(arg)
 
 def _safe_asarray(args):
-  if _is_pytree_placeholder(*args) or _is_aval(*args):
+  if _is_pytree_placeholder(*args) or _is_aval(*args) or _is_arginfo(*args):
     return args
   return map(_asarray_or_float0, args)
