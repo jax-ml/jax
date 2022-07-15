@@ -266,6 +266,12 @@ for device_array in [DeviceArray]:
 
   setattr(device_array, "__array__", __array__)
 
+  def __dlpack__(self):
+    from jax.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
+    return to_dlpack(self)
+
+  setattr(device_array, "__dlpack__", __dlpack__)
+
   def __reduce__(self):
     fun, args, arr_state = self._value.__reduce__()
     aval_state = {'weak_type': self.aval.weak_type,

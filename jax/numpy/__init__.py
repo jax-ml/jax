@@ -116,6 +116,7 @@ from jax._src.numpy.lax_numpy import (
     fromfunction as fromfunction,
     fromiter as fromiter,
     fromstring as fromstring,
+    from_dlpack as from_dlpack,
     full as full,
     full_like as full_like,
     gcd as gcd,

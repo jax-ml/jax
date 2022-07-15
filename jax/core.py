@@ -533,6 +533,10 @@ class Tracer:
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
 
+  def __dlpack__(self, *args, **kw):
+    raise ConcretizationTypeError(self,
+      f"The __dlpack__() method was called on the JAX Tracer object {self}")
+
   def __index__(self):
     raise TracerIntegerConversionError(self)
 

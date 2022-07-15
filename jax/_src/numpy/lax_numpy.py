@@ -2064,6 +2064,10 @@ def fromiter(*args, **kwargs):
     "because of its potential side-effect of consuming the iterable object; for more information see "
     "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
 
+@_wraps(getattr(np, "from_dlpack", None))
+def from_dlpack(x):
+  from jax.dlpack import from_dlpack  # pylint: disable=g-import-not-at-top
+  return from_dlpack(x.__dlpack__())
 
 @_wraps(np.fromfunction)
 def fromfunction(function, shape, *, dtype=float, **kwargs):

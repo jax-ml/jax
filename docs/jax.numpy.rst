@@ -180,6 +180,7 @@ namespace; they are listed below.
     fromfunction
     fromiter
     fromstring
+    from_dlpack
     full
     full_like
     gcd
