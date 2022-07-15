@@ -51,7 +51,7 @@ def _can_use_color() -> bool:
   except NameError:
     pass
   # Otherwise check if we're in a terminal
-  return sys.stdout.isatty()
+  return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
 
 CAN_USE_COLOR = _can_use_color()
 
