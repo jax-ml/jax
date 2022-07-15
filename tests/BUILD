@@ -39,6 +39,12 @@ jax_test(
 )
 
 jax_test(
+    name = "dynamic_api_test",
+    srcs = ["dynamic_api_test.py"],
+    shard_count = 2,
+)
+
+jax_test(
     name = "api_util_test",
     srcs = ["api_util_test.py"],
 )
