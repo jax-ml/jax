@@ -15,6 +15,7 @@
 import collections
 import functools
 import re
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -140,11 +141,10 @@ TREE_STRINGS = (
     "PyTreeDef((*, *))",
     "PyTreeDef(((*, *), [*, (*, None, *)]))",
     "PyTreeDef([*])",
-    ("PyTreeDef([*, CustomNode(namedtuple[<class '__main__.ATuple'>], [(*, "
-     "CustomNode(namedtuple[<class '__main__.ATuple'>], [*, None])), {'baz': "
-     "*}])])"),
-    "PyTreeDef([CustomNode(<class '__main__.AnObject'>[[4, 'foo']], [*, None])])",
-    "PyTreeDef(CustomNode(<class '__main__.Special'>[None], [*, *]))",
+    ("PyTreeDef([*, CustomNode(namedtuple[ATuple], [(*, "
+     "CustomNode(namedtuple[ATuple], [*, None])), {'baz': *}])])"),
+    "PyTreeDef([CustomNode(AnObject[[4, 'foo']], [*, None])])",
+    "PyTreeDef(CustomNode(Special[None], [*, *]))",
     "PyTreeDef({'a': *, 'b': *})",
 )
 
@@ -352,6 +352,7 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(expected, actual)
 
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
+  @unittest.skipIf(pytree_version < 2, "Requires jaxlib 0.3.15")
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""
     treedef = tree_util.tree_structure(tree)
