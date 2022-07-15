@@ -57,7 +57,7 @@ def _validate_csr_mhlo(data, indices, indptr, shape):
   assert indptr_type.shape == [shape[0] + 1]
   return data_type.element_type, indices_type.element_type, nnz
 
-def _validate_coo_mhlo(data, row, col, shape):
+def _validate_coo_mhlo(data, row, col):
   data_type = ir.RankedTensorType(data.type)
   row_type = ir.RankedTensorType(row.type)
   col_type = ir.RankedTensorType(col.type)
@@ -194,7 +194,7 @@ rocm_csr_matmat = partial(_csr_matmat_mhlo, "hip", _hipsparse)
 def _coo_todense_mhlo(platform, gpu_sparse, data, row, col, *, shape,
                       data_dtype, index_dtype):
   """COO to dense matrix."""
-  data_type, _, nnz = _validate_coo_mhlo(data, row, col, shape)
+  data_type, _, nnz = _validate_coo_mhlo(data, row, col)
   rows, cols = shape
 
   buffer_size, opaque = gpu_sparse.build_coo_todense_descriptor(
@@ -249,7 +249,7 @@ def _coo_matvec_mhlo(platform, gpu_sparse, data, row, col, x, *, shape,
                      transpose=False, compute_dtype=None, compute_type=None,
                      index_dtype, data_dtype, x_dtype):
   """COO matrix/vector multiply."""
-  data_type, index_type, nnz = _validate_coo_mhlo(data, row, col, shape)
+  data_type, _, nnz = _validate_coo_mhlo(data, row, col)
   rows, cols = shape
 
   if compute_dtype is None:
@@ -282,7 +282,7 @@ def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
                      transpose=False, compute_dtype=None, compute_type=None,
                      x_dtype, data_dtype, index_dtype):
   """COO from dense matrix."""
-  data_type, index_type, nnz = _validate_coo_mhlo(data, row, col, shape)
+  data_type, _, nnz = _validate_coo_mhlo(data, row, col)
   rows, cols = shape
   B_shape = ir.RankedTensorType(B.type).shape
   _, Ccols = B_shape
