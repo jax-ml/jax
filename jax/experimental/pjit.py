@@ -21,7 +21,7 @@ from functools import partial
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
-from jax.experimental.sharding import MeshPspecSharding, Sharding
+from jax.experimental.sharding import MeshPspecSharding, Sharding, XLACompatibleSharding
 from jax import core
 from jax import linear_util as lu
 from jax import stages
@@ -71,20 +71,14 @@ _is_auto = pxla._is_auto
 class PjitCompiled(stages.Compiled):
 
   @pxla.maybe_cached_property
-  def input_shardings(self) -> Sequence[pxla.PartitionSpec]:
-    args, kwargs = tree_unflatten(self.in_tree, [
-        pxla.array_mapping_to_axis_resources(i)
-        for i in self._executable._in_axes
-    ])  # pytype: disable=attribute-error
+  def input_shardings(self) -> Sequence[XLACompatibleSharding]:
+    args, kwargs = tree_unflatten(self.in_tree, self._executable._in_shardings)    # pytype: disable=attribute-error
     assert not kwargs
     return args
 
   @pxla.maybe_cached_property
-  def output_shardings(self):
-    return tree_unflatten(self.out_tree, [
-        pxla.array_mapping_to_axis_resources(o)
-        for o in self._executable._out_axes
-    ])  # pytype: disable=attribute-error
+  def output_shardings(self) -> Sequence[XLACompatibleSharding]:
+    return tree_unflatten(self.out_tree, self._executable._out_shardings)  # pytype: disable=attribute-error
 
 
 class PjitLowered(stages.Lowered):
@@ -808,7 +802,7 @@ def _pjit_call_impl(*args, jaxpr,
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
-    pxla._check_gda_or_array_xla_sharding_match(args, compiled._in_axes)
+    pxla._check_gda_or_array_xla_sharding_match(args, compiled._in_shardings)
   if config.jax_distributed_debug:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this
@@ -834,24 +828,27 @@ def _pjit_lower(
     donated_invars,
     name: str,
     in_is_global: Sequence[bool]):
-  # in_shardings and out_shardings are canonicalized to avoid
-  # recompilation (since pjit_lower is cached) if its compiled with `None` but
-  # in the next call `P(None)` is passed. Those are the same thing so should be
-  # treat as equivalent and pjit_lower's cache shouldn't be invalidated.
-  in_axes = [get_array_mapping(i if _is_auto(i) else i._parsed_pspec)
-             for i in in_shardings]
-  out_axes = [get_array_mapping(o if _is_unspecified(o) or _is_auto(o) else o._parsed_pspec)
-              for o in out_shardings]
   pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
   fun = lu.wrap_init(f)
-  # TODO(yashkatariya): Move `lower_mesh_computation` to use the `Sharding`
-  # interface too.
-  return pxla.lower_mesh_computation(
+  # TODO(yashkatariya): UNSPECIFIED should go through lower_sharding_computation.
+  # Also the `jaxpr_has_primitive` for xmap is temporary until xmap supports
+  # sharding instances.
+  # For `pjit(xmap)` cases, it needs to take the `lower_mesh_computation` path
+  # because `xmap` only supports SPMDAxisContext right now.
+  if (pxla._check_if_any_auto_or_unspecified(in_shardings + out_shardings) or
+      dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap')):
+    return pxla.lower_mesh_computation(
       fun, 'pjit', name, resource_env.physical_mesh,
-      in_axes, out_axes, donated_invars,
+      in_shardings, out_shardings, donated_invars,
       True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
+  else:
+    # Pass `in_is_global` here because this path is taken by both host local
+    # avals and global avals.
+    return pxla.lower_sharding_computation(
+        fun, 'pjit', name, in_shardings, out_shardings, donated_invars,
+        jaxpr.in_avals, in_is_global=in_is_global)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,
@@ -866,7 +863,8 @@ pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
                    in_positional_semantics, out_positional_semantics):
-  if not isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext):
+  if not isinstance(ctx.module_context.axis_context,
+                    (mlir.SPMDAxisContext, mlir.ShardingContext)):
     raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
 
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)

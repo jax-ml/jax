@@ -41,6 +41,7 @@ from jax._src.config import config
 from jax.errors import JAXTypeError
 from jax.experimental.array import Array
 from jax.experimental.global_device_array import GlobalDeviceArray
+from jax.experimental.sharding import MeshPspecSharding
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
@@ -716,9 +717,13 @@ def make_xmap_callable(fun: lu.WrappedFun,
       tiling_method = pxla.TileManual(manual_mesh_axes)
     else:
       tiling_method = pxla.TileVectorize()
+    in_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(i)).normalize()
+                    for i in mesh_in_axes]
+    out_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(o)).normalize()
+                     for o in mesh_out_axes]
     return pxla.lower_mesh_computation(
         f, 'xmap', name, mesh,
-        mesh_in_axes, mesh_out_axes, donated_invars,
+        in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, global_in_avals,
         tiling_method=tiling_method, in_is_global=in_is_global)
   else:
@@ -1318,6 +1323,8 @@ def _xmap_lowering_rule(ctx, *args, **kwargs):
       return _xmap_lowering_rule_spmd(ctx, *args, **kwargs)
   elif isinstance(ctx.module_context.axis_context, mlir.ReplicaAxisContext):
     return _xmap_lowering_rule_replica(ctx, *args, **kwargs)
+  elif isinstance(ctx.module_context.axis_context, mlir.ShardingContext):
+    raise ValueError('ShardingContext cannot be used with xmap.')
   else:
     raise AssertionError("Unrecognized axis context type!")
 mlir.register_lowering(xmap_p, _xmap_lowering_rule)
@@ -1852,7 +1859,7 @@ def _check_no_loop_collectives(jaxpr, loop_axis_resources):
 
 def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
   from jax.experimental.pjit import sharding_constraint_p, ParsedPartitionSpec
-  from jax.experimental.sharding import MeshPspecSharding
+
   rec = lambda jaxpr: _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name)
   if isinstance(jaxpr, core.ClosedJaxpr):
     return jaxpr.map_jaxpr(rec)

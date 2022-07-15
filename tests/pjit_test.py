@@ -38,7 +38,7 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
 from jax.experimental import array
-from jax.experimental.sharding import MeshPspecSharding
+from jax.experimental.sharding import MeshPspecSharding, Sharding
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    SpecSync, FROM_GDA, AUTO)
@@ -79,6 +79,9 @@ def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
     global_data = np.arange(
         prod(global_shape), dtype=np.float32).reshape(global_shape)
 
+  if isinstance(mesh_axes, Sharding):
+    mesh_axes = mesh_axes.spec
+
   return global_device_array.GlobalDeviceArray.from_callback(
       global_shape, global_mesh, mesh_axes, lambda idx: global_data[idx]), global_data
 
@@ -88,7 +91,10 @@ def create_array(global_shape, global_mesh, mesh_axes, global_data=None):
     global_data = np.arange(
         prod(global_shape), dtype=np.float32).reshape(global_shape)
 
-  sharding = MeshPspecSharding(global_mesh, mesh_axes)
+  if isinstance(mesh_axes, Sharding):
+    sharding = mesh_axes
+  else:
+    sharding = MeshPspecSharding(global_mesh, mesh_axes)
 
   return array.make_array_from_callback(
       global_shape, sharding, lambda idx: global_data[idx]), global_data
@@ -1319,7 +1325,8 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         inp = jax.ShapedArray(input_data.shape, input_data.dtype)
         compiled = f.lower(inp, _global_avals=True).compile()
 
-        different_pspec = (P('y', 'x') if compiled.input_shardings[0] == P(('x',), ('y',))
+        different_pspec = (P('y', 'x')
+                           if compiled.input_shardings[0].spec == P(('x',), ('y',))
                            else P('x', 'y'))
         arr, _ = create_fun(global_input_shape, global_mesh, different_pspec,
                             input_data)
@@ -1979,8 +1986,10 @@ class UtilTest(jtu.JaxTestCase):
     global_in_aval3 = jax.core.ShapedArray((), jnp.int32)
     in_avals = [global_in_aval1, global_in_aval2, global_in_aval3]
 
+    mp = MeshPspecSharding(global_mesh, P(None))
+
     _, out_indices, _ = pxla._get_input_metadata(
-        in_avals, global_mesh, [{}, {}, {}], [False, False, False])
+        in_avals, [mp, mp, mp], [False, False, False])
 
     self.assertLen(out_indices, len(in_avals))
     self.assertTrue(all(len(out) == len(global_mesh.local_devices)

@@ -155,8 +155,7 @@ class Array:
       return f"{prefix}{self.shape}{dtype_str}"
 
   def is_fully_addressable(self) -> bool:
-    # Disable pytype because it does not recognize cached properties.
-    return len(self.sharding.device_set) == len(self.sharding.addressable_devices)  # pytype:disable=wrong-arg-types
+    return self.sharding.is_fully_addressable()
 
   def __array__(self, dtype=None):
     return np.asarray(self._value, dtype=dtype)

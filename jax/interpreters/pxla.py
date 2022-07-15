@@ -1534,10 +1534,16 @@ def _get_sharding_spec_and_avals(
         # Cast for type checkers. Does not affect runtime.
         shardings = cast(Sequence[sharding.PmapSharding], shardings)
         return [s.sharding_spec for s in shardings], avals
-      else:
-        assert all(isinstance(s, sharding.MeshPspecSharding) for s in shardings)
+      elif all(isinstance(s, sharding.MeshPspecSharding) for s in shardings):
         return _get_mesh_sharding_spec_and_avals(
             cast(Sequence[sharding.MeshPspecSharding], shardings), avals, is_global=True)
+      else:
+        # TODO(b/239098037): Delete `_get_sharding_spec_and_avals` and
+        # _get_mesh_sharding_spec_and_avals. It's ok to return `[]` because
+        # for shardings other than MeshPspecSharding and PmapSharding, they
+        # don't have sharding specs and it doesn't make sense for other
+        # shardings to have that field set.
+        return [], avals
     else:
       raise ValueError('Option not recognized. Please file a bug against JAX.')
   else:
@@ -1552,7 +1558,7 @@ def global_avals_to_results_handler(
   if config.jax_parallel_functions_output_gda or config.jax_array:
     global_out_specs, _ = _get_sharding_spec_and_avals(
         shardings, global_out_avals, is_global=True)
-    global_out_indices = [list(s.devices_indices_map(aval.shape).values())
+    global_out_indices = [tuple(s.devices_indices_map(aval.shape).values())
                           for s, aval in safe_zip(shardings, global_out_avals)]
     handlers = [
         global_aval_to_result_handler(global_aval, s)
@@ -2196,11 +2202,17 @@ class TileManual:
 TilingMethod = Union[TileVectorize, TileManual]
 
 
-def _check_if_any_auto(axis_resources):
-  if not axis_resources:
-    return False
-  for resource in axis_resources:
-    if _is_auto(resource):
+def _check_if_any_auto(shardings: Sequence[Union[XLACompatibleSharding, _AUTOAxisResource]]) -> bool:
+  for s in shardings:
+    if _is_auto(s):
+      return True
+  return False
+
+# TODO(yashkatariya): Remove this once UNSPECIFIED can be used without mesh.
+def _check_if_any_auto_or_unspecified(
+    shardings: Sequence[Union[XLACompatibleSharding, _AUTOAxisResource, _UnspecifiedValue]]) -> bool:
+  for s in shardings:
+    if _is_auto(s) or _is_unspecified(s):
       return True
   return False
 
@@ -2238,14 +2250,109 @@ class PartitionSpec(tuple):
   UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
 
+def _get_backend_from_shardings(
+    shardings: Sequence[XLACompatibleSharding]) -> Tuple[xb.XlaBackend, XLACompatibleSharding]:
+  device_set = shardings[0]._device_assignment()
+  assert len(device_set) > 0
+  return xb.get_device_backend(device_set[0]), shardings[0]
+
+
+@profiler.annotate_function
+def lower_sharding_computation(
+    fun: lu.WrappedFun,
+    api_name: str,
+    fun_name: str,
+    in_shardings: Sequence[XLACompatibleSharding],
+    out_shardings: Sequence[XLACompatibleSharding],
+    donated_invars: Sequence[bool],
+    global_in_avals: Sequence[core.ShapedArray],
+    in_is_global: Sequence[bool]):
+  # Device assignment across all inputs and outputs should be the same. This
+  # is checked in pjit.
+  backend, first_sharding = _get_backend_from_shardings(
+      in_shardings + out_shardings)  # type: ignore
+  name_stack = new_name_stack(wrap_name(fun_name, api_name))
+
+  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              "Compiling %s (%d) for with global shapes and types %s. "
+              "Argument mapping: %s.",
+              getattr(fun, '__name__', '<unnamed function>'), id(fun),
+              global_in_avals, in_shardings)
+
+  # 1. Trace to jaxpr and preprocess/verify it
+  in_jaxpr_avals = global_in_avals
+
+  with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
+                                 "in {elapsed_time} sec"):
+    jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
+  assert len(out_shardings) == len(out_jaxpr_avals)
+
+  global_out_avals = out_jaxpr_avals
+
+  _sanitize_mesh_jaxpr(jaxpr)
+  if not first_sharding.is_fully_addressable():
+    check_multihost_collective_allowlist(jaxpr)
+  jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
+
+  # 2. Build up the HLO
+  tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
+  in_op_shardings: Optional[List[Optional[xc.OpSharding]]]
+  out_op_shardings: Optional[List[Optional[xc.OpSharding]]]
+  axis_ctx: mlir.ShardingContext
+
+  in_op_shardings = [i._to_xla_op_sharding(aval.ndim)
+                     for aval, i in safe_zip(global_in_avals, in_shardings)]
+  # TODO(yashkatariya): Fix the HLO produced if out_partitions is
+  # [None, OpShardingProto] has the sharding annotations.
+  out_op_shardings = [None if _is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
+                      for aval, o in safe_zip(global_out_avals, out_shardings)]
+  replicated_args = [False] * len(in_jaxpr_avals)
+  axis_ctx = mlir.ShardingContext(first_sharding)
+
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+  module: Union[str, xc.XlaComputation]
+  module_name = f"{api_name}_{fun_name}"
+
+  if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
+    raise ValueError("Ordered effects not supported in mesh computations.")
+  unordered_effects = [eff for eff in closed_jaxpr.effects
+                       if eff not in core.ordered_effects]
+  lowering_result = mlir.lower_jaxpr_to_module(
+      module_name, closed_jaxpr, unordered_effects, [], backend.platform,
+      axis_ctx, name_stack, donated_invars, replicated_args=replicated_args,
+      arg_shardings=in_op_shardings, result_shardings=out_op_shardings)
+  module, keepalive, host_callbacks = (
+      lowering_result.module, lowering_result.keepalive,
+      lowering_result.host_callbacks)
+
+  return MeshComputation(
+      str(name_stack),
+      module,
+      donated_invars,
+      mesh=None,
+      global_in_avals=global_in_avals,
+      global_out_avals=global_out_avals,
+      in_shardings=in_shardings,
+      out_shardings=out_shardings,
+      spmd_lowering=True,
+      tuple_args=tuple_args,
+      in_is_global=in_is_global,
+      auto_spmd_lowering=False,
+      unordered_effects=unordered_effects,
+      host_callbacks=host_callbacks,
+      keepalive=keepalive)
+
+
 @profiler.annotate_function
 def lower_mesh_computation(
     fun: lu.WrappedFun,
     api_name: str,
     fun_name: str,
     mesh: Mesh,
-    in_axes: Sequence[ArrayMappingOrAutoOrUnspecified],
-    out_axes: Sequence[ArrayMappingOrAutoOrUnspecified],
+    in_shardings: Sequence[Union[MeshPspecSharding, _AUTOAxisResource]],
+    out_shardings: Sequence[Union[MeshPspecSharding, _AUTOAxisResource,
+                            _UnspecifiedValue]],
     donated_invars: Sequence[bool],
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
@@ -2255,7 +2362,7 @@ def lower_mesh_computation(
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
-  auto_spmd_lowering = _check_if_any_auto(in_axes + out_axes)  # type: ignore  # union-attr
+  auto_spmd_lowering = _check_if_any_auto(in_shardings + out_shardings)  # type: ignore
 
   if auto_spmd_lowering and not spmd_lowering:
     raise ValueError('Enable spmd_lowering to use auto spmd lowering.')
@@ -2268,7 +2375,7 @@ def lower_mesh_computation(
               "Argument mapping: %s.",
               getattr(fun, '__name__', '<unnamed function>'), id(fun),
               tuple(global_axis_sizes.items()), global_in_avals,
-              in_axes)
+              in_shardings)
 
   # 1. Trace to jaxpr and preprocess/verify it
   if spmd_lowering:
@@ -2280,54 +2387,60 @@ def lower_mesh_computation(
         tiling_transform = lambda f, *args: vtile_manual(f, tiling_method.manual_axes, *args)  # type: ignore
       else:
         raise NotImplementedError(f"Unrecognized tiling method: {tiling_method}")
-      assert not callable(out_axes)
+      assert not callable(out_shardings)
       assert not auto_spmd_lowering
-      fun = tiling_transform(fun, mesh, in_axes, out_axes)  # type: ignore  # arg-type
+      # This is the xmap path where there is no `AUTO` or `UNSPECIFIED`, which
+      # is why `.spec` can be accessed.
+      fun = tiling_transform(
+          fun, mesh, [_get_array_mapping(i.spec) for i in in_shardings],  # type: ignore
+          [_get_array_mapping(o.spec) for o in out_shardings])  # type: ignore
     in_jaxpr_avals = global_in_avals
   else:
     assert isinstance(tiling_method, TileVectorize)
     assert not auto_spmd_lowering
-    in_tiled_avals = [tile_aval_nd(global_axis_sizes, aval_in_axes, aval)
-                      for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)]
+    # In non-spmd lowering path, there is no `AUTO` or `UNSPECIFIED`, which is
+    # why `.spec` can be accessed.
+    in_tiled_avals = [tile_aval_nd(global_axis_sizes, _get_array_mapping(i.spec), aval)  # type: ignore
+                      for aval, i in safe_zip(global_in_avals, in_shardings)]
     in_jaxpr_avals = in_tiled_avals
   with core.extend_axis_env_nd(mesh.shape.items()):
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
                                    "in {elapsed_time} sec"):
       jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
-  assert len(out_axes) == len(out_jaxpr_avals)
+  assert len(out_shardings) == len(out_jaxpr_avals)
   if spmd_lowering:
     global_out_avals = out_jaxpr_avals
   else:
-    global_out_avals = [untile_aval_nd(global_axis_sizes, aval_out_axes, aval)
-                        for aval, aval_out_axes in safe_zip(out_jaxpr_avals, out_axes)]
+    # In non-spmd lowering path, there is no `AUTO` or `UNSPECIFIED`, which is
+    # why `.spec` can be accessed.
+    global_out_avals = [untile_aval_nd(global_axis_sizes, _get_array_mapping(o.spec), aval)  # type: ignore
+                        for aval, o in safe_zip(out_jaxpr_avals, out_shardings)]
   _sanitize_mesh_jaxpr(jaxpr)
   if mesh.is_multi_process:
     check_multihost_collective_allowlist(jaxpr)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
-  # 3. Build up the HLO
+  # 2. Build up the HLO
   tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
   in_partitions: Optional[List[Optional[xc.OpSharding]]]
   out_partitions: Optional[List[Optional[xc.OpSharding]]]
   axis_ctx: mlir.AxisContext
   if spmd_lowering:
-    global_sharding_spec = mesh_sharding_specs(global_axis_sizes, mesh.axis_names)
     in_partitions = [
-        None if _is_auto(aval_in_axes) else global_sharding_spec(aval, aval_in_axes).sharding_proto()
-        for aval, aval_in_axes in safe_zip(global_in_avals, in_axes)
+        None if _is_auto(i) else i._to_xla_op_sharding(aval.ndim)
+        for aval, i in safe_zip(global_in_avals, in_shardings)
     ]
     # TODO(yashkatariya): Fix the HLO produced if out_partitions is
     # [None, OpShardingProto] has the sharding annotations.
     out_partitions = [
-        (None if _is_auto(aval_out_axes) or _is_unspecified(aval_out_axes) else
-         global_sharding_spec(aval, aval_out_axes).sharding_proto())
-        for aval, aval_out_axes in safe_zip(global_out_avals, out_axes)
+        None if _is_auto(o) or _is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
+        for aval, o in safe_zip(global_out_avals, out_shardings)
     ]
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = mlir.SPMDAxisContext(mesh)
     axis_env = axis_ctx.axis_env
   else:
-    replicated_args = [not axis for axis in in_axes]
+    replicated_args = [not _get_array_mapping(i.spec) for i in in_shardings]  # type: ignore
     in_partitions = None
     out_partitions = None
     axis_env = xla.AxisEnv(nreps=mesh.size,
@@ -2350,11 +2463,20 @@ def lower_mesh_computation(
         lowering_result.module, lowering_result.keepalive,
         lowering_result.host_callbacks)
   return MeshComputation(
-      str(name_stack), module, donated_invars, mesh=mesh, global_in_avals=global_in_avals,
-      global_out_avals=global_out_avals, in_axes=in_axes, out_axes=out_axes,
-      spmd_lowering=spmd_lowering, tuple_args=tuple_args, in_is_global=in_is_global,
+      str(name_stack),
+      module,
+      donated_invars,
+      mesh=mesh,
+      global_in_avals=global_in_avals,
+      global_out_avals=global_out_avals,
+      in_shardings=in_shardings,
+      out_shardings=out_shardings,
+      spmd_lowering=spmd_lowering,
+      tuple_args=tuple_args,
+      in_is_global=in_is_global,
       auto_spmd_lowering=auto_spmd_lowering,
-      unordered_effects=unordered_effects, host_callbacks=host_callbacks,
+      unordered_effects=unordered_effects,
+      host_callbacks=host_callbacks,
       keepalive=keepalive)
 
 
@@ -2398,18 +2520,37 @@ class MeshComputation(stages.XlaLowering):
     return self._executable
 
 
-def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_global):
+def _get_input_metadata(
+    global_in_avals: Sequence[ShapedArray],
+    in_shardings: Sequence[XLACompatibleSharding], in_is_global: Sequence[bool]
+) -> Tuple[Sequence[ShardingSpec], Sequence[Optional[Tuple[Index, ...]]], Sequence[ShapedArray]]:
+  from jax.experimental.sharding import MeshPspecSharding
+
+  if all(isinstance(s, MeshPspecSharding) for s in in_shardings):
+    return _get_input_metadata_from_mesh_pspec(
+        global_in_avals, cast(Sequence[MeshPspecSharding], in_shardings),
+        in_is_global)
+  else:
+    input_indices = [tuple(i.devices_indices_map(aval.shape).values())
+                     for aval, i in safe_zip(global_in_avals, in_shardings)]
+    # TODO(b/239102163): Remove `sharding_specs` attribute from InputsHandler.
+    # That way we don't have to return sharding specs from here.
+    return [], input_indices, global_in_avals
+
+
+def _get_input_metadata_from_mesh_pspec(
+    global_in_avals: Sequence[ShapedArray],
+    in_shardings: Sequence[MeshPspecSharding], in_is_global: Sequence[bool]
+) -> Tuple[Sequence[ShardingSpec], Sequence[Optional[Tuple[Index, ...]]], Sequence[ShapedArray]]:
   input_specs, input_indices, input_avals = [], [], []
-  num_local_devices = len(global_mesh.local_devices)
-  for gaval, axis, is_global in safe_zip(global_in_avals, in_axes, in_is_global):
-    # TODO(yashkatariya): Don't calculate input_indices and input_specs for GDA
-    # as GDA doesn't need it.
+  for gaval, i, is_global in safe_zip(global_in_avals, in_shardings, in_is_global):
+    axis = cast(ArrayMapping, _get_array_mapping(i.spec))
     if is_global:
       aval = gaval
-      mesh = global_mesh
+      mesh = i.mesh
     else:
-      aval = global_mesh._global_to_local(axis, gaval)
-      mesh = global_mesh.local_mesh
+      aval = i.mesh._global_to_local(axis, gaval)
+      mesh = i.mesh.local_mesh
 
     spec = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, axis)
     # We special case this logic to support fully replicated values because
@@ -2417,47 +2558,52 @@ def _get_input_metadata(global_in_avals, global_mesh, in_axes, in_is_global):
     # represent index for each device in the global mesh. But here we want
     # indices for the local devices of the global mesh.
     if not axis:
-      index = tuple((slice(None),) * aval.ndim for _ in range(num_local_devices))
+      index = tuple((slice(None),) * aval.ndim for _ in range(len(mesh.local_devices)))
     else:
-      index = spec_to_indices(aval.shape, spec) if spec is not None else None
+      index = spec_to_indices(aval.shape, spec) if spec is not None else None  # type: ignore
     input_specs.append(spec)
     input_indices.append(index)
     input_avals.append(aval)
   return input_specs, input_indices, input_avals
 
 
-def _get_array_mapping_from_executable(
-    xla_executable, mesh) -> Tuple[Sequence[ArrayMapping], Sequence[ArrayMapping]]:
+def _get_shardings_from_executable(xla_executable, mesh):
   from jax.experimental import pjit
+  from jax.experimental.sharding import MeshPspecSharding
+
   in_pspec, out_pspec = pjit._get_sharding_from_executable(xla_executable, mesh)
-  in_axes = [_get_array_mapping(ip) for ip in in_pspec]
-  out_axes = [_get_array_mapping(op) for op in out_pspec]
-  return cast(Sequence[ArrayMapping], in_axes), cast(Sequence[ArrayMapping], out_axes)
+  return ([MeshPspecSharding(mesh, i) for i in in_pspec],
+          [MeshPspecSharding(mesh, o) for o in out_pspec])
 
 
 class MeshExecutable(stages.XlaExecutable):
   __slots__ = ['xla_executable', 'unsafe_call', '_input_avals',
-               '_in_axes', '_out_axes', '_auto_spmd_lowering']
+               '_in_shardings', '_out_shardings', '_auto_spmd_lowering']
 
   def __init__(self, xla_executable, unsafe_call, input_avals,
-               in_axes, out_axes, auto_spmd_lowering):
+               in_shardings, out_shardings, auto_spmd_lowering):
     self.xla_executable = xla_executable
     self.unsafe_call = unsafe_call
     # input_avals is a list of global and local avals. Aval is global if input
     # is a GDA else local.
     self._input_avals = input_avals
-    self._in_axes = in_axes
-    self._out_axes = out_axes
+    self._in_shardings = in_shardings
+    self._out_shardings = out_shardings
     self._auto_spmd_lowering = auto_spmd_lowering
 
   @staticmethod
   def from_hlo(name: str,
                computation: Union[ir.Module, xc.XlaComputation],
-               mesh: Mesh,
+               # mesh only needs to be set if in_shardings and out_shardings
+               # contain AUTO or UNSPECIFIED (unspecified is temporary here).
+               # TODO(yashkatariya): Remove `mesh` from here once AUTO and
+               # UNSPECIFIED work without mesh.
+               mesh: Optional[Mesh],
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
-               in_axes: Sequence[ArrayMappingOrAutoOrUnspecified],
-               out_axes: Sequence[ArrayMappingOrAutoOrUnspecified],
+               in_shardings: Sequence[Union[XLACompatibleSharding, _AUTOAxisResource]],
+               out_shardings: Sequence[Union[XLACompatibleSharding, _AUTOAxisResource,
+                                       _UnspecifiedValue]],
                spmd_lowering: bool,
                tuple_args: bool,
                in_is_global: Sequence[bool],
@@ -2467,26 +2613,44 @@ class MeshExecutable(stages.XlaExecutable):
                unordered_effects: List[core.Effect],
                host_callbacks: List[Any],
                keepalive: Any) -> MeshExecutable:
-    assert not mesh.empty
-    backend = xb.get_device_backend(mesh.devices.flat[0])
+    auto_or_unspecified = (
+        auto_spmd_lowering or
+        (out_shardings and all(_is_unspecified(o) for o in out_shardings)))
 
-    if spmd_lowering:
+    if auto_or_unspecified:
+      assert mesh is not None
+      assert not mesh.empty
+      backend = xb.get_device_backend(mesh.devices.flat[0])
+    else:
+      backend, first_sharding = _get_backend_from_shardings(
+          in_shardings + out_shardings)  # type: ignore
+
+    dev: np.ndarray
+    if auto_or_unspecified:
+      assert mesh is not None and spmd_lowering
+      dev = mesh.devices
       num_replicas, num_partitions = 1, mesh.size
     else:
-      num_replicas, num_partitions = mesh.size, 1
-    device_assignment = mesh.devices.reshape((num_replicas, num_partitions))
+      dev = np.array(first_sharding._device_assignment())
+      if spmd_lowering:
+        num_replicas, num_partitions = 1, dev.size
+      else:
+        num_replicas, num_partitions = dev.size, 1
+    device_assignment = dev.reshape((num_replicas, num_partitions))
+
     compile_options = xb.get_compile_options(
         num_replicas=num_replicas,
         num_partitions=num_partitions,
         device_assignment=device_assignment,
         use_spmd_partitioning=spmd_lowering,
         use_auto_spmd_partitioning=auto_spmd_lowering,
-        # Set by default. The decision to use them is taken in
-        # `xb.get_compile_options`.
-        auto_spmd_partitioning_mesh_shape=list(mesh.shape.values()),
-        auto_spmd_partitioning_mesh_ids=_get_logical_mesh_ids(
-            list(mesh.shape.values())).reshape(-1),
     )
+    if auto_spmd_lowering:
+      assert mesh is not None
+      compile_options.executable_build_options.auto_spmd_partitioning_mesh_shape = \
+          list(mesh.shape.values())
+      compile_options.executable_build_options.auto_spmd_partitioning_mesh_ids = \
+          _get_logical_mesh_ids(list(mesh.shape.values())).reshape(-1)
     compile_options.parameter_is_tupled_arguments = tuple_args
     compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
         _allow_propagation_to_outputs
@@ -2494,9 +2658,9 @@ class MeshExecutable(stages.XlaExecutable):
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       assert not auto_spmd_lowering
       input_specs, input_indices, input_avals = _get_input_metadata(
-        global_in_avals, mesh, in_axes, in_is_global)
+          global_in_avals, in_shardings, in_is_global)  # type: ignore
       handle_outs = global_avals_to_results_handler(
-          global_out_avals, _get_mesh_pspec_sharding(mesh, out_axes))  # type: ignore  # arg-type
+          global_out_avals, out_shardings)  # type: ignore  # arg-type
       unsafe_call = backend.compile_replicated(
           computation, compile_options,
           input_indices, input_specs,
@@ -2508,19 +2672,23 @@ class MeshExecutable(stages.XlaExecutable):
         xla_executable = dispatch.compile_or_get_cached(
             backend, computation, compile_options, host_callbacks)
 
-      if auto_spmd_lowering or (out_axes and all(_is_unspecified(o) for o in out_axes)):
-        in_axes, out_axes = _get_array_mapping_from_executable(xla_executable, mesh)
+      if auto_or_unspecified:
+        # TODO(yashkatariya): Make this work for UNSPECIFIED without mesh by
+        # returning `OpShardingSharding`.
+        assert mesh is not None
+        in_shardings, out_shardings = _get_shardings_from_executable(
+            xla_executable, mesh)
 
       input_specs, input_indices, input_avals = _get_input_metadata(
-        global_in_avals, mesh, in_axes, in_is_global)
+          global_in_avals, in_shardings, in_is_global)  # type: ignore
       handle_outs = global_avals_to_results_handler(
-          global_out_avals, _get_mesh_pspec_sharding(mesh, out_axes))  # type: ignore  # arg-type
+          global_out_avals, out_shardings)  # type: ignore  # arg-type
       handle_args = InputsHandler(xla_executable.local_devices(), input_specs, input_indices)
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
                                       handle_outs, unordered_effects, keepalive)
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
-                          in_axes, out_axes, auto_spmd_lowering)
+                          in_shardings, out_shardings, auto_spmd_lowering)
 
   # -- stages.XlaExecutable overrides
 
@@ -2532,35 +2700,29 @@ class MeshExecutable(stages.XlaExecutable):
     ref_avals = self._input_avals
     dispatch.check_arg_avals_for_call(ref_avals, arg_avals)
     # Check the GDA sharding and the input sharding.
-    _check_gda_or_array_xla_sharding_match(args, self._in_axes)
+    _check_gda_or_array_xla_sharding_match(args, self._in_shardings)
     return self.unsafe_call(*args)
 
 
-def _get_mesh_pspec_sharding(mesh, out_axes):
-  from jax.experimental.sharding import MeshPspecSharding
-
-  return [MeshPspecSharding(mesh, array_mapping_to_axis_resources(o))
-          for o in out_axes]
-
-
-def _check_gda_or_array_xla_sharding_match(args, in_array_mappings):
+def _check_gda_or_array_xla_sharding_match(args, in_shardings):
   from jax.experimental.global_device_array import GlobalDeviceArray
   from jax.experimental.array import Array
+  from jax.experimental.sharding import MeshPspecSharding
 
-  for arg, inp_array_mapping in safe_zip(args, in_array_mappings):
+  for arg, i in safe_zip(args, in_shardings):
     if not isinstance(arg, (GlobalDeviceArray, Array)):
       continue
-    # TODO(yashkatariya): For `Array` check the `sharding` directly when pxla
-    # takes sharding instances.
-    arr_type, arr_mapping = (
-        ('GDA', _get_array_mapping(arg.mesh_axes)) if isinstance(arg, GlobalDeviceArray)
-        else ('Array', _get_array_mapping(arg.sharding.spec))
+    arr_type, arr_normalized_sharding = (
+        ('GDA', MeshPspecSharding(arg.mesh, arg.mesh_axes).normalize())
+        if isinstance(arg, GlobalDeviceArray)
+        else ('Array', arg.sharding.normalize())
     )
-    if inp_array_mapping != arr_mapping:
+    ndim = arg.ndim
+    if i._to_xla_op_sharding(ndim) != arr_normalized_sharding._to_xla_op_sharding(ndim):
       raise ValueError(
           f"{arr_type} sharding does not match the input sharding. "
-          f"Got {arr_type} spec: {array_mapping_to_axis_resources(arr_mapping)} and "
-          f"auto sharding spec: {array_mapping_to_axis_resources(inp_array_mapping)} "
+          f"Got {arr_type} sharding: {arr_normalized_sharding} and "
+          f"auto sharding spec: {i} "
           f"for {arr_type}: {arg}")
 
 

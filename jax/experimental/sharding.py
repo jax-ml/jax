@@ -14,7 +14,7 @@
 
 import abc
 from collections import Counter
-from typing import Sequence, Tuple, Optional, Mapping, Dict, Set
+from typing import Sequence, Tuple, Optional, Mapping, Dict, Set, Union
 
 from jax._src.util import cache, safe_zip
 from jax._src.lib import xla_bridge as xb
@@ -44,6 +44,10 @@ class Sharding(metaclass=abc.ABCMeta):
     """A set of addressable devices by the current process"""
     process_index = xb.process_index()
     return {d for d in self.device_set if d.process_index == process_index}
+
+  def is_fully_addressable(self) -> bool:
+    # The pytype disable is because pytype can't recognize a cached property.
+    return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
   @abc.abstractmethod
   def device_indices(self, device: Device,
@@ -163,8 +167,10 @@ class MeshPspecSharding(XLACompatibleSharding):
 
   @cache()
   def _to_xla_op_sharding(
-      self, num_dimensions: int,
-      axis_ctx: Optional[mlir.SPMDAxisContext] = None) -> Optional[xc.OpSharding]:
+      self,
+      num_dimensions: int,
+      axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
+  ) -> Optional[xc.OpSharding]:
     from jax.experimental.pjit import get_array_mapping
 
     array_mapping = get_array_mapping(self._parsed_pspec)
@@ -174,9 +180,11 @@ class MeshPspecSharding(XLACompatibleSharding):
         self.mesh.shape, self.mesh.axis_names)(num_dimensions, array_mapping)
     # Used in `with_sharding_constraint`.
     special_axes = {}
-    if axis_ctx is not None:
+    # Manual axes is only used with xmap.
+    if axis_ctx is not None and hasattr(axis_ctx, 'manual_axes'):
       axis_names = self.mesh.axis_names
-      for manual_axis in axis_ctx.manual_axes:
+      # Ignore type because mypy doesn't recognize the `hasattr` check above.
+      for manual_axis in axis_ctx.manual_axes:  # type: ignore
         special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
     return sharding_spec.sharding_proto(special_axes=special_axes)
 
