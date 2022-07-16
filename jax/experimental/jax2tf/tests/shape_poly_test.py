@@ -270,7 +270,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
   def test_poly_divmod(self, *, dividend, quotient, divisor, remainder):
     if quotient is None:
       with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                  "Dimension polynomial .* is not a multiple of .*"):
+                                  "Cannot divide .* by .*"):
         divmod(dividend, divisor)
     else:
       self.assertEqual((quotient, remainder), divmod(dividend, divisor))
@@ -294,7 +294,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
   def test_poly_truediv(self, *, dividend, divisor, quotient):
     if quotient is None:
       with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                  "Dimension polynomial .* is not a multiple of .*"):
+                                  "Cannot divide .* by .*"):
         dividend / divisor
     else:
       self.assertEqual(quotient, dividend / divisor)
@@ -302,7 +302,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
   def test_poly_truediv_error(self):
     a, = shape_poly._parse_spec("a,", (2,))
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Division of '3' by dimension polynomial .* is not supported"):
+                                "Cannot divide .* by .*"):
       3 / a
 
   def test_dilate_shape(self):
@@ -327,7 +327,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
         re.escape(
-          "Cannot compute stride for dimension 'a', window_size '1', stride '2'. Reason: Dimension polynomial 'a + -1' is not a multiple of '2'")):
+          "Cannot compute stride for dimension 'a', window_size '1', stride '2'.\nDetails: Cannot divide 'a + -1' by '2'")):
       core.stride_shape((a, 20), (1, 3), (2, 2))
 
 
@@ -929,7 +929,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
 
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                re.escape("Cannot divide evenly the sizes of shapes (b, 5, 7) and (2, -1)")):
+                                re.compile("Cannot divide evenly the sizes of shapes \\(b, 5, 7\\) and \\(2, -1\\).*Details: Cannot divide '35\\*b' by '-2'",
+                                           re.DOTALL)):
       jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
                      polymorphic_shapes=["(b, _, _)"])(np.ones((4, 5, 7)))
 
@@ -938,9 +939,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
                    polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 
+    jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+                   polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
+
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
-        re.compile("Division of .* by dimension polynomial .* is not supported",
+        re.compile("Cannot divide .* by 'v'.*Dividend must be a polynomial.",
                    re.DOTALL)):
       jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
                      polymorphic_shapes=["(v, _)"])(np.ones((4, 4)))
@@ -1275,20 +1279,40 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[(0, 1)]),
 
-    # Issue #11402 InconclusiveDimensionOperation: Dimension polynomial '-1*t' is not a multiple of '2'
-    # TODO(still fails)
-    # _make_harness("conv_general_dilated", "1d_1",
-    #               lambda lhs, rhs: lax.conv_general_dilated(
-    #                   lhs, rhs,
-    #                   window_strides=(2,),
-    #                   padding="SAME",
-    #                   rhs_dilation=None,
-    #                   dimension_numbers=lax.ConvDimensionNumbers(lhs_spec=(0, 2, 1),
-    #                                                              rhs_spec=(2, 1, 0),
-    #                                                              out_spec=(0, 2, 1))),
-    #               [RandArg((1, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
-    #               poly_axes=[1, None],
-    #               enable_and_disable_xla=True),
+    # Issue #11402
+    # We play a trick here. Since the stride is 2, when we compute the padding
+    # for "SAME" we need to divide by 2. We cannot do this in general, so we
+    # write the test with the assumption that the dimension is a multiple of 2.
+    # We pass the lhs as (1, b, 2, 16) and then we
+    # reshape it as (1, 2*b, 16), so that we know that the lhs's dimension 1
+    # is a multiple of 2.
+    _make_harness("conv_general_dilated", "1d_1",
+                  lambda lhs, rhs: lax.conv_general_dilated(
+                      jnp.reshape(lhs, (1, -1, 16)), rhs,
+                      window_strides=(2,),
+                      padding="SAME",
+                      rhs_dilation=None,
+                      dimension_numbers=lax.ConvDimensionNumbers(lhs_spec=(0, 2, 1),
+                                                                 rhs_spec=(2, 1, 0),
+                                                                 out_spec=(0, 2, 1))),
+                  [RandArg((1, 6, 2, 16), _f32), RandArg((4, 16, 16), _f32)],
+                  poly_axes=[1, None],
+                  enable_and_disable_xla=True),
+    # The same example from above, but without the reshape trick.
+    _make_harness("conv_general_dilated", "1d_1err",
+                  lambda lhs, rhs: lax.conv_general_dilated(
+                      lhs, rhs,
+                      window_strides=(2,),
+                      padding="SAME",
+                      rhs_dilation=None,
+                      dimension_numbers=lax.ConvDimensionNumbers(lhs_spec=(0, 2, 1),
+                                                                 rhs_spec=(2, 1, 0),
+                                                                 out_spec=(0, 2, 1))),
+                  [RandArg((1, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
+                  poly_axes=[1, None],
+                  enable_and_disable_xla=True,
+                  expect_error=(core.InconclusiveDimensionOperation,
+                                "Cannot divide .* by '2'")),
     # Issue #11402
     _make_harness("conv_general_dilated", "1d_2",
                   lambda lhs, rhs: lax.conv_transpose(lhs, rhs,
@@ -1842,7 +1866,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="conv_general_dilated_1d_2_noxla_poly_axes=[0, None]"
+      #one_containing="conv_general_dilated_1d_1err_poly_axes=[1, None]"
   )
   def test_prim(self, harness: Harness):
     _test_one_harness(self, harness)

@@ -297,6 +297,13 @@ class _DimPolynomial():
   def __lt__(self, other: DimSize):
     return not self.__ge__(other)
 
+  def _division_error_msg(self, dividend, divisor, details: str = "") -> str:
+    msg = f"Cannot divide '{dividend}' by '{divisor}'."
+    if details:
+      msg += f"\nDetails: {details}."
+    msg += "\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported."
+    return msg
+
   def divmod(self, divisor: DimSize) -> Tuple[DimSize, int]:
     """
     Floor division with remainder (divmod) generalized to polynomials.
@@ -309,18 +316,19 @@ class _DimPolynomial():
     divisor = _ensure_poly(divisor)
     dmon, dcount = divisor.leading_term
     dividend, quotient = self, 0
-    err_msg = f"Dimension polynomial '{self}' is not a multiple of '{divisor}'"
     # invariant: self = dividend + divisor * quotient
     # the leading term of dividend decreases through the loop.
     while is_poly_dim(dividend) and not dividend.is_constant:
       mon, count = dividend.leading_term
       try:
         qmon = mon.divide(dmon)
-      except InconclusiveDimensionOperation:
-        raise InconclusiveDimensionOperation(err_msg)
+      except InconclusiveDimensionOperation as e:
+        raise InconclusiveDimensionOperation(
+            self._division_error_msg(self, divisor, str(e)))
       qcount, rcount = divmod(count, dcount)
       if rcount != 0:
-        raise InconclusiveDimensionOperation(err_msg)
+        raise InconclusiveDimensionOperation(
+            self._division_error_msg(self, divisor))
 
       q = _DimPolynomial.from_coeffs({qmon: qcount})
       quotient += q
@@ -333,7 +341,8 @@ class _DimPolynomial():
       remainder = r
     else:
       if dividend != 0:
-        raise InconclusiveDimensionOperation(err_msg)
+        raise InconclusiveDimensionOperation(
+            self._division_error_msg(self, divisor))
       remainder = 0
 
     if config.jax_enable_checks:
@@ -351,13 +360,14 @@ class _DimPolynomial():
     q, r = self.divmod(divisor)
     if r != 0:
       raise InconclusiveDimensionOperation(
-          f"Dimension polynomial '{self}' is not a multiple of '{divisor}'")
+          self._division_error_msg(self, divisor,
+                                   f"Remainder is not zero: {r}"))
     return q
 
   def __rtruediv__(self, dividend: DimSize):
     # Used for "/", when dividend is not a _DimPolynomial
     raise InconclusiveDimensionOperation(
-        f"Division of '{dividend}' by dimension polynomial '{self}' is not supported")
+        self._division_error_msg(dividend, self, "Dividend must be a polynomial"))
 
   def __mod__(self, divisor: DimSize) -> int:
     return self.divmod(divisor)[1]
@@ -433,10 +443,10 @@ class DimensionHandlerPoly(core.DimensionHandler):
     err_msg = f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}"
     try:
       q, r = _ensure_poly(sz1).divmod(sz2)
-    except InconclusiveDimensionOperation:
-      raise InconclusiveDimensionOperation(err_msg)
+    except InconclusiveDimensionOperation as e:
+      raise InconclusiveDimensionOperation(err_msg + f"\nDetails: {e}")
     if r != 0:
-      raise InconclusiveDimensionOperation(err_msg)
+      raise InconclusiveDimensionOperation(err_msg + f"\nRemainder is not zero: {r}")
     return q  # type: ignore[return-value]
 
   def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
@@ -448,7 +458,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
     except InconclusiveDimensionOperation as e:
       raise InconclusiveDimensionOperation(
           f"Cannot compute stride for dimension '{d}', "
-          f"window_size '{window_size}', stride '{window_stride}'. Reason: {e}.")
+          f"window_size '{window_size}', stride '{window_stride}'.\nDetails: {e}.")
     return d
 
   def as_value(self, d: DimSize):
