@@ -6389,7 +6389,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     """Test that jax.numpy function signatures match numpy."""
     jnp_funcs = {name: getattr(jnp, name) for name in dir(jnp)}
     func_pairs = {name: (fun, fun.__np_wrapped__) for name, fun in jnp_funcs.items()
-                  if hasattr(fun, '__np_wrapped__')}
+                  if getattr(fun, '__np_wrapped__', None) is not None}
     assert len(func_pairs) > 0
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.

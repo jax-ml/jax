@@ -275,6 +275,8 @@ class ndarray(metaclass=ArrayMeta):
   # implement the NumPy ArrayLike protocol.
   def __array__(self) -> Any: ...
 
+  def __dlpack__(self) -> Any: ...
+
   # JAX extensions
   @property
   @abc.abstractmethod
