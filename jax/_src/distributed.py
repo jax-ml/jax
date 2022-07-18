@@ -35,9 +35,6 @@ class State:
                  coordinator_address: Optional[str] = None,
                  num_processes: Optional[int] = None,
                  process_id: Optional[int] = None):
-    coordinator_address = (coordinator_address or
-                           os.environ.get('JAX_COORDINATOR_ADDRESS', None))
-
     if cloud_tpu_init.running_in_cloud_tpu_vm:
       worker_endpoints = cloud_tpu_init.get_metadata(
           'worker-network-endpoints').split(',')
@@ -107,8 +104,10 @@ def initialize(coordinator_address: Optional[str] = None,
   Currently, calling ``initialize`` sets up the multi-host GPU backend and Cloud
   TPU backend.
 
-  If you are on GPU platform, you will have to provide the coordinator_address
-  and other args to the `initialize` API.
+  If you are on GPU platform, the following environment variables
+  ``JAX_COORDINATOR_ADDRESS``, ``JAX_NUM_PROCESSES``, and ``JAX_PROCESS_ID``
+  can be set or you will have to provide the coordinator_addressand other args
+  to the `initialize` API.
 
   If you are on TPU platform, the coordinator_address and other args will be
   auto detected but you have the option to provide it too.
@@ -142,6 +141,12 @@ def initialize(coordinator_address: Optional[str] = None,
 
   >>> jax.distributed.initialize('10.0.0.1:1234', 2, 1)  # doctest: +SKIP
   """
+  coordinator_address = (coordinator_address or
+                         os.environ.get('JAX_COORDINATOR_ADDRESS', None))
+  if num_processes is None:
+    num_processes = int(os.environ.get('JAX_NUM_PROCESSES', None))
+  if process_id is None:
+    process_id = int(os.environ.get('JAX_PROCESS_ID', None))
   global_state.initialize(coordinator_address, num_processes, process_id)
   atexit.register(shutdown)
 

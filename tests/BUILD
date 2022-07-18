@@ -97,7 +97,7 @@ py_test(
     name = "distributed_test",
     srcs = ["distributed_test.py"],
     args = [
-        "--exclude_test_targets=MultiProcessGpuTest",
+        "--exclude_test_targets=MultiProcessGpuTest,MultiProcessGpuWithEnvTest",
     ],
     deps = [
         "//jax",

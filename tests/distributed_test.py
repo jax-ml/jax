@@ -104,7 +104,47 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
                           stderr=subprocess.PIPE, universal_newlines=True))
 
     for proc in subprocesses:
-      out, _ = proc.communicate()
+      out, err = proc.communicate()
+      print(err)
+      self.assertEqual(proc.returncode, 0)
+      self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+
+
+@unittest.skipIf(not portpicker, "Test requires portpicker")
+class MultiProcessGpuWithEnvTest(jtu.JaxTestCase):
+
+  def test_gpu_distributed_initialize(self):
+    if jax.devices()[0].platform != 'gpu':
+      raise unittest.SkipTest('Tests only for GPU.')
+
+    port = portpicker.pick_unused_port()
+    num_gpus = 4
+    num_gpus_per_task = 1
+    num_tasks = num_gpus // num_gpus_per_task
+
+    os.environ["JAX_COORDINATOR_ADDRESS"] = f'localhost:{port}'
+    os.environ["JAX_NUM_PROCESSES"] = str(num_tasks)
+
+    subprocesses = []
+    for task in range(num_tasks):
+      env = os.environ.copy()
+      env["JAX_PROCESS_ID"] = str(task)
+      env["CUDA_VISIBLE_DEVICES"] = ",".join(
+          str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+      args = [
+          sys.executable,
+          "-c",
+          ('import jax, os; '
+           'jax.distributed.initialize(); '
+           'print(f\'{jax.local_device_count()},{jax.device_count()}\', end="")'
+          )
+      ]
+      subprocesses.append(subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, universal_newlines=True))
+
+    for proc in subprocesses:
+      out, err = proc.communicate()
+      print(err)
       self.assertEqual(proc.returncode, 0)
       self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
 
