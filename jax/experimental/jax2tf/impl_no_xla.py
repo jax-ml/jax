@@ -83,10 +83,9 @@ def _transpose_for_tf_conv(lhs, lhs_shape: core.Shape,
 
   The shapes passed in and returned may contain polynomials, and thus may
   be different than lhs.shape and rhs.shape."""
-  # TODO(marcvanzee): Add tests for this ops for shape polymorphism.
   lhs_perm, rhs_perm, _ = dimension_numbers
 
-  # TODO(marcvanzee): Consider merging tranposes if we want to optimize.
+  # TODO(marcvanzee): Consider merging transposes if we want to optimize.
   # For `lhs_perm` / `output_perm`, perm (0, 1, 2, 3) corresponds to "NCHW".
   lhs, lhs_shape = _transpose_with_shape(lhs, lhs_shape, lhs_perm)  # lhs --> "NCHW"
   if len(lhs_perm) == 3:
@@ -171,6 +170,7 @@ def _conv_transpose_pads_to_padtype(kernel_sdims, lhs_dilation, padding):
   raise ValueError('Transpose convolution padding mode must be '
                    '`SAME` or `VALID`.')
 
+
 def _validate_spatial_dimensions(lhs: TfVal, lhs_shape: core.Shape,
                                  rhs: TfVal, rhs_shape: core.Shape):
   """Check spatial dimension support."""
@@ -199,22 +199,17 @@ def _normalize_padding_and_dilations(
   return padding, lhs_dilation, rhs_dilation
 
 def _normalize_window_strides(window_strides):
-  """Ensure window_strides has length 4."""
-  # Some TF ops require len(window_strides) == 4 while others do not. We simply
-  # ensure it always has len(4).
+  """Normalize `window_strides` to length 4, returning `[1, spatial_dim1, spatial_dim2, 1]`.
+
+  For 1D Convolutions adds dummy `spatial_dim2 == 1` so 2D ops can be used.
+  """
+  assert len(window_strides) in [1, 2, 4], "Invalid window strides."
   if len(window_strides) == 1:
-    # This is the Conv1D case. We add a dummy dimension to allow using 2D ops,
-    # and use stride=1 on the dummy dimension.
     window_strides = list(window_strides) + [1]
   if len(window_strides) == 2:
     window_strides = [1] + list(window_strides) + [1]
   return window_strides
 
-def _normalize_output_perm(output_perm, is_conv1d):
-  """Ensure that output_perm has length 4."""
-  if is_conv1d:
-    output_perm = list(output_perm) + [1]
-  return output_perm
 
 def _validate_conv_features(
       is_transpose, is_atrous, is_depthwise, feature_group_count,
