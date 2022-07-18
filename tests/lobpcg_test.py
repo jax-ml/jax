@@ -371,6 +371,7 @@ class F32LobpcgTest(LobpcgTest):
     self.checkLobpcgConsistency(matrix_name, n, k, m, jnp.float32)
 
   @parameterized.named_parameters(_make_concrete_cases(f64=False))
+  @jtu.skip_on_devices("rocm") # see SWDEV-321073
   def testLobpcgMonotonicityF32(self, matrix_name, n, k, m):
     self.checkLobpcgMonotonicity(matrix_name, n, k, m, jnp.float32)
 
