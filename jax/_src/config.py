@@ -853,6 +853,12 @@ config.define_bool_state(
     default=True,
     help='Enable using the context manager-based name stack.')
 
+config.define_bool_state(
+    name='jax_unique_mhlo_module_names',
+    default=True,
+    help='Enables the generation of unique MHLO module names. This is useful '
+    'to clients that expect modules to have unique names (e.g, trace data).')
+
 # This flag is temporary during rollout of the remat barrier.
 # TODO(parkers): Remove if there are no complaints.
 config.define_bool_state(
