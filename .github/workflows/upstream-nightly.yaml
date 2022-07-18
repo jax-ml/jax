@@ -1,5 +1,10 @@
 name: CI-Nightly
-# Adapted from https://github.com/pydata/xarray/blob/main/.github/workflows/upstream-dev-ci.yaml
+# This configures a github action that runs the JAX test suite against nightly development builds
+# of numpy and scipy, in order to catch issues with new package versions prior to their release.
+# Unlike our other CI, this is one that we expect to fail frequently, and so we don't run it against
+# every commit and PR in the repository. Rather, we run it on a schedule, and failures lead to an
+# issue being created or updated.
+# Portions of this adapted from https://github.com/pydata/xarray/blob/main/.github/workflows/upstream-dev-ci.yaml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -62,7 +67,7 @@ jobs:
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short -rf \
               --report-log output-${{ matrix.python-version }}-log.jsonl \
-              tests/lax_numpy_test.py \
+              tests \
               || (
                 echo '::set-output name=ARTIFACTS_AVAILABLE::true' && false
               )
