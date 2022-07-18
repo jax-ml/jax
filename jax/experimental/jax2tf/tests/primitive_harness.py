@@ -3082,19 +3082,6 @@ for padding, lhs_dilation, rhs_dilation in [
         rhs_dilation=rhs_dilation,
         works_without_xla=True)
 
-#--- END Tests for conv_general_dilated with works_without_xla=True ---
-
-
-for lhs_dilation, rhs_dilation in [
-    # Note: LHS dilation does work for enable_xla=False, but only if
-    # padding=='VALID' (see test above for conv_transpose2d_valid_padding).
-    ((2, 2), (1, 1)),  # dilation only on LHS (transposed)
-    ((2, 3), (3, 2))   # dilation on both LHS and RHS (transposed & atrous)
-]:
-  _make_conv_harness(
-      "dilations", lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
-
-
 for padding, lhs_dilation, rhs_dilation in [
     ("VALID", (1,), (1,)),  # no dilation with "VALID" padding
     ("SAME", (1,), (1,)),  # no dilation with "SAME" padding
@@ -3112,7 +3099,19 @@ for padding, lhs_dilation, rhs_dilation in [
         dimension_numbers=dimension_numbers,
         window_strides=(1,),
         lhs_dilation=lhs_dilation,
-        rhs_dilation=rhs_dilation)
+        rhs_dilation=rhs_dilation,
+        works_without_xla=True)
+
+#--- END Tests for conv_general_dilated with works_without_xla=True ---
+
+for lhs_dilation, rhs_dilation in [
+    # Note: LHS dilation does work for enable_xla=False, but only if
+    # padding=='VALID' (see test above for conv_transpose2d_valid_padding).
+    ((2, 2), (1, 1)),  # dilation only on LHS (transposed)
+    ((2, 3), (3, 2))   # dilation on both LHS and RHS (transposed & atrous)
+]:
+  _make_conv_harness(
+      "dilations", lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
 
 
 for padding, lhs_dilation, rhs_dilation in [

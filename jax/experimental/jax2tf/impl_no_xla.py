@@ -118,17 +118,12 @@ def pads_to_padtype(in_shape, window_shape, window_strides, padding) -> str:
   return "EXPLICIT"
 
 
-def _pad_spatial_dims(x, x_shape, padding, is_conv1d):
+def _pad_spatial_dims(x, x_shape, padding):
   """Pads `x` using `padding`, which specifies padding for the spatial dimensions."""
   # Add empty padding for batch and feature dimensions.
   no_pad = ((0, 0),)
   padding = tuple(padding)
-  if is_conv1d:
-    padding = no_pad + padding + no_pad
-    # Add empty padding for dummy dimension, too.
-    padding = no_pad + padding + no_pad + no_pad
-  else:
-    padding = no_pad + padding + no_pad
+  padding = no_pad + padding + no_pad
   x = tf.pad(x, padding)
   assert len(x.shape) == len(padding)
   x_shape = tuple(p0 + xs + p1 for xs, (p0, p1) in zip(x_shape, padding))
@@ -285,7 +280,7 @@ def _conv_general_dilated(
       lhs_shape[1:3], rhs_dilated_shape, window_strides, padding)
     # We only manually pad if we aren't using a tranposed convolutions.
     if padding_type == "EXPLICIT":
-      lhs, lhs_shape = _pad_spatial_dims(lhs, lhs_shape, padding, is_conv1d)
+      lhs, lhs_shape = _pad_spatial_dims(lhs, lhs_shape, padding)
       padding_type = "VALID"
 
   if padding_type != "SAME" and any(l < r for l, r in zip(lhs_shape[1:3], rhs_dilated_shape)):
