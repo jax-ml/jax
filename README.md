@@ -388,15 +388,19 @@ Some standouts:
 
 JAX is written in pure Python, but it depends on XLA, which needs to be
 installed as the `jaxlib` package. Use the following instructions to install a
-binary package with `pip`, or to build JAX from source.
+binary package with `pip`, or to [build JAX from
+source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
-macOS (10.12 or later) platforms. Windows users can use JAX on CPU and GPU via
-the
-[Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/about).
-There is some initial native Windows support, but since it is still somewhat
-immature, there are no binary releases and it must be
-[built from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
+macOS (10.12 or later) platforms.
+
+Windows users can use JAX on CPU and GPU via the [Windows Subsystem for
+Linux](https://docs.microsoft.com/en-us/windows/wsl/about). In addition, there
+is some initial community-driven native Windows support, but since it is still
+somewhat immature, there are no official binary releases and it must be [built
+from source for Windows](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
+For an unofficial discussion of native Windows builds, see also the [Issue #5795
+thread](https://github.com/google/jax/issues/5795).
 
 ### pip installation: CPU
 
@@ -410,6 +414,8 @@ pip install --upgrade "jax[cpu]"
 
 On Linux, it is often necessary to first update `pip` to a version that supports
 `manylinux2014` wheels.
+**These `pip` installations do not work with Windows, and may fail silently; see
+[above](#installation).**
 
 ### pip installation: GPU (CUDA)
 
@@ -422,12 +428,12 @@ package.
 
 JAX provides pre-built CUDA-compatible wheels for **Linux only**,
 with CUDA 11.1 or newer, and CuDNN 8.0.5 or newer. Other combinations of
-operating system, CUDA, and CuDNN are possible, but require building from
-source.
+operating system, CUDA, and CuDNN are possible, but require [building from
+source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 * CUDA 11.1 or newer is *required*.
-  * You may be able to use older CUDA versions if you build from source, but
-    there are known bugs in CUDA in all CUDA versions older than 11.1, so we
+  * You may be able to use older CUDA versions if you [build from source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source),
+    but there are known bugs in CUDA in all CUDA versions older than 11.1, so we
     do not ship prebuilt binaries for older CUDA versions.
 * The supported cuDNN versions for the prebuilt wheels are:
   * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
@@ -455,6 +461,8 @@ pip install --upgrade pip
 pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
+**These `pip` installations do not work with Windows, and may fail silently; see
+[above](#installation).**
 
 The jaxlib version must correspond to the version of the existing CUDA
 installation you want to use. You can specify a particular CUDA and CuDNN
