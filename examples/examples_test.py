@@ -15,7 +15,6 @@
 
 import os
 import sys
-import unittest
 import zlib
 
 from absl.testing import absltest
@@ -23,14 +22,12 @@ from absl.testing import parameterized
 
 import numpy as np
 
-import jax
 from jax import lax
 from jax import random
 import jax.numpy as jnp
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from examples import kernel_lsq
-from examples import resnet50
 sys.path.pop()
 
 from jax.config import config
@@ -48,36 +45,6 @@ class ExamplesTest(parameterized.TestCase):
 
   def setUp(self):
     self.rng = np.random.default_rng(zlib.adler32(self.__class__.__name__.encode()))
-
-  @parameterized.named_parameters(
-      {"testcase_name": f"_input_shape={input_shape}",
-       "input_shape": input_shape}
-      for input_shape in [(2, 20, 25, 2)])
-  @unittest.skipIf(config.x64_enabled, "skip in x64 mode")
-  def testIdentityBlockShape(self, input_shape):
-    init_fun, apply_fun = resnet50.IdentityBlock(2, (4, 3))
-    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
-
-  @parameterized.named_parameters(
-      {"testcase_name": f"_input_shape={input_shape}",
-       "input_shape": input_shape}
-      for input_shape in [(2, 20, 25, 3)])
-  @unittest.skipIf(config.x64_enabled, "skip in x64 mode")
-  def testConvBlockShape(self, input_shape):
-    init_fun, apply_fun = resnet50.ConvBlock(3, (2, 3, 4))
-    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
-
-  @parameterized.named_parameters(
-      {"testcase_name": "_num_classes={}_input_shape={}"
-                        .format(num_classes, input_shape),
-       "num_classes": num_classes, "input_shape": input_shape}
-      for num_classes in [5, 10]
-      for input_shape in [(224, 224, 3, 2)])
-  @unittest.skipIf(config.x64_enabled, "skip in x64 mode")
-  @jax.numpy_rank_promotion("allow")  # Uses stax, which exercises implicit rank promotion.
-  def testResNet50Shape(self, num_classes, input_shape):
-    init_fun, apply_fun = resnet50.ResNet50(num_classes)
-    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   def testKernelRegressionGram(self):
     n, d = 100, 20
