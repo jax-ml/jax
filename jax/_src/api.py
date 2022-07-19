@@ -2172,6 +2172,8 @@ def _cpp_pmap(
       execute_replicated = execute[0]
       out_handler = execute_replicated.out_handler
       in_handler = execute_replicated.in_handler
+      out_indices = [tuple(s.devices_indices_map(a.shape).values())
+                     for s, a in safe_zip(out_handler.out_shardings, out_handler.out_avals)]
       fastpath_data = _PmapFastpathData(
           version=1,
           xla_executable=execute_replicated.xla_executable,
@@ -2181,8 +2183,8 @@ def _cpp_pmap(
           input_sharding_specs=in_handler.sharding_specs,
           input_devices=in_handler.local_devices,
           input_indices=in_handler.input_indices,
-          out_sharding_specs=out_handler.out_specs,
-          out_indices=out_handler.out_indices,
+          out_sharding_specs=[s.sharding_spec for s in out_handler.out_shardings],
+          out_indices=out_indices,
           out_avals=out_handler.out_avals,
       )
 
