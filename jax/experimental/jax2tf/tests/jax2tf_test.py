@@ -16,8 +16,9 @@
 Specific JAX primitive conversion tests are in primitives_test."""
 
 import unittest
-from typing import Dict, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
+from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -33,6 +34,7 @@ from jax._src import test_util as jtu
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
+import jax.interpreters.mlir as mlir
 from jax._src import source_info_util
 import jax._src.lib.xla_bridge
 
@@ -47,9 +49,13 @@ config.parse_flags_with_absl()
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
+  def test_empty(self):
+    f_jax = lambda x, y: x
+    self.ConvertAndCompare(f_jax, 0.7, 1)
+
   def test_basics(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
-    _, res_tf = self.ConvertAndCompare(f_jax, 0.7)
+    self.ConvertAndCompare(f_jax, 0.7)
 
   def test_input_output_naming(self):
     @jax2tf.convert
@@ -779,8 +785,12 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     if flavor == "old":
       raise unittest.SkipTest("TODO: CSE widget not yet implemented for old-style remat")
     if jax.config.jax_remat_opt_barrier:
-      self.assertRegex(
-          str(f_tf_graph), r"remat_checkpoint_/XlaOptimizationBarrier")
+      if config.jax2tf_default_experimental_native_lowering:
+        self.assertRegex(
+          str(f_tf_graph), r"mhlo.optimization_barrier")
+      else:
+        self.assertRegex(
+            str(f_tf_graph), r"remat_checkpoint_/XlaOptimizationBarrier")
     elif config.jax_experimental_name_stack:
       self.assertRegex(str(f_tf_graph),
                        r'transpose/jax2tf_f_/jvp/checkpoint/remat_checkpoint_/cond/branch_1_fun/Sin')
@@ -813,7 +823,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sin(1.)
     f_tf = tf.function(jax2tf.convert(f_jax), autograph=False)
     f_tf_graph = f_tf.get_concrete_function().graph.as_graph_def()
-    self.assertIn('op: "Sin"', str(f_tf_graph))
+    if config.jax2tf_default_experimental_native_lowering:
+      self.assertIn("mhlo.sine", str(f_tf_graph))
+    else:
+      self.assertIn('op: "Sin"', str(f_tf_graph))
 
   def test_convert_of_nested_independent_jit(self):
     def func(x):
@@ -885,14 +898,13 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         return my_test_function(jnp.sin(x))
 
       out = jax2tf.convert(caller, with_gradient=False)(2.)
-      # When we use `with_gradient=False` the raw output of `caller` is passed
-      # through a `tf.raw_ops.PreventGradient` and a `tf.identity`, clobbering
-      # the name scope of the `mul` op. We need to get the grandparent of the
-      # `out` tensor to see the name scope of the result of the `mul`.
-      grandparent_op = out.op.inputs[0].op.inputs[0]
-      self.assertIn("my_test_function", grandparent_op.name)
       return out
-    run()
+    run_graph = run.get_concrete_function().graph.as_graph_def()
+    print(str(run_graph))
+    if config.jax2tf_default_experimental_native_lowering:
+      self.assertIn("my_test_function/mul", str(run_graph))
+    else:
+      self.assertIn("my_test_function/jit_fn_/Mul", str(run_graph))
 
   def test_bfloat16_constant(self):
     # Re: https://github.com/google/jax/issues/3942
@@ -917,7 +929,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    const = np.ones((16, 16))
+    const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     def f(x):
       return x + const + const + const + const
 
@@ -927,7 +939,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    const = np.arange(256, dtype=np.float32)
+    const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     x = np.ones((256,), dtype=np.float32)
     def f1(x):
       return lax.cond(x[0] >= 0., lambda x: x + const, lambda x: x * const, x) + const
@@ -939,7 +951,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_scan(self):
     # See https://github.com/google/jax/issues/7992.
-    const = np.arange(256, dtype=np.float32)
+    const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     xs = np.ones((8, 256), dtype=np.float32)
     def f1(xs):
       res, _ = lax.scan(lambda carry, x: (carry + x + const, None),
@@ -955,7 +967,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_jit(self):
     # We do not share constants under jit.
-    const = np.ones((16, 16))
+    const = np.random.uniform(size=(16, 16)).astype(np.float32)  # A shared constant
     @jax.jit
     def g_jit(x):
       return x * const
@@ -1011,6 +1023,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                         (grad_tf[0].numpy(), grad_tf[1].numpy()))
 
 
+  @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
   def test_enable_xla(self):
     # Tests that enable_xla flag is properly scoped to a conversion.
     def fun(x):
@@ -1224,6 +1237,98 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         [],
         include_xla_op_metadata=False
     )
+
+def get_serialized_computation(
+    f_jax: Callable,
+    *args,
+    abstracted_axes: Optional[Tuple[Dict[int, str]]] = None) -> str:
+  lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
+  mhlo_module = lowered.compiler_ir(dialect='mhlo')
+  mhlo_module_text = mlir.module_to_string(mhlo_module)
+  logging.info(f'Serialized ir.Module = {mhlo_module_text}')
+  return mhlo_module_text
+
+
+class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
+  """Unit tests for XlaCallModule. Will move these eventually to TF."""
+  def test_simple(self):
+
+    def f_jax(x):
+      return jnp.sin(x)
+
+    x = np.ones((2, 3), dtype=np.float32)
+
+    jax_res = f_jax(x)
+    res = tfxla.call_module([x],
+                            module=get_serialized_computation(f_jax, x),
+                            Tout=[jax_res.dtype],
+                            Sout=[jax_res.shape])
+    self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
+                        [jax_res])
+
+  @unittest.skip("TODO(necula): Cannot deserialize MHLO computation")
+  def test_while(self):
+    # With nested computation
+    def f_jax(count, x):
+      return lax.while_loop(lambda carry: carry[0] < count, lambda carry:
+                            (carry[0] + 1, carry[1] + 1.), (0, x))[1]
+
+    count = np.int32(5)
+    x = np.ones((2, 3), dtype=np.float32)
+
+    jax_res = f_jax(count, x)
+    res = tfxla.call_module([count, x],
+                            module=get_serialized_computation(f_jax, count, x),
+                            Tout=[jax_res.dtype],
+                            Sout=[jax_res.shape])
+    self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
+                        [jax_res])
+
+  def test_multiple_args_results(self):
+
+    def f_jax(x1, x2):
+      return (jnp.sin(x1), jnp.cos(x2))
+
+    x1 = np.ones((2, 3), dtype=np.float32)
+    x2 = np.ones((3, 4), dtype=np.float32)
+
+    jax_res = f_jax(x1, x2)
+
+    def f_tf(x1_tf, x2_tf):
+      return tfxla.call_module([x1_tf, x2_tf],
+                               module=get_serialized_computation(f_jax, x1, x2),
+                               Tout=[jax_res[0].dtype, jax_res[1].dtype],
+                               Sout=[jax_res[0].shape, jax_res[1].shape])
+
+    res = tf.function(f_tf, jit_compile=True, autograph=False)(x1, x2)
+    self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
+                        jax_res)
+
+  @unittest.skip("TODO(necula): 'mhlo.dynamic_iota' op can't be translated to XLA HLO")
+  def test_shape_poly_arange(self):
+    if not config.jax_dynamic_shapes:
+      raise unittest.SkipTest("jax_dynamic_shapes must be enabled")
+    def f_jax(x):  # x: f32[b]
+      return jnp.arange(x.shape[0]) + x
+
+    x1 = np.ones((5,), dtype=np.float32)
+    jax_res = f_jax(x1)
+
+    def f_tf(x1_tf):
+      return tfxla.call_module([x1_tf],
+                               module=get_serialized_computation(
+                                   f_jax, x1,
+                                   abstracted_axes=({
+                                       0: 'b'
+                                   },)),
+                               Tout=[jax_res.dtype],
+                               Sout=[jax_res.shape],
+                               dim_args_spec=('0.0',))
+
+    res = tf.function(f_tf, jit_compile=True, autograph=False)(x1)
+    self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
+                        jax_res)
+
 
 if __name__ == "__main__":
   # TODO: Remove once tensorflow is 2.10.0 everywhere.

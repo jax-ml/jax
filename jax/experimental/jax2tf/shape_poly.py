@@ -409,12 +409,22 @@ class _DimPolynomial():
     terms = [_multiply(mon.evaluate(env), np.int32(coeff)) for mon, coeff in self.monomials()]
     return functools.reduce(_add, terms) if len(terms) > 1 else terms[0]
 
+  @staticmethod
+  def get_aval(_: "_DimPolynomial"):
+    return core.ShapedArray((),
+                            dtypes.canonicalize_dtype(np.int64),
+                            weak_type=True)
+
+
+core.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
+
 def _ensure_poly(p: DimSize) -> _DimPolynomial:
   if isinstance(p, _DimPolynomial): return p
   return _DimPolynomial({_DimMon(): p})
 
 def is_poly_dim(p: DimSize) -> bool:
   return isinstance(p, _DimPolynomial)
+
 
 
 class DimensionHandlerPoly(core.DimensionHandler):
