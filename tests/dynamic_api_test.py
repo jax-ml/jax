@@ -629,7 +629,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((5, 4), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skip('TODO: need typechecking rule for reshape')
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
   def test_reshape(self):
     @partial(jax.jit, abstracted_axes=({0: 'n'},))
     def f(x):  # x: f32[n, 4]
@@ -638,7 +638,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((5, 4), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skip('TODO: need typechecking rule for reshape')
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
   def test_nested(self):
     @jax.jit
     def nested_f(x):  # f32[h, v] -> f32[h, v]
@@ -651,7 +651,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(np.ones((3, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skip('TODO: need typechecking rule for reshape')
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
   def test_nested_arange(self):
     def nested_f(x):  # f32[h, v] -> f32[h, v]
       # A nested call that needs to compute with shapes
