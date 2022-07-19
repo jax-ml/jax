@@ -53,7 +53,6 @@ py_library(
         "//jaxlib/mlir:ml_program_dialect",
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:sparse_tensor_dialect",
-        "//jaxlib/mlir:transforms",
     ],
 )
 
