@@ -128,17 +128,3 @@ symlink_inputs(
         ":mlir",
     ],
 )
-
-symlink_inputs(
-    name = "transforms",
-    rule = py_library,
-    symlinked_inputs = {"srcs": {
-        "transforms": [
-            "@llvm-project//mlir/python:TransformsPyFiles",
-        ],
-    }},
-    deps = [
-        ":mlir",
-        "//jaxlib/mlir/_mlir_libs:_mlirTransforms",
-    ],
-)
