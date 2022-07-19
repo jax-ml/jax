@@ -2180,7 +2180,7 @@ def _cpp_pmap(
           in_handler=in_handler,
           out_handler=out_handler,
           out_pytree_def=out_pytree_def,
-          input_sharding_specs=in_handler.sharding_specs,
+          input_sharding_specs=[i.sharding_spec for i in in_handler.in_shardings],
           input_devices=in_handler.local_devices,
           input_indices=in_handler.input_indices,
           out_sharding_specs=[s.sharding_spec for s in out_handler.out_shardings],

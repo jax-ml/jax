@@ -1224,6 +1224,8 @@ class PmapExecutable(stages.XlaExecutable):
     ])
 
     local_arg_parts_ = parts.local_arg_parts or [None] * len(pci.avals)
+    # TODO(yashkatariya): Fix the input handling of `Array`s that span over
+    # multiple processes. Add multi-process tests for pmap.
     input_sharding_specs = [
         _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
                             parts.local_num_partitions, arg_parts, aval, in_axis)
@@ -1232,6 +1234,7 @@ class PmapExecutable(stages.XlaExecutable):
     input_indices = [spec_to_indices(aval.shape, spec)
                     if spec is not None else None
                     for aval, spec in safe_zip(pci.avals, input_sharding_specs)]
+    in_shardings = _get_pmap_sharding(local_device_assignment, input_sharding_specs)
     nouts = len(shards.out_sharded_avals)
 
     out_parts, local_out_parts = parts.out_parts, parts.local_out_parts
@@ -1272,8 +1275,8 @@ class PmapExecutable(stages.XlaExecutable):
 
     if hasattr(pci.backend, "compile_replicated"):
       execute_fun = pci.backend.compile_replicated(
-          xla_computation, compile_options, input_indices, input_sharding_specs,
-          handle_outs)
+          xla_computation, compile_options, pci.avals, input_indices,
+          in_shardings, handle_outs)
       # TODO(frostig): need `compile_replicated` to give us the XLA executable
       return PmapExecutable(None, execute_fun, None, pci.avals)
 
@@ -1282,7 +1285,7 @@ class PmapExecutable(stages.XlaExecutable):
       compiled = dispatch.compile_or_get_cached(
           pci.backend, xla_computation, compile_options, host_callbacks)
     handle_args = InputsHandler(
-        compiled.local_devices(), input_sharding_specs, input_indices)
+        compiled.local_devices(), in_shardings, input_indices)
     execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args,
                                     handle_outs, unordered_effects, keepalive)
     fingerprint = getattr(compiled, "fingerprint", None)
@@ -1302,10 +1305,10 @@ class PmapExecutable(stages.XlaExecutable):
     return self.unsafe_call(*args)
 
 
-def _get_pmap_sharding(devices, out_specs):
+def _get_pmap_sharding(devices, specs):
   from jax.experimental.sharding import PmapSharding
 
-  return [PmapSharding(devices, spec) for spec in out_specs]
+  return [PmapSharding(devices, spec) for spec in specs]
 
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
@@ -1449,12 +1452,12 @@ def _safe_div(x, y):
 
 
 class InputsHandler:
-  __slots__ = ("handler", "local_devices", "sharding_specs", "input_indices")
+  __slots__ = ("handler", "local_devices", "in_shardings", "input_indices")
 
-  def __init__(self, local_devices, sharding_specs, input_indices):
+  def __init__(self, local_devices, in_shardings, input_indices):
     self.handler = partial(shard_args, local_devices, input_indices)
     self.local_devices = local_devices
-    self.sharding_specs = sharding_specs
+    self.in_shardings = in_shardings
     self.input_indices = input_indices
 
   def __call__(self, input_buffers):
@@ -1463,7 +1466,7 @@ class InputsHandler:
   def __str__(self):
     return ("InputsHandler(\n"
             f"local_devices={self.local_devices},\n"
-            f"sharding_specs={self.sharding_specs},\n"
+            f"in_shardings={self.in_shardings},\n"
             f"input_indices={self.input_indices})")
 
 
@@ -2482,7 +2485,8 @@ class MeshComputation(stages.XlaLowering):
 def _get_input_metadata(
     global_in_avals: Sequence[ShapedArray],
     in_shardings: Sequence[XLACompatibleSharding], in_is_global: Sequence[bool]
-) -> Tuple[Sequence[ShardingSpec], Sequence[Optional[Tuple[Index, ...]]], Sequence[ShapedArray]]:
+) -> Tuple[Sequence[XLACompatibleSharding], Sequence[Tuple[Optional[Index], ...]],
+           Sequence[ShapedArray]]:
   from jax.experimental.sharding import MeshPspecSharding
 
   if all(isinstance(s, MeshPspecSharding) for s in in_shardings):
@@ -2492,38 +2496,39 @@ def _get_input_metadata(
   else:
     input_indices = [tuple(i.devices_indices_map(aval.shape).values())
                      for aval, i in safe_zip(global_in_avals, in_shardings)]
-    # TODO(b/239102163): Remove `sharding_specs` attribute from InputsHandler.
-    # That way we don't have to return sharding specs from here.
-    return [], input_indices, global_in_avals
+    return in_shardings, input_indices, global_in_avals
 
 
 def _get_input_metadata_from_mesh_pspec(
     global_in_avals: Sequence[ShapedArray],
     in_shardings: Sequence[MeshPspecSharding], in_is_global: Sequence[bool]
-) -> Tuple[Sequence[ShardingSpec], Sequence[Optional[Tuple[Index, ...]]], Sequence[ShapedArray]]:
-  input_specs, input_indices, input_avals = [], [], []
+) -> Tuple[Sequence[MeshPspecSharding], Sequence[Tuple[Optional[Index], ...]],
+           Sequence[ShapedArray]]:
+  from jax.experimental.sharding import MeshPspecSharding
+
+  shardings, input_indices, input_avals = [], [], []
   for gaval, i, is_global in safe_zip(global_in_avals, in_shardings, in_is_global):
-    axis = cast(ArrayMapping, _get_array_mapping(i.spec))
+    proto = i._to_xla_op_sharding(gaval.ndim)
     if is_global:
       aval = gaval
-      mesh = i.mesh
+      sharding = i
     else:
-      aval = i.mesh._global_to_local(axis, gaval)
-      mesh = i.mesh.local_mesh
+      aval = i.mesh._global_to_local(cast(ArrayMapping, _get_array_mapping(i.spec)), gaval)
+      sharding = MeshPspecSharding(i.mesh.local_mesh, i.spec)
 
-    spec = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, axis)
     # We special case this logic to support fully replicated values because
     # the mesh is global mesh and the indices returned by `spec_to_indices` will
     # represent index for each device in the global mesh. But here we want
     # indices for the local devices of the global mesh.
-    if not axis:
-      index = tuple((slice(None),) * aval.ndim for _ in range(len(mesh.local_devices)))
+    if proto.type == xc.OpSharding.Type.REPLICATED:
+      index = tuple((slice(None),) * aval.ndim for _ in range(len(sharding.addressable_devices)))
     else:
-      index = spec_to_indices(aval.shape, spec) if spec is not None else None  # type: ignore
-    input_specs.append(spec)
+      index = tuple(sharding.devices_indices_map(aval.shape).values())
+
+    shardings.append(sharding)
     input_indices.append(index)
     input_avals.append(aval)
-  return input_specs, input_indices, input_avals
+  return shardings, input_indices, input_avals
 
 
 def _get_shardings_from_executable(xla_executable, mesh):
@@ -2616,14 +2621,13 @@ class MeshExecutable(stages.XlaExecutable):
 
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       assert not auto_spmd_lowering
-      input_specs, input_indices, input_avals = _get_input_metadata(
+      in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore
       handle_outs = global_avals_to_results_handler(
           global_out_avals, out_shardings)  # type: ignore  # arg-type
       unsafe_call = backend.compile_replicated(
-          computation, compile_options,
-          input_indices, input_specs,
-          handle_outs)
+          computation, compile_options, input_avals, input_indices,
+          in_shardings, handle_outs)
       xla_executable = None
     else:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
@@ -2638,11 +2642,12 @@ class MeshExecutable(stages.XlaExecutable):
         in_shardings, out_shardings = _get_shardings_from_executable(
             xla_executable, mesh)
 
-      input_specs, input_indices, input_avals = _get_input_metadata(
+      in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore
       handle_outs = global_avals_to_results_handler(
           global_out_avals, out_shardings)  # type: ignore  # arg-type
-      handle_args = InputsHandler(xla_executable.local_devices(), input_specs, input_indices)
+      handle_args = InputsHandler(xla_executable.local_devices(), in_shardings,
+                                  input_indices)
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
                                       handle_outs, unordered_effects, keepalive)
 

@@ -107,7 +107,7 @@ class MeshPspecSharding(XLACompatibleSharding):
       self._parsed_pspec = _parsed_pspec
 
   def __repr__(self):
-    return f'MeshPspecSharding(\n  mesh={self.mesh},\n  partition_spec={self.spec})'
+    return f'MeshPspecSharding(mesh={dict(self.mesh.shape)}, partition_spec={self.spec})'
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
