@@ -1153,31 +1153,31 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_lhs={}_rhs={}_sym_pos={}_lower={}".format(
+       "_lhs={}_rhs={}_assume_a={}_lower={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype),
-           sym_pos, lower),
+           assume_a, lower),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "sym_pos": sym_pos, "lower": lower}
+       "assume_a": assume_a, "lower": lower}
       for lhs_shape, rhs_shape in [
           ((1, 1), (1, 1)),
           ((4, 4), (4,)),
           ((8, 8), (8, 4)),
       ]
-      for sym_pos, lower in [
-        (False, False),
-        (True, False),
-        (True, True),
+      for assume_a, lower in [
+        ('gen', False),
+        ('pos', False),
+        ('pos', True),
       ]
       for dtype in float_types + complex_types))
-  def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower):
+  def testSolve(self, lhs_shape, rhs_shape, dtype, assume_a, lower):
     rng = jtu.rand_default(self.rng())
-    osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
-    jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
+    osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, assume_a=assume_a, lower=lower)
+    jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, assume_a=assume_a, lower=lower)
 
     def args_maker():
       a = rng(lhs_shape, dtype)
-      if sym_pos:
+      if assume_a == 'pos':
         a = np.matmul(a, np.conj(T(a)))
         a = np.tril(a) if lower else np.triu(a)
       return [a, rng(rhs_shape, dtype)]
