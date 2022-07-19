@@ -800,18 +800,17 @@ def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
       used_carry_out = _map(operator.or_, used_carry_out, used_carry_in)
   else:
     assert False, "Fixpoint not reached"
-  core.check_jaxpr(jaxpr.jaxpr)
+  if config.jax_enable_checks: core.check_jaxpr(jaxpr.jaxpr)
 
   new_linear = [l for l, u in zip(eqn.params['linear'], used_inputs) if u]
   new_params = dict(eqn.params, num_consts=sum(used_consts),
                     num_carry=sum(used_carry_in), linear=tuple(new_linear),
                     jaxpr=core.ClosedJaxpr(jaxpr_dce, jaxpr.consts))
-  new_eqn = pe.new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs)
-                              if used],
-                             [v for v, used in zip(eqn.outvars, used_outputs)
-                              if used],
-                             eqn.primitive, new_params, eqn.effects,
-                             eqn.source_info)
+  # TODO(mattjj,sharadmv): don't assume effects are never DCE'd?
+  new_eqn = pe.new_jaxpr_eqn(
+      [v for v, used in zip(eqn.invars, used_inputs) if used],
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, eqn.effects, eqn.source_info)
   assert len(new_eqn.invars ) == len(new_params['jaxpr'].in_avals )
   assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
   return used_inputs, new_eqn
@@ -822,7 +821,8 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   num_ys = len(jaxpr.out_avals) - num_carry
 
-  # Fixpoint (currently trivial on 'inst_in')
+  # Fixpoint (trivial on 'inst_in', since we might as well make all inputs
+  # available as DCE can subsequently prune any unused ones)
   const_uk, carry_uk, xs_uk = split_list(unks_in, [num_consts, num_carry])
   for _ in range(1 + len(carry_uk)):
     unks_in = const_uk   + carry_uk   + xs_uk
@@ -831,7 +831,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
             jaxpr.jaxpr, in_unknowns=unks_in, in_inst=[True] * len(unks_in),
             ensure_out_unknowns=carry_uk + [False] * num_ys,
             ensure_out_inst=True, saveable=saveable)
-    carry_uk_out  , ys_uk   = split_list(unks_out, [num_carry])
+    carry_uk_out, ys_uk = split_list(unks_out, [num_carry])
     if carry_uk_out == carry_uk:
       break
     else:
@@ -841,13 +841,14 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   jaxpr_known  = core.ClosedJaxpr(jaxpr_known_ , jaxpr.consts)
   jaxpr_staged = core.ClosedJaxpr(jaxpr_staged_, jaxpr.consts)
 
-  # Ensure residuals are all moved to the back.
+  # Move all residual binders to the back of jaxpr_staged so they're extensive.
   # TODO(mattjj): make jaxpr_staged only take instantiated inputs
   res_avals = jaxpr_staged.in_avals[:num_res]
   jaxpr_staged = pe.move_binders_to_back(
       jaxpr_staged, [True] * num_res + [False] * len(jaxpr.in_avals))
 
-  # Instantiate all inputs (b/c jaxpr_staged takes all inputs).
+  # Instantiate all inputs (b/c jaxpr_staged takes all inputs, corresponding to
+  # passing in_inst argument to partial_eval_jaxpr_custom above).
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is core.Var and not inst]
   inst_in = [True] * len(inst_in)
@@ -907,6 +908,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
       core.closed_call_p, dict(call_jaxpr=call_jaxpr), call_jaxpr.effects,
       eqn.source_info)
 
+  # Create the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   linear_staged = ([False] * len(intensive_res) + list(eqn.params['linear']) +
                    [False] * len(extensive_res))
