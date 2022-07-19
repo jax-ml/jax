@@ -22,6 +22,7 @@ import functools
 from functools import partial
 import io
 import itertools
+import os
 import re
 import typing
 from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
@@ -35,6 +36,7 @@ from jax import linear_util as lu
 from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src.config import flags
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
@@ -48,6 +50,17 @@ import jax.interpreters.ad as ad
 import jax.interpreters.partial_eval as pe
 import jax.interpreters.xla as xla
 import numpy as np
+
+FLAGS = flags.FLAGS
+
+
+flags.DEFINE_bool(
+    "jax_use_generic_mlir",
+    os.getenv("JAX_USE_GENERIC_MLIR", "False").lower() == "true",
+    "Whether or not to give generic MLIR assembly to downstream tools. Avoids "
+    "the majority of errors associated with using compiler binaries built with "
+    "different versions of LLVM. However, this is not guaranteed to work if "
+    "new ops or attributes have been added to MHLO.")
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -620,7 +633,7 @@ def lower_jaxpr_to_module(
 def module_to_string(module: ir.Module) -> str:
   output = io.StringIO()
   module.operation.print(file=output, enable_debug_info=True,
-                         print_generic_op_form=False)
+                         print_generic_op_form=FLAGS.jax_use_generic_mlir)
   return output.getvalue()
 
 def _set_up_aliases(avals_in, avals_out, donated_args):
