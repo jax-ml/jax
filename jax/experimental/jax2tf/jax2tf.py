@@ -1635,7 +1635,7 @@ def _clamp(minval, operand, maxval, *, _in_avals, _out_aval):
 tf_impl_with_avals[lax.clamp_p] = _clamp
 
 
-def _concatenate(*operands, dimension):
+def _concatenate(*operands, dimension, **_):
   return tf.concat(operands, axis=dimension)
 
 
