@@ -19,9 +19,6 @@ library only. There are a number of other much more fully-featured neural
 network libraries for JAX, including `Flax`_ from Google, and `Haiku`_ from
 DeepMind.
 
-For an example of how to use Stax, see the `Stax Resnet-50 example`
-<https://github.com/google/jax/blob/main/examples/resnet50.py>`_.
-
 .. _Haiku: https://github.com/deepmind/dm-haiku
 .. _Flax: https://github.com/google/flax
 """
