@@ -812,6 +812,9 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
 
   lhs_padded = np.add(lhs_shape[2:], np.sum(np.array(pads).reshape(-1, 2),
                                               axis=1))
+  if np.any(lhs_padded < 0):
+    raise ValueError("Negative padding is larger than the size of the corresponding dimension: "
+                     f"got padding={pads} for lhs_shape[2:]={lhs_shape[2:]}")
   out_space = core.stride_shape(lhs_padded, rhs_shape[2:], strides)
   out_space = np.maximum(0, out_space)
   if batch_group_count > 1:
