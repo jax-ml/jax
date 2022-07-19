@@ -582,7 +582,7 @@ Buffer donation
 (This feature is implemented only for TPU and GPU.)
 
 When JAX executes a computation it uses buffers on the device for all inputs and outputs.
-If you know than one of the inputs is not needed after the computation, and if it
+If you know that one of the inputs is not needed after the computation, and if it
 matches the shape and element type of one of the outputs, you can specify that you
 want the corresponding input buffer to be donated to hold an output. This will reduce
 the memory required for the execution by the size of the donated buffer.
