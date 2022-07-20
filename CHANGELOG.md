@@ -29,7 +29,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * The `sym_pos` argument of {func}`jax.scipy.linalg.solve` is deprecated in favor of `assume_a='pos'`,
     following a similar deprecation in {func}`scipy.linalg.solve`.
 * Deprecations:
-  * {func}`jax.mask` {func}`jax.shapecheck` are being deprecated.
+  * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
     See {jax-issue}`#11557`.
 
 ## jaxlib 0.3.15 (Unreleased)

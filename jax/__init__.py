@@ -95,7 +95,7 @@ from jax._src.api import (
   linearize as linearize,
   linear_transpose as linear_transpose,
   make_jaxpr as make_jaxpr,
-  mask as mask,
+
   named_call as named_call,
   named_scope as named_scope,
   pmap as pmap,
@@ -103,7 +103,6 @@ from jax._src.api import (
   process_index as process_index,
   pxla,  # TODO(phawkins): update users to avoid this.
   remat as remat,
-  shapecheck as shapecheck,
   ShapedArray as ShapedArray,
   ShapeDtypeStruct as ShapeDtypeStruct,
   value_and_grad as value_and_grad,
