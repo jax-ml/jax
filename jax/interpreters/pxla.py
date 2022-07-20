@@ -34,7 +34,7 @@ import enum
 from contextlib import contextmanager, ContextDecorator
 from collections import defaultdict, OrderedDict
 import dataclasses
-from functools import partial
+from functools import partial, lru_cache
 import itertools as it
 import operator as op
 import threading
@@ -2672,26 +2672,32 @@ class MeshExecutable(stages.XlaExecutable):
     return self.unsafe_call(*args)
 
 
-def _check_gda_or_array_xla_sharding_match(args, in_shardings):
+def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
   from jax.experimental.global_device_array import GlobalDeviceArray
   from jax.experimental.array import Array
-  from jax.experimental.sharding import MeshPspecSharding
 
-  for arg, i in safe_zip(args, in_shardings):
+  @lru_cache
+  def _create_mesh_pspec_sharding(mesh, pspec):
+    from jax.experimental.sharding import MeshPspecSharding
+    return MeshPspecSharding(mesh, pspec)
+
+  @lru_cache(maxsize=4096)
+  def _cached_check(arg_sharding, in_xla_sharding, arg_type):
+    # TODO(yashkatariya): Use opsharding proto to compare equality after
+    # opsharding proto supports equality checks.
+    if arg_sharding.normalize() != in_xla_sharding.normalize():
+      raise ValueError(
+          f"{arg_type} sharding does not match the input sharding. "
+          f"Got {arg_type} sharding: {arg_sharding} and "
+          f"xla sharding: {in_xla_sharding}")
+
+  for arg, xs in safe_zip(args, in_xla_shardings):
     if not isinstance(arg, (GlobalDeviceArray, Array)):
       continue
-    arr_type, arr_normalized_sharding = (
-        ('GDA', MeshPspecSharding(arg.mesh, arg.mesh_axes).normalize())
-        if isinstance(arg, GlobalDeviceArray)
-        else ('Array', arg.sharding.normalize())
-    )
-    ndim = arg.ndim
-    if i._to_xla_op_sharding(ndim) != arr_normalized_sharding._to_xla_op_sharding(ndim):
-      raise ValueError(
-          f"{arr_type} sharding does not match the input sharding. "
-          f"Got {arr_type} sharding: {arr_normalized_sharding} and "
-          f"auto sharding spec: {i} "
-          f"for {arr_type}: {arg}")
+    if isinstance(arg, GlobalDeviceArray):
+      _cached_check(_create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes), xs, 'GDA')
+    else:
+      _cached_check(arg.sharding, xs, 'Array')
 
 
 def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:

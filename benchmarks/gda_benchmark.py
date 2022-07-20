@@ -20,7 +20,9 @@ import jax
 from jax._src import test_util as jtu
 from jax._src.util import prod
 from jax.interpreters.pxla import PartitionSpec as P
+from jax.interpreters import pxla
 from jax.experimental import global_device_array as gda
+from jax.experimental.sharding import MeshPspecSharding
 import numpy as np
 
 mesh_shapes_axes = [
@@ -107,6 +109,25 @@ def gda_local_shards(mesh_shape, mesh_axes, state):
     gda_inp._create_local_shards()
 
 
+def gda_xla_sharding_match(mesh_shape, mesh_axes, state):
+  global_mesh = jtu.create_global_mesh(mesh_shape, ("x", "y"))
+  global_input_shape = (2048, 2048)
+  global_input_data = np.arange(
+      prod(global_input_shape)).reshape(global_input_shape)
+  global_indices = gda.get_shard_indices(global_input_shape, global_mesh,
+                                         mesh_axes)
+  dbs = [
+      jax.device_put(global_input_data[global_indices[device]], device)
+      for device in global_mesh.local_devices
+  ]
+  gda_inp = gda.GlobalDeviceArray(global_input_shape, global_mesh, mesh_axes,
+                                  dbs)
+  in_xla_shardings = MeshPspecSharding(global_mesh, mesh_axes)
+  while state:
+    pxla._check_gda_or_array_xla_sharding_match([gda_inp] * 1000,
+                                                [in_xla_shardings] * 1000)
+
+
 benchmarks = []
 for mesh_shape, axes in mesh_shapes_axes:
   benchmarks.extend([
@@ -125,6 +146,9 @@ for mesh_shape, axes in mesh_shapes_axes:
       google_benchmark.register(
           partial(gda_local_shards, mesh_shape, axes),
           name=f"gda_local_shards_{mesh_shape}_{axes}"),
+      google_benchmark.register(
+          partial(gda_xla_sharding_match, mesh_shape, axes),
+          name=f"gda_xla_sharding_match_{mesh_shape}_{axes}"),
   ])
 
 

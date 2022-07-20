@@ -404,7 +404,6 @@ def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardi
                                         pjit_mesh, in_tree):
   arg_in_shardings_flat = tuple(a.sharding if hasattr(a, 'sharding') else _UNSPECIFIED
                                 for a in args_flat)
-  arg_ndims = tuple(a.ndim for a in args_flat)
 
   if _is_unspecified(pjit_in_shardings):
     # If pjit_in_shardings is unspecified, then arg_in_shardings cannot have
@@ -417,7 +416,7 @@ def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardi
   else:
     # This function is cached.
     in_shardings_flat = _get_and_check_pjit_arg_shardings(
-        hashable_pytree(pjit_in_shardings), arg_in_shardings_flat, arg_ndims,
+        hashable_pytree(pjit_in_shardings), arg_in_shardings_flat,
         in_tree)
 
   out_shardings_flat = tuple(tree_flatten(out_shardings)[0])
@@ -1340,13 +1339,13 @@ def _check_array_device_assignment(pjit_mesh, shardings):
 
 @lru_cache(maxsize=4096)
 def _get_and_check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
-                                      arg_ndims, in_tree):
+                                      in_tree):
   pjit_in_shardings_flat = flatten_axis_resources(
       "pjit in_shardings", in_tree, pjit_in_shardings(), tupled_args=True)
 
   out = []
-  for pjit_sharding, arg_sharding, ndim in safe_zip(
-      pjit_in_shardings_flat, arg_in_shardings_flat, arg_ndims):
+  for pjit_sharding, arg_sharding in safe_zip(
+      pjit_in_shardings_flat, arg_in_shardings_flat):
     # If the sharding of the arg is not known, replace it with the sharding on
     # pjit.
     if _is_unspecified(arg_sharding):
@@ -1356,7 +1355,9 @@ def _get_and_check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
                        'auto spmd partitioner is not allowed. Please call the '
                        'compiled object on the inputs.')
     else:
-      if pjit_sharding._to_xla_op_sharding(ndim) != arg_sharding._to_xla_op_sharding(ndim):
+      # TODO(yashkatariya): Use opsharding proto to compare equality after
+      # opsharding proto supports equality checks.
+      if pjit_sharding.normalize() != arg_sharding.normalize():
         raise ValueError('Sharding passed to pjit does not match the sharding '
                          'on the respective arg. '
                          f'Got pjit sharding: {pjit_sharding},\n'
