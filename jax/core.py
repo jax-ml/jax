@@ -1561,7 +1561,9 @@ raise_to_shaped_mappings : Dict[type, Callable] = {
   Bot: lambda aval, _: aval,
   UnshapedArray: lambda aval, _: aval,
   ShapedArray: lambda aval, weak_type: ShapedArray(
-      aval.shape, aval.dtype, weak_type, aval.named_shape)
+      aval.shape, aval.dtype, weak_type, aval.named_shape),
+  DConcreteArray: lambda aval, weak_type: DShapedArray(
+      aval.shape, aval.dtype, weak_type),
 }
 
 ### Operations on shapes and dimension sizes.

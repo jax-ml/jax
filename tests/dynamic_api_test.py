@@ -1213,6 +1213,16 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertEqual(y, 6)
     self.assertEqual(count, 2)
 
+  def test_bint_add(self):
+    d = lax.make_bint(4, 6)
+    x = jnp.arange(d)
+
+    @jax.jit
+    def f(x):
+      return x + x
+
+    f(x)  # doesn't crash
+
   def test_lower_abstracted_axes(self):
     @partial(jax.jit, abstracted_axes=('n',))
     def f(x):
