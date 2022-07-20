@@ -887,6 +887,11 @@ jax_test(
     ],
 )
 
+jax_test(
+    name = "clear_backends_test",
+    srcs = ["clear_backends_test.py"],
+)
+
 exports_files(
     [
         "api_test.py",
