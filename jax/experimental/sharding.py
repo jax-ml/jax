@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import abc
+import functools
 from collections import Counter
 from typing import Sequence, Tuple, Optional, Mapping, Dict, Set, Union
 
-from jax._src.util import cache, safe_zip
+from jax._src.util import safe_zip
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla, mlir
@@ -74,7 +75,7 @@ class XLACompatibleSharding(Sharding):
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     raise NotImplementedError('Subclasses should implement this method.')
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     process_index = xb.process_index()
     return [d for d in self._device_assignment() if d.process_index == process_index]
@@ -150,7 +151,7 @@ class MeshPspecSharding(XLACompatibleSharding):
   def _hashed_index(self, x) -> int:
     return hash(tuple((v.start, v.stop) for v in x))
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     index_to_replica: Dict[int, int] = Counter()
     out = {}
@@ -161,11 +162,11 @@ class MeshPspecSharding(XLACompatibleSharding):
       out[device] = replica_id
     return out
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.mesh.devices.flat)
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(
       self,
       num_dimensions: int,
@@ -215,19 +216,19 @@ class SingleDeviceSharding(XLACompatibleSharding):
   def device_indices(self, device: Device, global_shape: Shape) -> Optional[Index]:
     return self.devices_indices_map(global_shape)[device]
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
     return {self._device: (slice(None),) * len(global_shape)}
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     return {self._device: 0}
 
   def _device_assignment(self) -> XLADeviceAssignment:
     return [self._device]
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
     proto = xc.OpSharding()
     proto.type = xc.OpSharding.Type.REPLICATED
@@ -258,7 +259,7 @@ class PmapSharding(XLACompatibleSharding):
         return i
     return None
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
@@ -268,7 +269,7 @@ class PmapSharding(XLACompatibleSharding):
     return hash(
         tuple((v.start, v.stop) if isinstance(v, slice) else v for v in x))
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     index_to_replica: Dict[int, int] = Counter()
     out = {}
@@ -279,7 +280,7 @@ class PmapSharding(XLACompatibleSharding):
       out[device] = replica_id
     return out
 
-  @cache()
+  @functools.lru_cache(maxsize=4096)
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.devices.flat)
 

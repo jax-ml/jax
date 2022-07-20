@@ -17,7 +17,7 @@ import numpy as np
 from collections import OrderedDict, Counter
 from typing import Callable, Sequence, Tuple, Union, cast, List
 import itertools as it
-from functools import partial
+from functools import partial, lru_cache
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
@@ -50,7 +50,7 @@ from jax._src.tree_util import prefix_errors
 from jax._src import util
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wrap_name, wraps,
-    distributed_debug_log, split_list, cache, tuple_insert, weakref_lru_cache,
+    distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
     merge_lists)
 
 class _FromGdaSingleton:
@@ -428,7 +428,7 @@ def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardi
   return tree_unflatten(in_tree, in_shardings_flat), out_shardings
 
 
-@cache()
+@lru_cache(maxsize=4096)
 def _create_mesh_pspec_sharding(mesh, x):
   if _is_unspecified_or_from_gda_or_auto(x):
     return x
@@ -497,7 +497,7 @@ class PytreeLeaf:
   def __repr__(self): return "pytree leaf"
 
 
-@cache()
+@lru_cache(maxsize=4096)
 def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
                                in_tree, in_positional_semantics, is_gda):
   in_shardings_flat = flatten_axis_resources(
@@ -1308,7 +1308,7 @@ def _maybe_replace_from_gda_with_pspec(
   return in_sharding_flat
 
 
-@cache()
+@lru_cache(maxsize=4096)
 def _check_array_device_assignment(pjit_mesh, shardings):
   if not shardings:
     return
@@ -1338,7 +1338,7 @@ def _check_array_device_assignment(pjit_mesh, shardings):
                          f"Got Pjit devices: {list(pjit_mesh.devices.flat)},\n "
                          f"Array devices: {arr_device_assignment}")
 
-@cache()
+@lru_cache(maxsize=4096)
 def _get_and_check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
                                       arg_ndims, in_tree):
   pjit_in_shardings_flat = flatten_axis_resources(
