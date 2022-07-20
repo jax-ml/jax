@@ -72,13 +72,22 @@ Todos::
 from functools import partial
 from typing import (Any, Tuple)
 
+import json
 import numpy as np
 from jax import core
+from jax import linear_util
 from jax._src.lax import lax
+from jax._src.lax import slicing
 from jax._src.lib import xla_client as xc
-from jax._src import ad_util, dtypes
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import mhlo
+from jax._src import ad_util, dtypes, util
 
-from jax.interpreters import ad, xla, batching
+from jax.interpreters import ad
+from jax.interpreters import xla
+from jax.interpreters import batching
+from jax.interpreters import partial_eval
+from jax.interpreters import mlir
 
 Array = Any
 
@@ -132,8 +141,10 @@ def approx_max_k(operand: Array,
   >>> db = jax.numpy.array(np.random.rand(1024, 64))
   >>> dot_products, neighbors = mips(qy, db, k=10)
   """
+  comparator_jaxpr = _build_comparator_jaxpr(operand, is_max_k=True)
   return approx_top_k_p.bind(
       operand,
+      comparator_jaxpr=comparator_jaxpr,
       k=k,
       reduction_dimension=reduction_dimension,
       recall_target=recall_target,
@@ -195,8 +206,10 @@ def approx_min_k(operand: Array,
   ``qy^2 - 2 dot(qy, db^T) + db^2`` for performance reason. The former uses less
   arithmetics and produces the same set of neighbors.
   """
+  comparator_jaxpr = _build_comparator_jaxpr(operand, is_max_k=False)
   return approx_top_k_p.bind(
       operand,
+      comparator_jaxpr=comparator_jaxpr,
       k=k,
       reduction_dimension=reduction_dimension,
       recall_target=recall_target,
@@ -205,8 +218,8 @@ def approx_min_k(operand: Array,
       aggregate_to_topk=aggregate_to_topk)
 
 
-def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
-                                recall_target, is_max_k,
+def _approx_top_k_abstract_eval(operand, *, comparator_jaxpr, k,
+                                reduction_dimension, recall_target, is_max_k,
                                 reduction_input_size_override,
                                 aggregate_to_topk):
   if k <= 0:
@@ -230,74 +243,243 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
           operand.update(shape=dims, dtype=np.dtype(np.int32)))
 
 
-def _comparator_builder(op_type, is_max_k):
-  c = xc.XlaBuilder(
-      'top_k_{}_comparator'.format('gt' if is_max_k else 'lt'))
-  p0 = xla.parameter(c, 0, xc.Shape.scalar_shape(op_type))
-  p1 = xla.parameter(c, 1, xc.Shape.scalar_shape(op_type))
-  xla.parameter(c, 2, xc.Shape.scalar_shape(np.dtype(np.int32)))
-  xla.parameter(c, 3, xc.Shape.scalar_shape(np.dtype(np.int32)))
+def _build_comparator_jaxpr(operand, is_max_k):
+  op_aval = core.ShapedArray((), dtypes.dtype(operand))
+  idx_aval = core.ShapedArray((), dtype=np.int32)
+
+  @linear_util.wrap_init
+  def fast_comparator(val_x, val_y, idx_x, idx_y):
+    if is_max_k:
+      return (lax.gt(val_x, val_y),)
+    return (lax.lt(val_x, val_y),)
+
+  return partial_eval.trace_to_jaxpr_dynamic(
+      fast_comparator, (op_aval, op_aval, idx_aval, idx_aval))[0]
+
+
+def _build_aggregate_to_topk(k, reduction_dimension, is_max_k):
+
+  def _aggregate_to_topk_jaximpl(val, idx, init_val, init_idx):
+    if k == 1:
+      out_shape = list(val.shape)
+      out_shape[reduction_dimension] = 1
+
+      def reducer(x, y):
+        val_x, idx_x = x
+        val_y, idx_y = y
+        if is_max_k:
+          select_x = val_x > val_y
+        else:
+          select_x = val_x < val_y
+        out_val = lax.select(select_x, val_x, val_y)
+        out_idx = lax.select(select_x, idx_x, idx_y)
+        return out_val, out_idx
+
+      val, idx = lax.reduce([val, idx],
+                            init_values=[init_val, init_idx],
+                            computation=reducer,
+                            dimensions=[reduction_dimension])
+      return lax.reshape(val, out_shape), lax.reshape(idx, out_shape)
+    else:
+      if is_max_k:
+        val, idx = lax.sort_key_val(-val, idx, reduction_dimension)
+        val = slicing.slice_in_dim(-val, 0, k, axis=reduction_dimension)
+        idx = slicing.slice_in_dim(idx, 0, k, axis=reduction_dimension)
+        return val, idx
+      else:
+        val, idx = lax.sort_key_val(val, idx, reduction_dimension)
+        val = slicing.slice_in_dim(val, 0, k, axis=reduction_dimension)
+        idx = slicing.slice_in_dim(idx, 0, k, axis=reduction_dimension)
+        return val, idx
+
+  return _aggregate_to_topk_jaximpl
+
+
+def _approx_topk_falllback_lower(ctx, operand, *, comparator_jaxpr, k,
+                                 reduction_dimension, recall_target, is_max_k,
+                                 reduction_input_size_override,
+                                 aggregate_to_topk):
+  op_aval = ctx.avals_in[0]
+  op_dims = list(op_aval.shape)
+  op_type = op_aval.dtype
+  if not op_dims:
+    raise ValueError(f'operand must be an array, but was {op_dims}')
+  if reduction_dimension < 0:
+    reduction_dimension = len(op_dims) + reduction_dimension
+
+  iota = mhlo.IotaOp(
+      mlir.aval_to_ir_type(core.ShapedArray(op_dims, np.int32)),
+      mlir.i64_attr(reduction_dimension)).results
   if is_max_k:
-    cmp_result = xc.ops.Gt(p0, p1)
+    init_val = mlir.ir_constant(
+        np.array(lax._get_max_identity(op_type), dtype=op_type))
   else:
-    cmp_result = xc.ops.Lt(p0, p1)
-  return c.build(cmp_result)
+    init_val = mlir.ir_constant(
+        np.array(lax._get_min_identity(op_type), dtype=op_type))
+  init_idx = mlir.ir_constant(np.array(-1, np.int32))
+
+  n = op_dims[reduction_dimension]
+  output_size, _ = xc.ops.ApproxTopKReductionOutputSize(
+      n, len(op_dims), k, recall_target, aggregate_to_topk,
+      reduction_input_size_override)
+
+  out_dims = list(op_dims)
+  out_dims[reduction_dimension] = output_size
+
+  fallback_jaximpl = _build_aggregate_to_topk(output_size, reduction_dimension,
+                                              is_max_k)
+  fallback_lowering = mlir.lower_fun(fallback_jaximpl, True)
+  fallback_ctx = ctx.replace(
+      avals_in=[
+          op_aval,
+          core.ShapedArray(op_dims, np.int32),
+          core.ShapedArray((), op_type),
+          core.ShapedArray((), np.int32)
+      ],
+      avals_out=[
+          core.ShapedArray(out_dims, op_type),
+          core.ShapedArray(out_dims, np.int32)
+      ])
+  return fallback_lowering(fallback_ctx, operand, iota, init_val, init_idx)
 
 
-def _get_init_val_literal(op_type, is_max_k):
-  return np.array(np.NINF if is_max_k else np.Inf, dtype=op_type)
+def _approx_top_k_tpu_lower(ctx, operand, *, comparator_jaxpr, k,
+                            reduction_dimension, recall_target, is_max_k,
+                            reduction_input_size_override, aggregate_to_topk):
+  # we should only have one avals_in, which is the operand.
+  op_aval = ctx.avals_in[0]
+  op_dims = op_aval.shape
+  op_type = op_aval.dtype
 
-def _approx_top_k_tpu_translation(ctx, avals_in, avals_out, operand, *, k,
-                                  reduction_dimension, recall_target, is_max_k,
-                                  reduction_input_size_override,
-                                  aggregate_to_topk):
-  c = ctx.builder
-  op_shape = c.get_shape(operand)
-  if not op_shape.is_array():
-    raise ValueError(f'operand must be an array, but was {op_shape}')
-  op_dims = op_shape.dimensions()
-  op_type = op_shape.element_type()
+  if not op_dims:
+    raise ValueError(f'operand must be an array, but was {op_dims}')
   if reduction_dimension < 0:
     reduction_dimension = len(op_dims) + reduction_dimension
-  comparator = _comparator_builder(op_type, is_max_k)
-  init_val_literal = _get_init_val_literal(op_type, is_max_k)
-  iota = xc.ops.Iota(c, xc.Shape.array_shape(np.dtype(np.int32), op_dims),
-                     reduction_dimension)
-  init_val = xc.ops.Constant(c, init_val_literal)
-  init_arg = xc.ops.Constant(c, np.int32(-1))
-  out = xc.ops.ApproxTopK(c, [operand, iota], [init_val, init_arg], k,
-                          reduction_dimension, comparator, recall_target,
-                          aggregate_to_topk, reduction_input_size_override)
-  return xla.xla_destructure(c, out)
+  op_rank = len(op_dims)
+  tpu_tiling = 1024 if op_rank == 1 else 128
+
+  iota = mhlo.IotaOp(
+      mlir.aval_to_ir_type(core.ShapedArray(op_dims, np.int32)),
+      mlir.i64_attr(reduction_dimension)).results
+  if is_max_k:
+    init_val = mlir.ir_constant(
+        np.array(lax._get_max_identity(op_type), dtype=op_type))
+  else:
+    init_val = mlir.ir_constant(
+        np.array(lax._get_min_identity(op_type), dtype=op_type))
+  init_idx = mlir.ir_constant(np.array(-1, np.int32))
+
+  aggregate_to_topk_jaximpl = _build_aggregate_to_topk(k, reduction_dimension,
+                                                       is_max_k)
+  aggregate_to_topk_lowered = mlir.lower_fun(aggregate_to_topk_jaximpl, True)
+
+  n = op_dims[reduction_dimension]
+  init_val_aval = core.ShapedArray((), op_type)
+  init_idx_aval = core.ShapedArray((), np.int32)
+
+  if n <= tpu_tiling:
+    if aggregate_to_topk:
+      out_dims = list(op_dims)
+      out_dims[reduction_dimension] = k
+      agg_ctx = ctx.replace(
+          primitive=None,
+          avals_in=[
+              op_aval,
+              core.ShapedArray(op_dims, np.int32), init_val_aval, init_idx_aval
+          ],
+          avals_out=[
+              core.ShapedArray(out_dims, op_type),
+              core.ShapedArray(out_dims, np.int32)
+          ])
+      return aggregate_to_topk_lowered(agg_ctx, operand, iota, init_val,
+                                       init_idx)
+    return operand, iota
+
+  approx_output_size, log2_reduction = xc.ops.ApproxTopKReductionOutputSize(
+      n, op_rank, k, recall_target, False, reduction_input_size_override)
+
+  # When there is no reduction, fallback to naive aggregation
+  if log2_reduction == 0:
+    if aggregate_to_topk:
+      out_dims = list(op_dims)
+      out_dims[reduction_dimension] = k
+      agg_ctx = ctx.replace(
+          primitive=None,
+          avals_in=[
+              op_aval,
+              core.ShapedArray(op_dims, np.int32), init_val_aval, init_idx_aval
+          ],
+          avals_out=[
+              core.ShapedArray(out_dims, op_type),
+              core.ShapedArray(out_dims, np.int32)
+          ])
+      return aggregate_to_topk_lowered(agg_ctx, operand, iota, init_val,
+                                       init_idx)
+    return operand, iota
+
+  partial_reduce_config = {
+      'log2_reduction': log2_reduction,
+      'reduction_dim': reduction_dimension,
+      'to_apply_type': 'comparator',
+      'top_k': k,
+      'recall_target': recall_target,
+  }
+
+  closed_pr_comparator_jaxpr = core.ClosedJaxpr(comparator_jaxpr, [])
+
+  comparator_name = f'pr_comparator_{op_type}_is_max_k_{is_max_k}'
+  pr_comparator_func_op = mlir.lower_jaxpr_to_fun(ctx.module_context,
+                                                  comparator_name,
+                                                  closed_pr_comparator_jaxpr,
+                                                  [])
+  pr_comparator_symbol = pr_comparator_func_op.name.value
+
+  approx_out_dims = list(op_dims)
+  approx_out_dims[reduction_dimension] = approx_output_size
+  pr_out_type = ir.TupleType.get_tuple([
+      ir.RankedTensorType.get(approx_out_dims,
+                              mlir.dtype_to_ir_type(np.dtype(dtype)))
+      for dtype in [op_type, np.int32]
+  ])
+  pr_op = mhlo.CustomCallOp(
+      [pr_out_type],
+      [operand, iota, init_val, init_idx],
+      call_target_name=ir.StringAttr.get('PartialReduce'),
+      has_side_effect=ir.BoolAttr.get(False),
+      backend_config=ir.StringAttr.get(json.dumps(partial_reduce_config)),
+      api_version=mlir.i32_attr(1),
+      called_computations=ir.ArrayAttr.get(
+          [ir.FlatSymbolRefAttr.get(pr_comparator_symbol)]),
+      operand_layouts=None,
+      result_layouts=None,
+  )
+  init_val_ir_type = mlir.aval_to_ir_type(init_val_aval)
+  init_idx_ir_type = mlir.aval_to_ir_type(init_idx_aval)
+
+  approx_val = mhlo.GetTupleElementOp(pr_op.result, mlir.i32_attr(0)).result
+  approx_idx = mhlo.GetTupleElementOp(pr_op.result, mlir.i32_attr(1)).result
+
+  if aggregate_to_topk:
+    out_dims = list(op_dims)
+    out_dims[reduction_dimension] = k
+    agg_ctx = ctx.replace(
+        primitive=None,
+        avals_in=[
+            core.ShapedArray(approx_out_dims, op_type),
+            core.ShapedArray(approx_out_dims, np.int32), init_val_aval,
+            init_idx_aval
+        ],
+        avals_out=[
+            core.ShapedArray(out_dims, op_type),
+            core.ShapedArray(out_dims, np.int32)
+        ])
+    return aggregate_to_topk_lowered(agg_ctx, approx_val, approx_idx, init_val,
+                                     init_idx)
+
+  return approx_val, approx_idx
 
 
-def _approx_top_k_fallback_translation(ctx, avals_in, avals_out, operand, *, k,
-                                       reduction_dimension, recall_target,
-                                       is_max_k, reduction_input_size_override,
-                                       aggregate_to_topk):
-  c = ctx.builder
-  op_shape = c.get_shape(operand)
-  if not op_shape.is_array():
-    raise ValueError(f'operand must be an array, but was {op_shape}')
-  op_dims = op_shape.dimensions()
-  op_type = op_shape.element_type()
-
-  if reduction_dimension < 0:
-    reduction_dimension = len(op_dims) + reduction_dimension
-  comparator = _comparator_builder(op_type, is_max_k)
-  iota = xc.ops.Iota(c, xc.Shape.array_shape(np.dtype(np.int32), op_dims),
-                     reduction_dimension)
-  init_val_literal = _get_init_val_literal(op_type, is_max_k)
-  init_val = xc.ops.Constant(c, init_val_literal)
-  init_arg = xc.ops.Constant(c, np.int32(-1))
-  out = xc.ops.ApproxTopKFallback(c, [operand, iota], [init_val, init_arg], k,
-                                  reduction_dimension, comparator,
-                                  recall_target, aggregate_to_topk,
-                                  reduction_input_size_override)
-  return xla.xla_destructure(c, out)
-
-
-def _approx_top_k_batch_rule(batch_operands, batch_axes, *, k,
+def _approx_top_k_batch_rule(batch_operands, batch_axes, *, comparator_jaxpr, k,
                              reduction_dimension, recall_target, is_max_k,
                              reduction_input_size_override, aggregate_to_topk):
   assert len(batch_operands) == 1
@@ -308,6 +490,7 @@ def _approx_top_k_batch_rule(batch_operands, batch_axes, *, k,
   reduction_dimension = dim_map[reduction_dimension]
   return approx_top_k_p.bind(
       operand,
+      comparator_jaxpr=comparator_jaxpr,
       k=k,
       reduction_dimension=reduction_dimension,
       recall_target=recall_target,
@@ -324,9 +507,9 @@ def _approx_top_k_batch_rule(batch_operands, batch_axes, *, k,
 # 2. vjp cannot benefit from the algorithm above. We must run scatter to
 #    distribute the output cotangent to input cotangent. A reasonable way to do
 #    this is to run it on CPU.
-def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
-                      recall_target, is_max_k, reduction_input_size_override,
-                      aggregate_to_topk):
+def _approx_top_k_jvp(primals, tangents, *, comparator_jaxpr, k,
+                      reduction_dimension, recall_target, is_max_k,
+                      reduction_input_size_override, aggregate_to_topk):
   operand, = primals
   tangent, = tangents
   if is_max_k:
@@ -359,8 +542,8 @@ approx_top_k_p = core.Primitive('approx_top_k')
 approx_top_k_p.multiple_results = True
 approx_top_k_p.def_impl(partial(xla.apply_primitive, approx_top_k_p))
 approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
-xla.register_translation(approx_top_k_p, _approx_top_k_fallback_translation)
-xla.register_translation(approx_top_k_p, _approx_top_k_tpu_translation,
-                         platform='tpu')
 batching.primitive_batchers[approx_top_k_p] = _approx_top_k_batch_rule
 ad.primitive_jvps[approx_top_k_p] = _approx_top_k_jvp
+
+mlir.register_lowering(approx_top_k_p, _approx_topk_falllback_lower)
+mlir.register_lowering(approx_top_k_p, _approx_top_k_tpu_lower, platform='tpu')
