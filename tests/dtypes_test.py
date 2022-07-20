@@ -439,7 +439,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     vals = [typecode_to_val(t) for t in typecodes]
     table = [[val_to_typecode(v1 + v2) for v1 in vals] for v2 in vals]
 
-    def show_differences(epected, actual):
+    def show_differences(expected, actual):
       diffs = ""
       for i, t1 in enumerate(typecodes):
         for j, t2 in enumerate(typecodes):

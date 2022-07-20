@@ -238,7 +238,7 @@ def is_device_cuda():
   return xla_bridge.get_backend().platform_version.startswith('cuda')
 
 def _get_device_tags():
-  """returns a set of tags definded for the device under test"""
+  """returns a set of tags defined for the device under test"""
   if is_device_rocm():
     device_tags = {device_under_test(), "rocm"}
   elif is_device_cuda():

@@ -1795,7 +1795,7 @@ def bcoo_reduce_sum(mat, *, axes):
     mat: A BCOO-format array.
     shape: The shape of the target array.
     axes:  A tuple or list or ndarray which contains axes of ``mat`` over which
-      sum is perfomed.
+      sum is performed.
 
   Returns:
     A BCOO-format array containing the result.

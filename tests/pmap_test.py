@@ -1419,7 +1419,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # output = [[0, 4], [2, 6], [1, 5], [3, 7]]
     #
     # This is essentially like splitting the number of rows in the input in two
-    # groups of rows, and swaping the two inner axes (axis=1 and axis=2), which
+    # groups of rows, and swapping the two inner axes (axis=1 and axis=2), which
     # is exactly what the test case checks.
     device_count = jax.device_count()
     if device_count % 2 != 0:
