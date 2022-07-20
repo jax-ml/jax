@@ -206,14 +206,11 @@ def prepare_wheel(sources_path):
   mlir_dir = os.path.join(jaxlib_dir, "mlir")
   mlir_dialects_dir = os.path.join(jaxlib_dir, "mlir", "dialects")
   mlir_libs_dir = os.path.join(jaxlib_dir, "mlir", "_mlir_libs")
-  mlir_transforms_dir = os.path.join(jaxlib_dir, "mlir", "transforms")
   os.makedirs(mlir_dir)
   os.makedirs(mlir_dialects_dir)
   os.makedirs(mlir_libs_dir)
-  os.makedirs(mlir_transforms_dir)
   copy_file("__main__/jaxlib/mlir/ir.py", dst_dir=mlir_dir)
   copy_file("__main__/jaxlib/mlir/passmanager.py", dst_dir=mlir_dir)
-  copy_file("__main__/jaxlib/mlir/transforms/__init__.py", dst_dir=mlir_transforms_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_builtin_ops_ext.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_builtin_ops_gen.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_chlo_ops_gen.py", dst_dir=mlir_dialects_dir)
@@ -235,7 +232,6 @@ def prepare_wheel(sources_path):
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}", dst_dir=mlir_libs_dir)
-  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirTransforms.{pyext}", dst_dir=mlir_libs_dir)
   if _is_windows():
     copy_file("__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll", dst_dir=mlir_libs_dir)
   elif _is_mac():
