@@ -16,6 +16,8 @@
 
 import argparse
 import json
+import logging
+import traceback
 
 from pytest import TestReport
 
@@ -31,26 +33,38 @@ MSG_FORMAT = """\
 """
 
 
+class DefaultReport:
+  outcome : str = "none"
+
+
+def parse_line(line):
+  # TODO(jakevdp): should we parse other report types?
+  parsed = json.loads(line)
+  if parsed.get("$report_type") == "TestReport":
+    return TestReport._from_json(parsed)
+  return DefaultReport()
+
+
 def main(logfile, outfile):
-  failures = []
-
-  with open(logfile, 'r') as f:
-    for line in f:
-      parsed = json.loads(line)
-      report_type = parsed['$report_type']
-      if report_type == "TestReport":
-        parsed = TestReport._from_json(parsed)
-        if parsed.outcome == "failed":
-          failures.append(parsed)
-
-  summary = "\n".join(f"{f.nodeid}: {f.longrepr.chain[0][1].message}"
-                      for f in failures)
-  print(f"writing to {outfile}")
+  logging.info("Parsing %s", logfile)
+  try:
+    with open(logfile, 'r') as f:
+      reports = (parse_line(line) for line in f)
+      failures = (r for r in reports if r.outcome == "failed")
+      summary = "\n".join(f"{f.nodeid}: {f.longrepr.chain[0][1].message}"
+                          for f in failures)
+    logging.info("Parsed summary:\n%s", summary)
+  except Exception:
+    err_info = traceback.format_exc()
+    logging.info("Parsing failed:\n%s", err_info)
+    summary = f"Log parsing failed; traceback:\n\n{err_info}"
+  logging.info("Writing result to %s", outfile)
   with open(outfile, 'w') as f:
     f.write(MSG_FORMAT.format(summary=summary))
 
 
 if __name__ == '__main__':
+  logging.basicConfig(level=logging.INFO)
   parser = argparse.ArgumentParser()
   parser.add_argument("logfile", help="The path to the input logfile")
   parser.add_argument("--outfile", help="The path to the parsed output file to be created.",
