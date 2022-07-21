@@ -29,25 +29,25 @@ from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
 from jax._src.numpy.util import _wraps
 
 
-@_wraps(osp_special.gammaln)
+@_wraps(osp_special.gammaln, module='scipy.special')
 def gammaln(x):
   x, = _promote_args_inexact("gammaln", x)
   return lax.lgamma(x)
 
 
-@_wraps(osp_special.betaln)
+@_wraps(osp_special.betaln, module='scipy.special')
 def betaln(x, y):
   x, y = _promote_args_inexact("betaln", x, y)
   return lax.lgamma(x) + lax.lgamma(y) - lax.lgamma(x + y)
 
 
-@_wraps(osp_special.betainc)
+@_wraps(osp_special.betainc, module='scipy.special')
 def betainc(a, b, x):
   a, b, x = _promote_args_inexact("betainc", a, b, x)
   return lax.betainc(a, b, x)
 
 
-@_wraps(osp_special.digamma, lax_description="""\
+@_wraps(osp_special.digamma, module='scipy.special', lax_description="""\
 The JAX version only accepts real-valued inputs.""")
 def digamma(x):
   x, = _promote_args_inexact("digamma", x)
@@ -57,38 +57,38 @@ ad.defjvp(
     lambda g, x: lax.mul(g, polygamma(1, x)))  # type: ignore[has-type]
 
 
-@_wraps(osp_special.gammainc, update_doc=False)
+@_wraps(osp_special.gammainc, module='scipy.special', update_doc=False)
 def gammainc(a, x):
   a, x = _promote_args_inexact("gammainc", a, x)
   return lax.igamma(a, x)
 
 
-@_wraps(osp_special.gammaincc, update_doc=False)
+@_wraps(osp_special.gammaincc, module='scipy.special', update_doc=False)
 def gammaincc(a, x):
   a, x = _promote_args_inexact("gammaincc", a, x)
   return lax.igammac(a, x)
 
 
-@_wraps(osp_special.erf)
+@_wraps(osp_special.erf, module='scipy.special')
 def erf(x):
   x, = _promote_args_inexact("erf", x)
   return lax.erf(x)
 
 
-@_wraps(osp_special.erfc, update_doc=False)
+@_wraps(osp_special.erfc, module='scipy.special', update_doc=False)
 def erfc(x):
   x, = _promote_args_inexact("erfc", x)
   return lax.erfc(x)
 
 
-@_wraps(osp_special.erfinv)
+@_wraps(osp_special.erfinv, module='scipy.special')
 def erfinv(x):
   x, = _promote_args_inexact("erfinv", x)
   return lax.erf_inv(x)
 
 
 @api.custom_jvp
-@_wraps(osp_special.logit, update_doc=False)
+@_wraps(osp_special.logit, module='scipy.special', update_doc=False)
 def logit(x):
   x, = _promote_args_inexact("logit", x)
   return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
@@ -97,7 +97,7 @@ logit.defjvps(
 
 
 @api.custom_jvp
-@_wraps(osp_special.expit, update_doc=False)
+@_wraps(osp_special.expit, module='scipy.special', update_doc=False)
 def expit(x):
   x, = _promote_args_inexact("expit", x)
   one = _lax_const(x, 1)
@@ -105,7 +105,7 @@ def expit(x):
 expit.defjvps(lambda g, ans, x: g * ans * (_lax_const(ans, 1) - ans))
 
 
-@_wraps(osp_special.logsumexp)
+@_wraps(osp_special.logsumexp, module='scipy.special')
 def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None:
     a, b = _promote_args_inexact("logsumexp", a, b)
@@ -145,7 +145,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   return out
 
 
-@_wraps(osp_special.xlogy)
+@_wraps(osp_special.xlogy, module='scipy.special')
 def xlogy(x, y):
   x, y = _promote_args_inexact("xlogy", x, y)
   x_ok = x != 0.
@@ -154,7 +154,7 @@ def xlogy(x, y):
   return jnp.where(x_ok, lax.mul(safe_x, lax.log(safe_y)), jnp.zeros_like(x))
 
 
-@_wraps(osp_special.xlog1py, update_doc=False)
+@_wraps(osp_special.xlog1py, module='scipy.special', update_doc=False)
 def xlog1py(x, y):
   x, y = _promote_args_inexact("xlog1py", x, y)
   x_ok = x != 0.
@@ -163,7 +163,7 @@ def xlog1py(x, y):
   return jnp.where(x_ok, lax.mul(safe_x, lax.log1p(safe_y)), jnp.zeros_like(x))
 
 
-@_wraps(osp_special.entr)
+@_wraps(osp_special.entr, module='scipy.special')
 def entr(x):
   x, = _promote_args_inexact("entr", x)
   return lax.select(lax.lt(x, _lax_const(x, 0)),
@@ -208,7 +208,7 @@ _BERNOULLI_COEFS = [
 ]
 
 
-@_wraps(osp_special.zeta)
+@_wraps(osp_special.zeta, module='scipy.special')
 def zeta(x, q=None):
   assert q is not None, "Riemann zeta function is not implemented yet."
   # Reference: Johansson, Fredrik.
@@ -237,7 +237,7 @@ def zeta(x, q=None):
   return S + I + T
 
 
-@_wraps(osp_special.polygamma, update_doc=False)
+@_wraps(osp_special.polygamma, module='scipy.special', update_doc=False)
 def polygamma(n, x):
   assert jnp.issubdtype(lax.dtype(n), jnp.integer)
   n, x = _promote_args_inexact("polygamma", n, x)
@@ -657,22 +657,22 @@ def _norm_logpdf(x):
   log_normalizer = _lax_const(x, _norm_logpdf_constant)
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
 
-@_wraps(osp_special.i0e)
+@_wraps(osp_special.i0e, module='scipy.special')
 def i0e(x):
   x, = _promote_args_inexact("i0e", x)
   return lax.bessel_i0e(x)
 
-@_wraps(osp_special.i0)
+@_wraps(osp_special.i0, module='scipy.special')
 def i0(x):
   x, = _promote_args_inexact("i0", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i0e(x))
 
-@_wraps(osp_special.i1e)
+@_wraps(osp_special.i1e, module='scipy.special')
 def i1e(x):
   x, = _promote_args_inexact("i1e", x)
   return lax.bessel_i1e(x)
 
-@_wraps(osp_special.i1)
+@_wraps(osp_special.i1, module='scipy.special')
 def i1(x):
   x, = _promote_args_inexact("i1", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))
@@ -1307,7 +1307,7 @@ def _expi_pos(x):
   )
 
 
-@_wraps(osp_special.expi)
+@_wraps(osp_special.expi, module='scipy.special')
 @api.custom_jvp
 @jit
 def expi(x):
@@ -1426,7 +1426,7 @@ def _expn3(n, x):
   return (ans + one) * jnp.exp(-x) / xk
 
 
-@_wraps(osp_special.expn)
+@_wraps(osp_special.expn, module='scipy.special')
 @partial(api.custom_jvp, nondiff_argnums=(0,))
 @jnp.vectorize
 @jit
@@ -1466,7 +1466,7 @@ def expn_jvp(n, primals, tangents):
   )
 
 
-@_wraps(osp_special.exp1)
-def exp1(x):
+@_wraps(osp_special.exp1, module="scipy.special")
+def exp1(x, module='scipy.special'):
   (x,) = _promote_args_inexact("exp1", x)
   return expn(1, x)
