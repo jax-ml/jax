@@ -1818,7 +1818,11 @@ class DynamicJaxprTrace(core.Trace):
     in_tracers = [*implicit_tracers, *explicit_tracers]
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
     with core.new_sublevel():
-      jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2(f, self.main)
+      if config.jax_check_tracer_leaks or not config.jax_experimental_subjaxpr_lowering_cache:
+        jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2(f, self.main)
+      else:
+        jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2_memoized(
+            f, self.main).val
     if jaxpr.effects:
       raise NotImplementedError('Effects not supported for call primitives.')
     if params.get('inline', False):
@@ -2116,6 +2120,18 @@ def trace_to_subjaxpr_dynamic2(
     del fun, main, trace, frame, in_tracers, out_tracers, ans
   return jaxpr, out_type, consts
 
+
+@lu.cache
+def trace_to_subjaxpr_dynamic2_memoized(fun: lu.WrappedFun,
+                                        main: core.MainTrace):
+  return WrapperForWeakRef(trace_to_subjaxpr_dynamic2(fun, main))
+
+
+class WrapperForWeakRef:
+  val: Any
+
+  def __init__(self, val):
+    self.val = val
 
 @contextlib.contextmanager
 def extend_jaxpr_stack(main, frame):
