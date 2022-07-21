@@ -528,6 +528,14 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
   def test_no_errors(self):
     () = prefix_errors((1, 2), ((11, 12, 13), 2))
 
+  def test_different_structure_no_children(self):
+    e, = prefix_errors({}, {'a': []})
+    expected = ("pytree structure error: different numbers of pytree children "
+                "at key path\n"
+                "    in_axes tree root")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
