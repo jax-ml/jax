@@ -302,12 +302,12 @@ def load(*args, **kwargs):
 
 ### implementations of numpy functions in terms of lax
 
-@_wraps(np.fmin)
+@_wraps(np.fmin, module='numpy')
 @jit
 def fmin(x1, x2):
   return where((x1 < x2) | isnan(x2), x1, x2)
 
-@_wraps(np.fmax)
+@_wraps(np.fmax, module='numpy')
 @jit
 def fmax(x1, x2):
   return where((x1 > x2) | isnan(x2), x1, x2)
@@ -346,7 +346,7 @@ def trapz(y, x=None, dx=1.0, axis: int = -1):
   return 0.5 * (dx * (y[..., 1:] + y[..., :-1])).sum(-1)
 
 
-@_wraps(np.trunc)
+@_wraps(np.trunc, module='numpy')
 @jit
 def trunc(x):
   _check_arraylike('trunc', x)
@@ -2760,7 +2760,7 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
   return lax.dot_general(a, b, (contract_dims, batch_dims), precision)
 
 
-@_wraps(np.matmul, lax_description=_PRECISION_DOC)
+@_wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC)
 @partial(jit, static_argnames=('precision',), inline=True)
 def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
@@ -4087,7 +4087,7 @@ def _gcd_body_fn(xs):
             where(x2 != 0, lax.rem(x1, x2), _lax_const(x2, 0)))
   return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
-@_wraps(np.gcd)
+@_wraps(np.gcd, module='numpy')
 @jit
 def gcd(x1, x2):
   _check_arraylike("gcd", x1, x2)
@@ -4100,7 +4100,7 @@ def gcd(x1, x2):
   return gcd
 
 
-@_wraps(np.lcm)
+@_wraps(np.lcm, module='numpy')
 @jit
 def lcm(x1, x2):
   _check_arraylike("lcm", x1, x2)
@@ -4580,8 +4580,8 @@ _NOT_IMPLEMENTED_DESC = """
 *** This function is not yet implemented by jax.numpy, and will raise NotImplementedError ***
 """
 
-def _not_implemented(fun):
-  @_wraps(fun, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
+def _not_implemented(fun, module=None):
+  @_wraps(fun, module=module, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
   def wrapped(*args, **kwargs):
     msg = "Numpy function {} not yet implemented"
     raise NotImplementedError(msg.format(fun))
