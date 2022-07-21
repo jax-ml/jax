@@ -280,8 +280,6 @@ def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
 @remat_p.def_effectful_abstract_eval
 def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
   del args, prevent_cse, differentiated, policy  # Unused.
-  if jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `remat`.')
   return [v.aval for v in jaxpr.outvars], jaxpr.effects
 
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
@@ -303,6 +301,9 @@ ad.primitive_jvps[remat_p] = remat_jvp
 
 def remat_partial_eval(trace, *tracers, jaxpr, **params):
   assert not jaxpr.constvars
+  if jaxpr.effects:
+    raise NotImplementedError(
+        'Effects not supported in partial-eval of `checkpoint`/`remat`.')
   policy = params['policy'] or nothing_saveable
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res = \

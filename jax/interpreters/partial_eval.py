@@ -1149,9 +1149,11 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
   consts = remat_call_p.bind(f, **params)  # no known inputs
   _, out_avals, jaxpr, env = aux()
+  if jaxpr.effects:
+    raise NotImplementedError(
+        'Effects not supported in partial-eval of `checkpoint`/`remat`.')
   env_tracers = map(trace.full_raise, env)
   jaxpr = convert_constvars_jaxpr(jaxpr)
-  if jaxpr.effects: raise NotImplementedError
   del in_pvals, in_knowns, in_avals, out_avals, f, aux, env
   # When concrete=True, we could avoid some redundant computation by extracting
   # values from any ConcreteArrays in `out_avals`, but we eschew that
@@ -1823,8 +1825,6 @@ class DynamicJaxprTrace(core.Trace):
       else:
         jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2_memoized(
             f, self.main).val
-    if jaxpr.effects:
-      raise NotImplementedError('Effects not supported for call primitives.')
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers)
     source_info = source_info_util.current()

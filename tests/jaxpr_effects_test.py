@@ -25,6 +25,7 @@ from jax import core
 from jax import lax
 from jax import linear_util as lu
 from jax.config import config
+from jax.interpreters import ad
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import mlir
@@ -41,8 +42,12 @@ effect_p = core.Primitive('effect')
 effect_p.multiple_results = True
 
 @effect_p.def_effectful_abstract_eval
-def _(*, effect):
-  return [], {effect}
+def _(*avals, effect):
+  return avals, {effect}
+
+def effect_jvp_rule(primals, tangents, effect):
+  return effect_p.bind(*primals, effect=effect), tangents
+ad.primitive_jvps[effect_p] = effect_jvp_rule
 
 mlir.lowerable_effects.add('foo')
 mlir.lowerable_effects.add('foo2')
@@ -189,8 +194,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         effect_p.bind(effect='bar')
         return [x]
       return core.call(f_, x)[0]
-    with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
-      jax.make_jaxpr(f)(2.)
+    jax.make_jaxpr(f)(2.)
 
   def test_xla_call_primitive_inherits_effects(self):
 
@@ -199,8 +203,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='bar')
       return x
-    with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
-      jax.make_jaxpr(f)(2.)
+    jax.make_jaxpr(f)(2.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{flavor}", flavor=flavor)
@@ -210,11 +213,12 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
     @remat
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      x, = effect_p.bind(x, effect='foo')
+      x, = effect_p.bind(x, effect='bar')
       return x
-    with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
-      jax.make_jaxpr(f)(2.)
+    jax.make_jaxpr(f)(2.)
+    with self.assertRaisesRegex(NotImplementedError, "Effects not supported"):
+      jax.make_jaxpr(lambda x: jax.linearize(f, x)[1](x))(2.)
 
   def test_custom_jvp_primitive_inherits_effects(self):
 
