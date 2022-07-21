@@ -1071,9 +1071,10 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
   xla.check_backend_matches(backend, ctx.platform)
-  output_types = map(aval_to_ir_types, avals_out)
-  flat_output_types = util.flatten(output_types)
   effects = tokens_in.effects()
+  output_types = map(aval_to_ir_types, avals_out)
+  output_types = [token_type()] * len(effects) + output_types
+  flat_output_types = util.flatten(output_types)
   symbol_name = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects).name.value
   args = [*tokens_in.tokens(), *args]
   call = func_dialect.CallOp(flat_output_types,

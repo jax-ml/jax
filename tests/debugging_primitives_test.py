@@ -115,6 +115,17 @@ class DebugPrintTest(jtu.JaxTestCase):
     self.assertEqual(output(), "x: 2\n")
 
   @jtu.skip_on_devices(*disabled_backends)
+  def test_can_double_stage_out_ordered_print(self):
+    @jax.jit
+    @jax.jit
+    def f(x):
+      debug_print('x: {x}', x=x, ordered=True)
+    with capture_stdout() as output:
+      f(2)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print_with_pytree(self):
     @jax.jit
     def f(x):
