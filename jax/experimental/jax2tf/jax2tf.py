@@ -52,6 +52,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
+from jax._src import lib as jaxlib
 from jax._src.lib import xla_client
 
 from jax.experimental.jax2tf import shape_poly
@@ -609,6 +610,24 @@ def _lower_native(fun: lu.WrappedFun, in_vals: Sequence[TfVal],
 
   mhlo_module = lowered.mhlo()
   mhlo_module_text = mlir.module_to_string(mhlo_module)
+  if jaxlib.version <= (0, 3, 14):
+    mhlo_module_text = _fixup_mhlo_module_text(mhlo_module_text)
+  # We do not support custom_call, try to give an error for now
+  if "mhlo.custom_call" in mhlo_module_text:
+    # Try to give a nice error message. We could just dump the module...
+    msg = ("experimental_native_lowering does not work with custom calls. "
+           "Most likely you are running this on CPU or GPU for JAX programs that "
+           "use custom calls on those platforms. The serialization should "
+           "work on TPU.")
+    custom_calls = re.findall(r'mhlo.custom_call.*call_target_name\s+=\s+"([^"]+)".*loc\(([^\)]+)\)',
+                              mhlo_module_text)
+    for cc in custom_calls:
+      msg += f"\n{cc[0]}"
+      # Get the line number
+      m = re.search('^' + cc[1] + ' =.*', mhlo_module_text, re.MULTILINE)
+      if m:
+        msg += f"\n  from line {m.group(0)}"
+    raise NotImplementedError(msg)
   logging.vlog(2, f"XlaCallModule {mhlo_module_text}")
 
   # Figure out the result types and shapes
@@ -644,6 +663,14 @@ def _lower_native(fun: lu.WrappedFun, in_vals: Sequence[TfVal],
       _convert_res(res_val, out_aval.dtype)
       for res_val, out_aval in zip(res, out_avals))
   return zip(res, out_avals)
+
+def _fixup_mhlo_module_text(mhlo_module_text: str) -> str:
+  # A workaround for MHLO not (yet) having backwards compatibility. With
+  # jaxlib 0.3.14 we have an old serialization method that puts "..." around
+  # MHLO attributes. The parser is new and does not accept those attributes.
+  # We try to fix it up here, temporarily.
+  import re
+  return re.sub(r'#mhlo<"([^"]+)">', "#mhlo<\\1>", mhlo_module_text)
 
 
 def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
