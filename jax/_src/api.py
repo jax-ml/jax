@@ -2249,6 +2249,8 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
 
 
 def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
+  warn("`jax.mask` is deprecated and will be removed soon. ",
+       DeprecationWarning)
   _check_callable(fun)
   unique_ids = masking.UniqueIds()
 
@@ -2292,6 +2294,8 @@ def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
 
 @curry
 def shapecheck(in_shapes, out_shape, fun: Callable):
+  warn("`jax.shapecheck` is deprecated and will be removed soon. ",
+       DeprecationWarning)
   _check_callable(fun)
   in_shapes, in_tree = tree_flatten(in_shapes)
   in_shapes = map(masking.parse_spec, in_shapes)
