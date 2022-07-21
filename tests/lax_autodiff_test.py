@@ -616,6 +616,37 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     dus = lambda y: lax.dynamic_update_slice(operand, y, start_indices)
     check_grads(dus, (update,), 2, ["fwd", "rev"], eps=1.)
 
+  def testDynamicSliceValueAndGrad(self):
+    # Regression test for https://github.com/google/jax/issues/10984
+    # Issue arose due to an out-of-range negative index.
+    rng = jtu.rand_default(self.rng())
+    shape = (5, 5)
+    axis = 0
+    index = -(shape[axis] + 3)
+    def f(x):
+      return lax.dynamic_index_in_dim(x, index, axis).sum()
+    x = rng(shape, np.float32)
+
+    result1 = f(x)
+    result2, _ = jax.value_and_grad(f, 0)(x)
+    self.assertAllClose(result1, result2)
+
+  def testDynamicUpdateSliceValueAndGrad(self):
+    # Regression test for https://github.com/google/jax/issues/10984
+    # Issue arose due to an out-of-range negative index.
+    rng = jtu.rand_default(self.rng())
+    shape = (5, 5)
+    axis = 0
+    index = -(shape[axis] + 3)
+    def f(x, y):
+      return lax.dynamic_update_index_in_dim(x, y, index, axis).sum()
+    x = rng(shape, np.float32)
+    y = rng([1 for s in shape], np.float32)
+
+    result1 = f(x, y)
+    result2, _ = jax.value_and_grad(f, 0)(x, y)
+    self.assertAllClose(result1, result2)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_perm={}".format(
           jtu.format_shape_dtype_string(shape, dtype), perm),
