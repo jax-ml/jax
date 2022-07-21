@@ -4134,6 +4134,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         np.array(bytearray(b'\x2a\xf3'), ndmin=2)
     )
 
+  @parameterized.named_parameters(
+    {'testcase_name': f"_val={val}", 'val': val}
+    for val in [1+1j, [1+1j], jnp.pi, np.arange(2)])
+  def testIsComplexObj(self, val):
+    args_maker = lambda: [val]
+    self._CheckAgainstNumpy(np.iscomplexobj, jnp.iscomplexobj, args_maker)
+    self._CompileAndCheck(jnp.iscomplexobj, args_maker)
+
   def testIsClose(self):
     c_isclose = jax.jit(jnp.isclose)
     c_isclose_nan = jax.jit(partial(jnp.isclose, equal_nan=True))
