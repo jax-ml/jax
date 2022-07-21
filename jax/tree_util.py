@@ -52,6 +52,8 @@ from jax._src.tree_util import (
   tree_structure as tree_structure,
   tree_transpose as tree_transpose,
   tree_unflatten as tree_unflatten,
+  tree_labels as tree_labels,
+  tree_print as tree_print,
   treedef_children as treedef_children,
   treedef_is_leaf as treedef_is_leaf,
   treedef_tuple as treedef_tuple,

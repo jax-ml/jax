@@ -15,6 +15,8 @@
 import collections
 import functools
 import re
+import types
+
 import unittest
 
 from absl.testing import absltest
@@ -128,8 +130,8 @@ TREES = (
                              [("foo", 34), ("baz", 101), ("something", -42)]),),
     (ANamedTupleSubclass(foo="hello", bar=3.5),),
     (FlatCache(None),),
-    (FlatCache(1),),
-    (FlatCache({"a": [1, 2]}),),
+    (FlatCache(111),),
+    (FlatCache({"a": [111, 112]}),),
 )
 
 
@@ -527,6 +529,69 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
 
   def test_no_errors(self):
     () = prefix_errors((1, 2), ((11, 12, 13), 2))
+
+class SNWrap(types.SimpleNamespace):
+  def __init__(self, **kwargs):
+    super().__init__(**kwargs)
+
+def SNWrap_tree_flatten(x : SNWrap):
+  return pytree.flatten(x.__dict__, lambda a: a is not x.__dict__)
+
+def SNWrap_tree_unflatten(aux, values):
+  return SNWrap(**pytree.unflatten(aux, values))
+
+tree_util.register_pytree_node(SNWrap, SNWrap_tree_flatten, SNWrap_tree_unflatten)
+
+@unittest.skipIf(jax._src.lib.xla_extension_version < 75,
+                 "Test requires jaxlib newer than 0.3.12") # TODO(awf): How to relate xla_extension_version to jaxlib version?
+class PyTreeWalkTest(jtu.JaxTestCase):
+
+  def testWalk(self):
+    y = SNWrap()
+    y.y1 = {'y11': 'ya', 'y12': 'yb'}
+
+    x = SNWrap()
+    x.x1 = {'x11': 'a', 'x12': y, 'x13':'b'}
+    x.x2 = {'x21': '2a', 'x22': y}
+
+    obj = {'a1': 'leaf-a1',
+           'a2':{'b1': [111,2,3],
+                 'b2': jnp.ones((2,3)),
+                 'b3': {'c1': 33,
+                        'c2': (44,55)}},
+           'a3': x,
+           'a4':'fred'}
+
+    leaves,td = pytree.flatten(obj)
+
+    out = td.walk(lambda n,node_data:sum(n), lambda x:1, leaves)
+    self.assertEqual(out, len(leaves))
+
+    out = td.walk(lambda n,node_data:n, lambda x:3, leaves)
+    expect = (3,
+              ((3, 3, 3), 3, (3, (3, 3))),
+              ((3, ((3, 3),), 3), (3, ((3, 3),))),
+              3)
+    self.assertEqual(out, expect)
+
+    print('\nobj', obj)
+    tree_util.tree_print(obj, 'obj/')
+
+    for i,tree in enumerate(TREES):
+      print(f'TREES[{i}]: ', tree[0])
+      tree_util.tree_print(tree[0], '  foo/')
+
+  @parameterized.parameters(*TREES)
+  def testPrintedAllLeaves(self, obj):
+      leaves,td = pytree.flatten(obj)
+      leaf_indices = list(range(len(leaves)))
+      leaves_printed = [leaf for label,leaf in
+                        tree_util.tree_labels(td, leaf_indices)]
+      # Strip nulls, which are printed, but filtered from leaves
+      leaves_printed = [x for x in leaves_printed if x != ()]
+      # Ensure all leaves were printed, in the correct order
+      assert leaves_printed == leaf_indices
+
 
 
 if __name__ == "__main__":
