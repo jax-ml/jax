@@ -885,7 +885,7 @@ config.define_bool_state(
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(
     name='jax_coordination_service',
-    default=False,
+    default=(lib.xla_extension_version >= 80),
     help=(
          'Use coordination service (experimental) instead of the default PjRT '
          'distributed runtime.'
