@@ -4377,36 +4377,58 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   return lax.convert_element_type(result, a.dtype)
 
 
-@partial(vectorize, excluded={0, 2})
-def _searchsorted(a, v, side):
-  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
-  if len(a) == 0:
-    return dtype(0)
+@partial(vectorize, excluded={0, 2, 3})
+def _searchsorted_via_scan(sorted_arr, query, side, dtype):
   op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
-  a, v = _promote_dtypes(a, v)
   def body_fun(_, state):
     low, high = state
     mid = (low + high) // 2
-    go_left = op(v, a[mid])
+    go_left = op(query, sorted_arr[mid])
     return (where(go_left, low, mid), where(go_left, mid, high))
-
-  n_levels = int(np.ceil(np.log2(len(a) + 1)))
-  init = (dtype(0), dtype(len(a)))
+  n_levels = int(np.ceil(np.log2(len(sorted_arr) + 1)))
+  init = (dtype(0), dtype(len(sorted_arr)))
   return lax.fori_loop(0, n_levels, body_fun, init)[1]
 
 
-@_wraps(np.searchsorted, skip_params=['sorter'])
-@partial(jit, static_argnames=('side', 'sorter'))
-def searchsorted(a, v, side='left', sorter=None):
+def _searchsorted_via_sort(sorted_arr, query, side, dtype):
+  working_dtype = int32 if sorted_arr.size + query.size < np.iinfo(np.int32).max else int64
+  def _rank(x):
+    idx = lax.iota(working_dtype, len(x))
+    return zeros_like(idx).at[argsort(x)].set(idx)
+  query_flat = query.ravel()
+  if side == 'left':
+    index = _rank(lax.concatenate([query_flat, sorted_arr], 0))[:query.size]
+  else:
+    index = _rank(lax.concatenate([sorted_arr, query_flat], 0))[sorted_arr.size:]
+  return lax.reshape(lax.sub(index, _rank(query_flat)), np.shape(query)).astype(dtype)
+
+
+@_wraps(np.searchsorted, skip_params=['sorter'],
+  extra_params=_dedent("""
+    method : str
+        One of 'scan' (default) or 'sort'. Controls the method used by the implementation; 'scan'
+        tends to be more performant on CPU (particularly when ``a`` is very large), while
+        'sort' is often more performant on accelerator backends like GPU and TPU (particularly
+        when ``v`` is very large)."""))
+@partial(jit, static_argnames=('side', 'sorter', 'method'))
+def searchsorted(a, v, side='left', sorter=None, *, method='scan'):
   _check_arraylike("searchsorted", a, v)
   if side not in ['left', 'right']:
-    raise ValueError(f"{side!r} is an invalid value for keyword 'side'")
+    raise ValueError(f"{side!r} is an invalid value for keyword 'side'. "
+                     "Expected one of ['left', 'right'].")
+  if method not in ['scan', 'sort']:
+    raise ValueError(f"{method!r} is an invalid value for keyword 'method'. "
+                     "Expected one of ['sort', 'scan'].")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
-  return _searchsorted(a, v, side)
-
+  a, v = _promote_dtypes(a, v)
+  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
+  if len(a) == 0:
+    return zeros_like(v, dtype=dtype)
+  impl = _searchsorted_via_scan if method == 'scan' else _searchsorted_via_sort
+  return impl(a, v, side, dtype)
 
 @_wraps(np.digitize)
 @partial(jit, static_argnames=('right',))
