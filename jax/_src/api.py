@@ -2249,6 +2249,8 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
 
 
 def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
+  warn("`jax.mask` is deprecated and will be removed soon. ",
+       DeprecationWarning)
   _check_callable(fun)
   unique_ids = masking.UniqueIds()
 
@@ -2292,6 +2294,8 @@ def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
 
 @curry
 def shapecheck(in_shapes, out_shape, fun: Callable):
+  warn("`jax.shapecheck` is deprecated and will be removed soon. ",
+       DeprecationWarning)
   _check_callable(fun)
   in_shapes, in_tree = tree_flatten(in_shapes)
   in_shapes = map(masking.parse_spec, in_shapes)
@@ -3343,3 +3347,20 @@ def block_until_ready(x):
     except AttributeError:
       return x
   return jax.tree_util.tree_map(try_to_block, x)
+
+
+def clear_backends():
+  """
+  Clear all backend clients so that new backend clients can be created later.
+  """
+
+  if xc._version < 79:
+    raise RuntimeError("clear_backends is not supported in the jaxlib used."
+                       "Please update your jaxlib package.")
+
+  xb._clear_backends()
+  jax.lib.xla_bridge._backends = {}
+  dispatch.xla_callable.cache_clear()  # type: ignore
+  dispatch.xla_primitive_callable.cache_clear()
+  _cpp_jit_cache.clear()
+  jax_jit.CompiledFunctionCache.clear_all()

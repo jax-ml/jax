@@ -892,6 +892,11 @@ config.define_bool_state(
     )
 )
 
+config.define_bool_state(
+    name='jax_experimental_subjaxpr_lowering_cache',
+    default=False,
+    help='Enable using a cache for lowering subjaxprs.')
+
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:
   """Indicates that the current context is an explicit device_put*() call."""

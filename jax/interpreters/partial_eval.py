@@ -1149,9 +1149,11 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
   consts = remat_call_p.bind(f, **params)  # no known inputs
   _, out_avals, jaxpr, env = aux()
+  if jaxpr.effects:
+    raise NotImplementedError(
+        'Effects not supported in partial-eval of `checkpoint`/`remat`.')
   env_tracers = map(trace.full_raise, env)
   jaxpr = convert_constvars_jaxpr(jaxpr)
-  if jaxpr.effects: raise NotImplementedError
   del in_pvals, in_knowns, in_avals, out_avals, f, aux, env
   # When concrete=True, we could avoid some redundant computation by extracting
   # values from any ConcreteArrays in `out_avals`, but we eschew that
@@ -1566,7 +1568,7 @@ class DynamicJaxprTracer(core.Tracer):
       if len(progenitor_eqns) > 5:
         origin += "\n\n(Additional originating lines are not shown.)"
     else:
-      origin = (f"The error occured while tracing the function {dbg.func_src_info} "
+      origin = (f"The error occurred while tracing the function {dbg.func_src_info} "
                 f"for {dbg.traced_for}.")
     return "\n" + origin
 
@@ -1818,9 +1820,11 @@ class DynamicJaxprTrace(core.Trace):
     in_tracers = [*implicit_tracers, *explicit_tracers]
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
     with core.new_sublevel():
-      jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2(f, self.main)
-    if jaxpr.effects:
-      raise NotImplementedError('Effects not supported for call primitives.')
+      if config.jax_check_tracer_leaks or not config.jax_experimental_subjaxpr_lowering_cache:
+        jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2(f, self.main)
+      else:
+        jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2_memoized(
+            f, self.main).val
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers)
     source_info = source_info_util.current()
@@ -2116,6 +2120,18 @@ def trace_to_subjaxpr_dynamic2(
     del fun, main, trace, frame, in_tracers, out_tracers, ans
   return jaxpr, out_type, consts
 
+
+@lu.cache
+def trace_to_subjaxpr_dynamic2_memoized(fun: lu.WrappedFun,
+                                        main: core.MainTrace):
+  return WrapperForWeakRef(trace_to_subjaxpr_dynamic2(fun, main))
+
+
+class WrapperForWeakRef:
+  val: Any
+
+  def __init__(self, val):
+    self.val = val
 
 @contextlib.contextmanager
 def extend_jaxpr_stack(main, frame):

@@ -23,7 +23,7 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.config import config
 from jax.interpreters import pxla, xla
-from jax._src.util import prod, safe_zip, cache
+from jax._src.util import prod, safe_zip
 from jax._src.api import device_put
 from jax.interpreters.pxla import PartitionSpec
 
@@ -53,7 +53,7 @@ def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
   return indices  # type: ignore
 
 
-@cache()
+@functools.lru_cache(maxsize=4096)
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
@@ -63,7 +63,7 @@ def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
       for d, i in safe_zip(global_mesh.devices.flat, indices)}  # type: ignore
 
 
-@cache()
+@functools.lru_cache(maxsize=4096)
 def get_shard_indices_replica_ids(
     global_shape: Shape, global_mesh: pxla.Mesh,
     mesh_axes: MeshAxes) -> Mapping[Device, Tuple[Index, int]]:
@@ -95,7 +95,7 @@ def _get_shard_indices_replica_ids_uncached(
   return out
 
 
-@cache()
+@functools.lru_cache(maxsize=4096)
 def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   chunk_size = []
   for mesh_axis, size in zip(mesh_axes, global_shape):

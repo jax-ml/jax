@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import io
+import re
 import textwrap
 import unittest
 
@@ -20,10 +21,13 @@ from typing import IO, Sequence, Tuple
 from absl.testing import absltest
 import jax
 from jax.config import config
+from jax.experimental import maps
+from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -289,6 +293,34 @@ class CliDebuggerTest(jtu.JaxTestCase):
     g(jnp.arange(2., dtype=jnp.float32))
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debugger_works_with_pjit(self):
+    if jax.default_backend() != "tpu":
+      raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
+    stdin, stdout = make_fake_stdin_stdout(["p y", "c"])
+
+    def f(x):
+      y = x + 1
+      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      return y
+
+    def g(x):
+      y = f(x)
+      return jnp.exp(y)
+    g = pjit.pjit(g, in_axis_resources=pjit.PartitionSpec("dev"),
+                  out_axis_resources=pjit.PartitionSpec("dev"))
+    with maps.Mesh(np.array(jax.devices()), ["dev"]):
+      arr = (1 + np.arange(8)).astype(np.int32)
+      expected = _format_multiline(r"""
+      Entering jaxdb:
+      \(jaxdb\) {}
+      \(jaxdb\) """.format(re.escape(repr(arr))))
+      g(jnp.arange(8, dtype=jnp.int32))
+      jax.effects_barrier()
+      print(stdout.getvalue())
+      print(expected)
+      self.assertRegex(stdout.getvalue(), expected)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

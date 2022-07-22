@@ -302,12 +302,12 @@ def load(*args, **kwargs):
 
 ### implementations of numpy functions in terms of lax
 
-@_wraps(np.fmin)
+@_wraps(np.fmin, module='numpy')
 @jit
 def fmin(x1, x2):
   return where((x1 < x2) | isnan(x2), x1, x2)
 
-@_wraps(np.fmax)
+@_wraps(np.fmax, module='numpy')
 @jit
 def fmax(x1, x2):
   return where((x1 > x2) | isnan(x2), x1, x2)
@@ -346,7 +346,7 @@ def trapz(y, x=None, dx=1.0, axis: int = -1):
   return 0.5 * (dx * (y[..., 1:] + y[..., :-1])).sum(-1)
 
 
-@_wraps(np.trunc)
+@_wraps(np.trunc, module='numpy')
 @jit
 def trunc(x):
   _check_arraylike('trunc', x)
@@ -1051,7 +1051,7 @@ def bincount(x, weights=None, minlength=0, *, length=None):
       "The error occurred because of argument 'minlength' of jnp.bincount.")
   if length is None:
     x = core.concrete_or_error(asarray, x,
-      "The error occured because of argument 'x' of jnp.bincount. "
+      "The error occurred because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
     length = _max(minlength, x.size and x.max() + 1)
   else:
@@ -2144,9 +2144,9 @@ def _wrap_numpy_nullary_function(f):
   """
   @_wraps(f, update_doc=False)
   def wrapper(*args, **kwargs):
-    args = [core.concrete_or_error(None, arg, f"the error occured in argument {i} jnp.{f.__name__}()")
+    args = [core.concrete_or_error(None, arg, f"the error occurred in argument {i} jnp.{f.__name__}()")
             for i, arg in enumerate(args)]
-    kwargs = {key: core.concrete_or_error(None, val, f"the error occured in argument '{key}' jnp.{f.__name__}()")
+    kwargs = {key: core.concrete_or_error(None, val, f"the error occurred in argument '{key}' jnp.{f.__name__}()")
               for key, val in kwargs.items()}
     return asarray(f(*args, **kwargs))
   return wrapper
@@ -2760,7 +2760,7 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
   return lax.dot_general(a, b, (contract_dims, batch_dims), precision)
 
 
-@_wraps(np.matmul, lax_description=_PRECISION_DOC)
+@_wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC)
 @partial(jit, static_argnames=('precision',), inline=True)
 def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
@@ -4087,7 +4087,7 @@ def _gcd_body_fn(xs):
             where(x2 != 0, lax.rem(x1, x2), _lax_const(x2, 0)))
   return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
-@_wraps(np.gcd)
+@_wraps(np.gcd, module='numpy')
 @jit
 def gcd(x1, x2):
   _check_arraylike("gcd", x1, x2)
@@ -4100,7 +4100,7 @@ def gcd(x1, x2):
   return gcd
 
 
-@_wraps(np.lcm)
+@_wraps(np.lcm, module='numpy')
 @jit
 def lcm(x1, x2):
   _check_arraylike("lcm", x1, x2)
@@ -4377,36 +4377,58 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   return lax.convert_element_type(result, a.dtype)
 
 
-@partial(vectorize, excluded={0, 2})
-def _searchsorted(a, v, side):
-  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
-  if len(a) == 0:
-    return dtype(0)
+@partial(vectorize, excluded={0, 2, 3})
+def _searchsorted_via_scan(sorted_arr, query, side, dtype):
   op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
-  a, v = _promote_dtypes(a, v)
   def body_fun(_, state):
     low, high = state
     mid = (low + high) // 2
-    go_left = op(v, a[mid])
+    go_left = op(query, sorted_arr[mid])
     return (where(go_left, low, mid), where(go_left, mid, high))
-
-  n_levels = int(np.ceil(np.log2(len(a) + 1)))
-  init = (dtype(0), dtype(len(a)))
+  n_levels = int(np.ceil(np.log2(len(sorted_arr) + 1)))
+  init = (dtype(0), dtype(len(sorted_arr)))
   return lax.fori_loop(0, n_levels, body_fun, init)[1]
 
 
-@_wraps(np.searchsorted, skip_params=['sorter'])
-@partial(jit, static_argnames=('side', 'sorter'))
-def searchsorted(a, v, side='left', sorter=None):
+def _searchsorted_via_sort(sorted_arr, query, side, dtype):
+  working_dtype = int32 if sorted_arr.size + query.size < np.iinfo(np.int32).max else int64
+  def _rank(x):
+    idx = lax.iota(working_dtype, len(x))
+    return zeros_like(idx).at[argsort(x)].set(idx)
+  query_flat = query.ravel()
+  if side == 'left':
+    index = _rank(lax.concatenate([query_flat, sorted_arr], 0))[:query.size]
+  else:
+    index = _rank(lax.concatenate([sorted_arr, query_flat], 0))[sorted_arr.size:]
+  return lax.reshape(lax.sub(index, _rank(query_flat)), np.shape(query)).astype(dtype)
+
+
+@_wraps(np.searchsorted, skip_params=['sorter'],
+  extra_params=_dedent("""
+    method : str
+        One of 'scan' (default) or 'sort'. Controls the method used by the implementation; 'scan'
+        tends to be more performant on CPU (particularly when ``a`` is very large), while
+        'sort' is often more performant on accelerator backends like GPU and TPU (particularly
+        when ``v`` is very large)."""))
+@partial(jit, static_argnames=('side', 'sorter', 'method'))
+def searchsorted(a, v, side='left', sorter=None, *, method='scan'):
   _check_arraylike("searchsorted", a, v)
   if side not in ['left', 'right']:
-    raise ValueError(f"{side!r} is an invalid value for keyword 'side'")
+    raise ValueError(f"{side!r} is an invalid value for keyword 'side'. "
+                     "Expected one of ['left', 'right'].")
+  if method not in ['scan', 'sort']:
+    raise ValueError(f"{method!r} is an invalid value for keyword 'method'. "
+                     "Expected one of ['sort', 'scan'].")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
-  return _searchsorted(a, v, side)
-
+  a, v = _promote_dtypes(a, v)
+  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
+  if len(a) == 0:
+    return zeros_like(v, dtype=dtype)
+  impl = _searchsorted_via_scan if method == 'scan' else _searchsorted_via_sort
+  return impl(a, v, side, dtype)
 
 @_wraps(np.digitize)
 @partial(jit, static_argnames=('right',))
@@ -4580,8 +4602,8 @@ _NOT_IMPLEMENTED_DESC = """
 *** This function is not yet implemented by jax.numpy, and will raise NotImplementedError ***
 """
 
-def _not_implemented(fun):
-  @_wraps(fun, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
+def _not_implemented(fun, module=None):
+  @_wraps(fun, module=module, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
   def wrapped(*args, **kwargs):
     msg = "Numpy function {} not yet implemented"
     raise NotImplementedError(msg.format(fun))

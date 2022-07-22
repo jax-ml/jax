@@ -1071,9 +1071,10 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
   xla.check_backend_matches(backend, ctx.platform)
-  output_types = map(aval_to_ir_types, avals_out)
-  flat_output_types = util.flatten(output_types)
   effects = tokens_in.effects()
+  output_types = map(aval_to_ir_types, avals_out)
+  output_types = [token_type()] * len(effects) + output_types
+  flat_output_types = util.flatten(output_types)
   symbol_name = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects).name.value
   args = [*tokens_in.tokens(), *args]
   call = func_dialect.CallOp(flat_output_types,
@@ -1351,7 +1352,8 @@ def _dtype_to_xla_type_string(dtype: np.dtype) -> str:
   return _dtype_to_xla_type_string_map[dtype]
 
 def send_to_host(channel: int, token: mhlo.TokenType, operand: Any,
-                 aval: core.ShapedArray, name: str) -> ir.Value:
+                 aval: core.ShapedArray, name: str, *,
+                 sharding: Optional[xc.OpSharding] = None) -> ir.Value:
   channel_handle = mhlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
   send_op = mhlo.SendOp(mhlo.TokenType.get(), [operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
@@ -1363,11 +1365,14 @@ def send_to_host(channel: int, token: mhlo.TokenType, operand: Any,
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
           _xla_host_transfer_original_type=ir.StringAttr.get(dtype_str),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+  if sharding is not None:
+    set_sharding(send_op, sharding)
   return send_op.result
 
 
 def receive_from_host(channel: int, token: mhlo.TokenType,
-                      out_aval: core.ShapedArray, name: str) -> ir.Value:
+                      out_aval: core.ShapedArray, name: str, *,
+                      sharding: Optional[xc.OpSharding] = None) -> ir.Value:
   channel_handle = mhlo.ChannelHandle.get(channel, RECV_FROM_HOST_TYPE)
   recv_op = mhlo.RecvOp([aval_to_ir_type(out_aval),
                          mhlo.TokenType.get()], token, channel_handle,
@@ -1380,6 +1385,8 @@ def receive_from_host(channel: int, token: mhlo.TokenType,
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
           _xla_host_transfer_original_type=ir.StringAttr.get(dtype_str),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+  if sharding is not None:
+    set_sharding(recv_op, sharding)
   # Token should be at the end of the results
   result, token = recv_op.results
   return token, result
@@ -1409,10 +1416,19 @@ def emit_python_callback(
           "Callback with return values not supported on TPU.")
     token = token or mhlo.CreateTokenOp(mhlo.TokenType.get()).result
     send_channels = []
+    if isinstance(ctx.module_context.axis_context,
+                  (SPMDAxisContext, ShardingContext)):
+      # Apply maximal sharding so pjit only executes the callback on device 0.
+      sharding = xc.OpSharding()
+      sharding.type = xc.OpSharding.Type.MAXIMAL
+      sharding.tile_assignment_dimensions = [1]
+      sharding.tile_assignment_devices = [0]
+    else:
+      sharding = None
     for operand, operand_aval in zip(operands, operand_avals):
       channel = ctx.module_context.new_channel()
       token = send_to_host(channel, token, operand, operand_aval,
-                           callback.__name__)
+                           callback.__name__, sharding=sharding)
       send_channels.append(channel)
     recv_channels = []
     recv_channel = ctx.module_context.new_channel()
@@ -1431,7 +1447,7 @@ def emit_python_callback(
     dummy_recv_aval = core.ShapedArray((1,), np.float32)
     result_shapes = [*result_shapes, xla.aval_to_xla_shapes(dummy_recv_aval)[0]]
     token, _ = receive_from_host(recv_channel, token, dummy_recv_aval,
-                                 callback.__name__)
+                                 callback.__name__, sharding=sharding)
     recv_channels.append(recv_channel)
     opaque = backend.make_python_callback_from_host_send_and_recv(
         _wrapped_callback, operand_shapes, result_shapes, send_channels,

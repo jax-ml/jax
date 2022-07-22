@@ -1393,8 +1393,8 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')))
-  if vectorized_jaxpr.effects:
-    raise NotImplementedError('Cannot lower effectful `xmap`')
+  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+    raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(), (), *tiled_ins)
 
   outs = [
@@ -1458,8 +1458,8 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')))
-  if vectorized_jaxpr.effects:
-    raise NotImplementedError('Cannot lower effectful `xmap`')
+  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+    raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
       mlir.TokenSet(), (), *sharded_global_in_nodes)
 
@@ -1509,8 +1509,8 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')),
       axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
-  if vectorized_jaxpr.effects:
-    raise NotImplementedError('Cannot lower effectful `xmap`')
+  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+    raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
       mlir.TokenSet(), (), *([n] for n in global_in_nodes))
 

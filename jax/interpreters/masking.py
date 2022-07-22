@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Masking is **DEPRECATED** and is being removed."""
+
 from contextlib import contextmanager
 from collections import Counter, namedtuple
 from functools import partial, reduce

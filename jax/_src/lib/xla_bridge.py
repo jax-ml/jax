@@ -337,6 +337,20 @@ def backends():
     return _backends
 
 
+def _clear_backends():
+  global _backends
+  global _backends_errors
+  global _default_backend
+
+  logging.info("Clearing JAX backend caches.")
+  with _backend_lock:
+    _backends = {}
+    _backends_errors = {}
+    _default_backend = None
+
+  get_backend.cache_clear()
+
+
 def _init_backend(platform):
   factory, unused_priority = _backend_factories.get(platform, (None, None))
   if factory is None:

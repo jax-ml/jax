@@ -36,6 +36,7 @@ from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 import jax.interpreters.mlir as mlir
 from jax._src import source_info_util
+from jax._src import lib as jaxlib
 import jax._src.lib.xla_bridge
 
 import numpy as np
@@ -1245,6 +1246,8 @@ def get_serialized_computation(
   lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
   mhlo_module = lowered.compiler_ir(dialect='mhlo')
   mhlo_module_text = mlir.module_to_string(mhlo_module)
+  if jaxlib.version <= (0, 3, 14):
+    mhlo_module_text = jax2tf.jax2tf._fixup_mhlo_module_text(mhlo_module_text)
   logging.info(f'Serialized ir.Module = {mhlo_module_text}')
   return mhlo_module_text
 
@@ -1266,7 +1269,6 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
                         [jax_res])
 
-  @unittest.skip("TODO(necula): Cannot deserialize MHLO computation")
   def test_while(self):
     # With nested computation
     def f_jax(count, x):

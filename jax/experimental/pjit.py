@@ -17,7 +17,7 @@ import numpy as np
 from collections import OrderedDict, Counter
 from typing import Callable, Sequence, Tuple, Union, cast, List
 import itertools as it
-from functools import partial
+from functools import partial, lru_cache
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
@@ -50,7 +50,7 @@ from jax._src.tree_util import prefix_errors
 from jax._src import util
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wrap_name, wraps,
-    distributed_debug_log, split_list, cache, tuple_insert, weakref_lru_cache,
+    distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
     merge_lists)
 
 class _FromGdaSingleton:
@@ -404,7 +404,6 @@ def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardi
                                         pjit_mesh, in_tree):
   arg_in_shardings_flat = tuple(a.sharding if hasattr(a, 'sharding') else _UNSPECIFIED
                                 for a in args_flat)
-  arg_ndims = tuple(a.ndim for a in args_flat)
 
   if _is_unspecified(pjit_in_shardings):
     # If pjit_in_shardings is unspecified, then arg_in_shardings cannot have
@@ -417,7 +416,7 @@ def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardi
   else:
     # This function is cached.
     in_shardings_flat = _get_and_check_pjit_arg_shardings(
-        hashable_pytree(pjit_in_shardings), arg_in_shardings_flat, arg_ndims,
+        hashable_pytree(pjit_in_shardings), arg_in_shardings_flat,
         in_tree)
 
   out_shardings_flat = tuple(tree_flatten(out_shardings)[0])
@@ -428,7 +427,7 @@ def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardi
   return tree_unflatten(in_tree, in_shardings_flat), out_shardings
 
 
-@cache()
+@lru_cache(maxsize=4096)
 def _create_mesh_pspec_sharding(mesh, x):
   if _is_unspecified_or_from_gda_or_auto(x):
     return x
@@ -497,7 +496,7 @@ class PytreeLeaf:
   def __repr__(self): return "pytree leaf"
 
 
-@cache()
+@lru_cache(maxsize=4096)
 def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
                                in_tree, in_positional_semantics, is_gda):
   in_shardings_flat = flatten_axis_resources(
@@ -974,8 +973,6 @@ def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
                        resource_env, donated_invars, name, in_positional_semantics,
                        out_positional_semantics):
-  # XXX: At the moment all residuals get fully replicated, which is extremely
-  #      wasteful and might quickly lead to OOM errors.
   mesh = resource_env.physical_mesh
   in_pvals = [t.pval for t in in_tracers]
 
@@ -1308,7 +1305,7 @@ def _maybe_replace_from_gda_with_pspec(
   return in_sharding_flat
 
 
-@cache()
+@lru_cache(maxsize=4096)
 def _check_array_device_assignment(pjit_mesh, shardings):
   if not shardings:
     return
@@ -1338,15 +1335,15 @@ def _check_array_device_assignment(pjit_mesh, shardings):
                          f"Got Pjit devices: {list(pjit_mesh.devices.flat)},\n "
                          f"Array devices: {arr_device_assignment}")
 
-@cache()
+@lru_cache(maxsize=4096)
 def _get_and_check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
-                                      arg_ndims, in_tree):
+                                      in_tree):
   pjit_in_shardings_flat = flatten_axis_resources(
       "pjit in_shardings", in_tree, pjit_in_shardings(), tupled_args=True)
 
   out = []
-  for pjit_sharding, arg_sharding, ndim in safe_zip(
-      pjit_in_shardings_flat, arg_in_shardings_flat, arg_ndims):
+  for pjit_sharding, arg_sharding in safe_zip(
+      pjit_in_shardings_flat, arg_in_shardings_flat):
     # If the sharding of the arg is not known, replace it with the sharding on
     # pjit.
     if _is_unspecified(arg_sharding):
@@ -1356,7 +1353,9 @@ def _get_and_check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
                        'auto spmd partitioner is not allowed. Please call the '
                        'compiled object on the inputs.')
     else:
-      if pjit_sharding._to_xla_op_sharding(ndim) != arg_sharding._to_xla_op_sharding(ndim):
+      # TODO(yashkatariya): Use opsharding proto to compare equality after
+      # opsharding proto supports equality checks.
+      if pjit_sharding.normalize() != arg_sharding.normalize():
         raise ValueError('Sharding passed to pjit does not match the sharding '
                          'on the respective arg. '
                          f'Got pjit sharding: {pjit_sharding},\n'

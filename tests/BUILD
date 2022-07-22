@@ -465,11 +465,6 @@ jax_test(
 )
 
 jax_test(
-    name = "masking_test",
-    srcs = ["masking_test.py"],
-)
-
-jax_test(
     name = "metadata_test",
     srcs = ["metadata_test.py"],
     disable_backends = [
@@ -885,6 +880,11 @@ jax_test(
         "gpu",
         "cpu",
     ],
+)
+
+jax_test(
+    name = "clear_backends_test",
+    srcs = ["clear_backends_test.py"],
 )
 
 exports_files(

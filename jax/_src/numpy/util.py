@@ -124,6 +124,7 @@ def _wraps(
     sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
     skip_params: Sequence[str] = (),
     extra_params: Optional[str] = None,
+    module: Optional[str] = None,
 ) -> Callable[[_T], _T]:
   """Specialized version of functools.wraps for wrapping numpy functions.
 
@@ -147,13 +148,20 @@ def _wraps(
     extra_params: an optional string containing additional parameter descriptions.
       When ``update_doc=True``, these will be added to the list of parameter
       descriptions in the updated doc.
+    module: an optional string specifying the module from which the wrapped function
+      is imported. This is useful for objects such as ufuncs, where the module cannot
+      be determined from the wrapped function itself.
   """
   def wrap(op):
     docstr = getattr(fun, "__doc__", None)
+    name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
     try:
-      name = f"{fun.__module__}.{fun.__name__}"
+      mod = module or fun.__module__
     except AttributeError:
-      name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
+      if config.jax_enable_checks:
+        raise ValueError(f"function {fun} defines no __module__; pass module keyword to _wraps.")
+    else:
+      name = f"{mod}.{name}"
     if docstr:
       try:
         parsed = _parse_numpydoc(docstr)

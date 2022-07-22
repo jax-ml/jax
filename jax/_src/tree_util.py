@@ -90,6 +90,9 @@ def treedef_children(treedef):
 def treedef_is_leaf(treedef):
   return treedef.num_nodes == 1
 
+def treedef_is_strict_leaf(treedef):
+  return treedef.num_nodes == 1 and treedef.num_leaves == 1
+
 def all_leaves(iterable, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Tests whether all elements in the given iterable are all leaves.
 
@@ -433,7 +436,7 @@ class FlattenedKeyPathEntry(KeyPathEntry):  # fallback
     return f'[<flat index {self.key}>]'
 
 def _child_keys(pytree: Any) -> List[KeyPathEntry]:
-  assert not treedef_is_leaf(tree_structure(pytree))
+  assert not treedef_is_strict_leaf(tree_structure(pytree))
   handler = _keypath_registry.get(type(pytree))
   if handler:
     return handler(pytree)
@@ -461,7 +464,7 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
                   is_leaf: Optional[Callable[[Any], bool]] = None,
                   ) -> Iterable[Callable[[str], ValueError]]:
   # A leaf is a valid prefix of any tree:
-  if treedef_is_leaf(tree_structure(prefix_tree, is_leaf=is_leaf)): return
+  if treedef_is_strict_leaf(tree_structure(prefix_tree, is_leaf=is_leaf)): return
 
   # The subtrees may disagree because their roots are of different types:
   if type(prefix_tree) != type(full_tree):

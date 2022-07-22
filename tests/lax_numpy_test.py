@@ -3212,22 +3212,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_a={}_v={}_side={}".format(
+    {"testcase_name": "_a={}_v={}_side={}_method={}".format(
       jtu.format_shape_dtype_string(ashape, dtype),
       jtu.format_shape_dtype_string(vshape, dtype),
-      side), "ashape": ashape, "vshape": vshape, "side": side,
-     "dtype": dtype}
+      side, method), "ashape": ashape, "vshape": vshape, "side": side,
+     "dtype": dtype, "method": method}
     for ashape in [(15,), (16,), (17,)]
     for vshape in [(), (5,), (5, 5)]
     for side in ['left', 'right']
     for dtype in number_dtypes
+    for method in ['sort', 'scan']
   ))
-  def testSearchsorted(self, ashape, vshape, side, dtype):
+  def testSearchsorted(self, ashape, vshape, side, dtype, method):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [np.sort(rng(ashape, dtype)), rng(vshape, dtype)]
     def np_fun(a, v):
       return np.searchsorted(a, v, side=side).astype('int32')
-    jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side)
+    jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side, method=method)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -3249,10 +3250,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_dtype={dtype.__name__}_side={side}", "dtype": dtype, "side": side}
+    {"testcase_name": f"_dtype={dtype.__name__}_side={side}_method={method}",
+     "dtype": dtype, "side": side, "method": method}
     for dtype in inexact_dtypes
-    for side in ['left', 'right']))
-  def testSearchsortedNans(self, dtype, side):
+    for side in ['left', 'right']
+    for method in ['sort', 'scan']))
+  def testSearchsortedNans(self, dtype, side, method):
     if np.issubdtype(dtype, np.complexfloating):
       raise SkipTest("Known failure for complex inputs; see #9107")
     x = np.array([-np.inf, -1.0, 0.0, -0.0, 1.0, np.inf, np.nan, -np.nan], dtype=dtype)
@@ -3264,7 +3267,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x = np.array([complex(r, c) for r, c in itertools.product(x, repeat=2)])
       x_equiv = np.array([complex(r, c) for r, c in itertools.product(x_equiv, repeat=2)])
 
-    fun = partial(jnp.searchsorted, side=side)
+    fun = partial(jnp.searchsorted, side=side, method=method)
     self.assertArraysEqual(fun(x, x), fun(x_equiv, x_equiv))
     self.assertArraysEqual(jax.jit(fun)(x, x), fun(x_equiv, x_equiv))
 

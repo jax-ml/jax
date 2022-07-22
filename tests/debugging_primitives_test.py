@@ -27,6 +27,7 @@ import jax
 from jax import lax
 from jax.config import config
 from jax.experimental import maps
+from jax.experimental import pjit
 from jax._src import debugging
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
@@ -106,6 +107,17 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print(self):
+    @jax.jit
+    def f(x):
+      debug_print('x: {x}', x=x, ordered=True)
+    with capture_stdout() as output:
+      f(2)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_can_double_stage_out_ordered_print(self):
+    @jax.jit
     @jax.jit
     def f(x):
       debug_print('x: {x}', x=x, ordered=True)
@@ -409,6 +421,85 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       f2(jnp.arange(2))
       jax.effects_barrier()
     self._assertLinesEqual(output(), "hello: 0\nhello: 1\nhello: 2\nhello: 3\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_unordered_print_with_pjit(self):
+    if jax.default_backend() != "tpu":
+      raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
+
+    def f(x):
+      debug_print("{}", x, ordered=False)
+      return x
+    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
+                  out_axis_resources=pjit.PartitionSpec('dev'))
+    with maps.Mesh(np.array(jax.devices()), ['dev']):
+      with capture_stdout() as output:
+        f(jnp.arange(8, dtype=jnp.int32))
+        jax.effects_barrier()
+      self.assertEqual(output(), "[0 1 2 3 4 5 6 7]\n")
+
+    def f2(x):
+      y = x.dot(x)
+      debug_print("{}", y, ordered=False)
+      return y
+    f2 = pjit.pjit(f2, in_axis_resources=pjit.PartitionSpec('dev'),
+                   out_axis_resources=pjit.PartitionSpec())
+    with maps.Mesh(np.array(jax.devices()), ['dev']):
+      with capture_stdout() as output:
+        f2(jnp.arange(8, dtype=jnp.int32))
+        jax.effects_barrier()
+      self.assertEqual(output(), "140\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_unordered_print_of_pjit_of_while(self):
+    if jax.default_backend() != "tpu":
+      raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
+
+    def f(x):
+      def cond(carry):
+        i, *_ = carry
+        return i < 5
+      def body(carry):
+        i, x = carry
+        debug_print("{}", x, ordered=False)
+        x = x + 1
+        return (i + 1, x)
+      return lax.while_loop(cond, body, (0, x))[1]
+    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
+                  out_axis_resources=pjit.PartitionSpec('dev'))
+    with maps.Mesh(np.array(jax.devices()), ['dev']):
+      with capture_stdout() as output:
+        f(jnp.arange(8, dtype=jnp.int32))
+        jax.effects_barrier()
+      self.assertEqual(output(),
+          "[0 1 2 3 4 5 6 7]\n"
+          "[1 2 3 4 5 6 7 8]\n"
+          "[2 3 4 5 6 7 8 9]\n"
+          "[ 3  4  5  6  7  8  9 10]\n"
+          "[ 4  5  6  7  8  9 10 11]\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_unordered_print_of_pjit_of_xmap(self):
+    if jax.default_backend() != "tpu":
+      raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
+
+    def f(x):
+      def foo(x):
+        idx = lax.axis_index('foo')
+        debug_print("{idx}: {x}", idx=idx, x=x)
+        return jnp.mean(x, axis=['foo'])
+      out = maps.xmap(foo, in_axes=['foo'], out_axes=[...])(x)
+      debug_print("Out: {}", out)
+      return out
+    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
+                  out_axis_resources=pjit.PartitionSpec())
+    with maps.Mesh(np.array(jax.devices()), ['dev']):
+      with capture_stdout() as output:
+        f(jnp.arange(8, dtype=jnp.int32) * 2)
+        lines = ["0: 0", "1: 2", "2: 4", "3: 6", "4: 8", "5: 10", "6: 12",
+                 "7: 14", "Out: 7.0", ""]
+        jax.effects_barrier()
+        self._assertLinesEqual(output(), "\n".join(lines))
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_xmap(self):

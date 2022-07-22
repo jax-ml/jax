@@ -423,7 +423,7 @@ def _init():
   for name, func in util.get_module_functions(np).items():
     if name not in globals():
       _NOT_IMPLEMENTED.append(name)
-      globals()[name] = lax_numpy._not_implemented(func)
+      globals()[name] = lax_numpy._not_implemented(func, module='numpy')
 
 _init()
 del _init

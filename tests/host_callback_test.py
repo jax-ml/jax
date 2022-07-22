@@ -1859,67 +1859,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         what: ct_b
         1.""", testing_stream.output)
 
-  def test_tap_mask(self):
-
-    @partial(jax.mask, in_shapes=['n'], out_shape='')
-    def padded_sum(x):
-      three_x = hcb.id_print((x, 2 * x), result=3 * x, what="x",
-                             output_stream=testing_stream)
-      return jnp.sum(three_x)
-
-    x = np.arange(5.)
-
-    self.assertAllClose(9., padded_sum([x], dict(n=3)))
-    hcb.barrier_wait()
-    self.assertMultiLineStrippedEqual("""
-        transforms: [('mask', {'logical_shapes': 5})] what: x
-        ( ( [0. 1. 2. 3. 4.] [0. 2. 4. 6. 8.] ) ( ( 3 ) ( 3 ) ) )""",
-        testing_stream.output)
-    testing_stream.reset()
-
-    # With VMAP
-    xv = np.arange(10.).reshape((2, 5))  # logical_shape = 5
-    self.assertAllClose(
-        np.array([9., 78.]),
-        # batch_size = 2, n=3 and 4 for the two elements
-        jax.vmap(padded_sum)([xv],
-                             dict(n=np.array([3., 4.]))))
-    hcb.barrier_wait()
-    self.assertMultiLineStrippedEqual("""
-        transforms: [('mask', {'logical_shapes': 5}), ('batch', {'batch_dims': (0, 0, 0, 0)})] what: x
-        ( ( [[0. 1. 2. 3. 4.]
-             [5. 6. 7. 8. 9.]]
-            [[ 0.  2.  4.  6.  8.]
-             [10. 12. 14. 16. 18.]] )
-          ( ( [3. 4.] ) ( [3. 4.] ) ) )""", testing_stream.output)
-    testing_stream.reset()
-
-    # With JVP
-    self.assertAllClose((9., 0.9),
-                        jax.jvp(lambda arg: padded_sum([arg], dict(n=3)),
-                                (x,), (x * 0.1,)))
-    hcb.barrier_wait()
-    if FLAGS.jax_host_callback_ad_transforms:
-      self.assertMultiLineStrippedEqual("""
-          transforms: [('mask', {'logical_shapes': 5}), 'jvp'] what: x
-          ( ( ( [0. 1. 2. 3. 4.] [0. 2. 4. 6. 8.] ) ( ( 3 ) ( 3 ) ) )
-            ( ( [0.  0.1 0.2 0.3 0.4] [0.  0.2 0.4 0.6 0.8] ) ( ( False ) ( False ) ) ) )""",
-            testing_stream.output)
-    else:
-      self.assertMultiLineStrippedEqual("""
-          transforms: [('mask', {'logical_shapes': 5})] what: x
-          ( ( [0. 1. 2. 3. 4.] [0. 2. 4. 6. 8.] ) ( ( 3 ) ( 3 ) ) )""",
-            testing_stream.output)
-    testing_stream.reset()
-
-    # Now with JIT
-    self.assertAllClose(9., jax.jit(padded_sum)([x], dict(n=3)))
-    hcb.barrier_wait()
-    self.assertMultiLineStrippedEqual("""
-      transforms: [('mask', {'logical_shapes': 5})] what: x
-      ( ( [0. 1. 2. 3. 4.] [0. 2. 4. 6. 8.] ) ( ( 3 ) ( 3 ) ) )""",
-      testing_stream.output)
-
   def test_tap_callback_delay(self):
     hcb.callback_extra = lambda dev: time.sleep(1)
 

@@ -63,6 +63,7 @@ from jax._src.api import (
   block_until_ready,
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
+  clear_backends as clear_backends,
   closure_convert as closure_convert,
   curry,  # TODO(phawkins): update users to avoid this.
   custom_gradient as custom_gradient,

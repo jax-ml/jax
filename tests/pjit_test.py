@@ -1268,6 +1268,15 @@ class GDAPjitTest(jtu.JaxTestCase):
           ValueError, "GDA sharding does not match the input sharding."):
         compiled(input_gda)
 
+  def test_pjit_gda_same_sharding_aot(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+
+    g1, _ = create_gda(global_input_shape, global_mesh, P(None,))
+    with global_mesh:
+      f = pjit(lambda x: x, in_axis_resources=P(None), out_axis_resources=P('x'))
+      compiled = f.lower(jax.ShapedArray(global_input_shape, jnp.float32)).compile()
+      compiled(g1)  # no error
 
 class AutoShardingPjitTest(jtu.JaxTestCase):
 
@@ -1699,6 +1708,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
             ('Sharding passed to pjit does not match the sharding on the '
              'respective arg')):
           f(input_data, a1)
+
+  def test_pjit_array_same_sharding_aot(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    a1, _ = create_array(input_shape, global_mesh, P(None,))
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = pjit(lambda x: x, in_axis_resources=MeshPspecSharding(global_mesh, P(None,)))
+        compiled = f.lower(jax.ShapedArray(input_shape, jnp.float32)).compile()
+        compiled(a1)  # no error
 
 
 def spec_regex(s):

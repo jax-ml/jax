@@ -28,6 +28,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     * {func}`jax.tree_unflatten` is deprecated in favor of {func}`jax.tree_util.tree_unflatten`
   * The `sym_pos` argument of {func}`jax.scipy.linalg.solve` is deprecated in favor of `assume_a='pos'`,
     following a similar deprecation in {func}`scipy.linalg.solve`.
+* Deprecations:
+  * {func}`jax.mask` {func}`jax.shapecheck` are being deprecated.
+    See {jax-issue}`#11557`.
 
 ## jaxlib 0.3.15 (Unreleased)
 
