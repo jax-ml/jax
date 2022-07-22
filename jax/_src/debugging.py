@@ -76,13 +76,8 @@ def debug_callback_batching_rule(args, dims, **params):
   return outs, (0,) * len(outs)
 batching.primitive_batchers[debug_callback_p] = debug_callback_batching_rule
 
-def debug_callback_jvp_rule(*flat_args, callback: Callable[..., Any],
-    effect: DebugEffect, in_tree: tree_util.PyTreeDef):
-  del flat_args, callback, effect, in_tree
-  # TODO(sharadmv): link to relevant documentation when it exists
-  raise ValueError(
-      "JVP doesn't support debugging callbacks. "
-      "Instead, you can use them with `jax.custom_jvp` or `jax.custom_vjp`.")
+def debug_callback_jvp_rule(primals, tangents, **params):
+  return debug_callback_p.bind(*primals, **params), []
 ad.primitive_jvps[debug_callback_p] = debug_callback_jvp_rule
 
 def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
