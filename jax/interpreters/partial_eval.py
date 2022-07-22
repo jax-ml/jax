@@ -1568,7 +1568,7 @@ class DynamicJaxprTracer(core.Tracer):
       if len(progenitor_eqns) > 5:
         origin += "\n\n(Additional originating lines are not shown.)"
     else:
-      origin = (f"The error occured while tracing the function {dbg.func_src_info} "
+      origin = (f"The error occurred while tracing the function {dbg.func_src_info} "
                 f"for {dbg.traced_for}.")
     return "\n" + origin
 

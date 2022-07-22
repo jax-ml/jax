@@ -1051,7 +1051,7 @@ def bincount(x, weights=None, minlength=0, *, length=None):
       "The error occurred because of argument 'minlength' of jnp.bincount.")
   if length is None:
     x = core.concrete_or_error(asarray, x,
-      "The error occured because of argument 'x' of jnp.bincount. "
+      "The error occurred because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
     length = _max(minlength, x.size and x.max() + 1)
   else:
@@ -2144,9 +2144,9 @@ def _wrap_numpy_nullary_function(f):
   """
   @_wraps(f, update_doc=False)
   def wrapper(*args, **kwargs):
-    args = [core.concrete_or_error(None, arg, f"the error occured in argument {i} jnp.{f.__name__}()")
+    args = [core.concrete_or_error(None, arg, f"the error occurred in argument {i} jnp.{f.__name__}()")
             for i, arg in enumerate(args)]
-    kwargs = {key: core.concrete_or_error(None, val, f"the error occured in argument '{key}' jnp.{f.__name__}()")
+    kwargs = {key: core.concrete_or_error(None, val, f"the error occurred in argument '{key}' jnp.{f.__name__}()")
               for key, val in kwargs.items()}
     return asarray(f(*args, **kwargs))
   return wrapper
