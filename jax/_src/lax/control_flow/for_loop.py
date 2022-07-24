@@ -529,7 +529,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     else:
       length, = unique_lengths
 
-  x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
+  x_shapes = [x.shape[1:] for x in xs_flat]
   x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
   x_avals = tuple(map(core.ShapedArray, x_shapes, x_dtypes))
 

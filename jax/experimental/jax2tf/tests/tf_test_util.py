@@ -30,7 +30,6 @@ from jax import tree_util
 
 from jax.config import config
 from jax.experimental import jax2tf
-from jax.interpreters import masking
 from jax._src import util
 import jax._src.lib.xla_bridge
 import numpy as np
@@ -408,22 +407,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                                            concrete_output_tf_shape):
         self.assertEqual(tuple(expected.shape), tuple(found))
     return f_tf
-
-  def MakeInputSignature(self, *polymorphic_shapes):
-    """From a pytree of in_shape string specification, make a pytree of tf.TensorSpec.
-
-    Dimension variables are replaced with None.
-    """
-
-    def polymorphic_shape_to_tensorspec(poly_shape: str) -> tf.TensorSpec:
-      in_spec = masking.parse_spec(poly_shape)
-      return tf.TensorSpec(
-          tuple(
-              int(dim_spec) if dim_spec.is_constant else None
-              for dim_spec in in_spec),
-          dtype=tf.float32)
-
-    return tree_util.tree_map(polymorphic_shape_to_tensorspec, polymorphic_shapes)
 
   def CountLargeTfConstants(self, tf_fun: Callable, *args,
                             at_least=256):

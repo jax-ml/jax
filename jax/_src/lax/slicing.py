@@ -26,7 +26,6 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax._src.lax.utils import (
@@ -795,19 +794,9 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
-def _slice_masking_rule(
-    padded_vals, logical_shapes, start_indices, limit_indices, strides):
-  operand, = padded_vals
-  strides = masking.padded_shape_as_value(strides) if strides else None
-  return slice(operand,
-               start_indices=masking.padded_shape_as_value(start_indices),
-               limit_indices=masking.padded_shape_as_value(limit_indices),
-               strides=strides)
-
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice')
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
-masking.masking_rules[slice_p] = _slice_masking_rule
 
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
