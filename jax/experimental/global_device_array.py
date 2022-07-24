@@ -271,14 +271,6 @@ class GlobalDeviceArray:
       self._local_devices = self._gda_fast_path_args.local_devices
 
     if _enable_checks or config.jax_enable_checks:
-      for db, ld in safe_zip(device_buffers, self._local_devices):
-        if db.device() != ld:
-          raise ValueError(
-              "The `global_mesh.local_devices` and `device_buffers` device "
-              "order doesn't match. Please use `global_mesh.local_devices` to "
-              "put arrays on devices instead of `jax.local_devices()`")
-
-    if _enable_checks or config.jax_enable_checks:
       ss = get_shard_shape(self._global_shape, self._global_mesh, self.mesh_axes)
       assert all(db.shape == ss for db in device_buffers), (
           f"Expected shard shape {ss} doesn't match the device buffer "
@@ -559,7 +551,10 @@ xla.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
 xla.canonicalize_dtype_handlers[GlobalDeviceArray] = pxla.identity
 
 def _gda_shard_arg(x, devices, indices):
-  return x._device_buffers
+  return [
+      buf if buf.device() == d else buf.copy_to_device(d)
+      for buf, d in zip(x._device_buffers, devices)
+    ]
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
 

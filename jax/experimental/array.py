@@ -20,7 +20,7 @@ from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 from jax import core
 from jax._src import dispatch
 from jax._src.config import config
-from jax._src.util import prod
+from jax._src.util import prod, safe_zip
 from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
 from jax.interpreters import pxla, xla
@@ -259,7 +259,12 @@ dispatch.device_put_handlers[Array] = _device_put_array
 
 
 def _array_shard_arg(x, devices, indices):
-  return x._arrays
+  p = [
+      buf if buf.device() == d else buf.copy_to_device(d)
+      for buf, d in safe_zip(x._arrays, devices)
+    ]
+  return p
+
 pxla.shard_arg_handlers[Array] = _array_shard_arg
 
 
