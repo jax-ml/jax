@@ -181,17 +181,65 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
 
   def test_debug_print_jvp_rule(self):
     def f(x):
-      debug_print('should never be called: {}', x)
-    with self.assertRaisesRegex(
-        ValueError, "JVP doesn't support debugging callbacks"):
+      debug_print('x: {}', x)
+    with capture_stdout() as output:
       jax.jvp(f, (1.,), (1.,))
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 1.0\n")
 
   def test_debug_print_vjp_rule(self):
     def f(x):
-      debug_print('should never be called: {}', x)
-    with self.assertRaisesRegex(
-        ValueError, "JVP doesn't support debugging callbacks"):
+      debug_print('x: {}', x)
+    with capture_stdout() as output:
       jax.vjp(f, 1.)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 1.0\n")
+
+  def test_debug_print_in_custom_jvp(self):
+
+    @jax.custom_jvp
+    def print_tangent(x):
+      return x
+
+    @print_tangent.defjvp
+    def _(primals, tangents):
+      (x,), (t,) = primals, tangents
+      debug_print("x_tangent: {}", t)
+      return x, t
+
+    def f(x):
+      x = jnp.sin(x)
+      x = print_tangent(x)
+      return x
+
+    with capture_stdout() as output:
+      x = jnp.array(1., jnp.float32)
+      jax.jvp(f, (x,), (x,))  # should print out cos(1.)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x_tangent: 0.5403022766113281\n")
+
+  def test_debug_print_grad_with_custom_vjp_rule(self):
+    @jax.custom_vjp
+    def print_grad(x):
+      return x
+
+    def print_grad_fwd(x):
+      return x, None
+
+    def print_grad_bwd(_, x_grad):
+      debug_print("x_grad: {}", x_grad)
+      return (x_grad,)
+
+    print_grad.defvjp(print_grad_fwd, print_grad_bwd)
+    def f(x):
+      debug_print("x: {}", x)
+      x = print_grad(x)
+      return jnp.sin(x)
+
+    with capture_stdout() as output:
+      jax.grad(f)(jnp.array(1., jnp.float32))
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 1.0\nx_grad: 0.5403022766113281\n")
 
   def test_debug_print_transpose_rule(self):
     def f(x):
