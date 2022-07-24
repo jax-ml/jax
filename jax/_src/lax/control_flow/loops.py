@@ -26,7 +26,6 @@ from jax.config import config
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -932,9 +931,8 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts, num_carry
      type(linear) is tuple and all(type(x) is bool for x in linear))
   tc(unroll, 'unroll', 'positive int', type(unroll) is int and unroll > 0)
 
-  length_types = (int, masking.Poly) if bind_time else (int,)
   tc(length, 'length', 'non-negative int',
-     type(length) in length_types and length >= 0)
+     type(length) is int and length >= 0)
 
   if len(linear) != len(avals):
     raise core.JaxprTypeError(

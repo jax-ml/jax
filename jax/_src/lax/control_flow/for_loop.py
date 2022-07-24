@@ -22,7 +22,6 @@ from jax import lax
 from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla

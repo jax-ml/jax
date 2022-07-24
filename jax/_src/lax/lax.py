@@ -3605,7 +3605,7 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
 reduce_max_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_max')
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
-
+batching.defreducer(reduce_max_p)
 
 reduce_min_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_min')

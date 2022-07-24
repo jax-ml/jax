@@ -215,7 +215,7 @@ subsequent method call may return an incorrect result::
 What's happening here? The issue is that ``static_argnums`` relies on the hash of the object
 to determine whether it has changed between calls, and the default ``__hash__`` method
 for a user-defined class will not take into account the values of class attributes. That means
-that on the second function call, JAX has no way of knowing that the class attribues have
+that on the second function call, JAX has no way of knowing that the class attributes have
 changed, and uses the cached static value from the previous compilation.
 
 For this reason, if you are marking ``self`` arguments as static, it is important that you
