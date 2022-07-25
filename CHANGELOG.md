@@ -8,8 +8,18 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.15 (Unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.14...main).
+## jax 0.3.16 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.15...main).
+* Changes
+* Deprecations
+  * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
+    See {jax-issue}`#11557`.
+
+## jaxlib 0.3.16 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.15...main).
+
+## jax 0.3.15 (July 22, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.14...jax-v0.3.15).
 * Changes
   * `JaxTestCase` and `JaxTestLoader` have been removed from `jax.test_util`. These
     classes have been deprecated since v0.3.1 ({jax-issue}`#11248`).
@@ -28,11 +38,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     * {func}`jax.tree_unflatten` is deprecated in favor of {func}`jax.tree_util.tree_unflatten`
   * The `sym_pos` argument of {func}`jax.scipy.linalg.solve` is deprecated in favor of `assume_a='pos'`,
     following a similar deprecation in {func}`scipy.linalg.solve`.
-* Deprecations:
-  * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
-    See {jax-issue}`#11557`.
 
-## jaxlib 0.3.15 (Unreleased)
+## jaxlib 0.3.15 (July 22, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.14...jaxlib-v0.3.15).
 
 ## jax 0.3.14 (June 27, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...jax-v0.3.14).
