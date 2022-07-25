@@ -1725,15 +1725,17 @@ def spec_regex(s):
 
 
 class PJitErrorTest(jtu.JaxTestCase):
+
   @check_1d_2d_mesh(set_mesh=True)
   def testNonDivisibleArgs(self, mesh, resources):
     x = jnp.ones((3, 2))
     spec = P(resources, None)
     mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
-    with self.assertRaisesRegex(ValueError,
-                                r"One of pjit arguments.*" + spec_regex(spec) + r".*"
-                                r"implies that the size of its dimension 0 should be "
-                                r"divisible by " + mesh_size + r", but it is equal to 3"):
+    error = re.compile(
+        r"One of pjit arguments.*" + spec_regex(spec) + r".*"
+        r"implies that the size of its dimension 0 should be "
+        r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
+    with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
 
   @check_1d_2d_mesh(set_mesh=True)
@@ -1741,10 +1743,11 @@ class PJitErrorTest(jtu.JaxTestCase):
     x = jnp.ones((3, 2))
     spec = P(resources, None)
     mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
-    with self.assertRaisesRegex(ValueError,
-                                r"One of pjit outputs.*" + spec_regex(spec) + r".*"
-                                r"implies that the size of its dimension 0 should be "
-                                r"divisible by " + mesh_size + r", but it is equal to 3"):
+    error = re.compile(
+        r"One of pjit outputs.*" + spec_regex(spec) + r".*"
+        r"implies that the size of its dimension 0 should be "
+        r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
+    with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, in_axis_resources=None, out_axis_resources=P(resources, None))(x)
 
   @check_1d_2d_mesh(set_mesh=False)
@@ -1752,9 +1755,9 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testUndefinedResourcesArgs(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
-    with self.assertRaisesRegex(ValueError,
-                                r"One of pjit arguments.*" + spec_regex(spec) + r", "
-                                r"but resource axis x is undefined."):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Resource axis: x of.*" + spec_regex(spec) + " is undefined"):
       pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
@@ -1762,9 +1765,9 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testUndefinedResourcesOuts(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
-    with self.assertRaisesRegex(ValueError,
-                                r"One of pjit outputs.*" + spec_regex(spec) + r", "
-                                r"but resource axis x is undefined."):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Resource axis: x of.*" + spec_regex(spec) + " is undefined"):
       pjit(lambda x: x, in_axis_resources=None, out_axis_resources=spec)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
@@ -1772,10 +1775,9 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testUndefinedResourcesConstraint(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
-    with self.assertRaisesRegex(ValueError,
-                                r"One of with_sharding_constraint arguments"
-                                r".*" + spec_regex(spec) + r", but resource axis "
-                                r"x is undefined."):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Resource axis: x of.*" + spec_regex(spec) + " is undefined"):
       pjit(lambda x: with_sharding_constraint(x, spec),
            in_axis_resources=None, out_axis_resources=None)(x)
 
@@ -1783,8 +1785,9 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testRankTooLowArgs(self):
     x = jnp.arange(2)
     spec = P('x', 'y')
-    error = (r"One of pjit arguments.*" + spec_regex(spec) + r", which implies "
-             r"that it has a rank of at least 2, but it is 1")
+    error = re.compile(
+        r"One of pjit arguments.*" + spec_regex(spec) +
+        r".*rank at least 2, but was applied to a value of rank 1", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x.sum(), in_axis_resources=spec, out_axis_resources=None)(x)
 
@@ -1792,8 +1795,9 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testRankTooLowArgsAxisResourcesNone(self):
     x = jnp.arange(2)
     spec = P(None, None)
-    error = (r"One of pjit arguments.*" + spec_regex(spec) + r", which implies "
-             r"that it has a rank of at least 2, but it is 1")
+    error = re.compile(
+        r"One of pjit arguments.*" + spec_regex(spec) +
+        r".*rank at least 2, but was applied to a value of rank 1", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x.sum(), in_axis_resources=spec, out_axis_resources=None)(x)
 
@@ -1801,8 +1805,9 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testRankTooLowOuts(self):
     x = jnp.arange(2)
     spec = P('x', 'y')
-    error = (r"One of pjit outputs.*" + spec_regex(spec) + r", which implies "
-             r"that it has a rank of at least 2, but it is 0")
+    error = re.compile(
+        r"One of pjit outputs.*" + spec_regex(spec) +
+        r".*rank at least 2, but was applied to a value of rank 0", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x.sum(), in_axis_resources=None, out_axis_resources=spec)(x)
 
@@ -1810,9 +1815,10 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testRankTooLowConstraint(self):
     x = jnp.arange(2)
     spec = P('x', 'y')
-    error = (r"One of with_sharding_constraint arguments " +
-             r"was given.*" + spec_regex(spec) + r", which implies "
-             r"that it has a rank of at least 2, but it is 1")
+    error = re.compile(
+        r"One of with_sharding_constraint arguments" + r".*" + spec_regex(
+            pxla.array_mapping_to_axis_resources(pxla._get_array_mapping(spec))) +
+        r".*rank at least 2, but was applied to a value of rank 1", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: with_sharding_constraint(x, spec),
            in_axis_resources=None, out_axis_resources=None)(x)
@@ -1844,7 +1850,8 @@ class PJitErrorTest(jtu.JaxTestCase):
              in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
     x = jnp.arange(4).reshape((2, 2))
     error = (r"pjit input has an axis resources specification of " +
-             spec_regex(spec) + r" that uses one or more mesh axes already used by "
+             spec_regex(spec) + r" that uses one or more "
+             "mesh axes already used by "
              r"xmap to partition a named axis appearing in its named_shape \(both "
              r"use mesh axes `x`\)")
     with self.assertRaisesRegex(JAXTypeError, error):
@@ -1857,7 +1864,8 @@ class PJitErrorTest(jtu.JaxTestCase):
              in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
     x = jnp.arange(4).reshape((2, 2))
     error = (r"pjit output has an axis resources specification of " +
-             spec_regex(spec) + r" that uses one or more mesh axes already used by "
+             spec_regex(spec) + r" that uses one or more "
+             "mesh axes already used by "
              r"xmap to partition a named axis appearing in its named_shape \(both "
              r"use mesh axes `x`\)")
     with self.assertRaisesRegex(JAXTypeError, error):
@@ -1870,7 +1878,8 @@ class PJitErrorTest(jtu.JaxTestCase):
              in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
     x = jnp.arange(4).reshape((2, 2))
     error = (r"with_sharding_constraint input has an axis resources specification of " +
-             spec_regex(spec) + r" that uses one or more mesh axes already used by "
+             spec_regex(spec) + r" that uses one or more "
+             "mesh axes already used by "
              r"xmap to partition a named axis appearing in its named_shape \(both "
              r"use mesh axes `x`\)")
     with self.assertRaisesRegex(JAXTypeError, error):

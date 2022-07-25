@@ -505,10 +505,8 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
   # Fork here because the `Array` path is very simple and doesn't need all the
   # complexity below.
   if config.jax_array:
-    for aval, i in safe_zip(local_in_avals, in_shardings_flat):
-      if _is_auto(i): continue
-      pjit_check_aval_sharding(i, aval, "pjit arguments",
-                               allow_uneven_sharding=False)
+    pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
+                             allow_uneven_sharding=False)
     global_in_avals = local_in_avals
     return tuple(global_in_avals), tuple(i if _is_auto(i) else i.normalize()
                                          for i in in_shardings_flat)
@@ -540,15 +538,14 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     # Shapes should be checked against non canonicalized in_axis_resources.
     # For example, partitions of () and ((),) are not equivalent, since the
     # first one is a valid spec for a scalar value, while the second is not!
-    for aval, i in safe_zip(local_in_avals, in_shardings_flat):
-      if _is_from_gda(i) or _is_auto(i): continue
-      pjit_check_aval_sharding(i, aval, "pjit arguments",
-                               allow_uneven_sharding=False)
+    pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
+                             allow_uneven_sharding=False)
   else:
-    for aval, i in safe_zip(local_in_avals, in_shardings_flat):
-      if _is_from_gda(i) or _is_auto(i): continue
-      pjit_check_aval_sharding(i, aval, "pjit arguments",
-                               allow_uneven_sharding=False, local=True)
+    pjit_check_aval_sharding(
+        [i if _is_from_gda(i) or _is_auto(i) else
+         MeshPspecSharding(i.mesh.local_mesh, i.spec)
+         for i in in_shardings_flat],
+        local_in_avals, "pjit arguments", allow_uneven_sharding=False)
 
   normalized_in_shardings_flat = tuple(
       i if _is_from_gda(i) or _is_auto(i) else i.normalize() for i in in_shardings_flat)
@@ -573,9 +570,8 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
   out_shardings_flat = flatten_axis_resources(
       "pjit out_axis_resources", out_tree(), out_shardings_thunk(), tupled_args=False)
 
-  for aval, o in safe_zip(global_out_avals, out_shardings_flat):
-    if _is_unspecified(o) or _is_auto(o): continue
-    pjit_check_aval_sharding(o, aval, "pjit outputs", allow_uneven_sharding=False)
+  pjit_check_aval_sharding(out_shardings_flat, global_out_avals, "pjit outputs",
+                           allow_uneven_sharding=False)
 
   normalized_out_shardings_flat = tuple(
       o if _is_unspecified(o) or _is_auto(o) else o.normalize()
@@ -586,18 +582,44 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
   return _ListWithW([jaxpr, normalized_out_shardings_flat])
 
 
-# TODO(yashkatariya): Replace this with shape check against sharding which
-# uses OpSharding.tile_assignment_dimension.
-def pjit_check_aval_sharding(
-    sharding: MeshPspecSharding, aval, what_aval: str,
-    allow_uneven_sharding: bool, local: bool = False):
-  if local:
-    m = sharding.mesh.local_mesh
+def _get_num_ways_dim_sharded(s, aval_shape) -> List[int]:
+  op_sharding = s._to_xla_op_sharding(len(aval_shape))
+  tile_assignment_dimensions = op_sharding.tile_assignment_dimensions
+
+  if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
+    replicate_on_last_tile_dim = True
   else:
-    m = sharding.mesh
-  _check_shapes_against_resources(
-      what_aval, m.is_multi_process, m.shape, [aval],
-      [sharding._parsed_pspec], allow_uneven_sharding)
+    replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
+    if op_sharding.last_tile_dims:
+      raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
+  if replicate_on_last_tile_dim:
+    tile_assignment_dimensions = tile_assignment_dimensions[:-1]
+  return tile_assignment_dimensions
+
+
+def pjit_check_aval_sharding(
+    shardings: Sequence[XLACompatibleSharding], flat_avals, what_aval: str,
+    allow_uneven_sharding: bool):
+  for aval, s in zip(flat_avals, shardings):
+    if _is_unspecified_or_from_gda_or_auto(s):
+      continue
+    global_str = "" if s.is_fully_addressable else " global"
+    shape = aval.shape
+    try:
+      s.is_compatible_aval(shape)
+    except ValueError as e:
+      raise ValueError(f'One of {what_aval} is incompatible with its sharding '
+                       f'annotation: {str(e)}')
+    # Use the `OpSharding` proto to find out how many ways each dimension of
+    # the aval is sharded. This approach will work across all
+    # XLACompatibleSharding.
+    num_ways_dim_sharded = _get_num_ways_dim_sharded(s, shape)
+    for i, size in enumerate(num_ways_dim_sharded):
+      if not allow_uneven_sharding and shape[i] % size != 0:
+        raise ValueError(f"One of {what_aval} was given the sharding "
+                         f"of {s}, which implies that "
+                         f"the{global_str} size of its dimension {i} should be "
+                         f"divisible by {size}, but it is equal to {shape[i]}")
 
 
 class SpecSync(IntEnum):
@@ -751,34 +773,6 @@ def _check_unique_resources(axis_resources, arg_name):
         raise ValueError(f"A single {arg_name} specification can map every mesh axis "
                          f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
                          f"has duplicate entries for {pxla.show_axes(multiple_uses)}")
-
-def _check_shapes_against_resources(what: str, is_global_shape: bool,
-                                    mesh_shape, flat_avals, flat_axis_resources,
-                                    allow_uneven_sharding: bool):
-  global_str = " global" if is_global_shape else ""
-  for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
-    if _is_unspecified_or_from_gda_or_auto(aval_axis_resources):
-      continue
-    shape = aval.shape
-    if len(shape) < len(aval_axis_resources):
-      raise ValueError(f"One of {what} was given the resource assignment "
-                       f"of {aval_axis_resources.user_spec}, which implies that "
-                       f"it has a rank of at least {len(aval_axis_resources)}, "
-                       f"but it is {len(shape)}")
-    for i, axis_resources in enumerate(aval_axis_resources):
-      if axis_resources is None:
-        continue
-      try:
-        size = int(np.prod([mesh_shape[resource] for resource in axis_resources], dtype=np.int64))
-      except KeyError as e:
-        raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources.user_spec}, but resource axis "
-                         f"{e.args[0]} is undefined. Did you forget to declare the mesh?") from None
-      if not allow_uneven_sharding and shape[i] % size != 0:
-        raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources.user_spec}, which implies that "
-                         f"the{global_str} size of its dimension {i} should be "
-                         f"divisible by {size}, but it is equal to {shape[i]}")
 
 # -------------------- pjit rules --------------------
 
@@ -1165,9 +1159,8 @@ def with_sharding_constraint(x, axis_resources):
   sharding_flat = [MeshPspecSharding._from_parsed_pspec(mesh, a)
                    for a in axis_resources_flat]
 
-  for xf, i in safe_zip(x_flat, sharding_flat):
-    pjit_check_aval_sharding(i, xf, "with_sharding_constraint arguments",
-                             allow_uneven_sharding=True)
+  pjit_check_aval_sharding(sharding_flat, x_flat, "with_sharding_constraint arguments",
+                           allow_uneven_sharding=True)
 
   outs = [sharding_constraint_p.bind(xf, sharding=i.normalize(),
                                      resource_env=resource_env)
