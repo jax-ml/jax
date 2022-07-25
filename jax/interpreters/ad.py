@@ -490,6 +490,8 @@ def deflinear(primitive, transpose_rule):
 def linear_jvp(primitive, primals, tangents, **params):
   val_out = primitive.bind(*primals, **params)
   if all(type(tangent) is Zero for tangent in tangents):
+    if primitive.multiple_results:
+      return val_out, map(Zero.from_value, val_out)
     return val_out, Zero.from_value(val_out)
   else:
     tangents = map(instantiate_zeros, tangents)
