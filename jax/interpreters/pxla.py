@@ -2682,10 +2682,10 @@ def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
     return MeshPspecSharding(mesh, pspec)
 
   @lru_cache(maxsize=4096)
-  def _cached_check(arg_sharding, in_xla_sharding, arg_type):
-    # TODO(yashkatariya): Use opsharding proto to compare equality after
-    # opsharding proto supports equality checks.
-    if arg_sharding.normalize() != in_xla_sharding.normalize():
+  def _cached_check(arg_sharding, in_xla_sharding, arg_type, ndim):
+    if not are_op_shardings_equal(
+        arg_sharding._to_xla_op_sharding(ndim),
+        in_xla_sharding._to_xla_op_sharding(ndim)):
       raise ValueError(
           f"{arg_type} sharding does not match the input sharding. "
           f"Got {arg_type} sharding: {arg_sharding} and "
@@ -2695,9 +2695,10 @@ def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
     if not isinstance(arg, (GlobalDeviceArray, Array)):
       continue
     if isinstance(arg, GlobalDeviceArray):
-      _cached_check(_create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes), xs, 'GDA')
+      _cached_check(_create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes), xs,
+                    'GDA', arg.ndim)
     else:
-      _cached_check(arg.sharding, xs, 'Array')
+      _cached_check(arg.sharding, xs, 'Array', arg.ndim)
 
 
 def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
@@ -2706,6 +2707,21 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
 
   parsed_pspec, _, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
   return get_array_mapping(parsed_pspec)
+
+
+def are_op_shardings_equal(op1, op2):
+  # TODO(yashkatariya): Use HloSharding class to check for equality.
+  if id(op1) == id(op2):
+    return True
+  if op1.type != op2.type:
+    return False
+  if op1.type == xc.OpSharding.Type.TUPLE:
+    return all(are_op_shardings_equal(i, j)
+               for i, j in safe_zip(op1.tuple_shardings, op2.tuple_shardings))
+  return (op1.tile_assignment_dimensions == op2.tile_assignment_dimensions and
+          op1.tile_assignment_devices == op2.tile_assignment_devices and
+          op1.last_tile_dims == op2.last_tile_dims and
+          op1.replicate_on_last_tile_dim == op2.replicate_on_last_tile_dim)
 
 
 _forbidden_primitives = {

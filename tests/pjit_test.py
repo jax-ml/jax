@@ -44,7 +44,7 @@ from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    SpecSync, FROM_GDA, AUTO)
 from jax.interpreters import pxla
 from jax.interpreters import mlir
-from jax._src.lib import xla_client, xla_bridge
+from jax._src.lib import xla_client as xc, xla_bridge
 from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config
@@ -678,7 +678,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     def check_outfeed(d, x):
       y, = d.transfer_from_outfeed(
-          xla_client.shape_from_pyval((x,)).with_major_to_minor_layout_if_absent())
+          xc.shape_from_pyval((x,)).with_major_to_minor_layout_if_absent())
       self.assertAllClose(x, y, check_dtypes=True)
 
     logging.info('Transfering from outfeed for the pjit call')
@@ -2055,6 +2055,65 @@ class UtilTest(jtu.JaxTestCase):
         pjit_lib._check_all_or_none_unspecified(entries, 'test axis resources')
     else:
       pjit_lib._check_all_or_none_unspecified(entries, 'test axis resources')
+
+  def test_op_sharding_equality(self):
+    op1 = xc.OpSharding()
+    op1.type = xc.OpSharding.Type.OTHER
+    op1.tile_assignment_dimensions = [4, 2]
+    op1.tile_assignment_devices = [0, 1, 2, 3]
+
+    op2 = xc.OpSharding()
+    op2.type = xc.OpSharding.Type.OTHER
+    op2.tile_assignment_dimensions = [4, 2]
+    op2.tile_assignment_devices = [0, 1, 2, 3]
+
+    op3 = xc.OpSharding()
+    op3.type = xc.OpSharding.Type.OTHER
+    op3.tile_assignment_dimensions = [4, 2]
+    op3.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
+
+    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
+    self.assertFalse(pxla.are_op_shardings_equal(op1, op3))
+    self.assertFalse(pxla.are_op_shardings_equal(op2, op3))
+
+  def test_op_sharding_partial_sharding(self):
+    op1 = xc.OpSharding()
+    op1.type = xc.OpSharding.Type.OTHER
+    op1.tile_assignment_dimensions = [4, 1]
+    op1.tile_assignment_devices = [0, 1, 2, 3]
+    op1.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+
+    op2 = xc.OpSharding()
+    op2.type = xc.OpSharding.Type.OTHER
+    op2.tile_assignment_dimensions = [4, 1]
+    op2.tile_assignment_devices = [0, 1, 2, 3]
+    op2.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+
+    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
+
+  def test_op_sharding_tuple_shardings(self):
+    top1 = xc.OpSharding()
+    top1.type = xc.OpSharding.Type.OTHER
+    top1.tile_assignment_dimensions = [4, 1]
+    top1.tile_assignment_devices = [0, 1, 2, 3]
+    top1.replicate_on_last_tile_dim = True
+
+    top2 = xc.OpSharding()
+    top2.type = xc.OpSharding.Type.OTHER
+    top2.tile_assignment_dimensions = [2, 1]
+    top2.tile_assignment_devices = [0, 1, 2, 3]
+    top2.replicate_on_last_tile_dim = True
+
+    op1 = xc.OpSharding()
+    op1.type = xc.OpSharding.Type.TUPLE
+    op1.tuple_shardings = [top1, top2]
+
+    op2 = xc.OpSharding()
+    op2.type = xc.OpSharding.Type.TUPLE
+    op2.tuple_shardings = [top2, top1]
+
+    self.assertFalse(pxla.are_op_shardings_equal(op1, op2))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
