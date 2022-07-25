@@ -132,7 +132,13 @@ get_printoptions = np.get_printoptions
 printoptions = np.printoptions
 set_printoptions = np.set_printoptions
 
-iscomplexobj = np.iscomplexobj
+@_wraps(np.iscomplexobj)
+def iscomplexobj(x):
+  try:
+    typ = x.dtype.type
+  except AttributeError:
+    typ = asarray(x).dtype.type
+  return issubdtype(typ, complexfloating)
 
 shape = _shape = np.shape
 ndim = _ndim = np.ndim
