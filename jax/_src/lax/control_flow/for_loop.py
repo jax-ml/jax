@@ -22,7 +22,6 @@ from jax import lax
 from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -529,7 +528,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     else:
       length, = unique_lengths
 
-  x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
+  x_shapes = [x.shape[1:] for x in xs_flat]
   x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
   x_avals = tuple(map(core.ShapedArray, x_shapes, x_dtypes))
 

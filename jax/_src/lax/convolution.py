@@ -24,7 +24,6 @@ from jax._src import dtypes
 from jax._src.lax import lax
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax._src import util
 import jax._src.lib
@@ -632,31 +631,6 @@ def _conv_general_dilated_batch_rule(
       out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
       return out, out_spec[1]
 
-def _conv_general_dilated_masking_rule(
-        padded_vals, logical_shapes, window_strides, padding, lhs_dilation,
-        rhs_dilation, dimension_numbers, feature_group_count, batch_group_count,
-        lhs_shape, rhs_shape, precision, preferred_element_type):
-  lhs, rhs = padded_vals
-  logical_lhs_shape, logical_rhs_shape = logical_shapes
-
-  o, i, *window_dimensions = dimension_numbers.rhs_spec
-  assert (np.all(np.take(rhs.shape, window_dimensions)
-                  == np.take(logical_rhs_shape, window_dimensions))), \
-              "Conv filter masking not yet implemented."
-
-  n, c, *padded_dimensions = dimension_numbers.lhs_spec
-
-  return conv_general_dilated(
-    lax._masked(lhs, logical_lhs_shape, padded_dimensions),
-    lax._masked(rhs, logical_rhs_shape, (i,)),
-    window_strides=window_strides, padding=padding,
-    lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
-    dimension_numbers=dimension_numbers,
-    feature_group_count=feature_group_count,
-    batch_group_count=batch_group_count,
-    precision=precision,
-    preferred_element_type=preferred_element_type)
-
 conv_general_dilated_p = lax.standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
     'conv_general_dilated')
@@ -666,8 +640,6 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 batching.primitive_batchers[conv_general_dilated_p] = \
     _conv_general_dilated_batch_rule
-masking.masking_rules[conv_general_dilated_p] = \
-  _conv_general_dilated_masking_rule
 
 def _complex_mul(mul, x, y):
   # We use a trick for complex multiplication sometimes attributed to Gauss

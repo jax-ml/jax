@@ -37,7 +37,6 @@ from jax import linear_util as lu
 from jax.errors import UnexpectedTracerError
 import jax.interpreters.ad as ad
 import jax.interpreters.batching as batching
-import jax.interpreters.masking as masking
 import jax.interpreters.mlir as mlir
 import jax.interpreters.xla as xla
 import jax.interpreters.partial_eval as pe
@@ -1074,7 +1073,6 @@ device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
 device_put_p.def_abstract_eval(lambda x, device=None: x)
 ad.deflinear2(device_put_p, lambda cotangent, _, **kwargs: [cotangent])
-masking.defvectorized(device_put_p)
 batching.defvectorized(device_put_p)
 
 def _device_put_lowering(ctx, x, *, device):

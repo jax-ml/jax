@@ -44,7 +44,6 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 import jax._src.pretty_printer as pp
 from jax._src import util
 from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
@@ -1439,7 +1438,6 @@ def unop(result_dtype, accepted_dtypes, name):
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
                             weak_type_rule=weak_type_rule)
   batching.defvectorized(prim)
-  masking.defvectorized(prim)
   pe.padding_rules[prim] = lambda _, __, x, **kw: [prim.bind(x, **kw)]
   return prim
 standard_unop = partial(unop, _identity)
@@ -1515,7 +1513,6 @@ def naryop(result_dtype, accepted_dtypes, name):
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             weak_type_rule=weak_type_rule)
   batching.defbroadcasting(prim)
-  masking.defnaryop(prim)
   pe.padding_rules[prim] = lambda _, __, *xs, **kw: [prim.bind(*xs, **kw)]
   return prim
 standard_naryop = partial(naryop, _input_dtype)
@@ -1994,7 +1991,6 @@ def _integer_pow_jvp(g, x, *, y):
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow')
 batching.defvectorized(integer_pow_p)
-masking.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
 pe.padding_rules[integer_pow_p] = lambda _, __, x, y: [integer_pow_p.bind(x, y=y)]
 
@@ -2322,7 +2318,6 @@ convert_element_type_p.def_abstract_eval(
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
-masking.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 # TODO(mattjj): un-comment the next line (see #9456)
@@ -2359,7 +2354,6 @@ bitcast_convert_type_p = standard_primitive(
     'bitcast_convert_type', weak_type_rule=_strip_weak_type)
 ad.defjvp_zero(bitcast_convert_type_p)
 batching.defvectorized(bitcast_convert_type_p)
-masking.defvectorized(bitcast_convert_type_p)
 
 def _bitcast_convert_type_lower(ctx, operand, *, new_dtype):
   aval_out, = ctx.avals_out
@@ -2574,19 +2568,6 @@ def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
   new_dimension_numbers = ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch))
   return new_dimension_numbers, int(result_batch_dim)
 
-def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
-                              precision,
-                              preferred_element_type: Optional[DType]):
-  lhs, rhs = padded_vals
-  # Only need to mask off contraction dims of one side - we mask the lhs here
-  # but this is arbitrary. Could check the sizes of lhs and rhs and mask
-  # whichever is smallest.
-  lhs_shape, _ = logical_shapes
-  (lhs_contract, _), _ = dimension_numbers
-  return dot_general(_masked(lhs, lhs_shape, lhs_contract),
-                     rhs, dimension_numbers, precision=precision,
-                     preferred_element_type=preferred_element_type)
-
 def _dot_general_padding_rule(in_avals, out_avals, lhs, rhs, *,
                               dimension_numbers, **params):
   lhs_aval, _ = in_avals
@@ -2617,7 +2598,6 @@ dot_general_p = standard_primitive(_dot_general_shape_rule,
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
-masking.masking_rules[dot_general_p] = _dot_general_masking_rule
 pe.padding_rules[dot_general_p] = _dot_general_padding_rule
 # TODO(mattjj): un-comment the next line
 # core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
@@ -2982,9 +2962,6 @@ def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
 
-# The concatenate_p masking rule requires use of a while-loop construct and so
-# is defined in lax_control_flow.py
-
 concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate')
 ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
@@ -3061,21 +3038,9 @@ def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
                                          (operand_bdim,))
   return select(mask, x, broadcasted_padding), operand_bdim
 
-def _pad_masking_rule(padded_vals, logical_shapes, padding_config):
-  operand, padding_value = padded_vals
-  shape, _ = logical_shapes
-
-  out = pad(operand, padding_value, padding_config)
-  out_shape = [lo + shape[i] * (interior + 1)
-               for i, (lo, hi, interior) in enumerate(padding_config)]
-  padded_dims = [i for i, config in enumerate(padding_config)
-                 if config != (0, 0, 0)]
-  return _masked(out, out_shape, padded_dims, padding_value)
-
 pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad')
 ad.deflinear2(pad_p, _pad_transpose)
 batching.primitive_batchers[pad_p] = _pad_batch_rule
-masking.masking_rules[pad_p] = _pad_masking_rule
 
 def _pad_lower(ctx, x, padding_value, *, padding_config):
   low, high, interior = util.unzip3(padding_config)
@@ -3220,23 +3185,6 @@ def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions):
     dimensions = (0,) + tuple(np.add(1, dimensions))
   return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
 
-def _reshape_masking_rule(padded_args, logical_shapes, polymorphic_shapes,
-                          new_sizes, dimensions):
-  operand, = padded_args
-  old_shape, = polymorphic_shapes
-  def is_poly(size): return type(size) is masking.Poly and not size.is_constant
-  def merge_const_sizes(shape):
-    """Merges all nonpolymorphic sizes into the previous polymorphic size."""
-    poly_dims = [i for i, size in enumerate(shape) if is_poly(size)]
-    return [prod(shape[start:stop])
-            for start, stop in zip([0] + poly_dims, poly_dims + [len(shape)])]
-  if merge_const_sizes(old_shape) != merge_const_sizes(new_sizes):
-    raise NotImplementedError(
-      "Reshape on padded dimensions causing fragmentation is not supported.")
-
-  return reshape(operand,
-                 new_sizes=masking.padded_shape_as_value(new_sizes),
-                 dimensions=dimensions)
 
 def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions):
   aval_out, = ctx.avals_out
@@ -3263,7 +3211,6 @@ reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape')
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
-masking.masking_rules[reshape_p] = _reshape_masking_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
 core.custom_typechecks[reshape_p] = _reshape_typecheck_rule
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule
@@ -3311,15 +3258,11 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   perm = (bdim,) + tuple(i if i < bdim else i+1 for i in permutation)
   return transpose(operand, perm), 0
 
-def _transpose_masking_rule(padded_vals, logical_shapes, permutation):
-  return transpose(*padded_vals, permutation=permutation)
-
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])  # type: ignore[arg-type]
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
-masking.masking_rules[transpose_p] = _transpose_masking_rule
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
@@ -3404,13 +3347,6 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
     cases = [broadcast(c, which.shape) for c in cases]
   return select_n(which, *cases), 0
 
-def _select_masking_rule(padded_vals, logical_shapes):
-  which_shape, true_shape, false_shape = (
-      masking.padded_shape_as_value(val.shape) for val in padded_vals)
-  assert np.array_equal(which_shape, true_shape)
-  assert np.array_equal(which_shape, false_shape)
-  return select_n(*padded_vals)
-
 def _select_jvp(primals, tangents):
   which, *case_primals = primals
   case_tangents = tangents[1:]
@@ -3456,7 +3392,6 @@ select_n_p = standard_primitive(
 ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.primitive_batchers[select_n_p] = _select_batch_rule
-masking.masking_rules[select_n_p] = _select_masking_rule
 mlir.register_lowering(select_n_p, _select_mhlo_lowering)
 
 
@@ -3550,21 +3485,6 @@ def _reduce_jvp_rule(primals, tangents, *, computation, jaxpr,
   reducer = core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts))
   return _reduce_jvp(reducer, init_values, primal_xs, tangent_xs, dimensions)
 
-def _masking_defreducer(prim, identity):
-  masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity)
-
-def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
-                          axes, input_shape=None, **reduce_kwargs):
-  (padded_val,), (logical_shape,) = padded_vals, logical_shapes
-  padded_shape = masking.padded_shape_as_value(padded_val.shape)
-  masks = [broadcasted_iota(_dtype(d), padded_shape, i) < d
-           for i, d in enumerate(logical_shape) if i in axes]
-  mask = _reduce(operator.and_, masks)
-  masked_val = select(mask, padded_val, identity(padded_shape, padded_val.dtype))
-  prim_bind = partial(prim.bind, **reduce_kwargs)
-  bind = prim_bind if input_shape is None else partial(prim_bind, input_shape=padded_shape)
-  return bind(masked_val, axes=axes)
-
 def _reduce_named_shape_rule(*avals, computation, jaxpr, consts, dimensions):
   # TODO(mattjj,frostig): see the TODOs noting limitations/assumptions in
   # _reduce_batching_rule. We're making the same assumptions here for now.
@@ -3644,8 +3564,6 @@ reduce_sum_p = standard_primitive(
   'reduce_sum')
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
-_masking_defreducer(reduce_sum_p,
-                    lambda shape, dtype: np.broadcast_to(np.array(0, dtype), shape))
 pe.padding_rules[reduce_sum_p] = _reduce_sum_padding_rule
 
 
@@ -3669,8 +3587,6 @@ reduce_prod_p = standard_primitive(
   'reduce_prod')
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p)
-_masking_defreducer(reduce_prod_p,
-                    lambda shape, dtype: np.broadcast_to(np.array(1, dtype), shape))
 
 
 def _reduce_chooser_shape_rule(operand, *, axes):
@@ -3690,16 +3606,11 @@ reduce_max_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_max')
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p)
-_masking_defreducer(reduce_max_p,
-                    lambda shape, dtype: np.broadcast_to(np.array(-np.inf, dtype), shape))
-
 
 reduce_min_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_min')
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p)
-_masking_defreducer(reduce_min_p,
-                    lambda shape, dtype: np.broadcast_to(np.array(np.inf, dtype), shape))
 
 
 def _argminmax_shape_rule(operand, *, axes, index_dtype):
@@ -3830,7 +3741,6 @@ reduce_precision_p = standard_primitive(
     partial(unop_dtype_rule, _identity, _float, 'reduce_precision'),
     name='reduce_precision')
 batching.defvectorized(reduce_precision_p)
-masking.defvectorized(reduce_precision_p)
 
 def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
@@ -4365,7 +4275,6 @@ copy_p.def_abstract_eval(lambda x: x)
 mlir.register_lowering(copy_p, lambda ctx, x: [x])
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
-masking.defvectorized(copy_p)
 
 
 def rng_bit_generator(key, shape, dtype=np.uint32,

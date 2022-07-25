@@ -26,7 +26,6 @@ from jax.config import config
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -233,7 +232,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
-  x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
+  x_shapes = [x.shape[1:] for x in xs_flat]
   x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
   x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
 
@@ -759,21 +758,6 @@ def _scan_batching_rule(axis_size, axis_name, main_type, args, dims, reverse, le
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
-def _scan_masking_rule(padded_vals, logical_shapes, reverse, length,
-                       jaxpr, num_consts, num_carry, linear, unroll):
-  dynamic_length, = masking.shape_as_value((length,))
-  masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
-  consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
-  max_length, = {x.shape[0] for x in xs}
-  const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
-  dynamic_length = lax.convert_element_type(dynamic_length, dtypes.int_)
-  out_vals = scan_p.bind(dynamic_length, *consts, dtypes.int_(0), *init, *xs,
-      reverse=reverse, length=max_length, jaxpr=masked_jaxpr,
-      num_consts=1 + num_consts, num_carry=1 + num_carry,
-      linear=tuple([False] + const_linear + [False] + init_linear + xs_linear),
-      unroll=unroll)
-  return out_vals[1:]
-
 def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   fun = core.jaxpr_as_fun(jaxpr)
 
@@ -947,9 +931,8 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts, num_carry
      type(linear) is tuple and all(type(x) is bool for x in linear))
   tc(unroll, 'unroll', 'positive int', type(unroll) is int and unroll > 0)
 
-  length_types = (int, masking.Poly) if bind_time else (int,)
   tc(length, 'length', 'non-negative int',
-     type(length) in length_types and length >= 0)
+     type(length) is int and length >= 0)
 
   if len(linear) != len(avals):
     raise core.JaxprTypeError(
@@ -1001,7 +984,6 @@ xla.register_initial_style_primitive(scan_p)
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
 batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
-masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
@@ -1632,24 +1614,6 @@ def map(f, xs):
   g = lambda _, x: ((), f(x))
   _, ys = scan(g, (), xs)
   return ys
-
-
-def _concat_masking_rule(padded_vals, logical_shapes, dimension):
-  result = lax.concatenate(padded_vals, dimension)  # fragmented
-  offset = 0
-  for padded_val, logical_shape in zip(padded_vals, logical_shapes):
-    result = _memcpy(dimension, logical_shape[dimension], padded_val,
-                     result, offset)
-    offset = offset + logical_shape[dimension]
-  return result
-
-def _memcpy(axis, num, src, dst, offset):
-  def body(i, dst):
-    update = slicing.dynamic_index_in_dim(src, i, axis)
-    return slicing.dynamic_update_index_in_dim(dst, update, i + offset, axis)
-  return fori_loop(0, num, body, dst)
-
-masking.masking_rules[lax.concatenate_p] = _concat_masking_rule  # type: ignore
 
 def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, algorithm):
   """Calls RBG in a loop and stacks the results."""
