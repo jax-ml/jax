@@ -16,7 +16,6 @@ Experimental Modules
 
     jax.experimental.global_device_array
     jax.experimental.host_callback
-    jax.experimental.loops
     jax.experimental.maps
     jax.experimental.pjit
     jax.experimental.sparse

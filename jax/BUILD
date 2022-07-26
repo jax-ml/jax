@@ -22,7 +22,6 @@ load(
     "jax_extra_deps",
     "jax_internal_packages",
     "jax_test_util_visibility",
-    "loops_visibility",
     "numpy_py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
@@ -187,14 +186,6 @@ pytype_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
-)
-
-# loops is deprecated. Please do not add any more projects to the visibility.
-pytype_library(
-    name = "loops",
-    srcs = ["experimental/loops.py"],
-    visibility = [":internal"] + loops_visibility,
     deps = [":jax"],
 )
 
