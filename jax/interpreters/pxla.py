@@ -2672,14 +2672,15 @@ class MeshExecutable(stages.XlaExecutable):
     return self.unsafe_call(*args)
 
 
+@lru_cache()
+def _create_mesh_pspec_sharding(mesh, pspec, parsed_pspec=None):
+  from jax.experimental.sharding import MeshPspecSharding
+  return MeshPspecSharding(mesh, pspec, parsed_pspec)
+
+
 def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
   from jax.experimental.global_device_array import GlobalDeviceArray
   from jax.experimental.array import Array
-
-  @lru_cache
-  def _create_mesh_pspec_sharding(mesh, pspec):
-    from jax.experimental.sharding import MeshPspecSharding
-    return MeshPspecSharding(mesh, pspec)
 
   @lru_cache(maxsize=4096)
   def _cached_check(arg_sharding, in_xla_sharding, arg_type, ndim):

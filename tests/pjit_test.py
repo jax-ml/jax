@@ -1119,14 +1119,14 @@ class GDAPjitTest(jtu.JaxTestCase):
 
     gda_obj = global_device_array.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
-    with self.assertRaisesWithLiteralMatch(
+
+    with self.assertRaisesRegex(
         ValueError,
-        "Got an input GDA to pjit with different partitioning than specified "
-        'in the in_axis_resources argument to pjit. The partitioning must match, or '
-        'use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. '
-        "Got GDA spec: PartitionSpec('x',) and "
-        "pjit spec: PartitionSpec(('x',), ('y',)) "
-        'for GDA: GlobalDeviceArray(shape=(8, 2), dtype=float32)'):
+        r"Got an input GDA to pjit with different partitioning than specified "
+        r'in the in_axis_resources argument to pjit. The partitioning must match, or '
+        r'use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. '
+        r"Got GDA sharding.*PartitionSpec\('x',\).*and "
+        r"pjit sharding.*PartitionSpec\(\('x',\), \('y',\)\).*"):
       @partial(pjit, in_axis_resources=P('x', 'y'), out_axis_resources=P('x', 'y'))
       def f(x):
         return x
