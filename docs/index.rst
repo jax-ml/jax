@@ -20,6 +20,11 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    jax-101/index
 
 .. toctree::
+   :maxdepth: 2
+
+   debugging/index
+
+.. toctree::
    :maxdepth: 1
    :caption: Reference Documentation
 

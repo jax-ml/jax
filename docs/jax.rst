@@ -12,6 +12,7 @@ Subpackages
     jax.numpy
     jax.scipy
     jax.config
+    jax.debug
     jax.dlpack
     jax.distributed
     jax.example_libraries

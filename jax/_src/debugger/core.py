@@ -137,8 +137,4 @@ def breakpoint(*, ordered: bool = False, **kwargs):  # pylint: disable=redefined
     with debug_lock:
       debugger(frames, thread_id, **kwargs)
 
-  if ordered:
-    effect = debugging.DebugEffect.ORDERED_PRINT
-  else:
-    effect = debugging.DebugEffect.PRINT
-  debugging.debug_callback(_breakpoint_callback, effect, *flat_args)
+  debugging.debug_callback(_breakpoint_callback, *flat_args, ordered=ordered)
