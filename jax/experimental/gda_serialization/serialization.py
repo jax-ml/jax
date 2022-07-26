@@ -23,13 +23,11 @@ from absl import logging
 
 import jax
 from jax._src import distributed
-from jax._src.util import prod
 from jax.experimental import global_device_array as gda
 from jax.experimental.maps import Mesh
 import jax.numpy as jnp
 import numpy as np
 import tensorstore as ts
-from etils import epath
 
 
 TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
@@ -243,7 +241,7 @@ def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
 
 
 def _get_key(key: str):
-  return f'checkpoint_{key}'
+  return f'tensorstore_checkpoint_{key}'
 
 
 class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
@@ -302,8 +300,8 @@ class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
   # TODO(b/233793426): Try removing temp_checkpoint_dir and final_checkpoint_dir
   # from the API and use a callback instead. This will affect how async
   # mechanism works.
-  def serialize(self, gdas, tensorstore_specs, *, temp_checkpoint_dir,
-                final_checkpoint_dir):
+  def serialize(self, gdas, tensorstore_specs, *,
+                on_commit_callback: Callable[[], None]):
     """Serializes GDAs to TensorStore."""
 
   @abc.abstractmethod
@@ -327,7 +325,7 @@ class AsyncManager:
                        '`jax.distributed.initialize()` at the start of your '
                        'program.')
     self._client = distributed.global_state.client
-    self._final_checkpoint_dir = None
+    self._count = None
 
   def __del__(self):
     if self._thread is not None and self._thread.is_alive():
@@ -336,7 +334,7 @@ class AsyncManager:
                       'possibility of losing errors raised if the '
                       'this class is deleted before writing is completed.')
 
-  def _thread_func(self, temp_checkpoint_dir, final_checkpoint_dir):
+  def _thread_func(self):
     try:
       current_process = jax.process_index()
       logging.info('Starting commit to storage layer by process: %s',
@@ -348,27 +346,25 @@ class AsyncManager:
 
       # All processes will wait at the barrier. When all processes are at the
       # barrier, the barrier will be satisfied. If not, then it will timeout.
-      self._client.wait_at_barrier(self._final_checkpoint_dir,
-                                   self._timeout_in_ms)
+      self._client.wait_at_barrier(_get_key(self._count), self._timeout_in_ms)
       logging.info('Finished waiting at barrier for process %s',
                    current_process)
 
       if current_process == 0:
-        logging.info('Renaming %s to %s', temp_checkpoint_dir,
-                     final_checkpoint_dir)
-        epath.Path(temp_checkpoint_dir).rename(final_checkpoint_dir)
-        logging.info('Finished saving checkpoint to `%s`.',
-                     final_checkpoint_dir)
-        self._client.key_value_set(
-            _get_key(self._final_checkpoint_dir), _CHECKPOINT_SUCCESS)
+        self._on_commit_callback()
+        self._client.key_value_set(_get_key(self._count), _CHECKPOINT_SUCCESS)
+
     except Exception as e:
       self._exception = e
 
-  def _start_async_commit(self, temp_checkpoint_dir, final_checkpoint_dir):
-    self._final_checkpoint_dir = final_checkpoint_dir
-    self._thread = threading.Thread(
-        target=self._thread_func,
-        args=(temp_checkpoint_dir, final_checkpoint_dir))
+  def _start_async_commit(self, on_commit_callback):
+    if self._count is None:
+      self._count = 0
+    else:
+      self._count += 1
+
+    self._on_commit_callback = on_commit_callback
+    self._thread = threading.Thread(target=self._thread_func)
     self._thread.start()
 
   def check_for_errors(self):
@@ -385,11 +381,11 @@ class AsyncManager:
 
     self.check_for_errors()
 
-    if self._final_checkpoint_dir is not None:
+    if self._count is not None:
       # Block until process 0 writes success value to the key value store.
       # If it fails to write it, then `blocking_key_value_get` will time out.
       self._client.blocking_key_value_get(
-          _get_key(self._final_checkpoint_dir), self._timeout_in_ms)
+          _get_key(self._count), self._timeout_in_ms)
 
   def _add_futures(self, futures: Sequence[asyncio.Future]):
     self._commit_futures = futures
@@ -398,8 +394,7 @@ class AsyncManager:
 class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBase):
   """Responsible for serializing GDAs via TensorStore."""
 
-  def serialize(self, gdas, tensorstore_specs, *, temp_checkpoint_dir,
-                final_checkpoint_dir):
+  def serialize(self, gdas, tensorstore_specs, *, on_commit_callback):
     """Serializes GlobalDeviceArrays via TensorStore asynchronously.
 
     TensorStore writes to a storage layer in 2 steps:
@@ -425,8 +420,8 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     commit_futures = [[] for _ in range(len(tensorstore_specs))]
 
     async def _run_serializer():
-      future_writer = jax.tree_util.tree_map(async_serialize, gdas, tensorstore_specs,
-                                   commit_futures)
+      future_writer = jax.tree_util.tree_map(
+          async_serialize, gdas, tensorstore_specs, commit_futures)
       return await asyncio.gather(*future_writer)
 
     asyncio.run(_run_serializer())
@@ -435,7 +430,7 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
 
     # Used in wait_until_finished to check on process != 0, if the checkpoint
     # has finished writing.
-    self._start_async_commit(temp_checkpoint_dir, final_checkpoint_dir)
+    self._start_async_commit(on_commit_callback)
 
   def deserialize(self, global_meshes, mesh_axes, tensorstore_specs,
                   global_shapes=None, dtypes=None):
