@@ -2511,6 +2511,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.cond(x < 0., lambda x: x, lambda x: x, x)
     jax.vmap(jax.jacrev(lambda x: cond_id(cond_id(x))))(jnp.ones(1))
 
+  @parameterized.named_parameters(
+      {"testcase_name": "impl={}".format(scan_name), "scan": scan_impl}
+      for scan_impl, scan_name in SCAN_IMPLS)
+  def test_scan_hoisting_consts(self, scan):
+    A = jnp.arange(4.).reshape(2, 2)
+    B = jnp.arange(4.).reshape(2, 2) + 1.
+
+    def f(x):
+      def body(c, _):
+        c1, c2, c3 = c
+        return (jnp.dot(A, c1), jnp.dot(B, c2), jnp.dot(jnp.sin(B), c3)), None
+      init_carry = (x * jnp.ones(2), x * jnp.ones(2), x * jnp.ones(2))
+      (c1, c2, c3), _ = scan(body, init_carry, None, length=3)
+      return jnp.sum(c1) + jnp.sum(c2) + jnp.sum(c3)
+
+    jax.grad(f)(1.)  # doesn't crash
+
 
 class ForLoopTest(jtu.JaxTestCase):
 
