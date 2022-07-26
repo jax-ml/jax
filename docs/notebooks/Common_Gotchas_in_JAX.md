@@ -28,17 +28,8 @@ __JAX__ is a language for __expressing__ and __composing__ __transformations__ o
 JAX works great for many numerical and scientific programs, but __only if they are written with certain constraints__ that we describe below.
 
 ```{code-cell} ipython3
----
-executionInfo:
-  elapsed: 2325
-  status: ok
-  timestamp: 1653786786563
-  user:
-    displayName: Charlie Chen
-    userId: 03559182632086341278
-  user_tz: -60
-id: GoK_PCxPeYcy
----
+:id: GoK_PCxPeYcy
+
 import numpy as np
 from jax import grad, jit
 from jax import lax
@@ -1149,23 +1140,14 @@ x.dtype # --> dtype('float64')
 
 [Google TPUs](https://cloud.google.com/tpu) are ASICs optimised for machine learning. When running with a TPU backend, operations which involve matrix multiplications (dots, einsums, convolutions etc.) are executed on the MXUs (matrix multiplication units), which are systolic arrays designed to perform `128x128` by `128x8` matmults in `bf16` and accumulate the results in `f32`.
 
-The current default behavior reflect this hardware -- these operations will truncate `f32` inputs into `bf16` before they're applied, which is desired for many neural network applications where speed is more important than precision.
+The current default behavior on TPUs reflects the hardware -- When performing matmults on `f32` matrices, the underlying arithmetic operations will only have `bf16` precision. This is desired for applications where speed is more important than precision (e.g. neural networks).
 
 However, it can be counterproductive whenever numeric precision is required! 
 
 ```{code-cell} ipython3
----
-executionInfo:
-  elapsed: 7736
-  status: ok
-  timestamp: 1653786800460
-  user:
-    displayName: Charlie Chen
-    userId: 03559182632086341278
-  user_tz: -60
-id: beRBhZhNXe4t
-outputId: 119fe59b-69d9-4d05-fcb4-055f556d33b7
----
+:id: beRBhZhNXe4t
+:outputId: 119fe59b-69d9-4d05-fcb4-055f556d33b7
+
 # Execute with jax TPU backend
 def jax_matmult(v, mat):
   """Matmul on TPU."""
@@ -1186,21 +1168,12 @@ jax_matmult(x, y) - np_matmult(x, y)
 
 Furthermore, both the input and output dtype will be `f32`, even though the computation was executed with `bf16` precision! 
 
-This is again, often the desired behaviour when training neural nets, but it can be very misleading!
+This is again, acceptable behaviour when training neural networks, but it can be very misleading in other applications!
 
 ```{code-cell} ipython3
----
-executionInfo:
-  elapsed: 57
-  status: ok
-  timestamp: 1653786836385
-  user:
-    displayName: Charlie Chen
-    userId: 03559182632086341278
-  user_tz: -60
-id: GYXvvqW9XhYD
-outputId: b4a23340-961a-4f9a-dd84-c5e36e213376
----
+:id: GYXvvqW9XhYD
+:outputId: b4a23340-961a-4f9a-dd84-c5e36e213376
+
 # This is still a f32, even though it's only precise up to bf16!
 jax_matmult(x, y).dtype 
 ```
@@ -1208,24 +1181,15 @@ jax_matmult(x, y).dtype
 +++ {"id": "ggFSrW5SXl-8"}
 
 For individual operations, you can increase the [precision](https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.Precision) using the `precision` argument. Setting `precision` to:
-* `high|bfloat16_3x` performs the operation using 3 passes, giving us 24 bits of precision. 
-* `highest|float32` performs the operation using 6 passes, giving us 32 bits of precision.
+* `high|bfloat16_3x` performs the operation using 3 passes, giving us around 16 mantissa bits of precision. 
+* `highest|float32` performs the operation using 6 passes, giving us around 24 mantissa bits of precision.
 
-Please see the [docs](https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.Precision) for other aliases to the different precision levels. Again, note that be behaviour might differ on other backends!
+Please see the [docs](https://jax.readthedocs.io/en/latest/jax.lax.html#jax.lax.Precision) for other aliases to the different precision levels. Again, note that the behaviour might differ on other backends!
 
 ```{code-cell} ipython3
----
-executionInfo:
-  elapsed: 112
-  status: ok
-  timestamp: 1653787172729
-  user:
-    displayName: Charlie Chen
-    userId: 03559182632086341278
-  user_tz: -60
-id: 50X6AU0jXjVK
-outputId: 797d7778-72f0-4658-979f-509007419bdf
----
+:id: 50X6AU0jXjVK
+:outputId: 797d7778-72f0-4658-979f-509007419bdf
+
 def jax_matmult_highest_precision(v, mat):
   return jnp.einsum('ij,jk->ik', v, mat, precision = 'float32')
 
@@ -1258,7 +1222,7 @@ with jax.default_matmul_precision('float32'):
   --jax_default_matmul_precision=float32
 ```
 
-⚠️ Note that if `f64` is enabled (see above section), then matrix mults will also be executed using `f64` by default as expected, albeit with even more significant performance penalties.
+⚠️ Note that if `f64` is enabled (see above section), then matrix mults will also be executed using `f64` by default as expected, albeit with even more significant execution time penalties.
 
 +++ {"id": "WAHjmL0E2XwO"}
 
