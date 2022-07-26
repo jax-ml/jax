@@ -254,6 +254,16 @@ You have two options, either pass `enable_gradients=False` to `jax2tf.convert`, 
 set `tf.saved_model.SaveOption(experimental_custom_gradients=False)`. In either case,
 you will not be able to compute the gradients of the function loaded from the SavedModel.
 
+## Support for partitioning
+
+jax2tf supports JAX functions that use `jax.pjit`, for single-host meshes.
+The conversion is actually similar as for a `jax.jit`, except that the
+arguments and results will be wrapped with
+`tensorflow.compiler.xla.experimental.xla_sharding.XlaSharding` TensorFlow ops.
+
+Note that when saving a model, the parameters to the model are wrapped with
+`tf.Variable` before calling the converted function (see [above](#saved_model_with_parameters)),
+therefore outside of the `XlaSharding` wrapper.
 
 ## Shape-polymorphic conversion
 
@@ -317,7 +327,6 @@ when the shapes are fully known. For example, given the `"(b, d, d)"`
 specification for the argument `x` of a function, JAX will know that a conditional
 `x.shape[-2] == x.shape[-1]` is `True`, and will also know that `x` and `jnp.sin(x)` have the
 same shape of a batch of square matrices that can be passed to `jnp.matmul`.
-
 
 ### Correctness of shape-polymorphic tracing
 
@@ -655,7 +664,7 @@ in [savedmodel_test.py](https://github.com/google/jax/blob/main/jax/experimental
 ### Missing converter features
 
 There is currently no support for `pmap` or`xmap`, nor for the collective
-operations. There is support for `sharded_jit` and `pjit`.
+operations. There is support for `pjit`.
 
 ### SavedModel may be large
 
