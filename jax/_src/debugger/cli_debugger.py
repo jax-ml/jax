@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import cmd
+import pprint
 import sys
 import traceback
 
@@ -46,62 +47,108 @@ class CliDebugger(cmd.Cmd):
     env.update(curr_frame.locals)
     return eval(expr, {}, env)
 
+  def default(self, arg):
+    """Evaluates an expression."""
+    try:
+      print(repr(self.evaluate(arg)), file=self.stdout)
+    except:
+      self._error_message()
+
   def print_backtrace(self):
-    self.stdout.write('Traceback:\n')
+    print('Traceback:', file=self.stdout)
     for frame in self.frames[::-1]:
       self.stdout.write(f'  File "{frame.filename}", line {frame.lineno}\n')
       if frame.offset is None:
-        self.stdout.write('    <no source>\n')
+        print('    <no source>', file=self.stdout)
       else:
         line = frame.source[frame.offset]
-        self.stdout.write(f'    {line}\n')
+        print(f'    {line.strip()}', file=self.stdout)
 
   def print_context(self, num_lines=2):
     curr_frame = self.frames[self.frame_index]
-    self.stdout.write(f'> {curr_frame.filename}({curr_frame.lineno})\n')
+    print(f'> {curr_frame.filename}({curr_frame.lineno})', file=self.stdout)
     for i, line in enumerate(curr_frame.source):
       assert curr_frame.offset is not None
       if (curr_frame.offset - 1 - num_lines <= i <=
           curr_frame.offset + num_lines):
         if i == curr_frame.offset:
-          self.stdout.write(f'->  {line}\n')
+          print(f'->  {line}', file=self.stdout)
         else:
-          self.stdout.write(f'    {line}\n')
+          print(f'    {line}', file=self.stdout)
+
+  def _error_message(self):
+    exc_info = sys.exc_info()[:2]
+    msg = traceback.format_exception_only(*exc_info)[-1].strip()
+    print('***', msg, file=self.stdout)
 
   def do_p(self, arg):
+    """p expression
+    Evaluates and prints the value of an expression
+    """
     try:
-      self.stdout.write(repr(self.evaluate(arg)) + "\n")
-    except Exception:
-      traceback.print_exc(limit=1)
+      print(repr(self.evaluate(arg)), file=self.stdout)
+    except:
+      self._error_message()
 
-  def do_u(self, arg):
+  def do_pp(self, arg):
+    """pp expression
+    Evaluates and pretty-prints the value of an expression
+    """
+    try:
+      print(pprint.pformat(self.evaluate(arg)), file=self.stdout)
+    except:
+      self._error_message()
+
+  def do_up(self, _):
+    """u(p)
+    Move down a stack frame.
+    """
     if self.frame_index == len(self.frames) - 1:
-      self.stdout.write('At topmost frame.\n')
+      print('At topmost frame.', file=self.stdout)
     else:
       self.frame_index += 1
     self.print_context()
+  do_u = do_up
 
-  def do_d(self, arg):
+  def do_down(self, _):
+    """d(own)
+    Move down a stack frame.
+    """
     if self.frame_index == 0:
-      self.stdout.write('At bottommost frame.\n')
+      print('At bottommost frame.', file=self.stdout)
     else:
       self.frame_index -= 1
     self.print_context()
+  do_d = do_down
 
-  def do_l(self, arg):
+  def do_list(self, _):
+    """l(ist)
+    List source code for the current file.
+    """
     self.print_context(num_lines=5)
+  do_l = do_list
 
-  def do_ll(self, arg):
-    self.print_context(num_lines=5)
-
-  def do_c(self, arg):
+  def do_continue(self, _):
+    """c(ont(inue))
+    Continue the program's execution.
+    """
     return True
+  do_c = do_cont = do_continue
 
-  def do_EOF(self, arg):
+  def do_quit(self, _):
+    """q(uit)\n(exit)
+    Quit the debugger. The program is given an exit command.
+    """
     sys.exit(0)
+  do_q = do_EOF = do_exit = do_quit
 
-  def do_bt(self, arg):
+  def do_where(self, _):
+    """w(here)
+    Prints a stack trace with the most recent frame on the bottom.
+    'bt' is an alias for this command.
+    """
     self.print_backtrace()
+  do_w = do_bt = do_where
 
   def run(self):
     while True:
@@ -109,7 +156,7 @@ class CliDebugger(cmd.Cmd):
         self.cmdloop()
         break
       except KeyboardInterrupt:
-        self.stdout.write('--KeyboardInterrupt--\n')
+        print('--KeyboardInterrupt--', file=sys.stdout)
 
 def run_debugger(frames: List[DebuggerFrame], thread_id: Optional[int],
                  **kwargs: Any):
