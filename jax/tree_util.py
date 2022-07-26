@@ -46,8 +46,6 @@ from jax._src.tree_util import (
   tree_flatten as tree_flatten,
   tree_leaves as tree_leaves,
   tree_map as tree_map,
-  # TODO(jakevdp) remove tree_multimap once deprecation is complete.
-  tree_multimap,
   tree_reduce as tree_reduce,
   tree_structure as tree_structure,
   tree_transpose as tree_transpose,

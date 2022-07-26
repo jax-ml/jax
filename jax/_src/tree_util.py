@@ -200,12 +200,6 @@ def tree_map(f: Callable[..., Any], tree: Any, *rest: Any,
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
-def tree_multimap(*args, **kwargs):
-  """Deprecated alias of :func:`jax.tree_util.tree_map`"""
-  warnings.warn('jax.tree_util.tree_multimap() is deprecated. Please use jax.tree_util.tree_map() '
-                'instead as a drop-in replacement.', FutureWarning)
-  return tree_map(*args, **kwargs)
-
 def build_tree(treedef, xs):
   return treedef.from_iterable_tree(xs)
 

@@ -120,7 +120,6 @@ from jax._src.tree_util import (
   _deprecated_tree_flatten as tree_flatten,
   _deprecated_tree_leaves as tree_leaves,
   _deprecated_tree_map as tree_map,
-  _deprecated_tree_multimap as tree_multimap,
   _deprecated_tree_structure as tree_structure,
   _deprecated_tree_transpose as tree_transpose,
   _deprecated_tree_unflatten as tree_unflatten,
