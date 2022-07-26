@@ -503,7 +503,7 @@ def escaped_tracer_error(tracer, detail=None):
          f'with shape {tracer.shape} and dtype {tracer.dtype} to escape.\n'
          'JAX transformations require that functions explicitly return their '
          'outputs, and disallow saving intermediate values to global state.')
-  dbg = getattr(tracer._trace.main, 'debug_info', None)
+  dbg = getattr(tracer, '_debug_info', None)
   if dbg is not None:
     msg += ('\nThe function being traced when the value leaked was '
             f'{dbg.func_src_info} traced for {dbg.traced_for}.')
