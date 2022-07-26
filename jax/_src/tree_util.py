@@ -125,7 +125,7 @@ def register_pytree_node(nodetype: Type[T],
                          unflatten_func: Callable[[_AuxData, _Children], T]):
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  See `example usage <pytrees.html>`_.
+  See :ref:`example usage <pytrees>`.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node.
