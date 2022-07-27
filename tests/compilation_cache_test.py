@@ -141,6 +141,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
                         cc.get_cache_key(computation2, compile_options, backend))
 
   def test_xla_flags(self):
+    if jtu.is_device_tpu_v4():
+      raise unittest.SkipTest("TODO(b/240151176)")
+
     computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
     compile_options = jax._src.lib.xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1)

@@ -237,6 +237,9 @@ def is_device_rocm():
 def is_device_cuda():
   return xla_bridge.get_backend().platform_version.startswith('cuda')
 
+def is_device_tpu_v4():
+  return jax.devices()[0].device_kind == "TPU v4"
+
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
   if is_device_rocm():
