@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
   // Compile XlaComputation to PjRtExecutable.
   xla::XlaComputation xla_computation(test_module_proto);
   xla::CompileOptions compile_options;
-  std::unique_ptr<xla::PjRtExecutable> executable =
+  std::unique_ptr<xla::PjRtLoadedExecutable> executable =
       client->Compile(xla_computation, compile_options).ValueOrDie();
 
   // Prepare inputs.
