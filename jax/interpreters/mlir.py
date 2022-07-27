@@ -398,6 +398,7 @@ class ModuleContext:
 
   # Cached primitive lowerings.
   cached_primitive_lowerings: Dict[Any, func_dialect.FuncOp]
+  cached_call_jaxpr_lowerings: Dict[Any, func_dialect.FuncOp]
 
   @property
   def axis_env(self) -> xla.AxisEnv:
@@ -416,7 +417,9 @@ class ModuleContext:
       ip: Optional[ir.InsertionPoint] = None,
       symbol_table: Optional[ir.SymbolTable] = None,
       cached_primitive_lowerings: Optional[Dict[Any,
-                                                func_dialect.FuncOp]] = None):
+                                                func_dialect.FuncOp]] = None,
+      cached_call_jaxpr_lowerings: Optional[Dict[Any,
+                                                 func_dialect.FuncOp]] = None):
     assert platform is not None
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -430,6 +433,9 @@ class ModuleContext:
     self.channel_iterator = channel_iterator
     self.keepalives = keepalives
     self.host_callbacks = host_callbacks
+    self.cached_call_jaxpr_lowerings = ({}
+                                        if cached_call_jaxpr_lowerings is None
+                                        else cached_call_jaxpr_lowerings)
 
   def new_channel(self) -> int:
     return next(self.channel_iterator)
@@ -1066,6 +1072,20 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   return f_lowered
 
 
+def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects):
+  if not call_jaxpr.consts:
+    # Cacheable.
+    key = (fn_name, call_jaxpr.jaxpr, tuple(effects))
+    try:
+      func_op = ctx.cached_call_jaxpr_lowerings[key]
+    except KeyError:
+      func_op = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects)
+      ctx.cached_call_jaxpr_lowerings[key] = func_op
+  else:
+    func_op = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects)
+  return func_op
+
+
 def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
                    avals_out, tokens_in, *args):
   if isinstance(call_jaxpr, core.Jaxpr):
@@ -1075,7 +1095,7 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   output_types = map(aval_to_ir_types, avals_out)
   output_types = [token_type()] * len(effects) + output_types
   flat_output_types = util.flatten(output_types)
-  symbol_name = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects).name.value
+  symbol_name = _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects).name.value
   args = [*tokens_in.tokens(), *args]
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(symbol_name),
