@@ -148,7 +148,8 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
           operand=_no_operand_sentinel, linear=None):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
-  ``cond()`` has equivalent semantics to this Python implementation::
+  Provided arguments are correctly typed, ``cond()`` has equivalent
+  semantics to this Python implementation::
 
     def cond(pred, true_fun, false_fun, *operands):
       if pred:
@@ -181,6 +182,8 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     operands = (operand,)
   del operand
 
+  if pred is None:
+    raise TypeError("cond predicate is None")
   if isinstance(pred, Sequence) or np.ndim(pred) != 0:
     raise TypeError(
         f"Pred must be a scalar, got {pred} of " +

@@ -628,6 +628,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(4), cfun(4))
     self.assertEqual(fun(4), (8, 16))
 
+  def testCondPredIsNone(self):
+    # see https://github.com/google/jax/issues/11574
+    def f(pred, x):
+      return lax.cond(pred, lambda x: x + 1, lambda x: x + 2, x)
+
+    self.assertRaisesRegex(TypeError, "cond predicate is None",
+                           lambda: f(None, 1.))
+    self.assertRaisesRegex(TypeError, "cond predicate is None",
+                           lambda: jax.jit(f)(None, 1.))
+
   def testCondTwoOperands(self):
     # see https://github.com/google/jax/issues/8469
     add, mul = lax.add, lax.mul
