@@ -15,7 +15,8 @@
 import inspect
 import operator
 from functools import partial
-from typing import Any, Dict, Iterable, Sequence, Set, Tuple, Union, Optional
+from typing import (Any, Dict, Iterable, Sequence, Set, Tuple, Union, Optional,
+                    Callable)
 import warnings
 
 import numpy as np
@@ -425,7 +426,7 @@ def _dtype(x):
   except ValueError:
     return dtypes.result_type(getattr(x, 'dtype'))
 
-def shaped_abstractify(x):
+def _shaped_abstractify_slow(x):
   try:
     return core.raise_to_shaped(
       x if isinstance(x, core.AbstractValue) else core.get_aval(x))
@@ -436,6 +437,14 @@ def shaped_abstractify(x):
   named_shape = getattr(x, 'named_shape', {})
   return core.ShapedArray(np.shape(x), _dtype(x), weak_type=weak_type,
                           named_shape=named_shape)
+
+# TODO(mattjj,yashkatariya): replace xla.abstractify with this, same behavior
+def shaped_abstractify(x):
+  try:
+    return _shaped_abstractify_handlers[type(x)](x)
+  except KeyError:
+    return _shaped_abstractify_slow(x)
+_shaped_abstractify_handlers: Dict[Any, Callable[[Any], core.ShapedArray]] = {}
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.

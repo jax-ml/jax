@@ -19,6 +19,7 @@ import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
 from jax import core
+from jax._src import api_util
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.config import config
@@ -557,6 +558,8 @@ core.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
 xla.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
     x.shape, x.dtype)
 xla.canonicalize_dtype_handlers[GlobalDeviceArray] = pxla.identity
+api_util._shaped_abstractify_handlers[GlobalDeviceArray] = \
+    lambda x: core.ShapedArray(x.shape, x.dtype)
 
 def _gda_shard_arg(x, devices, indices):
   return x._device_buffers
