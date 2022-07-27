@@ -45,6 +45,7 @@ class CliDebugger(cmd.Cmd):
     env = {}
     curr_frame = self.frames[self.frame_index]
     env.update(curr_frame.locals)
+    env.update(curr_frame.globals)
     return eval(expr, {}, env)
 
   def default(self, arg):

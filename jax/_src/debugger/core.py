@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import inspect
 import threading
 
@@ -34,30 +35,31 @@ class DebuggerFrame:
   """Encapsulates Python frame information."""
   filename: str
   locals: Dict[str, Any]
+  globals: Dict[str, Any]
   code_context: str
   source: List[str]
   lineno: int
   offset: Optional[int]
 
   def tree_flatten(self):
-    flat_locals, locals_tree = tree_util.tree_flatten(self.locals)
+    flat_vars, vars_tree = tree_util.tree_flatten((self.locals, self.globals))
     is_valid = [
         isinstance(l, (core.Tracer, jnp.ndarray, np.ndarray))
-        for l in flat_locals
+        for l in flat_vars
     ]
-    invalid_locals, valid_locals = util.partition_list(is_valid, flat_locals)
-    return valid_locals, (is_valid, invalid_locals, locals_tree, self.filename,
+    invalid_vars, valid_vars = util.partition_list(is_valid, flat_vars)
+    return valid_vars, (is_valid, invalid_vars, vars_tree, self.filename,
                           self.code_context, self.source, self.lineno,
                           self.offset)
 
   @classmethod
-  def tree_unflatten(cls, info, valid_locals):
-    (is_valid, invalid_locals, locals_tree, filename, code_context, source,
+  def tree_unflatten(cls, info, valid_vars):
+    (is_valid, invalid_vars, vars_tree, filename, code_context, source,
      lineno, offset) = info
-    flat_locals = util.merge_lists(is_valid, invalid_locals, valid_locals)
-    locals_ = tree_util.tree_unflatten(locals_tree, flat_locals)
-    return DebuggerFrame(filename, locals_, code_context, source, lineno,
-                         offset)
+    flat_vars = util.merge_lists(is_valid, invalid_vars, valid_vars)
+    locals_, globals_ = tree_util.tree_unflatten(vars_tree, flat_vars)
+    return DebuggerFrame(filename, locals_, globals_, code_context, source,
+                         lineno, offset)
 
   @classmethod
   def from_frameinfo(cls, frame_info) -> DebuggerFrame:
@@ -78,6 +80,7 @@ class DebuggerFrame:
     return DebuggerFrame(
         filename=frame_info.filename,
         locals=frame_info.frame.f_locals,
+        globals=frame_info.frame.f_globals,
         code_context=frame_info.code_context,
         source=source,
         lineno=frame_info.lineno,

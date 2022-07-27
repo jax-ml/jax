@@ -14,6 +14,8 @@
 from jax._src.debugger.core import breakpoint
 from jax._src.debugger import cli_debugger
 from jax._src.debugger import colab_debugger
+from jax._src.debugger import web_debugger
 
 del cli_debugger  # For registration only
 del colab_debugger # For registration only
+del web_debugger # For registration only
