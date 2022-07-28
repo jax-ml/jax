@@ -164,11 +164,11 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
   *batch_shape, signal_length = x.shape
   # Created strided array of data segments
   if nperseg == 1 and noverlap == 0:
-    result = x[..., np.newaxis]
+    result = x[..., jnp.newaxis]
   else:
     step = nperseg - noverlap
     batch_shape = tuple(batch_shape)
-    x = x.reshape((int(np.prod(batch_shape)), signal_length))[..., np.newaxis]
+    x = x.reshape((-1, signal_length))[..., jnp.newaxis]
     result = jax.lax.conv_general_dilated_patches(
         x, (nperseg,), (step,),
         'VALID',
@@ -501,8 +501,8 @@ def _overlap_and_add(x, step_size):
     raise ValueError('Input must have (..., frames, frame_length) shape.')
 
   *batch_shape, nframes, segment_len = x.shape
-  flat_batchsize = np.prod(batch_shape, dtype=np.int64)
-  x = x.reshape((flat_batchsize, nframes, segment_len))
+  x = x.reshape((-1, nframes, segment_len))
+  flat_batchsize = x.shape[0]
   output_size = step_size * (nframes - 1) + segment_len
   nstep_per_segment = 1 + (segment_len - 1) // step_size
 
