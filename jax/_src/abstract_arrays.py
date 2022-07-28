@@ -18,6 +18,7 @@ import numpy as np
 
 from jax._src import ad_util
 from jax import core
+from jax._src import api_util
 from jax._src import dtypes
 
 from jax._src import traceback_util
@@ -56,6 +57,7 @@ def canonical_concrete_aval(val, weak_type=None):
 for t in array_types:
   core.pytype_aval_mappings[t] = canonical_concrete_aval
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
+  api_util.shaped_abstractify_handlers[t] = make_shaped_array
 
 core.literalable_types.update(array_types)
 

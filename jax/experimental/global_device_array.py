@@ -555,11 +555,9 @@ class GlobalDeviceArray:
 
 core.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
     x.shape, x.dtype)
-xla.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
-    x.shape, x.dtype)
 xla.canonicalize_dtype_handlers[GlobalDeviceArray] = pxla.identity
-api_util._shaped_abstractify_handlers[GlobalDeviceArray] = \
-    lambda x: core.ShapedArray(x.shape, x.dtype)
+api_util.shaped_abstractify_handlers[
+    GlobalDeviceArray] = lambda x: core.ShapedArray(x.shape, x.dtype)
 
 def _gda_shard_arg(x, devices, indices):
   return x._device_buffers

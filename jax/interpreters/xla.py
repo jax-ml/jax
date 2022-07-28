@@ -29,6 +29,7 @@ import numpy as np
 
 from jax.config import config
 from jax import core
+from jax._src import api_util
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import source_info_util
@@ -264,15 +265,7 @@ canonicalize_dtype_handlers[core.BInt] = \
     lambda x: core.BInt(_canonicalize_python_scalar_dtype(int, x.val), x.bound)
 
 def abstractify(x) -> core.AbstractValue:
-  typ = type(x)
-  aval_fn = pytype_aval_mappings.get(typ)
-  if aval_fn: return aval_fn(x)
-  for typ in typ.__mro__:
-    aval_fn = pytype_aval_mappings.get(typ)
-    if aval_fn: return aval_fn(x)
-  if hasattr(x, '__jax_array__'):
-    return abstractify(x.__jax_array__())
-  raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
+  return api_util.shaped_abstractify(x)
 
 def _make_abstract_python_scalar(typ, val):
   # Note: all python scalar types are weak except bool, because bool only
@@ -280,16 +273,8 @@ def _make_abstract_python_scalar(typ, val):
   return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val),
                      weak_type=typ is not bool)
 
-pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {}
-for t in device_array.device_array_types:
-  pytype_aval_mappings[t] = operator.attrgetter('aval')
-pytype_aval_mappings[core.BInt] = lambda x: core.AbstractBInt(x.bound)
-pytype_aval_mappings[core.PaddedArray] = operator.attrgetter('_aval')
-pytype_aval_mappings[core.Token] = lambda _: core.abstract_token
-pytype_aval_mappings.update((t, make_shaped_array) for t in array_types)
-pytype_aval_mappings.update(
+api_util.shaped_abstractify_handlers.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
-
 
 def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',
                              prim: core.Primitive,

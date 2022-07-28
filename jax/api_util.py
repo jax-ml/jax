@@ -22,4 +22,5 @@ from jax._src.api_util import (
   rebase_donate_argnums,
   safe_map,
   shaped_abstractify,
+  shaped_abstractify_handlers,
 )

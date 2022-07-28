@@ -807,9 +807,8 @@ def _register_handlers_for_sharded_device_array(sda):
 
   core.pytype_aval_mappings[sda] = abstract_arrays.canonical_concrete_aval
   dispatch.device_put_handlers[sda] = dispatch._device_put_array
-  xla.pytype_aval_mappings[sda] = op.attrgetter("aval")
   xla.canonicalize_dtype_handlers[sda] = identity
-  api_util._shaped_abstractify_handlers[sda] = op.attrgetter("aval")
+  api_util.shaped_abstractify_handlers[sda] = op.attrgetter("aval")
 
 _register_handlers_for_sharded_device_array(_ShardedDeviceArray)
 _register_handlers_for_sharded_device_array(pmap_lib.ShardedDeviceArray)

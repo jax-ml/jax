@@ -19,6 +19,7 @@ import numpy as np
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax import core, jit, lax, make_jaxpr
+from jax._src import api_util
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
@@ -128,7 +129,7 @@ def sparse_array_device_put_handler(a, device):
 
 core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
-xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
+api_util.shaped_abstractify_handlers[SparseArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
 dispatch.device_put_handlers[SparseArray] = sparse_array_device_put_handler
 dispatch.result_handlers[AbstractSparseArray] = sparse_array_result_handler
@@ -266,7 +267,7 @@ class ConcreteEmpty(AbstractEmpty):
 
 core.pytype_aval_mappings[Empty] = lambda x: ConcreteEmpty()
 core.raise_to_shaped_mappings[AbstractEmpty] = lambda aval, _: aval
-xla.pytype_aval_mappings[Empty] = lambda x: AbstractEmpty()
+api_util.shaped_abstractify_handlers[Empty] = lambda x: AbstractEmpty()
 xla.canonicalize_dtype_handlers[Empty] = lambda x: x
 dispatch.device_put_handlers[Empty] = lambda _, __: ()
 dispatch.result_handlers[AbstractEmpty] = lambda _, __: lambda: Empty(AbstractEmpty())

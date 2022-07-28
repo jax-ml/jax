@@ -438,13 +438,13 @@ def _shaped_abstractify_slow(x):
   return core.ShapedArray(np.shape(x), _dtype(x), weak_type=weak_type,
                           named_shape=named_shape)
 
-# TODO(mattjj,yashkatariya): replace xla.abstractify with this, same behavior
 def shaped_abstractify(x):
   try:
-    return _shaped_abstractify_handlers[type(x)](x)
+    return shaped_abstractify_handlers[type(x)](x)
   except KeyError:
     return _shaped_abstractify_slow(x)
-_shaped_abstractify_handlers: Dict[Any, Callable[[Any], core.ShapedArray]] = {}
+shaped_abstractify_handlers: Dict[Any, Callable[[Any], core.ShapedArray]] = {}
+shaped_abstractify_handlers[core.PaddedArray] = operator.attrgetter('_aval')
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.

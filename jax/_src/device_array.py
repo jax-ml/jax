@@ -24,6 +24,7 @@ import numpy as np
 import jax
 from jax import core
 from jax._src.config import config
+from jax._src import api_util
 from jax._src import abstract_arrays
 from jax._src import dtypes
 from jax._src import profiler
@@ -326,3 +327,4 @@ device_array_types: List[type] = [xc.Buffer, _DeviceArray]
 for _device_array in device_array_types:
   core.literalable_types.add(_device_array)
   core.pytype_aval_mappings[_device_array] = abstract_arrays.canonical_concrete_aval
+  api_util.shaped_abstractify_handlers[_device_array] = operator.attrgetter('aval')
