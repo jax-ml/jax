@@ -162,14 +162,14 @@ def eigh(x, *, lower: bool = True, symmetrize_input: bool = True,
       implementation-defined order.
 
   Returns:
-    A tuple ``(v, w)``.
-
-    ``v`` is an array with the same dtype as ``x`` such that ``v[..., :, i]`` is
-    the normalized eigenvector corresponding to eigenvalue ``w[..., i]``.
+    A tuple ``(w, v)``.
 
     ``w`` is an array with the same dtype as ``x`` (or its real counterpart if
     complex) with shape ``[..., n]`` containing the eigenvalues of ``x`` in
     ascending order(each repeated according to its multiplicity).
+
+    ``v`` is an array with the same dtype as ``x`` such that ``v[..., :, i]`` is
+    the normalized eigenvector corresponding to eigenvalue ``w[..., i]``.
   """
   if symmetrize_input:
     x = symmetrize(x)
