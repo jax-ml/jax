@@ -245,7 +245,8 @@ class ColabDebugger(cli_debugger.CliDebugger):
   def run(self):
     self._debugger_view.render()
     while True:
-      self.cmdloop()
+      if not self.cmdloop():
+        return
 
 
 def _run_debugger(frames, thread_id, **kwargs):
