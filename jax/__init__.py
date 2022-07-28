@@ -114,12 +114,12 @@ from jax.experimental.maps import soft_pmap as soft_pmap
 from jax.version import __version__ as __version__
 from jax.version import __version_info__ as __version_info__
 
-# TODO(jakevdp): remove these deprecated routines after October 2022
 from jax._src.tree_util import (
+  tree_map as tree_map,
+  # TODO(jakevdp): remove these deprecated routines after October 2022
   _deprecated_treedef_is_leaf as treedef_is_leaf,
   _deprecated_tree_flatten as tree_flatten,
   _deprecated_tree_leaves as tree_leaves,
-  _deprecated_tree_map as tree_map,
   _deprecated_tree_structure as tree_structure,
   _deprecated_tree_transpose as tree_transpose,
   _deprecated_tree_unflatten as tree_unflatten,
