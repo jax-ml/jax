@@ -214,9 +214,40 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
 
     with capture_stdout() as output:
       x = jnp.array(1., jnp.float32)
-      jax.jvp(f, (x,), (x,))  # should print out cos(1.)
+      jax.jvp(f, (x,), (x,))
       jax.effects_barrier()
-    self.assertEqual(output(), "x_tangent: 0.5403022766113281\n")
+    expected = jnp.cos(jnp.array(1., jnp.float32))
+    self.assertEqual(output(), f"x_tangent: {expected}\n")
+
+  @unittest.skip("doesn't work yet!")  # TODO(mattjj,sharadmv)
+  def test_debug_print_in_custom_jvp_linearize(self):
+
+    @jax.custom_jvp
+    def print_tangent(x):
+      return x
+
+    @print_tangent.defjvp
+    def _(primals, tangents):
+      (x,), (t,) = primals, tangents
+      debug_print("x_tangent: {}", t)
+      return x, t
+
+    def f(x):
+      x = jnp.sin(x)
+      x = print_tangent(x)
+      return x
+
+    with capture_stdout() as output:
+      x = jnp.array(1., jnp.float32)
+      y, f_lin = jax.linearize(f, x)
+      jax.effects_barrier()
+    self.assertEqual(output(), "")
+
+    with capture_stdout() as output:
+      _ = f_lin(x)
+      jax.effects_barrier()
+    expected = jnp.cos(jnp.array(1., jnp.float32))
+    self.assertEqual(output(), f"x_tangent: {expected}\n")
 
   def test_debug_print_grad_with_custom_vjp_rule(self):
     @jax.custom_vjp
@@ -239,7 +270,8 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     with capture_stdout() as output:
       jax.grad(f)(jnp.array(1., jnp.float32))
       jax.effects_barrier()
-    self.assertEqual(output(), "x: 1.0\nx_grad: 0.5403022766113281\n")
+    expected = jnp.cos(jnp.array(1., jnp.float32))
+    self.assertEqual(output(), f"x: 1.0\nx_grad: {expected}\n")
 
   def test_debug_print_transpose_rule(self):
     def f(x):

@@ -429,7 +429,7 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
       [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
-      core.no_effects, source)
+      core.join_effects(*(j.effects for j in branches_unknown)), source)
   for t in out_tracers: t.recipe = eqn
   return util.merge_lists(out_uks, out_consts, out_tracers)
 
