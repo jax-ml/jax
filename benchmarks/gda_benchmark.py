@@ -126,6 +126,7 @@ def gda_xla_sharding_match(mesh_shape, mesh_axes, state):
   while state:
     pxla._check_gda_or_array_xla_sharding_match([gda_inp] * 1000,
                                                 [in_xla_shardings] * 1000)
+  pxla._create_mesh_pspec_sharding.cache_clear()
 
 
 benchmarks = []
