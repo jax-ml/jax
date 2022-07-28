@@ -20,6 +20,7 @@ import google_benchmark
 import jax
 from jax import lax
 from jax.experimental import sparse
+from jax._src.api_util import shaped_abstractify  # technically not an api fn
 import jax.numpy as jnp
 import numpy as np
 
@@ -459,6 +460,15 @@ def sparse_bcoo_matvec_jit(state):
 @google_benchmark.register
 def sparse_bcoo_matvec_compile(state):
   return _sparse_bcoo_matvec(state, compile=True)
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_shaped_abstractify(state):
+  device, *_ = jax.devices()
+  args = [jax.device_put_replicated(1, [device])] * 1000
+  while state:
+    _ = [shaped_abstractify(x) for x in args]
 
 
 def swap(a, b):

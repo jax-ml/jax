@@ -18,6 +18,7 @@ import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
 from jax import core
+from jax._src import api_util
 from jax._src import dispatch
 from jax._src.config import config
 from jax._src.util import prod
@@ -242,6 +243,8 @@ def make_array_from_callback(shape: Shape, sharding: Sharding,
 core.pytype_aval_mappings[Array] = lambda x: core.ShapedArray(x.shape, x.dtype)
 xla.pytype_aval_mappings[Array] = lambda x: core.ShapedArray(x.shape, x.dtype)
 xla.canonicalize_dtype_handlers[Array] = pxla.identity
+api_util._shaped_abstractify_handlers[Array] = \
+    lambda x: core.ShapedArray(x.shape, x.dtype)
 
 
 def _device_put_array(x, device: Optional[Device]):

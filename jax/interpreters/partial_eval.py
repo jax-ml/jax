@@ -27,8 +27,9 @@ from weakref import ref
 import numpy as np
 
 from jax import core
-from jax._src import dtypes
 from jax import linear_util as lu
+from jax._src import api_util
+from jax._src import dtypes
 from jax._src import profiler
 from jax._src.ad_util import Zero
 from jax._src.api_util import flattened_fun_in_tree, flatten_fun_nokwargs
@@ -1578,6 +1579,7 @@ class DynamicJaxprTracer(core.Tracer):
     frame = self._trace.frame
     val = frame.constvar_to_val.get(frame.tracer_to_var.get(id(self)))
     return self if val is None else get_referent(val)
+api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = op.attrgetter("aval")
 
 
 class JaxprStackFrame:

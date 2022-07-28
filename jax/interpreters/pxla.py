@@ -59,6 +59,7 @@ from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_map
 
 from jax._src import abstract_arrays
+from jax._src import api_util
 from jax._src import device_array
 from jax._src import source_info_util
 from jax._src import util
@@ -808,6 +809,7 @@ def _register_handlers_for_sharded_device_array(sda):
   dispatch.device_put_handlers[sda] = dispatch._device_put_array
   xla.pytype_aval_mappings[sda] = op.attrgetter("aval")
   xla.canonicalize_dtype_handlers[sda] = identity
+  api_util._shaped_abstractify_handlers[sda] = op.attrgetter("aval")
 
 _register_handlers_for_sharded_device_array(_ShardedDeviceArray)
 _register_handlers_for_sharded_device_array(pmap_lib.ShardedDeviceArray)
