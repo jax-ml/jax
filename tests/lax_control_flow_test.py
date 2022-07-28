@@ -59,6 +59,22 @@ def cond_via_switch(pred, true_fun, false_fun, op, *args):
   index = lax.convert_element_type(pred, np.int32)
   return lax.switch(index, [false_fun, true_fun], op)
 
+def cond_with_new_checkpoint(pred, true_fun, false_fun, op, *args):
+  if args:
+    true_op, _true_fun, false_op, _false_fun = true_fun, false_fun, op, args[0]
+    op = (false_op, true_op)
+    false_fun = lambda op: _false_fun(op[0])
+    true_fun = lambda op: _true_fun(op[1])
+  index = lax.convert_element_type(pred, np.int32)
+  fn = lambda index, op: lax.switch(index, [false_fun, true_fun], op)
+  return new_checkpoint(fn)(index, op)
+
+COND_IMPLS = [
+    (lax.cond, 'cond'),
+    (cond_via_switch, 'switch'),
+    (cond_with_new_checkpoint, 'new_checkpoint'),
+]
+
 
 # We wanted to try all scan tests with the scan partial evaluation rule that
 # happens under ad_checkpoint.checkpoint, so we make a scan wrapper which
@@ -72,12 +88,6 @@ def scan_with_new_checkpoint2(f, *args, **kwargs):
 
 def scan_with_for(f, *args, **kwargs):
   return for_loop.scan(f, *args, **kwargs)
-
-COND_IMPLS = [
-    (lax.cond, 'cond'),
-    (cond_via_switch, 'switch'),
-]
-
 
 SCAN_IMPLS = [
     (lax.scan, 'unroll1'),
@@ -786,7 +796,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(cf(1, x), branch(x))
 
   def testIssue1379(self):
-
     def fun(pred):
       return lax.cond(pred, lambda x: (True, x), lambda x: (False, x), pred)
 
@@ -1092,7 +1101,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return 2. * x
 
     def fun(x):
-      return cond(x < 3, (), lambda _: 2., x, lambda x: 2. * x)
+      return cond(x < 3, None, lambda _: 2., x, lambda x: 2. * x)
 
     x = 3.14
     ans = jax.jvp(fun, (x,), (x,))
@@ -1222,7 +1231,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return 2. * x
 
     def fun(x):
-      return cond(x < 3, (), lambda _: 2., x, lambda x: 2. * x)
+      return cond(x < 3, None, lambda _: 2., x, lambda x: 2. * x)
 
     x = 3.14
     ans = jax.grad(fun)(x)
@@ -1240,6 +1249,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       {"testcase_name": f"_{name}", "cond": cond}
       for cond, name in COND_IMPLS)
   def testCondGrad4(self, cond):
+    if cond is cond_with_new_checkpoint and 'tpu' in jtu.device_under_test():
+      raise unittest.SkipTest("tpu bug")  # TODO(parkers): tpu bug ehibited here
     def fun_ref(x, y):
       if x < 3:
         return 2. * jnp.sin(y)
@@ -1250,7 +1261,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def fun(x, y):
       return cond(
           x < 3,
-          (), lambda _: 2. * jnp.sin(y),
+          None, lambda _: 2. * jnp.sin(y),
           x,  lambda x: 2. * x)
 
     y = 5.8
@@ -1760,7 +1771,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("scan carry output and input must have same type structure, "
                   f"got {tree_util.tree_structure(a)} and {tree_util.tree_structure((1, 2))}.")):
       lax.scan(lambda c, x: (0, x), (1, 2), a)
-
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{scan_name}",

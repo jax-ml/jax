@@ -4546,7 +4546,7 @@ class RematTest(jtu.JaxTestCase):
 
     # Two sine calls in the backward pass because while we don't save sines
     # within the (rematted) body function, we can save the scan carry, which
-    # effectively saves one sine. Three cosines for the Jacoian coefficients.
+    # effectively saves one sine. Three cosines for the Jacobian coefficients.
     self.assertEqual(jaxpr_text.count(' sin '), 2)
     self.assertEqual(jaxpr_text.count(' cos '), 3)
     # Six calls to dot_general in the backward pass because we save the primal
@@ -4805,7 +4805,7 @@ class RematTest(jtu.JaxTestCase):
           ('', api.remat),
           ('_new', new_checkpoint),
       ])
-  def test_const_in_jvp(self, remat):
+  def test_const_in_jvp_scan(self, remat):
     @api.custom_jvp
     def f(x):
       return x * np.arange(3.)
@@ -4978,6 +4978,233 @@ class RematTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 2)  # +1 b/c dce fixed point
+    self.assertEqual(jaxpr_text.count(' cos '), 2)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_remat_of_cond(self, remat):
+    true_fn  = lambda c: (jnp.sin(c), jnp.sin(c))
+    false_fn = lambda c: (jnp.sin(c), jnp.sin(c))
+    f = lambda x: lax.cond(x > 0., true_fn, false_fn, x)
+    jtu.check_grads(remat(f), (3.,), order=2, modes=['rev'])
+
+    jaxpr = api.make_jaxpr(api.linearize(remat(f), 4.)[1])(1.)
+    self.assertNotIn(' sin ', str(jaxpr))
+    self.assertIn(' cos ', str(jaxpr))
+
+    true_fn  = lambda c: jnp.sin(jnp.sin(c))
+    false_fn = lambda c: c
+    f = lambda x: lax.cond(x > 0., true_fn, false_fn, x)
+    jtu.check_grads(remat(f), (3.,), order=2, modes=['rev'])
+
+    jaxpr = api.make_jaxpr(api.linearize(remat(f), 4.)[1])(1.)
+    self.assertIn(' sin ', str(jaxpr))
+    self.assertIn(' cos ', str(jaxpr))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_const_in_jvp_cond(self, remat):
+    @api.custom_jvp
+    def f(x):
+      return x * np.arange(3.)
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return f(x), xdot * np.arange(3.)
+
+    @remat
+    def g(x):
+      y = jax.lax.cond(x.sum() > 0, f, lambda x: x, x)
+      return y.sum()
+
+    jax.grad(g)(jnp.arange(3.))  # doesn't crash
+
+  def test_remat_checkpoint_dots_inside_cond(self):
+    x = jnp.ones((5,))
+
+    def f(W):
+      @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+      def f(x):
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
+        return x
+
+      return lax.cond(x.sum() > 0, f, lambda x: x, x)
+
+    _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
+    jaxpr_text = str(f_vjp.args[0].func.args[1])
+
+    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' cos '), 3)
+    # Five calls to dot_general in the backward pass because we have two for
+    # each forward-pass dot, except for the first which only has one (as we are
+    # differentiating with respect to only W and not x).
+    self.assertEqual(jaxpr_text.count(' dot_'), 5)
+
+    jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
+                    modes=['fwd', 'rev'])
+
+  def test_remat_checkpoint_dots_outside_cond(self):
+    # see also above test test_remat_checkpoint_dots_inside_cond
+    # The behavior between the two tests is essentially identical, whereas for
+    # scan different things are saved based on this difference in remat
+    # placement (because of the carry).
+    x = jnp.ones((5,))
+
+    @partial(new_checkpoint, policy=jax.checkpoint_policies.checkpoint_dots)
+    def f(W):
+      def f(x):
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
+        return x
+
+      return lax.cond(x.sum() > 0, f, lambda x: x, x)
+
+    _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
+    jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr_text = str(jaxpr)
+
+    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' cos '), 3)
+    self.assertEqual(jaxpr_text.count(' dot_'), 5)
+
+    jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
+                    modes=['fwd', 'rev'])
+
+  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
+  def test_remat_of_cond_policy(self):
+    save_cos = lambda prim, *_, **__: str(prim) == 'cos'
+    f = new_checkpoint(lambda x: lax.cond(x > 0, jnp.sin, lambda x: x, x),
+                       policy=save_cos)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 0)
+
+  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
+  def test_remat_of_cond_funky_custom_jvp(self):
+    def cond_apply(f, x):
+      return lax.cond(x.sum() > -jnp.inf, f, lambda x: x, x)
+
+    @api.custom_jvp
+    def sin(x):
+      return jnp.sin(x)
+    def sin_jvp(primals, tangents):
+      x, = primals
+      xdot, = tangents
+      y, c = jax.jit(lambda: (jnp.sin(x), jnp.cos(x)))()
+      ydot = c * xdot
+      return y, ydot
+    sin.defjvp(sin_jvp)
+
+    save_cos = lambda prim, *_, **__: str(prim) == 'cos'
+    f = new_checkpoint(partial(cond_apply, sin), policy=save_cos)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 0)
+
+    save_sin = lambda prim, *_, **__: str(prim) == 'sin'
+    f = new_checkpoint(partial(cond_apply, sin), policy=save_sin)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 1)
+
+    f = new_checkpoint(partial(cond_apply, sin),
+                       policy=jax.checkpoint_policies.everything_saveable)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 0)
+
+    f = new_checkpoint(partial(cond_apply, sin),
+                       policy=jax.checkpoint_policies.nothing_saveable)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 1)
+
+    f = new_checkpoint(lambda x: cond_apply(sin, cond_apply(sin, x)),
+                       policy=jax.checkpoint_policies.nothing_saveable)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 1)
+    self.assertEqual(jaxpr_text.count(' cos '), 2)
+
+  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
+  def test_remat_of_cond_funky_custom_jvp2(self):
+    # Like the above test but instead of using jit inside custom_jvp, use cond.
+
+    def cond_apply(f, x):
+      return lax.cond(True, f, lambda x: x, x)
+
+    @api.custom_jvp
+    def sin(x):
+      return jnp.sin(x)
+    def sin_jvp(primals, tangents):
+      x, = primals
+      xdot, = tangents
+      y, c = cond_apply(lambda xs: (jnp.sin(xs[0]), jnp.cos(xs[1])), (x, x))
+      ydot = c * xdot
+      return y, ydot
+    sin.defjvp(sin_jvp)
+
+    save_cos = lambda prim, *_, **__: str(prim) == 'cos'
+    f = new_checkpoint(partial(cond_apply, sin), policy=save_cos)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 0)
+
+    save_sin = lambda prim, *_, **__: str(prim) == 'sin'
+    f = new_checkpoint(partial(cond_apply, sin), policy=save_sin)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 1)
+
+    f = new_checkpoint(partial(cond_apply, sin),
+                       policy=jax.checkpoint_policies.everything_saveable)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 0)
+
+    f = new_checkpoint(partial(cond_apply, sin),
+                       policy=jax.checkpoint_policies.nothing_saveable)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 1)
+
+    f = new_checkpoint(lambda x: cond_apply(sin, cond_apply(sin, x)),
+                       policy=jax.checkpoint_policies.nothing_saveable)
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+    jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
 
@@ -5366,6 +5593,56 @@ class DCETest(jtu.JaxTestCase):
     pruned_args = [x for x, used in zip(args, used_inputs) if used]
     result2 = core.eval_jaxpr(jaxpr_pruned, consts, *pruned_args)
     self.assertAllClose(result1, result2)
+
+  def test_dce_jaxpr_cond_trivial(self):
+    x = jnp.array(1., dtype='float32')
+
+    # start with 7 eqns, use both outputs so nothing can be pruned
+    def f(x1, x2):
+      return lax.cond(x1 > 0,
+                      lambda x1, x2: (jnp.sin(x1), jnp.sin(x2)),
+                      lambda x1, x2: (jnp.sin(x1), jnp.sin(x2)),
+                      x1, x2)
+    jaxpr = jax.make_jaxpr(f)(x, x).jaxpr
+    self.assert_dce_result(jaxpr, [True, True], [True, True], 7)
+
+    # use neither output so everything can be pruned
+    self.assert_dce_result(jaxpr, [False, False], [False, False], 0)
+
+  def test_dce_jaxpr_cond_nontrivial(self):
+    x = jnp.array(1., dtype='float32')
+
+    # start with 7 eqns, dont use an output so an eqn can be trimmed on each
+    # side and x2 _can_ be pruned
+    def f(x1, x2):
+      return lax.cond(x1 > 0,
+                      lambda x1, x2: (jnp.sin(x1), jnp.sin(x2)),
+                      lambda x1, x2: (jnp.sin(x1), jnp.sin(x1)),
+                      x1, x2)
+    jaxpr = jax.make_jaxpr(f)(x, x).jaxpr
+    self.assert_dce_result(jaxpr, [True, False], [True, False], 5)
+
+    # start with 7 eqns, dont use an output so an eqn can be trimmed on each
+    # side, but x2 _can't_ be pruned b/c of a swap
+    def f(x1, x2):
+      return lax.cond(x1 > 0,
+                      lambda x1, x2: (jnp.sin(x1), jnp.sin(x2)),
+                      lambda x1, x2: (jnp.sin(x2), jnp.sin(x1)),
+                      x1, x2)
+    jaxpr = jax.make_jaxpr(f)(x, x).jaxpr
+    self.assert_dce_result(jaxpr, [True, False], [True, True], 5)
+
+    # start with 7 eqns, only use x1 on one side and x2 on the other, so we
+    # can't prune any inputs or eqns
+    def f(x1, x2):
+      return lax.cond(x1 > 0,
+                      lambda x1, x2: (jnp.sin(x1), jnp.sin(x1)),
+                      lambda x1, x2: (jnp.sin(x2), jnp.sin(x2)),
+                      x1, x2)
+    jaxpr = jax.make_jaxpr(f)(x, x).jaxpr
+    self.assert_dce_result(jaxpr, [True, True], [True, True], 7)
+    # use only one output, so we can prune eqns but not inputs
+    self.assert_dce_result(jaxpr, [True, False], [True, True], 5)
 
 
 class CustomJVPTest(jtu.JaxTestCase):
