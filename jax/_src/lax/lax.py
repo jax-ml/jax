@@ -2920,8 +2920,12 @@ ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(lt(max, operand), g, _zeros(operand)))
 batching.primitive_batchers[clamp_p] = _clamp_batch_rule
-mlir.register_lowering(
-    clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp, explicit_type=True))
+if jax._src.lib.mlir_api_version < 30:
+  mlir.register_lowering(
+      clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp, explicit_type=True))
+else:
+  mlir.register_lowering(
+      clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp))
 pe.padding_rules[clamp_p] = lambda _, __, a, x, b: [clamp(a, x, b)]
 
 def _concatenate_shape_rule(*operands, **kwargs):
