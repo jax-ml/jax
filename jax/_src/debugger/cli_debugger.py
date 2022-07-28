@@ -56,26 +56,30 @@ class CliDebugger(cmd.Cmd):
       self._error_message()
 
   def print_backtrace(self):
-    print('Traceback:', file=self.stdout)
+    backtrace = []
+    backtrace.append('Traceback:')
     for frame in self.frames[::-1]:
-      self.stdout.write(f'  File "{frame.filename}", line {frame.lineno}\n')
+      backtrace.append(f'  File "{frame.filename}", line {frame.lineno}')
       if frame.offset is None:
-        print('    <no source>', file=self.stdout)
+        backtrace.append('    <no source>')
       else:
         line = frame.source[frame.offset]
-        print(f'    {line.strip()}', file=self.stdout)
+        backtrace.append(f'    {line.strip()}')
+    print("\n".join(backtrace), file=self.stdout)
 
   def print_context(self, num_lines=2):
     curr_frame = self.frames[self.frame_index]
-    print(f'> {curr_frame.filename}({curr_frame.lineno})', file=self.stdout)
+    context = []
+    context.append(f'> {curr_frame.filename}({curr_frame.lineno})')
     for i, line in enumerate(curr_frame.source):
       assert curr_frame.offset is not None
       if (curr_frame.offset - 1 - num_lines <= i <=
           curr_frame.offset + num_lines):
         if i == curr_frame.offset:
-          print(f'->  {line}', file=self.stdout)
+          context.append(f'->  {line}')
         else:
-          print(f'    {line}', file=self.stdout)
+          context.append(f'    {line}')
+    print("\n".join(context), file=self.stdout)
 
   def _error_message(self):
     exc_info = sys.exc_info()[:2]
