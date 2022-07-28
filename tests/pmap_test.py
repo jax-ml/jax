@@ -308,6 +308,13 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = f.lower(x).compile()
     self.assertIsNotNone(f.runtime_executable())
 
+  def testLowerShapedArray(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x_shape = jax.core.ShapedArray(x.shape, x.dtype)
+    self.assertAllClose(f.lower(x_shape).compile()(x), f(x))
+
   def testMean(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
 
