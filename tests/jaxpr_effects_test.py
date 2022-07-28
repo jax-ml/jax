@@ -724,6 +724,52 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
       return lax.cond(x, true_fun, false_fun, x)
     f(2)
 
+  def test_allowed_effect_in_cond_jvp(self):
+    def f(x):
+      def true_fun(x):
+        effect_p.bind(effect='while')
+        return x
+      def false_fun(x):
+        effect_p.bind(effect='while')
+        return x
+      return lax.cond(True, true_fun, false_fun, x)
+
+    # test primal side gets effect
+    primal_jaxpr = jax.make_jaxpr(lambda x: jax.linearize(f, x)[0])(2.)
+    self.assertEqual(primal_jaxpr.effects, {'while'})
+    # and tangent side does not
+    _, f_lin = jax.linearize(f, 2.)
+    lin_jaxpr = f_lin.func.fun.args[0]
+    self.assertEqual(lin_jaxpr.effects, set())
+
+  def test_allowed_effect_in_cond_jvp2(self):
+    @jax.custom_jvp
+    def print_tangents(x):
+      return x
+    @print_tangents.defjvp
+    def foo_jvp(primals, tangents):
+      x, = primals
+      t, = tangents
+      # TODO(mattjj,sharadmv): don't require data dependence for jax.linearize!
+      # effect_p.bind(t, effect='while')
+      t, = effect_p.bind(t, effect='while')  # data dep only on tangents
+      return x, t
+
+    def f(x):
+      def true_fun(x):
+        return print_tangents(x)
+      def false_fun(x):
+        return print_tangents(x)
+      return lax.cond(True, true_fun, false_fun, x)
+
+    # test primal side does not get effect
+    primal_jaxpr = jax.make_jaxpr(lambda x: jax.linearize(f, x)[0])(2.)
+    self.assertEqual(primal_jaxpr.effects, set())
+    # and tangent side does
+    _, f_lin = jax.linearize(f, 2.)
+    lin_jaxpr = f_lin.func.fun.args[0]
+    self.assertEqual(lin_jaxpr.effects, {'while'})
+
   def test_allowed_ordered_effect_in_cond(self):
     def f(x):
       def true_fun(x):
