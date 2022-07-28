@@ -350,6 +350,7 @@ def pjit(fun: Callable,
     if not config.jax_array:
       normalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
           normalized_in_shardings_flat, args_flat)
+    change_for_testing_a_bug = 1
 
     params = dict(
         jaxpr=jaxpr,
