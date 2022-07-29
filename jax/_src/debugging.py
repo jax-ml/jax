@@ -110,8 +110,8 @@ if jaxlib.version >= (0, 3, 15):
   mlir.register_lowering(
       debug_callback_p, debug_callback_lowering, platform="tpu")
 
-def debug_callback(callback: Callable[..., Any], effect: DebugEffect, *args,
-                   **kwargs):
+def debug_callback(callback: Callable[..., Any], *args: Any,
+                   ordered: bool = False, **kwargs: Any):
   """Calls a stageable Python callback.
 
   `debug_callback` enables you to pass in a Python function that can be called
@@ -128,33 +128,33 @@ def debug_callback(callback: Callable[..., Any], effect: DebugEffect, *args,
 
   Args:
     callback: A Python callable.
-    effect: A `DebugEffect`.
     *args: The positional arguments to the callback.
+    ordered: A keyword only argument used to indicate whether or not the
+      staged out computation will enforce ordering of this callback w.r.t.
+      other ordered callbacks.
     **kwargs: The positional arguments to the callback.
   Returns:
     The value of `callback(*args, **kwargs)`.
   """
-  if not isinstance(effect, DebugEffect):
-    raise ValueError("Can only use `DebugEffect` effects in `debug_callback`")
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
+  effect = DebugEffect.ORDERED_PRINT if ordered else DebugEffect.PRINT
   return debug_callback_p.bind(*flat_args, callback=callback, effect=effect,
                                in_tree=in_tree)
 
 def _format_print_callback(fmt: str, *args, **kwargs):
   sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
 
-def debug_print(fmt: str, *args, ordered=False, **kwargs) -> None:
+def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   """Prints values and works in staged out JAX functions.
 
   Args:
-    fmt: A format string, e.g. `"hello {x}"`, that will be used to format
+    fmt: A format string, e.g. ``"hello {x}"``, that will be used to format
       input arguments.
     *args: A list of positional arguments to be formatted.
     ordered: A keyword only argument used to indicate whether or not the
-      staged out computation will enforce ordering of this `debug_print` w.r.t.
-      other ordered `debug_print`s.
+      staged out computation will enforce ordering of this ``debug_print``
+      w.r.t. other ordered ``debug_print`` calls.
     **kwargs: Additional keyword arguments to be formatted.
   """
-  effect = DebugEffect.ORDERED_PRINT if ordered else DebugEffect.PRINT
-  debug_callback(functools.partial(_format_print_callback, fmt), effect, *args,
-                 **kwargs)
+  debug_callback(functools.partial(_format_print_callback, fmt), *args,
+                 **kwargs, ordered=ordered)
