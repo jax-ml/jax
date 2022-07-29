@@ -230,6 +230,14 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(tree_util.tree_structure((3,)),
                      tree_util.treedef_tuple((tree_util.tree_structure(3),)))
 
+  def testFlattenOrder(self):
+    flat1, _ = tree_util.tree_flatten([0, ((1, 2), 3, (4, (5, 6, 7))), 8, 9])
+    flat2, _ = tree_util.tree_flatten([0, ((1, 2), 3, (4, (5, 6, 7))), 8, 9])
+    flat3, _ = tree_util.tree_flatten([0, ((1, (2, 3)), (4, (5, 6, 7))), 8, 9])
+    self.assertEqual(flat1, list(range(10)))
+    self.assertEqual(flat2, list(range(10)))
+    self.assertEqual(flat3, list(range(10)))
+
   def testFlattenUpTo(self):
     _, tree = tree_util.tree_flatten([(1, 2), None, ATuple(foo=3, bar=7)])
     out = tree.flatten_up_to([({
