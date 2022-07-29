@@ -2659,14 +2659,21 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       rhs_batching_dimensions=list(rhs_batch),
       lhs_contracting_dimensions=list(lhs_contracting),
       rhs_contracting_dimensions=list(rhs_contracting))
-  return [
-      mhlo.DotGeneralOp(
-          mlir.aval_to_ir_type(aval_out),
-          lhs,
-          rhs,
-          dot_dnums,
-          precision_config=precision_attr(precision)).result
-  ]
+  if jax._src.lib.mlir_api_version < 31:
+    return [
+        mhlo.DotGeneralOp(
+            mlir.aval_to_ir_type(aval_out),
+            lhs,
+            rhs,
+            dot_dnums,
+            precision_config=precision_attr(precision)).result
+    ]
+  else:
+    return [
+        mhlo.DotGeneralOp(
+            lhs, rhs, dot_dnums,
+            precision_config=precision_attr(precision)).result
+    ]
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
 
