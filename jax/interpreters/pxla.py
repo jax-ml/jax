@@ -74,7 +74,7 @@ from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
-from jax._src.util import (unzip3, prod, safe_map, safe_zip,
+from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log)
 
@@ -1672,10 +1672,56 @@ xla_pmap_p = core.MapPrimitive('xla_pmap')
 xla_pmap = xla_pmap_p.bind
 xla_pmap_p.def_impl(xla_pmap_impl)
 
+def _pmap_partial_eval_custom_params_updater(
+    unks_in, inst_in, kept_outs_known, kept_outs_staged, num_res, params_known,
+    params_staged):
+  # prune inputs to jaxpr_known according to unks_in
+  donated_invars_known, _ = partition_list(unks_in, params_known['donated_invars'])
+  in_axes_known, _ = partition_list(unks_in, params_known['in_axes'])
+  _, out_axes_known = partition_list(kept_outs_known, params_known['out_axes'])
+  out_axes_known = out_axes_known + [0] * num_res
+  new_params_known = dict(params_known, in_axes=tuple(in_axes_known),
+                          out_axes=tuple(out_axes_known),
+                          donated_invars=tuple(donated_invars_known))
+
+  # added num_res new inputs to jaxpr_staged, pruning according to inst_in
+  _, donated_invars_staged = partition_list(inst_in, params_staged['donated_invars'])
+  donated_invars_staged = [False] * num_res + donated_invars_staged
+  _, in_axes_staged = partition_list(inst_in, params_staged['in_axes'])
+  in_axes_staged = [0] * num_res + in_axes_staged
+  _, out_axes_staged = partition_list(kept_outs_staged, params_staged['out_axes'])
+  new_params_staged = dict(params_staged, in_axes=tuple(in_axes_staged),
+                           out_axes=tuple(out_axes_staged),
+                           donated_invars=tuple(donated_invars_staged))
+  return new_params_known, new_params_staged
+
+def _pmap_partial_eval_custom_res_maker(params_known, aval):
+  return core.unmapped_aval(params_known['axis_size'], core.no_axis_name, 0, aval)
+
+def _pmap_dce_rule(used_outputs, eqn):
+  # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
+  new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
+  _, in_axes = partition_list(used_inputs, eqn.params['in_axes'])
+  _, out_axes = partition_list(used_outputs, eqn.params['out_axes'])
+  new_params = dict(eqn.params, call_jaxpr=new_jaxpr, in_axes=tuple(in_axes),
+                    out_axes=tuple(out_axes))
+  if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
+    return used_inputs, None
+  else:
+    new_eqn = pe.new_jaxpr_eqn(
+        [v for v, used in zip(eqn.invars, used_inputs) if used],
+        [v for v, used in zip(eqn.outvars, used_outputs) if used],
+        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+    return used_inputs, new_eqn
+
+
 # Set param update handlers to update `donated_invars` just like xla_call_p
 pe.call_param_updaters[xla_pmap_p] = pe.call_param_updaters[xla.xla_call_p]
 pe.partial_eval_jaxpr_custom_rules[xla_pmap_p] = \
-    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'pmap')
+    partial(pe.call_partial_eval_custom_rule,
+            'call_jaxpr', _pmap_partial_eval_custom_params_updater,
+            res_aval=_pmap_partial_eval_custom_res_maker)
+pe.dce_rules[xla_pmap_p] = _pmap_dce_rule
 ad.call_param_updaters[xla_pmap_p] = ad.call_param_updaters[xla.xla_call_p]
 ad.call_transpose_param_updaters[xla_pmap_p] = \
     ad.call_transpose_param_updaters[xla.xla_call_p]

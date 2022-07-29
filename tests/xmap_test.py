@@ -728,6 +728,13 @@ class XMapTest(XMapTestCase):
     f = checkpoint(xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...]))
     self.assertAllClose(jax.grad(lambda x: f(x).sum())(jnp.arange(3.)), jnp.ones(3))
 
+  def testNewCheckpointNonlinearWithPolicy(self):
+    raise SkipTest("fails!")  # TODO(mattjj,apaszke): residual outvars problem
+    f = checkpoint(xmap(lambda x: jnp.sin(jnp.sin(x)), in_axes=['i', ...],
+                        out_axes=['i', ...]),
+                   policy=lambda prim, *_, **__: str(prim) == 'sin')
+    jax.grad(lambda x: f(x).sum())(jnp.arange(3.))  # TODO crashes!
+
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):
   """Re-executes all basic tests with the SPMD partitioner enabled"""

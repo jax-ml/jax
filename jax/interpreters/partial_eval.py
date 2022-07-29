@@ -374,6 +374,7 @@ class JaxprTrace(Trace):
     staged_params = update_params(params, map(op.not_, in_knowns), num_new_args)
     staged_params = dict(staged_params, in_axes=staged_in_axes,
                          out_axes=tuple(staged_out_axes), call_jaxpr=call_jaxpr)
+    del staged_params['out_axes_thunk']
     # The outputs of the staged-out call are Tracers with the new eqn as recipe.
     out_avals = [unmapped_aval(params['axis_size'], params['axis_name'], ax, a)
                  for ax, a in zip(staged_out_axes, out_avals_mapped)]
@@ -1357,11 +1358,15 @@ def partial_eval_jaxpr_custom_rule_not_implemented(
 ParamsUpdater = Callable[[Sequence[bool], Sequence[bool], Sequence[bool],
                           Sequence[bool], int, dict, dict],
                          Tuple[dict, dict]]
+ResAvalUpdater = Callable[[Dict[str, Any], AbstractValue], AbstractValue]
+def _default_res_aval_updater(
+    params: Dict[str, Any], aval: AbstractValue) -> AbstractValue:
+  return aval
 
 def call_partial_eval_custom_rule(
     jaxpr_param_name: str, params_updater: ParamsUpdater,
     saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
-    eqn: JaxprEqn
+    eqn: JaxprEqn, *, res_aval: ResAvalUpdater = _default_res_aval_updater,
   ) -> Tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], List[Var]]:
   jaxpr = eqn.params[jaxpr_param_name]
   jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
@@ -1371,12 +1376,13 @@ def call_partial_eval_custom_rule(
   _, ins_staged = partition_list(inst_in, eqn.invars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   newvar = core.gensym([jaxpr_known, jaxpr_staged])
-  residuals = [newvar(v.aval) for v in jaxpr_staged.invars[:num_res]]
   params_known = {**eqn.params, jaxpr_param_name: jaxpr_known}
   params_staged = {**eqn.params, jaxpr_param_name: jaxpr_staged}
   params_known, params_staged = params_updater(
       unks_in, inst_in, map(op.not_, unks_out), inst_out, num_res, params_known,
       params_staged)
+  residuals = [newvar(res_aval(params_known, var.aval))
+               for var in jaxpr_staged.invars[:num_res]]
   eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                             eqn.primitive, params_known, jaxpr_known.effects, eqn.source_info)
   eqn_staged = new_jaxpr_eqn([*residuals, *ins_staged], out_binders_staged,
@@ -1891,7 +1897,7 @@ class DynamicJaxprTrace(core.Trace):
       if update_params:
         new_params = update_params(new_params, [True] * len(tracers), len(consts))
       eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
-                          new_params, new_params['call_jaxpr'].effects, source_info)
+                          new_params, jaxpr.effects, source_info)
       self.frame.add_eqn(eqn)
     return out_tracers
 

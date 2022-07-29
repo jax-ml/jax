@@ -1999,6 +1999,55 @@ class PythonPmapTest(jtu.JaxTestCase):
       return x
     jax.grad(f)(3.)  # doesn't fail
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', jax.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_remat_of_pmap(self, remat):
+    f = remat(jax.pmap(lambda x: jnp.sin(jnp.sin(x))))
+    jtu.check_grads(f, (jnp.arange(1.),), order=2, modes=["rev"])
+
+    x = jnp.arange(1.)
+    jaxpr = jax.make_jaxpr(jax.linearize(f, x)[1])(x)
+    self.assertIn(' sin ', str(jaxpr))
+    self.assertIn(' cos ', str(jaxpr))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', jax.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_remat_of_pmap_policy(self, remat):
+    g = jax.pmap(lambda x: jnp.sin(jnp.sin(x)))
+    x = jnp.arange(1.)
+
+    save_cos = lambda prim, *_, **__: str(prim) == 'cos'
+    f = remat(g, policy=save_cos)
+    _, f_vjp = jax.vjp(f, x)
+    jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 0)
+
+    save_sin = lambda prim, *_, **__: str(prim) == 'sin'
+    f = remat(g, policy=save_sin)
+    _, f_vjp = jax.vjp(f, x)
+    jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 0)
+    self.assertEqual(jaxpr_text.count(' cos '), 2)
+
+    save_nothing = lambda prim, *_, **__: False
+    f = remat(g, policy=save_nothing)
+    _, f_vjp = jax.vjp(f, x)
+    jaxpr = f_vjp.args[0].func.args[1]
+    jaxpr_text = str(jaxpr)
+    self.assertEqual(jaxpr_text.count(' sin '), 1)
+    self.assertEqual(jaxpr_text.count(' cos '), 2)
+
 
 class CppPmapTest(PythonPmapTest):
 
