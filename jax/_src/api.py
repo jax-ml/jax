@@ -70,7 +70,7 @@ from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                                      local_devices, process_index,
                                      process_count, host_id, host_ids,
                                      host_count, default_backend)
-from jax.ad_checkpoint import checkpoint_policies
+from jax.ad_checkpoint import checkpoint_policies, checkpoint as new_checkpoint
 from jax.core import ShapedArray, raise_to_shaped
 from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
@@ -3095,12 +3095,12 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
       ``pmap``, CSE can defeat the purpose of this decorator. But in some
       settings, like when used inside a ``scan``, this CSE prevention mechanism
       is unnecessary, in which case ``prevent_cse`` can be set to False.
-    policy: This is an experimental feature and the API is likely to change.
-      Optional callable, one of the attributes of ``jax.checkpoint_policies``,
-      which takes as input a type-level specification of a first-order primitive
-      application and returns a boolean indicating whether the corresponding
-      output value(s) can be saved as a residual (or, if not, instead must be
-      recomputed in the (co)tangent computation).
+    policy: Optional callable, one of the attributes of
+      ``jax.checkpoint_policies``, which takes as input a type-level
+      specification of a first-order primitive application and returns a boolean
+      indicating whether the corresponding output value(s) can be saved as a
+      residual (or instead must be recomputed in the (co)tangent computation if
+      needed).
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -3155,6 +3155,9 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
   ...     return lambda x: f1(jax.checkpoint(f2)(x))
   ...
   """
+  if config.jax_new_checkpoint and not concrete:
+    return new_checkpoint(fun, prevent_cse=prevent_cse, policy=policy)
+
   @wraps(fun)
   @api_boundary
   def remat_f(*args, **kwargs):

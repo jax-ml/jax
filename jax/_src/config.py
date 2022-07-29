@@ -875,12 +875,12 @@ config.define_bool_state(
     default=(lib.version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
-# TODO(mattjj): remove after May 19 2022, NeurIPS submission deadline
+# TODO(mattjj): set default to True, then remove
 config.define_bool_state(
-    name='after_neurips',
-    default=True,
+    name='jax_new_checkpoint',
+    default=False,
     upgrade=True,
-    help='Gate changes until after NeurIPS 2022 deadline.')
+    help='Whether to use the new jax.checkpoint implementation.')
 
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(

@@ -515,6 +515,7 @@ from jax.experimental import pjit
 from jax.interpreters import ad, xla, batching, pxla
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
+from jax._src import ad_checkpoint
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -1674,6 +1675,16 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                                    (pjit.REPLICATED, pjit.REPLICATED)),
                 out_axis_resources=(eqn.params["out_axis_resources"] +
                                     (pjit.REPLICATED, pjit.REPLICATED)),
+            )))
+  elif eqn.primitive is ad_checkpoint.remat_p:
+    jaxpr_ = cast(core.Jaxpr, eqn.params["jaxpr"])
+    eqns.append(
+        eqn.replace(
+            invars=eqn.invars + [input_token_var, input_itoken_var],
+            outvars=eqn.outvars + [output_token_var, output_itoken_var],
+            params=dict(
+                eqn.params,
+                jaxpr=_rewrite_jaxpr(jaxpr_, True, True),
             )))
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")

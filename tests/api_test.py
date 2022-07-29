@@ -4784,6 +4784,16 @@ class RematTest(jtu.JaxTestCase):
         f_vjp(1.)[0].block_until_ready()
     self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
 
+  @unittest.skipIf(not config.jax_new_checkpoint, "old remat recompiles here")
+  def test_fwd_caching(self):
+    # see above test also
+    identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      for _ in range(20):
+        y, _ = jax.vjp(identity, 1.)
+        y.block_until_ready()
+    self.assertEqual(count[0], 1)
+
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
@@ -4851,7 +4861,6 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
                     modes=['fwd', 'rev'])
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_scan_policy(self):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     to_scan = lambda c, _: (jnp.sin(c), jnp.sin(c))
@@ -4864,7 +4873,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_scan_funky_custom_jvp(self):
     def scan_apply(f, x):
       y, _ = lax.scan(lambda x, _: (f(x), None), x, None, length=1)
@@ -4921,7 +4929,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 2)  # +1 b/c dce fixed point
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_scan_funky_custom_jvp2(self):
     # Like the above test but instead of using jit inside custom_jvp, use scan.
 
@@ -5081,7 +5088,6 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
                     modes=['fwd', 'rev'])
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_cond_policy(self):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     f = new_checkpoint(lambda x: lax.cond(x > 0, jnp.sin, lambda x: x, x),
@@ -5093,7 +5099,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_cond_funky_custom_jvp(self):
     def cond_apply(f, x):
       return lax.cond(x.sum() > -jnp.inf, f, lambda x: x, x)
@@ -5149,7 +5154,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_cond_funky_custom_jvp2(self):
     # Like the above test but instead of using jit inside custom_jvp, use cond.
 
@@ -5395,7 +5399,6 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 0)
 
 
-@unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
 class DCETest(jtu.JaxTestCase):
 
   def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: List[bool],
@@ -5580,9 +5583,9 @@ class DCETest(jtu.JaxTestCase):
       return out, out
 
     def f(xs):
-      return lax.scan(scanned_f, 1., xs)
+      return lax.scan(scanned_f, jnp.array(1., 'float32'), xs)
 
-    xs = jnp.arange(10.)
+    xs = jnp.arange(10., dtype='float32')
     jaxpr = api.make_jaxpr(lambda xs: api.linearize(f, xs)[1])(xs).jaxpr
 
     jaxpr, used_inputs = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars))
