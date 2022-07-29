@@ -1075,7 +1075,7 @@ def _xmap_partial_eval_custom_params_updater(
   assert params_known['spmd_in_axes'] is None is params_known['spmd_out_axes']
   assert params_staged['spmd_in_axes'] is None is params_staged['spmd_out_axes']
 
-  # pruned inputs to jaxpr_known according to unks_in
+  # prune inputs to jaxpr_known according to unks_in
   donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
   in_axes_known, _ = pe.partition_list(unks_in, params_known['in_axes'])
   if num_res == 0:

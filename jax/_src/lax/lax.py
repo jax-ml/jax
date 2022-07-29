@@ -1428,7 +1428,8 @@ def zeros_like_array(x: Array) -> Array:
 for t in itertools.chain(
     dtypes.python_scalar_dtypes.keys(), array_types,
     device_array.device_array_types,
-    [pxla.ShardedDeviceArray, pxla.pmap_lib.ShardedDeviceArray]):
+    [pxla.ShardedDeviceArray, pxla._ShardedDeviceArray,
+     pxla.pmap_lib.ShardedDeviceArray]):
   ad_util.jaxval_adders[t] = add
 ad_util.jaxval_zeros_likers[device_array._DeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[device_array.Buffer] = zeros_like_array
