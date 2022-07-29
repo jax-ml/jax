@@ -76,6 +76,14 @@ flags.DEFINE_integer(
     'Optional profile version for XLA compilation. '
     'This is meaningful only when XLA is configured to '
     'support the remote compilation profile feature.')
+flags.DEFINE_string(
+    'jax_cuda_visible_devices', 'all',
+    'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
+    'comma-separate list of integer device IDs.')
+flags.DEFINE_string(
+    'jax_rocm_visible_devices', 'all',
+    'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
+    'comma-separate list of integer device IDs.')
 
 def get_compile_options(
     num_replicas: int,
@@ -212,19 +220,28 @@ register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
 
 
-def make_gpu_client(platform_name=None):
+def make_gpu_client(*, platform_name, visible_devices_flag):
+  visible_devices = getattr(FLAGS, visible_devices_flag, "all")
+  # Pass allowed_devices unconditionally when jaxlib 0.3.15 is the minimum.
+  kwargs = {}
+  if visible_devices != "all":
+    kwargs["allowed_devices"] = {int(x) for x in visible_devices.split(",")}
   return xla_client.make_gpu_client(
     distributed_client=distributed.global_state.client,
     node_id=distributed.global_state.process_id,
-    platform_name=platform_name)
+    platform_name=platform_name,
+    **kwargs)
 
 if hasattr(xla_client, "make_gpu_client"):
   register_backend_factory(
-      'cuda', partial(make_gpu_client, platform_name='cuda'),
+      'cuda', partial(make_gpu_client, platform_name='cuda',
+      visible_devices_flag='jax_cuda_visible_devices'),
       priority=200)
   register_backend_factory(
-      'rocm', partial(make_gpu_client, platform_name='rocm'),
+      'rocm', partial(make_gpu_client, platform_name='rocm',
+      visible_devices_flag='jax_rocm_visible_devices'),
       priority=200)
+
 
 if hasattr(xla_client, "make_tpu_client"):
   register_backend_factory(
