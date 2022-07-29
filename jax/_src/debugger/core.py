@@ -95,7 +95,9 @@ class Debugger(Protocol):
 _debugger_registry: Dict[str, Tuple[int, Debugger]] = {}
 
 
-def get_debugger() -> Debugger:
+def get_debugger(backend: Optional[str] = None) -> Debugger:
+  if backend is not None and backend in _debugger_registry:
+    return _debugger_registry[backend][1]
   debuggers = sorted(_debugger_registry.values(), key=lambda x: -x[0])
   if not debuggers:
     raise ValueError("No debuggers registered!")
@@ -111,7 +113,7 @@ def register_debugger(name: str, debugger: Debugger, priority: int) -> None:
 debug_lock = threading.Lock()
 
 
-def breakpoint(*, ordered: bool = False, **kwargs):  # pylint: disable=redefined-builtin
+def breakpoint(*, ordered: bool = False, backend=None, **kwargs):  # pylint: disable=redefined-builtin
   """Enters a breakpoint at a point in a program."""
   frame_infos = inspect.stack()
   # Filter out internal frames
@@ -131,7 +133,7 @@ def breakpoint(*, ordered: bool = False, **kwargs):  # pylint: disable=redefined
     thread_id = None
     if threading.current_thread() is not threading.main_thread():
       thread_id = threading.get_ident()
-    debugger = get_debugger()
+    debugger = get_debugger(backend=backend)
     # Lock here because this could be called from multiple threads at the same
     # time.
     with debug_lock:

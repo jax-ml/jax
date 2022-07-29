@@ -1,6 +1,6 @@
 # JAX debugging flags  
 
-JAX offers flags and context managers.
+JAX offers flags and context managers that enable catching errors more easily.
   
 ## `jax_debug_nans` configuration option and context manager
 

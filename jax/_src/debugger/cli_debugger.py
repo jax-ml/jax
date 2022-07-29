@@ -26,7 +26,7 @@ DebuggerFrame = debugger_core.DebuggerFrame
 
 class CliDebugger(cmd.Cmd):
   """A text-based debugger."""
-  prompt = '(jaxdb) '
+  prompt = '(jdb) '
   use_rawinput: bool = False
 
   def __init__(self, frames: List[DebuggerFrame], thread_id,
@@ -36,7 +36,7 @@ class CliDebugger(cmd.Cmd):
     self.frames = frames
     self.frame_index = 0
     self.thread_id = thread_id
-    self.intro = 'Entering jaxdb:'
+    self.intro = 'Entering jdb:'
 
   def current_frame(self):
     return self.frames[self.frame_index]
