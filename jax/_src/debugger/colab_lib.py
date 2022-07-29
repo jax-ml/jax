@@ -17,20 +17,19 @@ from __future__ import annotations
 import abc
 import dataclasses
 import functools
+import sys
 import uuid
 
 from typing import Any, Dict, List, Union
 
-# pylint: disable=g-import-not-at-top
-# pytype: disable=import-error
-try:
+IS_COLAB_ENABLED = "google.colab" in sys.modules
+if IS_COLAB_ENABLED:
+  # pylint: disable=g-import-not-at-top
+  # pytype: disable=import-error
   from google.colab import output
   from IPython import display
-  IS_COLAB_ENABLED = True
-except ImportError:
-  IS_COLAB_ENABLED = False
-# pytype: enable=import-error
-# pylint: enable=g-import-not-at-top
+  # pytype: enable=import-error
+  # pylint: enable=g-import-not-at-top
 
 
 class DOMElement(metaclass=abc.ABCMeta):
