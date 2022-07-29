@@ -44,7 +44,7 @@ symlink_inputs(
 py_library(
     name = "mlir",
     deps = [
-        "//jaxlib/mlir/_mlir_libs:_mlir_libs",
+        "//jaxlib/mlir/_mlir_libs",
     ],
 )
 
@@ -106,7 +106,7 @@ symlink_inputs(
     name = "mhlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo:MhloOpsPyFiles",
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:MhloOpsPyFiles",
     ]}},
     deps = [
         ":core",
