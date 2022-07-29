@@ -43,6 +43,10 @@ else:
 def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Flattens a pytree.
 
+  The flattening order (i.e. the order of elements in the output list)
+  is deterministic, corresponding to a left-to-right depth-first tree
+  traversal.
+
   Args:
     tree: a pytree to flatten.
     is_leaf: an optionally specified function that will be called at each
