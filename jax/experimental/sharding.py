@@ -71,10 +71,6 @@ class XLACompatibleSharding(Sharding):
     raise NotImplementedError('Subclasses should implement this method.')
 
   @abc.abstractmethod
-  def is_compatible_aval(self, aval_shape: Shape):
-    raise NotImplementedError('Subclasses should implement this method.')
-
-  @abc.abstractmethod
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -233,9 +229,6 @@ class SingleDeviceSharding(XLACompatibleSharding):
       return False
     return self._device == other._device
 
-  def is_compatible_aval(self, aval_shape: Shape):
-    pass
-
   def normalize(self):
     return SingleDeviceSharding(self._device)
 
@@ -268,9 +261,6 @@ class PmapSharding(XLACompatibleSharding):
     self.devices = devices
     # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
-
-  def is_compatible_aval(self, aval_shape: Shape):
-    pass
 
   def normalize(self):
     return PmapSharding(self.devices, self.sharding_spec)

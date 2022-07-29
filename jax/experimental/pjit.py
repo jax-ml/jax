@@ -593,10 +593,15 @@ def pjit_check_aval_sharding(
     global_str = "" if s.is_fully_addressable else " global"
     shape = aval.shape
     try:
-      s.is_compatible_aval(shape)
+      # Sharding interfaces can implement `is_compatible_aval` as an optional
+      # method to raise a more meaningful error.
+      if hasattr(s, 'is_compatible_aval'):
+        s.is_compatible_aval(shape)
+      else:
+        s._to_xla_op_sharding(len(shape))
     except ValueError as e:
       raise ValueError(f'One of {what_aval} is incompatible with its sharding '
-                       f'annotation: {str(e)}')
+                       f'annotation {s}: {str(e)}')
     # Use the `OpSharding` proto to find out how many ways each dimension of
     # the aval is sharded. This approach will work across all
     # XLACompatibleSharding.

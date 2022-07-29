@@ -19,10 +19,13 @@ import operator
 import google_benchmark
 import jax
 from jax import lax
+from jax._src import test_util as jtu
 from jax.experimental import sparse
 from jax._src.api_util import shaped_abstractify  # technically not an api fn
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla
+from jax.experimental import sharding
+from jax.experimental import pjit as pjit_lib
 import jax.numpy as jnp
 import numpy as np
 
@@ -488,6 +491,17 @@ def bench_are_op_shardings_equal(state):
 
   while state:
     pxla.are_op_shardings_equal(op1, op2)
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_pjit_check_aval_sharding(state):
+  mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+  s = sharding.MeshPspecSharding(mesh, pxla.PartitionSpec('x', 'y'))
+  aval = jax.ShapedArray((8, 2), np.int32)
+
+  while state:
+    pjit_lib.pjit_check_aval_sharding([s] * 100, [aval] * 100, 'benchmark', False)
 
 
 def swap(a, b):
