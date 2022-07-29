@@ -642,17 +642,6 @@ jax_test(
 )
 
 jax_test(
-    name = "sharded_jit_test",
-    srcs = ["sharded_jit_test.py"],
-    disable_backends = [
-        "tpu",
-        "iree",
-    ],
-    tags = ["multiaccelerator"],
-    deps = ["//jax:experimental"],
-)
-
-jax_test(
     name = "sparse_test",
     srcs = ["sparse_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],
@@ -892,7 +881,6 @@ exports_files(
         "api_test.py",
         "pmap_test.py",
         "compilation_cache_test.py",
-        "sharded_jit_test.py",
         "pjit_test.py",
         "transfer_guard_test.py",
     ],

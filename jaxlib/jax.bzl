@@ -35,7 +35,6 @@ flatbuffer_cc_library = _flatbuffer_cc_library
 jax_internal_packages = []
 jax_test_util_visibility = []
 loops_visibility = []
-sharded_jit_visibility = []
 
 absl_logging_py_deps = []
 absl_testing_py_deps = []
