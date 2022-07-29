@@ -4,7 +4,7 @@ Do you have exploding gradients? Are nans making you gnash your teeth? Just want
 
 ## [Interactive inspection with `jax.debug`](print_breakpoint)
 
-  **TL;DR** Use {func}`jax.debug.print` to print values to stdout in `jax.jit`- or `jax.pmap`-decorated functions
+  **TL;DR** Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`jax.pmap`-, and `pjit`-decorated functions
   and use {func}`jax.debug.breakpoint` to pause execution of your compiled function to inspect values in the call stack:
 
   ```python
