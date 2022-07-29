@@ -5207,6 +5207,50 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_new', new_checkpoint),
+      ])
+  def test_remat_of_while_loop(self, remat):
+    def cond_fn(carry):
+      i, _ = carry
+      return i < 3
+    def body_fn(carry):
+      i, x = carry
+      return i + 1, jnp.sin(x)
+    def f(x):
+      _, y = lax.while_loop(cond_fn, body_fn, (0, x))
+      return y
+
+    _, f_lin = jax.linearize(remat(f), 3.)
+    y_dot = f_lin(1.0)
+    expected = jax.grad(lambda x: jnp.sin(jnp.sin(jnp.sin(x))))(3.)
+    self.assertArraysAllClose(y_dot, expected, check_dtypes=False)
+
+    jaxpr = api.make_jaxpr(jax.linearize(remat(f), 4.)[1])(1.)
+    self.assertIn(' sin ', str(jaxpr))
+    self.assertIn(' cos ', str(jaxpr))
+
+  def test_remat_of_while_loop_policy(self):
+    def cond_fn(carry):
+      i, _ = carry
+      return i < 3
+    def body_fn(carry):
+      i, x = carry
+      return i + 1, jnp.sin(x)
+    def f(x):
+      _, y = lax.while_loop(cond_fn, body_fn, (0, x))
+      return y
+
+    # even with a policy, we can't save residuals (w/o dynamic shapes)!
+    save_cos = lambda prim, *_, **__: str(prim) == 'cos'
+    g = new_checkpoint(f, policy=save_cos)
+    jaxpr = api.make_jaxpr(jax.linearize(g, 4.)[1])(1.)
+    self.assertIn(' sin ', str(jaxpr))
+    self.assertIn(' cos ', str(jaxpr))
+
 
 class JaxprTest(jtu.JaxTestCase):
 

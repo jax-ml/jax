@@ -828,14 +828,14 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     unks_in = const_uk   + carry_uk   + xs_uk
     jaxpr_known_, jaxpr_staged_, unks_out, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
-            jaxpr.jaxpr, in_unknowns=unks_in, in_inst=[True] * len(unks_in),
+            jaxpr.jaxpr, in_unknowns=unks_in, in_inst=True,
             ensure_out_unknowns=carry_uk + [False] * num_ys,
             ensure_out_inst=True, saveable=saveable)
     carry_uk_out, ys_uk = split_list(unks_out, [num_carry])
     if carry_uk_out == carry_uk:
       break
     else:
-      carry_uk = _map(operator.or_, carry_uk  , carry_uk_out  )
+      carry_uk = _map(operator.or_, carry_uk, carry_uk_out)
   else:
     assert False, "Fixpoint not reached"
   jaxpr_known  = core.ClosedJaxpr(jaxpr_known_ , jaxpr.consts)
@@ -1309,6 +1309,70 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   out_tracers = [t for t, uk in zip(out_tracers_, carry_uk) if uk]
   return util.merge_lists(carry_uk, out_known, out_tracers)
 
+# TODO(mattjj): de-duplicate code with _while_partial_eval
+def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+  del saveable  # We can't save any residuals anyway (w/o dynamic shapes)!
+  cond_jaxpr = eqn.params['cond_jaxpr']
+  cond_nconsts = eqn.params['cond_nconsts']
+  body_jaxpr = eqn.params['body_jaxpr']
+  body_nconsts = eqn.params['body_nconsts']
+
+  cond_consts_uk, body_consts_uk, carry_init_uk = \
+      split_list(unks_in, [cond_nconsts, body_nconsts])
+
+  # Fixpoint to compute known part of the body (trivial on 'inst_in', since we
+  # make all inputs available as DCE can subsequently prune any unused ones)
+  carry_uk = carry_init_uk
+  for _ in range(1 + len(carry_uk)):
+    body_unks_in = body_consts_uk + carry_uk
+    jaxpr_known_, _, carry_uk_out, _, num_res = \
+        pe.partial_eval_jaxpr_custom(
+            body_jaxpr.jaxpr, in_unknowns=body_unks_in, in_inst=True,
+            ensure_out_unknowns=carry_uk, ensure_out_inst=True,
+            saveable=ad_checkpoint.nothing_saveable)
+    if carry_uk_out == carry_uk:
+      break
+    else:
+      carry_uk = _map(operator.or_, carry_uk, carry_uk_out)
+  else:
+    assert False, "Fixpoint not reached"
+  assert not num_res
+  body_jaxpr_known = core.ClosedJaxpr(jaxpr_known_, body_jaxpr.consts)
+  del jaxpr_known_, carry_uk_out, num_res
+
+  # Compute the known part of cond_fun (basically pruning inputs on known side).
+  cond_unks_in = cond_consts_uk + carry_uk
+  cond_jaxpr_known_, _, [cond_uk], _, _ = \
+      pe.partial_eval_jaxpr_custom(
+          cond_jaxpr.jaxpr, cond_unks_in, in_inst=True,
+          ensure_out_unknowns=False, ensure_out_inst=True,
+          saveable=ad_checkpoint.nothing_saveable)
+  assert not cond_uk  # only possible with old-style remat
+  cond_jaxpr_known = core.ClosedJaxpr(cond_jaxpr_known_, cond_jaxpr.consts)
+  del cond_uk
+
+  # Build the known eqn.
+  ins_known, _ = partition_list(unks_in, eqn.invars)
+  out_binders_known, _ = partition_list(carry_uk, eqn.outvars)
+  params_known = dict(cond_jaxpr=cond_jaxpr_known, body_jaxpr=body_jaxpr_known,
+                      cond_nconsts=len(cond_consts_uk) - sum(cond_consts_uk),
+                      body_nconsts=len(body_consts_uk) - sum(body_consts_uk))
+  effects_known = core.join_effects(cond_jaxpr_known.effects,
+                                    body_jaxpr_known.effects)
+  eqn_known = pe.new_jaxpr_eqn(ins_known, out_binders_known, while_p,
+                               params_known, effects_known, eqn.source_info)
+
+  # Staged eqn is same as input eqn.
+  eqn_staged = eqn
+
+  # Instantiate all inputs (b/c jaxpr_staged takes all inputs).
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+
+  unks_out = carry_uk
+  inst_out = [True] * len(unks_out)
+  return eqn_known, eqn_staged, unks_out, inst_out, new_inst
+
 def _while_transpose_error(*_, **kwargs):
   raise ValueError("Reverse-mode differentiation does not work for "
                    "lax.while_loop or lax.fori_loop. "
@@ -1323,8 +1387,7 @@ pe.custom_partial_eval_rules[while_p] = _while_partial_eval
 xla.register_initial_style_primitive(while_p)
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
-pe.partial_eval_jaxpr_custom_rules[while_p] = \
-    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'while_loop')
+pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 
 
 def _pred_bcast_select_mhlo(
