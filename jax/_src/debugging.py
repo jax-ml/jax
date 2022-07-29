@@ -50,17 +50,15 @@ debug_callback_p.multiple_results = True
 map, unsafe_map = util.safe_map, map
 
 @debug_callback_p.def_impl
-def debug_callback_impl(*flat_args, callback: Callable[..., Any],
-    effect: DebugEffect, in_tree: tree_util.PyTreeDef):
+def debug_callback_impl(*args, callback: Callable[..., Any],
+                        effect: DebugEffect):
   del effect
-  args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
-  out = callback(*args, **kwargs)
-  return tree_util.tree_leaves(out)
+  return callback(*args)
 
 @debug_callback_p.def_effectful_abstract_eval
 def debug_callback_abstract_eval(*flat_avals, callback: Callable[..., Any],
-    effect: DebugEffect, in_tree: tree_util.PyTreeDef):
-  del flat_avals, callback, in_tree
+                                 effect: DebugEffect):
+  del flat_avals, callback
   return [], {effect}
 
 def debug_callback_batching_rule(args, dims, **params):
@@ -87,8 +85,8 @@ def debug_callback_jvp_rule(primals, tangents, **params):
 ad.primitive_jvps[debug_callback_p] = debug_callback_jvp_rule
 
 def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
-    effect: DebugEffect, in_tree: tree_util.PyTreeDef):
-  del flat_args, callback, effect, in_tree
+    effect: DebugEffect):
+  del flat_args, callback, effect
   raise ValueError("Transpose doesn't support debugging callbacks.")
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
@@ -175,19 +173,23 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
   of the computation are duplicated or dropped.
 
   Args:
-    callback: A Python callable.
+    callback: A Python callable. Its return value will be ignored.
     *args: The positional arguments to the callback.
     ordered: A keyword only argument used to indicate whether or not the
       staged out computation will enforce ordering of this callback w.r.t.
       other ordered callbacks.
-    **kwargs: The positional arguments to the callback.
+    **kwargs: The keyword arguments to the callback.
   Returns:
     The value of `callback(*args, **kwargs)`.
   """
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   effect = DebugEffect.ORDERED_PRINT if ordered else DebugEffect.PRINT
-  return debug_callback_p.bind(*flat_args, callback=callback, effect=effect,
-                               in_tree=in_tree)
+  def _flat_callback(*flat_args):
+    args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
+    callback(*args, **kwargs)
+    return []
+  return debug_callback_p.bind(*flat_args, callback=_flat_callback,
+                               effect=effect)
 
 class _DebugPrintFormatChecker(string.Formatter):
 
