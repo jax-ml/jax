@@ -177,6 +177,24 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertListEqual(op_sharding.tile_assignment_devices,
                          [0, 2, 4, 6, 1, 3, 5, 7])
 
+  @parameterized.named_parameters(
+      ("mesh_x_y", P("x", "y")),
+      ("mesh_x", P("x")),
+      ("mesh_y", P("y")),
+      ("mesh_none_y", P(None, "y")),
+      ("mesh_none_x", P(None, "x")),
+      ("mesh_xy", P(("x", "y"))),
+      ("mesh_fully_replicated", P()),
+  )
+  def test_op_sharding_indices(self, pspec):
+    shape = (8, 4)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    mps = sharding.MeshPspecSharding(mesh, pspec)
+    ops = sharding.OpShardingSharding(
+        list(mesh.devices.flat), mps._to_xla_op_sharding(len(shape)))
+    self.assertDictEqual(
+        ops.devices_indices_map(shape), mps.devices_indices_map(shape))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

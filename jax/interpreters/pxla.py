@@ -205,6 +205,57 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
   proto.tile_assignment_devices = list(proto_mesh.flat)
   return proto
 
+
+def _get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int], int]:
+  partitions = op_sharding.tile_assignment_dimensions
+  if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
+    replicate_on_last_tile_dim = True
+  else:
+    replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
+    if op_sharding.last_tile_dims:
+      raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
+  num_replicas = 1
+  if replicate_on_last_tile_dim:
+    num_replicas = partitions[-1]
+    partitions = partitions[:-1]
+  return partitions, num_replicas
+
+
+def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+                           num_devices: int):
+  # num_devices is required as an argument when op_sharding is of type
+  # REPLICATED. `jax.device_count()` cannot be used because you can create
+  # an opsharding with less number of devices than `jax.device_count()`.
+  if op_sharding.type == xc.OpSharding.Type.REPLICATED:
+    # xb.device_count maybe not be always right as you can use less devices than
+    # what's available.
+    return tuple((slice(None),) * len(shape) for _ in range(num_devices))
+
+  assert num_devices == len(op_sharding.tile_assignment_devices)
+
+  partitions, num_replicas = _get_num_ways_dim_sharded(op_sharding)
+  assert len(partitions) == len(shape), (len(partitions), len(shape))
+
+  axis_indices: List[Sequence[Index]] = []
+  for dim, n_shards in zip(shape, partitions):
+    if n_shards == 1:
+      axis_indices.append([slice(None)])
+    elif n_shards > 1:
+      shard_size, ragged = divmod(dim, n_shards)
+      assert not ragged, (dim, n_shards, dim)
+      axis_indices.append([slice(i * shard_size, (i + 1) * shard_size)
+                           for i in range(n_shards)])
+    else:
+      raise AssertionError('Unrecognized number of shards. Please file a bug!')
+
+  indices = np.empty(num_devices, dtype=np.object_)
+  device_it = iter(op_sharding.tile_assignment_devices)
+  for i, idxs in enumerate(it.product(*axis_indices)):
+    for _ in range(num_replicas):
+      indices[next(device_it)] = idxs
+  return tuple(indices.flat)
+
+
 def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
   """Returns NumPy-style indices corresponding to a sharding spec.
 

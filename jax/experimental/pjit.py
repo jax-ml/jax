@@ -584,21 +584,6 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
   return _ListWithW([jaxpr, normalized_out_shardings_flat])
 
 
-def _get_num_ways_dim_sharded(s, aval_shape) -> List[int]:
-  op_sharding = s._to_xla_op_sharding(len(aval_shape))
-  tile_assignment_dimensions = op_sharding.tile_assignment_dimensions
-
-  if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
-    replicate_on_last_tile_dim = True
-  else:
-    replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
-    if op_sharding.last_tile_dims:
-      raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
-  if replicate_on_last_tile_dim:
-    tile_assignment_dimensions = tile_assignment_dimensions[:-1]
-  return tile_assignment_dimensions
-
-
 def pjit_check_aval_sharding(
     shardings: Sequence[XLACompatibleSharding], flat_avals, what_aval: str,
     allow_uneven_sharding: bool):
@@ -615,7 +600,10 @@ def pjit_check_aval_sharding(
     # Use the `OpSharding` proto to find out how many ways each dimension of
     # the aval is sharded. This approach will work across all
     # XLACompatibleSharding.
-    num_ways_dim_sharded = _get_num_ways_dim_sharded(s, shape)
+    op_sharding = s._to_xla_op_sharding(len(shape))
+    assert op_sharding is not None
+    num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(
+        cast(xc.OpSharding, op_sharding))
     for i, size in enumerate(num_ways_dim_sharded):
       if not allow_uneven_sharding and shape[i] % size != 0:
         raise ValueError(f"One of {what_aval} was given the sharding "
