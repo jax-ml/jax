@@ -466,5 +466,3 @@ mlir.register_lowering(
                                    multiple_results=True))
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
 batching.axis_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
-pe.partial_eval_jaxpr_custom_rules[linear_solve_p] = \
-    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'linear_solve')
