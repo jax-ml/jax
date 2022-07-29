@@ -23,6 +23,7 @@ import numpy as np
 
 import jax
 from jax import lax
+from jax.ad_checkpoint import checkpoint
 from jax._src import test_util as jtu
 from jax import tree_util
 import jax.numpy as jnp  # scan tests use numpy
@@ -413,6 +414,32 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
           lambda x: a * jnp.ones(2), 1.0, solve, solve)
     with self.assertRaisesRegex(ValueError, re.escape("matvec() output shapes")):
       jax.jvp(bad_matvec_usage, (1.0,), (1.0,))
+
+  def test_custom_linear_solve_new_remat(self):
+
+    def explicit_jacobian_solve(matvec, b):
+      return lax.stop_gradient(jnp.linalg.solve(jax.jacobian(matvec)(b), b))
+
+    def matrix_free_solve(matvec, b):
+      return lax.custom_linear_solve(
+          matvec, b, explicit_jacobian_solve, explicit_jacobian_solve,
+          symmetric=True)
+
+    @checkpoint
+    def linear_solve(a, b):
+      return matrix_free_solve(partial(high_precision_dot, a), b)
+
+    rng = self.rng()
+    a = rng.randn(3, 3)
+    if True:
+      a = a + a.T
+    b = rng.randn(3)
+    jtu.check_grads(linear_solve, (a, b), order=1, rtol=3e-3, modes=['rev'])
+
+    @partial(checkpoint, policy=lambda *_, **__: True)
+    def linear_solve(a, b):
+      return matrix_free_solve(partial(high_precision_dot, a), b)
+    jtu.check_grads(linear_solve, (a, b), order=1, rtol=3e-3, modes=['rev'])
 
 
 if __name__ == '__main__':
