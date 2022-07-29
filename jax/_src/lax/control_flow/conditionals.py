@@ -446,7 +446,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   unks_out: List[bool] = [False] * len(eqn.outvars)
   for jaxpr in branches:
     _, _, unks_out_, _, _ = pe.partial_eval_jaxpr_custom(
-        jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=[True] * len(ops_uk),
+        jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=True,
         ensure_out_unknowns=False, ensure_out_inst=True, saveable=saveable)
     unks_out = map(operator.or_, unks_out, unks_out_)
 
@@ -458,7 +458,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   for jaxpr in branches:
     jaxpr_known, jaxpr_staged, _, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
-            jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=[True] * len(ops_uk),
+            jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=True,
             ensure_out_unknowns=unks_out, ensure_out_inst=True,
             saveable=saveable)
     branches_known_.append( core.ClosedJaxpr(jaxpr_known,  jaxpr.consts))
@@ -481,7 +481,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # passing in_inst argument to partial_eval_jaxpr_custom above).
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is core.Var and not inst]
-  inst_in = [True] * len(inst_in)
+  del inst_in
 
   # Create residual variables.
   newvar = core.gensym()

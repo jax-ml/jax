@@ -1241,11 +1241,13 @@ call_partial_eval_rules[remat_call_p] = _remat_partial_eval
 def partial_eval_jaxpr_custom(
     jaxpr: Jaxpr,
     in_unknowns: Sequence[bool],
-    in_inst: Sequence[bool],
+    in_inst: Union[bool, Sequence[bool]],
     ensure_out_unknowns: Union[bool, Sequence[bool]],
     ensure_out_inst: Union[bool, Sequence[bool]],
     saveable: Callable[..., bool],
   ) -> Tuple[Jaxpr, Jaxpr, List[bool], List[bool], int]:
+  if type(in_inst) is bool:
+    in_inst = (in_inst,) * len(jaxpr.invars)
   if type(ensure_out_unknowns) is bool:
     ensure_out_unknowns = (ensure_out_unknowns,) * len(jaxpr.outvars)
   if type(ensure_out_inst) is bool:

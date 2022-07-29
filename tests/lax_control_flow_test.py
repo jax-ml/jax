@@ -105,6 +105,15 @@ SCAN_IMPLS_WITH_FOR = [
 ]
 
 
+def while_loop_new_checkpoint(cond_fun, body_fun, init_val):
+  return new_checkpoint(partial(lax.while_loop, cond_fun, body_fun))(init_val)
+
+WHILE_LOOP_IMPLS = [
+    (lax.while_loop, 'while_loop'),
+    (while_loop_new_checkpoint, 'new_checkpoint'),
+]
+
+
 def while_loop_reference(cond, body, carry):
   while cond(carry):
     carry = body(carry)
@@ -2007,13 +2016,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(loop, (x,), order=2, modes=["fwd"])
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_loop={}_jit_body={}_jit_cond={}".format(
-          jit_loop, jit_body, jit_cond),
-       "jit_loop": jit_loop, "jit_body": jit_body, "jit_cond": jit_cond}
+      {"testcase_name": "_jit_loop={}_jit_body={}_jit_cond={}_impl={}".format(
+          jit_loop, jit_body, jit_cond, while_name),
+       "jit_loop": jit_loop, "jit_body": jit_body, "jit_cond": jit_cond,
+       "while_loop": while_impl}
       for jit_loop in [False, True]
       for jit_body in [False, True]
-      for jit_cond in [False, True])
-  def testWhileLinearize(self, jit_loop=True, jit_body=False, jit_cond=True):
+      for jit_cond in [False, True]
+      for while_impl, while_name in WHILE_LOOP_IMPLS)
+  def testWhileLinearize(self, while_loop, jit_loop=True, jit_body=False,
+                         jit_cond=True):
     cond = lambda x: x[0, 2] <= 8
     body = lambda x: x * x
 
@@ -2022,7 +2034,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_body:
       body = jax.jit(body)
 
-    loop = partial(lax.while_loop, cond, body)
+    loop = partial(while_loop, cond, body)
     if jit_loop:
       loop = jax.jit(loop)
 
