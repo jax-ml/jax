@@ -70,6 +70,7 @@ from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
@@ -2713,18 +2714,20 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
 
 
 def are_op_shardings_equal(op1, op2):
-  # TODO(yashkatariya): Use HloSharding class to check for equality.
   if id(op1) == id(op2):
     return True
   if op1.type != op2.type:
     return False
-  if op1.type == xc.OpSharding.Type.TUPLE:
-    return all(are_op_shardings_equal(i, j)
-               for i, j in safe_zip(op1.tuple_shardings, op2.tuple_shardings))
-  return (op1.tile_assignment_dimensions == op2.tile_assignment_dimensions and
-          op1.tile_assignment_devices == op2.tile_assignment_devices and
-          op1.last_tile_dims == op2.last_tile_dims and
-          op1.replicate_on_last_tile_dim == op2.replicate_on_last_tile_dim)
+  if xla_extension_version >= 81:
+    return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
+  else:
+    if op1.type == xc.OpSharding.Type.TUPLE:
+      return all(are_op_shardings_equal(i, j)
+                 for i, j in safe_zip(op1.tuple_shardings, op2.tuple_shardings))
+    return (op1.tile_assignment_dimensions == op2.tile_assignment_dimensions and
+            op1.tile_assignment_devices == op2.tile_assignment_devices and
+            op1.last_tile_dims == op2.last_tile_dims and
+            op1.replicate_on_last_tile_dim == op2.replicate_on_last_tile_dim)
 
 
 _forbidden_primitives = {

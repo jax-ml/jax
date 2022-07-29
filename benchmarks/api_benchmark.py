@@ -21,6 +21,8 @@ import jax
 from jax import lax
 from jax.experimental import sparse
 from jax._src.api_util import shaped_abstractify  # technically not an api fn
+from jax._src.lib import xla_client as xc
+from jax.interpreters import pxla
 import jax.numpy as jnp
 import numpy as np
 
@@ -469,6 +471,23 @@ def bench_shaped_abstractify(state):
   args = [jax.device_put_replicated(1, [device])] * 1000
   while state:
     _ = [shaped_abstractify(x) for x in args]
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMicrosecond)
+def bench_are_op_shardings_equal(state):
+  op1 = xc.OpSharding()
+  op1.type = xc.OpSharding.Type.OTHER
+  op1.tile_assignment_dimensions = [4, 192, 16]
+  op1.tile_assignment_devices = list(range(12288))
+
+  op2 = xc.OpSharding()
+  op2.type = xc.OpSharding.Type.OTHER
+  op2.tile_assignment_dimensions = [4, 192, 16]
+  op2.tile_assignment_devices = list(range(12288))
+
+  while state:
+    pxla.are_op_shardings_equal(op1, op2)
 
 
 def swap(a, b):

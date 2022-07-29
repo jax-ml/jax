@@ -45,6 +45,7 @@ from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
 from jax.interpreters import pxla
 from jax.interpreters import mlir
 from jax._src.lib import xla_client as xc, xla_bridge
+from jax._src.lib import xla_extension_version
 from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config
@@ -2056,15 +2057,15 @@ class UtilTest(jtu.JaxTestCase):
     else:
       pjit_lib._check_all_or_none_unspecified(entries, 'test axis resources')
 
-  def test_op_sharding_equality(self):
+  def test_op_sharding_equality_and_hash_equality(self):
     op1 = xc.OpSharding()
     op1.type = xc.OpSharding.Type.OTHER
-    op1.tile_assignment_dimensions = [4, 2]
+    op1.tile_assignment_dimensions = [2, 2]
     op1.tile_assignment_devices = [0, 1, 2, 3]
 
     op2 = xc.OpSharding()
     op2.type = xc.OpSharding.Type.OTHER
-    op2.tile_assignment_dimensions = [4, 2]
+    op2.tile_assignment_dimensions = [2, 2]
     op2.tile_assignment_devices = [0, 1, 2, 3]
 
     op3 = xc.OpSharding()
@@ -2075,6 +2076,15 @@ class UtilTest(jtu.JaxTestCase):
     self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
     self.assertFalse(pxla.are_op_shardings_equal(op1, op3))
     self.assertFalse(pxla.are_op_shardings_equal(op2, op3))
+
+    if xla_extension_version >= 81:
+      hs1 = xc.HloSharding.from_proto(op1)
+      hs2 = xc.HloSharding.from_proto(op2)
+      hs3 = xc.HloSharding.from_proto(op3)
+
+      self.assertEqual(hash(hs1), hash(hs2))
+      self.assertNotEqual(hash(hs1), hash(hs3))
+      self.assertNotEqual(hash(hs2), hash(hs3))
 
   def test_op_sharding_partial_sharding(self):
     op1 = xc.OpSharding()
@@ -2091,6 +2101,11 @@ class UtilTest(jtu.JaxTestCase):
 
     self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
 
+    if xla_extension_version >= 81:
+      hs1 = xc.HloSharding.from_proto(op1)
+      hs2 = xc.HloSharding.from_proto(op2)
+      self.assertEqual(hash(hs1), hash(hs2))
+
   def test_op_sharding_tuple_shardings(self):
     top1 = xc.OpSharding()
     top1.type = xc.OpSharding.Type.OTHER
@@ -2100,7 +2115,7 @@ class UtilTest(jtu.JaxTestCase):
 
     top2 = xc.OpSharding()
     top2.type = xc.OpSharding.Type.OTHER
-    top2.tile_assignment_dimensions = [2, 1]
+    top2.tile_assignment_dimensions = [2, 2]
     top2.tile_assignment_devices = [0, 1, 2, 3]
     top2.replicate_on_last_tile_dim = True
 
@@ -2113,6 +2128,11 @@ class UtilTest(jtu.JaxTestCase):
     op2.tuple_shardings = [top2, top1]
 
     self.assertFalse(pxla.are_op_shardings_equal(op1, op2))
+
+    if xla_extension_version >= 81:
+      hs1 = xc.HloSharding.from_proto(op1)
+      hs2 = xc.HloSharding.from_proto(op2)
+      self.assertNotEqual(hash(hs1), hash(hs2))
 
 
 if __name__ == '__main__':
