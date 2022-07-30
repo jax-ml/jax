@@ -504,8 +504,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_pjit(self):
-    if jax.default_backend() != "tpu":
-      raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
 
     def f(x):
       debug_print("{}", x, ordered=False)
@@ -532,8 +530,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_while(self):
-    if jax.default_backend() != "tpu":
-      raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
 
     def f(x):
       def cond(carry):
@@ -560,8 +556,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_xmap(self):
-    if jax.default_backend() != "tpu":
-      raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
 
     def f(x):
       def foo(x):

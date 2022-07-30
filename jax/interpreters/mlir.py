@@ -1430,21 +1430,21 @@ def emit_python_callback(
       [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
   operand_shapes = util.flatten(
       [xla.aval_to_xla_shapes(op_aval) for op_aval in operand_avals])
+  if isinstance(ctx.module_context.axis_context,
+                (SPMDAxisContext, ShardingContext)):
+    # Apply maximal sharding so pjit only executes the callback on device 0.
+    sharding = xc.OpSharding()
+    sharding.type = xc.OpSharding.Type.MAXIMAL
+    sharding.tile_assignment_dimensions = [1]
+    sharding.tile_assignment_devices = [0]
+  else:
+    sharding = None
   if platform == "tpu":
     if result_avals:
       raise NotImplementedError(
           "Callback with return values not supported on TPU.")
     token = token or mhlo.CreateTokenOp(mhlo.TokenType.get()).result
     send_channels = []
-    if isinstance(ctx.module_context.axis_context,
-                  (SPMDAxisContext, ShardingContext)):
-      # Apply maximal sharding so pjit only executes the callback on device 0.
-      sharding = xc.OpSharding()
-      sharding.type = xc.OpSharding.Type.MAXIMAL
-      sharding.tile_assignment_dimensions = [1]
-      sharding.tile_assignment_devices = [0]
-    else:
-      sharding = None
     for operand, operand_aval in zip(operands, operand_avals):
       channel = ctx.module_context.new_channel()
       token = send_to_host(channel, token, operand, operand_aval,
@@ -1509,6 +1509,8 @@ def emit_python_callback(
       backend_config=ir.StringAttr.get(str(callback_descriptor)),
       operand_layouts=None,
       result_layouts=None)
+  if sharding is not None:
+    set_sharding(result, sharding)
   results = [
       mhlo.GetTupleElementOp(result, i32_attr(i)).result
       for i in range(len(result_types))

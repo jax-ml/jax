@@ -128,8 +128,7 @@ jax.grad(f)(1.)
 
 #### Printing in other transformations
 
-`jax.debug.print` also works in other transformations like `xmap` and `pjit`
-(but `pjit` only works on TPUs for now).
+`jax.debug.print` also works in other transformations like `xmap` and `pjit`.
 
 ### More control with `jax.debug.callback`
 
