@@ -313,7 +313,7 @@ class OpShardingSharding(XLACompatibleSharding):
     return self._hash
 
   def __repr__(self):
-    return self._op_sharding
+    return repr(self._op_sharding)
 
   def normalize(self, *_):
     return self
