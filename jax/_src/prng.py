@@ -203,7 +203,9 @@ class PRNGKeyArray:
     reshaped_keys = jnp.reshape(self._keys, (*newshape, -1), order=order)
     return PRNGKeyArray(self.impl, reshaped_keys)
 
-  def concatenate(self, key_arrs, axis):
+  def concatenate(self, key_arrs, axis, dtype=None):
+    if dtype is not None:
+      raise ValueError('dtype argument not supported for concatenating PRNGKeyArray')
     axis = canonicalize_axis(axis, self.ndim)
     arrs = [self._keys, *[k._keys for k in key_arrs]]
     return PRNGKeyArray(self.impl, jnp.concatenate(arrs, axis))

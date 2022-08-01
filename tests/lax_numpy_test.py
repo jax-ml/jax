@@ -2299,15 +2299,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_axis={}_baseshape=[{}]_dtypes=[{}]".format(
-          axis, ",".join(str(d) for d in base_shape),
+      {"testcase_name": "_axis={}_dtype={}_baseshape=[{}]_argdtypes=[{}]".format(
+          axis, dtype and np.dtype(dtype).name, ",".join(str(d) for d in base_shape),
           ",".join(np.dtype(dtype).name for dtype in arg_dtypes)),
-       "axis": axis, "base_shape": base_shape, "arg_dtypes": arg_dtypes}
+       "axis": axis, "dtype": dtype, "base_shape": base_shape, "arg_dtypes": arg_dtypes}
       for num_arrs in [3]
       for arg_dtypes in itertools.combinations_with_replacement(default_dtypes, num_arrs)
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
+      for dtype in [None] + default_dtypes
       for axis in range(-len(base_shape)+1, len(base_shape))))
-  def testConcatenate(self, axis, base_shape, arg_dtypes):
+  def testConcatenate(self, axis, dtype, base_shape, arg_dtypes):
     rng = jtu.rand_default(self.rng())
     wrapped_axis = axis % len(base_shape)
     shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
@@ -2315,9 +2316,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(*args):
       args = [x if x.dtype != jnp.bfloat16 else x.astype(np.float32)
               for x in args]
-      dtype = functools.reduce(jnp.promote_types, arg_dtypes)
-      return np.concatenate(args, axis=axis).astype(dtype)
-    jnp_fun = lambda *args: jnp.concatenate(args, axis=axis)
+      if numpy_version < (1, 20):
+        _dtype = dtype or jnp.result_type(*arg_dtypes)
+        return np.concatenate(args, axis=axis).astype(_dtype)
+      return np.concatenate(args, axis=axis, dtype=dtype, casting='unsafe')
+    jnp_fun = lambda *args: jnp.concatenate(args, axis=axis, dtype=dtype)
 
     def args_maker():
       return [rng(shape, dtype) for shape, dtype in zip(shapes, arg_dtypes)]
