@@ -505,6 +505,9 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_pjit(self):
 
+    if jax.default_backend() in {"cpu", "gpu"} and jaxlib.version < (0, 3, 16):
+      raise unittest.SkipTest("`pjit` of callback not supported.")
+
     def f(x):
       debug_print("{}", x, ordered=False)
       return x
@@ -531,6 +534,10 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_while(self):
 
+    if (jax.default_backend() in {"cpu", "gpu"}
+        and jaxlib.xla_extension_version < 81):
+      raise unittest.SkipTest("`pjit` of callback not supported.")
+
     def f(x):
       def cond(carry):
         i, *_ = carry
@@ -556,6 +563,10 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_xmap(self):
+
+    if (jax.default_backend() in {"cpu", "gpu"}
+        and jaxlib.xla_extension_version < 81):
+      raise unittest.SkipTest("`pjit` of callback not supported.")
 
     def f(x):
       def foo(x):
