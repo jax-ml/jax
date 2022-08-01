@@ -2139,10 +2139,6 @@ class BCOO(JAXSparse):
     return cls((data, indices), shape=(N, M), indices_sorted=True,
                unique_indices=True)
 
-  def _dedupe(self):
-    warnings.warn("_dedupe() is deprecated. Use sum_duplicates() instead.", FutureWarning)
-    return self.sum_duplicates(nse=self.nse)
-
   def update_layout(self, *, n_batch=None, n_dense=None, on_inefficient='error'):
     """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
 
