@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from distutils import spawn
+import subprocess
+import os
+import sys
+
 from setuptools import setup, find_packages
 
 _current_jaxlib_version = '0.3.15'
@@ -32,6 +37,21 @@ _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 with open('README.md') as f:
   _long_description = f.read()
 
+if 'PROTOC' in os.environ and os.path.exists(os.environ['PROTOC']):
+  protoc = os.environ['PROTOC']
+else:
+  protoc = spawn.find_executable('protoc')
+
+def generate_proto(source):
+  if not protoc or not os.path.exists(source):
+    return
+  protoc_command = [protoc, '-I.', '--python_out=.', source]
+  if subprocess.call(protoc_command) != 0:
+    sys.exit(-1)
+
+generate_proto("jax/experimental/australis/executable.proto")
+generate_proto("jax/experimental/australis/petri.proto")
+
 setup(
     name='jax',
     version=__version__,
@@ -49,7 +69,8 @@ setup(
         'opt_einsum',
         'scipy>=1.5',
         'typing_extensions',
-        'etils[epath]'
+        'etils[epath]',
+        'protobuf>=3.13,<4',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
