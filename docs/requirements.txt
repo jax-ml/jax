@@ -1,5 +1,5 @@
 sphinx >=3
-sphinx-autodoc-typehints==1.11.1  # Unpin after jaxlib 0.3.15 is released (#11455)
+sphinx-autodoc-typehints==1.19.1  # Unpin after jaxlib 0.3.15 is released (#11455)
 sphinx-book-theme
 sphinx-copybutton>=0.5.0
 sphinx-remove-toctrees
