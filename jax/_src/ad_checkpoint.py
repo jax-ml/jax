@@ -14,7 +14,7 @@
 
 from functools import partial
 import operator as op
-from typing import Callable, Optional, List, Tuple
+from typing import Callable, Optional, List, Tuple, Sequence, Union
 import types
 
 import jax
@@ -27,16 +27,15 @@ from jax.interpreters import mlir
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import source_info_util
-from jax._src.api_util import flatten_fun
+from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
-                           safe_zip, merge_lists)
+                           safe_zip, merge_lists, weakref_lru_cache)
 
 source_info_util.register_exclusion(__file__)
 
 # TODO(mattjj): before this can be the standard remat implementation, we must:
 #   [ ] fix up callers who use the 'concrete' option (now removed)
-#   [ ] implement remat-of-control-flow-primitives (passing through the policy)
 
 map = safe_map
 zip = safe_zip
@@ -209,17 +208,22 @@ def checkpoint(fun: Callable, prevent_cse: bool = True,
   @api_boundary
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
-    flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
-    debug = pe.debug_info(fun, in_tree, False, "checkpoint")
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    in_avals = [shaped_abstractify(x) for x in args_flat]
+    jaxpr, consts, out_tree = _trace_to_jaxpr(fun, in_tree, tuple(in_avals))
     out_flat = remat_p.bind(
-        *consts, *args_flat, jaxpr=pe.convert_constvars_jaxpr(jaxpr),
-        prevent_cse=prevent_cse, differentiated=False, policy=policy)
-    return tree_unflatten(out_tree(), out_flat)
+        *consts, *args_flat, jaxpr=jaxpr, prevent_cse=prevent_cse,
+        differentiated=False, policy=policy)
+    return tree_unflatten(out_tree, out_flat)
   return fun_remat
 
 remat = checkpoint  # alias
+
+@weakref_lru_cache
+def _trace_to_jaxpr(fun, in_tree, in_avals):
+  debug = pe.debug_info(fun, in_tree, False, "checkpoint")
+  flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+  return pe.convert_constvars_jaxpr(jaxpr), consts, out_tree()
 
 
 ### Utilities
@@ -285,8 +289,7 @@ def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars
   in_nonzeros = [type(t) is not ad_util.Zero for t in tangents]
-  jaxpr_ = core.ClosedJaxpr(jaxpr, ())
-  jaxpr_jvp_, out_nonzeros = ad.jvp_jaxpr(jaxpr_, in_nonzeros, False)
+  jaxpr_jvp_, out_nz = ad.jvp_jaxpr(pe.close_jaxpr(jaxpr), in_nonzeros, False)
   nonzero_tangents = [t for t in tangents if type(t) is not ad_util.Zero]
   jaxpr_jvp = pe.convert_constvars_jaxpr(jaxpr_jvp_.jaxpr)
   outs = remat_p.bind(
@@ -295,7 +298,7 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   out_primals, out_tangents_ = split_list(outs, [len(jaxpr.outvars)])
   out_tangents_ = iter(out_tangents_)
   out_tangents = [next(out_tangents_) if nz else ad_util.Zero.from_value(p)
-                  for p, nz in zip(out_primals, out_nonzeros)]
+                  for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
 
@@ -351,45 +354,82 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
 
 def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr, **params):
   assert not jaxpr.constvars
+  in_linear = [ad.is_undefined_primal(x) for x in in_primals]
+  out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
+  transposed_jaxpr_, in_zeros = transpose_jaxpr(
+      pe.close_jaxpr(jaxpr), in_linear, out_zeros, reduce_axes)
+  transposed_jaxpr, consts = transposed_jaxpr_.jaxpr, transposed_jaxpr_.consts
+  transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
+  args, _ = tree_flatten((in_primals, out_cts))
+  in_cts_nz = remat_p.bind(*consts, *args, jaxpr=transposed_jaxpr, **params)
+  in_cts_nz_, in_zeros_ = iter(in_cts_nz), iter(in_zeros)
+  in_cts = [None if not ad.is_undefined_primal(x) else
+            ad_util.Zero(x.aval) if next(in_zeros_) else next(in_cts_nz_)
+            for x in in_primals]
+  assert next(in_cts_nz_, None) is next(in_zeros_, None) is None
+  return in_cts
+ad.reducing_transposes[remat_p] = remat_transpose
+
+# TODO(mattjj): move this to ad.py
+def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: Union[bool, Sequence[bool]],
+                    out_zeros: Union[bool, Sequence[bool]],
+                    reduce_axes: Sequence[core.AxisName],
+                    ) -> Tuple[core.ClosedJaxpr, List[bool]]:
+  if type(in_linear) is bool:
+    in_linear = (in_linear,) * len(jaxpr.in_avals)
+  if type(out_zeros) is bool:
+    out_zeros = (out_zeros,) * len(jaxpr.out_avals)
+  return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros),
+                          tuple(reduce_axes))
+
+@weakref_lru_cache
+def _transpose_jaxpr(jaxpr, in_lin, out_zeros, reduce_axes):
+  in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
+              [a for a, zero in zip(jaxpr.out_avals, out_zeros) if not zero])
   cell = lambda: None
 
   @lu.wrap_init
-  def transposed(*args):
-    in_primals, out_cts = tree_unflatten(treedef, args)
-    in_pvals = [pe.PartialVal.unknown(x.aval) if ad.is_undefined_primal(x) else
-                pe.PartialVal.known(x) for x in in_primals]
-    primal_fun = lu.wrap_init(partial(core.eval_jaxpr, jaxpr, ()))
-    t_jaxpr, _, consts = pe.trace_to_jaxpr_nounits(primal_fun, in_pvals, False)
-    dummy_args = [ad.UndefinedPrimal(v.aval) for v in t_jaxpr.invars]
-    in_cts = ad.backward_pass(t_jaxpr, reduce_axes, False, consts, dummy_args,
-                              out_cts)
-    in_cts_ = iter(in_cts)
-    in_cts = [next(in_cts_) if ad.is_undefined_primal(x)
-              else ad_util.Zero(x.aval) for x in in_primals]
-    assert next(in_cts_, None) is None
-    in_cts, cell.treedef = tree_flatten(in_cts)
-    return in_cts
+  def transposed(*args_flat):
+    ins_flat, out_cts_flat = split_list(args_flat, [len(in_lin) - sum(in_lin)])
 
-  args, treedef = tree_flatten((in_primals, out_cts))
-  in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args]
+    # Evaluate nonlinear parts using partial evaluation to get a linear jaxpr.
+    ins_iter = iter(ins_flat)
+    in_pvals = [pe.PartialVal.unknown(aval) if lin else
+                pe.PartialVal.known(next(ins_iter))
+                for aval, lin in zip(jaxpr.in_avals, in_lin)]
+    assert next(ins_iter, None) is None
+    lin_jaxpr, _, consts = pe.trace_to_jaxpr_nounits(
+        lu.wrap_init(core.jaxpr_as_fun(jaxpr)), in_pvals, False)
+
+    # Transpose the linear jaxpr (which only has linear inputs).
+    out_cts_iter = iter(out_cts_flat)
+    out_cts = [ad_util.Zero(aval) if zero else next(out_cts_iter)
+               for aval, zero in zip(jaxpr.out_avals, out_zeros)]
+    assert next(out_cts_iter, None) is None
+    dummy_args = [ad.UndefinedPrimal(v.aval) for v in lin_jaxpr.invars]
+    in_cts = ad.backward_pass(lin_jaxpr, reduce_axes, False, consts, dummy_args,
+                              out_cts)
+
+    # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
+    in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]
+    in_cts_nz, _ = partition_list(in_zeros, in_cts)
+    return in_cts_nz
+
   transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(transposed, in_avals)
-  transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr_)
-  in_cts = remat_p.bind(*consts, *args, jaxpr=transposed_jaxpr, **params)
-  return tree_unflatten(cell.treedef, in_cts)  # type: ignore
-ad.reducing_transposes[remat_p] = remat_transpose
+  transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
+  return transposed_jaxpr, cell.in_cts_zero  # type: ignore
 
 def remat_vmap(axis_size, axis_name, main_type, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
-  jaxpr_ = core.ClosedJaxpr(jaxpr, ())
   jaxpr_batched_, out_batched = batching.batch_jaxpr_axes(
-      jaxpr_, axis_size, dims, [batching.zero_if_mapped] * len(jaxpr.outvars),
+      pe.close_jaxpr(jaxpr), axis_size, dims,
+      [batching.zero_if_mapped] * len(jaxpr.outvars),
       axis_name=axis_name, main_type=main_type)
   jaxpr_batched, consts = jaxpr_batched_.jaxpr, jaxpr_batched_.consts
   out_dims = [0 if b else None for b in out_batched]
   return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
 batching.axis_primitive_batchers[remat_p] = remat_vmap
 
-# TODO(mattjj,sharadmv): test this more
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
 def remat_dce(used_outputs: List[bool], eqn: core.JaxprEqn
               ) -> Tuple[List[bool], Optional[core.JaxprEqn]]:

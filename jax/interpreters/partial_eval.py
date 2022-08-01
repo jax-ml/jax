@@ -1509,6 +1509,10 @@ def dce_jaxpr_closed_call_rule(used_outputs: List[bool], eqn: JaxprEqn
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
+@weakref_lru_cache
+def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
+  return ClosedJaxpr(jaxpr, ())
+
 def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
                           ) -> ClosedJaxpr:
   """Reorder `invars` by moving those indicated in `to_move` to the front."""

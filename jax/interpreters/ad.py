@@ -16,8 +16,7 @@ import contextlib
 import functools
 from functools import partial
 import itertools as it
-from typing import Any, Callable, Dict, List, Tuple, Optional
-
+from typing import Any, Callable, Dict, List, Tuple, Sequence, Optional, Union
 import jax
 from jax.interpreters import partial_eval as pe
 from jax.config import config
@@ -642,8 +641,8 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in,
                     cotangent_in_avals, reduce_axes):
   unknowns = map(is_undefined_primal, primals_in)
   primal_jaxpr, tangent_jaxpr, _, _ = \
-      pe.partial_eval_jaxpr_nounits(_close_jaxpr(call_jaxpr), unknowns=unknowns,
-                                    instantiate=True)  # type: ignore
+      pe.partial_eval_jaxpr_nounits(pe.close_jaxpr(call_jaxpr),
+                                    unknowns=unknowns, instantiate=True)  # type: ignore
   args, in_tree = tree_flatten((primals_in, cotangents_in))
   transpose = lu.hashable_partial(lu.wrap_init(_remat_transpose), primal_jaxpr,
                                   tangent_jaxpr, reduce_axes)
@@ -664,10 +663,6 @@ def _remat_transpose(primal_jaxpr, tangent_jaxpr, reduce_axes,
           for x in primals_tangents_in]
   assert next(cotangents_out, None) is None
   return outs
-
-@weakref_lru_cache
-def _close_jaxpr(jaxpr: core.Jaxpr) -> core.ClosedJaxpr:
-  return core.ClosedJaxpr(jaxpr, [])
 
 @lu.transformation_with_aux
 def nonzero_outputs(*args, **kwargs):
@@ -717,9 +712,12 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
   return tuple(arg_cts)
 
 
-def jvp_jaxpr(jaxpr, nonzeros, instantiate):
-  inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
-  return _jvp_jaxpr(jaxpr, tuple(nonzeros), inst)
+def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
+              instantiate: Union[bool, Sequence[bool]]
+              ) -> Tuple[core.ClosedJaxpr, List[bool]]:
+  if type(instantiate) is bool:
+    instantiate = (instantiate,) * len(jaxpr.out_avals)
+  return _jvp_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate))
 
 @weakref_lru_cache
 def _jvp_jaxpr(jaxpr, nonzeros, instantiate):

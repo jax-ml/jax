@@ -781,8 +781,6 @@ def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
 
 def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
                    ) -> Tuple[List[bool], core.JaxprEqn]:
-  if not config.after_neurips:
-    return [True] * len(eqn.params['jaxpr'].in_avals), eqn
   jaxpr = eqn.params['jaxpr']
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   num_xs = len(jaxpr.in_avals) - num_consts - num_carry

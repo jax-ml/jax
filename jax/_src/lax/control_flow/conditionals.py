@@ -593,8 +593,6 @@ def _ordered_unique(xs):
 
 def _cond_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn,
                    ) -> Tuple[List[bool], core.JaxprEqn]:
-  if not config.after_neurips:
-    return [True] * len(eqn.params['jaxpr'].in_avals), eqn
   closed_branches = eqn.params['branches']
   branches = [closed_jaxpr.jaxpr for closed_jaxpr in closed_branches]
 
