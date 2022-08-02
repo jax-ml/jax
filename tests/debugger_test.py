@@ -325,5 +325,29 @@ class CliDebuggerTest(jtu.JaxTestCase):
       print(expected)
       self.assertRegex(stdout.getvalue(), expected)
 
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debugger_uses_local_before_global_scope(self):
+    stdin, stdout = make_fake_stdin_stdout(["p foo", "c"])
+
+    foo = "outer"
+
+    def f(x):
+      foo = "inner"
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
+      del foo
+      return x
+
+    del foo
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) 'inner'
+    \(jdb\) """)
+    f(2.)
+    jax.effects_barrier()
+    print(stdout.getvalue())
+    print(expected)
+    self.assertRegex(stdout.getvalue(), expected)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
