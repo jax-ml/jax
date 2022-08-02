@@ -3981,6 +3981,18 @@ class RematTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, "static_argnums"):
       g(jnp.array(3.))
 
+    # But don't raise an error mentioning static_argnums here:
+    @api.remat
+    def g(x):
+      jax.jit(lambda: 0 if jnp.add(1, 1) else 0)()
+      return lax.sin(x)
+
+    try:
+      g(jnp.array(3.))
+    except core.ConcretizationTypeError as e:
+      msg = str(e)
+    self.assertNotIn('static_argnums', msg)
+
   def test_remat_grad_python_control_flow_static_argnums(self):
     @partial(api.remat, static_argnums=(0,))
     def g(x):

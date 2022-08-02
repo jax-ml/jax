@@ -329,6 +329,8 @@ def _trace_to_jaxpr(fun, in_tree, in_avals):
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
   except core.ConcretizationTypeError as e:
     msg, = e.args
+    if 'for checkpoint' not in msg:
+      raise
     new_msg = msg + "\n\n" + (
         "Consider using the `static_argnums` parameter for `jax.remat` or "
         "`jax.checkpoint`. See the `jax.checkpoint` docstring and its example "
