@@ -1650,9 +1650,9 @@ def tile(A, reps):
                         [k for pair in zip(reps, A_shape) for k in pair])
   return reshape(result, tuple(np.multiply(A_shape, reps)))
 
-def _concatenate_array(arr, axis: int):
+def _concatenate_array(arr, axis: int, dtype=None):
   # Fast path for concatenation when the input is an ndarray rather than a list.
-  arr = asarray(arr)
+  arr = asarray(arr, dtype=dtype)
   if arr.ndim == 0 or arr.shape[0] == 0:
     raise ValueError("Need at least one array to concatenate.")
   if axis is None:
@@ -1665,26 +1665,29 @@ def _concatenate_array(arr, axis: int):
   return lax.reshape(arr, shape, dimensions)
 
 @_wraps(np.concatenate)
-def concatenate(arrays, axis: int = 0):
+def concatenate(arrays, axis: int = 0, dtype=None):
   if isinstance(arrays, (np.ndarray, ndarray)):
-    return _concatenate_array(arrays, axis)
+    return _concatenate_array(arrays, axis, dtype=dtype)
   _stackable(*arrays) or _check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
   if axis is None:
-    return concatenate([ravel(a) for a in arrays], axis=0)
+    return concatenate([ravel(a) for a in arrays], axis=0, dtype=dtype)
   if hasattr(arrays[0], "concatenate"):
-    return arrays[0].concatenate(arrays[1:], axis)
+    return arrays[0].concatenate(arrays[1:], axis, dtype=dtype)
   axis = _canonicalize_axis(axis, ndim(arrays[0]))
-  arrays = _promote_dtypes(*arrays)
+  if dtype is None:
+    arrays = _promote_dtypes(*arrays)
+  else:
+    arrays = [asarray(arr, dtype=dtype) for arr in arrays]
   # lax.concatenate can be slow to compile for wide concatenations, so form a
   # tree of concatenations as a workaround especially for op-by-op mode.
   # (https://github.com/google/jax/issues/653).
   k = 16
   if len(arrays) == 1:
-    return asarray(arrays[0])
+    return asarray(arrays[0], dtype=dtype)
   else:
     while len(arrays) > 1:
       arrays = [lax.concatenate(arrays[i:i+k], axis)
