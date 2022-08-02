@@ -2593,23 +2593,6 @@ def _get_input_metadata(
            Sequence[ShapedArray]]:
   from jax.experimental.sharding import MeshPspecSharding
 
-  if all(isinstance(s, MeshPspecSharding) for s in in_shardings):
-    return _get_input_metadata_from_mesh_pspec(
-        global_in_avals, cast(Sequence[MeshPspecSharding], in_shardings),
-        in_is_global)
-  else:
-    input_indices = [tuple(i.devices_indices_map(aval.shape).values())
-                     for aval, i in safe_zip(global_in_avals, in_shardings)]
-    return in_shardings, input_indices, global_in_avals
-
-
-def _get_input_metadata_from_mesh_pspec(
-    global_in_avals: Sequence[ShapedArray],
-    in_shardings: Sequence[MeshPspecSharding], in_is_global: Sequence[bool]
-) -> Tuple[Sequence[MeshPspecSharding], Sequence[Tuple[Optional[Index], ...]],
-           Sequence[ShapedArray]]:
-  from jax.experimental.sharding import MeshPspecSharding
-
   shardings, input_indices, input_avals = [], [], []
   for gaval, i, is_global in safe_zip(global_in_avals, in_shardings, in_is_global):
     proto = i._to_xla_op_sharding(gaval.ndim)
@@ -2617,6 +2600,7 @@ def _get_input_metadata_from_mesh_pspec(
       aval = gaval
       sharding = i
     else:
+      assert isinstance(i, MeshPspecSharding)
       aval = i.mesh._global_to_local(cast(ArrayMapping, _get_array_mapping(i.spec)), gaval)
       sharding = MeshPspecSharding(i.mesh.local_mesh, i.spec)
 
