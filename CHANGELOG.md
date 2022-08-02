@@ -18,6 +18,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     for an alternative API. 
   * {func}`jax.tree_util.tree_multimap` has been removed. It has been deprecated since
     JAX release 0.3.5, and {func}`jax.tree_util.tree_map` is a direct replacement.
+  * Removed `jax.experimental.stax`; it has long been a deprecated alias of
+    {mod}`jax.example_libraries.stax`.
 
 ## jaxlib 0.3.16 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.15...main).

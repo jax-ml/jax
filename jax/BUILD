@@ -144,7 +144,6 @@ pytype_library(
     name = "stax",
     srcs = [
         "example_libraries/stax.py",
-        "experimental/stax.py",
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],
