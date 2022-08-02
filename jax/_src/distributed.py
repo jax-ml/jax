@@ -106,7 +106,7 @@ def initialize(coordinator_address: Optional[str] = None,
 
   If you are on GPU platform, the following environment variables
   ``JAX_COORDINATOR_ADDRESS``, ``JAX_NUM_PROCESSES``, and ``JAX_PROCESS_ID``
-  can be set or you will have to provide the coordinator_addressand other args
+  can be set or you will have to provide the coordinator_address and other args
   to the `initialize` API.
 
   If you are on TPU platform, the coordinator_address and other args will be
@@ -143,10 +143,10 @@ def initialize(coordinator_address: Optional[str] = None,
   """
   coordinator_address = (coordinator_address or
                          os.environ.get('JAX_COORDINATOR_ADDRESS', None))
-  if num_processes is None:
-    num_processes = int(os.environ.get('JAX_NUM_PROCESSES', None))
-  if process_id is None:
-    process_id = int(os.environ.get('JAX_PROCESS_ID', None))
+  if num_processes is None and 'JAX_NUM_PROCESSES' in os.environ:
+    num_processes = int(os.environ['JAX_NUM_PROCESSES'])
+  if process_id is None and 'JAX_PROCESS_ID' in os.environ:
+    process_id = int(os.environ['JAX_PROCESS_ID'])
   global_state.initialize(coordinator_address, num_processes, process_id)
   atexit.register(shutdown)
 
