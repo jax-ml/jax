@@ -3911,10 +3911,82 @@ class RematTest(jtu.JaxTestCase):
     expected = f_lin_expected(3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @unittest.skipIf(config.jax_new_checkpoint, "test is for old remat only")
   def test_remat_grad_python_control_flow(self):
-    @partial(api.remat, concrete=True)
+    # See test `test_remat_grad_python_control_flow_static_argnums` for the
+    # new recommended way to express this computation.
+
     def g(x):
       if x > 0:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    with self.assertWarnsRegex(DeprecationWarning, "static_argnums"):
+      g = api.remat(g, concrete=True)
+
+    ans = f(2.)
+    expected = np.sin(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f)(2.)
+    expected = np.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @unittest.skipIf(config.jax_new_checkpoint, "new remat raises error here")
+  def test_remat_concrete_deprecation_warning(self):
+    def g(x):
+      if x > 0:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    with self.assertWarnsRegex(DeprecationWarning, "static_argnums"):
+      _ = api.remat(g, concrete=True)
+
+  @unittest.skipIf(not config.jax_new_checkpoint, "old remat warns here")
+  def test_remat_concrete_deprecation_error(self):
+    def g(x):
+      if x > 0:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    with self.assertRaisesRegex(NotImplementedError, "static_argnums"):
+      _ = api.remat(g, concrete=True)
+
+  @unittest.skipIf(not config.jax_new_checkpoint, "old remat different error")
+  def test_remat_concrete_error(self):
+    @api.remat  # no static_argnums or concrete
+    def g(x):
+      if x > 0:
+        return lax.sin(x)
+      else:
+        return lax.cos(x)
+
+    with self.assertRaisesRegex(core.ConcretizationTypeError, "static_argnums"):
+      g(3.)
+
+    @partial(api.remat, static_argnums=(0,))  # using static_argnums but...
+    def g(x):
+      if x > 0:  # jnp operations still get staged!
+        return lax.sin(x)
+      else:
+        return lax.cos(x)
+
+    with self.assertRaisesRegex(core.ConcretizationTypeError, "static_argnums"):
+      g(jnp.array(3.))
+
+  def test_remat_grad_python_control_flow_static_argnums(self):
+    @partial(api.remat, static_argnums=(0,))
+    def g(x):
+      with jax.ensure_compile_time_eval():
+        x_pos = x > 0
+      if x_pos:
         return lax.sin(x), 3.
       else:
         return lax.cos(x), 4.
@@ -3930,6 +4002,89 @@ class RematTest(jtu.JaxTestCase):
     ans = api.grad(f)(2.)
     expected = np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_grad_python_control_flow_unhashable_static_argnums(self):
+    @partial(api.remat, static_argnums=(0,))
+    def g(x):
+      x = x.val
+      with jax.ensure_compile_time_eval():
+        x_pos = x > 0
+      if x_pos:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    class A:
+      def __init__(self, val):
+        self.val = val
+      def __hash__(self):
+        raise TypeError
+
+    ans = f(A(2.))
+    expected = np.sin(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(lambda x: f(A(x)))(2.)
+    expected = np.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @unittest.skipIf(not config.jax_new_checkpoint, "old remat retraces here")
+  def test_remat_retracing(self):
+    # This is *not* a very important behavior; remat doesn't need to provide
+    # caching guarantees with the same importance as jit. But even so, in the
+    # interest of not redoing tracing work (and thus make jax.remat more
+    # feasible to use in eager mode), this test checks that we don't re-trace
+    # the remat-decorated function.
+    count = 0
+
+    @api.remat
+    def g(x):
+      nonlocal count
+      count += 1
+      return lax.sin(x), 3.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    for _ in range(10):
+      y = f(2.)
+      y.block_until_ready()
+    self.assertEqual(count, 1)
+
+  @unittest.skipIf(not config.jax_new_checkpoint, "old remat retraces here")
+  def test_remat_static_agnums_retracing(self):
+    # This is *not* a super important behavior; remat doesn't need to provide
+    # caching guarantees with the same importance as jit. But even so, in the
+    # interest of not redoing tracing work (and thus make jax.remat more
+    # feasible to use in eager mode), this test checks that we don't re-trace
+    # the remat-decorated function *even with static_argnums*. See also the
+    # above test, which doesn't check for static_argnums.
+    count = 0
+
+    @partial(api.remat, static_argnums=(0,))
+    def g(x):
+      nonlocal count
+      count += 1
+      with jax.ensure_compile_time_eval():
+        x_pos = x > 0
+      if x_pos:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    for _ in range(10):
+      y = f(2.)
+      y.block_until_ready()
+    self.assertEqual(count, 1)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -4784,6 +4939,15 @@ class RematTest(jtu.JaxTestCase):
         f_vjp(1.)[0].block_until_ready()
     self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
 
+  def test_vjp_caching_static_argnums(self):
+    identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
+                         static_argnums=(1,))
+    _, f_vjp = jax.vjp(identity, 1., True)
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      for _ in range(20):
+        f_vjp(1.)[0].block_until_ready()
+    self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
+
   @unittest.skipIf(not config.jax_new_checkpoint, "old remat recompiles here")
   def test_fwd_caching(self):
     # see above test also
@@ -4791,6 +4955,16 @@ class RematTest(jtu.JaxTestCase):
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       for _ in range(20):
         y, _ = jax.vjp(identity, 1.)
+        y.block_until_ready()
+    self.assertEqual(count[0], 1)
+
+  @unittest.skipIf(not config.jax_new_checkpoint, "old remat recompiles here")
+  def test_fwd_caching_static_argnums(self):
+    # see above test also
+    identity = jax.checkpoint(jax.jit(lambda x: 2 * x), static_argnums=(0,))
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      for _ in range(20):
+        y = identity(1.)
         y.block_until_ready()
     self.assertEqual(count[0], 1)
 

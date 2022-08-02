@@ -908,7 +908,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   local_devices = list(api.local_devices())
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(local_devices[:size]).reshape(shape)
+  mesh_devices = np.array(local_devices[:size]).reshape(shape)  # type: ignore
   with Mesh(mesh_devices, axis_names):
     yield
 

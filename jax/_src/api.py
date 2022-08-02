@@ -53,7 +53,8 @@ from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-    shaped_abstractify, _ensure_str_tuple, argnames_partial_except, validate_argnames, validate_argnums)
+    shaped_abstractify, _ensure_str_tuple, argnames_partial_except,
+    validate_argnames, validate_argnums)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
@@ -63,7 +64,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import broadcast_prefix
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                            extend_name_stack, new_name_stack, wrap_name, cache,
-                           wraps, HashableFunction)
+                           wraps, HashableFunction, weakref_lru_cache)
 
 # Unused imports to be exported
 from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
@@ -71,6 +72,7 @@ from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                                      process_count, host_id, host_ids,
                                      host_count, default_backend)
 from jax.ad_checkpoint import checkpoint_policies, checkpoint as new_checkpoint
+from jax._src.ad_checkpoint import _remat_static_argnums
 from jax.core import ShapedArray, raise_to_shaped
 from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
@@ -660,12 +662,12 @@ def disable_jit():
   """Context manager that disables :py:func:`jit` behavior under its dynamic context.
 
   For debugging it is useful to have a mechanism that disables :py:func:`jit`
-  everywhere in a dynamic context. Note that this not only disables explicit uses
-  of `jit` by the user, but will also remove any implicit JIT compilation used by the
-  JAX library: this includes implicit JIT computation of `body` and `cond`
-  functions passed to higher-level primitives like :func:`scan` and :func:`while_loop`,
-  JIT used in implementations of :mod:`jax.numpy` functions, and any other case where
-  `jit` is used within an API's implementation.
+  everywhere in a dynamic context. Note that this not only disables explicit
+  uses of `jit` by the user, but will also remove any implicit JIT compilation
+  used by the JAX library: this includes implicit JIT computation of `body` and
+  `cond` functions passed to higher-level primitives like :func:`scan` and
+  :func:`while_loop`, JIT used in implementations of :mod:`jax.numpy` functions,
+  and any other case where `jit` is used within an API's implementation.
 
   Values that have a data dependence on the arguments to a jitted function are
   traced and abstracted. For example, an abstract value may be a
@@ -3046,129 +3048,80 @@ def eval_shape(fun: Callable, *args, **kwargs):
   return tree_unflatten(out_tree(), out)
 
 
-def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
+def checkpoint(fun: Callable, *,
+               concrete: bool = False,
+               prevent_cse: bool = True,
+               static_argnums: Union[int, Tuple[int, ...], bool] = (),
                policy: Optional[Callable[..., bool]] = None,
                ) -> Callable:
-  """Make ``fun`` recompute internal linearization points when differentiated.
+  if concrete:
+    msg = ("The 'concrete' option to jax.checkpoint / jax.remat is deprecated; "
+           "in its place, you can use its `static_argnums` option, and if "
+           "necessary the `jax.ensure_compile_time_eval()` context manager.\n"
+           "\n"
+           "For example, if using `concrete=True` for an `is_training` flag:\n"
+           "\n"
+           "  from functools import partial\n"
+           "\n"
+           "  @partial(jax.checkpoint, concrete=True)\n"
+           "  def foo(x, is_training):\n"
+           "    if is_training:\n"
+           "      return f(x)\n"
+           "    else:\n"
+           "      return g(x)\n"
+           "\n"
+           "replace it with a use of `static_argnums`:\n"
+           "\n"
+           "  @partial(jax.checkpoint, static_argnums=(1,))\n"
+           "  def foo(x, is_training):\n"
+           "    ...\n"
+           "\n"
+           "If jax.numpy operations need to be performed on static arguments, "
+           "we can use the `jax.ensure_compile_time_eval()` context manager. "
+           "For example, we can replace this use of `concrete=True`\n:"
+           "\n"
+           "  @partial(jax.checkpoint, concrete=True)\n"
+           "  def foo(x, y):\n"
+           "    if y > 0:\n"
+           "      return f(x)\n"
+           "    else:\n"
+           "      return g(x)\n"
+           "\n"
+           "with this combination of `static_argnums` and "
+           "`jax.ensure_compile_time_eval()`:\n"
+           "\n"
+           "  @partial(jax.checkpoint, static_argnums=(1,))\n"
+           "  def foo(x, y):\n"
+           "    with jax.ensure_compile_time_eval():\n"
+           "      y_pos = y > 0\n"
+           "    if y_pos:\n"
+           "      return f(x)\n"
+           "    else:\n"
+           "      return g(x)\n"
+           "\n")
+    if config.jax_new_checkpoint:
+      raise NotImplementedError(msg)
+    else:
+      warn(msg, DeprecationWarning)
 
-  The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
-  way to trade off computation time and memory cost in the context of automatic
-  differentiation, especially with reverse-mode autodiff like :func:`jax.grad`
-  and :func:`jax.vjp` but also with :func:`jax.linearize`.
-
-  When differentiating a function in reverse-mode, by default all the
-  linearization points (e.g. inputs to elementwise nonlinear primitive
-  operations) are stored when evaluating the forward pass so that they can be
-  reused on the backward pass. This evaluation strategy can lead to a high
-  memory cost, or even to poor performance on hardware accelerators where memory
-  access is much more expensive than FLOPs.
-
-  An alternative evaluation strategy is for some of the linearization points to
-  be recomputed (i.e. rematerialized) rather than stored. This approach can
-  reduce memory usage at the cost of increased computation.
-
-  This function decorator produces a new version of ``fun`` which follows
-  the rematerialization strategy rather than the default store-everything
-  strategy. That is, it returns a new version of ``fun`` which, when
-  differentiated, doesn't store any of its intermediate linearization points.
-  Instead, these linearization points are recomputed from the function's saved
-  inputs.
-
-  See the examples below.
-
-  Args:
-    fun: Function for which the autodiff evaluation strategy is to be changed
-      from the default of storing all intermediate linearization points to
-      recomputing them. Its arguments and return value should be arrays,
-      scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
-    concrete: Optional, boolean indicating whether ``fun`` may involve
-      value-dependent Python control flow (default False). Support for such
-      control flow is optional, and disabled by default, because in some
-      edge-case compositions with :func:`jax.jit` it can lead to some extra
-      computation.
-    prevent_cse: Optional, boolean indicating whether to prevent common
-      subexpression elimination (CSE) optimizations in the HLO generated from
-      differentiation. This CSE prevention has costs because it can foil other
-      optimizations, and because it can incur high overheads on some backends,
-      especially GPU. The default is True because otherwise, under a ``jit`` or
-      ``pmap``, CSE can defeat the purpose of this decorator. But in some
-      settings, like when used inside a ``scan``, this CSE prevention mechanism
-      is unnecessary, in which case ``prevent_cse`` can be set to False.
-    policy: Optional callable, one of the attributes of
-      ``jax.checkpoint_policies``, which takes as input a type-level
-      specification of a first-order primitive application and returns a boolean
-      indicating whether the corresponding output value(s) can be saved as a
-      residual (or instead must be recomputed in the (co)tangent computation if
-      needed).
-
-  Returns:
-    A function (callable) with the same input/output behavior as ``fun`` but
-    which, when differentiated using e.g. :func:`jax.grad`, :func:`jax.vjp`, or
-    :func:`jax.linearize`, recomputes rather than stores intermediate
-    linearization points, thus potentially saving memory at the cost of extra
-    computation.
-
-  Here is a simple example:
-
-  >>> import jax
-  >>> import jax.numpy as jnp
-
-  >>> @jax.checkpoint
-  ... def g(x):
-  ...   y = jnp.sin(x)
-  ...   z = jnp.sin(y)
-  ...   return z
-  ...
-  >>> jax.value_and_grad(g)(2.0)
-  (DeviceArray(0.78907233, dtype=float32, weak_type=True), DeviceArray(-0.2556391, dtype=float32, weak_type=True))
-
-  Here, the same value is produced whether or not the :func:`jax.checkpoint`
-  decorator is present. When the decorator is not present, the values
-  ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))`` are computed on the forward
-  pass and are stored for use in the backward pass, because they are needed
-  on the backward pass and depend only on the primal inputs. When using
-  :func:`jax.checkpoint`, the forward pass will compute only the primal outputs
-  and only the primal inputs (``2.0``) will be stored for the backward pass.
-  At that time, the value ``jnp.sin(2.0)`` is recomputed, along with the values
-  ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))``.
-
-  While ``jax.checkpoint`` controls what values are stored from the forward-pass
-  to be used on the backward pass, the total amount of memory required to
-  evaluate a function or its VJP depends on many additional internal details of
-  that function. Those details include which numerical primitives are used,
-  how they're composed, where jit and control flow primitives like scan
-  are used, and other factors.
-
-  The :func:`jax.checkpoint` decorator can be applied recursively to express
-  sophisticated autodiff rematerialization strategies. For example:
-
-  >>> def recursive_checkpoint(funs):
-  ...   if len(funs) == 1:
-  ...     return funs[0]
-  ...   elif len(funs) == 2:
-  ...     f1, f2 = funs
-  ...     return lambda x: f1(f2(x))
-  ...   else:
-  ...     f1 = recursive_checkpoint(funs[:len(funs)//2])
-  ...     f2 = recursive_checkpoint(funs[len(funs)//2:])
-  ...     return lambda x: f1(jax.checkpoint(f2)(x))
-  ...
-  """
-  if config.jax_new_checkpoint and not concrete:
-    return new_checkpoint(fun, prevent_cse=prevent_cse, policy=policy)
+  if config.jax_new_checkpoint:
+    return new_checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
+                          static_argnums=static_argnums)
 
   @wraps(fun)
   @api_boundary
   def remat_f(*args, **kwargs):
+    f, args = _remat_static_argnums(fun, static_argnums, args)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+    flat_fun, out_tree = flatten_fun(lu.wrap_init(f), in_tree)
     out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
                              concrete=concrete, prevent_cse=prevent_cse,
-                             differentiated=False,
-                             policy=policy)
+                             differentiated=False, policy=policy)
     return tree_unflatten(out_tree(), out_flat)
   return remat_f
+checkpoint.__doc__ = new_checkpoint.__doc__
 remat = checkpoint  # type: ignore
+
 
 def named_call(
     fun: Callable[..., Any],

@@ -22,6 +22,7 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental import sparse
 from jax._src.api_util import shaped_abstractify  # technically not an api fn
+from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla
 from jax.experimental import sharding
@@ -43,6 +44,9 @@ def required_devices(num_devices_required):
       return f(state)
     return helper2
   return helper1
+
+def swap(a, b):
+  return b, a
 
 
 @google_benchmark.register
@@ -504,8 +508,35 @@ def bench_pjit_check_aval_sharding(state):
     pjit_lib.pjit_check_aval_sharding([s] * 100, [aval] * 100, 'benchmark', False)
 
 
-def swap(a, b):
-  return b, a
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_remat_eager_retracing_overheads(state):
+  def double_compose(f):
+    return lambda x: f(f(x))
+
+  f = jnp.sin
+  for _ in range(6):
+    f = double_compose(f)
+  f = double_compose(checkpoint(f))
+
+  while state:
+    y, _ = jax.vjp(f, 3.)
+  y.block_until_ready()
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_remat_eager_retracing_overheads_static_argnums(state):
+  def double_compose(f):
+    return lambda x, y: f(f(x, y), y)
+
+  f = lambda x, _: jnp.sin(x)
+  for _ in range(6):
+    f = double_compose(f)
+  f = double_compose(checkpoint(f, static_argnums=(1,)))
+
+  while state:
+    y, _ = jax.vjp(f, 3., True)
+  y.block_until_ready()
 
 
 if __name__ == "__main__":

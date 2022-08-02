@@ -14,7 +14,7 @@
 
 from functools import partial
 import operator as op
-from typing import Callable, Optional, List, Tuple, Sequence, Union
+from typing import Callable, Optional, List, Tuple, Sequence, Union, Any
 import types
 
 import jax
@@ -96,8 +96,9 @@ checkpoint_policies = types.SimpleNamespace(
 
 ### Main API
 
-def checkpoint(fun: Callable, prevent_cse: bool = True,
-               policy: Optional[Callable[..., bool]] = None
+def checkpoint(fun: Callable, *, prevent_cse: bool = True,
+               policy: Optional[Callable[..., bool]] = None,
+               static_argnums: Union[int, Tuple[int, ...]] = (),
                ) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
@@ -131,25 +132,26 @@ def checkpoint(fun: Callable, prevent_cse: bool = True,
       from the default of storing all intermediate linearization points to
       recomputing them. Its arguments and return value should be arrays,
       scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
-    concrete: Optional, boolean indicating whether ``fun`` may involve
-      value-dependent Python control flow (default False). Support for such
-      control flow is optional, and disabled by default, because in some
-      edge-case compositions with :func:`jax.jit` it can lead to some extra
-      computation.
-    prevent_cse: Optional, boolean indicating whether to prevent common
-      subexpression elimination (CSE) optimizations in the HLO generated from
-      differentiation. This CSE prevention has costs because it can foil other
-      optimizations, and because it can incur high overheads on some backends,
-      especially GPU. The default is True because otherwise, under a ``jit`` or
-      ``pmap``, CSE can defeat the purpose of this decorator. But in some
-      settings, like when used inside a ``scan``, this CSE prevention mechanism
-      is unnecessary, in which case ``prevent_cse`` can be set to False.
-    policy: This is an experimental feature and the API is likely to change.
-      Optional callable, one of the attributes of ``jax.checkpoint_policies``,
-      which takes as input a type-level specification of a first-order primitive
-      application and returns a boolean indicating whether the corresponding
-      output value(s) can be saved as a residual (or, if not, instead must be
-      recomputed in the (co)tangent computation).
+    prevent_cse: Optional, boolean keyword-only argument indicating whether to
+      prevent common subexpression elimination (CSE) optimizations in the HLO
+      generated from differentiation. This CSE prevention has costs because it
+      can foil other optimizations, and because it can incur high overheads on
+      some backends, especially GPU. The default is True because otherwise,
+      under a ``jit`` or ``pmap``, CSE can defeat the purpose of this decorator.
+      But in some settings, like when used inside a ``scan``, this CSE
+      prevention mechanism is unnecessary, in which case ``prevent_cse`` can be
+      set to False.
+    static_argnums: Optional, int or sequence of ints, a keyword-only argument
+      indicating which argument values on which to specialize for tracing and
+      caching purposes. Specifying arguments as static can avoid
+      ConcretizationTypeErrors when tracing, but at the cost of more retracing
+      overheads. See the example below.
+    policy: Optional, callable keyword-only argument. It should be one of the
+      attributes of ``jax.checkpoint_policies``. The callable takes as input a
+      type-level specification of a first-order primitive application and
+      returns a boolean indicating whether the corresponding output value(s) can
+      be saved as residuals (or instead must be recomputed in the (co)tangent
+      computation if needed).
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -203,13 +205,46 @@ def checkpoint(fun: Callable, prevent_cse: bool = True,
   ...     f2 = recursive_checkpoint(funs[len(funs)//2:])
   ...     return lambda x: f1(jax.checkpoint(f2)(x))
   ...
+
+  If ``fun`` involves Python control flow which depends on argument values,
+  it may be necessary to use the ``static_argums`` parameter. For example,
+  consider a boolean flag argument:
+
+    from functools import partial
+
+    @partial(jax.checkpoint, static_argnums=(1,))
+    def foo(x, is_training):
+      if is_training:
+        ...
+      else:
+        ...
+
+  Here, the use of ``static_argnums`` is necessary because the ``if`` statement
+  depends on the value of ``is_training``. The only cost to using
+  ``static_argnums`` is more retracing overheads: in the example, ``foo`` must
+  be retraced for every new value of ``is_training``. In some cases it may
+  additionally be necessary to use ``jax.ensure_compile_time_eval``:
+
+    @partial(jax.checkpoint, static_argnums=(1,))
+    def foo(x, y):
+      with jax.ensure_compile_time_eval():
+        y_pos = y > 0
+      if y_pos:
+        ...
+      else:
+        ...
+
+  As an alternative to using ``static_argnums`` (and
+  ``jax.ensure_compile_time_eval``), it may be easier to compute some values
+  outside the ``jax.checkpoint``-decorated function and then close over them.
   """
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
+    fun_, args = _remat_static_argnums(fun, static_argnums, args)
     args_flat, in_tree = tree_flatten((args, kwargs))
     in_avals = [shaped_abstractify(x) for x in args_flat]
-    jaxpr, consts, out_tree = _trace_to_jaxpr(fun, in_tree, tuple(in_avals))
+    jaxpr, consts, out_tree = _trace_to_jaxpr(fun_, in_tree, tuple(in_avals))
     out_flat = remat_p.bind(
         *consts, *args_flat, jaxpr=jaxpr, prevent_cse=prevent_cse,
         differentiated=False, policy=policy)
@@ -218,11 +253,90 @@ def checkpoint(fun: Callable, prevent_cse: bool = True,
 
 remat = checkpoint  # alias
 
+# This function is similar to api_util.argnums_partial, except the error
+# messages are specific to jax.remat (and thus more actionable), the
+# hashing/caching behavior is slightly different, and this function accepts a
+# boolean for static_argnums. Perhaps the two could be de-duplicated.
+def _remat_static_argnums(fun, static_argnums, args):
+  if type(static_argnums) is int:
+    static_argnums = (static_argnums,)
+  elif not (type(static_argnums) is tuple and
+            all(type(d) is int for d in static_argnums)):
+    raise TypeError("the `static_argnums` argument to `jax.checkpoint` / "
+                    "`jax.remat` must be an int, tuple of ints or, bool, but "
+                    f"got value {static_argnums}")
+
+  if not all(-len(args) <= d < len(args) for d in static_argnums):
+    raise ValueError("the `static_argnums` argument to `jax.checkpoint` / "
+                     "`jax.remat` can only take integer values greater than or "
+                     "equal to `-len(args)` and less than `len(args)`, but got "
+                     f"{static_argnums}")
+
+  if not static_argnums:
+    return fun, args
+  nargs = len(args)
+  static_argnums_ = frozenset(d % len(args) for d in static_argnums)
+  dyn_args, static_args = [], []
+  for i, x in enumerate(args):
+    if i in static_argnums_: static_args.append(WrapHashably(x))
+    else: dyn_args.append(x)
+  new_fun = _dyn_args_fun(fun, static_argnums_, tuple(static_args), nargs)
+  return new_fun, dyn_args
+
+class WrapHashably:
+  val: Any
+  hash: Optional[int] = None
+  hashable: bool
+
+  def __init__(self, val):
+    self.val = val
+    try:
+      self.hash = hash(val)
+      self.hashable = True
+    except:
+      self.hash = id(val)
+      self.hashable = False
+  def __hash__(self):
+    return self.hash
+  def __eq__(self, other):
+    if isinstance(other, WrapHashably):
+      try: return self.val == other.val
+      except: return self.val is other.val
+    return False
+
+# This caching is useful to avoid retracing even when static_argnums is used.
+# See api_benchmark.py:bench_remat_eager_retracing_overheads_static_argnums.
+# On that benchmark, including this caching makes a ~10x difference (which can
+# be made arbitrary large by involving larger functions to be traced).
+@weakref_lru_cache
+def _dyn_args_fun(fun: Callable, static_argnums: Tuple[int, ...],
+                  static_args: Tuple[WrapHashably, ...], nargs: int):
+  def new_fun(*dyn_args, **kwargs):
+    static_args_, dyn_args_ = iter(static_args), iter(dyn_args)
+    full_args = [next(static_args_).val if i in static_argnums
+                 else next(dyn_args_) for i in range(nargs)]
+    return fun(*full_args, **kwargs)
+  return new_fun
+
+# This helper is similar to those in control_flow/common.py, but with
+# remat-specific errors.
 @weakref_lru_cache
 def _trace_to_jaxpr(fun, in_tree, in_avals):
-  debug = pe.debug_info(fun, in_tree, False, "checkpoint")
+  debug = pe.debug_info(fun, in_tree, True, "checkpoint")
   flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+  try:
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+  except core.ConcretizationTypeError as e:
+    msg, = e.args
+    new_msg = msg + "\n\n" + (
+        "Consider using the `static_argnums` parameter for `jax.remat` or "
+        "`jax.checkpoint`. See the `jax.checkpoint` docstring and its example "
+        "involving `static_argnums`:\n"
+        "https://jax.readthedocs.io/en/latest/_autosummary/jax.checkpoint.html"
+        "\n")
+    new_e = core.ConcretizationTypeError.__new__(core.ConcretizationTypeError)
+    new_e.args = (new_msg,)
+    raise new_e from None
   return pe.convert_constvars_jaxpr(jaxpr), consts, out_tree()
 
 
