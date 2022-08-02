@@ -872,6 +872,15 @@ jax_test(
 )
 
 jax_test(
+    name = "state_test",
+    srcs = ["state_test.py"],
+    enable_configs = [
+        "gpu",
+        "cpu",
+    ],
+)
+
+jax_test(
     name = "clear_backends_test",
     srcs = ["clear_backends_test.py"],
 )
