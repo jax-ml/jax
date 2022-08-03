@@ -113,12 +113,12 @@ zip, unsafe_zip = safe_zip, zip
 FLAGS = flags.FLAGS
 
 flags.DEFINE_bool(
-    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
+    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", False),
     "A flag enabling the C++ jax.jit fast path."
     "Set this to `False` only if it crashes otherwise and report "
     "the error to the jax-team.")
 flags.DEFINE_bool(
-    "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", True),
+    "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", False),
     "A flag enabling the C++ jax.pmap fast path. Until the default "
     "is switched to True, the feature is not supported and possibly broken "
     "(e.g. it may use unreleased code from jaxlib.")
@@ -660,7 +660,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
 
 
 @contextmanager
-def disable_jit():
+def disable_jit(disable: bool = True):
   """Context manager that disables :py:func:`jit` behavior under its dynamic context.
 
   For debugging it is useful to have a mechanism that disables :py:func:`jit`
@@ -704,7 +704,7 @@ def disable_jit():
   Value of y is [2 4 6]
   [5 7 9]
   """
-  with _disable_jit(True):
+  with _disable_jit(disable):
     yield
 
 

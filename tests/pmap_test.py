@@ -727,6 +727,39 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
     self.assertAllClose(ans, expected, atol=1e-3, rtol=1e-3)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_mesh={device_mesh_shape}".replace(" ", ""),
+       "device_mesh_shape": device_mesh_shape}
+      for device_mesh_shape in [(1, 2)])
+  def testNestedWithClosure2(self, device_mesh_shape):
+    mesh_shape = self._getMeshShape(device_mesh_shape)
+
+    @partial(self.pmap, axis_name='i')
+    def test_fun(x):
+      y = jnp.sum(jnp.sin(x))
+
+      @partial(self.pmap, axis_name='j')
+      def g(z):
+        return jnp.exp(x.sum())
+      return grad(lambda w: jnp.sum(g(w)))(x)
+
+    @vmap
+    def baseline_fun(x):
+      y = jnp.sum(jnp.sin(x))
+
+      @vmap
+      def g(z):
+        return jnp.exp(x.sum())
+      return grad(lambda w: jnp.sum(g(w)))(x)
+
+    shape = mesh_shape
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    print(x.shape)
+
+    ans = grad(lambda x: jnp.sum(test_fun(x)))(x)
+    expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
+    self.assertAllClose(ans, expected, atol=1e-3, rtol=1e-3)
+
   def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
     f = self.pmap(f, axis_name='i')
@@ -1164,9 +1197,16 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = np.ones((device_count + 1, 10))
     self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
-    f = self.pmap(lambda x: self.pmap(lambda x: x)(x))
-    x = np.ones((device_count, 2, 10))
-    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    if not config.jax_disable_jit:
+      # When jit is disabled, this error is not raised given an identity fn. We
+      # kept this branch so as not to perturb old tests.
+      f = self.pmap(lambda x: self.pmap(lambda x: x)(x))
+      x = np.ones((device_count, 2, 10))
+      self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    else:
+      f = self.pmap(lambda x: self.pmap(lambda x: 2 * x)(x))
+      x = np.ones((device_count, 2, 10))
+      self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
   def testPmapConstant(self):
     device_count = jax.device_count()
@@ -1203,7 +1243,9 @@ class PythonPmapTest(jtu.JaxTestCase):
       bufs = ans._arrays
     else:
       bufs = ans.device_buffers
-    self.assertEqual([b.device() for b in bufs], devices)
+    # TODO(mattjj,sharadmv): fix physical layout with eager pmap, remove 'if'
+    if not config.jax_disable_jit:
+      self.assertEqual([b.device() for b in bufs], devices)
 
   def testPmapConstantError(self):
     device_count = jax.device_count()
@@ -1286,6 +1328,8 @@ class PythonPmapTest(jtu.JaxTestCase):
                      [b.device() for b in expected_sharded_bufs])
 
   def testNestedPmapConstantError(self):
+    if config.jax_disable_jit:
+      raise SkipTest("error test doesn't apply with disable_jit")
     f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, jax.device_count() // 2 + 1, 3)
     x = jnp.arange(prod(shape)).reshape(shape)
@@ -1702,7 +1746,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testCompositionWithJitTwice(self):
     @jit
     def f(x):
-      y = 2 * x
+      y = jnp.float32(2) * x
 
       @jit
       def g(z):
@@ -1710,7 +1754,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
       return g(x)
 
-    f(np.arange(1.).reshape((1, 1)))  # doesn't crash
+    f(np.arange(1., dtype='float32').reshape((1, 1)))  # doesn't crash
 
   @ignore_jit_of_pmap_warning()
   def testIssue1065(self):
@@ -1904,7 +1948,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testJitOfPmapWarningMessage(self):
     device_count = jax.device_count()
 
-    if device_count == 1:
+    if device_count == 1 or config.jax_disable_jit:
       raise SkipTest("test requires at least two devices")
 
     def foo(x): return x
@@ -2068,6 +2112,8 @@ class PythonPmapTest(jtu.JaxTestCase):
   def test_grad_of_pmap_compilation_caching(self, axis_size):
     if len(jax.local_devices()) < axis_size:
       raise SkipTest("too few devices for test")
+    if config.jax_disable_jit:
+      raise SkipTest("caching doesn't apply with jit disabled")
 
     @jax.pmap
     def f(x):
@@ -2474,6 +2520,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       f(jnp.ones(jax.device_count() + 1))
 
   def testBadAxisSizeErrorNested(self):
+    if config.jax_disable_jit:
+      raise SkipTest("error doesn't apply when jit is disabled")
     f = pmap(pmap(lambda x: lax.psum(x, ('i', 'j')),
                   axis_name='j'),
              axis_name='i',
@@ -2487,6 +2535,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testNestedPmaps(self):
     if jax.device_count() % 2 != 0:
       raise SkipTest
+    if config.jax_disable_jit:
+      raise SkipTest("disable_jit requires num devices to equal axis size")
 
     # Devices specified in outer pmap are OK
     @partial(pmap, axis_name='i', devices=jax.devices())
@@ -2504,6 +2554,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testNestedPmapsBools(self):
     if jax.device_count() % 2 != 0:
       raise SkipTest
+    if config.jax_disable_jit:
+      raise SkipTest("disable_jit requires num devices to equal axis size")
 
     # Devices specified in outer pmap are OK
     @partial(pmap, axis_name='i', devices=jax.devices())
@@ -3041,6 +3093,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out2, input_data)
 
   def test_pmap_array_in_axes_out_axes(self):
+    if config.jax_disable_jit:
+      raise SkipTest("test hangs with disable_jit")  # TODO(mattjj,sharadmv,yashkatariya)
     dc = jax.device_count()
     input_shape = (dc, 2)
     a1, input_data = create_input_array_for_pmap(input_shape, in_axes=0)
@@ -3130,6 +3184,29 @@ class ArrayVmapPmapCollectivesTest(ArrayPmapMixin, VmapPmapCollectivesTest):
   pass
 
 class ArrayPmapWithDevicesTest(ArrayPmapMixin, PmapWithDevicesTest):
+  pass
+
+class EagerPmapMixin:  # i hate mixins
+
+  def setUp(self):
+    super().setUp()
+    self.jit_disabled = config.jax_disable_jit
+    config.update('jax_disable_jit', True)
+
+  def tearDown(self):
+    config.update('jax_disable_jit', self.jit_disabled)
+    super().tearDown()
+
+class EagerPythonPmapTest(EagerPmapMixin, PythonPmapTest):
+  pass
+
+class EagerCppPmapTest(EagerPmapMixin, CppPmapTest):
+  pass
+
+class EagerPmapWithDevicesTest(EagerPmapMixin, PmapWithDevicesTest):
+  pass
+
+class EagerVmapOfPmapTest(EagerPmapMixin, VmapOfPmapTest):
   pass
 
 
