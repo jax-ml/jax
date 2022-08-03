@@ -15,6 +15,7 @@
 
 import abc
 import asyncio
+import itertools
 from functools import partial
 import re
 import threading
@@ -33,6 +34,7 @@ import tensorstore as ts
 TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
 _REMOVED_VALUE = 'Value removed'
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
+_module_unique_count = itertools.count()
 
 
 async def create_async_gda_from_callback(
@@ -361,10 +363,7 @@ class AsyncManager:
       self._exception = e
 
   def _start_async_commit(self, on_commit_callback):
-    if self._count is None:
-      self._count = 0
-    else:
-      self._count += 1
+    self._count = next(_module_unique_count)
 
     self._on_commit_callback = on_commit_callback
     self._thread = threading.Thread(target=self._thread_func)
