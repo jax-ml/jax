@@ -2608,7 +2608,7 @@ def _get_input_metadata(
     # the mesh is global mesh and the indices returned by `spec_to_indices` will
     # represent index for each device in the global mesh. But here we want
     # indices for the local devices of the global mesh.
-    if proto.type == xc.OpSharding.Type.REPLICATED:
+    if is_op_sharding_replicated(proto):
       index = tuple((slice(None),) * aval.ndim for _ in range(len(sharding.addressable_devices)))
     else:
       index = tuple(sharding.devices_indices_map(aval.shape).values())
@@ -2797,18 +2797,24 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
 def are_op_shardings_equal(op1, op2):
   if id(op1) == id(op2):
     return True
-  if op1.type != op2.type:
-    return False
   if xla_extension_version >= 81:
     return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
   else:
     if op1.type == xc.OpSharding.Type.TUPLE:
       return all(are_op_shardings_equal(i, j)
                  for i, j in safe_zip(op1.tuple_shardings, op2.tuple_shardings))
-    return (op1.tile_assignment_dimensions == op2.tile_assignment_dimensions and
+    return (op1.type == op2.type and
+            op1.tile_assignment_dimensions == op2.tile_assignment_dimensions and
             op1.tile_assignment_devices == op2.tile_assignment_devices and
             op1.last_tile_dims == op2.last_tile_dims and
             op1.replicate_on_last_tile_dim == op2.replicate_on_last_tile_dim)
+
+
+def is_op_sharding_replicated(op):
+  if xla_extension_version >= 81:
+    return xc.HloSharding.from_proto(op).is_replicated()
+  else:
+    return op.type == xc.OpSharding.Type.REPLICATED
 
 
 _forbidden_primitives = {
