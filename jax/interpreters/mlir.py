@@ -779,6 +779,9 @@ def lower_jaxpr_to_fun(
   if input_output_aliases:
     token_input_output_aliases = [None] * num_tokens
     input_output_aliases = [*token_input_output_aliases, *input_output_aliases]
+    # Update the existing aliases to account for the new output values
+    input_output_aliases = [None if a is None else a + num_output_tokens +
+                            num_tokens for a in input_output_aliases]
   if arg_shardings:
     token_shardings = [None] * num_tokens
     arg_shardings = [*token_shardings, *arg_shardings]

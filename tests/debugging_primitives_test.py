@@ -106,6 +106,19 @@ class DebugPrintTest(jtu.JaxTestCase):
     self.assertEqual(output(), "x: 2\n")
 
   @jtu.skip_on_devices(*disabled_backends)
+  def test_can_stage_out_debug_print_with_donate_argnums(self):
+    if jax.default_backend() not in {"gpu", "tpu"}:
+      raise unittest.SkipTest("Donate argnums not supported.")
+    def f(x, y):
+      debug_print('x: {x}', x=x)
+      return x + y
+    f = jax.jit(f, donate_argnums=0)
+    with capture_stdout() as output:
+      f(2, 3)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print(self):
     @jax.jit
     def f(x):
@@ -114,6 +127,33 @@ class DebugPrintTest(jtu.JaxTestCase):
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_can_stage_out_ordered_print_with_donate_argnums(self):
+    if jax.default_backend() not in {"gpu", "tpu"}:
+      raise unittest.SkipTest("Donate argnums not supported.")
+    def f(x, y):
+      debug_print('x: {x}', x=x, ordered=True)
+      return x + y
+    f = jax.jit(f, donate_argnums=0)
+    with capture_stdout() as output:
+      f(2, 3)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_can_stage_out_prints_with_donate_argnums(self):
+    if jax.default_backend() not in {"gpu", "tpu"}:
+      raise unittest.SkipTest("Donate argnums not supported.")
+    def f(x, y):
+      debug_print('x: {x}', x=x, ordered=True)
+      debug_print('x: {x}', x=x)
+      return x + y
+    f = jax.jit(f, donate_argnums=0)
+    with capture_stdout() as output:
+      f(2, 3)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2\nx: 2\n")
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_double_stage_out_ordered_print(self):
