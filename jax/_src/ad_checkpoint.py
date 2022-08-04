@@ -206,8 +206,8 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   ...     return lambda x: f1(jax.checkpoint(f2)(x))
   ...
 
-  If ``fun`` involves Python control flow which depends on argument values,
-  it may be necessary to use the ``static_argums`` parameter. For example,
+  If ``fun`` involves Python control flow that depends on argument values,
+  it may be necessary to use the ``static_argnums`` parameter. For example,
   consider a boolean flag argument:
 
     from functools import partial
