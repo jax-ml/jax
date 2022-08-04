@@ -219,11 +219,12 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
       else:
         ...
 
-  Here, the use of ``static_argnums`` is necessary because the ``if`` statement
-  depends on the value of ``is_training``. The only cost to using
-  ``static_argnums`` is more retracing overheads: in the example, ``foo`` must
-  be retraced for every new value of ``is_training``. In some cases it may
-  additionally be necessary to use ``jax.ensure_compile_time_eval``:
+  Here, the use of ``static_argnums`` allows the ``if`` statement's condition
+  to depends on the value of ``is_training``. The cost to using
+  ``static_argnums`` is that it introduces re-tracing overheads across calls:
+  in the example, ``foo`` is re-traced every time it is called with a new value
+  of ``is_training``. In some situations, ``jax.ensure_compile_time_eval``
+  is needed as well:
 
     @partial(jax.checkpoint, static_argnums=(1,))
     def foo(x, y):
