@@ -663,5 +663,26 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         output(), "hello: 0\nhello: 1\nhello: 2\n"
         "hello: 1\nhello: 2\n")
 
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_incorrectly_formatted_string(self):
+
+    @jax.jit
+    def f(x):
+      debug_print("hello: {x}", x)
+      return x
+
+    with self.assertRaises(KeyError):
+      f(jnp.arange(2))
+      jax.effects_barrier()
+
+    @jax.jit
+    def f(x):
+      debug_print("hello: {}", x=x)
+      return x
+
+    with self.assertRaises(IndexError):
+      f(jnp.arange(2))
+      jax.effects_barrier()
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

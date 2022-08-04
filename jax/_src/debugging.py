@@ -156,5 +156,6 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
       w.r.t. other ordered ``debug_print`` calls.
     **kwargs: Additional keyword arguments to be formatted.
   """
+  fmt.format(*args, **kwargs)
   debug_callback(functools.partial(_format_print_callback, fmt), *args,
                  **kwargs, ordered=ordered)
