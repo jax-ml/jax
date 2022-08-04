@@ -487,18 +487,38 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   cusparseDnMatDescr_t mat_b = 0;
   cusparseDnMatDescr_t mat_c = 0;
 
+  // All three matrices A, B, and C must have the same batch_count.
+  // TODO(tianjianlu): use batch_count from matrix descriptor.
+  int batch_count = 1;
+
+  // Three batch modes are supported, C_i = A_i B, C_i = A B_i, and
+  // Ci = A_i B_i, where `i` denotes the batch dimension. Use `batch_stride` to
+  // trigger individual mode, e.g., using `batch_stride_B = 0` in C_i = A_i B.
+  int batch_stride_A = A.rows * A.cols;
+  int batch_stride_B = B.rows * B.cols;
+  int batch_stride_C = C.rows * C.cols;
+
   // bufferSize does not reference these pointers, but does error on NULL.
   int val = 0;
   void* empty = &val;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(
       cusparseCreateCoo(&mat_a, A.rows, A.cols, A.nnz, empty, empty, empty,
                         A.index_type, CUSPARSE_INDEX_BASE_ZERO, A.value_type)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+    cusparseCooSetStridedBatch(
+        mat_a, /*batchCount=*/batch_count, /*batchStride=*/batch_stride_A)));
   JAX_THROW_IF_ERROR(
       JAX_AS_STATUS(cusparseCreateDnMat(&mat_b, B.rows, B.cols, /*ld=*/B.cols,
                                         empty, B.type, CUSPARSE_ORDER_ROW)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+    cusparseDnMatSetStridedBatch(
+      mat_b, /*batchCount=*/batch_count, /*batchStride=*/batch_stride_B)));
   JAX_THROW_IF_ERROR(
       JAX_AS_STATUS(cusparseCreateDnMat(&mat_c, C.rows, C.cols, /*ld=*/C.cols,
                                         empty, C.type, CUSPARSE_ORDER_ROW)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+    cusparseDnMatSetStridedBatch(
+      mat_c, /*batchCount=*/batch_count, /*batchStride=*/batch_stride_C)));
   size_t buffer_size;
   CudaConst alpha = CudaOne(C.type);
   CudaConst beta = CudaZero(C.type);
