@@ -113,7 +113,7 @@ class Array:
     if isinstance(sharding, XLACompatibleSharding):
       device_to_buffer = {db.device().id: db for db in self._arrays}
       self._arrays = [device_to_buffer[device.id]
-                      for device in self.sharding._addressable_device_assignment()]
+                      for device in self.sharding._addressable_device_assignment]
 
   @property
   def shape(self) -> Shape:

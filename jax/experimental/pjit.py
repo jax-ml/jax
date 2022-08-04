@@ -1309,8 +1309,8 @@ def _check_array_device_assignment(pjit_mesh, shardings):
     # Assign `first_device_assignment` after `AUTO` and `UNSPECIFIED` have been
     # skipped.
     if first_device_assignment is None:
-      first_device_assignment = i._device_assignment()
-    arr_device_assignment = i._device_assignment()
+      first_device_assignment = i._device_assignment
+    arr_device_assignment = i._device_assignment
     if pjit_mesh.empty:
       # If mesh is empty, then check if all devices across shardings are
       # equal

@@ -2318,7 +2318,7 @@ class PartitionSpec(tuple):
 
 def _get_backend_from_shardings(
     shardings: Sequence[XLACompatibleSharding]) -> Tuple[xb.XlaBackend, XLACompatibleSharding]:
-  device_set = shardings[0]._device_assignment()
+  device_set = shardings[0]._device_assignment
   assert len(device_set) > 0
   return xb.get_device_backend(device_set[0]), shardings[0]
 
@@ -2683,7 +2683,7 @@ class MeshExecutable(stages.XlaExecutable):
       dev = mesh.devices
       num_replicas, num_partitions = 1, mesh.size
     else:
-      dev = np.array(first_sharding._device_assignment())
+      dev = np.array(first_sharding._device_assignment)
       if spmd_lowering:
         num_replicas, num_partitions = 1, dev.size
       else:

@@ -168,7 +168,7 @@ class ShardingTest(jtu.JaxTestCase):
     mp_sharding = sharding.MeshPspecSharding(mesh, pspec)
     di_map = mp_sharding.devices_indices_map(global_shape)
     op_sharding = mp_sharding._to_xla_op_sharding(len(global_shape))
-    device_assignment = mp_sharding._device_assignment()
+    device_assignment = mp_sharding._device_assignment
 
     self.assertEqual(di_map[mesh.devices.flat[0]], (slice(0, 4), slice(0, 1)))
     self.assertArraysEqual(device_assignment, list(mesh.devices.flat))
