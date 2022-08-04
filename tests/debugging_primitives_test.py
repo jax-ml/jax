@@ -29,6 +29,7 @@ from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax._src import debugging
+from jax._src import dispatch
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -66,6 +67,10 @@ if jaxlib.version < (0, 3, 15):
   disabled_backends.append("tpu")
 
 class DebugPrintTest(jtu.JaxTestCase):
+
+  def tearDown(self):
+    super().tearDown()
+    dispatch.runtime_tokens.clear()
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_simple_debug_print_works_in_eager_mode(self):

@@ -50,6 +50,7 @@ from jax._src.config import config, flags
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 import jax._src.util as util
 from jax._src.util import flatten, unflatten
 from etils import epath
@@ -107,10 +108,14 @@ RuntimeToken = Any
 class RuntimeTokenSet(threading.local):
   tokens: Dict[core.Effect, Tuple[RuntimeToken, Device]]
   output_tokens: Dict[Device, RuntimeToken]
+  output_runtime_tokens: Dict[Device, RuntimeToken]
 
   def __init__(self):
     self.tokens = {}
+    # TODO(sharadmv): remove redundant output token dictionary when minimum
+    # jaxlib version is bumped to 0.3.16.
     self.output_tokens = {}
+    self.output_runtime_tokens = {}
 
   def get_token(self, eff: core.Effect, device: Device) -> RuntimeToken:
     if eff not in self.tokens:
@@ -131,17 +136,22 @@ class RuntimeTokenSet(threading.local):
     # we'd need to store a set of output tokens.
     self.output_tokens[device] = token
 
+  def set_output_runtime_token(self, device: Device, token: RuntimeToken):
+    # TODO(sharadmv): remove this method when minimum jaxlib version is bumped
+    self.output_runtime_tokens[device] = token
+
   def clear(self):
     self.tokens = {}
     self.output_tokens = {}
+    self.output_runtime_tokens = {}
 
   def block_until_ready(self):
-    for t, _ in self.tokens.values():
-      t[0].block_until_ready()
-    # TODO(sharadmv): use a runtime mechanism to block on computations instead
-    # of using output tokens.
-    for t in self.output_tokens.values():
-      t[0].block_until_ready()
+    for token, _ in self.tokens.values():
+      token[0].block_until_ready()
+    for token in self.output_tokens.values():
+      token[0].block_until_ready()
+    for token in self.output_runtime_tokens.values():
+      token.block_until_ready()
 
 runtime_tokens: RuntimeTokenSet = RuntimeTokenSet()
 
@@ -703,12 +713,17 @@ def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
   tokens = [runtime_tokens.get_token(eff, device) for eff in ordered_effects]
   tokens_flat = flatten(tokens)
   input_bufs = [*tokens_flat, *input_bufs]
-  def _remove_tokens(output_bufs):
-    token_bufs, output_bufs = util.split_list(
-        output_bufs, [has_unordered_effects + len(ordered_effects)])
+  def _remove_tokens(output_bufs, runtime_token):
+    # TODO(sharadmv): simplify when minimum jaxlib version is bumped
+    num_output_tokens = len(ordered_effects) + (xla_extension_version < 81 and
+        has_unordered_effects)
+    token_bufs, output_bufs = util.split_list(output_bufs, [num_output_tokens])
     if has_unordered_effects:
-      output_token_buf, *token_bufs = token_bufs
-      runtime_tokens.set_output_token(device, output_token_buf)
+      if xla_extension_version >= 81:
+        runtime_tokens.set_output_runtime_token(device, runtime_token)
+      else:
+        output_token_buf, *token_bufs = token_bufs
+        runtime_tokens.set_output_token(device, output_token_buf)
     for eff, token_buf in zip(ordered_effects, token_bufs):
       runtime_tokens.update_token(eff, token_buf)
     return output_bufs
@@ -727,13 +742,19 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
   in_flat = flatten(device_put(x, device) for i, x in enumerate(args)
                     if i in kept_var_idx)
   if has_unordered_effects or ordered_effects:
-    in_flat, token_handler = _add_tokens(has_unordered_effects, ordered_effects,
-                                         device, in_flat)
-  out_flat = compiled.execute(in_flat)
+    in_flat, token_handler = _add_tokens(
+        has_unordered_effects, ordered_effects, device, in_flat)
+    if xla_extension_version >= 81:
+      out_flat, runtime_token = compiled.execute_with_token(in_flat)
+    else:
+      out_flat = compiled.execute(in_flat)
+      runtime_token = None
+  else:
+    out_flat = compiled.execute(in_flat)
   check_special(name, out_flat)
   out_bufs = unflatten(out_flat, output_buffer_counts)
   if ordered_effects or has_unordered_effects:
-    out_bufs = token_handler(out_bufs)
+    out_bufs = token_handler(out_bufs, runtime_token)
   return result_handler(env, out_bufs)
 
 
@@ -934,7 +955,10 @@ class XlaCompiledComputation(stages.XlaExecutable):
                                        host_callbacks)
     buffer_counts = [aval_to_num_buffers(aval) for aval in out_avals]
     if ordered_effects or has_unordered_effects:
-      num_output_tokens = len(ordered_effects) + has_unordered_effects
+      num_output_tokens = len(ordered_effects)
+      # TODO(sharadmv): remove check when minimum jaxlib version is bumped
+      if xla_extension_version < 81:
+        num_output_tokens += has_unordered_effects
       buffer_counts = ([1] * num_output_tokens) + buffer_counts
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,  # type: ignore  # noqa: F811

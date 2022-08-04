@@ -456,10 +456,14 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     # First output should be output token
     result_types = mhlo.body.operations[0].type.results
-    self.assertLen(list(result_types), 2)
-    self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
-    self.assertLen(list(result_types), 2)
-    self.assertEqual(str(result_types[1]), 'tensor<f32>')
+    if jaxlib.version < (0, 3, 16):
+      self.assertLen(list(result_types), 2)
+      self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
+      self.assertLen(list(result_types), 2)
+      self.assertEqual(str(result_types[1]), 'tensor<f32>')
+    else:
+      self.assertLen(list(result_types), 1)
+      self.assertEqual(str(result_types[0]), 'tensor<f32>')
 
   def test_lowered_jaxpr_with_ordered_effects_takes_in_dummy_inputs(self):
     @jax.jit

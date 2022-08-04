@@ -41,6 +41,7 @@ from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src import source_info_util
 import jax._src.util as util
 from jax.config import config
@@ -615,7 +616,8 @@ def lower_jaxpr_to_module(
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects, public=True, create_tokens=True,
         replace_tokens_with_dummy=True,
-        num_output_tokens=1 if unordered_effects else 0,
+        num_output_tokens=(
+          1 if (unordered_effects and xla_extension_version < 81) else 0),
         replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)

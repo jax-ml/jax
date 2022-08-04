@@ -1707,12 +1707,26 @@ class ExecuteReplicated:
   @profiler.annotate_function
   def __call__(self, *args):
     input_bufs = self.in_handler(args)
-    out_bufs = self.xla_executable.execute_sharded_on_local_devices(input_bufs)
     if self.has_unordered_effects:
-      token_bufs, *out_bufs = out_bufs
-      for i, device in enumerate(self.xla_executable.local_devices()):
-        token = (token_bufs[i],)
-        dispatch.runtime_tokens.set_output_token(device, token)
+      # TODO(sharadmv): simplify this logic when minimum jaxlib version is
+      # bumped
+      if xla_extension_version >= 81:
+        out_bufs, runtime_tokens = (
+            self.xla_executable.execute_sharded_on_local_devices_with_tokens(
+              input_bufs))
+        for device, token in zip(
+          self.xla_executable.local_devices(), runtime_tokens):
+          dispatch.runtime_tokens.set_output_runtime_token(device, token)
+      else:
+        out_bufs = self.xla_executable.execute_sharded_on_local_devices(
+            input_bufs)
+        token_bufs, *out_bufs = out_bufs
+        for i, device in enumerate(self.xla_executable.local_devices()):
+          token = (token_bufs[i],)
+          dispatch.runtime_tokens.set_output_token(device, token)
+    else:
+      out_bufs = self.xla_executable.execute_sharded_on_local_devices(
+          input_bufs)
     if dispatch.needs_check_special():
       for bufs in out_bufs:
         dispatch.check_special("parallel computation", bufs)
