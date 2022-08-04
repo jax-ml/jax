@@ -34,7 +34,7 @@ read -r -d '' cmd <<EOF
 date \
 && pytest -v  -s --continue-on-collection-errors \
     --junit-xml=/workspace/outputs/junit_output_\${SLURM_PROCID}.xml \
-    /workspace/tests/distributed_multinode_test.py
+    /workspace/tests/distributed_gpu_multiprocess_test.py
 EOF
 
 # create run specific output directory for ease of analysis

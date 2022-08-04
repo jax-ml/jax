@@ -94,8 +94,8 @@ py_test(
 )
 
 py_test(
-    name = "distributed_multinode_test",
-    srcs = ["distributed_multinode_test.py"],
+    name = "distributed_gpu_multiprocess_test",
+    srcs = ["distributed_gpu_multiprocess_test.py"],
     deps = [
         "//jax",
         "//jax:test_util",
