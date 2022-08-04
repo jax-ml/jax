@@ -41,7 +41,7 @@ body:
 - type: input
   attributes:
     label: What jax/jaxlib version are you using?
-    placeholder: For example: jax v0.3.0; jaxlib v0.3.0
+    placeholder: For example jax v0.3.0, jaxlib v0.3.0
 - type: checkboxes
   attributes:
     label: Which accelerator(s) are you using?
