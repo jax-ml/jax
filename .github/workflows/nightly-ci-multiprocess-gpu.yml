@@ -1,0 +1,54 @@
+name: Nightly JAX CI on NVIDIA GPUs
+# This configures running JAX tests (especially multi-node multi-gpu) against nightly GPU jaxlib builds.
+# This is expected to fail frequently, and so we don't run it against every commit and PR in the repository.
+# Portions of this adapted from https://github.com/google/jax/blob/main/.github/workflows/upstream-nightly.yaml
+
+# Controls when the workflow will run
+on:
+  schedule:
+    - cron: "0 12 * * *" # Daily at 12:00 UTC
+  workflow_dispatch: # allows triggering the workflow run manually
+  pull_request:  # Automatically trigger on pull requests affecting this file
+    branches:
+      - main
+    paths:
+      - '**workflows/nightly-ci-multiprocess-gpu.yml'
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Launch slurm job and hook output to this shell
+        run: |
+          export JOBSCRIPTSDIR=${GITHUB_WORKSPACE}/.github/workflows/slurm_job_scripts
+          source $JOBSCRIPTSDIR/slurm_utils_common.sh
+          sbatch -N 2 $JOBSCRIPTSDIR/multinode_pytest.sub | tee output.log
+          sleep 2m
+          export SLURM_JOBID=$(grep 'Submitted batch job' "output.log" | awk '{ print $4 }')
+          export SLURM_OUTPUT=$(scontrol show job "${SLURM_JOBID}" | grep 'StdOut' | awk -F '=' '{ print $2 }')
+          job_wait "${SLURM_JOBID}" & PID=$!
+          touch "${SLURM_OUTPUT}"
+          echo -e " ---------------------------------------------------\n" \
+               "----------WAITING FOR SLURM JOB TO BEGIN-----------\n" \
+               "---------------------------------------------------\n"
+          tail --pid="${PID}" -f "${SLURM_OUTPUT}"
+          export SLURM_STATE=$(job_state "${SLURM_JOBID}"); echo "SLURM_JOBID=${SLURM_JOBID} SLURM_STATE='${SLURM_STATE}'"
+          export SLURM_WALLTIME=$(job_time "${SLURM_JOBID}"); echo "SLURM_WALLTIME=${SLURM_WALLTIME} secs"
+          export SLURM_EXITCODE=$(job_exit_code "${SLURM_JOBID}" || echo $?); echo "SLURM_EXITCODE='${SLURM_EXITCODE}'"
+          if [ "${SLURM_EXITCODE}" != "0" ];      then exit ${SLURM_EXITCODE:-999}; fi
+          if [ "${SLURM_STATE}" != "COMPLETED" ]; then exit 1; fi
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v1
+        if: always()
+        with:
+          files: "outputs/*.xml"
+
+      - name: Upload run results from all nodes
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: output-from-nodes
+          path: "outputs/*.txt"
