@@ -1173,10 +1173,19 @@ def _outside_call_lowering(
       result_arrays = ()
     return result_arrays
 
+  if isinstance(ctx.module_context.axis_context,
+                (mlir.SPMDAxisContext, mlir.ShardingContext)):
+    # Apply maximal sharding so pjit only executes the callback on device 0.
+    sharding = xla_client.OpSharding()
+    sharding.type = xla_client.OpSharding.Type.MAXIMAL
+    sharding.tile_assignment_dimensions = [1]
+    sharding.tile_assignment_devices = [0]
+  else:
+    sharding = None
   results, next_token, keep_alive = mlir.emit_python_callback(ctx,
       wrapped_callback, current_token, callback_operands,
       callback_operand_avals, callback_flat_results_aval,  # type: ignore[arg-type]
-      has_side_effect=True)
+      has_side_effect=True, sharding=sharding)
   _callback_handler_data.keep_alives.append(keep_alive)
   # We must put the two tokens at the end
   if identity:

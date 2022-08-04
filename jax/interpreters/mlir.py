@@ -1419,7 +1419,8 @@ def emit_python_callback(
     ctx: LoweringRuleContext, callback, token: Optional[Any],
     operands: List[ir.Value], operand_avals: List[core.AbstractValue],
     result_avals: List[core.AbstractValue],
-    has_side_effect: bool) -> Tuple[List[ir.Value], Any, Any]:
+    has_side_effect: bool, *, sharding: Optional[xc.OpSharding] = None
+    ) -> Tuple[List[ir.Value], Any, Any]:
   """Creates an MHLO `CustomCallOp` that calls back to the provided function."""
   platform = ctx.module_context.platform
   if platform in {"tpu"} and jax._src.lib.version < (0, 3, 15):
@@ -1433,15 +1434,6 @@ def emit_python_callback(
       [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
   operand_shapes = util.flatten(
       [xla.aval_to_xla_shapes(op_aval) for op_aval in operand_avals])
-  if isinstance(ctx.module_context.axis_context,
-                (SPMDAxisContext, ShardingContext)):
-    # Apply maximal sharding so pjit only executes the callback on device 0.
-    sharding = xc.OpSharding()
-    sharding.type = xc.OpSharding.Type.MAXIMAL
-    sharding.tile_assignment_dimensions = [1]
-    sharding.tile_assignment_devices = [0]
-  else:
-    sharding = None
   if platform == "tpu":
     if result_avals:
       raise NotImplementedError(

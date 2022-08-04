@@ -27,6 +27,7 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax._src.lax import control_flow as lcf
+from jax._src.lib import xla_client as xc
 import jax.numpy as jnp
 
 DebugEffect = enum.Enum('DebugEffect', ['PRINT', 'ORDERED_PRINT'])
@@ -88,6 +89,16 @@ ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
 def debug_callback_lowering(ctx, *args, effect, callback, **params):
 
+  if isinstance(ctx.module_context.axis_context,
+                (mlir.SPMDAxisContext, mlir.ShardingContext)):
+    # Apply maximal sharding so pjit only executes the callback on device 0.
+    sharding = xc.OpSharding()
+    sharding.type = xc.OpSharding.Type.MAXIMAL
+    sharding.tile_assignment_dimensions = [1]
+    sharding.tile_assignment_devices = [0]
+  else:
+    sharding = None
+
   def _callback(*flat_args):
     return tuple(
         debug_callback_p.impl(
@@ -99,7 +110,8 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
     ctx.set_tokens_out(mlir.TokenSet({effect: (token,)}))
   else:
     result, token, keepalive = mlir.emit_python_callback(
-        ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out, True)
+        ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out, True,
+        sharding=sharding)
   ctx.module_context.add_keepalive(keepalive)
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
