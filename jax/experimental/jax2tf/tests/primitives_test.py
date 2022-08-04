@@ -125,6 +125,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       if (config.jax2tf_default_experimental_native_lowering and
           "does not work with custom calls" in str(e)):
         logging.warning("Supressing error %s", e)
+      else:
+        raise e
 
   def test_primitive_coverage(self):
     """Fail if there are JAX primitives that are not implemented."""
