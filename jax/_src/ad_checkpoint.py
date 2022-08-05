@@ -14,7 +14,7 @@
 
 from functools import partial
 import operator as op
-from typing import Callable, Optional, List, Tuple, Sequence, Union, Any
+from typing import Callable, Optional, List, Tuple, Sequence, Set, Union, Any
 import types
 
 import jax
@@ -419,11 +419,16 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
 
+remat_allowed_effects: Set[core.Effect] = set()
+
 def remat_partial_eval(trace, *tracers, jaxpr, **params):
   assert not jaxpr.constvars
-  if jaxpr.effects:
+  disallowed_effects = {eff for eff in jaxpr.effects
+                        if eff not in remat_allowed_effects}
+  if disallowed_effects:
     raise NotImplementedError(
-        'Effects not supported in partial-eval of `checkpoint`/`remat`.')
+        'Effects not supported in partial-eval of `checkpoint`/`remat`: '
+        f'{disallowed_effects}')
   policy = params['policy'] or nothing_saveable
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res = \

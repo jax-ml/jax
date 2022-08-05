@@ -21,11 +21,13 @@ from typing import Callable, Any
 from jax import core
 from jax import tree_util
 from jax import lax
+from jax._src import ad_checkpoint
 from jax._src import lib as jaxlib
 from jax._src import util
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
 import jax.numpy as jnp
@@ -37,6 +39,8 @@ mlir.lowerable_effects.add(DebugEffect.PRINT)
 mlir.lowerable_effects.add(DebugEffect.ORDERED_PRINT)
 lcf.allowed_effects.add(DebugEffect.PRINT)
 lcf.allowed_effects.add(DebugEffect.ORDERED_PRINT)
+ad_checkpoint.remat_allowed_effects.add(DebugEffect.PRINT)
+ad_checkpoint.remat_allowed_effects.add(DebugEffect.ORDERED_PRINT)
 
 # `debug_callback_p` is the main primitive for staging out Python callbacks.
 debug_callback_p = core.Primitive('debug_callback')
@@ -121,6 +125,37 @@ mlir.register_lowering(
 if jaxlib.version >= (0, 3, 15):
   mlir.register_lowering(
       debug_callback_p, debug_callback_lowering, platform="tpu")
+
+def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+  # The default behavior for effectful primitives is to not stage them if
+  # possible. For debug callback, we actually want it to be staged to
+  # provide more information to the user. This rule bypasses partial_eval's
+  # regular behavior to do that. Specifically, we will stage the callback
+  # if:
+  # 1) the policy says debug_callbacks are not saveable
+  # 2) the policy says debug_callbacks are saveable BUT all of the input
+  #    values are instantiated.
+  # The purpose is to call back with as much information as possible while
+  # avoiding unnecessarily staging out other values.
+  if any(unks_in):
+    # The usual case (if we have any unknowns, we need to stage it out)
+    res = [v for v, inst in zip(eqn.invars, inst_in) if not inst]
+    return None, eqn, [], [], res
+  if saveable(debug_callback_p, *[v.aval for v in eqn.invars], **eqn.params):
+    # The policy is telling us we can save the debug callback.
+    if all(inst_in):
+      # If all of the inputs are instantiated, we also stage out the
+      # debug_callback.
+      return eqn, eqn, [], [], []
+    else:
+      # If any are not instantiated, we don't do any extra staging to avoid
+      # affecting the computation.
+      return eqn, None, [], [], []
+  # If we can't save the debug callback (thanks to the policy) we listen to
+  # the policy and stage out the debug callback.
+  return eqn, eqn, [], [], []
+pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
+    _debug_callback_partial_eval_custom)
 
 def debug_callback(callback: Callable[..., Any], *args: Any,
                    ordered: bool = False, **kwargs: Any):

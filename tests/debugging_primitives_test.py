@@ -28,6 +28,7 @@ from jax import lax
 from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
+from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import lib as jaxlib
@@ -328,6 +329,78 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # `debug_print` should be dropped by `partial_eval` because of no
     # output data-dependence.
     self.assertEqual(output(), "")
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  def test_remat_of_debug_print(self, ordered):
+    def f_(x):
+      y = ad_checkpoint.checkpoint_name(x + 1., "y")
+      z = ad_checkpoint.checkpoint_name(y * 2., "z")
+      debug_print('y: {}, z: {}', y, z, ordered=ordered)
+      return ad_checkpoint.checkpoint_name(jnp.exp(z), "w")
+
+    # Policy that saves everything so the debug callback will be saved
+    f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen once since it gets saved and isn't
+    # rematerialized.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n")
+
+    # Policy that saves nothing so everything gets rematerialized, including the
+    # debug callback
+    f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen twice since it is rematerialized.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
+
+    # Policy that does not save `z` so we will need to rematerialize the print
+    f = ad_checkpoint.checkpoint(
+        f_, policy=ad_checkpoint.save_any_names_but_these("z"))
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen twice since it is rematerialized.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
+
+    def save_everything_but_these_names(*names_not_to_save):
+      names_not_to_save = frozenset(names_not_to_save)
+      def policy(prim, *_, **params):
+        if prim is ad_checkpoint.name_p:
+          return params['name'] not in names_not_to_save
+        return True # Save everything else
+      return policy
+
+    # Policy that saves everything but `y`
+    f = ad_checkpoint.checkpoint(
+        f_, policy=save_everything_but_these_names("y"))
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen once because `y` is not rematerialized and
+    # we won't do extra materialization.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n")
+
+    # Policy that saves everything but `y` and `z`
+    f = ad_checkpoint.checkpoint(
+        f_, policy=save_everything_but_these_names("y", "z"))
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen twice because both `y` and `z` have been
+    # rematerialized and we don't have to do any extra rematerialization to
+    # print.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
+
 
 class DebugPrintControlFlowTest(jtu.JaxTestCase):
 
