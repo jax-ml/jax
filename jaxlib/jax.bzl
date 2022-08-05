@@ -132,6 +132,7 @@ def jax_test(
         name,
         srcs,
         args = [],
+        env = {},
         shard_count = None,
         deps = [],
         disable_backends = None,  # buildifier: disable=unused-variable
@@ -162,6 +163,7 @@ def jax_test(
             name = name + "_" + backend,
             srcs = srcs,
             args = test_args,
+            env = env,
             deps = [
                 "//jax",
                 "//jax:test_util",
