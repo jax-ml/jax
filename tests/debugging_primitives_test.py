@@ -762,5 +762,38 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       f(jnp.arange(2))
       jax.effects_barrier()
 
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_format_string_errors_with_unused_args(self):
+
+    @jax.jit
+    def f(x):
+      debug_print("hello: {x}", x=x, y=x)
+      return x
+
+    with self.assertRaisesRegex(ValueError, "Unused keyword arguments"):
+      f(jnp.arange(2))
+      jax.effects_barrier()
+
+    @jax.jit
+    def g(x):
+      debug_print("hello", x)
+      return x
+
+    with self.assertRaisesRegex(ValueError, "Unused positional arguments"):
+      g(jnp.arange(2))
+      jax.effects_barrier()
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_accidental_fstring(self):
+
+    @jax.jit
+    def f(x):
+      debug_print(f"hello: {x}", x=x)
+      return x
+
+    with self.assertRaisesRegex(ValueError, "You may be passing an f-string"):
+      f(jnp.arange(2))
+      jax.effects_barrier()
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -14,6 +14,7 @@
 """Module for JAX debugging primitives and related functionality."""
 import enum
 import functools
+import string
 import sys
 
 from typing import Callable, Any
@@ -188,6 +189,22 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
   return debug_callback_p.bind(*flat_args, callback=callback, effect=effect,
                                in_tree=in_tree)
 
+class _DebugPrintFormatChecker(string.Formatter):
+
+  def check_unused_args(self, used_args, args, kwargs):
+    unused_args = [arg for i, arg in enumerate(args) if i not in used_args]
+    unused_kwargs = [k for k in kwargs if k not in used_args]
+    if unused_args:
+      raise ValueError(
+          f"Unused positional arguments to `jax.debug.print`: {unused_args}")
+    if unused_kwargs:
+      raise ValueError(
+          f"Unused keyword arguments to `jax.debug.print`: {unused_kwargs}. "
+          "You may be passing an f-string (i.e, `f\"{x}\"`) into "
+          "`jax.debug.print` and instead should pass in a regular string.")
+
+formatter = _DebugPrintFormatChecker()
+
 def _format_print_callback(fmt: str, *args, **kwargs):
   sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
 
@@ -203,6 +220,8 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
       w.r.t. other ordered ``debug_print`` calls.
     **kwargs: Additional keyword arguments to be formatted.
   """
-  fmt.format(*args, **kwargs)
+  # Check that we provide the correct arguments to be formatted
+  formatter.format(fmt, *args, **kwargs)
+
   debug_callback(functools.partial(_format_print_callback, fmt), *args,
                  **kwargs, ordered=ordered)
