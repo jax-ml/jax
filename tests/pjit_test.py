@@ -2199,8 +2199,17 @@ class UtilTest(jtu.JaxTestCase):
     op2 = xc.OpSharding()
     op2.type = xc.OpSharding.Type.REPLICATED
 
+    op3 = xc.OpSharding()
+    op3.type = xc.OpSharding.Type.OTHER
+    op3.tile_assignment_dimensions = [1, 1, 1, 1]
+    op3.tile_assignment_devices = [0]
+    op3.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+
     self.assertTrue(pxla.is_op_sharding_replicated(op1))
+    self.assertTrue(pxla.is_op_sharding_replicated(op2))
+    self.assertTrue(pxla.is_op_sharding_replicated(op3))
     self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
+    self.assertTrue(pxla.are_op_shardings_equal(op2, op3))
 
   def test_op_sharding_manual_replicated(self):
     if xla_extension_version < 81:
