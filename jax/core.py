@@ -1417,7 +1417,7 @@ class DShapedArray(UnshapedArray):
   shape: Tuple[AxisSize, ...]  # noqa: F821
   array_abstraction_level: int = 3
 
-  def __init__(self, shape, dtype, weak_type):
+  def __init__(self, shape, dtype, weak_type=False):
     self.shape = shape
     self.dtype = dtype
     self.weak_type = weak_type
@@ -1474,6 +1474,7 @@ class DConcreteArray(DShapedArray):
 pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
 
 
+# TODO(mattjj): remove this, replace with arrays of bints
 class AbstractBInt(AbstractValue):
   __slots__ = ['bound']
   bound: int
@@ -1486,11 +1487,16 @@ class AbstractBInt(AbstractValue):
     return type(other) is AbstractBInt and self.bound == other.bound
   def __hash__(self) -> int:
     return hash((type(self), self.bound))
+  def at_least_vspace(self):
+    return self  # should return float0 array
+  def join(self, other):
+    return self
 
 class BInt:
   val: Any  # Union[int, Array]
   bound: int
   def __init__(self, val, bound):
+    assert 0 <= val <= bound
     self.val = val
     self.bound = bound
   def __repr__(self) -> str:

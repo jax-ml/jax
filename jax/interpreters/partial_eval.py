@@ -2497,6 +2497,18 @@ def _substitute_axis_sizes(env: Dict, aval: AbstractValue) -> AbstractValue:
 
 padding_rules: Dict[Primitive, Callable] = {}
 
+def def_trivial_padding(prim: Primitive) -> None:
+  if prim.multiple_results:
+    padding_rules[prim] = partial(_trivial_padding_rule_multi, prim)
+  else:
+    padding_rules[prim] = partial(_trivial_padding_rule, prim)
+
+def _trivial_padding_rule(prim, _, __, *args, **params):
+  return [prim.bind(*args, **params)]
+
+def _trivial_padding_rule_multi(prim, _, __, *args, **params):
+  return prim.bind(*args, **params)
+
 def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
   if call_jaxpr.constvars: raise NotImplementedError
   padded_jaxpr, padded_consts = pad_jaxpr(call_jaxpr, ())

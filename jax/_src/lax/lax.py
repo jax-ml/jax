@@ -1461,7 +1461,7 @@ def unop(result_dtype, accepted_dtypes, name):
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
                             weak_type_rule=weak_type_rule)
   batching.defvectorized(prim)
-  pe.padding_rules[prim] = lambda _, __, x, **kw: [prim.bind(x, **kw)]
+  pe.def_trivial_padding(prim)
   return prim
 standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -1536,7 +1536,7 @@ def naryop(result_dtype, accepted_dtypes, name):
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             weak_type_rule=weak_type_rule)
   batching.defbroadcasting(prim)
-  pe.padding_rules[prim] = lambda _, __, *xs, **kw: [prim.bind(*xs, **kw)]
+  pe.def_trivial_padding(prim)
   return prim
 standard_naryop = partial(naryop, _input_dtype)
 
@@ -2015,7 +2015,7 @@ integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow')
 batching.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
-pe.padding_rules[integer_pow_p] = lambda _, __, x, y: [integer_pow_p.bind(x, y=y)]
+pe.def_trivial_padding(integer_pow_p)
 
 def _integer_pow(x, *, y):
   # This should be kept in sync with the jax2tf translation rule.
@@ -2927,7 +2927,7 @@ if jax._src.lib.mlir_api_version < 30:
 else:
   mlir.register_lowering(
       clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp))
-pe.padding_rules[clamp_p] = lambda _, __, a, x, b: [clamp(a, x, b)]
+pe.def_trivial_padding(clamp_p)
 
 def _concatenate_shape_rule(*operands, **kwargs):
   dimension = kwargs.pop('dimension')
@@ -3285,16 +3285,17 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   perm = (bdim,) + tuple(i if i < bdim else i+1 for i in permutation)
   return transpose(operand, perm), 0
 
+def _transpose_lower(ctx, x, *, permutation):
+  aval_out, = ctx.avals_out
+  return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
+
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])  # type: ignore[arg-type]
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
-
-def _transpose_lower(ctx, x, *, permutation):
-  aval_out, = ctx.avals_out
-  return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 mlir.register_lowering(transpose_p, _transpose_lower)
+pe.def_trivial_padding(transpose_p)
 
 
 def _select_shape_rule(which, *cases):
@@ -3386,7 +3387,6 @@ def _select_jvp(primals, tangents):
     out_dot = select_n(which, *case_tangents)
   return out, out_dot
 
-
 def _select_mhlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
   if which_aval.dtype == np.dtype(np.bool_):
@@ -3420,6 +3420,7 @@ ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.primitive_batchers[select_n_p] = _select_batch_rule
 mlir.register_lowering(select_n_p, _select_mhlo_lowering)
+pe.def_trivial_padding(select_n_p)
 
 
 def _reduce_shape_rule(*avals, computation, jaxpr, consts, dimensions):
