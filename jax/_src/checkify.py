@@ -31,6 +31,7 @@ from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
+from jax.experimental.sharding import OpShardingSharding
 from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
 from jax._src import source_info_util, traceback_util
 from jax._src.lax import control_flow as cf
@@ -679,9 +680,8 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
                      in_positional_semantics, out_positional_semantics):
   checked_jaxpr, msgs = checkify_jaxpr(jaxpr, error, enabled_errors)
   new_vals_in = [error.err, error.code, error.payload, *vals_in]
-  # TODO(lenamartens, yashkatariya): replace with OpShardingSharding.
-  sharding = pxla._create_mesh_pspec_sharding(pxla.thread_resources.env.physical_mesh,
-                                              pxla.PartitionSpec(None))
+  sharding = OpShardingSharding.get_replicated(
+      list(pxla.thread_resources.env.physical_mesh.devices.flat))
   pos_sem = maps._positional_semantics.val
   new_in_shardings = (*[sharding]*3, *in_shardings)
   new_out_shardings = (*[sharding]*3, *out_shardings)
