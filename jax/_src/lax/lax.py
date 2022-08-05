@@ -2343,6 +2343,7 @@ ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpos
 batching.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
+pe.def_trivial_padding(convert_element_type_p)
 # TODO(mattjj): un-comment the next line (see #9456)
 # core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
 
