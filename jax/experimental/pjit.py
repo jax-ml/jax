@@ -45,6 +45,7 @@ from jax.interpreters.pxla import PartitionSpec
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            treedef_is_leaf, tree_structure, treedef_tuple)
 from jax._src.tree_util import prefix_errors
@@ -923,8 +924,8 @@ def _pjit_batcher(insert_axis,
       jaxpr, axis_size, is_mapped_in,
       instantiate=False, axis_name=axis_name, main_type=main_type)
 
+  # `insert_axis` is set to True only for some `xmap` uses.
   new_parts = (axis_name,) if insert_axis else ()
-  # TODO(yashkatariya, apaszke): Make this work with OpShardingSharding.
   mesh = resource_env.physical_mesh
   in_shardings = tuple(
       _pjit_batcher_for_sharding(i, 0, new_parts, mesh, aval.ndim) if is_mapped else i
@@ -947,15 +948,20 @@ def _pjit_batcher(insert_axis,
 batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
 pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True)
 
-# TODO(yashkatariya, apaszke): Remove this and replace this with
-# `OpShardingSharding`.
 def _pjit_batcher_for_sharding(
     s: OpShardingSharding, dim: int, val: Tuple[str, ...], mesh, ndim: int):
-  assert isinstance(s, OpShardingSharding)
-  parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
-  parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
-  mps = MeshPspecSharding._from_parsed_pspec(mesh, parsed_pspec)
-  return OpShardingSharding(mps._device_assignment, mps._to_xla_op_sharding(ndim))
+  if not val and xla_extension_version >= 83:
+    new_op = s._op_sharding.clone()
+    tad = list(new_op.tile_assignment_dimensions)
+    tad.insert(dim, 1)
+    new_op.tile_assignment_dimensions = tad
+    return OpShardingSharding(s._device_assignment, new_op)
+  else:
+    assert isinstance(s, OpShardingSharding)
+    parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
+    parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
+    mps = MeshPspecSharding._from_parsed_pspec(mesh, parsed_pspec)
+    return OpShardingSharding(mps._device_assignment, mps._to_xla_op_sharding(ndim))
 
 
 def _pjit_jvp(primals_in, tangents_in,
