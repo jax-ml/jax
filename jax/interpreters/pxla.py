@@ -223,12 +223,10 @@ def _get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int]
 
 def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
                            num_devices: int):
-  # num_devices is required as an argument when op_sharding is of type
+  # num_devices is required as an argument when op_sharding is
   # REPLICATED. `jax.device_count()` cannot be used because you can create
   # an opsharding with less number of devices than `jax.device_count()`.
-  if op_sharding.type == xc.OpSharding.Type.REPLICATED:
-    # xb.device_count maybe not be always right as you can use less devices than
-    # what's available.
+  if is_op_sharding_replicated(op_sharding):
     return tuple((slice(None),) * len(shape) for _ in range(num_devices))
 
   assert num_devices == len(op_sharding.tile_assignment_devices)

@@ -38,7 +38,7 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
 from jax.experimental import array
-from jax.experimental.sharding import MeshPspecSharding, Sharding
+from jax.experimental.sharding import MeshPspecSharding, Sharding, OpShardingSharding
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    SpecSync, FROM_GDA, AUTO)
@@ -2133,6 +2133,40 @@ class UtilTest(jtu.JaxTestCase):
       hs1 = xc.HloSharding.from_proto(op1)
       hs2 = xc.HloSharding.from_proto(op2)
       self.assertNotEqual(hash(hs1), hash(hs2))
+
+  def test_device_indices_cache(self):
+    if xla_extension_version < 81:
+      raise unittest.SkipTest('HloSharding is available after '
+                              'xla_extension_version >= 81')
+
+    def _cache_info_check(cache_info, hits, misses):
+      self.assertEqual(cache_info.currsize, 1)
+      self.assertEqual(misses, cache_info.misses)
+      self.assertEqual(hits, cache_info.hits)
+
+    op1 = xc.OpSharding()
+    op1.type = xc.OpSharding.Type.OTHER
+    op1.tile_assignment_dimensions = [1, 1, 2, 1]
+    op1.tile_assignment_devices = [0, 1]
+    op1.last_tile_dims = [xc.OpSharding.Type.REPLICATED, xc.OpSharding.Type.MANUAL]
+
+    op2 = xc.OpSharding()
+    op2.type = xc.OpSharding.Type.REPLICATED
+
+    shape = (8, 4)
+    devices = jax.devices()
+
+    ops = OpShardingSharding(devices, op1)
+    ops.devices_indices_map(shape)
+    _cache_info_check(OpShardingSharding.devices_indices_map.cache_info(), 0, 1)
+    ops.devices_indices_map(shape)
+    _cache_info_check(OpShardingSharding.devices_indices_map.cache_info(), 1, 1)
+
+    ops = OpShardingSharding(devices, op2)
+    ops.devices_indices_map(shape)
+    _cache_info_check(OpShardingSharding.devices_indices_map.cache_info(), 2, 1)
+    ops.devices_indices_map(shape)
+    _cache_info_check(OpShardingSharding.devices_indices_map.cache_info(), 3, 1)
 
 
 if __name__ == '__main__':

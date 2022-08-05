@@ -101,6 +101,7 @@ def _hashed_index(x) -> int:
   return hash(tuple((v.start, v.stop) if isinstance(v, slice) else v for v in x))
 
 
+@functools.lru_cache(maxsize=4096)
 def _device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]:
   index_to_replica: Dict[int, int] = Counter()
   out = {}
@@ -181,7 +182,6 @@ class MeshPspecSharding(XLACompatibleSharding):
     # `get_shard_indices` is cached.
     return global_device_array.get_shard_indices(global_shape, self.mesh, self.spec)
 
-  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     return _device_replica_id_map(self, global_shape)
 
@@ -280,7 +280,6 @@ class PmapSharding(XLACompatibleSharding):
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
     return {d: i for d, i in safe_zip(self.devices.flat, indices)}  # type: ignore
 
-  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     return _device_replica_id_map(self, global_shape)
 
@@ -301,7 +300,7 @@ class OpShardingSharding(XLACompatibleSharding):
   def __eq__(self, other):
     if not isinstance(other, OpShardingSharding):
       return False
-    return pxla.are_op_shardings_equal(self, other)
+    return pxla.are_op_shardings_equal(self._op_sharding, other._op_sharding)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
@@ -335,7 +334,6 @@ class OpShardingSharding(XLACompatibleSharding):
                                           len(self._devices))
     return dict(safe_zip(self._devices, indices))
 
-  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     return _device_replica_id_map(self, global_shape)
 
