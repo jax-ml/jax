@@ -457,7 +457,6 @@ def xmap(fun: Callable,
     specified. This is in line with the current multi-host :py:func:`pmap`
     programming model.
   """
-  warn("xmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
 
   if isinstance(in_axes, list) and not _is_axes_leaf(in_axes):
