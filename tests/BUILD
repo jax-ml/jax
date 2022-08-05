@@ -464,6 +464,7 @@ jax_test(
         "tpu": [
             "cpu:8",
             "noasan",  # Times out.
+            "notsan",  # Times out.
         ],
     },
     shard_count = {
