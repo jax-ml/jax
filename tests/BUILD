@@ -147,8 +147,15 @@ jax_test(
 jax_test(
     name = "lobpcg_test",
     srcs = ["lobpcg_test.py"],
+    env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
+    shard_count = {
+        "cpu": 48,
+        "gpu": 48,
+        "tpu": 48,
+    },
     deps = [
         "//jax:experimental_sparse",
+        "//third_party/py/matplotlib",
     ],
 )
 

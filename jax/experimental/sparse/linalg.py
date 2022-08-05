@@ -78,10 +78,9 @@ def lobpcg_standard(
           to the float epsilon of `A.dtype`.
 
   Returns:
-    `theta, U, i [, diagnostics]`, where `theta` is a `(k,)` array
+    `theta, U, i`, where `theta` is a `(k,)` array
     of eigenvalues, `U` is a `(n, k)` array of eigenvectors, `i` is the
-    number of iterations performed, and `diagnostics` is a dictionary with debug
-    information, which is only returned if `debug` is set to true.
+    number of iterations performed.
 
   Raises:
     ValueError : if `A,X` dtypes or `n` dimensions do not match, or `k` is too
