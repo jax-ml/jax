@@ -2606,7 +2606,6 @@ def _get_input_metadata(
 
   shardings, input_indices, input_avals = [], [], []
   for gaval, i, is_global in safe_zip(global_in_avals, in_shardings, in_is_global):
-    proto = i._to_xla_op_sharding(gaval.ndim)
     if is_global:
       aval = gaval
       sharding = i
@@ -2619,7 +2618,8 @@ def _get_input_metadata(
     # the mesh is global mesh and the indices returned by `spec_to_indices` will
     # represent index for each device in the global mesh. But here we want
     # indices for the local devices of the global mesh.
-    if is_op_sharding_replicated(proto):
+    proto = sharding._to_xla_op_sharding(aval.ndim)
+    if proto.type == xc.OpSharding.Type.REPLICATED:
       index = tuple((slice(None),) * aval.ndim for _ in range(len(sharding.addressable_devices)))
     else:
       index = tuple(sharding.devices_indices_map(aval.shape).values())
