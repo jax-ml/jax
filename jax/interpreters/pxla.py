@@ -2825,7 +2825,7 @@ def are_op_shardings_equal(op1, op2):
 
 
 def is_op_sharding_replicated(op):
-  if xla_extension_version >= 81:
+  if xla_extension_version >= 82:
     return xc.HloSharding.from_proto(op).is_replicated()
   else:
     return op.type == xc.OpSharding.Type.REPLICATED
