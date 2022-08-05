@@ -44,6 +44,7 @@ Then create a pull request that adds a file named
   9407: Design of Type Promotion Semantics for JAX <9407-type-promotion>
   9419: Jax and Jaxlib versioning <9419-jax-versioning>
   10657: Sequencing side-effects in JAX <10657-sequencing-effects>
+  11759: Python package structure <11759-python-package-structure>
   11830: `jax.remat` / `jax.checkpoint` new implementation <11830-new-remat-checkpoint>
 
 
