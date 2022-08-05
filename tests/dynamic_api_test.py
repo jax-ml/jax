@@ -1121,6 +1121,48 @@ class DynamicShapeTest(jtu.JaxTestCase):
     expected = jax.grad(loss_ref)(params, batch1)
     self.assertAllClose(ans, expected)
 
+  @jax.enable_checks(False)  # TODO(mattjj): upgrade typecompat to handle bints
+  def test_mlp_autodiff_dynamic_batch_bint(self):
+    count = 0
+
+    def predict(params, inputs):
+      for W, b in params:
+        outputs = jnp.dot(inputs, W) + b
+        inputs = jnp.maximum(0, outputs)
+      return outputs
+
+    def loss_ref(params, batch):
+      nonlocal count
+      count += 1  # count traces
+      inputs, targets = batch
+      predictions = predict(params, inputs)
+      return jnp.sum((predictions - targets) ** 2)
+
+    loss = jax.jit(loss_ref, abstracted_axes=({}, {0: 'n'}))
+
+    params = [(jnp.ones((784, 256)), jnp.ones(256)),
+              (jnp.ones((256,  10)), jnp.ones( 10))]
+
+    # two different batch sizes *with bints*
+    bs1 = jax.lax.make_bint(128, 128)
+    batch1 = (jnp.ones((bs1, 784)), jnp.ones((bs1, 10)))
+
+    bs2 = jax.lax.make_bint(32, 128)
+    batch2 = (jnp.ones((bs2, 784)), jnp.ones((bs2, 10)))
+
+    # count retraces (and don't crash)
+    self.assertEqual(count, 0)
+    _ = jax.grad(loss)(params, batch1)
+    self.assertEqual(count, 1)
+    g2 = jax.grad(loss)(params, batch2)
+    self.assertEqual(count, 1)  # cache hit!
+
+    # check the numbers make sense
+    batch = (jnp.ones((32, 784)), jnp.ones((32, 10)))
+    g2_expected = jax.grad(loss_ref)(params, batch)
+    self.assertAllClose(g2, g2_expected, check_dtypes=False,
+                        atol=1e-3, rtol=1e-3)
+
   def test_bint_basic(self):
     d = lax.make_bint(3, 5)
     self.assertEqual(str(d), '3{≤5}')
