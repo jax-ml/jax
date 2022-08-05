@@ -208,7 +208,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
 
   If ``fun`` involves Python control flow that depends on argument values,
   it may be necessary to use the ``static_argnums`` parameter. For example,
-  consider a boolean flag argument:
+  consider a boolean flag argument::
 
     from functools import partial
 
@@ -224,7 +224,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   ``static_argnums`` is that it introduces re-tracing overheads across calls:
   in the example, ``foo`` is re-traced every time it is called with a new value
   of ``is_training``. In some situations, ``jax.ensure_compile_time_eval``
-  is needed as well:
+  is needed as well::
 
     @partial(jax.checkpoint, static_argnums=(1,))
     def foo(x, y):
