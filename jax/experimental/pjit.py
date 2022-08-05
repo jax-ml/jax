@@ -849,12 +849,9 @@ def _pjit_lower(
         for o in out_shardings
     )
 
-  # TODO(yashkatariya): UNSPECIFIED should go through lower_sharding_computation.
-  # Also the `jaxpr_has_primitive` for xmap is temporary until xmap supports
-  # sharding instances.
   # For `pjit(xmap)` cases, it needs to take the `lower_mesh_computation` path
   # because `xmap` only supports SPMDAxisContext right now.
-  if (pxla._check_if_any_auto_or_unspecified(in_shardings + out_shardings) or
+  if (pxla._check_if_any_auto(it.chain(in_shardings,  out_shardings)) or
       dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap')):
     return pxla.lower_mesh_computation(
       fun, 'pjit', name, resource_env.physical_mesh,
@@ -1636,7 +1633,7 @@ def _get_ppspec_from_executable(executable, mesh) -> Tuple[Sequence[ParsedPartit
   return in_ppspec, out_ppspec
 
 
-def _get_sharding_from_executable(
+def _get_pspec_from_executable(
     executable, mesh: pxla.Mesh
 ) -> Tuple[Tuple[PartitionSpec, ...], Tuple[PartitionSpec, ...]]:
   in_ppspec, out_ppspec = _get_ppspec_from_executable(executable, mesh)

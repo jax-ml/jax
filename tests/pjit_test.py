@@ -1499,6 +1499,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
         self.assertArraysEqual(out._value, input_data)
 
   def test_unspecified_out_axis_resources(self):
+
+    def _checks(out, input_data):
+      self.assertIsInstance(out, array.Array)
+      self.assertIsInstance(out.sharding, OpShardingSharding)
+      self.assertEqual(out.shape, (8, 2))
+      self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
+      for s in out.addressable_shards:
+        self.assertLen(s.data._arrays, 1)
+        self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
+      self.assertArraysEqual(out._value, input_data)
+
     global_input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mesh_axes = P('x', 'y')
@@ -1510,13 +1521,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
         f = pjit(lambda x: x)
 
         out = f(input_array)
-        self.assertIsInstance(out, array.Array)
-        self.assertEqual(out.shape, (8, 2))
-        self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
-        for s in out.addressable_shards:
-          self.assertLen(s.data._arrays, 1)
-          self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
-        self.assertArraysEqual(out._value, input_data)
+        _checks(out, input_data)
+
+        out2 = f(out)
+        _checks(out2, input_data)
 
   @parameterized.named_parameters(
     ('mesh1', (4, 2), (2, 1), (2, 2), (1, 2), (8, 2)),
