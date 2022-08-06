@@ -29,11 +29,13 @@ from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
+import jax._src.pretty_printer as pp
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map)
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
+from jax._src import api_util
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
@@ -232,9 +234,8 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
-  x_shapes = [x.shape[1:] for x in xs_flat]
-  x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
-  x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
+  xs_avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs_flat]
+  x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
 
   def _create_jaxpr(init):
     init_flat, init_tree = tree_flatten(init)
@@ -242,7 +243,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
 
     carry_avals = tuple(_map(_abstractify, init_flat))
     jaxpr, consts, out_tree = _initial_style_jaxpr(
-        f, in_tree, carry_avals + x_avals, "scan")
+        f, in_tree, (*carry_avals, *x_avals), "scan")
     out_tree_children = out_tree.children()
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
@@ -414,7 +415,7 @@ def _index_array(i, aval, x):
   return slicing.index_in_dim(x, i, keepdims=False)
 
 def _empty_array(sz, aval):
-  return lax.full((sz,) + aval.shape, 0, aval.dtype)
+  return lax.broadcast(lax.empty(aval.dtype), (sz, *aval.shape))
 
 def _update_array(i, aval, xs, x):
   return slicing.dynamic_update_index_in_dim(xs, x, i, 0)
@@ -968,6 +969,28 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts, num_carry
       f'called with sequence of type\n{_avals_short(x_avals)}')
   return [*init_avals, *y_avals], jaxpr.effects
 
+def _scan_pp_rule(eqn, context, settings):
+  printed_params = dict(eqn.params)
+  del printed_params['linear']
+  if eqn.params['num_consts'] + eqn.params['num_carry'] == len(eqn.invars):
+    del printed_params['length']
+  if printed_params['unroll'] == 1:
+    del printed_params['unroll']
+  if printed_params['num_carry'] == 0:
+    del printed_params['num_carry']
+  if printed_params['num_consts'] == 0:
+    del printed_params['num_consts']
+  if not printed_params['reverse']:
+    del printed_params['reverse']
+  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
+  rhs = [pp.text(eqn.primitive.name),
+         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
+         pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
+  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+
+
 def scan_bind(*args, **params):
   if config.jax_enable_checks:
     avals = _map(core.get_aval, args)
@@ -992,6 +1015,8 @@ core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
+# TODO(mattjj,frostig): un-comment this pp rule
+# core.pp_eqn_rules[scan_p] = _scan_pp_rule
 
 ### while_loop
 
@@ -1376,38 +1401,32 @@ def _while_transpose_error(*_, **kwargs):
                    "lax.while_loop or lax.fori_loop. "
                    "Try using lax.scan instead.")
 
-while_p = core.AxisPrimitive('while')
-while_p.multiple_results = True
-while_p.def_impl(partial(xla.apply_primitive, while_p))
-while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
-ad.primitive_jvps[while_p] = _while_loop_jvp
-pe.custom_partial_eval_rules[while_p] = _while_partial_eval
-xla.register_initial_style_primitive(while_p)
-ad.primitive_transposes[while_p] = _while_transpose_error
-batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
-pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
-
-
-def _pred_bcast_select_mhlo(
-    pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
-    ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
-  if x_y_aval is core.abstract_token:
-    x, = xs
-    y, = ys
-    return [mhlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
-  else:
-    assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
-    x, = xs
-    y, = ys
-    assert x.type == y.type, (x.type, y.type)
-    assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
-            pred_aval.shape, x_y_aval)
-    bcast_pred = mhlo.BroadcastInDimOp(
-        mlir.aval_to_ir_type(x_y_aval.update(dtype=np.dtype(np.bool_))),
-        pred, mlir.dense_int_elements(list(range(len(pred_aval.shape))))).result
-    return mhlo.SelectOp(bcast_pred, x, y).results
-
-
+# For a while loop with ordered effects in the cond, we need a special
+# lowering. Fundamentally, we'd like to rewrite a while loop that looks like
+# this:
+# ```
+# while cond(x):
+#   x = body(x)
+# ```
+# into something that looks like this:
+# ```
+# while True:
+#   token, pred = cond(token, x)
+#   if not pred:
+#     break
+#   token, x = body(token, x)
+# ```
+# Unfortunately, with an MHLO while we can't (1) return multiple values
+# from a `cond` and (2) can't break a while loop. We thus adopt the
+# following rewrite strategy:
+# ```
+# def new_cond(pred, token, x):
+#   return pred
+# token, pred = cond(token, x)
+# while new_cond(pred, token, x):
+#   token, x = body(token, x)
+#   token, pred = cond(token, x)
+# ```
 def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
                     body_nconsts):
   pred_aval = cond_jaxpr.out_avals[0]
@@ -1415,32 +1434,6 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   cond_ordered_effects = [eff for eff in cond_jaxpr.effects if eff in
                           core.ordered_effects]
   if cond_ordered_effects:
-    # For a while loop with ordered effects in the cond, we need a special
-    # lowering. Fundamentally, we'd like to rewrite a while loop that looks like
-    # this:
-    # ```
-    # while cond(x):
-    #   x = body(x)
-    # ```
-    # into something that looks like this:
-    # ```
-    # while True:
-    #   token, pred = cond(token, x)
-    #   if not pred:
-    #     break
-    #   token, x = body(token, x)
-    # ```
-    # Unfortunately, with an MHLO while we can't (1) return multiple values
-    # from a `cond` and (2) can't break a while loop. We thus adopt the
-    # following rewrite strategy:
-    # ```
-    # def new_cond(pred, token, x):
-    #   return pred
-    # token, pred = cond(token, x)
-    # while new_cond(pred, token, x):
-    #   token, x = body(token, x)
-    #   token, pred = cond(token, x)
-    # ```
     def cond(args):
       return core.eval_jaxpr(cond_jaxpr.jaxpr, cond_jaxpr.consts, *args)[0]
     def body(args):
@@ -1540,7 +1533,47 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     ctx.set_tokens_out(mlir.TokenSet(zip(body_effects, tokens)))
   return z
 
+def _while_typecheck(*in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
+                     body_nconsts):
+  # TODO(frostig,mattjj): check cond_jaxpr, body_jaxpr types
+  joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+  if joined_effects - allowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `while`: {joined_effects - allowed_effects}')
+  return body_jaxpr.out_avals, joined_effects
+
+while_p = core.AxisPrimitive('while')
+while_p.multiple_results = True
+while_p.def_impl(partial(xla.apply_primitive, while_p))
+while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
+ad.primitive_jvps[while_p] = _while_loop_jvp
+pe.custom_partial_eval_rules[while_p] = _while_partial_eval
+xla.register_initial_style_primitive(while_p)
+ad.primitive_transposes[while_p] = _while_transpose_error
+batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
+pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
+core.custom_typechecks[while_p] = _while_typecheck
+
+
+def _pred_bcast_select_mhlo(
+    pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
+    ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
+  if x_y_aval is core.abstract_token:
+    x, = xs
+    y, = ys
+    return [mhlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
+  else:
+    assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
+    x, = xs
+    y, = ys
+    assert x.type == y.type, (x.type, y.type)
+    assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
+            pred_aval.shape, x_y_aval)
+    bcast_pred = mhlo.BroadcastInDimOp(
+        mlir.aval_to_ir_type(x_y_aval.update(dtype=np.dtype(np.bool_))),
+        pred, mlir.dense_int_elements(list(range(len(pred_aval.shape))))).result
+    return mhlo.SelectOp(bcast_pred, x, y).results
 
 ### fori_loop
 

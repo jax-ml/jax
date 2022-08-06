@@ -1791,6 +1791,15 @@ def _broadcast_in_dim(operand, *, shape, broadcast_dimensions,
 tf_impl_with_avals[lax.broadcast_in_dim_p] = _broadcast_in_dim
 
 
+def _empty(*, eltype):
+  if type(eltype) in core.custom_eltypes:
+    raise NotImplementedError  # TODO(frostig,mattjj): jax2tf handlers
+  return tf.constant(np.array(0, dtype=eltype))
+
+
+tf_impl[lax_internal.empty_p] = _empty
+
+
 def _reshape(operand, *, new_sizes, dimensions):
   if dimensions is None:
     dimensions = tf.range(tf.rank(operand))
