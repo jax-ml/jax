@@ -2812,10 +2812,12 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   return get_array_mapping(parsed_pspec)
 
 
-def are_op_shardings_equal(op1, op2):
+def are_op_shardings_equal(op1, op2) -> bool:
   if id(op1) == id(op2):
     return True
   if xla_extension_version >= 81:
+    if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
+      return True
     return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
   else:
     if op1.type == xc.OpSharding.Type.TUPLE:
@@ -2828,8 +2830,10 @@ def are_op_shardings_equal(op1, op2):
             op1.replicate_on_last_tile_dim == op2.replicate_on_last_tile_dim)
 
 
-def is_op_sharding_replicated(op):
+def is_op_sharding_replicated(op: xc.OpSharding) -> bool:
   if xla_extension_version >= 82:
+    if len(op.tile_assignment_devices) == 1:
+      return True
     return xc.HloSharding.from_proto(op).is_replicated()
   else:
     return op.type == xc.OpSharding.Type.REPLICATED
