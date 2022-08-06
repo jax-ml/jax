@@ -1338,6 +1338,10 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   body_jaxpr_known = core.ClosedJaxpr(jaxpr_known_, body_jaxpr.consts)
   del jaxpr_known_, carry_uk_out, num_res
 
+  # Instantiate all inputs (b/c jaxpr_staged will take all inputs).
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+
   # Compute the known part of cond_fun (basically pruning inputs on known side).
   cond_unks_in = cond_consts_uk + carry_uk
   cond_jaxpr_known_, _, [cond_uk], _, _ = \
@@ -1345,7 +1349,11 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
           cond_jaxpr.jaxpr, cond_unks_in, in_inst=True,
           ensure_out_unknowns=False, ensure_out_inst=True,
           saveable=ad_checkpoint.nothing_saveable)
-  assert not cond_uk  # only possible with old-style remat
+  # NOTE(mattjj): I think it should be impossible for the condition to be
+  # unknown, but asserting that caused a test failure in diffrax. So
+  # we handle it: if it is unknown, stage out the whole cond function.
+  if cond_uk:
+    return None, eqn, [True] * len(carry_uk), [True] * len(carry_uk), new_inst
   cond_jaxpr_known = core.ClosedJaxpr(cond_jaxpr_known_, cond_jaxpr.consts)
   del cond_uk
 
@@ -1362,10 +1370,6 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # Staged eqn is same as input eqn.
   eqn_staged = eqn
-
-  # Instantiate all inputs (b/c jaxpr_staged takes all inputs).
-  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
-              if type(x) is core.Var and not inst]
 
   unks_out = carry_uk
   inst_out = [True] * len(unks_out)
