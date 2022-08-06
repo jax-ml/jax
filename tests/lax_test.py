@@ -11,16 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
+
 
 import collections
 from functools import partial
 import itertools
 import operator
-import types
 import unittest
 from unittest import SkipTest
-from typing import Tuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -35,16 +33,12 @@ from jax.test_util import check_grads
 from jax import tree_util
 import jax.util
 
-from jax.interpreters import xla
-from jax.interpreters import mlir
-from jax.interpreters import batching
-from jax._src.lib.mlir.dialects import mhlo
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import lax_reference
 from jax._src.util import prod
 from jax._src.lax import lax as lax_internal
+
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -2975,289 +2969,6 @@ class LaxNamedShapeTest(jtu.JaxTestCase):
       expected = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
       (out,), _ = lax.psum_p.abstract_eval(aval1, axes=('i',), axis_index_groups=None)
       self.assertEqual(out, expected)
-
-
-class FooTy:
-  name = 'foo'
-  def __hash__(self) -> int:
-    return hash(FooTy)
-  def __eq__(self, other) -> bool:
-    return type(other) is FooTy
-  def __repr__(self) -> str:
-    return self.name
-  __str__ = __repr__
-
-  # handlers
-
-  @staticmethod
-  def aval_to_ir_types(aval):
-    aval2 = core.ShapedArray((*aval.shape, 2), jnp.dtype('uint32'))
-    return mlir.aval_to_ir_types(aval2)
-
-  @staticmethod
-  def result_handler(sticky_device, aval):
-    def handler(_, buf):
-      buf.aval = core.ShapedArray(buf.shape, buf.dtype)
-      return FooArray(aval.shape, buf)
-    return handler
-
-  # eltype-polymorphic primitive lowering rules
-
-  @staticmethod
-  def empty_mlir(ctx):
-    return mlir.ir_constants(np.empty((2,), dtype=np.dtype('uint32')))
-
-  @staticmethod
-  def dynamic_slice_mlir(ctx, x, start_indices, slice_sizes):
-    dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
-    start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
-    slice_sizes_ = mlir.dense_int_elements((*slice_sizes, 2))
-    return mhlo.DynamicSliceOp(x, start_indices, slice_sizes_).results
-
-  @staticmethod
-  def dynamic_update_slice_mlir(ctx, x, update, *start_indices):
-    aval_out, = ctx.avals_out
-    dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
-    start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
-    return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
-                                     start_indices).results
-
-  @staticmethod
-  def broadcast_in_dim_mlir(ctx, x, *dyn_shape, shape, broadcast_dimensions):
-    if dyn_shape: raise NotImplementedError
-    aval_out, = ctx.avals_out
-    broadcast_dimensions = [*broadcast_dimensions, aval_out.ndim]
-    return mhlo.BroadcastInDimOp(
-        mlir.aval_to_ir_type(aval_out), x,
-        mlir.dense_int_elements(broadcast_dimensions)).results
-
-  @staticmethod
-  def transpose_mlir(ctx, x, *, permutation):
-    perm = [*permutation, len(permutation)]
-    return mhlo.TransposeOp(x, mlir.dense_int_elements(perm)).results
-
-# primitives
-
-make_p = core.Primitive('make')
-bake_p = core.Primitive('bake')
-take_p = core.Primitive('take')
-
-def make(shape): return make_p.bind(shape=tuple(shape))
-def bake(k):     return bake_p.bind(k)
-def take(k):     return take_p.bind(k)
-
-@make_p.def_abstract_eval
-def make_abstract_eval(*, shape):
-  return core.ShapedArray(shape, FooTy())
-
-@bake_p.def_abstract_eval
-def bake_abstract_eval(x):
-  if type(x.dtype) != FooTy: raise TypeError
-  return core.ShapedArray(tuple(reversed(x.shape)), FooTy())
-
-@take_p.def_abstract_eval
-def take_abstract_eval(x):
-  return core.ShapedArray(x.shape, jnp.dtype('float32'))
-
-# runtime ('outside jit') data types
-
-class FooArray:
-  shape: Tuple[int, ...]
-  data: jnp.ndarray
-
-  def __init__(self, shape, data):
-    assert data.shape == (*shape, 2)
-    self.shape = shape
-    self.data = data
-
-  def __repr__(self) -> str:
-    shape = ','.join(map(str, self.shape))
-    return f'foo[{shape}] with value\n{self.data}'
-
-  size = property(lambda self: self.data.size // 2)
-  ndim = property(lambda self: self.data.ndim - 1)
-
-def device_put_foo_array(x: FooArray, device):
-  return dispatch._device_put_array(x.data, device)
-
-def foo_array_constant_handler(x, c):
-  return mlir._device_array_constant_handler(x.data, c)
-
-def make_lowering(*, shape):
-  return jnp.zeros((*shape, 2), 'uint32')
-
-def bake_lowering(k):
-  return k.T
-
-def take_lowering(k):
-  return jnp.broadcast_to(jnp.float32(k.size), k.shape)
-
-
-def bake_vmap(batched_args, batch_dims):
-  xs, = batched_args
-  bdim_in, = batch_dims
-  ys = bake(xs)
-  perm = list(reversed(range(xs.ndim)))
-  bdim_out = perm[bdim_in]
-  return ys, bdim_out
-
-
-class CustomElementTypesTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    core.custom_eltypes.add(FooTy)
-    core.pytype_aval_mappings[FooArray] = \
-        lambda x: core.ShapedArray(x.shape, FooTy())
-    xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
-    xla.pytype_aval_mappings[FooArray] = \
-        lambda x: core.ShapedArray(x.shape, FooTy())
-    dispatch.device_put_handlers[FooArray] = device_put_foo_array
-    mlir._constant_handlers[FooArray] = foo_array_constant_handler
-    mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
-    mlir.register_lowering(bake_p, mlir.lower_fun(bake_lowering, False))
-    mlir.register_lowering(take_p, mlir.lower_fun(take_lowering, False))
-    batching.defvectorized(take_p)
-    batching.primitive_batchers[bake_p] = bake_vmap
-
-  def tearDown(self):
-    core.custom_eltypes.remove(FooTy)
-    del core.pytype_aval_mappings[FooArray]
-    del xla.canonicalize_dtype_handlers[FooArray]
-    del xla.pytype_aval_mappings[FooArray]
-    del dispatch.device_put_handlers[FooArray]
-    del mlir._constant_handlers[FooArray]
-    del mlir._lowerings[make_p]
-    del mlir._lowerings[bake_p]
-    del mlir._lowerings[take_p]
-    del batching.primitive_batchers[take_p]
-    del batching.primitive_batchers[bake_p]
-
-  def test_shaped_array_construction(self):
-    aval = core.ShapedArray((), FooTy())
-    self.assertEqual(aval.str_short(), 'foo[]')
-    aval = core.ShapedArray((3, 4), FooTy())
-    self.assertEqual(aval.str_short(), 'foo[3,4]')
-
-  def test_make_jaxpr_identity(self):
-    x = types.SimpleNamespace(shape=(3,), dtype=FooTy())
-    jaxpr = jax.make_jaxpr(lambda x: x)(x).jaxpr
-    # { lambda ; a:foo[3]. let  in (a,) }
-    self.assertLen(jaxpr.invars, 1)
-    a, = jaxpr.invars
-    self.assertEqual(a.aval, core.ShapedArray((3,), FooTy()))
-    self.assertLen(jaxpr.outvars, 1)
-    a, = jaxpr.outvars
-    self.assertEqual(a.aval, core.ShapedArray((3,), FooTy()))
-
-  # tests after here need the primitives
-
-  def test_make_jaxpr_with_primitives(self):
-    def f():
-      k1 = make((3, 4))
-      k2 = bake(k1)
-      x  = take(k2)
-      return x
-
-    jaxpr = jax.make_jaxpr(f)().jaxpr
-    # { lambda ; . let
-    #     a:foo[3,4] = make[shape=(3, 4)]
-    #     b:foo[4,3] = bake a
-    #     c:f32[4,3] = take b
-    #   in (c,) }
-    self.assertLen(jaxpr.invars, 0)
-    self.assertLen(jaxpr.eqns, 3)
-    e1, e2, e3 = jaxpr.eqns
-
-    self.assertIs(e1.primitive, make_p)
-    self.assertLen(e1.outvars, 1)
-    a, = e1.outvars
-    self.assertEqual(a.aval, core.ShapedArray((3, 4), FooTy()))
-
-    self.assertIs(e2.primitive, bake_p)
-    self.assertLen(e2.outvars, 1)
-    b, = e2.outvars
-    self.assertEqual(b.aval, core.ShapedArray((4, 3), FooTy()))
-
-    self.assertIs(e3.primitive, take_p)
-    self.assertLen(e3.outvars, 1)
-    c, = e3.outvars
-    self.assertEqual(c.aval, core.ShapedArray((4, 3), np.dtype('float32')))
-
-  # tests after here need FooArray and lowerings
-
-  def test_jit_closure(self):
-    k = FooArray((), jnp.arange(2, dtype='uint32'))
-
-    @jax.jit
-    def f():
-      jnp.add(1, 1)  # make jit not hit trivial dispatch path
-      return k
-
-    y = f()  # doesn't crash
-    self.assertIsInstance(y, FooArray)
-    self.assertEqual(y.shape, ())
-
-  def test_jit_identity(self):
-    k = FooArray((), jnp.arange(2, dtype='uint32'))
-
-    @jax.jit
-    def f(k):
-      jnp.add(1, 1)  # make jit not hit trivial dispatch path
-      return k
-
-    y = f(k)  # doesn't crash
-    self.assertIsInstance(y, FooArray)
-    self.assertEqual(y.shape, ())
-
-  def test_jit_multiple_primitives(self):
-    @jax.jit
-    def f():
-      k1 = make((3,))
-      k2 = bake(k1)
-      y  = take(k2)
-      return y
-
-    y = f()
-    self.assertArraysAllClose(y, jnp.array([3., 3., 3.]), check_dtypes=False)
-
-  def test_scan_jaxpr(self):
-    ks = jax.jit(lambda: make((3, 4)))()
-    f = lambda ks: jax.lax.scan(lambda _, k: (None, bake(k)), None, ks)
-    jaxpr = jax.make_jaxpr(f)(ks).jaxpr
-    # { lambda ; a:foo[3,4]. let
-    #     b:foo[3,4] = scan[
-    #       jaxpr={ lambda ; c:foo[4]. let d:foo[4] = bake c in (d,) }
-    #     ] a
-    #   in (b,) }
-    self.assertLen(jaxpr.invars, 1)
-    a, = jaxpr.invars
-    self.assertEqual(a.aval, core.ShapedArray((3, 4), FooTy()))
-    self.assertLen(jaxpr.eqns, 1)
-    e, = jaxpr.eqns
-    self.assertLen(e.outvars, 1)
-    b, = e.outvars
-    self.assertEqual(b.aval, core.ShapedArray((3, 4), FooTy()))
-
-  def test_scan_lowering(self):
-    ks = jax.jit(lambda: make((3, 4)))()
-    f = lambda ks: jax.lax.scan(lambda _, k: (None, bake(k)), None, ks)
-    _, out = jax.jit(f)(ks)  # doesn't crash
-    self.assertIsInstance(out, FooArray)
-    self.assertEqual(out.shape, (3, 4))
-
-  def test_vmap(self):
-    ks = jax.jit(lambda: make((3, 4, 5)))()
-    ys = jax.vmap(jax.jit(lambda k: take(bake(k))))(ks)
-    expected = jnp.broadcast_to(3 * 4 * 5, (3, 5, 4)).astype('float32')
-    self.assertAllClose(ys, expected)
-
-  def test_transpose(self):
-    ks = jax.jit(lambda: make((3, 4)))()
-    ys = jax.jit(lambda x: x.T)(ks)
-    self.assertIsInstance(ys, FooArray)
-    self.assertEqual(ys.shape, (4, 3))
-
-  # TODO(frostig,mattjj): more polymorphic primitives tests
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

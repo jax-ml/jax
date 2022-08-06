@@ -917,7 +917,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                    polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
     with self.assertRaisesRegex(TypeError,
-                                "Argument 'b' .*DimPoly.*not a valid JAX type"):
+                                "Argument 'b' of type <class 'jax.experimental.jax2tf.shape_poly._DimPolynomial'> is not a valid JAX type"):
       jax2tf.convert(lambda x: jnp.prod(x.shape),
                      polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
