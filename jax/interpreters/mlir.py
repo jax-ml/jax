@@ -129,6 +129,8 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
 
 def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
                     ) -> Sequence[ir.Type]:
+  if type(aval.dtype) in core.custom_eltypes:
+    return aval.dtype.aval_to_ir_types(aval)
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:

@@ -2808,6 +2808,10 @@ def _broadcast_in_dim_partial_eval(
 
 def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype.broadcast_in_dim_mlir(
+        ctx, x, *dyn_shape, shape=shape,
+        broadcast_dimensions=broadcast_dimensions)
   if dyn_shape:
     shape = _merge_dyn_shape(shape, dyn_shape)
     return mhlo.DynamicBroadcastInDimOp(
@@ -3288,6 +3292,8 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype.transpose_mlir(ctx, x, permutation=permutation)
   return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
@@ -4532,6 +4538,8 @@ def _check_same_dtypes(name, ignore_fp_precision, *ttypes):
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
+  if any(type(t) in core.custom_eltypes for t in ttypes):
+    return  # TODO(mattjj,frostig): do some checking, friend
   types = map(np.dtype, ttypes)  # canonicalize
   if ignore_fp_precision:
     types = [
@@ -4691,3 +4699,14 @@ def _check_user_dtype_supported(dtype, fun_name=None):
     fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = dtypes.canonicalize_dtype(dtype).name
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype), stacklevel=3)
+
+
+def empty(eltype):
+  return empty_p.bind(eltype=eltype)
+empty_p = core.Primitive('empty')
+empty_p.def_abstract_eval(lambda *, eltype: core.ShapedArray((), eltype))
+def _empty_lower(ctx, *, eltype):
+  if type(eltype) in core.custom_eltypes:
+    return eltype.empty_mlir(ctx)
+  return mlir.ir_constants(np.zeros((), np.dtype(eltype)))
+mlir.register_lowering(empty_p, _empty_lower)
