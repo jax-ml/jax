@@ -10,6 +10,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.16 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.15...main).
+* Breaking changes
+  * Support for NumPy 1.19 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to NumPy 1.20 or newer.
 * Changes
   * Added {mod}`jax.debug` that includes utilities for runtime value debugging such at {func}`jax.debug.print` and {func}`jax.debug.breakpoint`.
   * Added new documentation for [runtime value debugging](debugging/index)
