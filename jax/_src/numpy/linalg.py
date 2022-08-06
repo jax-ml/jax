@@ -469,6 +469,13 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
       # code has slightly different type promotion semantics, so we need a
       # special case too.
       return jnp.sum(jnp.abs(x), axis=axis, keepdims=keepdims)
+    elif isinstance(ord, str):
+      msg = f"Invalid order '{ord}' for vector norm."
+      if ord == "inf":
+        msg += "Use 'jax.numpy.inf' instead."
+      if ord == "-inf":
+        msg += "Use '-jax.numpy.inf' instead."
+      raise ValueError(msg)
     else:
       abs_x = jnp.abs(x)
       ord = lax_internal._const(abs_x, ord)
