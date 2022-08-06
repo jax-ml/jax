@@ -1443,6 +1443,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     ('fully_sharded_output', P('x', 'y'), (2, 4)),
     ('fully_replicated_output', P(None), (8, 8)),
   )
+  @jax._src.config.jax_array(True)
   def test_pjit_array_single_output(self, out_axis_resources, shard_shape):
     global_input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -1450,20 +1451,45 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     input_array, input_data = create_array(global_input_shape, global_mesh, mesh_axes)
 
-    with jax._src.config.jax_array(True):
-      with global_mesh:
-        f = pjit(lambda x: x @ x.T, out_axis_resources=MeshPspecSharding(
-            global_mesh, out_axis_resources))
-        expected_matrix_mul = input_data @ input_data.T
+    f = pjit(lambda x: x @ x.T, out_axis_resources=MeshPspecSharding(
+        global_mesh, out_axis_resources))
+    expected_matrix_mul = input_data @ input_data.T
 
-        out = f(input_array)
-        self.assertIsInstance(out, array.Array)
-        self.assertEqual(out.shape, (8, 8))
-        self.assertEqual(out.addressable_shards[0].data.shape, shard_shape)
-        for s in out.addressable_shards:
-          self.assertLen(s.data._arrays, 1)
-          self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
-        self.assertArraysEqual(out._value, expected_matrix_mul)
+    out = f(input_array)
+    self.assertIsInstance(out, array.Array)
+    self.assertEqual(out.shape, (8, 8))
+    self.assertEqual(out.addressable_shards[0].data.shape, shard_shape)
+    for s in out.addressable_shards:
+      self.assertLen(s.data._arrays, 1)
+      self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
+    self.assertArraysEqual(out._value, expected_matrix_mul)
+
+  @parameterized.named_parameters(
+    ('fully_sharded_output', P('x', 'y'), (2, 4)),
+    ('fully_replicated_output', P(None), (8, 8)),
+  )
+  @jax._src.config.jax_array(True)
+  def test_pjit_array_single_output_with_mesh_context_manager(
+      self, out_axis_resources, shard_shape):
+    global_input_shape = (8, 2)
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    mesh_axes = P('x', 'y')
+
+    input_array, input_data = create_array(global_input_shape, global_mesh, mesh_axes)
+
+    with global_mesh:
+      f = pjit(lambda x: x @ x.T, out_axis_resources=MeshPspecSharding(
+          global_mesh, out_axis_resources))
+      expected_matrix_mul = input_data @ input_data.T
+
+      out = f(input_array)
+      self.assertIsInstance(out, array.Array)
+      self.assertEqual(out.shape, (8, 8))
+      self.assertEqual(out.addressable_shards[0].data.shape, shard_shape)
+      for s in out.addressable_shards:
+        self.assertLen(s.data._arrays, 1)
+        self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
+      self.assertArraysEqual(out._value, expected_matrix_mul)
 
   def test_non_array_input_error(self):
     input_shape = (8, 2)
@@ -1498,6 +1524,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
           self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
         self.assertArraysEqual(out._value, input_data)
 
+  @jax._src.config.jax_array(True)
   def test_unspecified_out_axis_resources(self):
 
     def _checks(out, input_data):
@@ -1516,21 +1543,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     input_array, input_data = create_array(global_input_shape, global_mesh, mesh_axes)
 
-    with jax._src.config.jax_array(True):
-      with global_mesh:
-        f = pjit(lambda x: x)
+    f = pjit(lambda x: x)
 
-        out = f(input_array)
-        _checks(out, input_data)
+    out = f(input_array)
+    _checks(out, input_data)
 
-        out2 = f(out)
-        _checks(out2, input_data)
+    out2 = f(out)
+    _checks(out2, input_data)
 
   @parameterized.named_parameters(
     ('mesh1', (4, 2), (2, 1), (2, 2), (1, 2), (8, 2)),
     ('mesh2', (2, 2), (4, 1), (4, 2), (2, 2), (8, 2)),
     ('mesh3', (2, 1), (4, 2), (4, 2), (4, 2), (8, 2)),
   )
+  @jax._src.config.jax_array(True)
   def test_pjit_array_multi_input_multi_output(self, mesh_shape, s1_shape,
                                                s2_shape, s3_shape, s4_shape):
     # Disable on SE runtime type because XLA sharding propagation is not
@@ -1549,37 +1575,35 @@ class ArrayPjitTest(jtu.JaxTestCase):
     spec4 = P(None)
     a4, _ = create_array(global_input_shape, global_mesh, spec4)
 
-    with jax._src.config.jax_array(True):
-      with global_mesh:
-        @pjit
-        def f(tree):
-          return tree
-        out_tree = f((a1, (a2, (a3, a4))))
-        (out1, out2, out3, out4), _ = jax.tree_util.tree_flatten(out_tree)
+    @pjit
+    def f(tree):
+      return tree
+    out_tree = f((a1, (a2, (a3, a4))))
+    (out1, out2, out3, out4), _ = jax.tree_util.tree_flatten(out_tree)
 
-        self.assertIsInstance(out1, array.Array)
-        self.assertEqual(out1.shape, (8, 2))
-        self.assertEqual(out1.addressable_shards[0].data.shape, s1_shape)
-        for s in out1.addressable_shards:
-          self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
+    self.assertIsInstance(out1, array.Array)
+    self.assertEqual(out1.shape, (8, 2))
+    self.assertEqual(out1.addressable_shards[0].data.shape, s1_shape)
+    for s in out1.addressable_shards:
+      self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
 
-        self.assertIsInstance(out2, array.Array)
-        self.assertEqual(out2.shape, (8, 2))
-        self.assertEqual(out2.addressable_shards[0].data.shape, s2_shape)
-        for s in out2.addressable_shards:
-          self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
+    self.assertIsInstance(out2, array.Array)
+    self.assertEqual(out2.shape, (8, 2))
+    self.assertEqual(out2.addressable_shards[0].data.shape, s2_shape)
+    for s in out2.addressable_shards:
+      self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
 
-        self.assertIsInstance(out3, array.Array)
-        self.assertEqual(out3.shape, (8, 2))
-        self.assertEqual(out3.addressable_shards[0].data.shape, s3_shape)
-        for s in out3.addressable_shards:
-          self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
+    self.assertIsInstance(out3, array.Array)
+    self.assertEqual(out3.shape, (8, 2))
+    self.assertEqual(out3.addressable_shards[0].data.shape, s3_shape)
+    for s in out3.addressable_shards:
+      self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
 
-        self.assertIsInstance(out4, array.Array)
-        self.assertEqual(out4.shape, (8, 2))
-        self.assertEqual(out4.addressable_shards[0].data.shape, s4_shape)
-        for s in out4.addressable_shards:
-          self.assertArraysEqual(s.data._arrays[0], input_data)
+    self.assertIsInstance(out4, array.Array)
+    self.assertEqual(out4.shape, (8, 2))
+    self.assertEqual(out4.addressable_shards[0].data.shape, s4_shape)
+    for s in out4.addressable_shards:
+      self.assertArraysEqual(s.data._arrays[0], input_data)
 
   def test_in_axis_resources_mismatch_error(self):
     global_input_shape = (8, 2)
@@ -1735,6 +1759,34 @@ class ArrayPjitTest(jtu.JaxTestCase):
         f = pjit(lambda x: x, in_axis_resources=MeshPspecSharding(global_mesh, P(None,)))
         compiled = f.lower(jax.ShapedArray(input_shape, jnp.float32)).compile()
         compiled(a1)  # no error
+
+  @jax._src.config.jax_array(True)
+  def test_pjit_single_device_sharding_add(self):
+    a = jnp.array([1, 2, 3], dtype=jnp.float32)
+    b = jnp.array([4, 5, 6], dtype=jnp.float32)
+
+    @pjit
+    def add(x, y):
+      return x + y
+    out = add(a, b)
+    self.assertIsInstance(out, array.Array)
+    self.assertArraysEqual(out, a + b)
+
+    out2 = add(out, out)
+    self.assertIsInstance(out2, array.Array)
+    self.assertArraysEqual(out2, 2 * (a + b))
+
+  @jax._src.config.jax_array(True)
+  def test_pjit_single_device_sharding_mul(self):
+    a = jnp.arange(16).reshape((8, 2))
+
+    @pjit
+    def mul(x):
+      return x @ x.T
+
+    out = mul(a)
+    self.assertIsInstance(out, array.Array)
+    self.assertArraysEqual(out, a @ a.T)
 
 
 def spec_regex(s):

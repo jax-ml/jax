@@ -2630,11 +2630,21 @@ def _get_input_metadata(
   return shardings, input_indices, input_avals
 
 
-def _get_op_sharding_shardings_from_executable(xla_executable, device_assignment):
+def _get_op_sharding_shardings_from_executable(
+    xla_executable, device_assignment, num_in_avals, num_out_avals):
   from jax.experimental import pjit
-  from jax.experimental.sharding import OpShardingSharding
+  from jax.experimental.sharding import OpShardingSharding, SingleDeviceSharding
 
   in_op_shardings, out_op_shardings = pjit._get_op_sharding_from_executable(xla_executable)
+
+  # When the device assignment only has 1 device, SPMD partitioner will not run.
+  # Hence the op shardings will not be set on the `hlo_module`. In that case,
+  # just return SingleDeviceShardings since we know the computation is running
+  # only on 1 device.
+  if not in_op_shardings and not out_op_shardings and len(device_assignment) == 1:
+    return ([SingleDeviceSharding(device_assignment[0]) for _ in range(num_in_avals)],
+            [SingleDeviceSharding(device_assignment[0]) for _ in range(num_out_avals)])
+
   return ([OpShardingSharding(device_assignment, i) for i in in_op_shardings],
           [OpShardingSharding(device_assignment, o) for o in out_op_shardings])
 
@@ -2746,7 +2756,8 @@ class MeshExecutable(stages.XlaExecutable):
       elif out_shardings and all(_is_unspecified(o) for o in out_shardings):
         assert mesh is None
         in_shardings, out_shardings = _get_op_sharding_shardings_from_executable(
-            xla_executable, first_sharding._device_assignment)
+            xla_executable, first_sharding._device_assignment,
+            len(global_in_avals), len(global_out_avals))
 
       in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore

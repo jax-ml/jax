@@ -295,8 +295,13 @@ def pjit(fun: Callable,
     resource_env = pxla.thread_resources.env
     pjit_mesh = resource_env.physical_mesh
     if pjit_mesh.empty:
-      raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
-                         "it's defined at the call site?")
+      if config.jax_array:
+        # Don't enforce requiring a mesh when `jax_array` flag is enabled. But
+        # if mesh is not empty then pjit will respect it.
+        pass
+      else:
+        raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
+                           "it's defined at the call site?")
 
     f = lu.wrap_init(fun)
     f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
@@ -955,6 +960,7 @@ def _pjit_batcher_for_sharding(
     return OpShardingSharding(s._device_assignment, new_op)
   else:
     assert isinstance(s, OpShardingSharding)
+    assert not mesh.empty
     parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
     mps = MeshPspecSharding._from_parsed_pspec(mesh, parsed_pspec)
@@ -1613,14 +1619,18 @@ def _get_partition_spec(ppspec: Sequence[ParsedPartitionSpec]) -> Sequence[Parti
 
 def _get_op_sharding_from_executable(
     executable) -> Tuple[Sequence[xc.OpSharding], Sequence[xc.OpSharding]]:
-  input_op_shardings: List[xc.OpSharding] = []
-  for s in executable.hlo_modules()[0].spmd_parameters_shardings:
-    input_op_shardings.extend(_get_op_sharding(s))
+  in_op_shardings: List[xc.OpSharding] = []
+  parameter_shardings_from_xla = executable.hlo_modules()[0].spmd_parameters_shardings
+  if parameter_shardings_from_xla is not None:
+    for s in parameter_shardings_from_xla:
+      in_op_shardings.extend(_get_op_sharding(s))
 
-  output_op_shardings: Sequence[xc.OpSharding] = _get_op_sharding(
-      executable.hlo_modules()[0].spmd_output_sharding)
+  out_op_shardings: List[xc.OpSharding] = []
+  output_shardings_from_xla = executable.hlo_modules()[0].spmd_output_sharding
+  if output_shardings_from_xla is not None:
+    out_op_shardings = _get_op_sharding(output_shardings_from_xla)  # type: ignore
 
-  return input_op_shardings, output_op_shardings
+  return in_op_shardings, out_op_shardings
 
 
 def _get_ppspec_from_executable(executable, mesh) -> Tuple[Sequence[ParsedPartitionSpec], Sequence[ParsedPartitionSpec]]:

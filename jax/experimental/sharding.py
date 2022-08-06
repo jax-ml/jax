@@ -205,6 +205,13 @@ class MeshPspecSharding(XLACompatibleSharding):
     return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
+@functools.lru_cache()
+def _get_replicated_op_sharding():
+  proto = xc.OpSharding()
+  proto.type = xc.OpSharding.Type.REPLICATED
+  return proto
+
+
 class SingleDeviceSharding(XLACompatibleSharding):
 
   def __init__(self, device: Device):
@@ -237,9 +244,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return [self._device]
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
-    proto = xc.OpSharding()
-    proto.type = xc.OpSharding.Type.REPLICATED
-    return proto
+    return _get_replicated_op_sharding()
 
 
 class PmapSharding(XLACompatibleSharding):
@@ -338,6 +343,5 @@ class OpShardingSharding(XLACompatibleSharding):
 
   @classmethod
   def get_replicated(cls, device_assignment):
-    proto = xc.OpSharding()
-    proto.type = xc.OpSharding.Type.REPLICATED
+    proto = _get_replicated_op_sharding()
     return cls(device_assignment, proto)
