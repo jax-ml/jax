@@ -96,6 +96,7 @@ checkpoint_policies = types.SimpleNamespace(
 
 ### Main API
 
+@api_boundary
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                policy: Optional[Callable[..., bool]] = None,
                static_argnums: Union[int, Tuple[int, ...]] = (),
