@@ -197,7 +197,7 @@ class MeshPspecSharding(XLACompatibleSharding):
     # Used in `with_sharding_constraint`.
     special_axes = {}
     # Manual axes is only used with xmap.
-    if axis_ctx is not None and hasattr(axis_ctx, 'manual_axes'):
+    if axis_ctx is not None and isinstance(axis_ctx, mlir.SPMDAxisContext):
       axis_names = self.mesh.axis_names
       # Ignore type because mypy doesn't recognize the `hasattr` check above.
       for manual_axis in axis_ctx.manual_axes:  # type: ignore
