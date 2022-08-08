@@ -874,6 +874,11 @@ jax_test(
 )
 
 jax_test(
+    name = "python_callback_test",
+    srcs = ["python_callback_test.py"],
+)
+
+jax_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
     enable_configs = [
