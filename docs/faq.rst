@@ -700,7 +700,7 @@ If you define a function that processes the input using operations that depend o
 the relative ordering of inputs (e.g. ``max``, ``greater``, ``argsort``, etc.) then
 you may be surprised to find that the gradient is everywhere zero.
 Here is an example, where we define `f(x)` to be a step function that returns
-`0` when `x` is negative, and `1` when `x` is positive:
+`0` when `x` is negative, and `1` when `x` is positive::
 
   import jax
   import numpy as np
