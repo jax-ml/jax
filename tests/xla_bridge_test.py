@@ -179,7 +179,7 @@ class GetBackendTest(jtu.JaxTestCase):
 
   def test_backend_init_error(self):
     def factory():
-      raise RuntimeError("I'm not a real backend")
+      raise xb.PlatformUnavailableError("I'm not a real backend")
 
     xb.register_backend_factory("error", factory, priority=10)
     # No error raised if there's a fallback backend.
@@ -193,22 +193,13 @@ class GetBackendTest(jtu.JaxTestCase):
     self._register_factory("no_devices", -10, device_count=0)
     default_backend = xb.get_backend()
     self.assertEqual(default_backend.platform, "cpu")
-    with self.assertRaisesRegex(
-        RuntimeError,
-        "Backend 'no_devices' failed to initialize: "
-        "Backend 'no_devices' provides no devices."):
-      xb.get_backend("no_devices")
-
+    self.assertEqual(xb.get_backend("no_devices").device_count(), 0)
     self._reset_backend_state()
 
     self._register_factory("no_devices2", 10, device_count=0)
     default_backend = xb.get_backend()
     self.assertEqual(default_backend.platform, "cpu")
-    with self.assertRaisesRegex(
-        RuntimeError,
-        "Backend 'no_devices2' failed to initialize: "
-        "Backend 'no_devices2' provides no devices."):
-      xb.get_backend("no_devices2")
+    self.assertEqual(xb.get_backend("no_devices2").device_count(), 0)
 
   def test_factory_returns_none(self):
     xb.register_backend_factory("none", lambda: None, priority=10)
@@ -216,8 +207,8 @@ class GetBackendTest(jtu.JaxTestCase):
     self.assertEqual(default_backend.platform, "cpu")
     with self.assertRaisesRegex(
         RuntimeError,
-        "Backend 'none' failed to initialize: "
-        "Could not initialize backend 'none'"):
+        "Platform 'none' failed to initialize: "
+        "Could not initialize platform 'none'."):
       xb.get_backend("none")
 
   def cpu_fallback_warning(self):

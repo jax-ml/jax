@@ -23,7 +23,7 @@ from functools import partial, lru_cache
 import os
 import platform as py_platform
 import threading
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 import warnings
 
 from absl import logging
@@ -171,7 +171,11 @@ def _make_tpu_driver_client():
   if FLAGS.jax_backend_target is None:
     logging.info("No --jax_backend_target was provided; skipping remote TPU.")
     return None
-  return tpu_driver_client.TpuBackend.create(worker=FLAGS.jax_backend_target)
+  try:
+    return tpu_driver_client.TpuBackend.create(worker=FLAGS.jax_backend_target)
+  except RuntimeError as e:
+    raise PlatformUnavailableError(
+        f"Remote TPU initialization failed {e}") from e
 
 
 def tpu_client_timer_callback(timer_secs: float):
@@ -188,6 +192,9 @@ def tpu_client_timer_callback(timer_secs: float):
 
   try:
     client = xla_client.make_tpu_client()
+  except (AttributeError, RuntimeError) as e:
+    raise PlatformUnavailableError(
+      f"TPU initialization failed {e}") from e
   finally:
     t.cancel()
 
@@ -204,7 +211,22 @@ _backends : Dict[str, Any] = {}
 _backends_errors : Dict[str, str] = {}
 _backend_lock = threading.Lock()
 
-def register_backend_factory(name, factory, *, priority=0):
+class PlatformUnavailableError(RuntimeError):
+  pass
+
+def register_backend_factory(name: str, factory: Callable, *,
+                             priority: int = 0) -> None:
+  """
+  Registers a new backend factory with JAX.
+  Args:
+    name: the name for the platform
+    factory: a Callable that returns either a backend or None.
+      If `factory` throws `PlatformUnavailableError` it will be treated as
+      a non-fatal error that will be reported to the user if they attempt to
+      use the platform. Other exceptions will not be caught.
+    priority: the relative priority of this platform. Higher priority platforms
+      are preferred.
+  """
   with _backend_lock:
     if name in _backends:
       raise RuntimeError(f"Backend {name} already initialized")
@@ -226,11 +248,14 @@ def make_gpu_client(*, platform_name, visible_devices_flag):
   kwargs = {}
   if visible_devices != "all":
     kwargs["allowed_devices"] = {int(x) for x in visible_devices.split(",")}
-  return xla_client.make_gpu_client(
-    distributed_client=distributed.global_state.client,
-    node_id=distributed.global_state.process_id,
-    platform_name=platform_name,
-    **kwargs)
+  try:
+    return xla_client.make_gpu_client(
+      distributed_client=distributed.global_state.client,
+      node_id=distributed.global_state.process_id,
+      platform_name=platform_name)
+  except RuntimeError as e:
+    raise PlatformUnavailableError(
+        "gpu platform failed to initialize") from e
 
 if hasattr(xla_client, "make_gpu_client"):
   register_backend_factory(
@@ -326,10 +351,10 @@ def backends():
         backend = _init_backend(platform)
         _backends[platform] = backend
 
-        if priority > default_priority:
+        if priority > default_priority and backend.device_count() > 0:
           _default_backend = backend
           default_priority = priority
-      except Exception as err:
+      except PlatformUnavailableError as err:
         if platform in ('cpu', 'interpreter'):
           # We always expect the CPU and interpreter backends to initialize
           # successfully.
@@ -371,21 +396,22 @@ def _clear_backends():
 def _init_backend(platform):
   factory, unused_priority = _backend_factories.get(platform, (None, None))
   if factory is None:
-    raise RuntimeError(f"Unknown backend '{platform}'")
+    raise RuntimeError(f"Unknown platform '{platform}'")
 
-  logging.vlog(1, "Initializing backend '%s'" % platform)
+  logging.info("Initializing platform '%s'", platform)
   backend = factory()
   # TODO(skye): consider raising more descriptive errors directly from backend
   # factories instead of returning None.
   if backend is None:
-    raise RuntimeError(f"Could not initialize backend '{platform}'")
-  if backend.device_count() == 0:
-    raise RuntimeError(f"Backend '{platform}' provides no devices.")
+    logging.info("Initialization of platform '%s' failed.", platform)
+    raise PlatformUnavailableError(
+        f"Could not initialize platform '{platform}'.")
   util.distributed_debug_log(("Initialized backend", backend.platform),
                              ("process_index", backend.process_index()),
                              ("device_count", backend.device_count()),
                              ("local_devices", backend.local_devices()))
-  logging.vlog(1, "Backend '%s' initialized" % platform)
+  logging.info("Platform '%s' initialized with %d devices", platform,
+               backend.device_count())
   return backend
 
 
@@ -404,7 +430,7 @@ def _get_backend_uncached(platform=None):
     backend = bs.get(platform, None)
     if backend is None:
       if platform in _backends_errors:
-        raise RuntimeError(f"Backend '{platform}' failed to initialize: "
+        raise RuntimeError(f"Platform '{platform}' failed to initialize: "
                            f"{_backends_errors[platform]}")
       raise RuntimeError(f"Unknown backend {platform}")
     return backend
