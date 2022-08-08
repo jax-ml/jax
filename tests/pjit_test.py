@@ -14,7 +14,7 @@
 
 import os
 import re
-from functools import partial
+from functools import partial, lru_cache
 import logging
 import threading
 import unittest
@@ -99,6 +99,11 @@ def create_array(global_shape, global_mesh, mesh_axes, global_data=None):
 
   return array.make_array_from_callback(
       global_shape, sharding, lambda idx: global_data[idx]), global_data
+
+
+@lru_cache()
+def simulated_cached_fun(s):
+  return s
 
 
 @curry
@@ -1788,6 +1793,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertIsInstance(out, array.Array)
     self.assertArraysEqual(out, a @ a.T)
 
+  @jax._src.config.jax_array(True)
+  def test_pjit_single_device_sharding_cache(self):
+    a = jnp.arange(16).reshape((8, 2))
+    f = pjit(lambda x: x)
+
+    out = f(a)
+    cache_info1 = pjit_lib._pjit_lower.cache_info()
+
+    _ = f(out)
+    cache_info2 = pjit_lib._pjit_lower.cache_info()
+
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
@@ -2310,6 +2329,25 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
     self.assertEqual(cache_info2.currsize, cache_info1.currsize)
+
+  def test_simulated_training_cache_in_pjit(self):
+    ndim = 2
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+
+    mps1 = MeshPspecSharding(mesh, P('x', 'y'))
+    op_sharding_sharding = pjit_lib.to_op_sharding_sharding(mps1, ndim)
+    next_loop_sharding = simulated_cached_fun(op_sharding_sharding)
+    cache_info1 = simulated_cached_fun.cache_info()
+
+    next_op_sharding_sharding = pjit_lib.to_op_sharding_sharding(
+        next_loop_sharding, ndim)
+    simulated_cached_fun(next_op_sharding_sharding)
+    cache_info2 = simulated_cached_fun.cache_info()
+
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+    self.assertEqual(id(next_op_sharding_sharding._op_sharding),
+                     id(op_sharding_sharding._op_sharding))
 
 
 if __name__ == '__main__':
