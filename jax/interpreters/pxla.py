@@ -221,13 +221,17 @@ def _get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int]
   return partitions, num_replicas
 
 
-def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
-                           num_devices: int):
+def _op_sharding_to_numpy_indices(
+    op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+    num_devices: int) -> np.ndarray:
+  indices = np.empty(num_devices, dtype=np.object_)
+
   # num_devices is required as an argument when op_sharding is
   # REPLICATED. `jax.device_count()` cannot be used because you can create
   # an opsharding with less number of devices than `jax.device_count()`.
   if is_op_sharding_replicated(op_sharding):
-    return tuple((slice(None),) * len(shape) for _ in range(num_devices))
+    indices.fill((slice(None),) * len(shape))
+    return indices
 
   assert num_devices == len(op_sharding.tile_assignment_devices)
 
@@ -246,11 +250,16 @@ def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
     else:
       raise AssertionError('Unrecognized number of shards. Please file a bug!')
 
-  indices = np.empty(num_devices, dtype=np.object_)
   device_it = iter(op_sharding.tile_assignment_devices)
   for i, idxs in enumerate(it.product(*axis_indices)):
     for _ in range(num_replicas):
       indices[next(device_it)] = idxs
+  return indices
+
+
+def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+                           num_devices: int) -> Tuple[Tuple[slice, ...], ...]:
+  indices = _op_sharding_to_numpy_indices(op_sharding, shape, num_devices)
   return tuple(indices.flat)
 
 
@@ -267,6 +276,13 @@ def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
     ints, slice objects with step=1, or tuples of those.
   """
   assert len(shape) == len(self.sharding), (shape, self.sharding)
+
+  has_unstacked = any(isinstance(s, Unstacked) for s in self.sharding)
+  # Take the op sharding indices generation route for pjit/xmap cases.
+  if not has_unstacked:
+    op_sharding_proto = sharding_spec_sharding_proto(self)
+    return _op_sharding_to_numpy_indices(
+        op_sharding_proto, shape, prod(self.mesh_shape))
 
   axis_indices: List[Sequence[Index]] = []
   shard_indices_shape = []
@@ -2619,7 +2635,7 @@ def _get_input_metadata(
     # represent index for each device in the global mesh. But here we want
     # indices for the local devices of the global mesh.
     proto = sharding._to_xla_op_sharding(aval.ndim)
-    if proto.type == xc.OpSharding.Type.REPLICATED:
+    if is_op_sharding_replicated(proto):
       index = tuple((slice(None),) * aval.ndim for _ in range(len(sharding.addressable_devices)))
     else:
       index = tuple(sharding.devices_indices_map(aval.shape).values())
