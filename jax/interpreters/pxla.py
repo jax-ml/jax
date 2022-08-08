@@ -2332,6 +2332,9 @@ class PartitionSpec(tuple):
   def __repr__(self):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
+  def __reduce__(self):
+    return (PartitionSpec, tuple(self))
+
   """A sentinel value representing a dim is unconstrained."""
   UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
