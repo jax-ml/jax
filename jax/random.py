@@ -66,7 +66,7 @@ Design and Context
 **TLDR**: JAX PRNG = `Threefry counter PRNG <http://www.thesalmons.org/john/random123/papers/random123sc11.pdf>`_
 + a functional array-oriented `splitting model <https://dl.acm.org/citation.cfm?id=2503784>`_
 
-See `docs/design_notes/prng.md <https://github.com/google/jax/blob/main/docs/design_notes/prng.md>`_
+See `docs/jep/263-prng.md <https://github.com/google/jax/blob/main/docs/jep/263-prng.md>`_
 for more details.
 
 To summarize, among other requirements, the JAX PRNG aims to:
