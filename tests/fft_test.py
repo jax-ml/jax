@@ -30,11 +30,7 @@ from jax._src.numpy.util import _promote_dtypes_complex
 from jax.config import config
 config.parse_flags_with_absl()
 
-numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
-if numpy_version < (1, 20):
-  FFT_NORMS = [None, "ortho"]
-else:
-  FFT_NORMS = [None, "ortho", "forward", "backward"]
+FFT_NORMS = [None, "ortho", "forward", "backward"]
 
 
 float_dtypes = jtu.dtypes.floating
