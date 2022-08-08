@@ -70,7 +70,6 @@ setup(
         'scipy>=1.5',
         'typing_extensions',
         'etils[epath]',
-        'protobuf>=3.13,<4',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
@@ -89,6 +88,9 @@ setup(
                 f'libtpu-nightly=={_libtpu_version}',
                 # Required by cloud_tpu_init.py
                 'requests'],
+
+        # $ pip install jax[australis]
+        'australis': ['protobuf>=3.13,<4'],
 
         # CUDA installations require adding jax releases URL; e.g.
         # Cuda installation defaulting to a CUDA and Cudnn version defined above.
