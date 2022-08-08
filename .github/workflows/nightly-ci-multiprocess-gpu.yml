@@ -41,10 +41,10 @@ jobs:
           if [ "${SLURM_STATE}" != "COMPLETED" ]; then exit 1; fi
 
       - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v1
+        uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
-          files: "outputs/*.xml"
+          junit_files: "outputs/*.xml"
 
       - name: Upload run results from all nodes
         uses: actions/upload-artifact@v3
