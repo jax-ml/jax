@@ -117,7 +117,7 @@ exclude_patterns = [
     # Ignore markdown source for notebooks; myst-nb builds from the ipynb
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
-    'design_notes/type_promotion.md',
+    'jep/9407-type-promotion.md',
     # TODO: revert to jax-101/*.md once 08-pjit has a notebook
     'jax-101/01-jax-basics.md',
     'jax-101/02-jitting.md',
@@ -202,7 +202,7 @@ nb_execution_excludepatterns = [
     # Strange error apparently due to asynchronous cell execution
     'notebooks/thinking_in_jax.*',
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
-    'design_notes/type_promotion.*',
+    'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
     'jax-101/*',
     'notebooks/xmap_tutorial.*',
