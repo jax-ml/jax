@@ -924,7 +924,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}".format(
            jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
-      for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
+      for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50),
+                    (3, 4, 5), (2, 3, 4, 5)]
       for dtype in float_types + complex_types))
   def testMatrixRank(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
