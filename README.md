@@ -432,9 +432,6 @@ operating system, CUDA, and CuDNN are possible, but require [building from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 * CUDA 11.1 or newer is *required*.
-  * You may be able to use older CUDA versions if you [build from source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source),
-    but there are known bugs in CUDA in all CUDA versions older than 11.1, so we
-    do not ship prebuilt binaries for older CUDA versions.
 * The supported cuDNN versions for the prebuilt wheels are:
   * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
     installation is new enough, since it supports additional functionality.
