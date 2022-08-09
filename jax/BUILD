@@ -159,7 +159,6 @@ pytype_library(
     name = "optimizers",
     srcs = [
         "example_libraries/optimizers.py",
-        "experimental/optimizers.py",
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],
