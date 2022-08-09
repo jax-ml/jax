@@ -376,7 +376,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
       x = 2
       g()
       return x
-
     _ = f()
     expected = _format_multiline(r"""
     Entering jdb:
@@ -406,6 +405,28 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
     expected = ".*At topmost frame.*"
     _ = f2()
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+  def test_can_handle_dictionaries_with_unsortable_keys(self):
+    stdin, stdout = make_fake_stdin_stdout(["p x", "p weird_dict",
+                                            "p weirder_dict", "c"])
+
+    @jax.jit
+    def f():
+      weird_dict = {(lambda x: x): 2., (lambda x: x * 2): 3}
+      weirder_dict = {(lambda x: x): weird_dict}
+      x = 2.
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
+      del weirder_dict
+      return x
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) 2.0
+    \(jdb\) <cant_flatten>
+    \(jdb\) <cant_flatten>
+    \(jdb\) """)
+    _ = f()
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
