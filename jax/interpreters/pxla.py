@@ -68,6 +68,7 @@ from jax._src import profiler
 from jax._src import stages
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
+from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
@@ -1724,7 +1725,7 @@ class ExecuteReplicated:
     if self.has_unordered_effects:
       # TODO(sharadmv): simplify this logic when minimum jaxlib version is
       # bumped
-      if xla_extension_version >= 81:
+      if can_execute_with_token:
         out_bufs, runtime_tokens = (
             self.xla_executable.execute_sharded_on_local_devices_with_tokens(
               input_bufs))

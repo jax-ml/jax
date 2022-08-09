@@ -48,9 +48,9 @@ from jax._src import traceback_util
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config, flags
 from jax._src.lib.mlir import ir
+from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 import jax._src.util as util
 from jax._src.util import flatten, unflatten
 from etils import epath
@@ -717,11 +717,11 @@ def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
   input_bufs = [*tokens_flat, *input_bufs]
   def _remove_tokens(output_bufs, runtime_token):
     # TODO(sharadmv): simplify when minimum jaxlib version is bumped
-    num_output_tokens = len(ordered_effects) + (xla_extension_version < 81 and
+    num_output_tokens = len(ordered_effects) + (not can_execute_with_token and
         has_unordered_effects)
     token_bufs, output_bufs = util.split_list(output_bufs, [num_output_tokens])
     if has_unordered_effects:
-      if xla_extension_version >= 81:
+      if can_execute_with_token:
         runtime_tokens.set_output_runtime_token(device, runtime_token)
       else:
         output_token_buf, *token_bufs = token_bufs
@@ -746,7 +746,7 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
   if has_unordered_effects or ordered_effects:
     in_flat, token_handler = _add_tokens(
         has_unordered_effects, ordered_effects, device, in_flat)
-    if xla_extension_version >= 81:
+    if can_execute_with_token:
       out_flat, runtime_token = compiled.execute_with_token(in_flat)
     else:
       out_flat = compiled.execute(in_flat)
@@ -959,7 +959,7 @@ class XlaCompiledComputation(stages.XlaExecutable):
     if ordered_effects or has_unordered_effects:
       num_output_tokens = len(ordered_effects)
       # TODO(sharadmv): remove check when minimum jaxlib version is bumped
-      if xla_extension_version < 81:
+      if not can_execute_with_token:
         num_output_tokens += has_unordered_effects
       buffer_counts = ([1] * num_output_tokens) + buffer_counts
     execute = _execute_compiled if nreps == 1 else _execute_replicated
