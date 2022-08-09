@@ -27,12 +27,14 @@ from jax.interpreters import mlir
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
 source_info_util.register_exclusion(__file__)
+traceback_util.register_exclusion(__file__)
 
 # TODO(mattjj): before this can be the standard remat implementation, we must:
 #   [ ] fix up callers who use the 'concrete' option (now removed)
