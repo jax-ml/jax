@@ -554,6 +554,25 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertListEqual(op.tile_assignment_devices, [0, 1])
     self.assertFalse(pxla.is_op_sharding_replicated(op))
 
+  @jtu.with_mesh([('x', 2)])
+  def testVMapShardingConstraintWithSpmdAxis(self):
+    f = pjit(
+        jax.vmap(
+            lambda x: with_sharding_constraint(x, P(None)),
+            spmd_axis_name='x',
+        ),
+        in_axis_resources=P('x'),
+        out_axis_resources=P('x'))
+    x = jnp.arange(16 * 4).reshape((16, 4))
+    jaxpr = jax.make_jaxpr(f)(x)
+    pjit_eqn, = jaxpr.eqns
+    constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
+    op = constraint_eqn.params['sharding']._op_sharding
+    self.assertEqual(op.type, xc.OpSharding.Type.OTHER)
+    self.assertListEqual(op.tile_assignment_dimensions, [2, 1])
+    self.assertListEqual(op.tile_assignment_devices, [0, 1])
+    self.assertFalse(pxla.is_op_sharding_replicated(op))
+
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingInXMap(self):
     h = pjit(lambda x: x, in_axis_resources=P('x'), out_axis_resources=None)
