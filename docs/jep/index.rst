@@ -32,7 +32,7 @@ should be linked to this issue.
 Then create a pull request that adds a file named
 `%d-{short-title}.md` - with the number being the issue number.
 
-.. _JEP label: https://github.com/google/jax/labels/JEP
+.. _JEP label: https://github.com/google/jax/issues?q=label%3AJEP
 
 .. toctree::
   :maxdepth: 1
