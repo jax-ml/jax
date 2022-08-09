@@ -1759,8 +1759,11 @@ def asin_impl(x):
 
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
-mlir.register_lowering(asin_p, mlir.lower_fun(asin_impl,
-                                              multiple_results=False))
+if jax._src.lib.mlir_api_version < 31:
+  mlir.register_lowering(asin_p, mlir.lower_fun(asin_impl,
+                                                multiple_results=False))
+else:
+  mlir.register_lowering(asin_p, partial(_nary_lower_mhlo, chlo.AsinOp))
 
 def acos_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
@@ -1789,8 +1792,11 @@ def atan_impl(x):
 
 atan_p = standard_unop(_float | _complex, 'atan')
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
-mlir.register_lowering(atan_p, mlir.lower_fun(atan_impl,
-                                              multiple_results=False))
+if jax._src.lib.mlir_api_version < 31:
+  mlir.register_lowering(atan_p, mlir.lower_fun(atan_impl,
+                                                multiple_results=False))
+else:
+  mlir.register_lowering(atan_p, partial(_nary_lower_mhlo, chlo.AtanOp))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
