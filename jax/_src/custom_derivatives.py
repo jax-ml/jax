@@ -727,7 +727,7 @@ def _custom_vjp_call_jaxpr_jvp(
   return primals_out, tangents_out
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
-def _custom_vjp_call_jaxpr_vmap(
+def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
     axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
@@ -752,7 +752,7 @@ def _custom_vjp_call_jaxpr_vmap(
   fwd_args_batched = [0 if b else not_mapped for b in args_batched]
   fwd_out_dims = lambda: out_dims2[0]
   batched_bwd = batching.batch_custom_vjp_bwd(bwd, axis_name, axis_size, fwd_out_dims,
-                                              fwd_args_batched, main_type)
+                                              fwd_args_batched, main_type, spmd_axis_name)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
@@ -760,7 +760,8 @@ def _custom_vjp_call_jaxpr_vmap(
       out_trees=out_trees, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
+batching.spmd_axis_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
+batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = partial(_custom_vjp_call_jaxpr_vmap, None)
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 

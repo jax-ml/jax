@@ -912,7 +912,7 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
 mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
-def _pjit_batcher(insert_axis,
+def _pjit_batcher(insert_axis, spmd_axis_name,
                   axis_size, axis_name, main_type,
                   vals_in, dims_in,
                   jaxpr, in_shardings, out_shardings,
@@ -927,7 +927,8 @@ def _pjit_batcher(insert_axis,
       instantiate=False, axis_name=axis_name, main_type=main_type)
 
   # `insert_axis` is set to True only for some `xmap` uses.
-  new_parts = (axis_name,) if insert_axis else ()
+  new_parts = (axis_name,) if insert_axis else (
+      () if spmd_axis_name is None else (spmd_axis_name,))
   mesh = resource_env.physical_mesh
   in_shardings = tuple(
       _pjit_batcher_for_sharding(i, 0, new_parts, mesh, aval.ndim) if is_mapped else i
@@ -947,8 +948,9 @@ def _pjit_batcher(insert_axis,
     out_positional_semantics=out_positional_semantics)
   dims_out = [0 if batched else batching.not_mapped for batched in is_mapped_out]
   return vals_out, dims_out
-batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
-pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True)
+batching.spmd_axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
+batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
+pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
 
 def _pjit_batcher_for_sharding(
     s: OpShardingSharding, dim: int, val: Tuple[str, ...], mesh, ndim: int):
@@ -1259,13 +1261,14 @@ mlir.register_lowering(sharding_constraint_p,
                        _sharding_constraint_mhlo_lowering)
 
 
-def _sharding_constraint_batcher(insert_axis, axis_size, axis_name, main_type,
-                                 vals_in, dims_in, sharding, resource_env,
-                                 unconstrained_dims):
+def _sharding_constraint_batcher(insert_axis, spmd_axis_name, axis_size,
+                                 axis_name, main_type, vals_in, dims_in,
+                                 sharding, resource_env, unconstrained_dims):
   x, = vals_in
   d, = dims_in
   # None means unconstrained in ParsedPartitionSpec
-  new_parts = (axis_name,) if insert_axis else None
+  new_parts = (axis_name,) if insert_axis else (
+      None if spmd_axis_name is None else (spmd_axis_name,))
   y = sharding_constraint_p.bind(
       x,
       sharding=_pjit_batcher_for_sharding(
@@ -1273,8 +1276,12 @@ def _sharding_constraint_batcher(insert_axis, axis_size, axis_name, main_type,
       resource_env=resource_env,
       unconstrained_dims={ud + (d <= ud) for ud in unconstrained_dims})
   return y, d
-batching.axis_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, False)
-pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, True)
+batching.spmd_axis_primitive_batchers[sharding_constraint_p] = partial(
+    _sharding_constraint_batcher, False)
+batching.axis_primitive_batchers[sharding_constraint_p] = partial(
+    _sharding_constraint_batcher, False, None)
+pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(
+    _sharding_constraint_batcher, True, None)
 
 
 def _resource_typing_sharding_constraint(avals, params, source_info,

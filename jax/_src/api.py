@@ -1396,7 +1396,8 @@ def vmap(fun: F,
          in_axes: Union[int, Sequence[Any]] = 0,
          out_axes: Any = 0,
          axis_name: Optional[Hashable] = None,
-         axis_size: Optional[int] = None) -> F:
+         axis_size: Optional[int] = None,
+         spmd_axis_name: Optional[Hashable] = None) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -1441,6 +1442,8 @@ def vmap(fun: F,
       axis so that parallel collectives can be applied.
     axis_size: Optional, an integer indicating the size of the axis to be
       mapped. If not provided, the mapped axis size is inferred from arguments.
+    spmd_axis_name: Optional, a hashable Python object to insert into any
+      mapped PartitionSpecs.
 
   Returns:
     Batched/vectorized version of ``fun`` with arguments that correspond to
@@ -1564,7 +1567,8 @@ def vmap(fun: F,
                                     kws=True))
     out_flat = batching.batch(
         flat_fun, axis_name, axis_size_, in_axes_flat,
-        lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
+        lambda: flatten_axes("vmap out_axes", out_tree(), out_axes),
+        spmd_axis_name=spmd_axis_name
     ).call_wrapped(*args_flat)
     return tree_unflatten(out_tree(), out_flat)
 
