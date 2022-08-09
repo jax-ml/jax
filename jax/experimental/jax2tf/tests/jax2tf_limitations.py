@@ -136,7 +136,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "random_categorical", "random_split", "random_uniform", "random_randint",
       "reduce",
       "reduce_and", "reduce_prod", "reduce_or", "reduce_sum",
-      "reduce_window_add", "reduce_window_mul", "reduce_window_min",
+      "reduce_window_mul", "reduce_window_min",
       "reduce_window_max",
       "real", "reshape", "rev", "rsqrt", "scatter_max", "scatter_min",
       "select_n", "select_and_scatter_add",
@@ -906,6 +906,19 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def reduce_min(cls, harness: primitive_harness.Harness):
     return cls.reduce_max(harness)
+
+  @classmethod
+  def reduce_window_add(cls, harness: primitive_harness.Harness):
+    return [
+        Jax2TfLimitation(
+            "Large deviations on TPU for enable_xla=False",
+            dtypes=[np.float16, np.float32],
+            devices="tpu",
+            modes=("eager", "graph", "compiled"),
+            expect_tf_error=False,
+            skip_comparison=True,
+            enabled=not harness.params["enable_xla"]),
+    ]
 
   @classmethod
   def regularized_incomplete_beta(cls, harness: primitive_harness.Harness):

@@ -32,9 +32,9 @@ For a detailed description of these XLA ops, please see the
 | XlaPad  | `lax.pad` | Full |
 | XlaConv | `lax.conv_general_dilated` | [Partial](#xlaconv) |
 | XlaGather | `lax.gather` | [Partial](#xlagather) |
-| XlaReduceWindow | `lax.reduce_window_sum_p`, `lax.reduce_window_min_p`, `lax.reduce_window_max_p`, and `lax.reduce_window_p` | [Partial](#xlareducewindow) |
-| XlaScatter | `lax.scatter_p`, `lax.scatter_min_p`, `lax.scatter_max_p`, `lax.scatter_mul_p`, `lax.scatter_add_p` | [Partial](#xlascatter) |
-| XlaSelectAndScatter | `lax.select_and_scatter_add_p` | Unsupported |
+| XlaReduceWindow | `lax.reduce_window` | [Partial](#xlareducewindow) |
+| XlaScatter | `lax.scatter`, `lax.scatter_min`, `lax.scatter_max`, `lax.scatter_mul`, `lax.scatter_add` | [Partial](#xlascatter) |
+| XlaSelectAndScatter | `lax._select_and_scatter_add` | Unsupported |
 | XlaReduce | `lax.reduce`, `lax.argmin`, `lax.argmax` | Unsupported |
 | XlaVariadicSort | `lax.sort` | Unsupported |
 
@@ -90,7 +90,7 @@ The signature of [`lax.gather`](https://jax.readthedocs.io/en/latest/_autosummar
 is as follows:
 
 ```
-jax.lax.gather(
+lax.gather(
     operand, start_indices, dimension_numbers, slice_sizes,
     unique_indices=False, indices_are_sorted=False, mode=None,
     fill_value=None
@@ -126,34 +126,47 @@ All other cases of `lax.gather` are currently not supported.
 
 ### XlaReduceWindow
 
-This op is called by `lax.reduce_window_sum_p`, `lax.reduce_window_max_p`,
-`lax.reduce_window_min_p` and `lax.reduce_window`.
-
-Of these ops, we currently only support `lax.reduce_window_sum_p` and
-`lax.reduce_window_max_p` through respectively the TF ops
-[`tf.nn.avg_pool`](https://www.tensorflow.org/api_docs/python/tf/nn/avg_pool) and
-[`tf.nn.max_pool`](https://www.tensorflow.org/api_docs/python/tf/nn/max_pool).
-
-Both functions have the following signature:
+The signature of [`lax.reduce_window`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.reduce_window.html)
+is as follows:
 
 ```
-lax.reduce_window_{sum,max}(
-    operand, window_dimensions, window_strides,
-    padding, base_dilation, window_dilation)
+lax.reduce_window(operand, init_value, computation: Callable,
+                  window_dimensions: core.Shape, window_strides: Sequence[int],
+                  padding: Union[str, Sequence[Tuple[int, int]]],
+                  base_dilation: Optional[Sequence[int]] = None,
+                  window_dilation: Optional[Sequence[int]] = None)
+)
 ```
 
-We support these ops with the following limitations:
+This function with either call a monoid reducer `lax.reduce_window_min_p`,
+`lax.reduce_window_max_p`, or `lax.reduce_window_sum_p`, or the full reducer
+function `lax.reduce_window_p` with the following conditions:
 
-* For `reduce_window_sum_p`, dtypes `jnp.bool`, `jnp.uint32`, `jnp.uint64`,
-  `jnp.complex64`, and `jnp.complex128` are not supported.
-* For `reduce_window_max_p`, dtype `jnp.float16`, `jnp.float32`, and
-  `jnp.float64` are not supported.
-* We support at most 3 spatial dimension.
-* `base_dilation = (1, 1, ...)`.
-* `window_dilation == (1, 1, ...)`.
+* If `computation` is one of `lax.min`, `lax.max`, or `lax.add` and `init_value`
+  is the identity element for `computation` (for instance: 0 for `lax.add`),
+  then it will call one of the monoid reducers.
+
+* Otherwise, it will call the full reduction function `lax.reduce_window_p`.
+
+We provide partial support for all these ops, with the following limitations:
+
+* `computation` should be one of `lax.min`, `lax.max`, or `lax.add`.
+* For `lax.min` and `lax.max`, dtypes `np.bool`, `np.uint32`, `np.uint64`,
+  `np.complex64`, and `np.complex128` are not supported.
+* Additionally, for `lax.min`, dtypes `np.uint8` and `np.uint16` are not
+  supported.
+* For `lax.add`, only dtypes `np.float16`, `np.float32`, and `np.float64` are
+  supported.
+* We support at most 2 spatial dimension.
+* Base dilations other than `(1,) * len(operand)` are not supported.
 * `padding` should either be `VALID` or `SAME`.
+* Using `lax.add` on TPU may give very large deviations. This is due to the way
+  the conversion is implemented (first take the average over the window and then
+  multiply by window size). This gives large deviations on TPU due to the fact
+  that it uses `bfloat16` for computations.
 
-`lax.reduce_window_min_p` and `lax.reduce_window` are currently not supported.
+We implement all reductions using the Tensorflow function
+[tf.nn.pool](https://www.tensorflow.org/api_docs/python/tf/nn/pool).
 
 ### XlaScatter
 

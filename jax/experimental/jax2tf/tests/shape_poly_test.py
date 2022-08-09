@@ -1632,6 +1632,18 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   poly_axes=[None, 0],
                   expect_error=(core.InconclusiveDimensionOperation,
                                 "the product of the known dimensions must be even")),
+    _make_harness("reduce_window", "min",
+                  # x.shape = (b, 8)
+                  lambda x: lax.reduce_window(x, np.array(1., _f32), lax.min,
+                                              (2, 2), (1, 1), "VALID"),
+                  [RandArg((3, 8), _f32)],
+                  poly_axes=[0]),
+    _make_harness("reduce_window", "add",
+                  # x.shape = (b, 8)
+                  lambda x: lax.reduce_window(x, 0, lax.add, (2, 2), (1, 1),
+                                              "VALID"),
+                  [RandArg((3, 8), _f32)],
+                  poly_axes=[0]),
     # TODO(necula): not yet supported, but also unlikely to come up.
     # _make_harness("random_uniform", "odd",
     #               lambda key, a: jax.random.uniform(key, (2 * a.shape[0] + 1, a.shape[1]),
@@ -1885,7 +1897,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="conv_general_dilated_1d_1err_poly_axes=[1, None]"
+      #one_containing="reduce_window_add",
   )
   def test_prim(self, harness: Harness):
     _test_one_harness(self, harness)

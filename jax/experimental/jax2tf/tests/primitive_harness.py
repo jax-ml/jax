@@ -2384,14 +2384,14 @@ for dtype in jtu.dtypes.all:
                            dtype=dtype)
     # Test the dimensions, but only for int32 (to keep the # of tests small)
     if dtype == np.int32:
-        _make_reduce_harness(name, nr_operands=nr_operands,
-                             computation=computation, init_value=init_value,
-                             dimensions=(1,),
-                             dtype=dtype)
-        _make_reduce_harness(name, nr_operands=nr_operands,
-                             computation=computation, init_value=init_value,
-                             dimensions=(0, 1),
-                             dtype=dtype)
+      _make_reduce_harness(name, nr_operands=nr_operands,
+                           computation=computation, init_value=init_value,
+                           dimensions=(1,),
+                           dtype=dtype)
+      _make_reduce_harness(name, nr_operands=nr_operands,
+                           computation=computation, init_value=init_value,
+                           dimensions=(0, 1),
+                           dtype=dtype)
 
 def _make_reduce_window_harness(name,
                                 *,
@@ -2404,10 +2404,9 @@ def _make_reduce_window_harness(name,
                                 window_strides=(1, 1),
                                 dtype=np.float32,
                                 padding=((0, 0), (0, 0)),
-                                requires_xla=True):
+                                requires_xla=False):
   prim_name = f"reduce_window_{computation.__name__}"
   limitations = []
-
   xla_opts = [True] if requires_xla else [True, False]
 
   for enable_xla in xla_opts:
@@ -2439,6 +2438,18 @@ def _make_reduce_window_harness(name,
         window_dilation=window_dilation,
         enable_xla=enable_xla)
 
+def requires_xla_for_reduce(name, dtype):
+  if name not in ["min", "max", "add"]:
+    return True
+  if name in ["min", "max"] and dtype in [
+      np.bool_, np.uint32, np.uint64, np.complex64, np.complex128
+  ]:
+    return True
+  if name == "min" and dtype in [np.uint8, np.uint16]:
+    return True
+  if name == "add" and dtype not in [np.float16, np.float32, np.float64]:
+    return True
+  return False
 
 # Validate dtypes across all execution paths
 # This first harness runs the tests for all dtypes using default values for
@@ -2446,28 +2457,35 @@ def _make_reduce_window_harness(name,
 # several execution paths. Variations of other parameters can thus safely
 # skip testing their corresponding default value.
 for dtype in jtu.dtypes.all:
-  for computation, init_value, requires_xla in [
-      (lax.min, _get_min_identity(dtype), True),  # path through reduce_window_min
-      (lax.max, _get_max_identity(dtype), False),  # path through TF reduce_window_max
-      (lax.max, 1, True),  # path through reduce_window
-      (lax.add, 0, False),  # path_through reduce_window_sum
-      (lax.add, 1, True),  # path through reduce_window
-      (lax.mul, 0, True),  # path through reduce_window
-      (lax.mul, 1, True),  # path through reduce_window
-      (lax.mul, 2, True),  # path through reduce_window
+  for computation, init_value in [
+      (lax.min, _get_min_identity(dtype)),  # path through reduce_window_min
+      (lax.max, _get_max_identity(dtype)),  # path through TF reduce_window_max
+      (lax.max, 1),  # path through reduce_window
+      (lax.add, 0),  # path_through reduce_window_sum
+      (lax.add, 1),  # path through reduce_window
+      (lax.mul, 0),  # path through reduce_window
+      (lax.mul, 1),  # path through reduce_window
+      (lax.mul, 2),  # path through reduce_window
   ]:
-    if dtype == np.bool_ and (computation in [lax.add, lax.mul]):
+    if dtype == np.bool_ and computation in [lax.add, lax.mul]:
       continue
     _make_reduce_window_harness(
-        "dtypes", dtype=dtype, computation=computation, init_value=init_value)
+        "dtypes",
+        dtype=dtype,
+        computation=computation,
+        init_value=init_value,
+        requires_xla=requires_xla_for_reduce(computation.__name__, dtype))
+
 # Validate window_dimensions
 _make_reduce_window_harness("window_dimensions", window_dimensions=(1, 1))
 # Validate window_strides
 _make_reduce_window_harness("window_strides", window_strides=(1, 2))
 # Validate padding
-_make_reduce_window_harness("padding", padding=((1, 2), (0, 3)))
+_make_reduce_window_harness("padding", padding=((1, 2), (0, 3)),
+                            requires_xla=True)
 # Validate base_dilation
-_make_reduce_window_harness("base_dilation", base_dilation=(1, 2))
+_make_reduce_window_harness("base_dilation", base_dilation=(1, 2),
+                            requires_xla=True)
 # Validate window_dilation
 _make_reduce_window_harness("window_dilation", window_dilation=(1, 2))
 # Validate squeezing behavior and dimensions in tf.nn.max_pool
@@ -2480,6 +2498,7 @@ for shape, window_dimensions in [
     ((2, 4, 3), (2, 2, 2)),  # 3 spatial dimensions, left and right squeeze
     ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1))  # 3 spatial dimensions, no squeeze
 ]:
+  requires_xla = len(shape) > 2  # Without XLA only supports 1D/2D reductions.
   _make_reduce_window_harness(
       "squeeze_dim",
       computation=lax.max,
@@ -2490,7 +2509,8 @@ for shape, window_dimensions in [
       window_dilation=tuple([1] * len(shape)),
       padding=tuple([(0, 0)] * len(shape)),
       window_strides=tuple([1] * len(shape)),
-      window_dimensions=window_dimensions)
+      window_dimensions=window_dimensions,
+      requires_xla=requires_xla)
 
 # This corresponds to SAME padding.
 _make_reduce_window_harness(
@@ -2500,7 +2520,17 @@ _make_reduce_window_harness(
     computation=lax.max,
     window_dimensions=(3, 3),
     window_strides=(2, 2),
-    padding=((0, 1), (0, 1)),
+    padding="SAME")
+
+# b/240647139
+_make_reduce_window_harness(
+    "init_value_1d",
+    shape=(1, 16000),
+    init_value=1.0,
+    computation=lax.min,
+    window_dimensions=[1, 401],
+    window_strides=[1, 160],
+    padding="VALID",
     requires_xla=False)
 
 def _make_reducer_harness(prim,
