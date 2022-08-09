@@ -220,6 +220,9 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     else:
       length, = unique_lengths
 
+  if length == 0:
+    return init, xs
+
   if config.jax_disable_jit:
     if length == 0:
       raise ValueError("zero-length scan is not supported in disable_jit() mode because the output type is unknown.")
