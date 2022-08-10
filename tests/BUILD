@@ -14,16 +14,11 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "absl_logging_py_deps",
-    "cloudpickle_py_deps",
     "jax_generate_backend_suites",
     "jax_test",
     "jax_test_file_visibility",
-    "pil_py_deps",
-    "portpicker_py_deps",
+    "py_deps",
     "pytype_library",
-    "scipy_py_deps",
-    "tensorflow_py_deps",
 )
 
 licenses(["notice"])  # Apache 2
@@ -53,7 +48,7 @@ jax_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
     disable_backends = ["tpu"],
-    deps = tensorflow_py_deps,
+    deps = py_deps("tensorflow"),
 )
 
 jax_test(
@@ -111,7 +106,7 @@ py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ] + portpicker_py_deps,
+    ] + py_deps("portpicker"),
 )
 
 jax_test(
@@ -147,9 +142,15 @@ jax_test(
 jax_test(
     name = "lobpcg_test",
     srcs = ["lobpcg_test.py"],
+    env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
+    shard_count = {
+        "cpu": 48,
+        "gpu": 48,
+        "tpu": 48,
+    },
     deps = [
         "//jax:experimental_sparse",
-    ],
+    ] + py_deps("matplotlib"),
 )
 
 jax_test(
@@ -234,7 +235,7 @@ jax_test(
         "tpu": 10,
         "iree": 10,
     },
-    deps = pil_py_deps + tensorflow_py_deps,
+    deps = py_deps("pil") + py_deps("tensorflow"),
 )
 
 jax_test(
@@ -283,7 +284,7 @@ py_test(
         "//jax:test_util",
         "//jax/experimental/jax2tf",
         "//jax/tools:jax_to_ir",
-    ] + tensorflow_py_deps,
+    ] + py_deps("tensorflow"),
 )
 
 jax_test(
@@ -463,6 +464,7 @@ jax_test(
         "tpu": [
             "cpu:8",
             "noasan",  # Times out.
+            "notsan",  # Times out.
         ],
     },
     shard_count = {
@@ -512,7 +514,7 @@ jax_test(
     srcs = ["pickle_test.py"],
     deps = [
         "//jax:experimental",
-    ] + cloudpickle_py_deps,
+    ] + py_deps("cloudpickle"),
 )
 
 jax_test(
@@ -667,7 +669,7 @@ jax_test(
     },
     deps = [
         "//jax:experimental_sparse",
-    ] + scipy_py_deps,
+    ] + py_deps("scipy"),
 )
 
 jax_test(
@@ -743,7 +745,7 @@ py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ] + absl_logging_py_deps,
+    ] + py_deps("absl/logging"),
 )
 
 py_test(
@@ -813,7 +815,7 @@ jax_test(
     deps = [
         "//jax:experimental_host_callback",
         "//jax:ode",
-    ] + tensorflow_py_deps,
+    ] + py_deps("tensorflow"),
 )
 
 jax_test(
@@ -869,6 +871,11 @@ jax_test(
         "gpu",
         "cpu",
     ],
+)
+
+jax_test(
+    name = "python_callback_test",
+    srcs = ["python_callback_test.py"],
 )
 
 jax_test(

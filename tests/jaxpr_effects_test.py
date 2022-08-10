@@ -20,7 +20,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
-from jax import ad_checkpoint
 from jax import core
 from jax import lax
 from jax import linear_util as lu
@@ -29,6 +28,7 @@ from jax.interpreters import ad
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import mlir
+from jax._src import ad_checkpoint
 from jax._src import lib as jaxlib
 from jax._src import dispatch
 from jax._src import test_util as jtu
@@ -63,6 +63,8 @@ core.ordered_effects.add('while2')
 lcf.allowed_effects.add('while')
 lcf.allowed_effects.add('while1')
 lcf.allowed_effects.add('while2')
+
+ad_checkpoint.remat_allowed_effects.add('remat')
 
 # TODO(sharadmv): remove jaxlib guards for TPU tests when jaxlib minimum
 #                 version is >= 0.3.15
@@ -219,6 +221,14 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     jax.make_jaxpr(f)(2.)
     with self.assertRaisesRegex(NotImplementedError, "Effects not supported"):
       jax.make_jaxpr(lambda x: jax.linearize(f, x)[1](x))(2.)
+
+  def test_new_remat_allows_certain_effects(self):
+    @ad_checkpoint.checkpoint
+    def f(x):
+      x, = effect_p.bind(x, effect='remat')
+      return x
+    jaxpr = jax.make_jaxpr(f)(2.)
+    self.assertSetEqual(jaxpr.effects, {"remat"})
 
   def test_custom_jvp_primitive_inherits_effects(self):
 

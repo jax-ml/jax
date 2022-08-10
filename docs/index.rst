@@ -74,7 +74,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    developer
    jax_internal_api
    autodidax
-   design_notes/index
+   jep/index
 
 .. toctree::
    :maxdepth: 3

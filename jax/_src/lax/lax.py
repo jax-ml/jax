@@ -1461,7 +1461,7 @@ def unop(result_dtype, accepted_dtypes, name):
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
                             weak_type_rule=weak_type_rule)
   batching.defvectorized(prim)
-  pe.padding_rules[prim] = lambda _, __, x, **kw: [prim.bind(x, **kw)]
+  pe.def_trivial_padding(prim)
   return prim
 standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -1536,7 +1536,7 @@ def naryop(result_dtype, accepted_dtypes, name):
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             weak_type_rule=weak_type_rule)
   batching.defbroadcasting(prim)
-  pe.padding_rules[prim] = lambda _, __, *xs, **kw: [prim.bind(*xs, **kw)]
+  pe.def_trivial_padding(prim)
   return prim
 standard_naryop = partial(naryop, _input_dtype)
 
@@ -1759,8 +1759,11 @@ def asin_impl(x):
 
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
-mlir.register_lowering(asin_p, mlir.lower_fun(asin_impl,
-                                              multiple_results=False))
+if jax._src.lib.mlir_api_version < 31:
+  mlir.register_lowering(asin_p, mlir.lower_fun(asin_impl,
+                                                multiple_results=False))
+else:
+  mlir.register_lowering(asin_p, partial(_nary_lower_mhlo, chlo.AsinOp))
 
 def acos_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
@@ -1789,8 +1792,11 @@ def atan_impl(x):
 
 atan_p = standard_unop(_float | _complex, 'atan')
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
-mlir.register_lowering(atan_p, mlir.lower_fun(atan_impl,
-                                              multiple_results=False))
+if jax._src.lib.mlir_api_version < 31:
+  mlir.register_lowering(atan_p, mlir.lower_fun(atan_impl,
+                                                multiple_results=False))
+else:
+  mlir.register_lowering(atan_p, partial(_nary_lower_mhlo, chlo.AtanOp))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
@@ -2015,7 +2021,7 @@ integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow')
 batching.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
-pe.padding_rules[integer_pow_p] = lambda _, __, x, y: [integer_pow_p.bind(x, y=y)]
+pe.def_trivial_padding(integer_pow_p)
 
 def _integer_pow(x, *, y):
   # This should be kept in sync with the jax2tf translation rule.
@@ -2343,6 +2349,7 @@ ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpos
 batching.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
+pe.def_trivial_padding(convert_element_type_p)
 # TODO(mattjj): un-comment the next line (see #9456)
 # core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
 
@@ -2807,6 +2814,10 @@ def _broadcast_in_dim_partial_eval(
 
 def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype.broadcast_in_dim_mlir(
+        ctx, x, *dyn_shape, shape=shape,
+        broadcast_dimensions=broadcast_dimensions)
   if dyn_shape:
     shape = _merge_dyn_shape(shape, dyn_shape)
     return mhlo.DynamicBroadcastInDimOp(
@@ -2927,7 +2938,7 @@ if jax._src.lib.mlir_api_version < 30:
 else:
   mlir.register_lowering(
       clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp))
-pe.padding_rules[clamp_p] = lambda _, __, a, x, b: [clamp(a, x, b)]
+pe.def_trivial_padding(clamp_p)
 
 def _concatenate_shape_rule(*operands, **kwargs):
   dimension = kwargs.pop('dimension')
@@ -3285,16 +3296,19 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   perm = (bdim,) + tuple(i if i < bdim else i+1 for i in permutation)
   return transpose(operand, perm), 0
 
+def _transpose_lower(ctx, x, *, permutation):
+  aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype.transpose_mlir(ctx, x, permutation=permutation)
+  return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
+
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])  # type: ignore[arg-type]
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
-
-def _transpose_lower(ctx, x, *, permutation):
-  aval_out, = ctx.avals_out
-  return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 mlir.register_lowering(transpose_p, _transpose_lower)
+pe.def_trivial_padding(transpose_p)
 
 
 def _select_shape_rule(which, *cases):
@@ -3386,7 +3400,6 @@ def _select_jvp(primals, tangents):
     out_dot = select_n(which, *case_tangents)
   return out, out_dot
 
-
 def _select_mhlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
   if which_aval.dtype == np.dtype(np.bool_):
@@ -3420,6 +3433,7 @@ ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.primitive_batchers[select_n_p] = _select_batch_rule
 mlir.register_lowering(select_n_p, _select_mhlo_lowering)
+pe.def_trivial_padding(select_n_p)
 
 
 def _reduce_shape_rule(*avals, computation, jaxpr, consts, dimensions):
@@ -4530,6 +4544,8 @@ def _check_same_dtypes(name, ignore_fp_precision, *ttypes):
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
+  if any(type(t) in core.custom_eltypes for t in ttypes):
+    return  # TODO(mattjj,frostig): do some checking, friend
   types = map(np.dtype, ttypes)  # canonicalize
   if ignore_fp_precision:
     types = [
@@ -4689,3 +4705,14 @@ def _check_user_dtype_supported(dtype, fun_name=None):
     fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = dtypes.canonicalize_dtype(dtype).name
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype), stacklevel=3)
+
+
+def empty(eltype):
+  return empty_p.bind(eltype=eltype)
+empty_p = core.Primitive('empty')
+empty_p.def_abstract_eval(lambda *, eltype: core.ShapedArray((), eltype))
+def _empty_lower(ctx, *, eltype):
+  if type(eltype) in core.custom_eltypes:
+    return eltype.empty_mlir(ctx)
+  return mlir.ir_constants(np.zeros((), np.dtype(eltype)))
+mlir.register_lowering(empty_p, _empty_lower)

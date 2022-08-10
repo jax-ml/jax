@@ -1132,7 +1132,7 @@ def lattice_join(x: Optional[AbstractValue],
 # For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
 Value = Any
 
-def valid_jaxtype(x):
+def valid_jaxtype(x) -> bool:
   try:
     concrete_aval(x)
   except TypeError:
@@ -1187,16 +1187,25 @@ def concrete_or_error(force: Any, val: Any, context=""):
     return force(val)
 
 
-def _short_dtype_name(dtype):
-  return (dtype.name.replace('float', 'f').replace('uint', 'u')
-                    .replace('int', 'i').replace('complex', 'c'))
+# TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
+custom_eltypes: Set[Any] = set()
+
+def _short_dtype_name(dtype) -> str:
+  if type(dtype) in custom_eltypes:
+    return str(dtype)
+  else:
+    return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
+                      .replace('int'  , 'i').replace('complex', 'c'))
+
+def _dtype_object(dtype):
+  return dtype if type(dtype) in custom_eltypes else np.dtype(dtype)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
   array_abstraction_level = 4
 
   def __init__(self, dtype, weak_type=False):
-    self.dtype = np.dtype(dtype)
+    self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
 
   def update(self, dtype=None, weak_type=None):
@@ -1264,7 +1273,7 @@ class ShapedArray(UnshapedArray):
 
   def __init__(self, shape, dtype, weak_type=False, named_shape=None):
     self.shape = canonicalize_shape(shape)
-    self.dtype = np.dtype(dtype)
+    self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
@@ -1417,7 +1426,7 @@ class DShapedArray(UnshapedArray):
   shape: Tuple[AxisSize, ...]  # noqa: F821
   array_abstraction_level: int = 3
 
-  def __init__(self, shape, dtype, weak_type):
+  def __init__(self, shape, dtype, weak_type=False):
     self.shape = shape
     self.dtype = dtype
     self.weak_type = weak_type
@@ -1474,6 +1483,7 @@ class DConcreteArray(DShapedArray):
 pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
 
 
+# TODO(mattjj): remove this, replace with arrays of bints
 class AbstractBInt(AbstractValue):
   __slots__ = ['bound']
   bound: int
@@ -1486,11 +1496,16 @@ class AbstractBInt(AbstractValue):
     return type(other) is AbstractBInt and self.bound == other.bound
   def __hash__(self) -> int:
     return hash((type(self), self.bound))
+  def at_least_vspace(self):
+    return self  # should return float0 array
+  def join(self, other):
+    return self
 
 class BInt:
   val: Any  # Union[int, Array]
   bound: int
   def __init__(self, val, bound):
+    assert 0 <= val <= bound
     self.val = val
     self.bound = bound
   def __repr__(self) -> str:
@@ -1879,6 +1894,9 @@ class NamedShape:
     return total
 
   def __str__(self):
+    # TODO(mattjj,frostig): revise not to miss commas
+    if not self.__named:
+      return str(self.__positional)
     return (f"({', '.join(map(str, self.__positional))}{', ' if self.__named else ''}"
             f"{', '.join(f'{k}={v}' for k, v in self.__named.items())})")
 

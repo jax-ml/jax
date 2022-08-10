@@ -215,7 +215,7 @@ class DLPackTest(jtu.JaxTestCase):
      for shape in all_shapes
      for dtype in torch_dtypes))
   @unittest.skipIf(numpy_version < (1, 22, 0), "Requires numpy 1.22 or newer")
-  @jtu.skip_on_devices("rocm") # TODO(sharadmv,phawkins): see GH issue #10973
+  @jtu.skip_on_devices("gpu")
   def testJaxToNumpy(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x_jax = jnp.array(rng(shape, dtype))

@@ -20,6 +20,7 @@ from typing import Sequence, Tuple, Optional, Mapping, Dict, Set, Union
 from jax._src.util import safe_zip
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.interpreters import pxla, mlir
 
 import numpy as np
@@ -67,10 +68,6 @@ class XLACompatibleSharding(Sharding):
     raise NotImplementedError('Subclasses should implement this method.')
 
   @abc.abstractmethod
-  def normalize(self):
-    raise NotImplementedError('Subclasses should implement this method.')
-
-  @abc.abstractmethod
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -101,6 +98,7 @@ def _hashed_index(x) -> int:
   return hash(tuple((v.start, v.stop) if isinstance(v, slice) else v for v in x))
 
 
+@functools.lru_cache(maxsize=4096)
 def _device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]:
   index_to_replica: Dict[int, int] = Counter()
   out = {}
@@ -159,11 +157,6 @@ class MeshPspecSharding(XLACompatibleSharding):
           f"{len(self._parsed_pspec)}, but was applied to a value of rank "
           f"{len(aval_shape)}")
 
-  def normalize(self):
-    from jax.experimental import pjit
-    cp = pjit.CanonicalizedParsedPartitionSpec(self._parsed_pspec)
-    return MeshPspecSharding._from_parsed_pspec(self.mesh, cp)
-
   @classmethod
   def _from_parsed_pspec(cls, mesh, parsed_pspec):
     from jax.experimental import pjit
@@ -181,7 +174,6 @@ class MeshPspecSharding(XLACompatibleSharding):
     # `get_shard_indices` is cached.
     return global_device_array.get_shard_indices(global_shape, self.mesh, self.spec)
 
-  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     return _device_replica_id_map(self, global_shape)
 
@@ -205,12 +197,19 @@ class MeshPspecSharding(XLACompatibleSharding):
     # Used in `with_sharding_constraint`.
     special_axes = {}
     # Manual axes is only used with xmap.
-    if axis_ctx is not None and hasattr(axis_ctx, 'manual_axes'):
+    if axis_ctx is not None and isinstance(axis_ctx, mlir.SPMDAxisContext):
       axis_names = self.mesh.axis_names
       # Ignore type because mypy doesn't recognize the `hasattr` check above.
       for manual_axis in axis_ctx.manual_axes:  # type: ignore
         special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
     return sharding_spec.sharding_proto(special_axes=special_axes)
+
+
+@functools.lru_cache()
+def _get_replicated_op_sharding():
+  proto = xc.OpSharding()
+  proto.type = xc.OpSharding.Type.REPLICATED
+  return proto
 
 
 class SingleDeviceSharding(XLACompatibleSharding):
@@ -229,9 +228,6 @@ class SingleDeviceSharding(XLACompatibleSharding):
       return False
     return self._device == other._device
 
-  def normalize(self):
-    return SingleDeviceSharding(self._device)
-
   @property
   def device_set(self) -> Set[Device]:
     return {self._device}
@@ -248,9 +244,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return [self._device]
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
-    proto = xc.OpSharding()
-    proto.type = xc.OpSharding.Type.REPLICATED
-    return proto
+    return _get_replicated_op_sharding()
 
 
 class PmapSharding(XLACompatibleSharding):
@@ -259,9 +253,6 @@ class PmapSharding(XLACompatibleSharding):
     self.devices = devices
     # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
-
-  def normalize(self):
-    return PmapSharding(self.devices, self.sharding_spec)
 
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:
@@ -280,7 +271,6 @@ class PmapSharding(XLACompatibleSharding):
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
     return {d: i for d, i in safe_zip(self.devices.flat, indices)}  # type: ignore
 
-  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     return _device_replica_id_map(self, global_shape)
 
@@ -292,6 +282,14 @@ class PmapSharding(XLACompatibleSharding):
     raise NotImplementedError("pmap doesn't use OpSharding.")
 
 
+# TODO(yashkatariya): Remove this when minimum_jaxlib version is 0.3.17
+def _hash_op_sharding(op: xc.OpSharding):
+  if op.type == xc.OpSharding.Type.TUPLE:
+    return hash(tuple(_hash_op_sharding(o) for o in  op.tuple_shardings))
+  return hash((tuple(op.tile_assignment_devices), tuple(op.tile_assignment_dimensions),
+               op.type, op.replicate_on_last_tile_dim, tuple(op.last_tile_dims)))
+
+
 class OpShardingSharding(XLACompatibleSharding):
 
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
@@ -301,20 +299,18 @@ class OpShardingSharding(XLACompatibleSharding):
   def __eq__(self, other):
     if not isinstance(other, OpShardingSharding):
       return False
-    return pxla.are_op_shardings_equal(self, other)
+    return pxla.are_op_shardings_equal(self._op_sharding, other._op_sharding)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      # TODO(yashkatariya): Write a hash function that's backwards compatible
-      # for `xla_extension_version` < 81.
-      self._hash = hash(xc.HloSharding.from_proto(self._op_sharding))
+      if xla_extension_version >= 81:
+        self._hash = hash(xc.HloSharding.from_proto(self._op_sharding))
+      else:
+        self._hash = _hash_op_sharding(self._op_sharding)
     return self._hash
 
   def __repr__(self):
     return repr(self._op_sharding)
-
-  def normalize(self, *_):
-    return self
 
   def is_compatible_aval(self, aval_shape: Shape):
     num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(self._op_sharding)
@@ -335,7 +331,6 @@ class OpShardingSharding(XLACompatibleSharding):
                                           len(self._devices))
     return dict(safe_zip(self._devices, indices))
 
-  @functools.lru_cache(maxsize=4096)
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     return _device_replica_id_map(self, global_shape)
 
@@ -345,3 +340,8 @@ class OpShardingSharding(XLACompatibleSharding):
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return self._op_sharding
+
+  @classmethod
+  def get_replicated(cls, device_assignment):
+    proto = _get_replicated_op_sharding()
+    return cls(device_assignment, proto)

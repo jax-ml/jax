@@ -211,8 +211,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def asin(cls, harness: primitive_harness.Harness):
     return [
-        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4),
-        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12),
+        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4,
+                       modes=("eager", "graph", "compiled")),
+        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12,
+                       modes=("eager", "graph", "compiled")),
         cls.helper_get_trig_custom_limitation(np.sin)
     ]
 
@@ -399,6 +401,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def dot_general(cls, harness: primitive_harness.Harness):
+    prefer_elem = harness.params["preferred_element_type"]
     return [
         missing_tf_kernel(dtypes=[np.bool_],),
         # TODO(b/189287598)
@@ -409,7 +412,13 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             ],
             devices="gpu",
             modes=("eager", "graph", "compiled"),
-            enabled=(harness.params["preferred_element_type"] is not None),
+            enabled=(prefer_elem is not None),
+            skip_comparison=True),
+        # TODO(b/241740367) - note this only occurs when X64 is enabled.
+        Jax2TfLimitation(
+            "Large tolerances when upcasting with preferred_element_type on CPU (b/241740367)",
+            devices=["cpu", "gpu", "tpu"],
+            enabled=prefer_elem and np.dtype(harness.dtype) < np.dtype(prefer_elem),
             skip_comparison=True),
         # JAX performs float16 matmuls in float32 on CPU, so the JAX result
         # may be more precise.

@@ -15,8 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "jax2tf_deps",
-    "numpy_py_deps",
-    "tensorflow_py_deps",
+    "py_deps",
 )
 
 licenses(["notice"])  # Apache 2
@@ -44,5 +43,5 @@ py_library(
     srcs_version = "PY3",
     deps = [
         "//jax",
-    ] + numpy_py_deps + tensorflow_py_deps + jax2tf_deps,
+    ] + py_deps("numpy") + py_deps("tensorflow") + jax2tf_deps,
 )

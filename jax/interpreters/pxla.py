@@ -68,6 +68,7 @@ from jax._src import profiler
 from jax._src import stages
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
+from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
@@ -221,15 +222,17 @@ def _get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int]
   return partitions, num_replicas
 
 
-def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
-                           num_devices: int):
-  # num_devices is required as an argument when op_sharding is of type
+def _op_sharding_to_numpy_indices(
+    op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+    num_devices: int) -> np.ndarray:
+  indices = np.empty(num_devices, dtype=np.object_)
+
+  # num_devices is required as an argument when op_sharding is
   # REPLICATED. `jax.device_count()` cannot be used because you can create
   # an opsharding with less number of devices than `jax.device_count()`.
-  if op_sharding.type == xc.OpSharding.Type.REPLICATED:
-    # xb.device_count maybe not be always right as you can use less devices than
-    # what's available.
-    return tuple((slice(None),) * len(shape) for _ in range(num_devices))
+  if is_op_sharding_replicated(op_sharding):
+    indices.fill((slice(None),) * len(shape))
+    return indices
 
   assert num_devices == len(op_sharding.tile_assignment_devices)
 
@@ -248,11 +251,16 @@ def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
     else:
       raise AssertionError('Unrecognized number of shards. Please file a bug!')
 
-  indices = np.empty(num_devices, dtype=np.object_)
   device_it = iter(op_sharding.tile_assignment_devices)
   for i, idxs in enumerate(it.product(*axis_indices)):
     for _ in range(num_replicas):
       indices[next(device_it)] = idxs
+  return indices
+
+
+def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+                           num_devices: int) -> Tuple[Tuple[slice, ...], ...]:
+  indices = _op_sharding_to_numpy_indices(op_sharding, shape, num_devices)
   return tuple(indices.flat)
 
 
@@ -269,6 +277,13 @@ def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
     ints, slice objects with step=1, or tuples of those.
   """
   assert len(shape) == len(self.sharding), (shape, self.sharding)
+
+  has_unstacked = any(isinstance(s, Unstacked) for s in self.sharding)
+  # Take the op sharding indices generation route for pjit/xmap cases.
+  if not has_unstacked:
+    op_sharding_proto = sharding_spec_sharding_proto(self)
+    return _op_sharding_to_numpy_indices(
+        op_sharding_proto, shape, prod(self.mesh_shape)).reshape(self.mesh_shape)
 
   axis_indices: List[Sequence[Index]] = []
   shard_indices_shape = []
@@ -1710,7 +1725,7 @@ class ExecuteReplicated:
     if self.has_unordered_effects:
       # TODO(sharadmv): simplify this logic when minimum jaxlib version is
       # bumped
-      if xla_extension_version >= 81:
+      if can_execute_with_token:
         out_bufs, runtime_tokens = (
             self.xla_executable.execute_sharded_on_local_devices_with_tokens(
               input_bufs))
@@ -2282,17 +2297,9 @@ class TileManual:
 TilingMethod = Union[TileVectorize, TileManual]
 
 
-def _check_if_any_auto(shardings: Sequence[Union[XLACompatibleSharding, _AUTOAxisResource]]) -> bool:
+def _check_if_any_auto(shardings: Iterable[Union[XLACompatibleSharding, _AUTOAxisResource]]) -> bool:
   for s in shardings:
     if _is_auto(s):
-      return True
-  return False
-
-# TODO(yashkatariya): Remove this once UNSPECIFIED can be used without mesh.
-def _check_if_any_auto_or_unspecified(
-    shardings: Sequence[Union[XLACompatibleSharding, _AUTOAxisResource, _UnspecifiedValue]]) -> bool:
-  for s in shardings:
-    if _is_auto(s) or _is_unspecified(s):
       return True
   return False
 
@@ -2326,15 +2333,25 @@ class PartitionSpec(tuple):
   def __repr__(self):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
+  def __reduce__(self):
+    return (PartitionSpec, tuple(self))
+
   """A sentinel value representing a dim is unconstrained."""
   UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
 
 def _get_backend_from_shardings(
-    shardings: Sequence[XLACompatibleSharding]) -> Tuple[xb.XlaBackend, XLACompatibleSharding]:
-  device_set = shardings[0]._device_assignment
-  assert len(device_set) > 0
-  return xb.get_device_backend(device_set[0]), shardings[0]
+    shardings: Iterable[XLACompatibleSharding]) -> Tuple[xb.XlaBackend, XLACompatibleSharding]:
+  da = None
+  first_sharding = None
+  for s in shardings:
+    if _is_unspecified(s):
+      continue
+    da = s._device_assignment
+    first_sharding = s
+    break
+  assert len(da) > 0  # type: ignore
+  return xb.get_device_backend(da[0]), first_sharding  # type: ignore
 
 
 @profiler.annotate_function
@@ -2350,7 +2367,7 @@ def lower_sharding_computation(
   # Device assignment across all inputs and outputs should be the same. This
   # is checked in pjit.
   backend, first_sharding = _get_backend_from_shardings(
-      in_shardings + out_shardings)  # type: ignore
+      it.chain(in_shardings, out_shardings))  # type: ignore
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -2385,7 +2402,7 @@ def lower_sharding_computation(
                      for aval, i in safe_zip(global_in_avals, in_shardings)]
   # TODO(yashkatariya): Fix the HLO produced if out_partitions is
   # [None, OpShardingProto] has the sharding annotations.
-  out_op_shardings = [o._to_xla_op_sharding(aval.ndim)
+  out_op_shardings = [None if _is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
                       for aval, o in safe_zip(global_out_avals, out_shardings)]
   replicated_args = [False] * len(in_jaxpr_avals)
   axis_ctx = mlir.ShardingContext(first_sharding)
@@ -2609,7 +2626,6 @@ def _get_input_metadata(
 
   shardings, input_indices, input_avals = [], [], []
   for gaval, i, is_global in safe_zip(global_in_avals, in_shardings, in_is_global):
-    proto = i._to_xla_op_sharding(gaval.ndim)
     if is_global:
       aval = gaval
       sharding = i
@@ -2622,6 +2638,7 @@ def _get_input_metadata(
     # the mesh is global mesh and the indices returned by `spec_to_indices` will
     # represent index for each device in the global mesh. But here we want
     # indices for the local devices of the global mesh.
+    proto = sharding._to_xla_op_sharding(aval.ndim)
     if is_op_sharding_replicated(proto):
       index = tuple((slice(None),) * aval.ndim for _ in range(len(sharding.addressable_devices)))
     else:
@@ -2633,11 +2650,32 @@ def _get_input_metadata(
   return shardings, input_indices, input_avals
 
 
-def _get_shardings_from_executable(xla_executable, mesh):
+def _get_op_sharding_shardings_from_executable(
+    xla_executable, device_assignment, num_in_avals, num_out_avals):
+  from jax.experimental import pjit
+  from jax.experimental.sharding import OpShardingSharding, SingleDeviceSharding
+
+  in_op_shardings, out_op_shardings = pjit._get_op_sharding_from_executable(xla_executable)
+
+  # When the device assignment only has 1 device, SPMD partitioner will not run.
+  # Hence the op shardings will not be set on the `hlo_module`. In that case,
+  # just return SingleDeviceShardings since we know the computation is running
+  # only on 1 device.
+  if not in_op_shardings and not out_op_shardings and len(device_assignment) == 1:
+    return ([SingleDeviceSharding(device_assignment[0]) for _ in range(num_in_avals)],
+            [SingleDeviceSharding(device_assignment[0]) for _ in range(num_out_avals)])
+
+  return ([OpShardingSharding(device_assignment, i) for i in in_op_shardings],
+          [OpShardingSharding(device_assignment, o) for o in out_op_shardings])
+
+
+# TODO(yashkatariya): Remove this function after `AUTO` can return shardings
+# without mesh.
+def _get_mesh_pspec_shardings_from_executable(xla_executable, mesh):
   from jax.experimental import pjit
   from jax.experimental.sharding import MeshPspecSharding
 
-  in_pspec, out_pspec = pjit._get_sharding_from_executable(xla_executable, mesh)
+  in_pspec, out_pspec = pjit._get_pspec_from_executable(xla_executable, mesh)
   return ([MeshPspecSharding(mesh, i) for i in in_pspec],
           [MeshPspecSharding(mesh, o) for o in out_pspec])
 
@@ -2660,10 +2698,8 @@ class MeshExecutable(stages.XlaExecutable):
   @staticmethod
   def from_hlo(name: str,
                computation: Union[ir.Module, xc.XlaComputation],
-               # mesh only needs to be set if in_shardings and out_shardings
-               # contain AUTO or UNSPECIFIED (unspecified is temporary here).
-               # TODO(yashkatariya): Remove `mesh` from here once AUTO and
-               # UNSPECIFIED work without mesh.
+               # TODO(yashkatariya): Remove `mesh` from here once AUTO can work
+               # without mesh.
                mesh: Optional[Mesh],
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
@@ -2679,20 +2715,16 @@ class MeshExecutable(stages.XlaExecutable):
                unordered_effects: List[core.Effect],
                host_callbacks: List[Any],
                keepalive: Any) -> MeshExecutable:
-    auto_or_unspecified = (
-        auto_spmd_lowering or
-        (out_shardings and all(_is_unspecified(o) for o in out_shardings)))
-
-    if auto_or_unspecified:
+    if auto_spmd_lowering:
       assert mesh is not None
       assert not mesh.empty
       backend = xb.get_device_backend(mesh.devices.flat[0])
     else:
       backend, first_sharding = _get_backend_from_shardings(
-          in_shardings + out_shardings)  # type: ignore
+          it.chain(in_shardings, out_shardings))  # type: ignore
 
     dev: np.ndarray
-    if auto_or_unspecified:
+    if auto_spmd_lowering:
       assert mesh is not None and spmd_lowering
       dev = mesh.devices
       num_replicas, num_partitions = 1, mesh.size
@@ -2737,12 +2769,15 @@ class MeshExecutable(stages.XlaExecutable):
         xla_executable = dispatch.compile_or_get_cached(
             backend, computation, compile_options, host_callbacks)
 
-      if auto_or_unspecified:
-        # TODO(yashkatariya): Make this work for UNSPECIFIED without mesh by
-        # returning `OpShardingSharding`.
+      if auto_spmd_lowering:
         assert mesh is not None
-        in_shardings, out_shardings = _get_shardings_from_executable(
+        in_shardings, out_shardings = _get_mesh_pspec_shardings_from_executable(
             xla_executable, mesh)
+      elif out_shardings and all(_is_unspecified(o) for o in out_shardings):
+        assert mesh is None
+        in_shardings, out_shardings = _get_op_sharding_shardings_from_executable(
+            xla_executable, first_sharding._device_assignment,
+            len(global_in_avals), len(global_out_avals))
 
       in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore
@@ -2808,10 +2843,12 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   return get_array_mapping(parsed_pspec)
 
 
-def are_op_shardings_equal(op1, op2):
+def are_op_shardings_equal(op1, op2) -> bool:
   if id(op1) == id(op2):
     return True
   if xla_extension_version >= 81:
+    if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
+      return True
     return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
   else:
     if op1.type == xc.OpSharding.Type.TUPLE:
@@ -2824,8 +2861,10 @@ def are_op_shardings_equal(op1, op2):
             op1.replicate_on_last_tile_dim == op2.replicate_on_last_tile_dim)
 
 
-def is_op_sharding_replicated(op):
-  if xla_extension_version >= 81:
+def is_op_sharding_replicated(op: xc.OpSharding) -> bool:
+  if xla_extension_version >= 82:
+    if len(op.tile_assignment_devices) == 1:
+      return True
     return xc.HloSharding.from_proto(op).is_replicated()
   else:
     return op.type == xc.OpSharding.Type.REPLICATED

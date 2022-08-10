@@ -29,10 +29,6 @@ cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
 if cuda_version and cudnn_version:
   __version__ += f"+cuda{cuda_version.replace('.', '')}-cudnn{cudnn_version.replace('.', '')}"
 
-nightly = os.environ.get('JAXLIB_NIGHTLY')
-if nightly:
-  project_name = 'jaxlib-nightly'
-
 setup(
     name=project_name,
     version=__version__,
@@ -43,7 +39,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=['jaxlib', 'jaxlib.xla_extension'],
     python_requires='>=3.7',
-    install_requires=['scipy>=1.5', 'numpy>=1.19', 'absl-py'],
+    install_requires=['scipy>=1.5', 'numpy>=1.20', 'absl-py'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
     classifiers=[

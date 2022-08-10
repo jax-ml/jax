@@ -14,7 +14,7 @@
 
 from functools import partial
 import operator as op
-from typing import Callable, Optional, List, Tuple, Sequence, Union, Any
+from typing import Callable, Optional, List, Tuple, Sequence, Set, Union, Any
 import types
 
 import jax
@@ -27,12 +27,14 @@ from jax.interpreters import mlir
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
 source_info_util.register_exclusion(__file__)
+traceback_util.register_exclusion(__file__)
 
 # TODO(mattjj): before this can be the standard remat implementation, we must:
 #   [ ] fix up callers who use the 'concrete' option (now removed)
@@ -96,6 +98,7 @@ checkpoint_policies = types.SimpleNamespace(
 
 ### Main API
 
+@api_boundary
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                policy: Optional[Callable[..., bool]] = None,
                static_argnums: Union[int, Tuple[int, ...]] = (),
@@ -208,7 +211,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
 
   If ``fun`` involves Python control flow that depends on argument values,
   it may be necessary to use the ``static_argnums`` parameter. For example,
-  consider a boolean flag argument:
+  consider a boolean flag argument::
 
     from functools import partial
 
@@ -224,7 +227,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   ``static_argnums`` is that it introduces re-tracing overheads across calls:
   in the example, ``foo`` is re-traced every time it is called with a new value
   of ``is_training``. In some situations, ``jax.ensure_compile_time_eval``
-  is needed as well:
+  is needed as well::
 
     @partial(jax.checkpoint, static_argnums=(1,))
     def foo(x, y):
@@ -419,11 +422,16 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
 
+remat_allowed_effects: Set[core.Effect] = set()
+
 def remat_partial_eval(trace, *tracers, jaxpr, **params):
   assert not jaxpr.constvars
-  if jaxpr.effects:
+  disallowed_effects = {eff for eff in jaxpr.effects
+                        if eff not in remat_allowed_effects}
+  if disallowed_effects:
     raise NotImplementedError(
-        'Effects not supported in partial-eval of `checkpoint`/`remat`.')
+        'Effects not supported in partial-eval of `checkpoint`/`remat`: '
+        f'{disallowed_effects}')
   policy = params['policy'] or nothing_saveable
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res = \

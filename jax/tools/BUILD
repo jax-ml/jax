@@ -14,7 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "tensorflow_py_deps",
+    "py_deps",
 )
 
 licenses(["notice"])
@@ -39,5 +39,5 @@ py_library(
     deps = [
         "//jax",
         "//jax/experimental/jax2tf",
-    ] + tensorflow_py_deps,
+    ] + py_deps("tensorflow"),
 )

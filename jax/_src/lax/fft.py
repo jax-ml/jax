@@ -18,6 +18,7 @@ from typing import Union, Sequence
 
 import numpy as np
 
+import jax
 from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
 from jax.core import Primitive
 from jax.interpreters import mlir
@@ -92,9 +93,18 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
 
 def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   out_aval, = ctx.avals_out
-  return [mhlo.FftOp(mlir.aval_to_ir_type(out_aval), x,
-                     mhlo.FftTypeAttr.get(fft_type.name),
-                     mlir.dense_int_elements(fft_lengths)).result]
+  if jax._src.lib.mlir_api_version < 31:
+    return [
+        mhlo.FftOp(
+            mlir.aval_to_ir_type(out_aval), x,
+            mhlo.FftTypeAttr.get(fft_type.name),
+            mlir.dense_int_elements(fft_lengths)).result
+    ]
+  else:
+    return [
+        mhlo.FftOp(x, mhlo.FftTypeAttr.get(fft_type.name),
+                   mlir.dense_int_elements(fft_lengths)).result
+    ]
 
 
 def _fft_lowering_cpu(ctx, x, *, fft_type, fft_lengths):

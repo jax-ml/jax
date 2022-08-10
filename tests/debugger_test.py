@@ -59,6 +59,8 @@ disabled_backends = []
 if jaxlib.version < (0, 3, 15):
   disabled_backends.append("tpu")
 
+foo = 2
+
 class CliDebuggerTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -321,8 +323,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
       \(jdb\) """.format(re.escape(repr(arr))))
       g(jnp.arange(8, dtype=jnp.int32))
       jax.effects_barrier()
-      print(stdout.getvalue())
-      print(expected)
       self.assertRegex(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -344,10 +344,91 @@ class CliDebuggerTest(jtu.JaxTestCase):
     \(jdb\) """)
     f(2.)
     jax.effects_barrier()
-    print(stdout.getvalue())
-    print(expected)
     self.assertRegex(stdout.getvalue(), expected)
 
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debugger_accesses_globals(self):
+    stdin, stdout = make_fake_stdin_stdout(["p foo", "c"])
+
+    @jax.jit
+    def g():
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
+
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) \*\*\* NameError: name 'foo' is not defined
+    \(jdb\) """)
+    g()
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_can_limit_num_frames(self):
+    stdin, stdout = make_fake_stdin_stdout(["u", "p x", "c"])
+
+    def g():
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli",
+                          num_frames=2)
+
+    @jax.jit
+    def f():
+      x = 2
+      g()
+      return x
+    _ = f()
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) .*
+    .*
+    .*
+    .*
+    .*
+    .*
+    .*
+    \(jdb\) 2
+    \(jdb\) """)
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+    stdin, stdout = make_fake_stdin_stdout(["u", "u", "c"])
+
+    def g2():
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli",
+                          num_frames=2)
+
+    @jax.jit
+    def f2():
+      x = 2
+      g2()
+      return x
+
+    expected = ".*At topmost frame.*"
+    _ = f2()
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+  def test_can_handle_dictionaries_with_unsortable_keys(self):
+    stdin, stdout = make_fake_stdin_stdout(["p x", "p weird_dict",
+                                            "p weirder_dict", "c"])
+
+    @jax.jit
+    def f():
+      weird_dict = {(lambda x: x): 2., (lambda x: x * 2): 3}
+      weirder_dict = {(lambda x: x): weird_dict}
+      x = 2.
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
+      del weirder_dict
+      return x
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) 2.0
+    \(jdb\) <cant_flatten>
+    \(jdb\) <cant_flatten>
+    \(jdb\) """)
+    _ = f()
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

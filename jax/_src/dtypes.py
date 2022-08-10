@@ -25,6 +25,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
+import jax
 from jax._src.config import flags, config
 from jax._src.lib import xla_client
 
@@ -85,6 +86,8 @@ def _to_complex_dtype(dtype):
 @functools.lru_cache(maxsize=None)
 def _canonicalize_dtype(x64_enabled, dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
+  if type(dtype) in jax.core.custom_eltypes:
+    return dtype
   try:
     dtype = np.dtype(dtype)
   except TypeError as e:

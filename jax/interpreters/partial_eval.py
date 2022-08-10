@@ -1300,7 +1300,9 @@ def _partial_eval_jaxpr_custom_cached(
       map(partial(write, True, True), eqn.outvars)
     else:
       known_eqns.append(eqn)
-      if saveable(eqn.primitive, *[x.aval for x in eqn.invars], **eqn.params):
+      # If it's an effectful primitive, we always to run and avoid staging it.
+      if eqn.effects or saveable(
+          eqn.primitive, *[x.aval for x in eqn.invars], **eqn.params):
         map(partial(write, False, False), eqn.outvars)
       else:
         inputs = map(ensure_instantiated, inst_in, eqn.invars)
@@ -2496,6 +2498,18 @@ def _substitute_axis_sizes(env: Dict, aval: AbstractValue) -> AbstractValue:
     return aval
 
 padding_rules: Dict[Primitive, Callable] = {}
+
+def def_trivial_padding(prim: Primitive) -> None:
+  if prim.multiple_results:
+    padding_rules[prim] = partial(_trivial_padding_rule_multi, prim)
+  else:
+    padding_rules[prim] = partial(_trivial_padding_rule, prim)
+
+def _trivial_padding_rule(prim, _, __, *args, **params):
+  return [prim.bind(*args, **params)]
+
+def _trivial_padding_rule_multi(prim, _, __, *args, **params):
+  return prim.bind(*args, **params)
 
 def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
   if call_jaxpr.constvars: raise NotImplementedError

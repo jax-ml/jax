@@ -878,7 +878,7 @@ config.define_bool_state(
 # TODO(mattjj): set default to True, then remove
 config.define_bool_state(
     name='jax_new_checkpoint',
-    default=False,
+    default=True,
     upgrade=True,
     help='Whether to use the new jax.checkpoint implementation.')
 
