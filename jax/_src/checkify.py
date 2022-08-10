@@ -68,7 +68,7 @@ Payload = Union[np.ndarray, jnp.ndarray, core.Tracer]
 # For now, the payload needs to be a fixed-size array: 3 int32s, used for the
 # OOB message.
 # TODO(lenamartens): Relax this fixed-size constraint.
-init_payload = np.ones((3,), np.int32)
+init_payload = lambda: np.ones((3,), np.int32)
 
 
 def _format_msg(msg, payloads):
@@ -85,7 +85,15 @@ class Error:
   msgs: Dict[int, str]
   # There might be many msgs with a {payload}, but only one msg will
   # ever be active for an Error instance, so only one Payload is tracked.
-  payload: Payload = init_payload
+  payload: Payload
+
+  def __init__(self, err: Bool, code: Int, msgs: Dict[int, str], payload: Optional[Payload] = None):
+    # We can't directly assign to members of a frozen dataclass, even in __init__.
+    object.__setattr__(self, "err", err)
+    object.__setattr__(self, "code", code)
+    object.__setattr__(self, "msgs", msgs)
+    object.__setattr__(self, "payload",
+                       init_payload() if payload is None else payload)
 
   def get(self) -> Optional[str]:
     """Returns error message is error happened, None if no error happened."""
@@ -120,7 +128,7 @@ next_code = it.count(1).__next__  # globally unique ids, could be uuid4
 def assert_func(error: Error, pred: Bool, msg: str,
                 payload: Optional[Payload]) -> Error:
   code = next_code()
-  payload = init_payload if payload is None else payload
+  payload = init_payload() if payload is None else payload
   out_err = error.err | jnp.logical_not(pred)
   out_code = lax.select(error.err, error.code, code)
   out_payload = lax.select(error.err, error.payload, payload)
