@@ -1190,7 +1190,21 @@ def concrete_or_error(force: Any, val: Any, context=""):
 
 
 # TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
+
 custom_eltypes: Set[Any] = set()
+
+# TODO(frostig): update inliners of the four functions below to call them
+def has_custom_eltype(x: Any):
+  return aval_has_custom_eltype(get_aval(x))
+
+def eltype(x: Any):
+  return aval_eltype(get_aval(x))
+
+def aval_has_custom_eltype(aval: UnshapedArray):
+  return type(aval.dtype) in custom_eltypes
+
+def aval_eltype(aval: UnshapedArray):
+  return aval.dtype
 
 def _short_dtype_name(dtype) -> str:
   if type(dtype) in custom_eltypes:
@@ -1404,8 +1418,14 @@ class ConcreteArray(ShapedArray):
   _float           = concretization_function_error(float, True)
   _complex         = concretization_function_error(complex, True)
 
+# TODO(frostig,mattjj): rename to primal_eltype_to_tangent_eltype
 def primal_dtype_to_tangent_dtype(primal_dtype):
-  if not dtypes.issubdtype(primal_dtype, np.inexact):
+  # TODO(frostig,mattjj): determines that all custom eltypes have
+  # float0 tangent type, which works fine for all our current custom
+  # eltype applications. We may some day want to delegate this
+  # decision to the eltype.
+  if (type(primal_dtype) in custom_eltypes or
+      not dtypes.issubdtype(primal_dtype, np.inexact)):
     return dtypes.float0
   else:
     return primal_dtype

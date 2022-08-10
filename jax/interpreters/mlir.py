@@ -195,6 +195,9 @@ _constant_handlers : Dict[type, ConstantHandler] = {}
 def register_constant_handler(type_: type, handler_fun: ConstantHandler):
   _constant_handlers[type_] = handler_fun
 
+def get_constant_handler(type_: type) -> ConstantHandler:
+  return _constant_handlers[type_]
+
 def ir_constants(val: Any,
                  canonicalize_types: bool = True) -> Sequence[ir.Value]:
   """Translate a Python `val` to an IR constant, canonicalizing its dtype.

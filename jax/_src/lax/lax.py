@@ -1239,11 +1239,14 @@ def stop_gradient(x: T) -> T:
   DeviceArray(0., dtype=float32, weak_type=True)
   """
   def stop(x):
-    if (dtypes.issubdtype(_dtype(x), np.floating) or
+    # only bind primitive on inexact dtypes, to avoid some staging
+    if core.has_custom_eltype(x):
+      return x
+    elif (dtypes.issubdtype(_dtype(x), np.floating) or
         dtypes.issubdtype(_dtype(x), np.complexfloating)):
       return ad_util.stop_gradient_p.bind(x)
     else:
-      return x  # only bind primitive on inexact dtypes, to avoid some staging
+      return x
   return tree_map(stop, x)
 
 def reduce_precision(operand: Union[float, Array],
@@ -1504,7 +1507,7 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   return result_dtype(*avals)
 
 
-def _broadcasting_shape_rule(name, *avals):
+def broadcasting_shape_rule(name, *avals):
   shapes = [aval.shape for aval in avals if aval.shape]
   if not shapes:
     return ()
@@ -1545,7 +1548,7 @@ def _naryop_weak_type_rule(name, *avals, **kwargs):
 
 def naryop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
-  shape_rule = partial(_broadcasting_shape_rule, name)
+  shape_rule = partial(broadcasting_shape_rule, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             weak_type_rule=weak_type_rule)
