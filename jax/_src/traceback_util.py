@@ -182,10 +182,16 @@ def api_boundary(fun: C) -> C:
         e.__context__ = None
         e.__cause__ = unfiltered
 
-        # There seems to be no way to alter the currently raised exception's
-        # traceback, except via the C API. The currently raised exception
-        # is part of the interpreter's thread state: value `e` is a copy.
-        xla_extension.replace_thread_exc_traceback(filtered_tb)
+        e.__traceback__ = filtered_tb
+        # In Python < 3.11, there seems to be no way to alter the currently
+        # raised exception traceback, except via the C API. The interpreter
+        # keeps a copy of the traceback (exc_traceback) that is separate to the
+        # __traceback__ of exc_value. Python 3.11 removes exc_traceback and
+        # just setting __traceback__ is enough. Since it is no longer needed,
+        # the XLA extension no longer defines a traceback-replacing method at
+        # Python 3.11 and onward.
+        if hasattr(xla_extension, "replace_thread_exc_traceback"):
+          xla_extension.replace_thread_exc_traceback(filtered_tb)
         raise
       finally:
         del filtered_tb
