@@ -857,6 +857,24 @@ jax_test(
 )
 
 jax_test(
+    name = "program_eviction_test",
+    srcs = ["program_eviction_test.py"],
+    args = [
+        "--jax_tpu_runtime=tfrt",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    disable_configs = [
+        "tpu_pjrt_c_api",
+    ],
+    deps = [
+        "//jax:experimental_program_eviction",
+    ],
+)
+
+jax_test(
     name = "name_stack_test",
     srcs = ["name_stack_test.py"],
 )
@@ -914,6 +932,7 @@ exports_files(
         "compilation_cache_test.py",
         "pjit_test.py",
         "transfer_guard_test.py",
+        "program_eviction_test.py",
     ],
     visibility = jax_test_file_visibility,
 )
