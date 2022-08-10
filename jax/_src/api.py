@@ -3051,7 +3051,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
 def checkpoint(fun: Callable, *,
                concrete: bool = False,
                prevent_cse: bool = True,
-               static_argnums: Union[int, Tuple[int, ...], bool] = (),
+               static_argnums: Union[int, Tuple[int, ...]] = (),
                policy: Optional[Callable[..., bool]] = None,
                ) -> Callable:
   if concrete:
