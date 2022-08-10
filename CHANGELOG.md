@@ -21,13 +21,16 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
     See {jax-issue}`#11557`.
   * {mod}`jax.experimental.loops` has been removed. See {jax-issue}`#10278`
-    for an alternative API. 
+    for an alternative API.
   * {func}`jax.tree_util.tree_multimap` has been removed. It has been deprecated since
     JAX release 0.3.5, and {func}`jax.tree_util.tree_map` is a direct replacement.
   * Removed `jax.experimental.stax`; it has long been a deprecated alias of
     {mod}`jax.example_libraries.stax`.
   * Removed `jax.experimental.optimizers`; it has long been a deprecated alias of
     {mod}`jax.example_libraries.optimizers`.
+  * {func}`jax.checkpoint`, also known as {func}`jax.remat`, has a new
+    implementation switched on by default, meaning the old implementation is
+    deprecated; see [JEP 11830](https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html).
 
 ## jaxlib 0.3.16 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.15...main).
