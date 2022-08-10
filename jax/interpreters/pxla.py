@@ -2775,7 +2775,7 @@ class MeshExecutable(stages.XlaExecutable):
             xla_executable, mesh)
       elif out_shardings and all(_is_unspecified(o) for o in out_shardings):
         assert mesh is None
-        in_shardings, out_shardings = _get_op_sharding_shardings_from_executable(
+        _, out_shardings = _get_op_sharding_shardings_from_executable(
             xla_executable, first_sharding._device_assignment,
             len(global_in_avals), len(global_out_avals))
 
