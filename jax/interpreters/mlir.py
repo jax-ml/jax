@@ -1511,7 +1511,7 @@ def emit_python_callback(
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
     raise ValueError(
         f"`EmitPythonCallback` not supported on {platform} backend.")
-  backend = xb.get_backend(platform)
+  backend = xb.get_backend()
   result_shapes = util.flatten(
       [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
   operand_shapes = util.flatten(
