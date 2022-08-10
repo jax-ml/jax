@@ -800,6 +800,10 @@ batching.primitive_batchers[slice_p] = _slice_batching_rule
 
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
+  aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype.slice_mlir(ctx, x, start_indices, limit_indices,
+                                     strides)
   return mhlo.SliceOp(x,
                       mlir.dense_int_elements(start_indices),
                       mlir.dense_int_elements(limit_indices),

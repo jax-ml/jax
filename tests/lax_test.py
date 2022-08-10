@@ -3008,6 +3008,16 @@ class FooTy:
     return mlir.ir_constants(np.zeros((2,), dtype=np.dtype('uint32')))
 
   @staticmethod
+  def slice_mlir(ctx, x, start_indices, limit_indices, strides):
+    start_indices = (*start_indices, 0)
+    limit_indices = (*limit_indices, 2)
+    strides = (*strides, 1)
+    return mhlo.SliceOp(x,
+                        mlir.dense_int_elements(start_indices),
+                        mlir.dense_int_elements(limit_indices),
+                        mlir.dense_int_elements(strides)).results
+
+  @staticmethod
   def dynamic_slice_mlir(ctx, x, start_indices, slice_sizes):
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
@@ -3250,6 +3260,18 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     ys = jax.vmap(jax.jit(lambda k: take(bake(k))))(ks)
     expected = jnp.broadcast_to(3 * 4 * 5, (3, 5, 4)).astype('float32')
     self.assertAllClose(ys, expected)
+
+  def test_slice(self):
+    ks = jax.jit(lambda: make((3, 4)))()
+    ys = jax.jit(lambda x: lax.slice_in_dim(x, 1, 3))(ks)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (2, 4))
+
+  def test_dynamic_slice(self):
+    ks = jax.jit(lambda: make((3, 4)))()
+    ys = jax.jit(lambda x, i: lax.dynamic_slice_in_dim(x, i, 2))(ks, 1)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (2, 4))
 
   def test_transpose(self):
     ks = jax.jit(lambda: make((3, 4)))()
