@@ -727,39 +727,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
     self.assertAllClose(ans, expected, atol=1e-3, rtol=1e-3)
 
-  @parameterized.named_parameters(
-      {"testcase_name": f"_mesh={device_mesh_shape}".replace(" ", ""),
-       "device_mesh_shape": device_mesh_shape}
-      for device_mesh_shape in [(1, 2)])
-  def testNestedWithClosure2(self, device_mesh_shape):
-    mesh_shape = self._getMeshShape(device_mesh_shape)
-
-    @partial(self.pmap, axis_name='i')
-    def test_fun(x):
-      y = jnp.sum(jnp.sin(x))
-
-      @partial(self.pmap, axis_name='j')
-      def g(z):
-        return jnp.exp(x.sum())
-      return grad(lambda w: jnp.sum(g(w)))(x)
-
-    @vmap
-    def baseline_fun(x):
-      y = jnp.sum(jnp.sin(x))
-
-      @vmap
-      def g(z):
-        return jnp.exp(x.sum())
-      return grad(lambda w: jnp.sum(g(w)))(x)
-
-    shape = mesh_shape
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
-    print(x.shape)
-
-    ans = grad(lambda x: jnp.sum(test_fun(x)))(x)
-    expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
-    self.assertAllClose(ans, expected, atol=1e-3, rtol=1e-3)
-
   def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
     f = self.pmap(f, axis_name='i')
@@ -3087,8 +3054,6 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out2, input_data)
 
   def test_pmap_array_in_axes_out_axes(self):
-    if config.jax_disable_jit:
-      raise SkipTest("test hangs with disable_jit")  # TODO(mattjj,sharadmv,yashkatariya)
     dc = jax.device_count()
     input_shape = (dc, 2)
     a1, input_data = create_input_array_for_pmap(input_shape, in_axes=0)
@@ -3180,14 +3145,17 @@ class ArrayVmapPmapCollectivesTest(ArrayPmapMixin, VmapPmapCollectivesTest):
 class ArrayPmapWithDevicesTest(ArrayPmapMixin, PmapWithDevicesTest):
   pass
 
-class EagerPmapMixin:  # i hate mixins
+class EagerPmapMixin:
 
   def setUp(self):
     super().setUp()
+    self.eager_pmap_enabled = config.jax_eager_pmap
     self.jit_disabled = config.jax_disable_jit
     config.update('jax_disable_jit', True)
+    config.update('jax_eager_pmap', True)
 
   def tearDown(self):
+    config.update('jax_eager_pmap', self.eager_pmap_enabled)
     config.update('jax_disable_jit', self.jit_disabled)
     super().tearDown()
 
@@ -3201,6 +3169,9 @@ class EagerPmapWithDevicesTest(EagerPmapMixin, PmapWithDevicesTest):
   pass
 
 class EagerVmapOfPmapTest(EagerPmapMixin, VmapOfPmapTest):
+  pass
+
+class EagerArrayPmapTest(EagerPmapMixin, ArrayPmapTest):
   pass
 
 
