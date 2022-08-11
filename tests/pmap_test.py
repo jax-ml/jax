@@ -1189,24 +1189,17 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testDeviceCountError(self):
     device_count = jax.device_count()
 
-    f = self.pmap(lambda x: x)
+    f = self.pmap(lambda x: 2 * x)
     x = jnp.arange(device_count + 1)
     self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
-    f = self.pmap(lambda x: x)
+    f = self.pmap(lambda x: 2 * x)
     x = np.ones((device_count + 1, 10))
     self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
-    if not config.jax_disable_jit:
-      # When jit is disabled, this error is not raised given an identity fn. We
-      # kept this branch so as not to perturb old tests.
-      f = self.pmap(lambda x: self.pmap(lambda x: x)(x))
-      x = np.ones((device_count, 2, 10))
-      self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
-    else:
-      f = self.pmap(lambda x: self.pmap(lambda x: 2 * x)(x))
-      x = np.ones((device_count, 2, 10))
-      self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    f = self.pmap(lambda x: self.pmap(lambda x: 2 * x)(x))
+    x = np.ones((device_count, 2, 10))
+    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
   def testPmapConstant(self):
     device_count = jax.device_count()
@@ -1218,11 +1211,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.repeat(3, device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    f = self.pmap(lambda x: (x, 3))
-    x = np.arange(device_count)
-    with jtu.assert_num_jit_and_pmap_compilations(1):
-      _, ans = f(x)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    if not config.jax_disable_jit:
+      f = self.pmap(lambda x: (x, 3))
+      x = np.arange(device_count)
+      with jtu.assert_num_jit_and_pmap_compilations(1):
+        _, ans = f(x)
+      self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPmapConstantDevices(self):
     if jax.device_count() == 1:

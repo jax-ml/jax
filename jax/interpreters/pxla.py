@@ -941,29 +941,31 @@ def _emap_impl(fun: lu.WrappedFun, *args,
                donated_invars: Sequence[bool],
                global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
   if global_axis_size is not None: raise NotImplementedError
-  del global_axis_size, global_arg_shapes
-  if devices is not None:
-    if len(devices) == 0:
-      raise ValueError("'devices' argument to pmap must be non-empty, or None.")
-    if len(devices) != axis_size:
-      raise ValueError(
-          f"Leading axis size of input to pmapped function must equal the "
-          f"number of local devices passed to pmap. Got axis_size="
-          f"{axis_size}, num_local_devices={len(devices)}.")
-  else:
-    devices = xb.devices(backend=backend)[:axis_size]
-    if len(devices) != axis_size:
-      msg = ("compiling computation that requires {} logical devices, but only {} XLA "
-             "devices are available (num_replicas={}, num_partitions={})")
-      raise ValueError(msg.format(axis_size,
-                                  xb.device_count(backend),
-                                  None,
-                                  None))
+  pci = ParallelCallableInfo(
+          name, backend, axis_name, axis_size,
+          global_axis_size, devices, None, None, ())
+  # if devices is not None:
+  #   if len(devices) == 0:
+  #     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
+  #   if len(devices) != axis_size:
+  #     raise ValueError(
+  #         f"Leading axis size of input to pmapped function must equal the "
+  #         f"number of local devices passed to pmap. Got axis_size="
+  #         f"{axis_size}, num_local_devices={len(devices)}.")
+  # else:
+  #   devices = xb.devices(backend=backend)[:axis_size]
+  #   if len(devices) != axis_size:
+  #     msg = ("compiling computation that requires {} logical devices, but only {} XLA "
+  #            "devices are available (num_replicas={}, num_partitions={})")
+  #     raise ValueError(msg.format(axis_size,
+  #                                 xb.device_count(backend),
+  #                                 None,
+  #                                 None))
   sharded_args = []
   shard_axes = []
   for arg, in_axis in zip(args, in_axes):
     if in_axis == 0:
-      sharded_args.append(jax.device_put_sharded(list(arg), devices))
+      sharded_args.append(arg)
       shard_axes.append({axis_name: 0})
     elif in_axis is None:
       sharded_args.append(arg)
@@ -972,10 +974,9 @@ def _emap_impl(fun: lu.WrappedFun, *args,
       perm = list(range(arg.ndim))
       a = perm.pop(in_axis)
       perm.insert(0, a)
-      new_arg = arg.transpose(perm)
-      sharded_args.append(jax.device_put_sharded(list(new_arg), devices))
+      sharded_args.append(arg.transpose(perm))
       shard_axes.append({axis_name: 0})
-  with core.new_base_main(MapTrace) as main:
+  with core.new_base_main(MapTrace, pci=pci) as main:
     with core.new_sublevel(), core.extend_axis_env(axis_name, axis_size, main):
       t = main.with_cur_sublevel()
       tracers = [
@@ -989,21 +990,10 @@ def _emap_impl(fun: lu.WrappedFun, *args,
   # This next bit is like matchaxis in batching.py (for the end of a vmap)
   new_outvals = []
   for out_axis_src, out_axis, outval in zip(out_axes_src, out_axes, outvals):
-    if out_axis is None:
-      if src := out_axis_src.get(axis_name) is None:
-        new_outvals.append(outval)
-      else:
-        idx = [slice(None)] * len(outval.shape)
-        idx[src] = 0
-        new_outvals.append(outval[tuple(idx)])
-    elif out_axis == 0 == out_axis_src.get(axis_name):
-      new_outvals.append(outval)
-    else:
-      # TODO maybe just a transpose/broadcast here?
-      with jax._src.config.disable_jit(False):
-        new_outvals.append(
-            jax.pmap(lambda _, x: x, in_axes=(0, out_axis_src.get(axis_name)),
-                     out_axes=out_axis)(np.arange(axis_size), outval))
+    with jax._src.config.disable_jit(False):
+      out = jax.pmap(lambda _, x: x, in_axes=(0, out_axis_src.get(axis_name)),
+                     out_axes=out_axis)(np.arange(axis_size), outval)
+      new_outvals.append(out)
   return new_outvals
 
 
@@ -1011,6 +1001,10 @@ def _map_indices_to_map_schedule(idx: Tuple[Optional[int], ...]):
   return tuple(None if i is None else i - sum(j is not None and j < i for j in idx[:l]) for l, i in enumerate(idx))
 
 class MapTrace(core.Trace):
+
+  def __init__(self, *args, pci):
+    super().__init__(*args)
+    self.pci = pci
 
   def _get_frames(self):
     frames = [f for f in core.thread_local_state.trace_state.axis_env
@@ -1036,7 +1030,8 @@ class MapTrace(core.Trace):
     for i, name in reversed(list(enumerate(names))):
       in_axes = tuple(arg_axis[i] for arg_axis in all_axes)
       if any(in_axis is not None for in_axis in in_axes):
-        f = jax.pmap(f, in_axes=in_axes, axis_name=name)
+        f = jax.pmap(f, in_axes=in_axes, axis_name=name,
+                     devices=self.main.payload['pci'].devices)
         used_names.append(name)
     with core.eval_context(), jax._src.config.disable_jit(False):
       outvals = f(*vals)
@@ -1105,10 +1100,12 @@ class MapTrace(core.Trace):
     return MapTracer(self, outval, shard_axis_out)
 
   def process_axis_index(self, frame):
-    assert frame.size is not None
+    fake_primitive = types.SimpleNamespace(
+        multiple_results=False, bind=lambda _: jax.lax.axis_index(frame.name))
     with core.eval_context():
       range = jax.lax.iota(np.int32, frame.size)
-    return MapTracer(self, range, {frame.name: 0})
+    dummy_tracer = MapTracer(self, range, {frame.name: 0})
+    return self.process_primitive(fake_primitive, (dummy_tracer,), {})
 
 def annotation_to_flat(ndim: int, mapped_axes: Sequence[int],
                        src_flat: Optional[int], dst_annotation: Optional[int]
