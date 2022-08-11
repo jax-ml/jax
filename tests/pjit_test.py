@@ -441,8 +441,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = [{'a': v, 'b': v * 2}, v * 3]
 
     mhlo_str = str(f.lower(x).compiler_ir(dialect="mhlo"))
-    self.assertIn("unspecified_dims=[1]", mhlo_str)
-    self.assertIn("unspecified_dims=[2]", mhlo_str)
+    self.assertIn("unspecified_dims=[0,1]", mhlo_str)
+    self.assertIn("unspecified_dims=[0,2]", mhlo_str)
 
   def testCaching(self):
     def f(x):
