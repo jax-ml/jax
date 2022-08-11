@@ -85,6 +85,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(val, jnp.array([0.5]))
 
   @parameterized.parameters(False, True)
+  def testGeluIntType(self, approximate):
+    val_float = nn.gelu(jnp.array(-1.0), approximate=approximate)
+    val_int = nn.gelu(jnp.array(-1), approximate=approximate)
+    self.assertAllClose(val_float, val_int)
+
+  @parameterized.parameters(False, True)
   def testGelu(self, approximate):
     def gelu_reference(x):
       return x * scipy.stats.norm.cdf(x)
