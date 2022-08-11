@@ -252,6 +252,10 @@ def gelu(x: Array, approximate: bool = True) -> Array:
     x : input array
     approximate: whether to use the approximate or exact formulation.
   """
+
+  # Promote to nearest float-like dtype.
+  x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+
   if approximate:
     sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
     cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))
