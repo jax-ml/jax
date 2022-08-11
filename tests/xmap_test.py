@@ -819,6 +819,21 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     x = jnp.arange(20, dtype=jnp.float32).reshape(4, 5)
     self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
 
+  @parameterized.named_parameters(
+    {'testcase_name': name, 'mesh': mesh}
+    for name, mesh in (
+      ('1d', (('x', 2),)),
+      ('2d', (('x', 2), ('y', 2))),
+    ))
+  @jtu.with_mesh_from_kwargs
+  def testCollective(self, mesh):
+    all_axes = tuple(axis[0] for axis in mesh)
+    f = xmap(lambda x: lax.psum(x, 'i'), in_axes=['i', 'j'], out_axes=['j'],
+             axis_resources=dict(zip('ij', all_axes)))
+    h = pjit(lambda x: f(x * x), in_axis_resources=P(*all_axes), out_axis_resources=None)
+    x = jnp.arange(16, dtype=jnp.float32).reshape(4, 4)
+    self.assertAllClose(h(x), (x * x).sum(0))
+
 
 class NamedNumPyTest(XMapTestCase):
 

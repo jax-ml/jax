@@ -357,10 +357,17 @@ class SPMDAxisContext:
 
   @property
   def axis_env(self):
-    # TODO: Should we restrict the mesh to manual axes? This depends on the
-    # semantics of ReplicaId in partially manual computations, but I don't
-    # know what they are...
-    return xla.AxisEnv(nreps=1, names=(), sizes=())
+    # All collectives that touch axis_env should remember to set use_global_device_ids
+    # when this context is enabled!
+    if self.manual_axes != frozenset(self.mesh.axis_names):
+      raise NotImplementedError(
+          "Collectives in manually partitioned computations are only supported "
+          "when all mesh axes are partitioned manually (no partial automatic sharding). "
+          "Make sure that you mention all mesh axes in axis_resources!")
+    return xla.AxisEnv(
+        nreps=self.mesh.size,
+        names=self.mesh.axis_names,
+        sizes=tuple(self.mesh.shape.values()))
 
   def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> SPMDAxisContext:
     return SPMDAxisContext(self.mesh, self.manual_axes | axes)
@@ -1056,7 +1063,6 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   def f_lowered(ctx, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params)
-    axis_env = ctx.module_context.axis_env
 
     if config.jax_dynamic_shapes:
       # We might be applying this function to arguments with dynamic shapes,
@@ -1072,11 +1078,9 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
                         if type(a) is core.DShapedArray else a, True)
                        for a in ctx.avals_in]
       wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
-      with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
     else:
-      with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
 
     out, tokens = jaxpr_subcomp(
         ctx.module_context, jaxpr, ctx.tokens_in, _ir_consts(consts),
@@ -1360,6 +1364,7 @@ def xla_fallback_lowering(prim: core.Primitive):
 
 register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 
+DEVICE_TO_DEVICE_TYPE = 1
 SEND_TO_HOST_TYPE = 2
 RECV_FROM_HOST_TYPE = 3
 
