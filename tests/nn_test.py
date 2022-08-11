@@ -84,9 +84,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.glu(jnp.array([1.0, 0.0]), axis=0)
     self.assertAllClose(val, jnp.array([0.5]))
 
-  def testGeluIntType(self):
-    val_float = nn.gelu(jnp.array(-1.0))
-    val_int = nn.gelu(jnp.array(-1))
+  @parameterized.parameters(False, True)
+  def testGeluIntType(self, approximate):
+    val_float = nn.gelu(jnp.array(-1.0), approximate=approximate)
+    val_int = nn.gelu(jnp.array(-1), approximate=approximate)
     self.assertAllClose(val_float, val_int)
 
   @parameterized.parameters(False, True)
