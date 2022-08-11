@@ -183,7 +183,8 @@ class IreeClient:
         extra_args=extra_args,
     )
     # Load it into the runtime.
-    vm_module = iree.runtime.VmModule.from_flatbuffer(iree_binary)
+    vm_module = iree.runtime.VmModule.from_flatbuffer(
+      self.iree_config.vm_instance, iree_binary)
     module_object = iree.runtime.load_vm_module(vm_module, self.iree_config)
     return IreeExecutable(self, self._devices, module_object, "main")
 
