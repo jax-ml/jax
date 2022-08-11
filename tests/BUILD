@@ -189,6 +189,11 @@ jax_test(
 jax_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
+    shard_count = {
+        "cpu": 5,
+        "gpu": 5,
+        "tpu": 5,
+    },
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",

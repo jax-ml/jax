@@ -561,7 +561,9 @@ xla.canonicalize_dtype_handlers[GlobalDeviceArray] = pxla.identity
 api_util._shaped_abstractify_handlers[GlobalDeviceArray] = \
     lambda x: core.ShapedArray(x.shape, x.dtype)
 
-def _gda_shard_arg(x, devices, indices):
+def _gda_shard_arg(x, devices, indices, mode):
+  if mode == pxla.InputsHandlerMode.pmap:
+    raise RuntimeError('GDA is not supported with pmap.')
   return x._device_buffers
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 

@@ -1897,39 +1897,41 @@ class PmapCallInfo(NamedTuple):
 
 
 def _check_in_pmap_sharding_with_arrays(args, in_axes_flat, in_devices):
-  from jax.experimental import sharding
+  from jax.experimental.sharding import PmapSharding
+  from jax.experimental.array import Array
 
   if not args:
     return
 
-  if in_devices is not None:
-    in_devices = np.array(in_devices)
-
-  first_arr_devices = args[0].sharding.devices
+  first_device_assignment = None
   for a, i in safe_zip(args, in_axes_flat):
-    assert isinstance(a.sharding, sharding.PmapSharding)
+    if not isinstance(a, Array):
+      continue
+    if not isinstance(a.sharding, PmapSharding):
+      raise NotImplementedError('pmap only works with PmapSharding.')
+    if first_device_assignment is None:
+      first_device_assignment = a.sharding._device_assignment
     arr_sharding = a.sharding.sharded_dim
-    arr_devices = a.sharding.devices
+    arr_device_assignment = a.sharding._device_assignment
     if arr_sharding != i:
       raise ValueError('Array and pmap sharding does not match. Got pmap '
                        f'sharding: {i}, Array sharding: {arr_sharding} for '
                        f'arg: {a}')
     if (in_devices is not None and
-        arr_devices is not None and
-        not np.array_equal(arr_devices, in_devices)):
+        arr_device_assignment is not None and
+        arr_device_assignment != in_devices):
       raise ValueError('Devices passed to pmap and Array should be equal. '
-                       f'Got pmap devices: {devices}, Array devices: '
-                       f'{arr_devices} for arg: {a}')
+                       f'Got pmap devices: {in_devices}, Array devices: '
+                       f'{arr_device_assignment} for arg: {a}')
     if (in_devices is None and
-        not np.array_equal(arr_devices, first_arr_devices)):
+        arr_device_assignment != first_device_assignment):
       raise ValueError('Devices of all `Array` inputs should be the same. '
-                       f'Got array device: {arr_devices}, '
-                       f'another array device: {first_arr_devices}')
-  return first_arr_devices
+                       f'Got array device: {arr_device_assignment}, '
+                       f'another array device: {first_device_assignment}')
 
 
 def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
-                  donate_tuple, global_arg_shapes, devices, args, kwargs):
+                  donate_tuple, global_arg_shapes, in_devices, args, kwargs):
   f = lu.wrap_init(fun)
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
@@ -1971,13 +1973,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   flat_fun, out_tree = flatten_fun(f, in_tree)
 
   if config.jax_array:
-    from jax.experimental.array import Array
-    if any(not isinstance(a, Array) for a in args):
-      raise ValueError('All arguments to pmap when `config.jax_array` is '
-                       'enabled should be `Array`s.')
-    arr_devices = _check_in_pmap_sharding_with_arrays(args, in_axes_flat, devices)
-    if devices is None and arr_devices is not None:
-      devices = arr_devices
+    _check_in_pmap_sharding_with_arrays(args, in_axes_flat, in_devices)
 
   if any(out_axis is None for out_axis in tree_flatten(out_axes)):
     raise NotImplementedError("None out_axes in pmap are not supported yet")
@@ -2011,7 +2007,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                       local_axis_size=local_axis_size,
                       global_arg_shapes_flat=global_arg_shapes_flat,
                       out_axes_thunk=out_axes_thunk,
-                      devices=None if devices is None else tuple(devices))
+                      devices=None if in_devices is None else tuple(in_devices))
 
 
 def _get_f_mapped(
@@ -2199,8 +2195,9 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
-  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,
-                               static_broadcasted_tuple, pxla._shard_arg)
+  cpp_mapped_f = pmap_lib.pmap(
+      fun, cache_miss, static_broadcasted_tuple,
+      partial(pxla._shard_arg, mode=pxla.InputsHandlerMode.pmap))
 
   pmap_f = wraps(fun)(cpp_mapped_f)
 

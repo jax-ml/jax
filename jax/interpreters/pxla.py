@@ -368,7 +368,7 @@ def spec_to_indices(shape: Tuple[int, ...],
 
 def identity(x): return x
 
-def _shard_arg(arg, devices, arg_indices):
+def _shard_arg(arg, devices, arg_indices, mode):
   """Returns a list of size len(devices) containing per-device buffers.
 
   For the C++ pmap path, we fallback to Python (this function) to shard
@@ -378,6 +378,7 @@ def _shard_arg(arg, devices, arg_indices):
     arg: The Python argument.
     devices: The list of devices to shard over.
     arg_indices: A list of `len(devices)` indices to use to shard the argument.
+    mode: An enum telling whether shard_arg is executed via pmap or pjit/xmap.
   """
   if isinstance(arg, ShardedDeviceArray) and arg_indices == arg.indices:
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
@@ -390,12 +391,13 @@ def _shard_arg(arg, devices, arg_indices):
     ]
   else:
     arg = xla.canonicalize_dtype(arg)
-    return shard_arg_handlers[type(arg)](arg, devices, arg_indices)
+    return shard_arg_handlers[type(arg)](arg, devices, arg_indices, mode)
 
 
 @profiler.annotate_function
 def shard_args(devices: Sequence[xb.xla_client.Device],
                indices: Sequence[Sequence[Index]],
+               mode: InputsHandlerMode,
                args) -> Sequence[Sequence[xb.xla_client.Buffer]]:
   """Shard each argument data array along its leading axis.
 
@@ -411,16 +413,16 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
     A list of length matching args, containing lists of per-device buffers
     for each argument.
   """
-  return [_shard_arg(arg, devices, indices[i]) for i, arg in enumerate(args)]
+  return [_shard_arg(arg, devices, indices[i], mode) for i, arg in enumerate(args)]
 
 
-shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
-def _shard_array(x, devices, indices):
+shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any, InputsHandlerMode], Sequence[Any]]] = {}
+def _shard_array(x, devices, indices, mode):
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_device_array(x, devices, indices):
+def _shard_device_array(x, devices, indices, mode):
   start_indices, limit_indices, removed_dims = unzip3(
       _as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
@@ -524,9 +526,15 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
   return PartitionSpec(*partitions)
 
 
+class OutputType(enum.Enum):
+  Array = 0
+  GlobalDeviceArray = 1
+  ShardedDeviceArray = 2
+
+
 def local_aval_to_result_handler(
     aval: core.AbstractValue,
-    sharding_spec: Optional[ShardingSpec],
+    sharding: XLACompatibleSharding,
     indices: Optional[Tuple[Index]],
 ) -> Callable[[List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
@@ -543,24 +551,25 @@ def local_aval_to_result_handler(
     for this output. The function will return an object suitable for returning
     to the user, e.g. a ShardedDeviceArray.
   """
+  if config.jax_array:
+    output_type = OutputType.Array
+  else:
+    output_type = OutputType.ShardedDeviceArray
   try:
-    return local_result_handlers[type(aval)](aval, sharding_spec, indices)
+    return local_result_handlers[(type(aval), output_type)](aval, sharding, indices)
   except KeyError as err:
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
 PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
-local_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
-def sda_array_result_handler(aval: ShapedArray, sharding_spec, indices):
+local_result_handlers: Dict[Tuple[Type[core.AbstractValue], OutputType], PxlaResultHandler] = {}
+
+def sda_array_result_handler(aval: ShapedArray, sharding, indices):
+  sharding_spec = _get_sharding_specs([sharding], [aval])[0]
   return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
                                                 indices)
-local_result_handlers[ShapedArray] = sda_array_result_handler
-local_result_handlers[ConcreteArray] = sda_array_result_handler
-
-
-class OutputType(enum.Enum):
-  Array = 0
-  GlobalDeviceArray = 1
+local_result_handlers[(ShapedArray, OutputType.ShardedDeviceArray)] = sda_array_result_handler
+local_result_handlers[(ConcreteArray, OutputType.ShardedDeviceArray)] = sda_array_result_handler
 
 
 def global_aval_to_result_handler(
@@ -839,7 +848,7 @@ def _hashable_index(idx):
 
 # The fast path is handled directly in shard_args().
 # TODO(skye): is there a simpler way to rewrite this using sharding_spec?
-def _shard_sharded_device_array_slow_path(x, devices, indices):
+def _shard_sharded_device_array_slow_path(x, devices, indices, mode):
   candidates = defaultdict(list)
   for buf, idx in safe_zip(x.device_buffers, x.indices):
     candidates[_hashable_index(idx)].append(buf)
@@ -851,7 +860,7 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?
-      return shard_arg_handlers[type(x._value)](x._value, devices, indices)
+      return shard_arg_handlers[type(x._value)](x._value, devices, indices, mode)
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -1293,8 +1302,6 @@ class PmapExecutable(stages.XlaExecutable):
     ])
 
     local_arg_parts_ = parts.local_arg_parts or [None] * len(pci.avals)
-    # TODO(yashkatariya): Fix the input handling of `Array`s that span over
-    # multiple processes. Add multi-process tests for pmap.
     input_sharding_specs = [
         _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
                             parts.local_num_partitions, arg_parts, aval, in_axis)
@@ -1312,40 +1319,26 @@ class PmapExecutable(stages.XlaExecutable):
     if parts.local_out_parts is None:
       local_out_parts = (None,) * nouts
 
-    if config.jax_array:
-      global_unmapped_avals = [
+    local_out_avals = [
+      get_local_aval(aval, parts, lparts)
+      for aval, parts, lparts
+      in safe_zip(shards.out_sharded_avals, out_parts, local_out_parts)]
+    local_unmapped_avals = [
         core.unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval)
         if out_axis is not None else aval
-        for aval, out_axis in safe_zip(shards.out_sharded_avals, pci.out_axes)]
-      global_out_specs = [
-        _pmap_sharding_spec(replicas.num_global_replicas, pci.axis_size,
-                            parts.num_partitions, op, aval, out_axis)
-        for op, aval, out_axis in safe_zip(
-            out_parts, shards.out_sharded_avals, pci.out_axes)]
-      pmap_shardings = _get_pmap_sharding(device_assignment, global_out_specs)
-      handle_outs = global_avals_to_results_handler(
-          global_unmapped_avals, pmap_shardings)
-    else:
-      local_out_avals = [
-        get_local_aval(aval, parts, lparts)
-        for aval, parts, lparts
-        in safe_zip(shards.out_sharded_avals, out_parts, local_out_parts)]
-      local_unmapped_avals = [
-          core.unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval)
-          if out_axis is not None else aval
-          for aval, out_axis in safe_zip(local_out_avals, pci.out_axes)]
-      out_specs = [
-          _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
-                              parts.local_num_partitions, out_parts, aval, out_axis)
-          for out_parts, aval, out_axis in safe_zip(
-              local_out_parts, local_out_avals, pci.out_axes)]
-      pmap_shardings = _get_pmap_sharding(local_device_assignment, out_specs)
-      handle_outs = local_avals_to_results_handler(local_unmapped_avals, pmap_shardings)
+        for aval, out_axis in safe_zip(local_out_avals, pci.out_axes)]
+    out_specs = [
+        _pmap_sharding_spec(replicas.num_local_replicas, pci.axis_size,
+                            parts.local_num_partitions, out_parts, aval, out_axis)
+        for out_parts, aval, out_axis in safe_zip(
+            local_out_parts, local_out_avals, pci.out_axes)]
+    pmap_shardings = _get_pmap_sharding(local_device_assignment, out_specs)
+    handle_outs = local_avals_to_results_handler(local_unmapped_avals, pmap_shardings)
 
     if hasattr(pci.backend, "compile_replicated"):
       execute_fun = pci.backend.compile_replicated(
           xla_computation, compile_options, pci.avals, input_indices,
-          in_shardings, handle_outs)
+          in_shardings, InputsHandlerMode.pmap, handle_outs)
       # TODO(frostig): need `compile_replicated` to give us the XLA executable
       return PmapExecutable(None, execute_fun, None, pci.avals)
 
@@ -1354,7 +1347,7 @@ class PmapExecutable(stages.XlaExecutable):
       compiled = dispatch.compile_or_get_cached(
           pci.backend, xla_computation, compile_options, host_callbacks)
     handle_args = InputsHandler(
-        compiled.local_devices(), in_shardings, input_indices)
+        compiled.local_devices(), in_shardings, input_indices, InputsHandlerMode.pmap)
     execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args,
                                     handle_outs, unordered_effects, keepalive)
     fingerprint = getattr(compiled, "fingerprint", None)
@@ -1520,14 +1513,21 @@ def _safe_div(x, y):
   return result
 
 
-class InputsHandler:
-  __slots__ = ("handler", "local_devices", "in_shardings", "input_indices")
+class InputsHandlerMode(enum.Enum):
+  pmap = 0
+  pjit_or_xmap = 1
 
-  def __init__(self, local_devices, in_shardings, input_indices):
-    self.handler = partial(shard_args, local_devices, input_indices)
+
+class InputsHandler:
+  __slots__ = ("handler", "local_devices", "in_shardings", "input_indices",
+               "mode")
+
+  def __init__(self, local_devices, in_shardings, input_indices, mode):
+    self.handler = partial(shard_args, local_devices, input_indices, mode)
     self.local_devices = local_devices
     self.in_shardings = in_shardings
     self.input_indices = input_indices
+    self.mode = mode
 
   def __call__(self, input_buffers):
     return self.handler(input_buffers)
@@ -1536,7 +1536,8 @@ class InputsHandler:
     return ("InputsHandler(\n"
             f"local_devices={self.local_devices},\n"
             f"in_shardings={self.in_shardings},\n"
-            f"input_indices={self.input_indices})")
+            f"input_indices={self.input_indices})\n"
+            f"mode={self.mode}")
 
 
 class ResultsHandler:
@@ -1572,13 +1573,11 @@ def _get_sharding_specs(
 def local_avals_to_results_handler(
     unmapped_local_out_avals: Sequence[Optional[ShapedArray]],
     local_shardings: Sequence[XLACompatibleSharding]) -> ResultsHandler:
-  local_out_specs = _get_sharding_specs(
-      local_shardings, cast(Sequence[ShapedArray], unmapped_local_out_avals))
   out_indices = [tuple(s.devices_indices_map(aval.shape).values())
                  for s, aval in safe_zip(local_shardings, unmapped_local_out_avals)]
   handlers = [
-      local_aval_to_result_handler(aval, spec, idcs)
-      for aval, spec, idcs in safe_zip(unmapped_local_out_avals, local_out_specs, out_indices)
+      local_aval_to_result_handler(aval, s, idcs)
+      for aval, s, idcs in safe_zip(unmapped_local_out_avals, local_shardings, out_indices)
   ]
   return ResultsHandler(handlers, local_shardings, unmapped_local_out_avals)
 
@@ -2761,7 +2760,7 @@ class MeshExecutable(stages.XlaExecutable):
           global_out_avals, out_shardings)  # type: ignore  # arg-type
       unsafe_call = backend.compile_replicated(
           computation, compile_options, input_avals, input_indices,
-          in_shardings, handle_outs)
+          in_shardings, InputsHandlerMode.pjit_or_xmap, handle_outs)
       xla_executable = None
     else:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
@@ -2784,7 +2783,7 @@ class MeshExecutable(stages.XlaExecutable):
       handle_outs = global_avals_to_results_handler(
           global_out_avals, out_shardings)  # type: ignore  # arg-type
       handle_args = InputsHandler(xla_executable.local_devices(), in_shardings,
-                                  input_indices)
+                                  input_indices, InputsHandlerMode.pjit_or_xmap)
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
                                       handle_outs, unordered_effects, keepalive)
 
