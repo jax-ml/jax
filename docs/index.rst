@@ -64,7 +64,6 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    profiling
    device_memory_profiling
    rank_promotion_warning
-   custom_vjp_update
 
 .. toctree::
    :maxdepth: 2
