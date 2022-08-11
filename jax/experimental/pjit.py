@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
-from typing import Callable, Sequence, Tuple, Union, cast, List
+from typing import Callable, Sequence, Tuple, Union, cast, List, Optional, Iterable
 import itertools as it
 from functools import partial, lru_cache
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax.experimental.sharding import (
-    MeshPspecSharding, Sharding, XLACompatibleSharding, OpShardingSharding)
+    MeshPspecSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
+    XLADeviceAssignment)
 from jax import core
 from jax import linear_util as lu
 from jax import stages
@@ -96,6 +98,12 @@ _is_unspecified = pxla._is_unspecified
 
 def _is_unspecified_or_from_gda_or_auto(x):
   return _is_from_gda(x) or _is_auto(x) or _is_unspecified(x)
+
+
+PjitSharding = Union[OpShardingSharding, _UnspecifiedValue, _AUTOAxisResource]
+PjitShardingMinusUnspecified = Union[OpShardingSharding, _AUTOAxisResource]
+MeshSharding = Union[MeshPspecSharding, _UnspecifiedValue, _AUTOAxisResource]
+MeshShardingMinusUnspecified = Union[MeshPspecSharding, _AUTOAxisResource]
 
 
 def _check_all_or_none_unspecified(axis_resources, name):
@@ -822,15 +830,57 @@ def _pjit_call_impl(*args, jaxpr,
   return compiled.unsafe_call(*args)
 pjit_p.def_impl(_pjit_call_impl)
 
-@weakref_lru_cache
+
+@dataclasses.dataclass(frozen=True)
+class SameDeviceAssignmentTuple:
+  shardings: Tuple[PjitSharding, ...]
+  # device_assignment is Optional because shardings can contain `AUTO` and in
+  # that case `mesh` is compulsory to be used. So in that case
+  # `_pjit_lower_cached` cache, resource_env will check against the devices.
+  device_assignment: Optional[XLADeviceAssignment]
+
+  def __hash__(self):
+    shardings_hash = tuple(s._op_sharding_hash if isinstance(s, OpShardingSharding) else s
+                           for s in self.shardings)
+    if self.device_assignment is None:
+      return hash(shardings_hash)
+    else:
+      return hash((shardings_hash, *self.device_assignment))
+
+  def __eq__(self, other):
+    if not isinstance(other, SameDeviceAssignmentTuple):
+      return False
+    return (all(pxla.are_op_shardings_equal(s._op_sharding, o._op_sharding)
+                if isinstance(s, OpShardingSharding) and isinstance(o, OpShardingSharding)
+                else s == o
+                for s, o in safe_zip(self.shardings, other.shardings)) and
+            self.device_assignment == other.device_assignment)
+
+
 def _pjit_lower(
     jaxpr: core.ClosedJaxpr,
     in_shardings,
     out_shardings,
+    *args, **kwargs):
+  da = _get_device_assignment(it.chain(in_shardings, out_shardings))
+  in_shardings = SameDeviceAssignmentTuple(in_shardings, da)
+  out_shardings = SameDeviceAssignmentTuple(out_shardings, da)
+  return _pjit_lower_cached(jaxpr, in_shardings, out_shardings, *args, **kwargs)
+
+
+@weakref_lru_cache
+def _pjit_lower_cached(
+    jaxpr: core.ClosedJaxpr,
+    sdat_in_shardings: SameDeviceAssignmentTuple,
+    sdat_out_shardings: SameDeviceAssignmentTuple,
     resource_env,
     donated_invars,
     name: str,
     in_is_global: Sequence[bool]):
+  in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
+      Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
+  out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings
+
   pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
@@ -841,18 +891,20 @@ def _pjit_lower(
   # MeshPspecSharding is required for host-local inputs too.
   if not config.jax_array:
     mesh = resource_env.physical_mesh
-    in_shardings = tuple(
-        i if _is_auto(i) or isinstance(i, MeshPspecSharding) else
-        MeshPspecSharding._from_parsed_pspec(
-            mesh, parse_flatten_op_sharding(i._op_sharding, mesh)[0])
-        for i in in_shardings
-    )
-    out_shardings = tuple(
-        o if _is_auto(o) or _is_unspecified(o) or isinstance(o, MeshPspecSharding) else
-        MeshPspecSharding._from_parsed_pspec(
-            mesh, parse_flatten_op_sharding(o._op_sharding, mesh)[0])
-        for o in out_shardings
-    )
+    in_shardings: Tuple[MeshShardingMinusUnspecified, ...] = cast(  # type:ignore[no-redef]
+        Tuple[MeshShardingMinusUnspecified, ...], tuple(
+            MeshPspecSharding._from_parsed_pspec(
+                mesh, parse_flatten_op_sharding(i._op_sharding, mesh)[0])
+            if isinstance(i, OpShardingSharding) else i
+            for i in in_shardings
+    ))
+    out_shardings: Tuple[MeshSharding, ...] = cast(  # type: ignore[no-redef]
+        Tuple[MeshSharding, ...], tuple(
+            MeshPspecSharding._from_parsed_pspec(
+                mesh, parse_flatten_op_sharding(o._op_sharding, mesh)[0])
+            if isinstance(o, OpShardingSharding) else o
+            for o in out_shardings
+    ))
 
   # For `pjit(xmap)` cases, it needs to take the `lower_mesh_computation` path
   # because `xmap` only supports SPMDAxisContext right now.
@@ -1004,13 +1056,7 @@ def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
                        resource_env, donated_invars, name, in_positional_semantics,
                        out_positional_semantics):
-  da = None
-  for i in it.chain(in_shardings, out_shardings):
-    if _is_auto(i) or _is_unspecified(i):
-      continue
-    da = i._device_assignment
-    break
-
+  da = _get_device_assignment(it.chain(in_shardings, out_shardings))
   in_pvals = [t.pval for t in in_tracers]
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
@@ -1377,6 +1423,16 @@ def _get_in_positional_semantics(arg) -> maps._PositionalSemantics:
   if isinstance(arg, GDA):
     return maps._PositionalSemantics.GLOBAL
   return maps._positional_semantics.val
+
+
+def _get_device_assignment(shardings: Iterable[PjitSharding]) -> Optional[XLADeviceAssignment]:
+  da = None
+  for i in shardings:
+    if _is_auto(i) or _is_unspecified(i):
+      continue
+    da = i._device_assignment  # type: ignore
+    break
+  return da
 
 
 def _maybe_replace_from_gda_with_pspec(

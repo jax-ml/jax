@@ -293,20 +293,25 @@ def _hash_op_sharding(op: xc.OpSharding):
 class OpShardingSharding(XLACompatibleSharding):
 
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
-    self._devices = devices
+    self._devices = tuple(devices)
     self._op_sharding = op_sharding
+
+  @pxla.maybe_cached_property
+  def _op_sharding_hash(self):
+    if xla_extension_version >= 81:
+      return hash(xc.HloSharding.from_proto(self._op_sharding))
+    else:
+      return _hash_op_sharding(self._op_sharding)
 
   def __eq__(self, other):
     if not isinstance(other, OpShardingSharding):
       return False
-    return pxla.are_op_shardings_equal(self._op_sharding, other._op_sharding)
+    return (pxla.are_op_shardings_equal(self._op_sharding, other._op_sharding) and
+            self._devices == other._devices)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      if xla_extension_version >= 81:
-        self._hash = hash(xc.HloSharding.from_proto(self._op_sharding))
-      else:
-        self._hash = _hash_op_sharding(self._op_sharding)
+      self._hash = hash((self._devices, self._op_sharding_hash))
     return self._hash
 
   def __repr__(self):

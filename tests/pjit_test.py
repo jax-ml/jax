@@ -1183,25 +1183,25 @@ class GDAPjitTest(jtu.JaxTestCase):
     def f(x, y):
       return x @ y.T
 
-    before_lower_cache = pjit_lib._pjit_lower.cache_info()
+    before_lower_cache = pjit_lib._pjit_lower_cached.cache_info()
 
     f(gda_obj, gda_obj)
-    after_lower_cache1 = pjit_lib._pjit_lower.cache_info()
+    after_lower_cache1 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertEqual(before_lower_cache.hits, after_lower_cache1.hits)
     self.assertEqual(before_lower_cache.misses + 1, after_lower_cache1.misses)
 
     f(gda_obj, gda_obj)
-    after_lower_cache2 = pjit_lib._pjit_lower.cache_info()
+    after_lower_cache2 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertEqual(after_lower_cache1.hits + 1, after_lower_cache2.hits)
     self.assertEqual(after_lower_cache1.misses, after_lower_cache2.misses)
 
     f(input_data, input_data)
-    after_lower_cache3 = pjit_lib._pjit_lower.cache_info()
+    after_lower_cache3 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertEqual(after_lower_cache2.hits, after_lower_cache3.hits)
     self.assertEqual(after_lower_cache2.misses + 1, after_lower_cache3.misses)
 
     f(gda_obj, input_data)
-    after_lower_cache4 = pjit_lib._pjit_lower.cache_info()
+    after_lower_cache4 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertEqual(after_lower_cache3.hits, after_lower_cache4.hits)
     self.assertEqual(after_lower_cache3.misses + 1, after_lower_cache4.misses)
 
@@ -1260,9 +1260,9 @@ class GDAPjitTest(jtu.JaxTestCase):
         out_gda = f(input_gda)
         self.assertEqual(out_gda.mesh_axes, ())
 
-        before_cache = pjit_lib._pjit_lower.cache_info()
+        before_cache = pjit_lib._pjit_lower_cached.cache_info()
         f(out_gda)
-        after_cache = pjit_lib._pjit_lower.cache_info()
+        after_cache = pjit_lib._pjit_lower_cached.cache_info()
 
         self.assertEqual(before_cache.hits + 1, after_cache.hits)
         self.assertEqual(before_cache.misses, after_cache.misses)
@@ -1282,9 +1282,9 @@ class GDAPjitTest(jtu.JaxTestCase):
         out_gda = f(global_data)
         self.assertEqual(out_gda.mesh_axes, ())
 
-        before_cache = pjit_lib._pjit_lower.cache_info()
+        before_cache = pjit_lib._pjit_lower_cached.cache_info()
         f(out_gda)
-        after_cache = pjit_lib._pjit_lower.cache_info()
+        after_cache = pjit_lib._pjit_lower_cached.cache_info()
 
         self.assertEqual(before_cache.hits + 1, after_cache.hits)
         self.assertEqual(before_cache.misses, after_cache.misses)
@@ -1818,13 +1818,37 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f = pjit(lambda x: x)
 
     out = f(a)
-    cache_info1 = pjit_lib._pjit_lower.cache_info()
+    cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
 
     _ = f(out)
-    cache_info2 = pjit_lib._pjit_lower.cache_info()
+    cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
+
+  @jax._src.config.jax_array(True)
+  def test_pjit_different_device_recompilation(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest('Requires 2 or more devices.')
+
+    val1 = jnp.array([1, 2, 3], dtype=jnp.float32)
+    a = jax.device_put(val1, jax.devices()[0])
+
+    val2 = jnp.array([4, 5, 6], dtype=jnp.float32)
+    b = jax.device_put(val2, jax.devices()[1])
+
+    f = pjit(lambda x: x)
+
+    out1 = f(a)
+    cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
+
+    out2 = f(b)
+    cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
+
+    self.assertEqual(cache_info2.hits, cache_info1.hits)
+    self.assertEqual(cache_info2.misses, cache_info1.misses + 1)
+    self.assertArraysEqual(out1, val1)
+    self.assertArraysEqual(out2, val2)
 
 
 def spec_regex(s):

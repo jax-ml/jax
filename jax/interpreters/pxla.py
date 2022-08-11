@@ -2296,7 +2296,9 @@ class TileManual:
 TilingMethod = Union[TileVectorize, TileManual]
 
 
-def _check_if_any_auto(shardings: Iterable[Union[XLACompatibleSharding, _AUTOAxisResource]]) -> bool:
+def _check_if_any_auto(
+    shardings: Iterable[Union[XLACompatibleSharding, _AUTOAxisResource,
+                              _UnspecifiedValue]]) -> bool:
   for s in shardings:
     if _is_auto(s):
       return True
