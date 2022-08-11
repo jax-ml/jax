@@ -43,13 +43,10 @@ body:
   attributes:
     label: What jax/jaxlib version are you using?
     placeholder: For example jax v0.3.0, jaxlib v0.3.0
-- type: checkboxes
+- type: input
   attributes:
     label: Which accelerator(s) are you using?
-    options:
-      - label: CPU
-      - label: GPU
-      - label: TPU
+    placeholder: CPU/GPU/TPU
 - type: input
   attributes:
     label: Additional System Info
