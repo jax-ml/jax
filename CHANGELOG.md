@@ -8,7 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.16 (Unreleased)
+## jax 0.3.17 (Unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.16...main).
+
+## jax 0.3.16
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.15...main).
 * Breaking changes
   * Support for NumPy 1.19 has been dropped, per the
