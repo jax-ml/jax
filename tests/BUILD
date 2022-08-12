@@ -387,7 +387,7 @@ jax_test(
         "tpu": ["noasan"],  # Test times out.
     },
     shard_count = {
-        "cpu": 10,
+        "cpu": 20,
         "gpu": 40,
         "tpu": 10,
         "iree": 10,
@@ -473,7 +473,7 @@ jax_test(
         ],
     },
     shard_count = {
-        "cpu": 25,
+        "cpu": 40,
         "gpu": 40,
         "tpu": 10,
         "iree": 20,
@@ -601,7 +601,7 @@ jax_test(
     },
     main = "random_test.py",
     shard_count = {
-        "cpu": 30,
+        "cpu": 40,
         "gpu": 40,
         "tpu": 40,
         "iree": 20,
@@ -667,7 +667,7 @@ jax_test(
         ],
     },
     shard_count = {
-        "cpu": 10,
+        "cpu": 20,
         "gpu": 40,
         "tpu": 40,
         "iree": 10,
