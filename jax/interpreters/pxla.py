@@ -1337,8 +1337,8 @@ class PmapExecutable(stages.XlaExecutable):
 
     if hasattr(pci.backend, "compile_replicated"):
       execute_fun = pci.backend.compile_replicated(
-          xla_computation, compile_options, pci.avals, input_indices,
-          in_shardings, InputsHandlerMode.pmap, handle_outs)
+          xla_computation, compile_options, host_callbacks, pci.avals,
+          input_indices, in_shardings, InputsHandlerMode.pmap, handle_outs)
       # TODO(frostig): need `compile_replicated` to give us the XLA executable
       return PmapExecutable(None, execute_fun, None, pci.avals)
 
@@ -2763,9 +2763,11 @@ class MeshExecutable(stages.XlaExecutable):
           global_in_avals, in_shardings, in_is_global)  # type: ignore
       handle_outs = global_avals_to_results_handler(
           global_out_avals, out_shardings)  # type: ignore  # arg-type
-      unsafe_call = backend.compile_replicated(
-          computation, compile_options, input_avals, input_indices,
-          in_shardings, InputsHandlerMode.pjit_or_xmap, handle_outs)
+      unsafe_call = backend.compile_replicated(computation, compile_options,
+                                               host_callbacks, input_avals,
+                                               input_indices, in_shardings,
+                                               InputsHandlerMode.pjit_or_xmap,
+                                               handle_outs)
       xla_executable = None
     else:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
