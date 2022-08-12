@@ -73,8 +73,8 @@ from jax._src.numpy.ufuncs import (  # noqa: F401
 from jax._src.numpy.util import (  # noqa: F401
   _arraylike, _broadcast_arrays, _broadcast_to, _check_arraylike,
   _complex_elem_type, _promote_args, _promote_args_inexact, _promote_dtypes,
-  _promote_dtypes_inexact, _promote_shapes, _register_stackable, _stackable,
-  _where, _wraps)
+  _promote_dtypes_numeric, _promote_dtypes_inexact, _promote_shapes,
+  _register_stackable, _stackable, _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
@@ -4100,10 +4100,9 @@ def _gcd_body_fn(xs):
 @jit
 def gcd(x1, x2):
   _check_arraylike("gcd", x1, x2)
-  if (not issubdtype(_dtype(x1), integer) or
-      not issubdtype(_dtype(x2), integer)):
-    raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = _promote_dtypes(x1, x2)
+  if not issubdtype(_dtype(x1), integer):
+    raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = broadcast_arrays(x1, x2)
   gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn, (abs(x1), abs(x2)))
   return gcd
@@ -4114,6 +4113,8 @@ def gcd(x1, x2):
 def lcm(x1, x2):
   _check_arraylike("lcm", x1, x2)
   x1, x2 = _promote_dtypes(x1, x2)
+  if not issubdtype(_dtype(x1), integer):
+    raise ValueError("Arguments to jax.numpy.lcm must be integers.")
   d = gcd(x1, x2)
   return where(d == 0, _lax_const(d, 0),
                abs(multiply(x1, floor_divide(x2, d))))
