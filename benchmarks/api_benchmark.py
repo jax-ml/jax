@@ -539,5 +539,13 @@ def bench_remat_eager_retracing_overheads_static_argnums(state):
   y.block_until_ready()
 
 
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_slicing_compilation(state):
+  x = jnp.arange(3)
+  while state:
+    jax.jit(lambda x: (x[0], x[1], x[2])).lower(x).compile()
+
+
 if __name__ == "__main__":
   google_benchmark.main()

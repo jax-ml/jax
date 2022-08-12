@@ -3485,10 +3485,10 @@ def _normalize_index(index, axis_size):
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
                                              _dtype(index))
-  return lax.select(
-    lax.lt(index, _lax_const(index, 0)),
-    lax.add(index, axis_size_val),
-    index)
+  if isinstance(index, (int, np.integer)):
+    return lax.add(index, axis_size_val) if index < 0 else index
+  else:
+    return lax.select(index < 0, lax.add(index, axis_size_val), index)
 
 
 TAKE_ALONG_AXIS_DOC = """
