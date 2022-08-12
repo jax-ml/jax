@@ -14,6 +14,7 @@
 import contextlib
 import io
 import textwrap
+import unittest
 from unittest import mock
 
 from typing import Any, Callable, Generator, Sequence
@@ -23,6 +24,7 @@ import jax
 from jax import core
 from jax import lax
 from jax import tree_util
+from jax._src import callback as jc
 from jax._src import debugging
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
@@ -455,6 +457,171 @@ class PythonCallbackTest(jtu.JaxTestCase):
         out,
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
 
+class PurePythonCallbackTest(jtu.JaxTestCase):
+
+  def test_simple_pure_callback(self):
+
+    @jax.jit
+    def f(x):
+      return jc.pure_callback(lambda x: (x * 2.).astype(x.dtype), x, x)
+    self.assertEqual(f(2.), 4.)
+
+  def test_can_dce_pure_callback(self):
+
+    if jax.default_backend() == "tpu":
+      raise unittest.SkipTest("DCE doesn't currently happen on TPU")
+
+    log = []
+    def _callback(x):
+      # Should never happen!
+      log.append("hello world")
+      return (x * 2.).astype(x.dtype)
+
+    @jax.jit
+    def f(x):
+      _ = jc.pure_callback(_callback, x, x)
+      return x * 2.
+    _ = f(2.)
+    self.assertEmpty(log)
+
+  def test_can_vmap_pure_callback(self):
+
+    @jax.jit
+    @jax.vmap
+    def f(x):
+      return jc.pure_callback(np.sin, x, x)
+    out = f(jnp.arange(4.))
+    np.testing.assert_allclose(out, np.sin(np.arange(4.)))
+
+    @jax.jit
+    def g(x):
+      return jc.pure_callback(np.sin, x, x)
+    out = jax.vmap(g, in_axes=1)(jnp.arange(8.).reshape((4, 2)))
+    np.testing.assert_allclose(out, np.sin(np.arange(8.).reshape((4, 2))).T)
+
+  def test_can_pmap_pure_callback(self):
+
+    @jax.jit
+    @jax.pmap
+    def f(x):
+      return jc.pure_callback(np.sin, x, x)
+    out = f(jnp.arange(float(jax.local_device_count())))
+    np.testing.assert_allclose(out, np.sin(np.arange(jax.local_device_count())))
+
+  def test_cant_take_grad_of_pure_callback(self):
+
+    def sin(x):
+      return np.sin(x)
+
+    @jax.jit
+    @jax.grad
+    def f(x):
+      return jc.pure_callback(sin, x, x)
+    with self.assertRaisesRegex(
+        ValueError, "Pure callbacks do not support JVP."):
+      f(2.)
+
+  def test_can_take_grad_of_pure_callback_with_custom_jvp(self):
+
+    @jax.custom_jvp
+    def sin(x):
+      return jc.pure_callback(np.sin, x, x)
+
+    @sin.defjvp
+    def sin_jvp(xs, ts):
+      (x,), (t,), = xs, ts
+      return sin(x), jc.pure_callback(np.cos, x, x) * t
+
+    @jax.jit
+    @jax.grad
+    def f(x):
+      return sin(x)
+    out = f(2.)
+    np.testing.assert_allclose(out, jnp.cos(2.))
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_inside_of_cond(self):
+
+    def _callback1(x):
+      return x + 1.
+
+    def _callback2(x):
+      return x - 1.
+
+    @jax.jit
+    def f(pred, x):
+
+      def true_fun(x):
+        return jc.pure_callback(_callback1, x, x)
+
+      def false_fun(x):
+        return jc.pure_callback(_callback2, x, x)
+
+      return lax.cond(pred, true_fun, false_fun, x)
+
+    out = f(True, jnp.ones(2))
+    np.testing.assert_allclose(out, jnp.ones(2) * 2.)
+    out = f(False, jnp.ones(2))
+    np.testing.assert_allclose(out, jnp.zeros(2))
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_inside_of_scan(self):
+
+    def _callback(x):
+      return x + 1.
+
+    @jax.jit
+    def f(x):
+
+      def body(x, _):
+        x = jc.pure_callback(_callback, x, x)
+        return x, ()
+
+      return lax.scan(body, x, jnp.arange(10))[0]
+
+    out = f(jnp.arange(2.))
+    np.testing.assert_allclose(out, jnp.arange(2.) + 10.)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_inside_of_while_loop(self):
+
+    def _cond_callback(x):
+      return np.any(x < 10)
+
+    def _callback(x):
+      return (x + 1.).astype(x.dtype)
+
+    @jax.jit
+    def f(x):
+
+      def cond(x):
+        return jc.pure_callback(
+            _cond_callback, jax.ShapeDtypeStruct((), np.bool_), x)
+
+      def body(x):
+        return jc.pure_callback(_callback, x, x)
+
+      return lax.while_loop(cond, body, x)
+
+    out = f(jnp.arange(5.))
+    np.testing.assert_allclose(out, jnp.arange(10., 15.))
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_inside_of_pmap(self):
+
+    def _callback(x):
+      return x + 1.
+
+    @jax.pmap
+    def f(x):
+      return jc.pure_callback(_callback, x, x)
+
+    out = f(
+        jnp.arange(2 * jax.local_device_count(),
+                   dtype=jnp.float32).reshape([-1, 2]))
+    np.testing.assert_allclose(
+        out,
+        np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

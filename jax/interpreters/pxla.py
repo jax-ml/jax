@@ -1349,7 +1349,8 @@ class PmapExecutable(stages.XlaExecutable):
     handle_args = InputsHandler(
         compiled.local_devices(), in_shardings, input_indices, InputsHandlerMode.pmap)
     execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args,
-                                    handle_outs, unordered_effects, keepalive)
+                                    handle_outs, unordered_effects, keepalive,
+                                    bool(host_callbacks))
     fingerprint = getattr(compiled, "fingerprint", None)
 
     return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
@@ -1706,17 +1707,19 @@ def partitioned_sharding_spec(num_partitions: int,
 class ExecuteReplicated:
   """The logic to shard inputs, execute a replicated model, returning outputs."""
   __slots__ = ['xla_executable', 'backend', 'in_handler', 'out_handler',
-               'has_unordered_effects', 'keepalive']
+               'has_unordered_effects', 'keepalive', 'has_host_callbacks']
 
   def __init__(self, xla_executable, backend, in_handler: InputsHandler,
                out_handler: ResultsHandler,
-               unordered_effects: List[core.Effect], keepalive: Any):
+               unordered_effects: List[core.Effect], keepalive: Any,
+               has_host_callbacks: bool):
     self.xla_executable = xla_executable
     self.backend = backend
     self.in_handler = in_handler
     self.out_handler = out_handler
     self.has_unordered_effects = bool(unordered_effects)
     self.keepalive = keepalive
+    self.has_host_callbacks = has_host_callbacks
 
   @profiler.annotate_function
   def __call__(self, *args):
@@ -2787,7 +2790,8 @@ class MeshExecutable(stages.XlaExecutable):
       handle_args = InputsHandler(xla_executable.local_devices(), in_shardings,
                                   input_indices, InputsHandlerMode.pjit_or_xmap)
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
-                                      handle_outs, unordered_effects, keepalive)
+                                      handle_outs, unordered_effects, keepalive,
+                                      bool(host_callbacks))
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
                           in_shardings, out_shardings, auto_spmd_lowering)

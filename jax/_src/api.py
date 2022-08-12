@@ -548,6 +548,8 @@ def _cpp_jit(
         # No effects in computation
         not execute.args[5] and
         not execute.args[6] and
+        # Has no host callbacks
+        not execute.args[8] and
         # Not supported: ShardedDeviceArray
         all(device_array.type_is_device_array(x) for x in out_flat) and
         # Not supported: dynamic shapes
@@ -557,7 +559,7 @@ def _cpp_jit(
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       (_, xla_executable,
-       _, _, result_handlers, _, _, kept_var_idx) = execute.args
+       _, _, result_handlers, _, _, kept_var_idx, _) = execute.args
       sticky_device = None
       avals = []
       lazy_exprs = [None] * len(result_handlers)
@@ -2168,6 +2170,7 @@ def _cpp_pmap(
         isinstance(execute[0], pxla.ExecuteReplicated) and
         # TODO(sharadmv): Enable effects in replicated computation
         not execute[0].has_unordered_effects and
+        not execute[0].has_host_callbacks and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(isinstance(x, device_array.DeviceArray) for x in out_flat))

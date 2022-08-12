@@ -738,7 +738,7 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
                       result_handler: Callable,
                       has_unordered_effects: bool,
                       ordered_effects: List[core.Effect],
-                      kept_var_idx, *args):
+                      kept_var_idx, host_callbacks, *args):
   device, = compiled.local_devices()
   args, env = input_handler(args) if input_handler else (args, None)
   in_flat = flatten(device_put(x, device) for i, x in enumerate(args)
@@ -766,7 +766,7 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
                         result_handler: Callable,
                         has_unordered_effects: bool,
                         ordered_effects: List[core.Effect],
-                        kept_var_idx, *args):
+                        kept_var_idx, host_callbacks, *args):
   if has_unordered_effects or ordered_effects:
     # TODO(sharadmv): support jit-of-pmap with effects
     raise NotImplementedError(
@@ -965,7 +965,7 @@ class XlaCompiledComputation(stages.XlaExecutable):
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,  # type: ignore  # noqa: F811
                           result_handler, has_unordered_effects,
-                          ordered_effects, kept_var_idx)
+                          ordered_effects, kept_var_idx, host_callbacks)
     return XlaCompiledComputation(compiled, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 
