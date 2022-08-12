@@ -87,7 +87,7 @@ class TestPolynomial(jtu.JaxTestCase):
 
     jnp_fun = jnp.roots
     def np_fun(arg):
-      return np.roots(arg).astype(dtypes._to_complex_dtype(arg.dtype))
+      return np.roots(arg).astype(dtypes.to_complex_dtype(arg.dtype))
 
     # Note: outputs have no defined order, so we need to use a special comparator.
     args = args_maker()
@@ -116,7 +116,7 @@ class TestPolynomial(jtu.JaxTestCase):
 
     jnp_fun = partial(jnp.roots, strip_zeros=False)
     def np_fun(arg):
-      roots = np.roots(arg).astype(dtypes._to_complex_dtype(arg.dtype))
+      roots = np.roots(arg).astype(dtypes.to_complex_dtype(arg.dtype))
       if len(roots) < len(arg) - 1:
         roots = np.pad(roots, (0, len(arg) - len(roots) - 1),
                        constant_values=complex(np.nan, np.nan))

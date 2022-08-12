@@ -184,7 +184,7 @@ def _complex_uniform(key: KeyArray,
   """
   key_r, key_theta = random.split(key)
   real_dtype = np.array(0, dtype).real.dtype
-  dtype = dtypes._to_complex_dtype(real_dtype)
+  dtype = dtypes.to_complex_dtype(real_dtype)
   r = jnp.sqrt(2 * random.uniform(key_r, shape, real_dtype)).astype(dtype)
   theta = 2 * jnp.pi * random.uniform(key_theta, shape, real_dtype).astype(dtype)
   return r * jnp.exp(1j * theta)
@@ -199,7 +199,7 @@ def _complex_truncated_normal(key: KeyArray, upper: Array,
   """
   key_r, key_theta = random.split(key)
   real_dtype = np.array(0, dtype).real.dtype
-  dtype = dtypes._to_complex_dtype(real_dtype)
+  dtype = dtypes.to_complex_dtype(real_dtype)
   t = ((1 - jnp.exp(jnp.array(-(upper ** 2), dtype)))
        * random.uniform(key_r, shape, real_dtype).astype(dtype))
   r = jnp.sqrt(-jnp.log(1 - t))

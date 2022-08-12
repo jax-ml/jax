@@ -842,7 +842,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(x):
       x = np.asarray(x)
       if inexact:
-        x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+        x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if dtype != jnp.bfloat16 else x.astype(np.float32)
       t = out_dtype if out_dtype != jnp.bfloat16 else np.float32
       return np_op(x_cast, axis, dtype=t, keepdims=keepdims)
@@ -884,7 +884,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(x):
       x = np.asarray(x)
       if inexact:
-        x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+        x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
@@ -919,7 +919,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(x):
       x = np.asarray(x)
       if inexact:
-        x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+        x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
@@ -955,7 +955,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(x):
       x = np.asarray(x)
       if inexact:
-        x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+        x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
@@ -999,7 +999,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(x):
       x = np.asarray(x)
       if inexact:
-        x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+        x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial, where=where)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
@@ -1042,7 +1042,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def np_fun(x):
       x = np.asarray(x)
       if inexact:
-        x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+        x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, where=where)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
@@ -3145,7 +3145,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     @jtu.ignore_warning(category=RuntimeWarning, message="overflow.*")
     def np_fun(x1, x2):
-      out_dtype = dtypes._to_inexact_dtype(x1.dtype)
+      out_dtype = dtypes.to_inexact_dtype(x1.dtype)
       return np.ldexp(x1.astype(out_dtype), x2)
 
     jnp_fun = jnp.ldexp

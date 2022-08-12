@@ -458,7 +458,7 @@ def ldexp(x1, x2):
 
   x1, x2 = _promote_shapes("ldexp", x1, x2)
 
-  dtype = dtypes.canonicalize_dtype(dtypes._to_inexact_dtype(x1_dtype))
+  dtype = dtypes.canonicalize_dtype(dtypes.to_inexact_dtype(x1_dtype))
   info = dtypes.finfo(dtype)
   int_type = _INT_DTYPES[info.bits]
 

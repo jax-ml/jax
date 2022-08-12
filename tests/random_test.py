@@ -639,7 +639,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis):
     # This is the function API that we test against (note that self.rng().choice differs)
     np_choice = np.random.default_rng(0).choice
-    p_dtype = dtypes._to_inexact_dtype(dtype)
+    p_dtype = dtypes.to_inexact_dtype(dtype)
 
     key = self.seed_prng(0)
     is_range = type(input_range_or_shape) is int

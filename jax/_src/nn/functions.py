@@ -254,7 +254,7 @@ def gelu(x: Array, approximate: bool = True) -> Array:
   """
 
   # Promote to nearest float-like dtype.
-  x = x.astype(dtypes._to_inexact_dtype(x.dtype))
+  x = x.astype(dtypes.to_inexact_dtype(x.dtype))
 
   if approximate:
     sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
