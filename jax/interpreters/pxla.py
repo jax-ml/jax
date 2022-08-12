@@ -1332,8 +1332,8 @@ class PmapExecutable(stages.XlaExecutable):
                             parts.local_num_partitions, out_parts, aval, out_axis)
         for out_parts, aval, out_axis in safe_zip(
             local_out_parts, local_out_avals, pci.out_axes)]
-    pmap_shardings = _get_pmap_sharding(local_device_assignment, out_specs)
-    handle_outs = local_avals_to_results_handler(local_unmapped_avals, pmap_shardings)
+    out_shardings = _get_pmap_sharding(local_device_assignment, out_specs)
+    handle_outs = local_avals_to_results_handler(local_unmapped_avals, out_shardings)
 
     if hasattr(pci.backend, "compile_replicated"):
       execute_fun = pci.backend.compile_replicated(

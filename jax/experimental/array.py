@@ -18,13 +18,15 @@ import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
 from jax import core
+from jax._src import ad_util
 from jax._src import api_util
 from jax._src import dispatch
+from jax._src.lax import lax as lax_internal
 from jax._src.config import config
 from jax._src.util import prod, safe_zip
 from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
-from jax.interpreters import pxla, xla
+from jax.interpreters import pxla, xla, mlir
 from jax.experimental.sharding import (Sharding, SingleDeviceSharding,
                                        XLACompatibleSharding)
 
@@ -245,6 +247,14 @@ xla.pytype_aval_mappings[Array] = lambda x: core.ShapedArray(x.shape, x.dtype)
 xla.canonicalize_dtype_handlers[Array] = pxla.identity
 api_util._shaped_abstractify_handlers[Array] = \
     lambda x: core.ShapedArray(x.shape, x.dtype)
+ad_util.jaxval_adders[Array] = lax_internal.add
+ad_util.jaxval_zeros_likers[Array] = lax_internal.zeros_like_array
+
+
+def _array_mlir_constant_handler(val, canonicalize_types=True):
+  return mlir.ir_constants(val._value,
+                           canonicalize_types=canonicalize_types)
+mlir.register_constant_handler(Array, _array_mlir_constant_handler)
 
 
 def _device_put_array(x, device: Optional[Device]):
@@ -267,6 +277,8 @@ def _array_shard_arg(x, devices, indices, mode):
   if mode == pxla.InputsHandlerMode.pmap:
     # sharding mismatch between `Array` and pmap sharding is checked in api.py's
     # `_check_in_pmap_sharding_with_arrays` function.
+    if isinstance(x.sharding, SingleDeviceSharding):
+      return pxla._shard_device_array(x, devices, indices, mode)
     return [buf if buf.device() == d else buf.copy_to_device(d)
             for buf, d in safe_zip(x._arrays, devices)]
   else:

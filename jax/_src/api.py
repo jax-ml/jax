@@ -1897,7 +1897,7 @@ class PmapCallInfo(NamedTuple):
 
 
 def _check_in_pmap_sharding_with_arrays(args, in_axes_flat, in_devices):
-  from jax.experimental.sharding import PmapSharding
+  from jax.experimental.sharding import PmapSharding, SingleDeviceSharding
   from jax.experimental.array import Array
 
   if not args:
@@ -1906,6 +1906,8 @@ def _check_in_pmap_sharding_with_arrays(args, in_axes_flat, in_devices):
   first_device_assignment = None
   for a, i in safe_zip(args, in_axes_flat):
     if not isinstance(a, Array):
+      continue
+    if isinstance(a.sharding, SingleDeviceSharding):
       continue
     if not isinstance(a.sharding, PmapSharding):
       raise NotImplementedError('pmap only works with PmapSharding.')
