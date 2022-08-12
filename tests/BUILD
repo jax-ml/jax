@@ -641,6 +641,7 @@ jax_test(
         ],  # Test times out under asan/tsan.
     },
     shard_count = {
+        "cpu": 10,
         "gpu": 10,
         "tpu": 5,
     },
