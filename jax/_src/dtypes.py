@@ -70,14 +70,14 @@ _dtype_to_inexact = {
 }
 
 
-def _to_inexact_dtype(dtype):
+def to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
   dtype = np.dtype(dtype)
   return _dtype_to_inexact.get(dtype, dtype)
 
 
-def _to_complex_dtype(dtype):
-  ftype = _to_inexact_dtype(dtype)
+def to_complex_dtype(dtype):
+  ftype = to_inexact_dtype(dtype)
   if ftype in [np.dtype('float64'), np.dtype('complex128')]:
     return np.dtype('complex128')
   return np.dtype('complex64')

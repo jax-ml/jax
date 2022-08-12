@@ -413,7 +413,7 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
     raise NotImplementedError("string values for `bins` not implemented.")
   _check_arraylike("histogram_bin_edges", a, bins)
   a = ravel(a)
-  dtype = dtypes._to_inexact_dtype(_dtype(a))
+  dtype = dtypes.to_inexact_dtype(_dtype(a))
   if _ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
   bins = core.concrete_or_error(operator.index, bins,
@@ -2178,9 +2178,9 @@ def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   _check_arraylike("linspace", start, stop)
 
   if dtype is None:
-    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
+    dtype = dtypes.to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = dtypes._to_inexact_dtype(dtype)
+  computation_dtype = dtypes.to_inexact_dtype(dtype)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
 
@@ -2237,9 +2237,9 @@ def _logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
   """Implementation of logspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "logspace")
   if dtype is None:
-    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
+    dtype = dtypes.to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = dtypes._to_inexact_dtype(dtype)
+  computation_dtype = dtypes.to_inexact_dtype(dtype)
   _check_arraylike("logspace", start, stop)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
@@ -2259,9 +2259,9 @@ def _geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   """Implementation of geomspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "geomspace")
   if dtype is None:
-    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
+    dtype = dtypes.to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = dtypes._to_inexact_dtype(dtype)
+  computation_dtype = dtypes.to_inexact_dtype(dtype)
   _check_arraylike("geomspace", start, stop)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
@@ -3271,7 +3271,7 @@ def sort(a, axis: Optional[int] = -1, kind='quicksort', order=None):
 def sort_complex(a):
   _check_arraylike("sort_complex", a)
   a = lax.sort(a, dimension=0)
-  return lax.convert_element_type(a, dtypes._to_complex_dtype(a.dtype))
+  return lax.convert_element_type(a, dtypes.to_complex_dtype(a.dtype))
 
 @_wraps(np.lexsort)
 @partial(jit, static_argnames=('axis',))

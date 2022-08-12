@@ -277,7 +277,7 @@ def _spectral_helper(x, y,
     except ValueError as err:
       raise ValueError('x and y cannot be broadcast together.') from err
 
-  result_dtype = dtypes._to_complex_dtype(x.dtype)
+  result_dtype = dtypes.to_complex_dtype(x.dtype)
   freq_dtype = np.finfo(result_dtype).dtype
 
   if nperseg is not None:  # if specified by user

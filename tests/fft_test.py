@@ -109,7 +109,8 @@ class FftTest(jtu.JaxTestCase):
   def testLaxIrfftDoesNotMutateInputs(self, dtype):
     if dtype == np.float64 and not config.x64_enabled:
       raise self.skipTest("float64 requires jax_enable_x64=true")
-    x = (1 + 1j) * jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=dtypes._to_complex_dtype(dtype))
+    x = (1 + 1j) * jnp.array([[1.0, 2.0], [3.0, 4.0]],
+                             dtype=dtypes.to_complex_dtype(dtype))
     y = np.asarray(jnp.fft.irfft2(x))
     z = np.asarray(jnp.fft.irfft2(x))
     self.assertAllClose(y, z)
