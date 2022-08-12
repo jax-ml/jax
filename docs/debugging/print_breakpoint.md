@@ -175,7 +175,7 @@ Depending on the backend, `jax.debug.print`s may happen asynchronously, i.e. not
 ```python
 @jax.jit
 def f(x):
-  jax.debug.print("x: {}")
+  jax.debug.print("x: {}", x)
   return x
 f(2.).block_until_ready()
 # <do something else>
@@ -187,7 +187,7 @@ To block on the `jax.debug.print`s in a function, you can call `jax.effects_barr
 ```python
 @jax.jit
 def f(x):
-  jax.debug.print("x: {}")
+  jax.debug.print("x: {}", x)
   return x
 f(2.).block_until_ready()
 jax.effects_barrier()
