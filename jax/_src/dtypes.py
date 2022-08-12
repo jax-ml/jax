@@ -69,6 +69,11 @@ _dtype_to_inexact = {
     ]
 }
 
+def to_numeric_dtype(dtype):
+  """Promotes a dtype into an numeric dtype, if it is not already one."""
+  dtype = np.dtype(dtype)
+  return np.dtype('int32') if dtype == np.dtype('bool') else dtype
+
 
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
