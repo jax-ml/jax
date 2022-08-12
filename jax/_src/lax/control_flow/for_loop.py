@@ -307,8 +307,9 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
       constvars=[])
   for _ in range(num_inputs):
     jaxpr_in_unknowns = [False] * len(discharged_consts) + [False, *in_unknowns]
-    _, _, out_unknowns, _, _ = _partial_eval_jaxpr_custom(
-        discharged_jaxpr, jaxpr_in_unknowns, _save_everything)
+    _, _, out_unknowns, _, _, = pe.partial_eval_jaxpr_custom(
+        discharged_jaxpr, jaxpr_in_unknowns, [True] * len(jaxpr_in_unknowns),
+          in_unknowns, False, _save_everything)
     out_unknowns = list(out_unknowns)
     if out_unknowns == in_unknowns:
       break
@@ -374,6 +375,8 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   known_vals = [t.pval.get_known() for t in known_tracers]
   empty_res = map(ad_util.zeros_like_aval, res_avals)
   jaxpr_known_args = [*known_vals, *empty_res]
+  # We assume the known inputs are nonlinear which is okay to do for AD but not
+  # necessarily okay for general partial eval.
   jaxpr_known_which_linear = (False,) * len(jaxpr_known_args)
   out_flat = for_p.bind(*jaxpr_known_args, jaxpr=jaxpr_known, nsteps=nsteps,
                         reverse=reverse, which_linear=jaxpr_known_which_linear)
@@ -470,7 +473,6 @@ def _convert_inputs_to_reads(
   return jaxpr
 
 def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: List[bool]) -> core.Jaxpr:
-  which_linear = map(bool, np.cumsum(which_linear).astype(np.bool_))
   def trans(i, *args):
     # First we want to run the computation to read all the residual refs. We can
     # do that by using partial evaluation with all linear inputs unknown.
