@@ -147,7 +147,6 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
 ]
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class LaxBackedScipyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Scipy implementation."""
 

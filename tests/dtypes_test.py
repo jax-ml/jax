@@ -75,7 +75,6 @@ def identity(x):
   return x
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class DtypesTest(jtu.JaxTestCase):
 
   def test_canonicalize_type(self):
@@ -296,7 +295,6 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class TestPromotionTables(jtu.JaxTestCase):
 
   @parameterized.named_parameters(

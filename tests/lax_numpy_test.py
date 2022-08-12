@@ -522,7 +522,6 @@ def _promote_like_jnp(fun, inexact=False):
   return wrapper
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
 
@@ -6262,7 +6261,6 @@ GRAD_SPECIAL_VALUE_TEST_RECORDS = [
 ]
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class NumpyGradTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -6369,7 +6367,6 @@ class NumpyGradTests(jtu.JaxTestCase):
     check_grads(jnp.logaddexp2, args, 1, ["fwd", "rev"], tol, tol)
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class NumpySignaturesTest(jtu.JaxTestCase):
 
   def testWrappedSignaturesMatch(self):
@@ -6492,7 +6489,6 @@ def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:
       yield arg_dtypes
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class NumpyUfuncTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -6525,7 +6521,6 @@ class NumpyUfuncTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False, tol=1E-2)
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class NumpyDocTests(jtu.JaxTestCase):
 
   def test_lax_numpy_docstrings(self):
