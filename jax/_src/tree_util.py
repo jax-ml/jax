@@ -524,6 +524,22 @@ def _register_keypaths(
     )
 
 
+def _sorted_keys(dct: dict[Any, Any]) -> Iterable[Any]:
+  try:
+    # Sort directly if possible (do not use `key` for performance reasons)
+    return sorted(dct)
+  except TypeError:  # the keys are not comparable
+    try:
+      # Add `{obj.__class__.__module__}.{obj.__class__.__qualname__}` to the key
+      # order to make it sortable between different types (e.g. `int` vs. `str`)
+      return sorted(
+        dct,
+        key=lambda o: ('{0.__module__}.{0.__qualname__}'.format(o.__class__), o),
+      )
+    except TypeError:  # cannot sort the keys (e.g. user-defined types)
+      return dct  # fallback to insertion order
+
+
 _registry_with_keypaths = {}
 
 _register_keypaths(
@@ -532,7 +548,7 @@ _register_keypaths(
 _register_keypaths(
     list, lambda xs: tuple(SequenceKey(i) for i in range(len(xs)))
 )
-_register_keypaths(dict, lambda xs: tuple(DictKey(k) for k in sorted(xs)))
+_register_keypaths(dict, lambda xs: tuple(DictKey(k) for k in _sorted_keys(xs)))
 
 _register_keypaths(
     collections.defaultdict, lambda x: tuple(DictKey(k) for k in x.keys())
