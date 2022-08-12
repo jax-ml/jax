@@ -3592,7 +3592,6 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
-  arr = asarray(arr)
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
   if (jax.config.jax_dynamic_shapes and type(idx) is slice and idx.step is None
