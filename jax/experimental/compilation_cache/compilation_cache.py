@@ -111,7 +111,8 @@ def _hash_computation(hash_obj, xla_computation):
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 32
+  # TODO(phawkins): simplify this code when jaxlib >= 0.3.16 is the minimum.
+  expected_num_compile_options = 33 if xla_client._version >= 84 else 32
   assert len(dir(compile_options_obj)) == expected_num_compile_options, (
       f"Unexpected number of CompileOption fields: "
       f"{len(dir(compile_options_obj))}. This likely: means that an extra "
@@ -128,6 +129,9 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   _hash_int(hash_obj, compile_options_obj.profile_version)
   if compile_options_obj.device_assignment is not None:
     hash_obj.update(compile_options_obj.device_assignment.serialize())
+  # TODO(phawkins): simplify this code when jaxlib >= 0.3.16 is the minimum.
+  if xla_client._version >= 84:
+    _hash_bool(hash_obj, compile_options_obj.compile_portable_executable)
 
 def _hash_executable_build_options(hash_obj, executable_obj):
   expected_options = 34
