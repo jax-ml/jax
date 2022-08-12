@@ -163,6 +163,18 @@ class Array:
   def __array__(self, dtype=None):
     return np.asarray(self._value, dtype=dtype)
 
+  # TODO(yashkatariya): Remove this method when everyone is using devices().
+  def device(self) -> Device:
+    device_set = self.sharding.device_set
+    if len(device_set) == 1:
+      single_device, = device_set
+      return single_device
+    raise ValueError('Length of devices is greater than 1. '
+                     'Please use `.devices()`.')
+
+  def devices(self) -> List[Device]:
+    return list(self.sharding.device_set)
+
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
