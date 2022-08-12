@@ -18,7 +18,7 @@ def logpmf(x, n, p):
     x, n, p = _promote_args_inexact("multinomial.logpmf", x, n, p)
     _check_args(x, n, p)
     one = _lax_const(x, 1)
-    nplusone, xplusone = jnp.add(n, 1), jnp.add(x, 1)
+    nplusone, xplusone = jnp.add(n, one), jnp.add(x, one)
     return gammaln(nplusone) + jnp.sum(xlogy(x, p) - gammaln(xplusone), axis=-1)
 
 @_wraps(osp_stats.multinomial.pmf, update_doc=False)
