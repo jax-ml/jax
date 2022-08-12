@@ -17,6 +17,8 @@ import operator as op
 from typing import Callable, Optional, List, Tuple, Sequence, Set, Union, Any
 import types
 
+from absl import logging
+
 import jax
 from jax import core
 from jax import linear_util as lu
@@ -86,6 +88,15 @@ def save_only_these_names(*names_which_can_be_saved):
     return False  # not saveable unless it's in the allow-list
   return policy
 
+
+def save_from_both_policies(policy_1, policy_2):
+
+  def policy(prim, *args, **params):
+    return policy_1(prim, *args, **params) or policy_2(prim, *args, **params)
+
+  return policy
+
+
 checkpoint_policies = types.SimpleNamespace(
     everything_saveable=everything_saveable,
     nothing_saveable=nothing_saveable,
@@ -93,7 +104,7 @@ checkpoint_policies = types.SimpleNamespace(
     checkpoint_dots_with_no_batch_dims=dot_with_no_batch_dims,
     save_any_names_but_these=save_any_names_but_these,
     save_only_these_names=save_only_these_names,
-)
+    save_from_both_policies=save_from_both_policies)
 
 
 ### Main API
