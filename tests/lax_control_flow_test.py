@@ -1607,7 +1607,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
        "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testScanGrad(self, jit_scan, jit_f, scan):
     rng = self.rng()
@@ -2798,6 +2798,39 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     _, actual_tangents = jax.jvp(f, (a, b), (a, b))
     np.testing.assert_allclose(actual_tangents[0], expected_tangents[0])
     np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_jit_for={}_f={}_nsteps={}".format(
+        jit_for, for_body_name, nsteps),
+        "jit_for": jit_for, "f": for_body, "body_shapes": body_shapes,
+        "ref": ref, "n": nsteps}
+      for jit_for in [False, True]
+      for for_body_name, for_body, ref, body_shapes, nsteps in [
+        ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
+        ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
+        ("sincos", for_body_sincos, sincos_ref, [(4,), (4,)], 4),
+        ("sincostan", for_body_sincostan, sincostan_ref, [(4,), (4,)], 4),
+        ("accum", for_body_accum, accum_ref, [(4,), (4,)], 3),
+        ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
+        ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
+      ])
+  def test_for_grad(self, jit_for, f, ref, body_shapes, n):
+    for_ = for_loop.for_loop
+    rng = self.rng()
+
+    args = [rng.randn(*s) for s in body_shapes]
+
+    if jit_for:
+      for_ = jax.jit(for_, static_argnums=(0, 1))
+    tol = {np.float64: 1e-12, np.float32: 1e-4}
+    ans = jax.grad(lambda args: for_(         n, f, args)[1].sum())(args)
+    ans_discharged = jax.grad(
+        lambda args: for_reference(n, f, args)[1].sum())(args)
+    expected = jax.grad(lambda args: ref(*args)[1].sum())(args)
+    self.assertAllClose(ans, ans_discharged, check_dtypes=True, rtol=tol,
+                        atol=tol)
+    self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
+    jtu.check_grads(lambda *args: for_(n, f, args)[1].sum(), args, order=2)
 
 
 if __name__ == '__main__':

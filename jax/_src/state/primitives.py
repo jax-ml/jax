@@ -252,3 +252,10 @@ def _swap_transpose(g, ref, x, *idx):
   x_bar = ref_swap(ref, idx, ad_util.instantiate(g))
   return [None, x_bar] + [None] * len(idx)
 ad.primitive_transposes[swap_p] = _swap_transpose
+
+def addupdate_transpose(cts_in, ref, x, *idx):
+  # addupdate transpose is get
+  del cts_in, x
+  g = ref_get(ref, idx)
+  return [None] + [None] * len(idx) + [g]
+ad.primitive_transposes[addupdate_p] = addupdate_transpose
