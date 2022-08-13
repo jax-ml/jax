@@ -401,6 +401,64 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # print.
     self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
 
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debug_print_in_staged_out_custom_jvp(self):
+
+    @jax.jit
+    def f(x):
+      @jax.custom_jvp
+      def g(x):
+        debug_print("hello: {x}", x=x)
+        return x
+      def g_jvp(primals, tangents):
+        (x,), (t,) = primals, tangents
+        debug_print("goodbye: {x} {t}", x=x, t=t)
+        return x, t
+      g.defjvp(g_jvp)
+      return g(x)
+
+    with capture_stdout() as output:
+      f(2.)
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello: 2.0\n")
+
+    with capture_stdout() as output:
+      jax.jvp(f, (2.,), (3.,))
+      jax.effects_barrier()
+    self.assertEqual(output(), "goodbye: 2.0 3.0\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debug_print_in_staged_out_custom_vjp(self):
+
+    @jax.jit
+    def f(x):
+      @jax.custom_vjp
+      def g(x):
+        debug_print("hello: {x}", x=x)
+        return x
+      def g_fwd(x):
+        debug_print("hello fwd: {x}", x=x)
+        return x, x
+      def g_bwd(x, g):
+        debug_print("hello bwd: {x} {g}", x=x, g=g)
+        return (g,)
+      g.defvjp(fwd=g_fwd, bwd=g_bwd)
+      return g(x)
+
+    with capture_stdout() as output:
+      f(2.)
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello: 2.0\n")
+
+    with capture_stdout() as output:
+      _, f_vjp = jax.vjp(f, 2.)
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello fwd: 2.0\n")
+
+    with capture_stdout() as output:
+      f_vjp(3.0)
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello bwd: 2.0 3.0\n")
 
 class DebugPrintControlFlowTest(jtu.JaxTestCase):
 

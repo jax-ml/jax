@@ -23,6 +23,7 @@ from jax import core
 from jax import tree_util
 from jax import lax
 from jax._src import ad_checkpoint
+from jax._src import custom_derivatives
 from jax._src import lib as jaxlib
 from jax._src import util
 from jax.interpreters import ad
@@ -42,6 +43,8 @@ lcf.allowed_effects.add(DebugEffect.PRINT)
 lcf.allowed_effects.add(DebugEffect.ORDERED_PRINT)
 ad_checkpoint.remat_allowed_effects.add(DebugEffect.PRINT)
 ad_checkpoint.remat_allowed_effects.add(DebugEffect.ORDERED_PRINT)
+custom_derivatives.allowed_effects.add(DebugEffect.PRINT)
+custom_derivatives.allowed_effects.add(DebugEffect.ORDERED_PRINT)
 
 # `debug_callback_p` is the main primitive for staging out Python callbacks.
 debug_callback_p = core.Primitive('debug_callback')

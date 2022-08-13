@@ -15,8 +15,8 @@
 from functools import update_wrapper, reduce, partial
 import inspect
 import operator as op
-from typing import (Callable, Generic, Optional, Sequence, Tuple, List, TypeVar,
-                    Any)
+from typing import (Any, Callable, Generic, List, Optional, Sequence, Set,
+                    Tuple, TypeVar)
 
 from jax import core
 from jax import linear_util as lu
@@ -320,6 +320,8 @@ def _apply_todos(todos, outs):
     outs = map(core.full_lower, todos_list.pop()(outs))
   return outs
 
+
+allowed_effects: Set[core.Effect] = set()
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 
 
@@ -329,8 +331,11 @@ def _custom_jvp_call_jaxpr_impl(*args, fun_jaxpr: core.ClosedJaxpr, **params):
 
 def _custom_jvp_call_jaxpr_abstract_eval(*args, fun_jaxpr: core.ClosedJaxpr, **params):
   del args, params
-  if fun_jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `custom_jvp`.')
+  disallowed_effects = {eff for eff in fun_jaxpr.effects if eff not in
+                        allowed_effects}
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `custom_jvp`: {disallowed_effects}')
   return fun_jaxpr.out_avals, fun_jaxpr.effects
 
 custom_jvp_call_jaxpr_p = core.AxisPrimitive('custom_jvp_call_jaxpr')
@@ -690,8 +695,11 @@ def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
   return core.jaxpr_as_fun(fun_jaxpr)(*args)
 
 def _custom_vjp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
-  if fun_jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `custom_vjp`.')
+  disallowed_effects = {eff for eff in fun_jaxpr.effects if eff not in
+                        allowed_effects}
+  if disallowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `custom_vjp`: {disallowed_effects}')
   return fun_jaxpr.out_avals, fun_jaxpr.effects
 
 custom_vjp_call_jaxpr_p = core.AxisPrimitive('custom_vjp_call_jaxpr')
