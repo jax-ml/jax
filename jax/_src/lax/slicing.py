@@ -50,6 +50,8 @@ Shape = core.Shape
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+_dtype = partial(dtypes.dtype, canonicalize=True)
+
 
 def slice(operand: Array, start_indices: Sequence[int],
           limit_indices: Sequence[int],
@@ -263,7 +265,7 @@ def gather(operand: Array, start_indices: Array,
   parsed_mode = GatherScatterMode.from_any(mode)
   if parsed_mode == GatherScatterMode.FILL_OR_DROP:
     if fill_value is None:
-      dtype = lax._dtype(operand)
+      dtype = _dtype(operand)
       if dtypes.issubdtype(dtype, np.inexact):
         fill_value = np.nan
       elif dtypes.issubdtype(dtype, np.signedinteger):
@@ -2042,14 +2044,15 @@ def _dynamic_slice_indices(operand, start_indices: Any):
     if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))
-    start_indices = [i for i in start_indices]
-  return [np.asarray(i + d if i < 0 else i, lax._dtype(i))
-          if isinstance(i, (int, np.integer)) and core.is_constant_dim(d)
-          else lax.select(
-              lax.lt(i, lax._const(i, 0)),
-              lax.add(i, lax.convert_element_type(core.dimension_as_value(d), lax._dtype(i))),
-              i)
-          for i, d in zip(start_indices, operand.shape)]
+    start_indices = list(start_indices)
+  result = []
+  for i, d in zip(start_indices, operand.shape):
+    if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
+      result.append(lax.convert_element_type(i + d, _dtype(i)) if i < 0 else i)
+    else:
+      d = lax.convert_element_type(core.dimension_as_value(d), _dtype(i))
+      result.append(lax.select(i < 0, i + d, i))
+  return result
 
 
 # TODO(mattjj): getslice is a prototype for dynamic shapes, revise or remove it
