@@ -1,7 +1,7 @@
 cloudpickle
 colorama>=0.4.4
 matplotlib
-pillow>=8.3.1
+pillow>=9.1.0
 pytest-benchmark
 pytest-xdist
 wheel
