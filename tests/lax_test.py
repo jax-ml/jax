@@ -3046,6 +3046,25 @@ class FooTy:
     perm = [*permutation, len(permutation)]
     return mhlo.TransposeOp(x, mlir.dense_int_elements(perm)).results
 
+  @staticmethod
+  def gather_mlir(ctx, x, indices, *,
+                  dimension_numbers, slice_sizes, unique_indices,
+                  indices_are_sorted, mode, fill_value):
+    aval_x, aval_indices = ctx.avals_in
+    aval_y, = ctx.avals_out
+    dimension_numbers = dimension_numbers._replace(
+        offset_dims=(*dimension_numbers.offset_dims, aval_y.ndim))
+    slice_sizes = (*slice_sizes, 2)
+    gather_lower = partial(
+        lax_internal.slicing._gather_lower, dimension_numbers=dimension_numbers,
+        slice_sizes=slice_sizes, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+    aval_x_raw = core.ShapedArray((*aval_x.shape, 2), np.dtype('uint32'))
+    aval_y_raw = core.ShapedArray((*aval_y.shape, 2), np.dtype('uint32'))
+    return mlir.delegate_lowering(ctx, gather_lower, x, indices,
+                                  avals_in=[aval_x_raw, aval_indices],
+                                  avals_out=[aval_y_raw])
+
 # primitives
 
 make_p = core.Primitive('make')
@@ -3278,6 +3297,30 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     ys = jax.jit(lambda x: x.T)(ks)
     self.assertIsInstance(ys, FooArray)
     self.assertEqual(ys.shape, (4, 3))
+
+  def test_gather(self):
+    ks = jax.jit(lambda: make((3, 4)))()
+    ys = jax.jit(lambda x: x[1])(ks)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (4,))
+
+    ks = jax.jit(lambda: make((3, 4, 5)))()
+
+    ys = jax.jit(lambda x: x[1])(ks)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (4, 5))
+
+    ys = jax.jit(lambda x: x[1, 2:4])(ks)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (2, 5))
+
+    ys = jax.jit(lambda x: x[1, 2:4, 3])(ks)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (2,))
+
+    ys = jax.jit(lambda x: x[:, 2:4, 3:4])(ks)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (3, 2, 1))
 
   # TODO(frostig,mattjj): more polymorphic primitives tests
 

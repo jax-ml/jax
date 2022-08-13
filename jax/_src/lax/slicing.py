@@ -1315,6 +1315,12 @@ def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype.gather_mlir(
+        ctx, operand, indices, dimension_numbers=dimension_numbers,
+        slice_sizes=slice_sizes, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
     return gather_fill_fn(
