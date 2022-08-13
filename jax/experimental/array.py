@@ -139,6 +139,12 @@ class Array:
   def sharding(self):
     return self._sharding
 
+  def __len__(self):
+    try:
+      return self.shape[0]
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err  # same as numpy error
+
   def __repr__(self):
     prefix = '{}('.format(self.__class__.__name__.lstrip('_'))
     # TODO(yashkatariya): Add weak_type to the repr and handle weak_type
