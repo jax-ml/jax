@@ -1699,20 +1699,24 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
     with self.assertRaisesRegex(TypeError, 'input element type key<fry2>'):
       jax.grad(lambda x: 1., allow_int=True)(key)
 
-@skipIf(not config.jax_enable_custom_prng,
-        'custom PRNG tests require config.jax_enable_custom_prng')
+
+# TODO(frostig): remove `with_config` we always enable_custom_prng
+@jtu.with_config(jax_default_prng_impl='rbg')
 class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def seed_prng(self, seed):
     return random.rbg_key(seed)
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_split_shape(self):
     key = self.seed_prng(73)
     keys = random.split(key, 10)
     self.assertEqual(keys.shape, (10,))
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_vmap_fold_in_shape(self):
     LaxRandomWithCustomPRNGTest.test_vmap_fold_in_shape(self)
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_vmap_split_not_mapped_key(self):
     key = self.seed_prng(73)
     single_split_key = random.split(key)
@@ -1722,6 +1726,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
       self.assertArraysEqual(vk.unsafe_raw_array(),
                              single_split_key.unsafe_raw_array())
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_vmap_split_mapped_key(self):
     key = self.seed_prng(73)
     mapped_keys = random.split(key, num=3)
@@ -1741,6 +1746,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     self.assertEqual(rand_nums.shape, (3,))
     self.assertArraysEqual(rand_nums, jnp.array(forloop_rand_nums))
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_cannot_add(self):
     key = self.seed_prng(73)
     self.assertRaisesRegex(
@@ -1749,6 +1755,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
 
   @skipIf(np.__version__ == "1.21.0",
           "https://github.com/numpy/numpy/issues/19305")
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_grad_of_prng_key(self):
     key = self.seed_prng(73)
     with self.assertRaisesRegex(TypeError, 'input element type key<.?rbg>'):
@@ -1762,16 +1769,18 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     raise SkipTest('8-bit types not supported with RBG PRNG')
 
 
+# TODO(frostig): remove `with_config` we always enable_custom_prng
+@jtu.with_config(jax_default_prng_impl='unsafe_rbg')
 class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
   def seed_prng(self, seed):
-    return prng.seed_with_impl(prng.unsafe_rbg_prng_impl, seed)
+    return random.unsafe_rbg_key(seed)
 
 def like(keys):
   return jnp.ones(keys.shape)
 
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
-class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
+class JnpWithKeyArrayTest(jtu.JaxTestCase):
   def test_reshape(self):
     key = random.PRNGKey(123)
     keys = random.split(key, 4)
