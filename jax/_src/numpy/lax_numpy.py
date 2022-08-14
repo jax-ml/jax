@@ -1616,14 +1616,14 @@ def pad(array, pad_width, mode="constant", **kwargs):
 
 
 @_wraps(np.stack, skip_params=['out'])
-def stack(arrays, axis: int = 0, out=None):
+def stack(arrays, axis: int = 0, out=None, dtype=None):
   if not len(arrays):
     raise ValueError("Need at least one array to stack.")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.stack is not supported.")
   if isinstance(arrays, (np.ndarray, ndarray)):
     axis = _canonicalize_axis(axis, arrays.ndim)
-    return concatenate(expand_dims(arrays, axis + 1), axis=axis)
+    return concatenate(expand_dims(arrays, axis + 1), axis=axis, dtype=dtype)
   else:
     _stackable(*arrays) or _check_arraylike("stack", *arrays)
     shape0 = shape(arrays[0])
@@ -1633,7 +1633,7 @@ def stack(arrays, axis: int = 0, out=None):
       if shape(a) != shape0:
         raise ValueError("All input arrays must have the same shape.")
       new_arrays.append(expand_dims(a, axis))
-    return concatenate(new_arrays, axis=axis)
+    return concatenate(new_arrays, axis=axis, dtype=dtype)
 
 @_wraps(np.tile)
 def tile(A, reps):
@@ -1696,33 +1696,33 @@ def concatenate(arrays, axis: int = 0, dtype=None):
 
 
 @_wraps(np.vstack)
-def vstack(tup):
+def vstack(tup, dtype=None):
   if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_2d)(tup)
   else:
     arrs = [atleast_2d(m) for m in tup]
-  return concatenate(arrs, axis=0)
+  return concatenate(arrs, axis=0, dtype=dtype)
 row_stack = vstack
 
 
 @_wraps(np.hstack)
-def hstack(tup):
+def hstack(tup, dtype=None):
   if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_1d)(tup)
     arr0_ndim = arrs.ndim - 1
   else:
     arrs = [atleast_1d(m) for m in tup]
     arr0_ndim = arrs[0].ndim
-  return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1)
+  return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1, dtype=dtype)
 
 
 @_wraps(np.dstack)
-def dstack(tup):
+def dstack(tup, dtype=None):
   if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_3d)(tup)
   else:
     arrs = [atleast_3d(m) for m in tup]
-  return concatenate(arrs, axis=2)
+  return concatenate(arrs, axis=2, dtype=dtype)
 
 
 @_wraps(np.column_stack)
