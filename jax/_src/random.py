@@ -1631,6 +1631,7 @@ def orthogonal(
   Returns:
     A random array of shape `(*shape, n, n)` and specified dtype.
   """
+  key, _ = _check_prng_key(key)
   _check_shape("orthogonal", shape)
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
   z = normal(key, (*shape, n, n), dtype)
@@ -1656,6 +1657,7 @@ def generalized_normal(
   Returns:
     A random array with the specified shape and dtype.
   """
+  key, _ = _check_prng_key(key)
   _check_shape("generalized_normal", shape)
   keys = split(key)
   g = gamma(keys[0], 1/p, shape, dtype)
@@ -1684,6 +1686,7 @@ def ball(
   Returns:
     A random array of shape `(*shape, d)` and specified dtype.
   """
+  key, _ = _check_prng_key(key)
   _check_shape("ball", shape)
   d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
   k1, k2 = split(key)
