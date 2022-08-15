@@ -136,7 +136,7 @@ class IreeClient:
 
   def __init__(self,
                *,
-               iree_backend: str = None):
+               iree_backend: Optional[str] = None):
     self.platform = "iree"
     self.platform_version = "0.0.1"
     self.runtime_type = "iree"
