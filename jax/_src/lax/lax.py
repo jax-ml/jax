@@ -1886,7 +1886,10 @@ xla.register_translation(bessel_i0e_p, standard_translate(bessel_i0e_p))
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
 
 bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
-xla.register_translation(bessel_i1e_p, standard_translate(bessel_i1e_p))
+if jax._src.lib.mlir_api_version < 31:
+  xla.register_translation(bessel_i1e_p, standard_translate(bessel_i1e_p))
+else:
+  mlir.register_lowering(bessel_i1e_p, partial(_nary_lower_mhlo, chlo.BesselI1eOp))
 def _bessel_i1e_jvp(g, y, x):
   eps = dtypes.finfo(_dtype(x)).eps
   x_is_not_tiny = abs(x) > eps
