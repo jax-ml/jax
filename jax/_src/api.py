@@ -660,7 +660,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
 
 
 @contextmanager
-def disable_jit():
+def disable_jit(disable: bool = True):
   """Context manager that disables :py:func:`jit` behavior under its dynamic context.
 
   For debugging it is useful to have a mechanism that disables :py:func:`jit`
@@ -704,7 +704,7 @@ def disable_jit():
   Value of y is [2 4 6]
   [5 7 9]
   """
-  with _disable_jit(True):
+  with _disable_jit(disable):
     yield
 
 

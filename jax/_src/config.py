@@ -897,6 +897,13 @@ config.define_bool_state(
     default=False,
     help='Enable using a cache for lowering subjaxprs.')
 
+# TODO(sharadmv,mattjj): set default to True, then remove
+config.define_bool_state(
+    name='jax_eager_pmap',
+    default=False,
+    upgrade=True,
+    help='Enable eager-mode pmap when jax_disable_jit is activated.')
+
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:
   """Indicates that the current context is an explicit device_put*() call."""
