@@ -2020,11 +2020,11 @@ def _get_f_mapped(
     axis_name: Optional[AxisName],
     in_axes=0,
     out_axes=0,
-    static_broadcasted_tuple: Tuple[int],
+    static_broadcasted_tuple: Tuple[int, ...],
     devices: Optional[Sequence[xc.Device]],  # noqa: F811
     backend: Optional[str],
     axis_size: Optional[int],
-    donate_tuple: Tuple[int],
+    donate_tuple: Tuple[int, ...],
     global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]],
   ):
   def pmap_f(*args, **kwargs):

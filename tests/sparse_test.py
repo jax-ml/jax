@@ -60,8 +60,8 @@ GPU_LOWERING_ENABLED = gpu_sparse and (gpu_sparse.cuda_is_supported or
                                        gpu_sparse.rocm_is_supported)
 
 class BcooDotGeneralProperties(NamedTuple):
-  lhs_shape: Tuple[int]
-  rhs_shape: Tuple[int]
+  lhs_shape: Tuple[int, ...]
+  rhs_shape: Tuple[int, ...]
   dtype: np.dtype
   n_batch: int
   n_dense: int

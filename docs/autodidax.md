@@ -251,7 +251,7 @@ def swap(f): return lambda x, y: f(y, x)
 ```{code-cell} ipython3
 class ShapedArray:
   array_abstraction_level = 1
-  shape: Tuple[int]
+  shape: Tuple[int, ...]
   dtype: np.dtype
 
   def __init__(self, shape, dtype):
@@ -722,7 +722,7 @@ register_pytree_node(dict,
 class PyTreeDef(NamedTuple):
   node_type: NodeType
   node_metadata: Hashable
-  child_treedefs: Tuple['PyTreeDef']
+  child_treedefs: Tuple['PyTreeDef', ...]
 
 class Leaf: pass
 leaf = Leaf()
@@ -1564,7 +1564,8 @@ def xla_call_impl(*args, jaxpr: Jaxpr, num_consts: int):
 impl_rules[xla_call_p] = xla_call_impl
 
 @lru_cache()
-def xla_callable(hashable_jaxpr: IDHashable, hashable_consts: Tuple[IDHashable]):
+def xla_callable(hashable_jaxpr: IDHashable,
+                 hashable_consts: Tuple[IDHashable, ...]):
   jaxpr: Jaxpr = hashable_jaxpr.val
   typecheck_jaxpr(jaxpr)
   consts = [x.val for x in hashable_consts]

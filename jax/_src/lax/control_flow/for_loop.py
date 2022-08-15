@@ -291,7 +291,7 @@ _save_everything = lambda *_, **__: True
 
 def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
                       jaxpr: core.Jaxpr, nsteps: int, reverse: bool,
-                      which_linear: Tuple[bool]) -> List[pe.JaxprTracer]:
+                      which_linear: Tuple[bool, ...]) -> List[pe.JaxprTracer]:
   num_inputs = len(tracers)
   in_unknowns = [not t.pval.is_known() for t in tracers]
   # We first need to run a fixpoint to determine which of the `Ref`s are unknown

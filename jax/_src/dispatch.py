@@ -1018,7 +1018,7 @@ def check_arg_avals_for_call(ref_avals, arg_avals):
         f"called with:\n  {arg_avals_fmt}")
 
 
-def device_put(x, device: Optional[Device] = None) -> Tuple[Any]:
+def device_put(x, device: Optional[Device] = None) -> Tuple[Any, ...]:
   x = xla.canonicalize_dtype(x)
   try:
     return device_put_handlers[type(x)](x, device)
@@ -1044,7 +1044,8 @@ def _device_put_token(_, device):
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
-device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]], Tuple[Any]]] = {}
+device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]],
+                                        Tuple[Any, ...]]] = {}
 device_put_handlers.update((t, _device_put_array) for t in array_types)
 device_put_handlers.update((t, _device_put_scalar) for t in _scalar_types)
 device_put_handlers[core.Token] = _device_put_token

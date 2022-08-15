@@ -52,7 +52,7 @@ def _get_impl(ref: Ref, *idx: int):
   raise ValueError("Cannot run stateful primitive.")
 get_p.def_impl(_get_impl)
 
-def ref_get(ref: Ref, idx: Tuple[int]) -> Array:
+def ref_get(ref: Ref, idx: Tuple[int, ...]) -> Array:
   """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
   idx = map(jnp.int32, idx)
   return get_p.bind(ref, *idx)
@@ -80,12 +80,12 @@ def _swap_impl(ref: Ref, value: Array, *idx: int):
   raise ValueError("Cannot run stateful primitive.")
 swap_p.def_impl(_swap_impl)
 
-def ref_swap(ref: Ref, idx: Tuple[int], value: Array) -> Array:
+def ref_swap(ref: Ref, idx: Tuple[int, ...], value: Array) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
   idx = map(jnp.int32, idx)
   return swap_p.bind(ref, value, *idx)
 
-def ref_set(ref: Ref, idx: Tuple[int], value: Array) -> None:
+def ref_set(ref: Ref, idx: Tuple[int, ...], value: Array) -> None:
   """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
   ref_swap(ref, idx, value)
 
@@ -108,7 +108,7 @@ def _addupdate_impl(ref: Ref, value: Array, *idx: int):
   raise ValueError("Can't evaluate `addupdate` outside a stateful context.")
 addupdate_p.def_impl(_addupdate_impl)
 
-def ref_addupdate(ref: Ref, idx: Tuple[int], x: Array) -> None:
+def ref_addupdate(ref: Ref, idx: Tuple[int, ...], x: Array) -> None:
   """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
   return addupdate_p.bind(ref, x, *idx)
 

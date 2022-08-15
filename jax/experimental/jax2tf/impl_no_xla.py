@@ -585,7 +585,8 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
 def _reduce_window(*args, jaxpr, consts, window_dimensions,
                    window_strides, padding, base_dilation, window_dilation,
                    _in_avals: Sequence[core.ShapedArray],
-                   _out_aval: Tuple[core.ShapedArray]) -> Tuple[TfVal]:
+                   _out_aval: Tuple[core.ShapedArray, ...]
+                   ) -> Tuple[TfVal, ...]:
   assert len(consts) == 0, "Reduction computation cannot have constants"
   operands, init_values = util.split_list(args, [len(args) // 2])
 
