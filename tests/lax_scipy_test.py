@@ -506,7 +506,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for nonzero_condition_number in nonzero_condition_numbers
       for dtype in jtu.dtypes.inexact
       for seed in seeds))
-  @jtu.skip_on_devices("gpu")  # Fails on A100.
   def testPolar(
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
       side, nonzero_condition_number, dtype, seed):

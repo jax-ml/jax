@@ -93,8 +93,6 @@ class QdwhTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([8, 10, 20], [6, 10, 18])
       for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
-  # TODO(tianjianlu): Fails on A100 GPU.
-  @jtu.skip_on_devices("gpu")
   def testQdwhWithUpperTriangularInputAllOnes(self, m, n, log_cond):
     """Tests qdwh with upper triangular input of all ones."""
     a = jnp.triu(jnp.ones((m, n))).astype(_QDWH_TEST_DTYPE)
@@ -181,8 +179,6 @@ class QdwhTest(jtu.JaxTestCase):
           'm': m, 'n': n, 'log_cond': log_cond}
       for m, n in zip([10, 8], [10, 8])
       for log_cond in np.linspace(1, 4, 4)))
-  # TODO(tianjianlu): Fails on A100 GPU.
-  @jtu.skip_on_devices("gpu")
   def testQdwhWithOnRankDeficientInput(self, m, n, log_cond):
     """Tests qdwh with rank-deficient input."""
     a = jnp.triu(jnp.ones((m, n))).astype(_QDWH_TEST_DTYPE)
