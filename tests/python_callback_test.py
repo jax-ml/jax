@@ -501,7 +501,6 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
   def test_can_pmap_pure_callback(self):
 
-    @jax.jit
     @jax.pmap
     def f(x):
       return jc.pure_callback(np.sin, x, x)
