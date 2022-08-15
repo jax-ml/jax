@@ -35,6 +35,7 @@ build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
 # these values are overridden.
 build --@org_tensorflow//tensorflow/compiler/xla/python:enable_gpu=false
 build --@org_tensorflow//tensorflow/compiler/xla/python:enable_tpu=false
+build --@org_tensorflow//tensorflow/compiler/xla/python:enable_plugin_device=false
 
 ###########################################################################
 
@@ -112,6 +113,8 @@ build:short_logs --output_filter=DONT_MATCH_ANYTHING
 
 build:tpu --@org_tensorflow//tensorflow/compiler/xla/python:enable_tpu=true
 build:tpu --define=with_tpu_support=true
+
+build:plugin_device --@org_tensorflow//tensorflow/compiler/xla/python:enable_plugin_device=true
 
 #########################################################################
 # RBE config options below.

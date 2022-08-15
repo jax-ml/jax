@@ -247,6 +247,13 @@ if hasattr(xla_client, "make_tpu_client"):
   register_backend_factory(
     'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
 
+if hasattr(xla_client, "make_plugin_device_client"):
+  # It is assumed that if jax has been built with a plugin client, then the
+  # user wants to use the plugin client by default. Therefore, it gets the
+  # highest priority.
+  register_backend_factory("plugin", xla_client.make_plugin_device_client,
+      priority=400)
+
 if iree is not None:
   register_backend_factory("iree", iree.iree_client_factory, priority=-100)
 
