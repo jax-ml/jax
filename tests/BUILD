@@ -526,9 +526,9 @@ jax_test(
     name = "pmap_test",
     srcs = ["pmap_test.py"],
     shard_count = {
-        "cpu": 5,
+        "cpu": 10,
         "gpu": 10,
-        "tpu": 5,
+        "tpu": 10,
     },
     tags = ["multiaccelerator"],
     deps = [
