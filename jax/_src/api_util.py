@@ -263,7 +263,7 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
 
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
-                           args: Tuple[Any], *, allow_invalid: bool):
+                           args: Tuple[Any, ...], *, allow_invalid: bool):
   """Version of ``argnums_partial`` that checks hashability of static_argnums."""
   if not static_argnums:
     return f, args

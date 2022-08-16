@@ -1306,7 +1306,7 @@ def gen_axis_names():
 
 
 def schedules_from_pdot_spec(
-    spec: PdotTestSpec, lhs_shape: Tuple[int], rhs_shape: Tuple[int]
+    spec: PdotTestSpec, lhs_shape: Tuple[int, ...], rhs_shape: Tuple[int, ...]
     ) -> Generator[Tuple[AxisResources, jtu.MeshSpec], None, None]:
   logical_sizes = {
       name: shape[ax]

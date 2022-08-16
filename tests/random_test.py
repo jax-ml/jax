@@ -61,7 +61,7 @@ PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
 class RandomValuesCase(NamedTuple):
   name: str
   prng_impl: str
-  shape: Tuple[int]
+  shape: Tuple[int, ...]
   dtype: Any
   params: dict
   expected: np.ndarray

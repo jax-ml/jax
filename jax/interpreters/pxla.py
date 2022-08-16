@@ -539,7 +539,7 @@ class OutputType(enum.Enum):
 def local_aval_to_result_handler(
     aval: core.AbstractValue,
     sharding: XLACompatibleSharding,
-    indices: Optional[Tuple[Index]],
+    indices: Optional[Tuple[Index, ...]],
 ) -> Callable[[List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
