@@ -120,10 +120,11 @@ def pads_to_padtype(in_shape, window_shape, window_strides, padding) -> str:
 
 def _pad_spatial_dims(x, x_shape, padding):
   """Pads `x` using `padding`, which specifies padding for the spatial dimensions."""
-  # Add empty padding for batch and feature dimensions.
-  no_pad = ((0, 0),)
   padding = tuple(padding)
-  padding = no_pad + padding + no_pad
+  if len(padding) == len(x_shape) - 2:
+    # If necessary, add empty padding for batch and feature dimensions.
+    no_pad = ((0, 0),)
+    padding = no_pad + padding + no_pad
   x = tf.pad(x, padding)
   assert len(x.shape) == len(padding)
   x_shape = tuple(p0 + xs + p1 for xs, (p0, p1) in zip(x_shape, padding))
@@ -517,11 +518,9 @@ tf_impl_no_xla[lax.argmin_p] = partial(_argminmax, True)
 tf_impl_no_xla[lax.argmax_p] = partial(_argminmax, False)
 
 
-def _reduce_monoid(operand, window_dimensions, window_strides, padding,
-                   base_dilation, window_dilation, computation_name,
-                   _in_avals: Sequence[core.ShapedArray],
-                   _out_aval: core.ShapedArray):
-  dtype = operand.dtype
+def _validate_reduce_window_inputs(operand_shape, computation_name, dtype,
+                                   window_dimensions, window_strides,
+                                   base_dilation, window_dilation):
   if computation_name not in ["min", "max", "add"]:
     raise _reduce_error("Reduction function should be either min, max, or add.")
   if computation_name in ["min", "max"] and dtype in [
@@ -540,35 +539,117 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
     raise _reduce_error("Add pooling does not support operands of type "
                         f"{dtype}")
 
-  # In presence of shape polymorphism, operand.shape may contain None. The
-  # actual dimension polynomial shapes are in _in_avals.
-  operand_shape = _in_avals[0].shape
+  if (len(operand_shape) != len(window_dimensions) != len(window_strides) !=
+      len(window_dilation)):
+    raise _reduce_error("Input shapes, window dimensions, window stride "
+                        "dimensions, and window dilation dimensions should "
+                        "match.")
+
+  has_only_spatial_dims = True
+  if len(operand_shape) > 4:
+    raise _reduce_error("Only 1D or 2D input are supported.")
+  if len(operand_shape) > 2:
+    # operand_shape = (batch, spatial_dims, ..., channel).
+    has_only_spatial_dims = False
+
+    for name, value in [("window_dimensions", window_dimensions),
+                        ("window_strides", window_strides),
+                        ("window_dilation", window_dilation)]:
+      if value[0] != value[-1] != 1:
+        raise _reduce_error("Only 1D or 2D input are supported, expected "
+                            f"{name}=(1, spatial_dims, ..., 1), but got "
+                            f"{value}")
 
   if list(base_dilation) != [1] * len(operand_shape):
     # TODO(marcvanzee): Add support for base dilations. We can do this using
     # a scatter on operand.
     raise _reduce_error("Unimplemented support for base dilation.")
 
+  return has_only_spatial_dims
+
+
+def _padding_reduce_window(operand, operand_shape, computation_name,
+                           window_dimensions, window_strides, padding):
   padding_type = pads_to_padtype(operand_shape, window_dimensions,
                                  window_strides, padding)
-  if padding_type == "EXPLICIT":
-    # TODO(marcvanzee): Add support for explicit padding. This can be done
-    # similarly like we did for convolutions.
-    raise _reduce_error("Only 'VALID' and 'SAME' padding are currently "
-                        "supported.")
 
-  def tf_pool(op, pooling_type):
-    # Add batch and channel dimensions, these are expected by TF.
-    op = tf.reshape(op, (1,) + operand_shape + (1,))
-    op = tf.nn.pool(
-        input=op,
+  # https://github.com/google/jax/issues/11874.
+  needs_manual_padding = (
+      padding_type == "SAME" and computation_name == "add" and
+      window_dimensions != [1] * len(operand_shape))
+
+  if needs_manual_padding or padding_type == "EXPLICIT":
+    operand, operand_shape = _pad_spatial_dims(operand, operand_shape, padding)
+    padding_type = "VALID"
+
+  return operand, operand_shape, padding_type
+
+
+def _reshape_reduce_window(operand, operand_shape, window_dimensions,
+                           window_strides, window_dilation, *,
+                           has_only_spatial_dims):
+  # Reshape inputs so they are accepted by tf.nn.pool, which expects batch and
+  # channel dimensions for operand but not for any of the other inputs.
+  if has_only_spatial_dims:  # len(operand_shape) <= 2
+    # Call eval_shape on a shape that may contain polynomials, otherwise TF does
+    # not know what to do with polynomials in the shape.
+    operand_shape = jax2tf._eval_shape(operand_shape)
+    # Add batch and channel dimensions to operand.
+    operand = tf.reshape(operand, (1,) + operand_shape + (1,))
+  else:
+    # This branch assumes operand.shape = (batch, spatial_dims, ..., channel),
+    # and dimensions, strides, dilation are all (1, spatial_values, ..., 1).
+    # Input validation for this is done in _validate_reduce_window_inputs.
+    window_dimensions = window_dimensions[1:-1]
+    window_strides = window_strides[1:-1]
+    window_dilation = window_dilation[1:-1]
+
+  return operand, window_dimensions, window_strides, window_dilation
+
+
+def _reduce_monoid(operand, window_dimensions, window_strides, padding,
+                   base_dilation, window_dilation, computation_name,
+                   _in_avals: Sequence[core.ShapedArray],
+                   _out_aval: core.ShapedArray):
+  dtype = operand.dtype
+  # In presence of shape polymorphism, operand.shape may contain None. The
+  # actual dimension polynomial shapes are in _in_avals.
+  operand_shape = _in_avals[0].shape
+
+  # TODO(marcvanzee): Put reduce_window arguments into dataclass, similar to
+  # Gather, to simplify function calls.
+  has_only_spatial_dims = _validate_reduce_window_inputs(
+      operand_shape, computation_name, dtype, window_dimensions, window_strides,
+      base_dilation, window_dilation)
+
+  operand, operand_shape, padding_type = _padding_reduce_window(
+      operand, operand_shape, computation_name, window_dimensions,
+      window_strides, padding)
+
+  operand, window_dimensions, window_strides, dilations = _reshape_reduce_window(
+      operand,
+      operand_shape,
+      window_dimensions,
+      window_strides,
+      window_dilation,
+      has_only_spatial_dims=has_only_spatial_dims)
+
+  def tf_pool(inputs, pooling_type):
+    result = tf.nn.pool(
+        inputs,
         window_shape=window_dimensions,
         pooling_type=pooling_type,
         padding=padding_type,
         strides=window_strides,
-        dilations=window_dilation)
-    op = tf.reshape(op, jax2tf._aval_to_tf_shape(_out_aval))
-    return op
+        dilations=dilations)
+
+    if has_only_spatial_dims:
+      # If the input only had spatial dimensions we need to contract the batch
+      # and channel dimensions before returning the output.
+      result = tf.squeeze(result, [0, -1])
+
+    jax2tf._assert_matching_abstract_shape(result, _out_aval.shape)
+    return result
 
   negate = lambda x: tf.multiply(x, tf.constant(-1, dtype))
   if computation_name == "max":
@@ -577,8 +658,8 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
     return negate(tf_pool(negate(operand), "MAX"))
   elif computation_name == "add":
     # TODO(marcvanzee): This may give very large deviations on TPU when using
-    # floats as inputs. We should think of a different implementation if users
-    # run into this often.
+    # floats as inputs. Alternatively, we could implement this using a
+    # convolution with an all-1's kernel.
     return tf.multiply(tf_pool(operand, "AVG"), np.prod(window_dimensions))
 
 

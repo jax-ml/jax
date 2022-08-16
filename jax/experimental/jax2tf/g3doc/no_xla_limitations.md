@@ -150,20 +150,29 @@ function `lax.reduce_window_p` with the following conditions:
 
 We provide partial support for all these ops, with the following limitations:
 
-* `computation` should be one of `lax.min`, `lax.max`, or `lax.add`.
-* For `lax.min` and `lax.max`, dtypes `np.bool`, `np.uint32`, `np.uint64`,
-  `np.complex64`, and `np.complex128` are not supported.
-* Additionally, for `lax.min`, dtypes `np.uint8` and `np.uint16` are not
-  supported.
-* For `lax.add`, only dtypes `np.float16`, `np.float32`, and `np.float64` are
-  supported.
-* We support at most 2 spatial dimension.
-* Base dilations other than `(1,) * len(operand)` are not supported.
-* `padding` should either be `VALID` or `SAME`.
-* Using `lax.add` on TPU may give very large deviations. This is due to the way
-  the conversion is implemented (first take the average over the window and then
-  multiply by window size). This gives large deviations on TPU due to the fact
-  that it uses `bfloat16` for computations.
+*   `computation` should be one of `lax.min`, `lax.max`, or `lax.add`.
+*   For `lax.min` and `lax.max`, dtypes `np.bool`, `np.uint32`, `np.uint64`,
+    `np.complex64`, and `np.complex128` are not supported.
+*   Additionally, for `lax.min`, dtypes `np.uint8` and `np.uint16` are not
+    supported.
+*   For `lax.add`, only dtypes `np.float16`, `np.float32`, and `np.float64` are
+    supported.
+*   We support at most 2 spatial dimension.
+*   Base dilations other than `(1,) * len(operand)` are not supported.
+*   `padding` should either be `VALID` or `SAME`.
+*   We compute `lax.reduce_window_sum_p` by calling `tf.nn.avg_pool` (through
+    `tf.nn.pool`), and then multiplying the result by
+    `np.prod(window_dimensions)`. If you are using an NN library that implements
+    `avg_pool` using `lax.reduce_window` (such as Flax's
+    [pooling.py](https://github.com/google/flax/blob/main/flax/linen/pooling.py)),
+    this is usually implemented by dividing the result with
+    `np.prod(window_dimensions)`. So when converting this function, the
+    resulting computation for `avg_pool` is `(tf.nn.avg_pool(xs) *
+    np.prod(window)) / np.prod(window)`. This is redundant and can be optimized.
+*   Using `lax.add` on TPU may give very large deviations. This is due to the
+    way the conversion is implemented (first take the average over the window
+    and then multiply by window size). This gives large deviations on TPU due to
+    the fact that it uses `bfloat16` for computations.
 
 We implement all reductions using the Tensorflow function
 [tf.nn.pool](https://www.tensorflow.org/api_docs/python/tf/nn/pool).

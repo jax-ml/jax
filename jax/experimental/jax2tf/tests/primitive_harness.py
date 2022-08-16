@@ -828,7 +828,7 @@ for prim in [lax.argmin_p, lax.argmax_p]:
   for index_dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned:
     _make_argminmax_harness(prim, "index_dtype", index_dtype=index_dtype)
 
-      # Some special cases, with equal elements and NaN
+  # Some special cases, with equal elements and NaN
   for name, operand in [
       ("nan_0", np.array([np.nan, np.nan, 2., -2., -np.nan, -np.nan], np.float32)),
       ("nan_1", np.array([np.nan, -np.nan, 2., -2.], np.float32)),
@@ -2488,19 +2488,22 @@ _make_reduce_window_harness("base_dilation", base_dilation=(1, 2),
                             requires_xla=True)
 # Validate window_dilation
 _make_reduce_window_harness("window_dilation", window_dilation=(1, 2))
-# Validate squeezing behavior and dimensions in tf.nn.max_pool
-for shape, window_dimensions in [
-    ((2,), (2,)),  # 1 spatial dimension, left and right squeeze
-    ((2, 1), (2, 1)),  # 1 spatial dimension, left squeeze
-    ((1, 2), (1, 2)),  # 1 spatial dimension, right squeeze
-    ((1, 2, 1), (1, 2, 1)),  # 1 spatial dimension no squeeze
-    ((2, 4), (2, 2)),  # 2 spatial dimensions, left and right squeeze
-    ((2, 4, 3), (2, 2, 2)),  # 3 spatial dimensions, left and right squeeze
-    ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1))  # 3 spatial dimensions, no squeeze
+# Validate batch and channel dimensions behavior. lax.reduce_window accepts
+# inputs that either have or do not have batch and channel dimensions.
+# N=batch, DHW=spatial, C=channel.
+# Without XLA only supports 1D/2D reductions.
+for shape, window_dimensions, requires_xla in [
+    ((2,), (2,), False),  # W
+    ((2, 1), (2, 1), False),  # WC
+    ((1, 2), (1, 2), False),  # NW
+    ((1, 2, 1), (1, 2, 1), False),  # NWC
+    ((2, 4), (2, 2), False),  # HW
+    ((1, 2, 4, 1), (1, 2, 2, 1), False),  # NHWC
+    ((2, 4, 3), (2, 2, 2), True),  # DHW
+    ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1), True)  # NDHWC
 ]:
-  requires_xla = len(shape) > 2  # Without XLA only supports 1D/2D reductions.
   _make_reduce_window_harness(
-      "squeeze_dim",
+      "batch_channel_dims",
       computation=lax.max,
       shape=shape,
       dtype=np.float32,
@@ -2512,17 +2515,31 @@ for shape, window_dimensions in [
       window_dimensions=window_dimensions,
       requires_xla=requires_xla)
 
-# This corresponds to SAME padding.
-_make_reduce_window_harness(
-    "same_padding",
-    shape=(112, 112),
-    init_value=-np.inf,
-    computation=lax.max,
-    window_dimensions=(3, 3),
-    window_strides=(2, 2),
-    padding="SAME")
+for computation, id_value in [(lax.max, _get_max_identity(np.float32)),
+                              (lax.min, _get_min_identity(np.float32)),
+                              (lax.add, 0.)]:
+  _make_reduce_window_harness(
+      "same_padding",
+      shape=(112, 112),
+      init_value=id_value,
+      computation=computation,
+      window_dimensions=(3, 3),
+      window_strides=(2, 2),
+      padding="SAME")
 
-# b/240647139
+# A few additional test cases for manual padding, which is applied when calling
+# reduce_window with lax.add, SAME padding and window_dimensions != (1, 1, ...).
+for window_dimensions, window_strides in [((2, 2), (1, 1)), ((3, 3), (2, 2)),
+                                          ((13, 13), (5, 6))]:
+  _make_reduce_window_harness(
+      "manual_padding",
+      shape=(12, 12),
+      init_value=0.,
+      computation=lax.add,
+      window_dimensions=window_dimensions,
+      window_strides=window_strides,
+      padding="SAME")
+
 _make_reduce_window_harness(
     "init_value_1d",
     shape=(1, 16000),
