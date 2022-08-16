@@ -266,7 +266,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --distinct_host_configuration=false\n")
 
     for o in bazel_options:
-      f.write(f"common {o}\n")
+      f.write(f"build {o}\n")
     if target_cpu_features == "release":
       if wheel_cpu == "x86_64":
         f.write("build --config=avx_windows\n" if is_windows()
@@ -464,6 +464,7 @@ def main():
       "darwin_arm64": "arm64",
       "darwin_x86_64": "x86_64",
       "ppc": "ppc64le",
+      "aarch64": "aarch64",
   }
   # TODO(phawkins): support other bazel cpu overrides.
   wheel_cpu = (wheel_cpus[args.target_cpu] if args.target_cpu is not None
@@ -548,7 +549,7 @@ def main():
     f"--cpu={wheel_cpu}"])
   print(" ".join(command))
   shell(command)
-  shell([bazel_path, "shutdown"])
+  shell([bazel_path] + args.bazel_startup_options + ["shutdown"])
 
 
 if __name__ == "__main__":
