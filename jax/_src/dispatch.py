@@ -383,8 +383,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   ordered_effects = [eff for eff in closed_jaxpr.effects
                      if eff in core.ordered_effects]
   lowering_result = mlir.lower_jaxpr_to_module(
-      module_name, closed_jaxpr,
-      unordered_effects, ordered_effects, backend.platform,
+      module_name, closed_jaxpr, unordered_effects,
+      ordered_effects, backend, backend.platform,
       mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
   module, keepalive, host_callbacks = (
       lowering_result.module, lowering_result.keepalive,

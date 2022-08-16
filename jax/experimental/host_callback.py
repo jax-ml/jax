@@ -1099,7 +1099,7 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
         xla.aval_to_xla_shapes(res_aval)[0]
         for res_aval in callback_flat_results_aval
     ]
-    backend = xb.get_backend(ctx.platform)
+    backend = ctx.module_context.backend
     token_and_results_op, keep_alive = backend.emit_python_callback(
         wrapped_callback,
         comp,

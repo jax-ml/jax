@@ -852,7 +852,7 @@ def xla_computation(fun: Callable,
 
   fun_name = getattr(fun, "__name__", "unknown")
 
-  backend = backend if backend is not None else xb.get_backend().platform
+  platform = backend if backend is not None else xb.get_backend().platform
 
   def make_axis_env(nreps):
     if axis_env is None:
@@ -905,14 +905,15 @@ def xla_computation(fun: Callable,
           core.ClosedJaxpr(jaxpr, consts),
           unordered_effects=unordered_effects,
           ordered_effects=ordered_effects,
-          platform=backend,
+          backend_or_name=backend,
+          platform=platform,
           axis_context=mlir.ReplicaAxisContext(axis_env_),
           name_stack=new_name_stack(wrap_name(fun_name, "xla_computation")),
           donated_args=donated_invars,
-          arg_shardings=(None if in_parts_flat is None else
-                         map(xla.sharding_to_proto, in_parts_flat)),
-          result_shardings=(None if out_parts_flat is None else
-                            map(xla.sharding_to_proto, out_parts_flat)))
+          arg_shardings=(None if in_parts_flat is None else map(
+              xla.sharding_to_proto, in_parts_flat)),
+          result_shardings=(None if out_parts_flat is None else map(
+              xla.sharding_to_proto, out_parts_flat)))
       should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
       built = xc._xla.mlir.mlir_module_to_xla_computation(
           mlir.module_to_string(lowering_result.module),
