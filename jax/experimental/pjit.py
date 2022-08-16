@@ -1248,20 +1248,27 @@ pxla.custom_resource_typing_rules[pjit_p] = _resource_typing_pjit
 
 def with_sharding_constraint(x, axis_resources):
   x_flat, tree = tree_flatten(x)
-  parsed_axis_resources, _, _, _ = _prepare_axis_resources(
-      axis_resources, "axis_resources", allow_unconstrained_dims=True)
+  if not config.jax_array:
+    axis_resources, _, _, _ = _prepare_axis_resources(
+        axis_resources, "axis_resources", allow_unconstrained_dims=True)
   axis_resources_flat = tuple(
-      flatten_axes("with_sharding_constraint axis_resources",
-                   tree, parsed_axis_resources))
+      flatten_axes("with_sharding_constraint sharding", tree, axis_resources))
   resource_env = pxla.thread_resources.env
   mesh = resource_env.physical_mesh
 
-  sharding_flat = [MeshPspecSharding._from_parsed_pspec(mesh, a)
-                   for a in axis_resources_flat]
-  # Calculate unconstrained_dims from MeshPspecSharding because that information
-  # is lost when converted to OpSharding. Bind unconstrained_dims to
-  # with_sharding_constraint primitive.
-  unconstrained_dims = [get_unconstrained_dims(s) for s in sharding_flat]
+  if config.jax_array:
+    sharding_flat = axis_resources_flat
+    unconstrained_dims = [
+        get_unconstrained_dims(s) if isinstance(s, MeshPspecSharding) else {}
+        for s in sharding_flat
+    ]
+  else:
+    sharding_flat = [MeshPspecSharding._from_parsed_pspec(mesh, a)
+                     for a in axis_resources_flat]
+    # Calculate unconstrained_dims from MeshPspecSharding because that information
+    # is lost when converted to OpSharding. Bind unconstrained_dims to
+    # with_sharding_constraint primitive.
+    unconstrained_dims = [get_unconstrained_dims(s) for s in sharding_flat]
 
   pjit_check_aval_sharding(sharding_flat, x_flat, "with_sharding_constraint arguments",
                            allow_uneven_sharding=True)

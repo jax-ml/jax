@@ -372,6 +372,62 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
+  @jax._src.config.jax_array(True)
+  def testShardingConstraintWithArray(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    s = MeshPspecSharding(mesh, P(None))
+
+    @partial(pjit, in_axis_resources=s, out_axis_resources=s)
+    def f(x):
+      y = x + 1
+      y = with_sharding_constraint(y, MeshPspecSharding(mesh, P('x', 'y')))
+      return y * 2
+
+    shape = (8, 8)
+    x = np.arange(prod(shape)).reshape(shape)
+    expected = (x + 1) * 2
+    actual = f(x)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, array.Array)
+    self.assertLen(actual.addressable_shards, 2)
+    self.assertAllClose(actual._arrays[0].to_py(), expected,
+                        check_dtypes=False)
+
+    hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
+    # Annotation from with_sharding_constraint
+    self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
+    # Annotation from pjit
+    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
+
+  @jax._src.config.jax_array(True)
+  def testShardingConstraintWithArrayOpSharding(self):
+    shape = (8, 8)
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    s = MeshPspecSharding(mesh, P(None))
+    ops = pjit_lib.to_op_sharding_sharding(
+        MeshPspecSharding(mesh, P('x', 'y')), len(shape))
+
+    @partial(pjit, in_axis_resources=s, out_axis_resources=s)
+    def f(x):
+      y = x + 1
+      y = with_sharding_constraint(y, ops)
+      return y * 2
+
+    x = np.arange(prod(shape)).reshape(shape)
+    expected = (x + 1) * 2
+    actual = f(x)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, array.Array)
+    self.assertLen(actual.addressable_shards, 2)
+    self.assertAllClose(actual._arrays[0].to_py(), expected,
+                        check_dtypes=False)
+
+    hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
+    # Annotation from with_sharding_constraint
+    self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
+    # Annotation from pjit
+    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
+
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraintPyTree(self):
     @partial(pjit, in_axis_resources=None, out_axis_resources=None)
@@ -390,6 +446,38 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected[0]["a"] *= 2
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertLen(actual[0]["a"].device_buffers, 2)
+
+    hlo = f.lower(x).compiler_ir(dialect="hlo")
+    # Annotations from with_sharding_constraint
+    self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
+    self.assertIn("sharding={devices=[1,2]0,1}", hlo.as_hlo_text())
+    # Annotation from pjit
+    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
+
+  @jax._src.config.jax_array(True)
+  def testShardingConstraintPyTreeWithArray(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    s = MeshPspecSharding(mesh, P(None))
+
+    @partial(pjit, in_axis_resources=s, out_axis_resources=s)
+    def f(x):
+      x = with_sharding_constraint(x, [
+          MeshPspecSharding(mesh, P('x', 'y')),
+          MeshPspecSharding(mesh, P('y', 'x'))
+      ])
+      x = x.copy()
+      x[0]["a"] *= 2
+      return x
+
+    shape = (8, 8)
+    v = np.arange(prod(shape)).reshape(shape)
+    x = [{"a": v, "b": v * 2}, v * 3]
+    actual = f(x)
+
+    expected = x.copy()
+    expected[0]["a"] *= 2
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertLen(actual[0]["a"].addressable_shards, 2)
 
     hlo = f.lower(x).compiler_ir(dialect="hlo")
     # Annotations from with_sharding_constraint
