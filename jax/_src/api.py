@@ -44,6 +44,7 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            treedef_is_leaf, treedef_children,
                            Partial, PyTreeDef, all_leaves, treedef_tuple)
 
+from jax._src import callback as jcb
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
@@ -3230,6 +3231,50 @@ def block_until_ready(x):
       return x
   return jax.tree_util.tree_map(try_to_block, x)
 
+def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
+                  *args: Any, **kwargs: Any):
+  """Calls a pure Python callback function from staged out JAX programs.
+
+  ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
+  The input ``callback`` will be passed NumPy arrays in place of JAX arrays and
+  should also return NumPy arrays. Execution takes place on the CPU host.
+
+  The callback is treated as "pure" meaning it can be called multiple times when
+  transformed (for example in a ``vmap`` or ``pmap``), and it can also
+  potentially be removed from JAX programs via dead-code elimination. Pure
+  callbacks can also be reordered if data-dependence allows.
+
+  When ``pmap``-ed, the pure callback will be called several times (one on each axis
+  of the map). When `vmap`-ed the behavior will depend on the value of the
+  ``rank_polymorphic`` keyword argument. If the callback is indicated as rank
+  polymorphic, the callback will be called directly on batched inputs (where the
+  batch axis is the leading dimension). Additionally, the callbacks should
+  return outputs that also have a leading batch axis. If not rank polymorphic,
+``callback`` will be mapped sequentially across the batched axis.
+
+  Args:
+    callback: A Python callable. The callable will be passed in NumPy arrays and
+      should return a PyTree of NumPy arrays that matches
+      ``result_shape_dtypes``.
+    result_shape_dtypes: A PyTree of Python objects that have ``shape`` and
+      ``dtype`` properties that correspond to the shape and dtypes of the
+      outputs of ``callback``.
+    *args: The positional arguments to the callback. Must be PyTrees of JAX
+      types.
+    rank_polymorphic: A boolean that indicates whether or not ``callback`` is
+      rank polymorphic, meaning it can handle arrays with additional leading
+      dimensions. If ``rank_polymorphic`` is `True`, when the callback is mapped
+      via `jax.vmap`, it will be called directly on inputs with leading batch
+      dimensions instead of executing ``callback`` on each mapped input
+      individually. The callback should also return outputs batched across the
+      leading axis.
+    **kwargs: The keyword arguments to the callback. Must be PyTrees of JAX
+      types.
+
+  Returns:
+    The value of ``callback(*args, **kwargs)``.
+  """
+  return jcb.pure_callback(callback, result_shape_dtypes, *args, **kwargs)
 
 def clear_backends():
   """

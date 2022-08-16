@@ -24,12 +24,12 @@ import jax
 from jax import core
 from jax import lax
 from jax import tree_util
-from jax._src import callback as jc
 from jax._src import debugging
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src import util
 from jax.config import config
+from jax.experimental import maps
 from jax.interpreters import mlir
 import jax.numpy as jnp
 import numpy as np
@@ -459,13 +459,15 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
 class PurePythonCallbackTest(jtu.JaxTestCase):
 
+  @jtu.skip_on_devices(*disabled_backends)
   def test_simple_pure_callback(self):
 
     @jax.jit
     def f(x):
-      return jc.pure_callback(lambda x: (x * 2.).astype(x.dtype), x, x)
+      return jax.pure_callback(lambda x: (x * 2.).astype(x.dtype), x, x)
     self.assertEqual(f(2.), 4.)
 
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_dce_pure_callback(self):
 
     if jax.default_backend() == "tpu":
@@ -479,31 +481,134 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      _ = jc.pure_callback(_callback, x, x)
+      _ = jax.pure_callback(_callback, x, x)
       return x * 2.
     _ = f(2.)
     self.assertEmpty(log)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_with_wrong_number_of_args(self):
+
+    @jax.jit
+    def f():
+      # Calling a function that expects `x` with no arguments
+      return jax.pure_callback(lambda x: np.ones(4, np.float32),
+                               core.ShapedArray((4,), np.float32))
+
+    with self.assertRaises(RuntimeError):
+      f()
+      jax.effects_barrier()
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_with_wrong_number_of_returned_values(self):
+
+    @jax.jit
+    def f(x):
+      # Calling a function with a return value that expects no return values
+      return jax.pure_callback(lambda x: (x, np.ones(4, np.float32)), x)
+
+    with self.assertRaises(RuntimeError):
+      f(2.)
+      jax.effects_barrier()
+
+    @jax.jit
+    def g():
+      # Calling a function with a return value that expects no return values
+      return jax.pure_callback(lambda: None, (
+        core.ShapedArray((1,), np.float32), core.ShapedArray((2,), np.float32)))
+
+    with self.assertRaises(RuntimeError):
+      g()
+      jax.effects_barrier()
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_with_wrong_shape_outputs(self):
+
+    @jax.jit
+    def f():
+      # Calling a function expected a (1,) shaped return value but getting ()
+      return jax.pure_callback(lambda: np.float32(1.),
+                               core.ShapedArray((1,), np.float32))
+
+    with self.assertRaises(RuntimeError):
+      f()
+      jax.effects_barrier()
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_with_wrong_dtype_outputs(self):
+
+    def _cb():
+      return np.array([1], np.float64)
+
+    @jax.jit
+    def f():
+      # Calling a function expected a f32 return value but getting f64
+      return callback(_cb, core.ShapedArray((1,), np.float32))
+
+    with self.assertRaises(RuntimeError):
+      f()
+      jax.effects_barrier()
 
   def test_can_vmap_pure_callback(self):
 
     @jax.jit
     @jax.vmap
     def f(x):
-      return jc.pure_callback(np.sin, x, x)
+      return jax.pure_callback(np.sin, x, x)
     out = f(jnp.arange(4.))
     np.testing.assert_allclose(out, np.sin(np.arange(4.)))
 
     @jax.jit
     def g(x):
-      return jc.pure_callback(np.sin, x, x)
+      return jax.pure_callback(np.sin, x, x)
     out = jax.vmap(g, in_axes=1)(jnp.arange(8.).reshape((4, 2)))
     np.testing.assert_allclose(out, np.sin(np.arange(8.).reshape((4, 2))).T)
+
+  def test_vmap_rank_polymorphic_callback(self):
+
+    def cb(x):
+      self.assertTupleEqual(x.shape, ())
+      return np.sin(x)
+
+    @jax.jit
+    @jax.vmap
+    def f(x):
+      return jax.pure_callback(cb, x, x)
+
+    _ = f(jnp.arange(4.))
+
+    def cb2(x):
+      self.assertTupleEqual(x.shape, (4,))
+      return np.sin(x)
+
+
+    @jax.jit
+    @jax.vmap
+    def g(x):
+      return jax.pure_callback(cb2, x, x, rank_polymorphic=True)
+
+    _ = g(jnp.arange(4.))
+
+  def test_vmap_rank_polymorphic_callback_errors_if_returns_wrong_shape(self):
+
+    def cb(x):
+      # Reduces over all dimension when it shouldn't
+      return np.sin(x).sum()
+
+    @jax.jit
+    @jax.vmap
+    def f(x):
+      return jax.pure_callback(cb, x, x, rank_polymorphic=True)
+
+    with self.assertRaises(RuntimeError):
+      f(jnp.arange(4.))
+      jax.effects_barrier()
 
   def test_can_pmap_pure_callback(self):
 
     @jax.pmap
     def f(x):
-      return jc.pure_callback(np.sin, x, x)
+      return jax.pure_callback(np.sin, x, x)
     out = f(jnp.arange(float(jax.local_device_count())))
     np.testing.assert_allclose(out, np.sin(np.arange(jax.local_device_count())))
 
@@ -515,7 +620,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.grad
     def f(x):
-      return jc.pure_callback(sin, x, x)
+      return jax.pure_callback(sin, x, x)
     with self.assertRaisesRegex(
         ValueError, "Pure callbacks do not support JVP."):
       f(2.)
@@ -524,12 +629,12 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
     @jax.custom_jvp
     def sin(x):
-      return jc.pure_callback(np.sin, x, x)
+      return jax.pure_callback(np.sin, x, x)
 
     @sin.defjvp
     def sin_jvp(xs, ts):
       (x,), (t,), = xs, ts
-      return sin(x), jc.pure_callback(np.cos, x, x) * t
+      return sin(x), jax.pure_callback(np.cos, x, x) * t
 
     @jax.jit
     @jax.grad
@@ -551,10 +656,10 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     def f(pred, x):
 
       def true_fun(x):
-        return jc.pure_callback(_callback1, x, x)
+        return jax.pure_callback(_callback1, x, x)
 
       def false_fun(x):
-        return jc.pure_callback(_callback2, x, x)
+        return jax.pure_callback(_callback2, x, x)
 
       return lax.cond(pred, true_fun, false_fun, x)
 
@@ -573,7 +678,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     def f(x):
 
       def body(x, _):
-        x = jc.pure_callback(_callback, x, x)
+        x = jax.pure_callback(_callback, x, x)
         return x, ()
 
       return lax.scan(body, x, jnp.arange(10))[0]
@@ -594,11 +699,11 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     def f(x):
 
       def cond(x):
-        return jc.pure_callback(
+        return jax.pure_callback(
             _cond_callback, jax.ShapeDtypeStruct((), np.bool_), x)
 
       def body(x):
-        return jc.pure_callback(_callback, x, x)
+        return jax.pure_callback(_callback, x, x)
 
       return lax.while_loop(cond, body, x)
 
@@ -613,7 +718,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
     @jax.pmap
     def f(x):
-      return jc.pure_callback(_callback, x, x)
+      return jax.pure_callback(_callback, x, x)
 
     out = f(
         jnp.arange(2 * jax.local_device_count(),
@@ -621,6 +726,37 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         out,
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_inside_xmap(self):
+
+    def _callback(x):
+      return (x + 1.).astype(x.dtype)
+
+    def f(x):
+      return jax.pure_callback(_callback, x, x)
+
+    f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
+                  axis_resources={'a': 'dev'})
+    with maps.Mesh(np.array(jax.devices()), ['dev']):
+      out = f(jnp.arange(40.))
+    np.testing.assert_allclose(out, jnp.arange(1., 41.))
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_rank_polymorphic_callback_inside_xmap(self):
+
+    def _callback(x):
+      return (x + 1.).astype(x.dtype)
+
+    def f(x):
+      return jax.pure_callback(_callback, x, x, rank_polymorphic=True)
+
+    f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
+                  axis_resources={'a': 'dev'})
+    with maps.Mesh(np.array(jax.devices()), ['dev']):
+      out = f(jnp.arange(40.))
+    np.testing.assert_allclose(out, jnp.arange(1., 41.))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1154,6 +1154,7 @@ tf_not_yet_impl = [
     "getslice",
     "full_to_shard",
     "shard_to_full",
+    "pure_callback",
 
     # Not high priority?
     "after_all",

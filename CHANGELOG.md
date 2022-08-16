@@ -14,6 +14,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.checkpoint`, also known as {func}`jax.remat`, no longer supports
     the `concrete` option, following the previous version's deprecation; see
     [JEP 11830](https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html).
+* Changes
+  * Added {func}`jax.pure_callback` that enables calling back to pure Python functions from functions compiled with `jax.jit` or `jax.pmap`.
 
 ## jax 0.3.16
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.15...main).

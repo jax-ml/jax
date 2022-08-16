@@ -100,6 +100,7 @@ from jax._src.api import (
   pmap as pmap,
   process_count as process_count,
   process_index as process_index,
+  pure_callback as pure_callback,
   pxla,  # TODO(phawkins): update users to avoid this.
   remat as remat,
   ShapedArray as ShapedArray,
