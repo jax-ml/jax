@@ -3103,27 +3103,11 @@ def checkpoint(fun: Callable, *,
            "      return f(x)\n"
            "    else:\n"
            "      return g(x)\n"
-           "\n")
-    if config.jax_new_checkpoint:
-      raise NotImplementedError(msg)
-    else:
-      warn(msg, DeprecationWarning)
-
-  if config.jax_new_checkpoint:
-    return new_checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
-                          static_argnums=static_argnums)
-
-  @wraps(fun)
-  @api_boundary
-  def remat_f(*args, **kwargs):
-    f, args = _remat_static_argnums(fun, static_argnums, args)
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    flat_fun, out_tree = flatten_fun(lu.wrap_init(f), in_tree)
-    out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
-                             concrete=concrete, prevent_cse=prevent_cse,
-                             differentiated=False, policy=policy)
-    return tree_unflatten(out_tree(), out_flat)
-  return remat_f
+           "\n"
+           "See https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html\n")
+    raise NotImplementedError(msg)
+  return new_checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
+                        static_argnums=static_argnums)
 remat = checkpoint  # type: ignore
 
 

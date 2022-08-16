@@ -1979,7 +1979,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
           for grad_func in ["grad", "value_and_grad"]
           for use_remat in ["old", "new", "none"]))
   def test_tap_remat(self, use_result=False, grad_func="grad", use_remat="new"):
-    if config.jax_new_checkpoint and use_remat == "old": raise SkipTest()
+    if use_remat == "old": raise SkipTest()
 
     def f(x):
       id_print_result = hcb.id_print(x, output_stream=testing_stream)

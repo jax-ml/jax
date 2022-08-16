@@ -1070,9 +1070,9 @@ class TensorFlowTrace(core.Trace):
 
   def post_process_call(self, call_primitive: core.Primitive,
                         out_tracers: Sequence[TensorFlowTracer], params):
-    # We encountered a call primitive, e.g., remat_call_p, whose result
-    # (out_tracers) include TensorFlowTracer that were not passed through
-    # its arguments (captured from the environment).
+    # We encountered a call primitive whose result (out_tracers) include
+    # TensorFlowTracer that were not passed through its arguments (captured from
+    # the environment).
     vals = tuple(t.val for t in out_tracers)
     main = self.main
 
@@ -1137,8 +1137,7 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
 
 
 # Call primitives are inlined
-for unexpected in [core.call_p, core.named_call_p, xla.xla_call_p,
-                   partial_eval.remat_call_p, maps.xmap_p]:
+for unexpected in [core.call_p, core.named_call_p, xla.xla_call_p, maps.xmap_p]:
   tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.
@@ -2549,7 +2548,7 @@ tf_impl_with_avals[lax.scan_p] = _convert_jax_impl(
     extra_name_stack="scan")
 
 tf_impl_with_avals[ad_checkpoint.remat_p] = \
-  _convert_jax_impl(partial(lax_control_flow.remat_impl,
+  _convert_jax_impl(partial(ad_checkpoint.remat_lowering,
                             # TODO: jax2tf cannot discriminate by platform
                             is_gpu_platform=False),
                     multiple_results=True,

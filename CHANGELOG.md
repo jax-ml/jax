@@ -10,6 +10,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.17 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.16...main).
+* Breaking changes
+  * {func}`jax.checkpoint`, also known as {func}`jax.remat`, no longer supports
+    the `concrete` option, following the previous version's deprecation; see
+    [JEP 11830](https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html).
 
 ## jax 0.3.16
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.15...main).

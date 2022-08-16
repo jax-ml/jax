@@ -875,13 +875,6 @@ config.define_bool_state(
     default=(lib.version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
-# TODO(mattjj): set default to True, then remove
-config.define_bool_state(
-    name='jax_new_checkpoint',
-    default=True,
-    upgrade=True,
-    help='Whether to use the new jax.checkpoint implementation.')
-
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(
     name='jax_coordination_service',
