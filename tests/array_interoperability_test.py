@@ -73,7 +73,6 @@ class DLPackTest(jtu.JaxTestCase):
     take_ownership=[False, True],
     gpu=[False, True],
   )
-  @jtu.skip_on_devices("rocm") # TODO(sharadmv,phawkins): see GH issue #10973
   def testJaxRoundTrip(self, shape, dtype, take_ownership, gpu):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
@@ -96,7 +95,6 @@ class DLPackTest(jtu.JaxTestCase):
     dtype=dlpack_dtypes,
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
-  @jtu.skip_on_devices("rocm") # TODO(sharadmv,phawkins): see GH issue #10973
   def testTensorFlowToJax(self, shape, dtype):
     if not config.x64_enabled and dtype in [jnp.int64, jnp.uint64, jnp.float64]:
       raise self.skipTest("x64 types are disabled by jax_enable_x64")
@@ -203,7 +201,6 @@ class DLPackTest(jtu.JaxTestCase):
     dtype=torch_dtypes,
   )
   @unittest.skipIf(numpy_version < (1, 22, 0), "Requires numpy 1.22 or newer")
-  @jtu.skip_on_devices("rocm") # TODO(sharadmv,phawkins): see GH issue #10973
   def testNumpyToJax(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x_np = rng(shape, dtype)
@@ -215,7 +212,7 @@ class DLPackTest(jtu.JaxTestCase):
     dtype=torch_dtypes,
   )
   @unittest.skipIf(numpy_version < (1, 23, 0), "Requires numpy 1.23 or newer")
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("gpu") #NumPy only accepts cpu DLPacks
   def testJaxToNumpy(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x_jax = jnp.array(rng(shape, dtype))
