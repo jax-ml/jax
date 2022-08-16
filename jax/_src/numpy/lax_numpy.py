@@ -4774,6 +4774,8 @@ def _multi_slice(arr,
 def _unstack(x):
   return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
 setattr(device_array.DeviceArray, "_unstack", _unstack)
+setattr(Array, '_unstack', _unstack)
+
 def _chunk_iter(x, size):
   if size > x.shape[0]:
     yield x
@@ -4784,6 +4786,7 @@ def _chunk_iter(x, size):
     if tail:
       yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
 setattr(device_array.DeviceArray, "_chunk_iter", _chunk_iter)
+setattr(Array, '_chunk_iter', _chunk_iter)
 
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:

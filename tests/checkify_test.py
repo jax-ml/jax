@@ -26,6 +26,8 @@ from jax.config import config
 from jax.experimental import checkify
 from jax.experimental import pjit
 from jax.experimental import maps
+from jax.experimental.sharding import MeshPspecSharding
+from jax.experimental import array
 from jax._src.checkify import CheckEffect
 import jax.numpy as jnp
 
@@ -421,13 +423,20 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       # binary func
       return x / y
 
-    ps = pjit.PartitionSpec("dev")
+    mesh = maps.Mesh(np.array(jax.devices()), ["dev"])
+    if config.jax_array:
+      ps = MeshPspecSharding(mesh, pjit.PartitionSpec("dev"))
+      inp = np.arange(8)
+      x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
+    else:
+      ps = pjit.PartitionSpec("dev")
+      x = jnp.arange(8)
+
     f = pjit.pjit(f, in_axis_resources=ps, out_axis_resources=ps)
     f = checkify.checkify(f, errors=checkify.float_checks)
     g = pjit.pjit(g, in_axis_resources=ps, out_axis_resources=ps)
     g = checkify.checkify(g, errors=checkify.float_checks)
-    with maps.Mesh(np.array(jax.devices()), ["dev"]):
-      x = jnp.arange(8)
+    with mesh:
       u_err, _ = f(x)
       b_err, _ = g(x, x)
 
@@ -851,6 +860,26 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
       return out
 
     checkify.checkify(g)(0.)  # does not crash
+
+
+class CheckifyWithArray:
+
+  def setUp(self):
+    super().setUp()
+    self.array_enabled = config.jax_array
+    config.update('jax_array', True)
+
+  def tearDown(self):
+    config.update('jax_array', self.array_enabled)
+    super().tearDown()
+
+
+class ArrayCheckifyTransformTests(CheckifyWithArray, CheckifyTransformTests):
+  pass
+
+class ArrayAssertPrimitiveTests(CheckifyWithArray, AssertPrimitiveTests):
+  pass
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

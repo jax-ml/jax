@@ -365,8 +365,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReduceScatter(self):
-    if config.jax_array:
-      raise unittest.SkipTest('psum_scatter gives wrong answer with Array.')
     f = self.pmap(lambda x: lax.psum_scatter(x, 'i'), axis_name='i')
 
     device_count = jax.device_count()
@@ -378,8 +376,6 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertAllClose(actual, expected[i])
 
   def testReduceScatterTiled(self):
-    if config.jax_array:
-      raise unittest.SkipTest('psum_scatter gives wrong answer with Array.')
     f = self.pmap(lambda x: lax.psum_scatter(x, 'i', tiled=True), axis_name='i')
 
     device_count = jax.device_count()
@@ -393,8 +389,6 @@ class PythonPmapTest(jtu.JaxTestCase):
                           expected[i * scatter_len:(i + 1) * scatter_len])
 
   def testReduceScatterReplicaGroupsTiled(self):
-    if config.jax_array:
-      raise unittest.SkipTest('psum_scatter gives wrong answer with Array.')
     replicas = jax.device_count()
     if replicas % 2 != 0:
       raise SkipTest
@@ -1063,8 +1057,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(result, expected)
 
   def testRule30(self):
-    if config.jax_array:
-      raise unittest.SkipTest('times out when Array is enabled.')
     # This is a test of collective_permute implementing a simple halo exchange
     # to run a rule 30 simulation: https://en.wikipedia.org/wiki/Rule_30
     # Halo exchange should be useful in spatially-sharded convolutions and in
@@ -1829,8 +1821,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.pmap(remat(f), axis_name='i')(keys)
 
   def testPmapMapVmapCombinations(self):
-    if config.jax_array:
-      raise unittest.SkipTest('times out when Array is enabled.')
     # https://github.com/google/jax/issues/2822
     def vv(x, y):
       """Vector-vector multiply"""
@@ -1873,8 +1863,6 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.pmap(test)(a)
 
   def testPsumOnBooleanDtype(self):
-    if config.jax_array:
-      raise unittest.SkipTest('times out when Array is enabled.')
     # https://github.com/google/jax/issues/3123
     n = jax.device_count()
     if n > 1:

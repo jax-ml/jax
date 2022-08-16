@@ -1175,22 +1175,32 @@ class PythonJitTest(CPPJitTest):
 
 class APITest(jtu.JaxTestCase):
 
-  def test_grad_item(self):
-    def f(x):
-      if x.astype(bool).item():
-        return x ** 2
-      else:
-        return x
-    out = jax.grad(f)(2.0)
-    self.assertEqual(out, 4)
+  @parameterized.named_parameters(
+      ('array', True),
+      ('no_array', False)
+  )
+  def test_grad_item(self, array_enabled):
+    with jax._src.config.jax_array(array_enabled):
+      def f(x):
+        if x.astype(bool).item():
+          return x ** 2
+        else:
+          return x
+      out = jax.grad(f)(2.0)
+      self.assertEqual(out, 4)
 
-  def test_jit_item(self):
-    def f(x):
-      return x.item()
-    x = jnp.array(1.0)
-    self.assertEqual(f(x), x)
-    with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
-      jax.jit(f)(x)
+  @parameterized.named_parameters(
+      ('array', True),
+      ('no_array', False)
+  )
+  def test_jit_item(self, array_enabled):
+    with jax._src.config.jax_array(array_enabled):
+      def f(x):
+        return x.item()
+      x = jnp.array(1.0)
+      self.assertEqual(f(x), x)
+      with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
+        jax.jit(f)(x)
 
   def test_grad_bad_input(self):
     def f(x):

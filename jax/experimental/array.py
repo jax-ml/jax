@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import operator
 import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
@@ -21,6 +22,7 @@ from jax import core
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.config import config
 from jax._src.util import prod, safe_zip
@@ -138,6 +140,73 @@ class Array:
   @property
   def sharding(self):
     return self._sharding
+
+  def __str__(self):
+    return str(self._value)
+
+  def __len__(self):
+    try:
+      return self.shape[0]
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err  # same as numpy error
+
+  def __bool__(self):
+    return bool(self._value)
+
+  def __nonzero__(self):
+    return bool(self._value)
+
+  def __float__(self):
+    return self._value.__float__()
+
+  def __int__(self):
+    return self._value.__int__()
+
+  def __complex__(self):
+    return self._value.__complex__()
+
+  def __hex__(self):
+    assert self.ndim == 0, 'hex only works on scalar values'
+    return hex(self._value)  # type: ignore
+
+  def __oct__(self):
+    assert self.ndim == 0, 'oct only works on scalar values'
+    return oct(self._value)  # type: ignore
+
+  def __index__(self):
+    return operator.index(self._value)
+
+  def to_bytes(self, order="C"):
+    return self._value.tobytes(order)
+
+  def tolist(self):
+    return self._value.tolist()
+
+  def __format__(self, format_spec):
+    # Simulates behavior of https://github.com/numpy/numpy/pull/9883
+    if self.ndim == 0:
+      return format(self._value[()], format_spec)
+    else:
+      return format(self._value, format_spec)
+
+  def __iter__(self):
+    if self.ndim == 0:
+      raise TypeError("iteration over a 0-d array")  # same as numpy error
+    else:
+      # chunk_iter is added to Array in lax_numpy.py similar to DA.
+      return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
+
+  def item(self):
+    if dtypes.issubdtype(self.dtype, np.complexfloating):
+      return complex(self)
+    elif dtypes.issubdtype(self.dtype, np.floating):
+      return float(self)
+    elif dtypes.issubdtype(self.dtype, np.integer):
+      return int(self)
+    elif dtypes.issubdtype(self.dtype, np.bool_):
+      return bool(self)
+    else:
+      raise TypeError(self.dtype)
 
   def __repr__(self):
     prefix = '{}('.format(self.__class__.__name__.lstrip('_'))

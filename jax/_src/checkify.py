@@ -30,11 +30,11 @@ from jax.experimental import maps
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import pxla
 from jax.experimental.sharding import OpShardingSharding
 from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
 from jax._src import source_info_util, traceback_util
 from jax._src.lax import control_flow as cf
+from jax._src.config import config
 from jax import lax
 from jax._src.util import (as_hashable_function, unzip2, split_list, safe_map,
                            safe_zip)
@@ -688,18 +688,25 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
                      in_positional_semantics, out_positional_semantics):
   checked_jaxpr, msgs = checkify_jaxpr(jaxpr, error, enabled_errors)
   new_vals_in = [error.err, error.code, error.payload, *vals_in]
+
   sharding = OpShardingSharding.get_replicated(
-      list(pxla.thread_resources.env.physical_mesh.devices.flat))
-  pos_sem = maps._positional_semantics.val
-  new_in_shardings = (*[sharding]*3, *in_shardings)
-  new_out_shardings = (*[sharding]*3, *out_shardings)
+      list(resource_env.physical_mesh.devices.flat))
+  new_in_shardings = (*[sharding] * 3, *in_shardings)
+  new_out_shardings = (*[sharding] * 3, *out_shardings)
+
+  if config.jax_array:
+    pos_sem = maps._PositionalSemantics.GLOBAL
+  else:
+    pos_sem = maps._positional_semantics.val
+
   if not isinstance(in_positional_semantics, Iterable):
     in_positional_semantics = (in_positional_semantics,)
   if not isinstance(out_positional_semantics, Iterable):
     out_positional_semantics = (out_positional_semantics,)
-  new_positional_sems_in = (*[pos_sem]*3, *in_positional_semantics)
-  new_positional_sems_out = (*[pos_sem]*3, *out_positional_semantics)
-  new_donated_invars = (*[False]*3, *donated_invars)
+  new_positional_sems_in = (*[pos_sem] * 3, *in_positional_semantics)
+  new_positional_sems_out = (*[pos_sem] * 3, *out_positional_semantics)
+  new_donated_invars = (*[False] * 3, *donated_invars)
+
   err, code, payload, *vals_out = pjit.pjit_p.bind(
       *new_vals_in,
       jaxpr=checked_jaxpr,
