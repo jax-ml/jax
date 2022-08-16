@@ -81,7 +81,7 @@ def main(_):
   print_ir(np.float32(0))(lax.bessel_i0e)
 
   # CHECK-LABEL: TEST: bessel_i1e float32[]
-  # CHECK: xla_fallback_bessel_i1e
+  # CHECK: chlo.bessel_i1e
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.bessel_i1e)
 
