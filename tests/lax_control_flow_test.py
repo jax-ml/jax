@@ -1813,7 +1813,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
        "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
-      for scan_impl, scan_name in SCAN_IMPLS
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR
       for in_axes in itertools.product([None, 0, 1], [None, 0, 1, 2])
       if in_axes != (None, None))
   def testScanVmap(self, jit_scan, jit_f, in_axes, scan):
@@ -1879,7 +1879,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": "_impl={}".format(scan_name), "scan": scan_impl}
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def testScanVmapFixpoint(self, scan):
     def f(carry_init):
       def scan_body(c, x):
@@ -2556,7 +2556,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": "impl={}".format(scan_name), "scan": scan_impl}
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def test_scan_hoisting_consts(self, scan):
     A = jnp.arange(4.).reshape(2, 2)
     B = jnp.arange(4.).reshape(2, 2) + 1.

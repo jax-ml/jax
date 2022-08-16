@@ -22,6 +22,7 @@ from jax import lax
 from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
+from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -240,6 +241,33 @@ def _for_impl(*args, jaxpr, nsteps, reverse, which_linear):
 mlir.register_lowering(for_p, mlir.lower_fun(_for_impl, multiple_results=True))
 for_p.def_impl(partial(xla.apply_primitive, for_p))
 
+def _for_vmap(axis_size, axis_name, main_type, args, dims, *,
+              jaxpr, nsteps, reverse, which_linear):
+  init_batched = [d is not batching.not_mapped for d in dims]
+  discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
+  batched = init_batched
+  for _ in range(len(batched)):
+    _, out_batched = batching.batch_jaxpr(
+        core.ClosedJaxpr(discharged_jaxpr, body_consts),
+        axis_size, [False] + batched, instantiate=batched,
+        axis_name=axis_name, main_type=main_type)
+    if out_batched == batched:
+      break
+    batched = map(operator.or_, batched, out_batched)
+  else:
+    raise Exception("Invalid fixpoint")
+  args = [batching.broadcast(x, axis_size, 0) if now_bat and not was_bat
+          else batching.moveaxis(x, d, 0) if now_bat else x
+          for x, d, was_bat, now_bat in zip(args, dims, init_batched, batched)]
+  batched_jaxpr_, _ = batching.batch_jaxpr(
+      core.ClosedJaxpr(jaxpr, []), axis_size, [False] + batched, [],
+      axis_name=axis_name, main_type=main_type)
+  batched_jaxpr, () = batched_jaxpr_.jaxpr, batched_jaxpr_.consts  # TODO consts
+  out_flat = for_p.bind(*args, jaxpr=batched_jaxpr, nsteps=nsteps,
+                        reverse=reverse, which_linear=which_linear)
+  return out_flat, [0 if b else batching.not_mapped for b in batched]
+batching.axis_primitive_batchers[for_p] = _for_vmap
+
 def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear):
   nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
   # We need to find out which `Ref`s have nonzero tangents after running the
@@ -258,22 +286,19 @@ def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear):
     nonzero_tangents = map(operator.or_, nonzero_tangents, out_nonzero_tangents)
   else:
     raise Exception("Invalid fixpoint")
-  tangents = [ad.instantiate_zeros(t) if inst else t for t, inst in
-      zip(tangents, nonzero_tangents)]
+  tangents = [ad.instantiate_zeros(t) if inst else t
+              for t, inst in zip(tangents, nonzero_tangents)]
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
   closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
   jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, [False] + nonzero_tangents, [])
-  jvp_jaxpr, jvp_consts = jvp_jaxpr_.jaxpr, jvp_jaxpr_.consts
-  jvp_which_linear = ((False,) * len(jvp_consts) + which_linear
-                      + (True,) * len(tangents))
-  out_flat = for_p.bind(*jvp_consts, *primals, *tangents, jaxpr=jvp_jaxpr,
+  jvp_jaxpr, () = jvp_jaxpr_.jaxpr, jvp_jaxpr_.consts  # TODO consts
+  jvp_which_linear = which_linear + (True,) * len(tangents)
+  out_flat = for_p.bind(*primals, *tangents, jaxpr=jvp_jaxpr,
                         nsteps=nsteps, reverse=reverse,
                         which_linear=jvp_which_linear)
-  # `out_flat` includes constant inputs into the `for_loop` which are
-  # converted into outputs as well. We don't care about these in AD so we
-  # throw them out.
-  _, out_primals, out_tangents = split_list(out_flat,
-                                            [len(jvp_consts), len(primals)])
+  # `out_flat` includes constant inputs into the `for_loop` which are converted
+  # into outputs as well. We don't care about these in AD so we throw them out.
+  out_primals, out_tangents = split_list(out_flat, [len(primals)])
   out_tangents_iter = iter(out_tangents)
   out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
                   for p, nz in zip(out_primals, nonzero_tangents)]
