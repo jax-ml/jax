@@ -1155,6 +1155,17 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(count[0], 0)  # no compiles
     self.assertArraysAllClose(ans, expected, check_dtypes=True)
 
+  def test_cache_key_defaults(self):
+    # https://github.com/google/jax/discussions/11875
+    if not self.use_cpp_jit:
+      raise unittest.SkipTest("this test only applies to _cpp_jit")
+    f = self.jit(lambda x: (x ** 2).sum())
+    self.assertEqual(f._cache_size(), 0)
+    x = jnp.arange(5.0)
+    for _ in range(3):
+      _ = f(x)
+    self.assertEqual(f._cache_size(), 1)
+
 
 class PythonJitTest(CPPJitTest):
 
