@@ -364,6 +364,10 @@ class SPMDAxisContext:
           "Collectives in manually partitioned computations are only supported "
           "when all mesh axes are partitioned manually (no partial automatic sharding). "
           "Make sure that you mention all mesh axes in axis_resources!")
+    return self.unsafe_axis_env
+
+  @property
+  def unsafe_axis_env(self):
     return xla.AxisEnv(
         nreps=self.mesh.size,
         names=self.mesh.axis_names,
@@ -1340,8 +1344,13 @@ def xla_fallback_lowering(prim: core.Primitive):
   @cache_lowering
   def fallback(ctx: LoweringRuleContext, *args, **params):
     module_ctx = ctx.module_context
+    axis_ctx = module_ctx.axis_context
+    if isinstance(axis_ctx, SPMDAxisContext):
+      axis_env = axis_ctx.unsafe_axis_env
+    else:
+      axis_env = module_ctx.axis_env
     xla_computation = xla.primitive_subcomputation(
-        module_ctx.platform, module_ctx.axis_env, prim, ctx.avals_in,
+        module_ctx.platform, axis_env, prim, ctx.avals_in,
         ctx.avals_out, **params)
     xla_module = xla_computation_to_mhlo_module(xla_computation)
     callee_name = merge_mhlo_modules(
