@@ -3311,9 +3311,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "{}_axis={}_array={}".format(
-          jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), axis, array_input),
-       "shape": shape, "axis": axis, "dtypes": dtypes, "array_input": array_input}
+      {"testcase_name": "{}_axis={}_array={}_out={}".format(
+          jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), axis, array_input,
+          np.dtype(out_dtype).name),
+       "shape": shape, "axis": axis, "dtypes": dtypes, "array_input": array_input,
+       "out_dtype": out_dtype}
       for dtypes in [
         [np.float32],
         [np.float32, np.float32],
@@ -3323,23 +3325,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       ]
       for shape in [(), (2,), (3, 4), (1, 100)]
       for axis in range(-len(shape), len(shape) + 1)
-      for array_input in [True, False]))
-  def testStack(self, shape, axis, dtypes, array_input):
+      for array_input in [True, False]
+      for out_dtype in [np.float32, np.int32]))
+  def testStack(self, shape, axis, dtypes, array_input, out_dtype):
     rng = jtu.rand_default(self.rng())
     if array_input:
       args_maker = lambda: [np.array([rng(shape, dtype) for dtype in dtypes])]
     else:
       args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
-    np_fun = _promote_like_jnp(partial(np.stack, axis=axis))
-    jnp_fun = partial(jnp.stack, axis=axis)
+
+    if numpy_version < (1, 24):
+        np_fun = _promote_like_jnp(lambda *args: np.stack(*args, axis=axis).astype(out_dtype))
+    else:
+        np_fun = _promote_like_jnp(partial(np.stack, axis=axis, dtype=out_dtype))
+
+    jnp_fun = partial(jnp.stack, axis=axis, dtype=out_dtype)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_{}_array={}".format(
-          op, jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), array_input),
-       "shape": shape, "op": op, "dtypes": dtypes, "array_input": array_input}
+      {"testcase_name": "_op={}_{}_array={}_out={}".format(
+          op, jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), array_input,
+          np.dtype(out_dtype).name),
+       "shape": shape, "op": op, "dtypes": dtypes, "array_input": array_input, "out_dtype": out_dtype}
       for op in ["hstack", "vstack", "dstack"]
       for dtypes in [
         [np.float32],
@@ -3349,15 +3358,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         [np.float32, np.int32, np.float64],
       ]
       for shape in [(), (2,), (3, 4), (1, 100), (2, 3, 4)]
-      for array_input in [True, False]))
-  def testHVDStack(self, shape, op, dtypes, array_input):
+      for array_input in [True, False]
+      for out_dtype in [np.float32, np.int32]))
+  def testHVDStack(self, shape, op, dtypes, array_input, out_dtype):
     rng = jtu.rand_default(self.rng())
     if array_input:
       args_maker = lambda: [np.array([rng(shape, dtype) for dtype in dtypes])]
     else:
       args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
-    np_fun = _promote_like_jnp(getattr(np, op))
-    jnp_fun = getattr(jnp, op)
+
+    if numpy_version < (1, 24) or op == "dstack":
+        np_fun = _promote_like_jnp(lambda *args: getattr(np, op)(*args).astype(out_dtype))
+    else:
+        np_fun = partial(_promote_like_jnp(getattr(np, op)), dtype=out_dtype)
+
+    jnp_fun = partial(getattr(jnp, op), dtype=out_dtype)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
@@ -6388,7 +6403,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'einsum': ['kwargs'],
       'einsum_path': ['einsum_call'],
       'eye': ['order', 'like'],
-      'hstack': ['dtype', 'casting'],
+      'hstack': ['casting'],
       'identity': ['like'],
       'in1d': ['kind'],
       'isin': ['kind'],
@@ -6400,11 +6415,11 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogramdd': ['normed'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
-      'row_stack': ['dtype', 'casting'],
-      'stack': ['dtype', 'casting'],
+      'row_stack': ['casting'],
+      'stack': ['casting'],
       'tri': ['like'],
       'unique': ['equal_nan'],
-      'vstack': ['dtype', 'casting'],
+      'vstack': ['casting'],
       'zeros_like': ['subok', 'order']
     }
 
