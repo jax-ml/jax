@@ -2549,8 +2549,9 @@ class PartitionSpec(tuple):
 
 
 def _get_backend_from_shardings(
-    shardings: Iterable[XLACompatibleSharding]) -> Tuple[xb.XlaBackend, XLACompatibleSharding]:
-  da = None
+    shardings: Iterable[Union[XLACompatibleSharding, _UnspecifiedValue]]
+) -> Tuple[xb.XlaBackend, XLACompatibleSharding]:
+  da: Optional[Sequence[xc.Device]] = None
   first_sharding = None
   for s in shardings:
     if _is_unspecified(s):
@@ -2558,8 +2559,8 @@ def _get_backend_from_shardings(
     da = s._device_assignment
     first_sharding = s
     break
-  assert len(da) > 0  # type: ignore
-  return xb.get_device_backend(da[0]), first_sharding  # type: ignore
+  assert len(da) > 0
+  return xb.get_device_backend(da[0]), first_sharding
 
 
 @profiler.annotate_function
@@ -2591,7 +2592,7 @@ def lower_sharding_computation(
   with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
                                  "in {elapsed_time} sec"):
     jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
-  assert len(out_shardings) == len(out_jaxpr_avals)
+  assert len(out_shardings) == len(out_jaxpr_avals), (len(out_shardings), len(out_jaxpr_avals))
 
   global_out_avals = out_jaxpr_avals
 
@@ -2982,11 +2983,13 @@ class MeshExecutable(stages.XlaExecutable):
         assert mesh is not None
         in_shardings, out_shardings = _get_mesh_pspec_shardings_from_executable(
             xla_executable, mesh)
-      elif out_shardings and all(_is_unspecified(o) for o in out_shardings):
+      elif out_shardings and any(_is_unspecified(o) for o in out_shardings):
         assert mesh is None
-        in_shardings, out_shardings = _get_op_sharding_shardings_from_executable(
+        _, out_shardings_xla = _get_op_sharding_shardings_from_executable(
             xla_executable, first_sharding._device_assignment,
             len(global_in_avals), len(global_out_avals))
+        out_shardings = [x if _is_unspecified(o) else o
+                        for x, o in safe_zip(out_shardings_xla, out_shardings)]
 
       in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore

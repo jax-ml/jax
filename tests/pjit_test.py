@@ -1523,31 +1523,6 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
           self.assertIsInstance(o, arr_type)
           self.assertArraysEqual(o._value, input_data)
 
-  def test_pjit_array_error(self):
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
-
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    global_input_shape = (8, 2)
-    input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
-
-    with jax_array(True):
-      with global_mesh:
-        f = pjit(lambda x: x, in_axis_resources=AUTO,
-                 out_axis_resources=AUTO)
-
-        inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-        compiled = f.lower(inp, _global_avals=True).compile()
-        inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
-                  for ip in compiled.input_shardings]
-        with self.assertRaisesRegex(
-            ValueError,
-            ('Passing sharding on pjit and on args while using the '
-             'auto spmd partitioner is not allowed. Please call the '
-             'compiled object on the inputs.')):
-          f(*inputs)
-
 
 class ArrayPjitTest(jtu.JaxTestCase):
 
@@ -1603,20 +1578,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
       self.assertArraysEqual(out._value, expected_matrix_mul)
 
-  def test_non_array_input_error(self):
-    input_shape = (8, 2)
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    input_data = np.arange(
-        prod(input_shape), dtype=np.float32).reshape(input_shape)
-    with jax._src.config.jax_array(True):
-      with global_mesh:
-        f = pjit(lambda x: x,
-                 out_axis_resources=MeshPspecSharding(
-                     global_mesh, P('x', 'y')))
-        with self.assertRaisesRegex(
-            ValueError, 'Please specify sharding either on the arg or on pjit'):
-          f(input_data)
-
   def test_numpy_array_input(self):
     input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -1629,6 +1590,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
                      global_mesh, P(None)),
                  out_axis_resources=MeshPspecSharding(
                      global_mesh, P('x', 'y')))
+        out = f(input_data)
+        self.assertIsInstance(out, array.Array)
+        for s in out.addressable_shards:
+          self.assertEqual(s.data.shape, (2, 1))
+          self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
+        self.assertArraysEqual(out._value, input_data)
+
+  def test_non_array_input_error(self):
+    input_shape = (8, 2)
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_data = np.arange(
+        prod(input_shape), dtype=np.float32).reshape(input_shape)
+    with jax._src.config.jax_array(True):
+      with global_mesh:
+        f = pjit(lambda x: x,
+                 out_axis_resources=MeshPspecSharding(
+                     global_mesh, P('x', 'y')))
+        # Since no in_axis_resources is provided, pjit will assume that
+        # the numpy input is fully replicated over the mesh.
         out = f(input_data)
         self.assertIsInstance(out, array.Array)
         for s in out.addressable_shards:
@@ -1937,6 +1917,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.misses, cache_info1.misses + 1)
     self.assertArraysEqual(out1, val1)
     self.assertArraysEqual(out2, val2)
+
+  @jax._src.config.jax_array(True)
+  def test_grad_of_pjit_single_device_sharding(self):
+    a = jnp.array(16, dtype=jnp.float32)
+    f = lambda x: x
+    out = jax.grad(pjit(f))(a)
+    self.assertIsInstance(out, array.Array)
+    self.assertArraysEqual(out, jax.grad(f)(a))
+
+  @jax._src.config.jax_array(True)
+  def test_autodiff_with_single_device_sharding(self):
+    # Add a constant captured by the nested pjit to make things more complicated
+    h = jnp.arange(4.)
+    f = pjit(lambda x: x.sum(1) * h.sum())
+    g = pjit(lambda x: f(jnp.sin(x * 4 + 2)))
+    jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
 
 def spec_regex(s):
