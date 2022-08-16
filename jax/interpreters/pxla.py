@@ -2743,7 +2743,6 @@ def lower_mesh_computation(
     ]
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = mlir.SPMDAxisContext(mesh)
-    axis_env = axis_ctx.axis_env
   else:
     replicated_args = [not _get_array_mapping(i.spec) for i in in_shardings]  # type: ignore
     in_partitions = None
