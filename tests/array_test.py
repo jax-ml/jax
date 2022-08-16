@@ -158,6 +158,27 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertEqual(arr_float32.dtype, np.float32)
       self.assertArraysEqual(arr_float32, arr.astype(np.float32))
 
+  @jax._src.config.jax_array(True)
+  def test_sharded_zeros_like(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    a, input_data = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+    out = jnp.zeros_like(a)
+    expected = jnp.zeros(input_data.shape, dtype=np.int32)
+    self.assertArraysEqual(out, expected)
+    self.assertLen(out.addressable_shards, 8)
+    for i in out.addressable_shards:
+      self.assertArraysEqual(i.data, expected[i.index])
+
+  @jax._src.config.jax_array(True)
+  def test_zeros_like(self):
+    a = jnp.array([1, 2, 3], dtype=np.int32)
+    out = jnp.zeros_like(a)
+    expected = np.zeros(a.shape, dtype=np.int32)
+    self.assertArraysEqual(out, expected)
+    self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
