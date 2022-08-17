@@ -1201,10 +1201,13 @@ def eltype(x: Any):
   return aval_eltype(get_aval(x))
 
 def aval_has_custom_eltype(aval: UnshapedArray):
-  return type(aval.dtype) in custom_eltypes
+  return is_custom_eltype(aval.dtype)
 
 def aval_eltype(aval: UnshapedArray):
   return aval.dtype
+
+def is_custom_eltype(eltype):
+  return type(eltype) in custom_eltypes
 
 def _short_dtype_name(dtype) -> str:
   if type(dtype) in custom_eltypes:

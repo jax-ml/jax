@@ -286,9 +286,13 @@ class KeyTy:
   # handlers
 
   @staticmethod
+  def physical_avals(aval):
+    return [core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),
+                             jnp.dtype('uint32'))]
+
+  @staticmethod
   def aval_to_ir_types(aval):
-    phys_aval = core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),
-                                 jnp.dtype('uint32'))
+    phys_aval, = KeyTy.physical_avals(aval)
     return mlir.aval_to_ir_types(phys_aval)
 
   @staticmethod
@@ -300,8 +304,7 @@ class KeyTy:
 
   @staticmethod
   def sharded_result_handler(aval, sharding, indices):
-    phys_aval = core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),
-                                 jnp.dtype('uint32'))
+    phys_aval, = KeyTy.physical_avals(aval)
     phys_handler_maker = pxla.local_result_handlers[
         (core.ShapedArray, pxla.OutputType.ShardedDeviceArray)]
     phys_handler = phys_handler_maker(phys_aval, sharding, indices)
@@ -477,8 +480,12 @@ def random_seed_abstract_eval(seeds_aval, *, impl):
 
 @random_seed_p.def_impl
 def random_seed_impl(seeds, *, impl):
+  base_arr = random_seed_impl_base(seeds, impl=impl)
+  return PRNGKeyArray(impl, base_arr)
+
+def random_seed_impl_base(seeds, *, impl):
   seed = iterated_vmap_unary(seeds.ndim, impl.seed)
-  return PRNGKeyArray(impl, seed(seeds))
+  return seed(seeds)
 
 def random_seed_lowering(ctx, seeds, *, impl):
   aval, = ctx.avals_in
@@ -503,9 +510,13 @@ def random_split_abstract_eval(keys_aval, *, count):
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, count):
-  impl = keys.impl
-  split = iterated_vmap_unary(keys.ndim, lambda k: impl.split(k, count))
-  return PRNGKeyArray(impl, split(keys.unsafe_raw_array()))
+  base_arr = random_split_impl_base(
+      keys.impl, keys.unsafe_raw_array(), keys.ndim, count=count)
+  return PRNGKeyArray(keys.impl, base_arr)
+
+def random_split_impl_base(impl, base_arr, keys_ndim, *, count):
+  split = iterated_vmap_unary(keys_ndim, lambda k: impl.split(k, count))
+  return split(base_arr)
 
 def random_split_lowering(ctx, keys, *, count):
   aval, = ctx.avals_in
@@ -535,10 +546,14 @@ def random_fold_in_abstract_eval(keys_aval, msgs_aval):
 
 @random_fold_in_p.def_impl
 def random_fold_in_impl(keys, msgs):
-  impl = keys.impl
+  base_arr = random_fold_in_impl_base(
+      keys.impl, keys.unsafe_raw_array(), msgs, keys.shape)
+  return PRNGKeyArray(keys.impl, base_arr)
+
+def random_fold_in_impl_base(impl, base_arr, msgs, keys_shape):
   fold_in = iterated_vmap_binary_bcast(
-      keys.shape, np.shape(msgs), impl.fold_in)
-  return PRNGKeyArray(impl, fold_in(keys.unsafe_raw_array(), msgs))
+      keys_shape, np.shape(msgs), impl.fold_in)
+  return fold_in(base_arr, msgs)
 
 def random_fold_in_lowering(ctx, keys, msgs):
   keys_aval, msgs_aval = ctx.avals_in
@@ -580,10 +595,13 @@ def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):
-  impl = keys.impl
+  return random_bits_impl_base(keys.impl, keys.unsafe_raw_array(), keys.ndim,
+                               bit_width=bit_width, shape=shape)
+
+def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape):
   bits = iterated_vmap_unary(
-      keys.ndim, lambda k: impl.random_bits(k, bit_width, shape))
-  return bits(keys.unsafe_raw_array())
+      keys_ndim, lambda k: impl.random_bits(k, bit_width, shape))
+  return bits(base_arr)
 
 def random_bits_lowering(ctx, keys, *, bit_width, shape):
   aval, = ctx.avals_in

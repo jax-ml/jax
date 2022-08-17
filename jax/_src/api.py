@@ -2963,7 +2963,7 @@ class ShapeDtypeStruct:
   __slots__ = ["shape", "dtype", "named_shape"]
   def __init__(self, shape, dtype, named_shape=None):
     self.shape = shape
-    self.dtype = np.dtype(dtype)
+    self.dtype = dtype if core.is_custom_eltype(dtype) else np.dtype(dtype)
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: prod(self.shape))
