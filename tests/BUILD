@@ -913,6 +913,7 @@ exports_files(
         "pmap_test.py",
         "compilation_cache_test.py",
         "pjit_test.py",
+        "python_callback_test.py",
         "transfer_guard_test.py",
     ],
     visibility = jax_test_file_visibility,
