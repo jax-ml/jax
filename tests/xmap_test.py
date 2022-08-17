@@ -43,6 +43,7 @@ from jax.experimental.maps import xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2, prod, safe_zip
 from jax._src.lax.parallel import pgather
 from jax.interpreters import batching, pxla
@@ -827,6 +828,8 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     ))
   @jtu.with_mesh_from_kwargs
   def testCollective(self, mesh):
+    if xla_extension_version < 85:
+      raise SkipTest("Need use_global_device_ids in AllReduceOp")
     all_axes = tuple(axis[0] for axis in mesh)
     f = xmap(lambda x: lax.psum(x, 'i'), in_axes=['i', 'j'], out_axes=['j'],
              axis_resources=dict(zip('ij', all_axes)))
