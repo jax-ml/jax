@@ -968,11 +968,18 @@ def _emap_impl(fun: lu.WrappedFun, *args,
     del main
   out_axes = out_axes_thunk()
 
+  platform = xb.get_backend(backend).platform
+  donate_argnums = (1,) if platform in {"cuda", "rocm", "tpu"} else ()
   new_outvals = []
   for out_axis_src, out_axis, outval in zip(out_axes_src, out_axes, outvals):
     with jax.disable_jit(False):
+      donate_argnums_ = donate_argnums
+      if isinstance(outval, (ShardedDeviceArray, jax.experimental.array.Array)):
+        # We don't want to donate if it's already sharded.
+        donate_argnums_ = ()
       out = jax.pmap(lambda _, x: x, in_axes=(0, out_axis_src.get(axis_name)),
-                     out_axes=out_axis, devices=devices, backend=backend)(
+                     out_axes=out_axis, devices=devices, backend=backend,
+                     donate_argnums=donate_argnums_)(
                          np.arange(axis_size), outval)
       new_outvals.append(out)
   return new_outvals

@@ -893,7 +893,7 @@ config.define_bool_state(
 # TODO(sharadmv,mattjj): set default to True, then remove
 config.define_bool_state(
     name='jax_eager_pmap',
-    default=False,
+    default=True,
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
