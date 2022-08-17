@@ -67,7 +67,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       arr, _ = create_array(
           input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
       arr.delete()
-      with self.assertRaisesRegex(ValueError, 'Array has been deleted.'):
+      with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
         arr._check_if_deleted()
       self.assertIsNone(arr._npy_value)
       self.assertIsNone(arr._arrays)
@@ -88,7 +88,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     with jax._src.config.jax_array(True):
       arr = jax.device_put(np.array([1, 2, 3]), jax.devices()[0])
       arr.delete()
-      with self.assertRaisesRegex(ValueError, 'Array has been deleted.'):
+      with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
         arr._check_if_deleted()
       self.assertIsNone(arr._npy_value)
       self.assertIsNone(arr._arrays)

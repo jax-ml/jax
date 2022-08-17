@@ -862,24 +862,5 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     checkify.checkify(g)(0.)  # does not crash
 
 
-class CheckifyWithArray:
-
-  def setUp(self):
-    super().setUp()
-    self.array_enabled = config.jax_array
-    config.update('jax_array', True)
-
-  def tearDown(self):
-    config.update('jax_array', self.array_enabled)
-    super().tearDown()
-
-
-class ArrayCheckifyTransformTests(CheckifyWithArray, CheckifyTransformTests):
-  pass
-
-class ArrayAssertPrimitiveTests(CheckifyWithArray, AssertPrimitiveTests):
-  pass
-
-
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

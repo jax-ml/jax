@@ -89,6 +89,8 @@ ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
 def arg_spec(x: Any) -> ArgSpec:
   aval = xla.abstractify(x)
   try:
+    if config.jax_array:
+      return aval, (x.device() if x._committed else None)
     return aval, x._device
   except:
     return aval, None
@@ -626,7 +628,7 @@ def _maybe_create_array_from_da(buf, aval, device):
   if config.jax_array:
     from jax.experimental.array import Array
     from jax.experimental.sharding import SingleDeviceSharding
-    return Array(buf.shape, SingleDeviceSharding(buf.device()), [buf],
+    return Array(aval, SingleDeviceSharding(buf.device()), [buf],
                  committed=(device is not None))
   else:
     return device_array.make_device_array(aval, device, buf)

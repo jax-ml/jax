@@ -54,6 +54,7 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
+from jax.experimental import array, sharding
 from jax._src import device_array
 import jax._src.lib
 from jax._src.lib import xla_client
@@ -72,6 +73,13 @@ FLAGS = config.FLAGS
 python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 jaxlib_version = jax._src.lib.version
+
+
+def _check_instance(self, x):
+  if config.jax_array:
+    self.assertIsInstance(x, array.Array)
+  else:
+    self.assertIsInstance(x, device_array.DeviceArray)
 
 
 class CPPJitTest(jtu.BufferDonationTestCase):
@@ -232,8 +240,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_device(self):
     device = jax.devices()[-1]
     x = self.jit(lambda x: x, device=device)(3.)
-    self.assertIsInstance(x, jnp.DeviceArray)
-    self.assertEqual(x.device_buffer.device(), device)
+    _check_instance(self, x)
+    if config.jax_array:
+      self.assertEqual(x.device(), device)
+    else:
+      self.assertEqual(x.device_buffer.device(), device)
 
   @jtu.skip_on_devices("cpu")
   def test_jit_default_device(self):
@@ -259,7 +270,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(
           jax.jit(f, device=system_default_device)(1).device(),
           system_default_device)
-      self.assertEqual(jax.jit(f, backend="cpu")(1).platform(), "cpu")
+      out = jax.jit(f, backend="cpu")(1)
+      if config.jax_array:
+        self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
+        self.assertEqual(out._arrays[0].platform(), "cpu")
+      else:
+        self.assertEqual(out.platform(), "cpu")
 
       # Sticky input device overrides default_device
       sticky = jax.device_put(1, system_default_device)
@@ -542,6 +558,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertAllClose(x * 2 - 3., y)
 
   def test_trivial_computations(self):
+    if config.jax_array:
+      raise unittest.SkipTest('Does not work with Array')
     x = jnp.array([1, 2, 3])
     y = self.jit(lambda x: x)(x)
     self.assertIs(x, y)
@@ -692,7 +710,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     jitted_f = self.jit(lambda a: a + 1)
     jitted_f(1)
-    self.assertIsInstance(jitted_f(2), device_array.Buffer)
+    if config.jax_array:
+      out = jitted_f(2)
+      self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
+      self.assertIsInstance(out._arrays[0], device_array.Buffer)
+    else:
+      self.assertIsInstance(jitted_f(2), device_array.Buffer)
 
   @jtu.skip_on_devices("cpu")
   def test_explicit_backend(self):
@@ -702,8 +725,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     result = jitted_f(1.)
     result_cpu = jitted_f_cpu(1.)
-    self.assertEqual(result.device_buffer.platform(), jtu.device_under_test())
-    self.assertEqual(result_cpu.device_buffer.platform(), "cpu")
+    if config.jax_array:
+      buf = result._arrays[0]
+      buf_cpu = result_cpu._arrays[0]
+    else:
+      buf = result.device_buffer
+      buf_cpu = result_cpu.device_buffer
+    self.assertEqual(buf.platform(), jtu.device_under_test())
+    self.assertEqual(buf_cpu.platform(), "cpu")
 
   @jtu.skip_on_devices("cpu")
   def test_device_to_device_copy_between_backends(self):
@@ -1107,7 +1136,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(x, f(x))
 
   def test_hitting_cpp_path(self):
-    if not self.use_cpp_jit:
+    if not self.use_cpp_jit or config.jax_array:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     jit_impl = dispatch._xla_call_impl
@@ -1157,7 +1186,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_cache_key_defaults(self):
     # https://github.com/google/jax/discussions/11875
-    if not self.use_cpp_jit:
+    if not self.use_cpp_jit or config.jax_array:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
     f = self.jit(lambda x: (x ** 2).sum())
     self.assertEqual(f._cache_size(), 0)
@@ -1424,7 +1453,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
-    self.assertIsInstance(dx, device_array.DeviceArray)
+    _check_instance(self, dx)
     self.assertIsInstance(dx, jnp.ndarray)
     self.assertNotIsInstance(dx, np.ndarray)
     x2 = api.device_get(dx)
@@ -1447,7 +1476,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
-    self.assertIsInstance(x, device_array.DeviceArray)
+    _check_instance(self, x)
     y = [x, 2]
     y2 = api.device_get(y)
     self.assertIsInstance(y2, list)
@@ -1463,9 +1492,17 @@ class APITest(jtu.JaxTestCase):
     d1, d2 = api.local_devices()[:2]
     data = self.rng().randn(*shape).astype(np.float32)
     x = api.device_put(data, device=d1)
-    self.assertEqual(x.device_buffer.device(), d1)
+    if config.jax_array:
+      self.assertEqual(x.device(), d1)
+    else:
+      self.assertEqual(x.device_buffer.device(), d1)
+
     y = api.device_put(x, device=d2)
-    self.assertEqual(y.device_buffer.device(), d2)
+    if config.jax_array:
+      self.assertEqual(y.device(), d2)
+    else:
+      self.assertEqual(y.device_buffer.device(), d2)
+
     np.testing.assert_array_equal(data, np.array(y))
     # Make sure these don't crash
     api.device_put(x)
@@ -1479,11 +1516,17 @@ class APITest(jtu.JaxTestCase):
     np_arr = np.array([1,2,3])
     scalar = 1
     device_arr = jnp.array([1,2,3])
-    assert device_arr.device_buffer.device() is default_device
+    if config.jax_array:
+      assert device_arr.device() is default_device
+    else:
+      assert device_arr.device_buffer.device() is default_device
 
     for val in [np_arr, device_arr, scalar]:
       x = api.device_put(val, device=cpu_device)
-      self.assertEqual(x.device_buffer.device(), cpu_device)
+      if config.jax_array:
+        self.assertEqual(x.device(), cpu_device)
+      else:
+        self.assertEqual(x.device_buffer.device(), cpu_device)
 
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
@@ -1964,18 +2007,21 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_repr(self):
     x = device_put(jnp.zeros(3))
-    self.assertIsInstance(x, device_array.DeviceArray)
+    _check_instance(self, x)
     repr(x)  # doesn't crash
 
     x = device_put(jnp.full(3, 1 + 1j))
-    self.assertIsInstance(x, device_array.DeviceArray)
+    _check_instance(self, x)
     repr(x)  # doesn't crash
 
   def test_devicearray_delete(self):
     x = device_put(1.)
     x.delete()
-    self.assertRaisesRegex(RuntimeError, "DeviceArray has been deleted.",
-                           lambda: repr(x))
+    if config.jax_array:
+      msg = "Array has been deleted."
+    else:
+      msg = "DeviceArray has been deleted."
+    self.assertRaisesRegex(RuntimeError, msg, lambda: repr(x))
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
@@ -2296,6 +2342,8 @@ class APITest(jtu.JaxTestCase):
                            np.zeros((4, 2), dtype=float0))
 
   def test_float0_error(self):
+    if config.jax_array:
+      raise unittest.SkipTest('Does not work with Array')
     # float0 is incompatible with other dtypes
     float0_array = jax.grad(lambda x: x+0., allow_int=True)(1)
     error_text = "float0s do not support any operations by design"
@@ -2836,11 +2884,15 @@ class APITest(jtu.JaxTestCase):
 
   def test_device_array_repr(self):
     rep = jnp.ones(()) + 1.
-    self.assertStartsWith(repr(rep), "DeviceArray")
+    if config.jax_array:
+      msg = 'Array'
+    else:
+      msg = 'DeviceArray'
+    self.assertStartsWith(repr(rep), msg)
 
   def test_device_array_hash(self):
     rep = jnp.ones((1,)) + 1.
-    self.assertIsInstance(rep, device_array.DeviceArray)
+    _check_instance(self, rep)
     self.assertNotIsInstance(rep, collections.abc.Hashable)
     with self.assertRaisesRegex(TypeError, 'unhashable type'):
       hash(rep)
@@ -2931,6 +2983,8 @@ class APITest(jtu.JaxTestCase):
     grad(lambda x: x[0])(CustomNode([0.]))
 
   def test_trivial_computations(self):
+    if config.jax_array:
+      raise unittest.SkipTest('Does not work with Array')
     x = jnp.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
     self.assertIs(x, y)

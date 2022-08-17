@@ -34,6 +34,13 @@ jax_test(
 )
 
 jax_test(
+    name = "api_test_with_array",
+    srcs = ["api_test.py"],
+    args = ["--jax_array=true"],
+    shard_count = 10,
+)
+
+jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
     shard_count = 2,
@@ -699,6 +706,12 @@ jax_test(
 jax_test(
     name = "checkify_test",
     srcs = ["checkify_test.py"],
+)
+
+jax_test(
+    name = "checkify_test_with_array",
+    srcs = ["checkify_test.py"],
+    args = ["--jax_array=true"],
 )
 
 jax_test(

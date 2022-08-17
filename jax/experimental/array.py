@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-import operator
+import operator as op
 import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
@@ -91,9 +91,9 @@ class Shard:
 class Array:
   # TODO(yashkatariya): Add __slots__ here.
 
-  def __init__(self, shape: Shape, sharding: Sharding,
+  def __init__(self, aval: core.ShapedArray, sharding: Sharding,
                arrays: Union[Sequence[DeviceArray], Sequence[Array]], committed: bool):
-    self._shape = shape
+    self.aval = aval
     self._sharding = sharding
     # Extract DeviceArrays from arrays with `SingleDeviceSharding` to keep the
     # code handling `self._arrays` simpler.
@@ -106,12 +106,10 @@ class Array:
     self._committed = committed
     self._npy_value = None
 
-    dtype = self._arrays[0].dtype
     if config.jax_enable_checks:
-      assert all(db.dtype == dtype for db in self._arrays), (
+      assert all(db.dtype == self.dtype for db in self._arrays), (
           "Input arrays to `Array` must have matching dtypes, "
           f"got: {[db.dtype for db in self._arrays]}")
-    self.dtype = dtype
 
     # Rearrange arrays based on the device assignment.
     if isinstance(sharding, XLACompatibleSharding):
@@ -121,13 +119,11 @@ class Array:
 
   @property
   def shape(self) -> Shape:
-    return self._shape
+    return self.aval.shape
 
-  # TODO(yashkatariya): Remove this and take aval as an input to account for
-  # weak types.
   @property
-  def aval(self) -> core.ShapedArray:
-    return core.ShapedArray(self.shape, self.dtype)
+  def dtype(self):
+    return self.aval.dtype
 
   @property
   def ndim(self):
@@ -174,7 +170,7 @@ class Array:
     return oct(self._value)  # type: ignore
 
   def __index__(self):
-    return operator.index(self._value)
+    return op.index(self._value)
 
   def to_bytes(self, order="C"):
     return self._value.tobytes(order)
@@ -210,9 +206,10 @@ class Array:
 
   def __repr__(self):
     prefix = '{}('.format(self.__class__.__name__.lstrip('_'))
-    # TODO(yashkatariya): Add weak_type to the repr and handle weak_type
-    # generally too.
-    dtype_str = f'dtype={self.dtype.name})'
+    if self.aval is not None and self.aval.weak_type:
+      dtype_str = f'dtype={self.dtype.name}, weak_type=True)'
+    else:
+      dtype_str = f'dtype={self.dtype.name})'
 
     if self.is_fully_addressable():
       line_width = np.get_printoptions()["linewidth"]
@@ -232,6 +229,18 @@ class Array:
   def __array__(self, dtype=None):
     return np.asarray(self._value, dtype=dtype)
 
+  # TODO(yashkatariya): Remove this method when everyone is using devices().
+  def device(self) -> Device:
+    device_set = self.sharding.device_set
+    if len(device_set) == 1:
+      single_device, = device_set
+      return single_device
+    raise ValueError('Length of devices is greater than 1. '
+                     'Please use `.devices()`.')
+
+  def devices(self) -> List[Device]:
+    return list(self.sharding.device_set)
+
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
@@ -241,7 +250,7 @@ class Array:
       device = db.device()
       # Wrap the device arrays in `Array` until C++ returns an Array instead
       # of a DA.
-      array = Array(db.shape, SingleDeviceSharding(device), [db], committed=True)
+      array = Array(db.aval, SingleDeviceSharding(device), [db], committed=True)
       out.append(Shard(device, self.sharding, self.shape, array))
     return out
 
@@ -255,7 +264,7 @@ class Array:
 
   def _check_if_deleted(self):
     if self._arrays is None:
-      raise ValueError("Array has been deleted.")
+      raise RuntimeError("Array has been deleted.")
 
   def block_until_ready(self):
     self._check_if_deleted()
@@ -301,6 +310,8 @@ class Array:
     # https://docs.python.org/3/library/typing.html#typing.cast
     return cast(np.ndarray, self._npy_value)
 
+# explicitly set to be unhashable. Same as what device_array.py does.
+setattr(Array, "__hash__", None)
 
 def make_array_from_callback(shape: Shape, sharding: Sharding,
                              data_callback: Callable[[Optional[Index]], ArrayLike]) -> Array:
@@ -308,14 +319,14 @@ def make_array_from_callback(shape: Shape, sharding: Sharding,
       device_put(data_callback(sharding.device_indices(device, shape)), device)
       for device in sharding.addressable_devices
   ]
-  return Array(shape, sharding, arrays, committed=True)
+  aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  return Array(aval, sharding, arrays, committed=True)
 
 
-core.pytype_aval_mappings[Array] = lambda x: core.ShapedArray(x.shape, x.dtype)
-xla.pytype_aval_mappings[Array] = lambda x: core.ShapedArray(x.shape, x.dtype)
+core.pytype_aval_mappings[Array] = op.attrgetter('aval')
+xla.pytype_aval_mappings[Array] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[Array] = pxla.identity
-api_util._shaped_abstractify_handlers[Array] = \
-    lambda x: core.ShapedArray(x.shape, x.dtype)
+api_util._shaped_abstractify_handlers[Array] = op.attrgetter('aval')
 ad_util.jaxval_adders[Array] = lax_internal.add
 ad_util.jaxval_zeros_likers[Array] = lax_internal.zeros_like_array
 
@@ -356,12 +367,12 @@ pxla.shard_arg_handlers[Array] = _array_shard_arg
 
 
 def _array_global_result_handler(global_aval, out_sharding):
-  return lambda bufs: Array(global_aval.shape, out_sharding, bufs, committed=True)
+  return lambda bufs: Array(global_aval, out_sharding, bufs, committed=True)
 pxla.global_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_global_result_handler
 
 
 def _array_local_result_handler(aval, sharding, indices):
-  return lambda bufs: Array(aval.shape, sharding, bufs, committed=True)
+  return lambda bufs: Array(aval, sharding, bufs, committed=True)
 pxla.local_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_local_result_handler
 pxla.local_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_local_result_handler
