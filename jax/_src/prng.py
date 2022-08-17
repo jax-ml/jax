@@ -298,6 +298,17 @@ class KeyTy:
       return PRNGKeyArray(aval.dtype.impl, buf)
     return handler
 
+  @staticmethod
+  def sharded_result_handler(aval, sharding, indices):
+    phys_aval = core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),
+                                 jnp.dtype('uint32'))
+    phys_handler_maker = pxla.local_result_handlers[
+        (core.ShapedArray, pxla.OutputType.ShardedDeviceArray)]
+    phys_handler = phys_handler_maker(phys_aval, sharding, indices)
+    def handler(bufs):
+      return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs))
+    return handler
+
   # eltype-polymorphic primitive lowering rules
 
   @staticmethod
