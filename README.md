@@ -496,8 +496,8 @@ if you run into any errors or problems with the prebuilt wheels.
 ### pip installation: Google Cloud TPU
 JAX also provides pre-built wheels for
 [Google Cloud TPU](https://cloud.google.com/tpu/docs/users-guide-tpu-vm).
-To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can run
-the following in your cloud TPU VM:
+To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can
+run the following in your cloud TPU VM:
 ```bash
 pip install --upgrade pip
 pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
