@@ -766,16 +766,13 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, "grad")
     self.TransformConvertAndCompare(f, arg, "grad_vmap")
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_{flavor}", flavor=flavor)
-    for flavor in ["old", "new"]))
-  def test_remat(self, flavor="old"):
+  def test_remat(self):
     def f(x1):
       x2 = jnp.sin(x1)
       x3 = jnp.sin(x2)
       x4 = jnp.sin(x3)
       return x4
-    remat_f = jax.remat(f) if flavor == "old" else ad_checkpoint.checkpoint(f)
+    remat_f = ad_checkpoint.checkpoint(f)
 
     # The computation of grad_f computes "sin" 5 times, 3 for the forward pass
     # and then to rematerialize "x2" and "x3" in the backward pass.
@@ -783,21 +780,19 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # Check that we have a Sin under a conditional
     f_tf = tf.function(jax2tf.convert(jax.grad(remat_f)), autograph=False)
     f_tf_graph = f_tf.get_concrete_function(arg).graph.as_graph_def()
-    if flavor == "old":
-      raise unittest.SkipTest("TODO: CSE widget not yet implemented for old-style remat")
     if jax.config.jax_remat_opt_barrier:
       if config.jax2tf_default_experimental_native_lowering:
         self.assertRegex(
           str(f_tf_graph), r"mhlo.optimization_barrier")
       else:
         self.assertRegex(
-            str(f_tf_graph), r"remat_checkpoint_/XlaOptimizationBarrier")
+            str(f_tf_graph), r"XlaOptimizationBarrier")
     elif config.jax_experimental_name_stack:
       self.assertRegex(str(f_tf_graph),
-                       r'transpose/jax2tf_f_/jvp/checkpoint/remat_checkpoint_/cond/branch_1_fun/Sin')
+                       r'transpose/jax2tf_f_/jvp/checkpoint/cond/branch_1_fun/Sin')
     else:
       self.assertRegex(str(f_tf_graph),
-                       r'remat_checkpoint_/switch_case/indexed_case/Sin')
+                       r'switch_case/indexed_case/Sin')
 
   def test_remat_free_var(self):
     def f(x):

@@ -19,15 +19,17 @@ As of [#11830](https://github.com/google/jax/pull/11830) we're switching on a ne
 
 ## How can I disable the change, and go back to the old behavior for now?
 
-In case you have a problem with this change, it will **temporarily** be possible to switch off the new implementation by setting the `jax_new_checkpoint` config option to be False, in any one of these ways:
-
-
+In case you have a problem with this change, **through version `jax==0.3.16`** it is possible to switch off the new implementation by setting the `jax_new_checkpoint` config option to be False, in any one of these ways:
 
 1. set the shell environment variable `JAX_NEW_CHECKPOINT=0`;
 2. execute `jax.config.update('jax_new_checkpoint', False)`;
 3. if you parse flags with `absl`, pass the `--jax_new_checkpoint=False` option.
 
 If you need to revert to the old implementation, **please reach out** on a GitHub issue so that we can make the new implementation work for you.
+
+As of `jax==0.3.17` the `jax_new_checkpoint` config option is no longer
+available. If you have an issue, please reach out on [the issue
+tracker](https://github.com/google/jax/issues) so we can help fix it!
 
 
 ## Why are we doing this?

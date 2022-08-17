@@ -1615,16 +1615,6 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 # cased to just pass-through the token
                 in_axes=eqn.params["in_axes"] + (None, None),
                 out_axes=eqn.params["out_axes"] + (0, 0))))
-  elif eqn.primitive is pe.remat_call_p:
-    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
-    eqns.append(
-        eqn.replace(
-            invars=eqn.invars + [input_token_var, input_itoken_var],
-            outvars=eqn.outvars + [output_token_var, output_itoken_var],
-            params=dict(
-                eqn.params,
-                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
-            )))
   elif eqn.primitive is custom_derivatives.custom_jvp_call_jaxpr_p:
     fun_jaxpr = eqn.params["fun_jaxpr"]
 

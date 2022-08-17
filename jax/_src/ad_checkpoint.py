@@ -18,28 +18,29 @@ from typing import Callable, Optional, List, Tuple, Sequence, Set, Union, Any
 import types
 
 from absl import logging
+import numpy as np
 
 import jax
 from jax import core
 from jax import linear_util as lu
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
+from jax._src import util
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.api_util import flatten_fun, shaped_abstractify
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
-
-# TODO(mattjj): before this can be the standard remat implementation, we must:
-#   [ ] fix up callers who use the 'concrete' option (now removed)
 
 map = safe_map
 zip = safe_zip
@@ -580,6 +581,104 @@ def remat_dce(used_outputs: List[bool], eqn: core.JaxprEqn
         eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
     return used_inputs, new_eqn
 pe.dce_rules[remat_p] = remat_dce
+
+
+def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
+                   differentiated: bool, is_gpu_platform: bool = False,
+                   **_):
+  assert not jaxpr.constvars
+
+  if differentiated and prevent_cse:
+    if jax.config.jax_remat_opt_barrier:
+      translation_rule = _remat_translation_using_opt_barrier
+    elif is_gpu_platform:
+      translation_rule = _remat_translation_using_while
+    else:
+      translation_rule = _remat_translation_using_cond
+  else:
+    translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
+
+  return jax.named_call(translation_rule, name="remat")(*args, jaxpr=jaxpr)
+
+def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
+  args = _optimization_barrier(args)
+  return core.eval_jaxpr(jaxpr, (), *args)
+
+# TODO(mattjj): add core utility for 'create dummy value for this type'?
+def _dummy_like(aval: core.AbstractValue) -> Any:
+  if aval is core.abstract_token:
+    return jax.lax.create_token()
+  elif isinstance(aval, (core.ShapedArray, core.DShapedArray)):
+    return jax.lax.broadcast(jax.lax.empty(aval.dtype), aval.shape)  # type: ignore
+  else:
+    raise ValueError(aval)
+
+def _remat_translation_using_while(*args, jaxpr: core.Jaxpr):
+  # Implements:
+  #  for(counter=0, result=0; counter < rng(1, 2); counter ++) {
+  #     result = eval_jaxpr(*args)
+  #  }
+  # The loop carry is a tuple: (counter, result, args)
+  avals_out = tuple(v.aval for v in jaxpr.outvars)
+  carry_init = (np.int32(0), tuple(map(_dummy_like, avals_out)), args)
+  def cond(carry):
+    counter, _, _ = carry
+    unif = jax.lax.rng_uniform(np.int32(1), np.int32(2), shape=())
+    return counter < unif
+
+  def body(carry):
+    counter, _, args = carry
+    results = core.eval_jaxpr(jaxpr, (), *args)
+    return (counter + 1, tuple(results), args)
+
+  carry_res = jax.lax.while_loop(cond, body, carry_init)
+  return carry_res[1]
+
+def _remat_translation_using_cond(*args, jaxpr: core.Jaxpr):
+  # Implements:
+  #  if(rng(0, 1) < 2)
+  #    return eval_jaxpr(*args)
+  #  else:
+  #    return 0
+  avals_out = tuple(v.aval for v in jaxpr.outvars)
+
+  def remat_comp(*args):
+    return tuple(core.eval_jaxpr(jaxpr, (), *args))
+  def dummy_comp(*args):
+    return tuple(map(_dummy_like, avals_out))
+
+  unif = jax.lax.rng_uniform(np.float32(0), np.float32(1), shape=())
+  return jax.lax.cond(unif < np.float32(2), remat_comp, dummy_comp, *args)
+
+mlir.register_lowering(
+    remat_p, mlir.lower_fun(remat_lowering, multiple_results=True))
+mlir.register_lowering(
+    remat_p,
+    mlir.lower_fun(partial(remat_lowering, is_gpu_platform=True),
+                   multiple_results=True),
+    platform="gpu")
+
+def _optimization_barrier_abstract_eval(*args):
+  return args
+
+def _optimization_barrier_lowering_rule(ctx, *args):
+  barrier_types = map(mlir.aval_to_ir_types, ctx.avals_in)
+  flat_barrier_types = util.flatten(barrier_types)
+  flat_args = mlir.flatten_lowering_ir_args(args)
+  barrier_op = mhlo.OptimizationBarrierOp(flat_barrier_types, flat_args)
+  return util.unflatten(barrier_op.results, map(len, barrier_types))
+
+def _optimization_barrier(arg):
+  flat_args, treedef = tree_flatten(arg)
+  return tree_unflatten(treedef, optimization_barrier_p.bind(*flat_args))
+
+optimization_barrier_p = core.Primitive('optimization_barrier')
+optimization_barrier_p.multiple_results = True
+optimization_barrier_p.def_impl(
+    partial(xla.apply_primitive, optimization_barrier_p))
+optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
+mlir.register_lowering(optimization_barrier_p,
+                       _optimization_barrier_lowering_rule)
 
 
 def checkpoint_name(x, name):

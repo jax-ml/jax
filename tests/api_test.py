@@ -3932,55 +3932,6 @@ class RematTest(jtu.JaxTestCase):
     expected = f_lin_expected(3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @unittest.skipIf(config.jax_new_checkpoint, "test is for old remat only")
-  def test_remat_grad_python_control_flow(self):
-    # See test `test_remat_grad_python_control_flow_static_argnums` for the
-    # new recommended way to express this computation.
-
-    def g(x):
-      if x > 0:
-        return lax.sin(x), 3.
-      else:
-        return lax.cos(x), 4.
-
-    def f(x):
-      x, _ = g(x)
-      return x
-
-    with self.assertWarnsRegex(DeprecationWarning, "static_argnums"):
-      g = api.remat(g, concrete=True)
-
-    ans = f(2.)
-    expected = np.sin(2.)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.grad(f)(2.)
-    expected = np.cos(2.)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @unittest.skipIf(config.jax_new_checkpoint, "new remat raises error here")
-  def test_remat_concrete_deprecation_warning(self):
-    def g(x):
-      if x > 0:
-        return lax.sin(x), 3.
-      else:
-        return lax.cos(x), 4.
-
-    with self.assertWarnsRegex(DeprecationWarning, "static_argnums"):
-      _ = api.remat(g, concrete=True)
-
-  @unittest.skipIf(not config.jax_new_checkpoint, "old remat warns here")
-  def test_remat_concrete_deprecation_error(self):
-    def g(x):
-      if x > 0:
-        return lax.sin(x), 3.
-      else:
-        return lax.cos(x), 4.
-
-    with self.assertRaisesRegex(NotImplementedError, "static_argnums"):
-      _ = api.remat(g, concrete=True)
-
-  @unittest.skipIf(not config.jax_new_checkpoint, "old remat different error")
   def test_remat_concrete_error(self):
     @api.remat  # no static_argnums or concrete
     def g(x):
@@ -4065,7 +4016,6 @@ class RematTest(jtu.JaxTestCase):
     expected = np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @unittest.skipIf(not config.jax_new_checkpoint, "old remat retraces here")
   def test_remat_retracing(self):
     # This is *not* a very important behavior; remat doesn't need to provide
     # caching guarantees with the same importance as jit. But even so, in the
@@ -4089,7 +4039,6 @@ class RematTest(jtu.JaxTestCase):
       y.block_until_ready()
     self.assertEqual(count, 1)
 
-  @unittest.skipIf(not config.jax_new_checkpoint, "old remat retraces here")
   def test_remat_static_agnums_retracing(self):
     # This is *not* a super important behavior; remat doesn't need to provide
     # caching guarantees with the same importance as jit. But even so, in the
@@ -4981,7 +4930,6 @@ class RematTest(jtu.JaxTestCase):
         f_vjp(1.)[0].block_until_ready()
     self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
 
-  @unittest.skipIf(not config.jax_new_checkpoint, "old remat recompiles here")
   def test_fwd_caching(self):
     # see above test also
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
@@ -4991,7 +4939,6 @@ class RematTest(jtu.JaxTestCase):
         y.block_until_ready()
     self.assertEqual(count[0], 1)
 
-  @unittest.skipIf(not config.jax_new_checkpoint, "old remat recompiles here")
   def test_fwd_caching_static_argnums(self):
     # see above test also
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x), static_argnums=(0,))
