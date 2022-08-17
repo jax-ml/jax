@@ -104,6 +104,30 @@ class FftTest(jtu.JaxTestCase):
     x = rng((10,), np.complex64)
     self.assertAllClose(np.fft.fft(x).astype(np.complex64),
                         lax.fft(x, "FFT", fft_lengths=(10,)))
+    self.assertAllClose(np.fft.fft(x).astype(np.complex64),
+                        lax.fft(x, "fft", fft_lengths=(10,)))
+
+  def testLaxFftErrors(self):
+    with self.assertRaises(
+      ValueError,
+      msg="FFT input shape (14, 15) must have at least as many input "
+          "dimensions as fft_lengths (4, 5, 6)"):
+      lax.fft(np.ones((14, 15)), fft_type="fft", fft_lengths=(4, 5, 6))
+    with self.assertRaises(
+      ValueError,
+      msg="FFT input shape (14, 15) minor dimensions must be equal to "
+          "fft_lengths (17,)"):
+      lax.fft(np.ones((14, 15)), fft_type="fft", fft_lengths=(17,))
+    with self.assertRaises(
+      ValueError,
+      msg="RFFT input shape (14, 15) minor dimensions must be equal to "
+          "fft_lengths (14, 15,)"):
+      lax.fft(np.ones((2, 14, 15)), fft_type="rfft", fft_lengths=(14, 12))
+    with self.assertRaises(
+      ValueError,
+      msg="IRFFT input shape (14, 15) minor dimensions must be equal to "
+          "all except the last fft_length, got fft_lengths=(14, 15,)"):
+      lax.fft(np.ones((2, 14, 15)), fft_type="irfft", fft_lengths=(13, 15))
 
   @parameterized.parameters((np.float32,), (np.float64,))
   def testLaxIrfftDoesNotMutateInputs(self, dtype):
