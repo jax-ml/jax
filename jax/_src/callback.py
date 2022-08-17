@@ -36,15 +36,15 @@ map, unsafe_map = util.safe_map, map
 
 @pure_callback_p.def_impl
 def pure_callback_impl(*args, result_avals, callback: Callable[..., Any],
-                       rank_polymorphic: bool):
-  del rank_polymorphic, result_avals
+                       vectorized: bool):
+  del vectorized, result_avals
   return callback(*args)
 
 
 @pure_callback_p.def_abstract_eval
 def pure_callback_abstract_eval(*avals, callback: Callable[..., Any],
-                                result_avals, rank_polymorphic: bool):
-  del avals, callback, rank_polymorphic
+                                result_avals, vectorized: bool):
+  del avals, callback, vectorized
   return result_avals
 
 
@@ -67,26 +67,29 @@ def pure_callback_transpose_rule(*args, **kwargs):
 ad.primitive_transposes[pure_callback_p] = pure_callback_transpose_rule
 
 
-def pure_callback_batching_rule(args, dims, *, callback, rank_polymorphic: bool,
+def pure_callback_batching_rule(args, dims, *, callback, vectorized: bool,
                                 result_avals: Sequence[core.ShapedArray]):
   axis_size = next(a.shape[0] for a, d in zip(args, dims)
                    if d is not batching.not_mapped)
-  new_args = []
-  for arg, dim in zip(args, dims):
-    new_args.append(batching.moveaxis(arg, dim, 0))
-  if rank_polymorphic:
+  new_args = [arg if dim is batching.not_mapped else
+              batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
+  if vectorized:
     result_avals = tuple(
         core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)  # type: ignore
         for aval in result_avals)
     outvals = pure_callback_p.bind(
-        *new_args, callback=callback, rank_polymorphic=rank_polymorphic,
+        *new_args, callback=callback, vectorized=vectorized,
         result_avals=result_avals)
   else:
+    is_batched = [d is not batching.not_mapped for d in dims]
+    unbatched_args, batched_args = util.partition_list(is_batched, new_args)
+    def _batch_fun(*batched_args):
+      merged_args = util.merge_lists(is_batched, unbatched_args, batched_args)
+      return pure_callback_p.bind(
+          *merged_args, callback=callback, result_avals=result_avals,
+          vectorized=vectorized)
     from jax._src.lax.control_flow import map as lax_map
-    outvals = lax_map(
-        functools.partial(pure_callback_p.bind, callback=callback,
-          rank_polymorphic=rank_polymorphic, result_avals=result_avals),
-        *new_args)
+    outvals = lax_map(_batch_fun, *batched_args)
   return tuple(outvals), (0,) * len(outvals)
 
 
@@ -115,7 +118,7 @@ mlir.register_lowering(pure_callback_p, pure_callback_lowering)
 
 
 def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
-                  *args: Any, rank_polymorphic: bool = False, **kwargs: Any):
+                  *args: Any, vectorized: bool = False, **kwargs: Any):
   def _flat_callback(*flat_args):
     args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
     return tree_util.tree_leaves(callback(*args, **kwargs))
@@ -126,5 +129,5 @@ def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
   flat_result_avals, out_tree = tree_util.tree_flatten(result_avals)
   out_flat = pure_callback_p.bind(
       *flat_args, callback=_flat_callback,
-      result_avals=tuple(flat_result_avals), rank_polymorphic=rank_polymorphic)
+      result_avals=tuple(flat_result_avals), vectorized=vectorized)
   return tree_util.tree_unflatten(out_tree, out_flat)

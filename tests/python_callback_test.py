@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import functools
 import io
 import textwrap
 import unittest
@@ -25,6 +26,7 @@ from jax import core
 from jax import lax
 from jax import tree_util
 from jax._src import debugging
+from jax._src import dispatch
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src import util
@@ -459,6 +461,10 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
 class PurePythonCallbackTest(jtu.JaxTestCase):
 
+  def tearDown(self):
+    super().tearDown()
+    dispatch.runtime_tokens.clear()
+
   @jtu.skip_on_devices(*disabled_backends)
   def test_simple_pure_callback(self):
 
@@ -504,8 +510,8 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      # Calling a function with a return value that expects no return values
-      return jax.pure_callback(lambda x: (x, np.ones(4, np.float32)), x)
+      # Calling a function with two return values that expects one return value
+      return jax.pure_callback(lambda x: (x, np.ones(4, np.float32)), x, x)
 
     with self.assertRaises(RuntimeError):
       f(2.)
@@ -513,8 +519,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
     @jax.jit
     def g():
-      # Calling a function with a return value that expects no return values
-      return jax.pure_callback(lambda: None, (
+      return jax.pure_callback(lambda: (), (
         core.ShapedArray((1,), np.float32), core.ShapedArray((2,), np.float32)))
 
     with self.assertRaises(RuntimeError):
@@ -564,7 +569,14 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     out = jax.vmap(g, in_axes=1)(jnp.arange(8.).reshape((4, 2)))
     np.testing.assert_allclose(out, np.sin(np.arange(8.).reshape((4, 2))).T)
 
-  def test_vmap_rank_polymorphic_callback(self):
+    @jax.jit
+    @functools.partial(jax.vmap, in_axes=(0, None))
+    def h(x, y):
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y)
+    out = h(jnp.arange(4.), 4.)
+    np.testing.assert_allclose(out, np.sin(np.arange(4.)) + 4.)
+
+  def test_vmap_vectorized_callback(self):
 
     def cb(x):
       self.assertTupleEqual(x.shape, ())
@@ -575,7 +587,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     def f(x):
       return jax.pure_callback(cb, x, x)
 
-    _ = f(jnp.arange(4.))
+    np.testing.assert_allclose(f(jnp.arange(4.)), np.sin(np.arange(4.)))
 
     def cb2(x):
       self.assertTupleEqual(x.shape, (4,))
@@ -585,11 +597,19 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def g(x):
-      return jax.pure_callback(cb2, x, x, rank_polymorphic=True)
+      return jax.pure_callback(cb2, x, x, vectorized=True)
 
-    _ = g(jnp.arange(4.))
+    np.testing.assert_allclose(g(jnp.arange(4.)), np.sin(np.arange(4.)))
 
-  def test_vmap_rank_polymorphic_callback_errors_if_returns_wrong_shape(self):
+    @jax.jit
+    @functools.partial(jax.vmap, in_axes=(0, None))
+    def h(x, y):
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y,
+                               vectorized=True)
+    out = h(jnp.arange(4.), 4.)
+    np.testing.assert_allclose(out, np.sin(np.arange(4.)) + 4.)
+
+  def test_vmap_vectorized_callback_errors_if_returns_wrong_shape(self):
 
     def cb(x):
       # Reduces over all dimension when it shouldn't
@@ -598,7 +618,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def f(x):
-      return jax.pure_callback(cb, x, x, rank_polymorphic=True)
+      return jax.pure_callback(cb, x, x, vectorized=True)
 
     with self.assertRaises(RuntimeError):
       f(jnp.arange(4.))
@@ -743,13 +763,13 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, jnp.arange(1., 41.))
 
   @jtu.skip_on_devices(*disabled_backends)
-  def test_rank_polymorphic_callback_inside_xmap(self):
+  def test_vectorized_callback_inside_xmap(self):
 
     def _callback(x):
       return (x + 1.).astype(x.dtype)
 
     def f(x):
-      return jax.pure_callback(_callback, x, x, rank_polymorphic=True)
+      return jax.pure_callback(_callback, x, x, vectorized=True)
 
     f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
                   axis_resources={'a': 'dev'})
