@@ -116,6 +116,18 @@ def check_1d_2d_mesh(f, set_mesh):
       ("2x2", (("x", 2), ("y", 2)), ("x", "y")),
     ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
 
+@curry
+def check_1d_2d_mesh_with_array(f, set_mesh):
+  return parameterized.named_parameters(
+    {"testcase_name": f"_{name}_array_{ea}", "mesh": mesh, "resources": resources,
+     "enable_array": ea}
+    for ea in [True, False]
+    for name, mesh, resources in (
+      ("2", (("x", 2),), "x"),
+      ("2x1", (("x", 2), ("y", 1)), ("x", "y")),
+      ("2x2", (("x", 2), ("y", 2)), ("x", "y")),
+    ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
+
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
 class PJitTest(jtu.BufferDonationTestCase):
@@ -1941,29 +1953,85 @@ def spec_regex(s):
 
 class PJitErrorTest(jtu.JaxTestCase):
 
-  @check_1d_2d_mesh(set_mesh=True)
-  def testNonDivisibleArgs(self, mesh, resources):
+  @check_1d_2d_mesh_with_array(set_mesh=True)
+  def testNonDivisibleArgs(self, mesh, resources, enable_array):
     x = jnp.ones((3, 2))
-    spec = P(resources, None)
-    mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
-    error = re.compile(
-        r"One of pjit arguments.*" + spec_regex(spec) + r".*"
-        r"implies that the size of its dimension 0 should be "
-        r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
-    with self.assertRaisesRegex(ValueError, error):
-      pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
+    pspec = P(resources, None)
+    with jax._src.config.jax_array(enable_array):
+      if enable_array:
+        axes, shape = zip(*mesh)
+        m = jtu.create_global_mesh(shape, axes)
+        spec = MeshPspecSharding(m, pspec)
+        out_spec = MeshPspecSharding(m, P(None))
+      else:
+        spec = pspec
+        out_spec = P(None)
+      mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
+      error = re.compile(
+          r"One of pjit arguments.*" + spec_regex(spec) + r".*"
+          r"implies that the size of its dimension 0 should be "
+          r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
+      with self.assertRaisesRegex(ValueError, error):
+        pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=out_spec)(x)
+
+  @check_1d_2d_mesh_with_array(set_mesh=True)
+  def testNonDivisibleOuts(self, mesh, resources, enable_array):
+    x = jnp.ones((3, 2))
+    pspec = P(resources, None)
+    with jax._src.config.jax_array(enable_array):
+      if enable_array:
+        axes, shape = zip(*mesh)
+        m = jtu.create_global_mesh(shape, axes)
+        in_spec = MeshPspecSharding(m, P(None))
+        out_spec = MeshPspecSharding(m, pspec)
+      else:
+        in_spec = P(None)
+        out_spec = pspec
+      mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
+      error = re.compile(
+          r"One of pjit outputs.*" + spec_regex(pspec) + r".*"
+          r"implies that the size of its dimension 0 should be "
+          r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
+      with self.assertRaisesRegex(ValueError, error):
+        pjit(lambda x: x, in_axis_resources=in_spec, out_axis_resources=out_spec)(x)
 
   @check_1d_2d_mesh(set_mesh=True)
-  def testNonDivisibleOuts(self, mesh, resources):
-    x = jnp.ones((3, 2))
-    spec = P(resources, None)
+  @jax._src.config.jax_array(True)
+  def testNonDivisibleArgsWithArrayInput(self, mesh, resources):
+    pspec = P(resources, None)
+    axes, mesh_shape = zip(*mesh)
+    m = jtu.create_global_mesh(mesh_shape, axes)
+
+    inp_data = jnp.ones((3, 2))
+    bufs = [jax.device_put(inp_data, d) for d in jax.local_devices()]
+    arr = array.Array(inp_data.aval, MeshPspecSharding(m, pspec), bufs, True)
+
     mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
     error = re.compile(
-        r"One of pjit outputs.*" + spec_regex(spec) + r".*"
+        r"One of pjit arguments.*" + spec_regex(pspec) + r".*"
         r"implies that the size of its dimension 0 should be "
         r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
-      pjit(lambda x: x, in_axis_resources=None, out_axis_resources=P(resources, None))(x)
+      pjit(lambda x: x)(arr)
+
+  @check_1d_2d_mesh(set_mesh=True)
+  @jax._src.config.jax_array(True)
+  def testNonDivisibleOutsWithArrayInput(self, mesh, resources):
+    inp_shape = (3, 2)
+    pspec = P(resources, None)
+
+    axes, mesh_shape = zip(*mesh)
+    m = jtu.create_global_mesh(mesh_shape, axes)
+    arr, _ = create_array(inp_shape, m, P(None))
+    out_spec = MeshPspecSharding(m, pspec)
+
+    mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
+    error = re.compile(
+        r"One of pjit outputs.*" + spec_regex(pspec) + r".*"
+        r"implies that the size of its dimension 0 should be "
+        r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
+    with self.assertRaisesRegex(ValueError, error):
+      pjit(lambda x: x, out_axis_resources=out_spec)(arr)
 
   @check_1d_2d_mesh(set_mesh=False)
   @jtu.with_mesh([('z', 1)])

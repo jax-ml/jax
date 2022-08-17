@@ -490,14 +490,21 @@ class PytreeLeaf:
 def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
                                in_tree, in_positional_semantics, is_gda,
                                resource_env):
+  in_shardings = in_shardings_thunk()
   in_shardings_flat = flatten_axis_resources(
-        "pjit in_axis_resources", in_tree, in_shardings_thunk(), tupled_args=True)
+        "pjit in_axis_resources", in_tree, in_shardings, tupled_args=True)
 
   # Fork here because the `Array` path is very simple and doesn't need all the
   # complexity below.
   if config.jax_array:
-    pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
-                             allow_uneven_sharding=False)
+    # TODO(yashkatariya): Remove this check from here once
+    # in_shardings/in_axis_resources is deleted.
+    # Check here if user specifies shardings in in_axis_resources because the
+    # check in _pjit_call_impl is too late since everything will be an
+    # OpShardingSharding by that time.
+    if not _is_unspecified(in_shardings):
+      pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
+                               allow_uneven_sharding=False)
     global_in_avals = local_in_avals
     canonicalized_shardings = tuple(
         i if _is_auto(i) or _is_unspecified(i) else to_op_sharding_sharding(i, aval.ndim)
@@ -771,10 +778,9 @@ pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
 
 
-def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
+def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh, arg_ndims):
   arg_shardings = tuple(a.sharding if hasattr(a, 'sharding') else _UNSPECIFIED
                         for a in args)
-  arg_ndims = tuple(a.ndim if hasattr(a, 'ndim') else 0 for a in args)
   da = _get_and_check_device_assignment(
         it.chain(arg_shardings, pjit_in_shardings, out_shardings), pjit_mesh)
 
@@ -784,7 +790,7 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
       if _is_unspecified(arg_s):
         resolved_in_shardings.append(OpShardingSharding.get_replicated(da))
       else:
-        resolved_in_shardings.append(to_op_sharding_sharding(arg_s, ndim))
+        resolved_in_shardings.append(arg_s)
     else:
       if not _is_unspecified(arg_s):
         if not pxla.are_op_shardings_equal(
@@ -804,8 +810,17 @@ def _pjit_call_impl(*args, jaxpr,
                     donated_invars, name,
                     in_positional_semantics, out_positional_semantics):
   if config.jax_array:
-    in_shardings = _resolve_in_shardings(args, in_shardings, out_shardings,
-                                         resource_env.physical_mesh)
+    arg_ndims = tuple(a.ndim if hasattr(a, 'ndim') else 0 for a in args)
+    resolved_in_shardings = _resolve_in_shardings(
+        args, in_shardings, out_shardings, resource_env.physical_mesh, arg_ndims)
+    # If the original shardings that were bound to pjit_p are all unspecified,
+    # then do the aval sharding check here.
+    if all(_is_unspecified(i) for i in in_shardings):
+      pjit_check_aval_sharding(resolved_in_shardings, jaxpr.in_avals, "pjit arguments",
+                               allow_uneven_sharding=False)
+    # Convert to OpShardingSharding after aval sharding check is done so that
+    # users don't see op sharding protos in the error messages.
+    in_shardings = tree_map(to_op_sharding_sharding, resolved_in_shardings, arg_ndims)
 
   in_is_global = _calc_is_global_sequence(in_positional_semantics, in_shardings)
   if config.jax_array and all(_is_unspecified(o) for o in out_shardings):
