@@ -221,7 +221,7 @@ def _asarray(arr):
   Note this will not correctly handle lists or tuples.
   """
   _check_arraylike("_asarray", arr)
-  dtype, weak_type = dtypes._lattice_result_type(arr)
+  dtype, weak_type = dtypes.result_type(arr, return_weak_type_flag=True)
   return lax_internal._convert_element_type(arr, dtype, weak_type)
 
 def _promote_shapes(fun_name, *args):
@@ -271,8 +271,7 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    to_dtype, weak_type = dtypes._lattice_result_type(*args)
-    to_dtype = dtypes.canonicalize_dtype(to_dtype)
+    to_dtype, weak_type = dtypes.result_type(*args, return_weak_type_flag=True)
     return [lax_internal._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
@@ -280,8 +279,7 @@ def _promote_dtypes_inexact(*args):
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype, weak_type = dtypes.result_type(*args, return_weak_type_flag=True)
   to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
   return [lax_internal._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
@@ -291,8 +289,7 @@ def _promote_dtypes_numeric(*args):
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a numeric (non-bool) type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype, weak_type = dtypes.result_type(*args, return_weak_type_flag=True)
   to_dtype_numeric = dtypes.to_numeric_dtype(to_dtype)
   return [lax_internal._convert_element_type(x, to_dtype_numeric, weak_type)
           for x in args]
@@ -302,8 +299,7 @@ def _promote_dtypes_complex(*args):
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a complex type."""
-  to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype, weak_type = dtypes.result_type(*args, return_weak_type_flag=True)
   to_dtype_complex = dtypes.to_complex_dtype(to_dtype)
   return [lax_internal._convert_element_type(x, to_dtype_complex, weak_type)
           for x in args]

@@ -179,7 +179,7 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   r0 = _sub(b, A(x0))
   rho0 = alpha0 = omega0 = lax_internal._convert_element_type(
-      1, *dtypes._lattice_result_type(*tree_leaves(b)))
+      1, *dtypes.result_type(*tree_leaves(b), return_weak_type_flag=True))
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
@@ -298,8 +298,7 @@ def _safe_normalize(x, thresh=None):
   taken to be 0, and the normalized x to be the zero vector.
   """
   norm = _norm(x)
-  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(x))
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype, weak_type = dtypes.result_type(*tree_leaves(x), return_weak_type_flag=True)
   if thresh is None:
     thresh = jnp.finfo(norm.dtype).eps
   thresh = thresh.astype(dtype).real
@@ -531,8 +530,7 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
       lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
       unit_residual,
   )
-  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(b))
-  dtype = dtypes.canonicalize_dtype(dtype)
+  dtype, weak_type = dtypes.result_type(*tree_leaves(b), return_weak_type_flag=True)
   H = lax_internal._convert_element_type(
       jnp.eye(restart, restart + 1, dtype=dtype), weak_type=weak_type)
 

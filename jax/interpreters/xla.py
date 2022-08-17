@@ -245,7 +245,7 @@ def canonicalize_dtype(x):
   raise TypeError(f"No canonicalize_dtype handler for type: {type(x)}")
 
 def _canonicalize_ndarray_dtype(x):
-  return np.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
+  return np.asarray(x, dtypes.result_type(x))
 
 def _canonicalize_python_scalar_dtype(typ, x):
   return np.asarray(
