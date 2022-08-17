@@ -1316,11 +1316,9 @@ def _sharding_constraint_mhlo_lowering(ctx, x_node, *, sharding,
   # MeshPspecSharding. So convert the OpShardingSharding to MeshPspecSharding
   # and then convert it back with the added special axes.
   if isinstance(axis_ctx, mlir.SPMDAxisContext):
-    mesh = resource_env.physical_mesh
-    parsed_pspec = parse_flatten_op_sharding(sharding._op_sharding, mesh)[0]
-    mps = MeshPspecSharding._from_parsed_pspec(mesh, parsed_pspec)
+    os = sharding._original_sharding
     sharding = OpShardingSharding(
-        mps._device_assignment, mps._to_xla_op_sharding(aval.ndim, axis_ctx=axis_ctx))
+        os._device_assignment, os._to_xla_op_sharding(aval.ndim, axis_ctx=axis_ctx))
   return [
       mlir.wrap_with_sharding_op(
           x_node,
