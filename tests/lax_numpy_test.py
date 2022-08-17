@@ -3337,7 +3337,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if numpy_version < (1, 24):
         np_fun = _promote_like_jnp(lambda *args: np.stack(*args, axis=axis).astype(out_dtype))
     else:
-        np_fun = _promote_like_jnp(partial(np.stack, axis=axis, dtype=out_dtype))
+        np_fun = _promote_like_jnp(partial(np.stack, axis=axis, dtype=out_dtype, casting='unsafe'))
 
     jnp_fun = partial(jnp.stack, axis=axis, dtype=out_dtype)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
