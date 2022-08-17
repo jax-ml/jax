@@ -182,6 +182,19 @@ std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GeqrfDescriptor{type, b, m, n, lwork})};
 }
 
+// csrlsvqr: Linear system solve via Sparse QR
+
+// Returns a descriptor for a csrlsvqr operation.
+py::bytes BuildCsrlsvqrDescriptor(const py::dtype& dtype, int n, int nnzA,
+                                  int reorder, double tol) {
+  CusolverType type = DtypeToCusolverType(dtype);
+  auto h = SpSolverHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
+
+  return PackDescriptor(CsrlsvqrDescriptor{type, n, nnzA, reorder, tol});
+}
+
 // orgqr/ungqr: apply elementary Householder transformations
 
 // Returns the workspace size and a descriptor for a geqrf operation.
@@ -463,6 +476,7 @@ py::dict Registrations() {
   dict["cusolver_potrf"] = EncapsulateFunction(Potrf);
   dict["cusolver_getrf"] = EncapsulateFunction(Getrf);
   dict["cusolver_geqrf"] = EncapsulateFunction(Geqrf);
+  dict["cusolver_csrlsvqr"] = EncapsulateFunction(Csrlsvqr);
   dict["cusolver_orgqr"] = EncapsulateFunction(Orgqr);
   dict["cusolver_syevd"] = EncapsulateFunction(Syevd);
   dict["cusolver_syevj"] = EncapsulateFunction(Syevj);
@@ -476,6 +490,7 @@ PYBIND11_MODULE(_cusolver, m) {
   m.def("build_potrf_descriptor", &BuildPotrfDescriptor);
   m.def("build_getrf_descriptor", &BuildGetrfDescriptor);
   m.def("build_geqrf_descriptor", &BuildGeqrfDescriptor);
+  m.def("build_csrlsvqr_descriptor", &BuildCsrlsvqrDescriptor);
   m.def("build_orgqr_descriptor", &BuildOrgqrDescriptor);
   m.def("build_syevd_descriptor", &BuildSyevdDescriptor);
   m.def("build_syevj_descriptor", &BuildSyevjDescriptor);
