@@ -889,7 +889,8 @@ def lower_jaxpr_to_fun(
   with ir.InsertionPoint(entry_block):
     flat_args = entry_block.arguments
     if not use_sharding_annotations and ir_arg_shardings is not None:
-      flat_args = map(wrap_with_sharding_op, flat_args, ir_arg_shardings)
+      flat_args = [a if s is None else wrap_with_sharding_op(a, s)
+                   for a, s in zip(flat_args, ir_arg_shardings)]
 
     unflattened_args = util.unflatten(flat_args, map(len, input_types))
     # We separate out the token inputs and the usual inputs. The token inputs
@@ -926,8 +927,8 @@ def lower_jaxpr_to_fun(
         outs.append(out)
     flat_outputs = util.flatten(outs)
     if not use_sharding_annotations and ir_result_shardings is not None:
-      flat_outputs = map(wrap_with_sharding_op, flat_outputs,
-                         ir_result_shardings)
+      flat_outputs = [o if s is None else wrap_with_sharding_op(o, s)
+                      for o, s in zip(flat_outputs, ir_result_shardings)]
 
     func_dialect.ReturnOp(flat_outputs)
 
