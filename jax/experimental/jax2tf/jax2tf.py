@@ -1235,9 +1235,7 @@ def _round(operand, *, rounding_method,
         tf.where(cond, tf.constant(np.array(1), operand.dtype),
                  tf.math.round(operand)) + floor)
   else:  # rounding_method is RoundingMethod.TO_NEAREST_EVEN
-    rounding_fun = _convert_jax_impl(
-        lax_internal._round_to_nearest_even, multiple_results=False)
-    return rounding_fun(operand, _in_avals=_in_avals, _out_aval=_out_aval)
+    return tf.math.round(operand)
 
 tf_impl_with_avals[lax.round_p] = _round
 tf_impl[lax.nextafter_p] = tf.math.nextafter

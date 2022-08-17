@@ -1689,19 +1689,6 @@ ceil_p = standard_unop(_float, 'ceil')
 ad.defjvp_zero(ceil_p)
 mlir.register_lowering(ceil_p, partial(_nary_lower_mhlo, mhlo.CeilOp))
 
-def _round_to_nearest_even(x):
-  half = _const(x, 0.5)
-  one = _const(x, 1)
-  round_val = floor(x)
-  fraction = x - round_val
-  nearest_even_int = sub(
-    round_val, mul(_const(x, 2), floor(mul(half, x))))
-  is_odd = eq(nearest_even_int, one)
-  return select(
-    bitwise_or(gt(fraction, half),
-               bitwise_and(eq(fraction, half), is_odd)),
-    add(round_val, one), round_val)
-
 round_p = standard_unop(_float, 'round')
 ad.defjvp_zero(round_p)
 
@@ -1710,9 +1697,7 @@ def _round_lower(ctx, x, *, rounding_method):
     return mhlo.RoundOp(x).results
   else:
     assert rounding_method is RoundingMethod.TO_NEAREST_EVEN
-    round_nearest = mlir.cache_lowering(mlir.lower_fun(_round_to_nearest_even,
-                                                       multiple_results=False))
-    return round_nearest(ctx, x)
+    return mhlo.RoundNearestEvenOp(x).results
 mlir.register_lowering(round_p, _round_lower)
 
 is_finite_p = unop(_fixed_dtype(np.bool_), _float, 'is_finite')
