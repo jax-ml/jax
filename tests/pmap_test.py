@@ -2083,6 +2083,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(count[0], 0)  # cache hits on fwd and bwd
 
   def testSizeOverflow(self):
+    if config.jax_disable_jit:
+      # TODO(sharadmv, mattjj): investigate and fix this issue
+      raise SkipTest("OOMs in eager mode")
     x = jnp.arange(1)
     x = self.pmap(lambda _: jnp.ones([8, 267736, 1024], dtype=jnp.int8))(x)
     self.assertEqual(x.size, 8 * 267736 * 1024)
