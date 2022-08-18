@@ -89,6 +89,15 @@ class Shard:
     return device_replica_id_fn(self._global_shape)[self.device]
 
 
+def _reconstruct_array(fun, args, arr_state, aval_state):
+  """Method to reconstruct a device array from a serialized state."""
+  np_value = fun(*args)
+  np_value.__setstate__(arr_state)
+  jnp_value = device_put(np_value)
+  jnp_value.aval = jnp_value.aval.update(**aval_state)
+  return jnp_value
+
+
 class Array:
   # TODO(yashkatariya): Add __slots__ here.
 
@@ -173,7 +182,7 @@ class Array:
   def __index__(self):
     return op.index(self._value)
 
-  def to_bytes(self, order="C"):
+  def tobytes(self, order="C"):
     return self._value.tobytes(order)
 
   def tolist(self):
@@ -230,8 +239,19 @@ class Array:
   def __array__(self, dtype=None):
     return np.asarray(self._value, dtype=dtype)
 
+  def __dlpack__(self):
+    from jax.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
+    return to_dlpack(self)
+
+  def __reduce__(self):
+    fun, args, arr_state = self._value.__reduce__()
+    aval_state = {'weak_type': self.aval.weak_type,
+                  'named_shape': self.aval.named_shape}
+    return (_reconstruct_array, (fun, args, arr_state, aval_state))
+
   # TODO(yashkatariya): Remove this method when everyone is using devices().
   def device(self) -> Device:
+    self._check_if_deleted()
     device_set = self.sharding.device_set
     if len(device_set) == 1:
       single_device, = device_set
@@ -240,6 +260,7 @@ class Array:
                      'Please use `.devices()`.')
 
   def devices(self) -> List[Device]:
+    self._check_if_deleted()
     return list(self.sharding.device_set)
 
   @pxla.maybe_cached_property
@@ -262,6 +283,9 @@ class Array:
       buf.delete()
     self._arrays = None
     self._npy_value = None
+
+  def is_deleted(self):
+    return all(buf.is_deleted() for buf in self._arrays)
 
   def _check_if_deleted(self):
     if self._arrays is None:

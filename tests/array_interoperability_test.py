@@ -86,7 +86,7 @@ class DLPackTest(jtu.JaxTestCase):
     device = jax.devices("gpu" if gpu else "cpu")[0]
     x = jax.device_put(np, device)
     dlpack = jax.dlpack.to_dlpack(x, take_ownership=take_ownership)
-    self.assertEqual(take_ownership, x.device_buffer.is_deleted())
+    self.assertEqual(take_ownership, x.is_deleted())
     y = jax.dlpack.from_dlpack(dlpack)
     self.assertEqual(y.device(), device)
     self.assertAllClose(np.astype(x.dtype), y)

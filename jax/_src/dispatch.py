@@ -678,7 +678,7 @@ class SimpleResultHandler:
     return tuple(h(env, *bs) for h, bs in zip(self.handlers, lists_of_bufs))
 
 
-def _maybe_create_array_from_da(buf, aval, device):
+def maybe_create_array_from_da(buf, aval, device):
   if config.jax_array:
     from jax.experimental.array import Array
     from jax.experimental.sharding import SingleDeviceSharding
@@ -709,7 +709,7 @@ def array_result_handler(sticky_device: Optional[Device],
   aval = core.raise_to_shaped(aval)
   if type(aval.dtype) in core.custom_eltypes:
     return aval.dtype.result_handler(sticky_device, aval)
-  handler = lambda _, b: _maybe_create_array_from_da(b, aval, sticky_device)
+  handler = lambda _, b: maybe_create_array_from_da(b, aval, sticky_device)
   handler.args = aval, sticky_device  # for C++ dispatch path in api.py
   return handler
 
@@ -727,15 +727,15 @@ def _dynamic_array_result_handler(sticky_device, aval, env, buf):
            for d in aval.shape]
   if all(type(d) is int for d in shape):
     aval = core.ShapedArray(tuple(shape), aval.dtype)
-    return _maybe_create_array_from_da(buf, aval, sticky_device)
+    return maybe_create_array_from_da(buf, aval, sticky_device)
   elif any(type(d) is core.BInt for d in shape):
     padded_shape = [d.bound if type(d) is core.BInt else d for d in shape]
     buf_aval = core.ShapedArray(tuple(padded_shape), aval.dtype, aval.weak_type)
-    data = _maybe_create_array_from_da(buf, buf_aval, sticky_device)
+    data = maybe_create_array_from_da(buf, buf_aval, sticky_device)
     return core.PaddedArray(aval.update(shape=tuple(shape)), data)
   else:
     aval = core.ShapedArray(tuple(shape), aval.dtype)
-    return _maybe_create_array_from_da(buf, aval, sticky_device)
+    return maybe_create_array_from_da(buf, aval, sticky_device)
 
 
 
