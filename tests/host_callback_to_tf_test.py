@@ -34,7 +34,7 @@ import numpy as np
 
 try:
   import tensorflow as tf
-except ImportError:
+except ModuleNotFoundError:
   tf = None
 
 config.parse_flags_with_absl()

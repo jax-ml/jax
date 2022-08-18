@@ -32,12 +32,12 @@ config.parse_flags_with_absl()
 try:
   import torch
   import torch.utils.dlpack
-except ImportError:
+except ModuleNotFoundError:
   torch = None
 
 try:
   import cupy
-except ImportError:
+except ModuleNotFoundError:
   cupy = None
 
 try:

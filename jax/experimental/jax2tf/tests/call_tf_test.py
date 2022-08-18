@@ -32,7 +32,7 @@ import numpy as np
 
 try:
   import tensorflow as tf  # type: ignore[import]
-except ImportError:
+except ModuleNotFoundError:
   tf = None
 
 config.parse_flags_with_absl()

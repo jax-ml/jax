@@ -24,12 +24,12 @@ import jax
 try:
   from tensorflow.python.profiler import profiler_v2 as profiler
   from tensorflow.python.profiler import profiler_client
-except ImportError:
-  raise ImportError("This script requires `tensorflow` to be installed.")
+except ModuleNotFoundError:
+  raise ModuleNotFoundError("This script requires `tensorflow` to be installed.")
 try:
   from tensorboard_plugin_profile.convert import raw_to_tool_data as convert
-except ImportError:
-  raise ImportError(
+except ModuleNotFoundError:
+  raise ModuleNotFoundError(
       "This script requires `tensorboard_plugin_profile` to be installed.")
 # pytype: enable=import-error
 

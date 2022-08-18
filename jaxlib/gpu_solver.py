@@ -30,14 +30,14 @@ try:
   from .cuda import _cublas
   for _name, _value in _cublas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
+except ModuleNotFoundError:
   _cublas = None
 
 try:
   from .cuda import _cusolver
   for _name, _value in _cusolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
+except ModuleNotFoundError:
   _cusolver = None
 
 
@@ -45,14 +45,14 @@ try:
   from .rocm import _hipblas
   for _name, _value in _hipblas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
-except ImportError:
+except ModuleNotFoundError:
   _hipblas = None
 
 try:
   from .rocm import _hipsolver
   for _name, _value in _hipsolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
-except ImportError:
+except ModuleNotFoundError:
   _hipsolver = None
 
 
