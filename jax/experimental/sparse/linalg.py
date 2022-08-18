@@ -20,6 +20,12 @@ import functools
 import jax
 import jax.numpy as jnp
 
+from jax import core
+from jax.interpreters import mlir
+from jax.interpreters import xla
+
+from jax._src.lib import gpu_solver
+
 import numpy as np
 
 def lobpcg_standard(
@@ -501,3 +507,49 @@ def _extend_basis(X, m):
   h = -2 * jnp.linalg.multi_dot(
       [w, w[k:, :].T, other], precision=jax.lax.Precision.HIGHEST)
   return h.at[k:].add(other)
+
+
+# Sparse direct solve via QR factorization
+
+
+def _spsolve_abstract_eval(data, indices, indptr, b, tol, reorder):
+  del data, indices, indptr, tol, reorder
+  return core.raise_to_shaped(b)
+
+
+def _spsolve_gpu_lowering(ctx, data, indices, indptr, b, tol, reorder):
+  data_aval, _, _, _, = ctx.avals_in
+
+  return gpu_solver.cuda_csrlsvqr(data_aval.dtype, data, indices,
+                                  indptr, b, tol, reorder)
+
+
+spsolve_p = core.Primitive('spsolve')
+spsolve_p.def_impl(functools.partial(xla.apply_primitive, spsolve_p))
+spsolve_p.def_abstract_eval(_spsolve_abstract_eval)
+mlir.register_lowering(spsolve_p, _spsolve_gpu_lowering, platform='cuda')
+
+
+def spsolve(data, indices, indptr, b, tol=1e-6, reorder=1):
+  """A sparse direct solver using QR factorization.
+
+  Accepts a sparse matrix in CSR format `data, indices, indptr` arrays.
+  Currently only the CUDA GPU backend is implemented.
+
+  Args:
+    data : An array containing the non-zero entries of the CSR matrix.
+    indices : The column indices of the CSR matrix.
+    indptr : The row pointer array of the CSR matrix.
+    b : The right hand side of the linear system.
+    tol : Tolerance to decide if singular or not. Defaults to 1e-6.
+    reorder : The reordering scheme to use to reduce fill-in. No reordering if
+        `reorder=0'. Otherwise, symrcm, symamd, or csrmetisnd (`reorder=1,2,3'),
+        respectively. Defaults to symrcm.
+
+  Returns:
+    An array with the same dtype and size as b representing the solution to
+    the sparse linear system.
+  """
+  if jax._src.lib.xla_extension_version < 86:
+    raise ValueError('spsolve requires jaxlib version 86 or above.')
+  return spsolve_p.bind(data, indices, indptr, b, tol=tol, reorder=reorder)

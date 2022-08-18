@@ -20,15 +20,21 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
+#include "third_party/gpus/cuda/include/cusolverSp.h"
 #include "jaxlib/handle_pool.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 
 using SolverHandlePool = HandlePool<cusolverDnHandle_t, cudaStream_t>;
+using SpSolverHandlePool = HandlePool<cusolverSpHandle_t, cudaStream_t>;
 
 template <>
 absl::StatusOr<SolverHandlePool::Handle> SolverHandlePool::Borrow(
+    cudaStream_t stream);
+
+template <>
+absl::StatusOr<SpSolverHandlePool::Handle> SpSolverHandlePool::Borrow(
     cudaStream_t stream);
 
 // Set of types known to Cusolver.
@@ -69,6 +75,17 @@ struct GeqrfDescriptor {
 
 void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
+
+// csrlsvpr: Linear system solve via Sparse QR
+
+struct CsrlsvqrDescriptor {
+  CusolverType type;
+  int n, nnz, reorder;
+  double tol;
+};
+
+void Csrlsvqr(cudaStream_t stream, void** buffers, const char* opaque,
+              size_t opaque_len, XlaCustomCallStatus* status);
 
 // orgqr/ungqr: apply elementary Householder transformations
 

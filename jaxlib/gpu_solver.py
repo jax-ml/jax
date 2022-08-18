@@ -260,6 +260,31 @@ cuda_geqrf_batched = partial(_geqrf_batched_mhlo, "cu", _cublas)
 rocm_geqrf_batched = partial(_geqrf_batched_mhlo, "hip", _hipblas)
 
 
+def _csrlsvqr_mhlo(platform, gpu_solver, dtype, data,
+                   indices, indptr, b, tol, reorder):
+  """Sparse solver via QR decomposition. CUDA only."""
+  b_type = ir.RankedTensorType(b.type)
+  data_type = ir.RankedTensorType(data.type)
+
+  n = b_type.shape[0]
+  nnz = data_type.shape[0]
+  opaque = gpu_solver.build_csrlsvqr_descriptor(
+      np.dtype(dtype), n, nnz, reorder, tol
+  )
+
+  out = custom_call(
+      f"{platform}solver_csrlsvqr",  # call_target_name
+      [b.type],  # out_types
+      [data, indptr, indices, b],  # operands
+      backend_config=opaque,  # backend_config
+      operand_layouts=[(0,), (0,), (0,), (0,)],  # operand_layouts
+      result_layouts=[(0,)]  # result_layouts
+  )
+  return [out]
+
+cuda_csrlsvqr = partial(_csrlsvqr_mhlo, "cu", _cusolver)
+
+
 def _orgqr_mhlo(platform, gpu_solver, dtype, a, tau):
   """Product of elementary Householder reflections."""
   a_type = ir.RankedTensorType(a.type)

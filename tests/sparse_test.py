@@ -2319,5 +2319,38 @@ class SparseRandomTest(jtu.JaxTestCase):
     self.assertAlmostEqual(int(num_nonzero), approx_expected_num_nonzero, delta=2)
 
 
+class SparseSolverTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_re{}_({})".format(reorder,
+        jtu.format_shape_dtype_string((size, size), dtype)),
+       "size": size, "reorder": reorder, "dtype": dtype}
+      for size in [20, 50, 100]
+      for reorder in [0, 1, 2, 3]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/cusolver")
+  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  @unittest.skipIf(jax._src.lib.xla_extension_version < 86, "test requires jaxlib version 86")
+  @jtu.skip_on_devices("rocm")
+  def test_sparse_qr_linear_solver(self, size, reorder, dtype):
+    rng = rand_sparse(self.rng())
+    a = rng((size, size), dtype)
+    nse = (a != 0).sum()
+    data, indices, indptr = sparse.csr_fromdense(a, nse=nse)
+
+    rng_k = jtu.rand_default(self.rng())
+    b = rng_k([size], dtype)
+
+    def args_maker():
+      return data, indices, indptr, b
+
+    tol = 1e-8
+    def sparse_solve(data, indices, indptr, b):
+      return sparse.linalg.spsolve(data, indices, indptr, b, tol, reorder)
+    x = sparse_solve(data, indices, indptr, b)
+
+    self.assertAllClose(a @ x, b, rtol=1e-2)
+    self._CompileAndCheck(sparse_solve, args_maker)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
