@@ -500,7 +500,8 @@ def escaped_tracer_error(tracer, detail=None):
   num_frames = FLAGS.jax_tracer_error_num_traceback_frames
   msg = ('Encountered an unexpected tracer. A function transformed by JAX '
          'had a side effect, allowing for a reference to an intermediate value '
-         f'with shape {tracer.shape} and dtype {tracer.dtype} to escape.\n'
+         f'with type {tracer.aval.str_short()} wrapped in a '
+         f'{type(tracer).__name__} to escape the scope of the transformation.\n'
          'JAX transformations require that functions explicitly return their '
          'outputs, and disallow saving intermediate values to global state.')
   dbg = getattr(tracer, '_debug_info', None)
