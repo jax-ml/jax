@@ -19,6 +19,7 @@ import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
 from jax import core
+from jax._src import abstract_arrays
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import dispatch
@@ -323,7 +324,7 @@ def make_array_from_callback(shape: Shape, sharding: Sharding,
   return Array(aval, sharding, arrays, committed=True)
 
 
-core.pytype_aval_mappings[Array] = op.attrgetter('aval')
+core.pytype_aval_mappings[Array] = abstract_arrays.canonical_concrete_aval
 xla.pytype_aval_mappings[Array] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[Array] = pxla.identity
 api_util._shaped_abstractify_handlers[Array] = op.attrgetter('aval')
