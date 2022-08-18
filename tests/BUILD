@@ -121,6 +121,13 @@ jax_test(
     srcs = ["dtypes_test.py"],
 )
 
+jax_test(
+    name = "dtypes_test_with_array",
+    srcs = ["dtypes_test.py"],
+    args = ["--jax_array=true"],
+    enable_configs = ["cpu"],
+)
+
 py_test(
     name = "errors_test",
     srcs = ["errors_test.py"],
