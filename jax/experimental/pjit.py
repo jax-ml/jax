@@ -1469,12 +1469,12 @@ def _maybe_replace_from_gda_with_pspec(
     if not _is_from_gda(in_sharding) and not pxla.are_op_shardings_equal(
         gda_sharding._to_xla_op_sharding(ndim),
         in_sharding._to_xla_op_sharding(ndim)):
-      pspec = in_sharding._original_sharding.spec  # type: ignore
       raise ValueError(
           f"Got an input GDA to pjit with different partitioning than specified in "
           "the in_axis_resources argument to pjit. The partitioning must match, or "
           "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. "
-          f"Got GDA sharding: {gda_sharding} and pjit sharding: {pspec}")
+          f"Got GDA sharding: {gda_sharding} and "
+          f"pjit sharding: {in_sharding._original_sharding}")  # type: ignore
     return to_op_sharding_sharding(gda_sharding, ndim)
 
   out = []
