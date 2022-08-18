@@ -3163,8 +3163,7 @@ class APITest(jtu.JaxTestCase):
       _ = self._saved_tracer+1
 
   def test_escaped_tracer_shape_dtype(self):
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                r"shape \(4, 3\) and dtype int32"):
+    with self.assertRaisesRegex(core.UnexpectedTracerError, r"int32\[4,3\]"):
       jax.jit(self.helper_save_tracer)(jnp.ones((4, 3), dtype=jnp.int32))
       _ = self._saved_tracer+1
 
@@ -6642,15 +6641,15 @@ class CustomJVPTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    ans = api.grad(api.grad(api.remat(g)))(2.)
+    ans = api.grad(api.grad(new_checkpoint(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.remat(api.grad(g)))(2.)
+    ans = api.grad(new_checkpoint(api.grad(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.grad(api.grad(api.remat(g))))(2.)
+    ans = api.grad(api.grad(api.grad(new_checkpoint(g))))(2.)
     expected = api.grad(api.grad(api.grad(g)))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
