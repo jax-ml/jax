@@ -28,14 +28,14 @@ try:
   from .cuda import _cuda_prng
   for _name, _value in _cuda_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ModuleNotFoundError:
+except ImportError:
   _cuda_prng = None
 
 try:
   from .rocm import _hip_prng
   for _name, _value in _hip_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
-except ModuleNotFoundError:
+except ImportError:
   _hip_prng = None
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)

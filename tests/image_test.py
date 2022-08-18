@@ -37,12 +37,12 @@ try:
     warnings.filterwarnings('ignore', category=DeprecationWarning,
                             message=".*is deprecated and will be removed in Pillow 10.*")
     import tensorflow as tf
-except ModuleNotFoundError:
+except ImportError:
   tf = None
 
 try:
   from PIL import Image as PIL_Image
-except ModuleNotFoundError:
+except ImportError:
   PIL_Image = None
 
 config.parse_flags_with_absl()

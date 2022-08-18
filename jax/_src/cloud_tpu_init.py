@@ -39,7 +39,7 @@ def cloud_tpu_init():
     import libtpu
     # pytype: enable=import-error
     # pylint: enable=import-outside-toplevel
-  except ModuleNotFoundError:
+  except ImportError:
     # We assume libtpu is installed iff we're in a correctly-configured Cloud
     # TPU environment. Exit early if we're not running on Cloud TPU.
     return

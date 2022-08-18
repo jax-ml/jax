@@ -29,7 +29,7 @@ from jax._src import test_util as jtu
 
 try:
   import portpicker
-except ModuleNotFoundError:
+except ImportError:
   portpicker = None
 
 config.parse_flags_with_absl()

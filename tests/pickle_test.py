@@ -21,7 +21,7 @@ from absl.testing import parameterized
 
 try:
   import cloudpickle
-except ModuleNotFoundError:
+except ImportError:
   cloudpickle = None
 
 import jax

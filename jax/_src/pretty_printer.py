@@ -34,7 +34,7 @@ from jax.config import config
 
 try:
   import colorama  # pytype: disable=import-error
-except ModuleNotFoundError:
+except ImportError:
   colorama = None
 
 def _can_use_color() -> bool:

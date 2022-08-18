@@ -25,7 +25,7 @@ from jax._src.public_test_util import (
 # pytype: disable=import-error
 try:
   import jax._src.test_util as _private_test_util
-except ModuleNotFoundError:
+except ImportError:
   pass
 else:
   del _private_test_util
@@ -35,7 +35,7 @@ else:
 def __getattr__(attr):
   try:
     from jax._src import test_util
-  except ModuleNotFoundError:
+  except ImportError:
     raise AttributeError(f"module {__name__} has no attribute {attr}")
   if attr in ['cases_from_list', 'check_close', 'check_eq', 'device_under_test',
               'format_shape_dtype_string', 'rand_uniform', 'skip_on_devices',
