@@ -108,6 +108,43 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       self.assertEqual(proc.returncode, 0)
       self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
 
+  @unittest.skipIf(jax._src.lib.xla_extension_version < 88,
+                   "Test requires jaxlib 0.3.17 or newer")
+  def test_distributed_jax_cuda_visible_devices(self):
+    """Test jax_cuda_visible_devices works in distributed settings."""
+    if jax.devices()[0].platform != 'gpu':
+      raise unittest.SkipTest('Tests only for GPU.')
+
+    port = portpicker.pick_unused_port()
+    num_gpus = 4
+    num_gpus_per_task = 1
+    num_tasks = num_gpus // num_gpus_per_task
+
+    os.environ["JAX_PORT"] = str(port)
+    os.environ["NUM_TASKS"] = str(num_tasks)
+
+    subprocesses = []
+    for task in range(num_tasks):
+      env = os.environ.copy()
+      env["TASK"] = str(task)
+      visible_devices = ",".join(
+          str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+      program = (
+        'import jax, os; '
+        f'jax.config.update("jax_cuda_visible_devices", "{visible_devices}"); '
+        'jax.distributed.initialize('
+        'f\'localhost:{os.environ["JAX_PORT"]}\', '
+        'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
+        'print(f\'{jax.local_device_count()},{jax.device_count()}\', end="")'
+      )
+      args = [sys.executable, "-c", program]
+      subprocesses.append(subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, universal_newlines=True))
+
+    for proc in subprocesses:
+      out, _ = proc.communicate()
+      self.assertEqual(proc.returncode, 0)
+      self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
