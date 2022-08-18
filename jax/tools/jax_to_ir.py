@@ -78,13 +78,13 @@ import jax
 import jax.numpy as jnp
 
 try:
-  from jax.experimental import jax2tf
-except ImportError:
+  import jax.experimental.jax2tf as jax2tf
+except ModuleNotFoundError:
   jax2tf = None  # type: ignore[assignment]
 
 try:
   import tensorflow as tf
-except ImportError:
+except ModuleNotFoundError:
   tf = None  # type: ignore
 
 FLAGS = flags.FLAGS

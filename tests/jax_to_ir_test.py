@@ -22,7 +22,7 @@ from jax.config import config
 
 try:
   import tensorflow as tf
-except ImportError:
+except ModuleNotFoundError:
   tf = None  # type: ignore
 
 

@@ -33,7 +33,7 @@ if colab_lib.IS_COLAB_ENABLED:
 try:
   import pygments
   IS_PYGMENTS_ENABLED = True
-except ImportError:
+except ModuleNotFoundError:
   IS_PYGMENTS_ENABLED = False
 # pytype: enable=import-error
 # pylint: enable=g-import-not-at-top

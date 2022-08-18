@@ -32,7 +32,7 @@ from absl.testing import parameterized
 import numpy as np
 try:
   import numpy_dispatch
-except ImportError:
+except ModuleNotFoundError:
   numpy_dispatch = None
 
 import jax

@@ -27,7 +27,7 @@ from .mhlo_helpers import custom_call
 
 try:
   from .cuda import _cusparse
-except ImportError:
+except ModuleNotFoundError:
   _cusparse = None
 else:
   for _name, _value in _cusparse.registrations().items():
@@ -35,7 +35,7 @@ else:
 
 try:
   from .rocm import _hipsparse
-except ImportError:
+except ModuleNotFoundError:
   _hipsparse = None
 else:
   for _name, _value in _hipsparse.registrations().items():

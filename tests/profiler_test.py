@@ -30,13 +30,13 @@ import jax._src.test_util as jtu
 
 try:
   import portpicker
-except ImportError:
+except ModuleNotFoundError:
   portpicker = None
 
 try:
   from tensorflow.python.profiler import profiler_client
   from tensorflow.python.profiler import profiler_v2 as tf_profiler
-except ImportError:
+except ModuleNotFoundError:
   profiler_client = None
   tf_profiler = None
 
@@ -45,7 +45,7 @@ try:
   import tensorboard_plugin_profile
   del tensorboard_plugin_profile
   TBP_ENABLED = True
-except ImportError:
+except ModuleNotFoundError:
   pass
 
 config.parse_flags_with_absl()
