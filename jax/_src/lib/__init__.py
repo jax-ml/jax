@@ -118,7 +118,7 @@ import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
 xla_extension_version = getattr(xla_client, '_version', 0)
 
 can_execute_with_token = (
-    xla_extension_version >= 81 and
+    xla_extension_version >= 89 and
     hasattr(xla_client.Executable, "execute_with_token"))
 
 # Version number for MLIR:Python APIs, provided by jaxlib.

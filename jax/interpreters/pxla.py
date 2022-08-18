@@ -1946,12 +1946,12 @@ class ExecuteReplicated:
       # TODO(sharadmv): simplify this logic when minimum jaxlib version is
       # bumped
       if can_execute_with_token:
-        out_bufs, runtime_tokens = (
+        out_bufs, sharded_token = (
             self.xla_executable.execute_sharded_on_local_devices_with_tokens(
               input_bufs))
-        for device, token in zip(
-          self.xla_executable.local_devices(), runtime_tokens):
-          dispatch.runtime_tokens.set_output_runtime_token(device, token)
+        for i, device in enumerate(self.xla_executable.local_devices()):
+          dispatch.runtime_tokens.set_output_runtime_token(
+              device, sharded_token.get_token(i))
       else:
         out_bufs = self.xla_executable.execute_sharded_on_local_devices(
             input_bufs)

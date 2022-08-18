@@ -34,6 +34,7 @@ from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import control_flow as lcf
+from jax._src.lib import can_execute_with_token
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -466,7 +467,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     # First output should be output token
     result_types = mhlo.body.operations[0].type.results
-    if jaxlib.version < (0, 3, 16):
+    if not can_execute_with_token:
       self.assertLen(list(result_types), 2)
       self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
       self.assertLen(list(result_types), 2)
