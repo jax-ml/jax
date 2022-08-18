@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import atexit
+import collections
 import contextlib
 from functools import partial
 import itertools
@@ -87,11 +88,16 @@ _on_exit = False
 ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
 
 def arg_spec(x: Any) -> ArgSpec:
+  from jax.experimental.sharding import PmapSharding
+
   aval = xla.abstractify(x)
   try:
     if config.jax_array:
-      return aval, (x.device() if x._committed else None)
-    return aval, x._device
+      if isinstance(x.sharding, PmapSharding):
+        return aval, None
+      return aval, (x.sharding if x._committed else None)
+    else:
+      return aval, x._device
   except:
     return aval, None
 
@@ -163,9 +169,13 @@ def wait_for_tokens():
 
 @util.cache()
 def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
-  avals, arg_devices = util.unzip2(arg_specs)
+  _, arg_devices = util.unzip2(arg_specs)
   donated_invars = (False,) * len(arg_specs)
-  device = _device_from_arg_devices(arg_devices)
+  if config.jax_array:
+    # This will be resolved in _xla_callable_device.
+    device = None
+  else:
+    device = _device_from_arg_devices(arg_devices)
   def prim_fun(*args):
     out = prim.bind(*args, **params)
     if prim.multiple_results:
@@ -206,6 +216,9 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
   if fun.in_type is None:
     arg_specs = unsafe_map(arg_spec, args)
   else:
+    # fun.in_type is used for dynamic shapes.
+    if config.jax_array:
+      raise NotImplementedError('Dynamic shapes do not work with Array.')
     arg_specs = [(None, getattr(x, '_device', None)) for x in args]
   compiled_fun = xla_callable(fun, device, backend, name, donated_invars,
                               keep_unused, *arg_specs)
@@ -254,10 +267,51 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
 xla.xla_call_p.def_impl(_xla_call_impl)
 
 
+def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
+                     *arg_specs):
+  # TODO(yashkatariya): Remove the local imports from here when the functions
+  # in pxla.py move to dispatch.py or a utils file.
+  from jax.interpreters import pxla
+  from jax.experimental import pjit, sharding
+
+  in_avals, in_shardings = util.unzip2(arg_specs)
+
+  # TODO(yashkatariya): Remove this and make `SingleDeviceSharding` go through
+  # lower_sharding_computation and resolve all the errors once that happens.
+  # For pmap, keep using the fallback by checking the jaxpr and then wrapping it
+  # in a lu.Wrappedfun again.
+  if any(s is None or isinstance(s, sharding.SingleDeviceSharding) for s in in_shardings):
+    arg_specs = tuple(
+        (a, s._device) if isinstance(s, sharding.SingleDeviceSharding) else (a, None)
+        for a, s in zip(in_avals, in_shardings))
+    return lower_xla_callable(fun, device, backend, name, donated_invars, False,
+                              keep_unused, *arg_specs).compile().unsafe_call
+
+  da = pjit._get_and_check_device_assignment(
+      (i for i in in_shardings if i is not None), pxla.EMPTY_ENV.physical_mesh)
+  in_shardings = [sharding.OpShardingSharding.get_replicated(da) if i is None else i
+                  for i in in_shardings]
+
+  # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
+  # the number of output avals at this stage. lower_sharding_computation will
+  # apply it to all out_avals.
+  return pxla.lower_sharding_computation(
+      fun, 'xla_callable', name, in_shardings, pjit._UNSPECIFIED,
+      donated_invars, in_avals,
+      in_is_global=(True,) * len(arg_specs)).compile(
+          _allow_propagation_to_outputs=True).unsafe_call
+
+
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
                            donated_invars, keep_unused, *arg_specs):
-  return lower_xla_callable(fun, device, backend, name, donated_invars, False,
-                            keep_unused, *arg_specs).compile().unsafe_call
+  # TODO(yashkatariya): Remove the `and arg_specs` from here once
+  # lower_sharding_computation supports no avals as input.
+  if config.jax_array and arg_specs:
+    return sharded_lowering(fun, device, backend, name,
+                            donated_invars, keep_unused, *arg_specs)
+  else:
+    return lower_xla_callable(fun, device, backend, name, donated_invars, False,
+                              keep_unused, *arg_specs).compile().unsafe_call
 
 xla_callable = lu.cache(_xla_callable_uncached)
 
