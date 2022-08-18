@@ -671,6 +671,12 @@ def _cond_transpose(reduce_axes, cts, *args, branches, linear):
   assert next(out_iter, None) is None
   return [None] + out
 
+def _cond_axis_substitution(params, subst, traverse):
+  if not traverse:
+    return params
+  branches = tuple(core.subst_axis_names_jaxpr(jaxpr, subst) for jaxpr in params['branches'])
+  return dict(params, branches=branches)
+
 def _cond_typecheck(*in_atoms, branches, linear):
   avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'cond')
@@ -753,6 +759,7 @@ pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.axis_primitive_batchers[cond_p] = _cond_batching_rule
 xla.register_initial_style_primitive(cond_p)
 core.custom_typechecks[cond_p] = _cond_typecheck
+core.axis_substitution_rules[cond_p] = _cond_axis_substitution
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
 
