@@ -15,8 +15,8 @@
 from functools import update_wrapper, reduce, partial
 import inspect
 import operator as op
-from typing import (Callable, Generic, Optional, Sequence, Tuple, TypeVar, Set,
-                    Any)
+from typing import (Any, Callable, Generic, List, Optional, Sequence, Set,
+                    Tuple, TypeVar)
 
 from jax import core
 from jax import linear_util as lu
@@ -275,8 +275,8 @@ def _flatten_jvp(in_tree, *args):
       raise TypeError(msg.format('\n'.join(disagreements)))
   yield primals_out + tangents_out, out_tree
 
-class CustomJVPCallPrimitive(core.Primitive):
-  multiple_results = True
+class CustomJVPCallPrimitive(core.CallPrimitive):
+  initial_style: core.Primitive
 
   def bind(self, fun, jvp, *args):
     args = map(core.full_lower, args)
@@ -297,23 +297,6 @@ class CustomJVPCallPrimitive(core.Primitive):
   def post_process(self, trace, out_tracers, jvp_was_run: bool):
     return trace.post_process_custom_jvp_call(out_tracers, jvp_was_run)
 
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    call_jaxpr = new_params.pop('call_jaxpr')
-    num_consts = new_params.pop('num_consts')
-    jvp_jaxpr_thunk = new_params.pop('jvp_jaxpr_thunk')
-    fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr))
-
-    @lu.wrap_init
-    def jvp(*xs):
-      jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
-      n, ragged = divmod(len(xs), 2)
-      assert not ragged
-      primals, tangents = xs[num_consts:n], xs[n+num_consts:]
-      return core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *tangents)
-
-    return [fun, jvp], new_params
-
 @lu.transformation_with_aux
 def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
   outs = yield args, {}
@@ -331,23 +314,6 @@ def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    call_jaxpr = new_params.pop('call_jaxpr')
-    num_consts = new_params.pop('num_consts')
-    jvp_jaxpr_thunk = new_params.pop('jvp_jaxpr_thunk')
-    fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr))
-
-    @lu.wrap_init
-    def jvp(*xs):
-      jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
-      n, ragged = divmod(len(xs), 2)
-      assert not ragged
-      primals, tangents = xs[num_consts:n], xs[n+num_consts:]
-      return core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *tangents)
-
-    return [fun, jvp], new_params
-
 def _apply_todos(todos, outs):
   todos_list = list(todos)
   while todos_list:
@@ -358,35 +324,122 @@ def _apply_todos(todos, outs):
 allowed_effects: Set[core.Effect] = set()
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 
-def _custom_jvp_call_typecheck(*in_avals, call_jaxpr, jvp_jaxpr_thunk, num_consts):
-  # TODO(mattjj): could do more checking here...
-  del in_avals, jvp_jaxpr_thunk, num_consts
-  disallowed_effects = {eff for eff in call_jaxpr.effects if eff not in
+
+def _custom_jvp_call_jaxpr_impl(*args, fun_jaxpr: core.ClosedJaxpr, **params):
+  del params  # other params ignored because we're just executing the primal fun
+  return core.jaxpr_as_fun(fun_jaxpr)(*args)
+
+def _custom_jvp_call_jaxpr_abstract_eval(*args, fun_jaxpr: core.ClosedJaxpr, **params):
+  del args, params
+  disallowed_effects = {eff for eff in fun_jaxpr.effects if eff not in
                         allowed_effects}
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `custom_jvp`: {disallowed_effects}')
-  return call_jaxpr.out_avals, call_jaxpr.effects
-core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
+  return fun_jaxpr.out_avals, fun_jaxpr.effects
 
-def _custom_jvp_call_mlir_translation(ctx, *args, call_jaxpr, jvp_jaxpr_thunk,
-                                      num_consts):
-  del jvp_jaxpr_thunk, num_consts
-  args_ = map(mlir.wrap_singleton_ir_values, args)
-  consts = mlir._ir_consts(call_jaxpr.consts)
-  out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr.jaxpr,
-                                   ctx.tokens_in, consts, *args_)
-  ctx.set_tokens_out(tokens)
-  return out
-mlir.register_lowering(custom_jvp_call_p, _custom_jvp_call_mlir_translation)
+custom_jvp_call_jaxpr_p = core.AxisPrimitive('custom_jvp_call_jaxpr')
+custom_jvp_call_jaxpr_p.multiple_results = True
+custom_jvp_call_jaxpr_p.def_impl(_custom_jvp_call_jaxpr_impl)
+custom_jvp_call_jaxpr_p.def_effectful_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
+CustomJVPCallPrimitive.initial_style = custom_jvp_call_jaxpr_p
+
+mlir.register_lowering(custom_jvp_call_jaxpr_p, mlir.lower_fun(
+    _custom_jvp_call_jaxpr_impl, multiple_results=True))
+
+
+def _custom_jvp_call_jaxpr_jvp(
+    primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
+    jvp_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
+    num_consts: int):
+  _, args = split_list(primals, [num_consts])
+  consts_dot, args_dot = split_list(tangents, [num_consts])
+  if any(type(t) is not Zero for t in consts_dot):
+    raise ad.CustomJVPException()
+  jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()  # consts can be tracers!
+  args_dot = map(ad.instantiate_zeros, args_dot)
+  # Cast float0 to zeros with the primal dtype because custom jvp rules don't
+  # currently handle float0s
+  args_dot = map(ad.replace_float0s, args, args_dot)
+  outs = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *args, *args_dot)
+  primals_out, tangents_out = split_list(outs, [len(outs) // 2])
+  tangents_out = map(ad.recast_to_float0, primals_out, tangents_out)
+  if config.jax_enable_checks:
+    assert all(map(core.typecheck, fun_jaxpr.out_avals, primals_out))
+  return primals_out, tangents_out
+ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
+
+def _custom_jvp_call_jaxpr_vmap(
+    axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
+    jvp_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
+    num_consts: int):
+  args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
+          else x for x, d in zip(args, in_dims)]
+  num_out = len(fun_jaxpr.out_avals)
+
+  in_batched = [d is not not_mapped for d in in_dims]
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
+      fun_jaxpr, axis_size, in_batched, False, axis_name, main_type)
+  out_dims1 = [0 if b else not_mapped for b in out_batched]
+  out_dims2 = []  # mutable cell updated by batched_jvp_jaxpr_thunk
+
+  @pe._memoize
+  def batched_jvp_jaxpr_thunk():
+    jvp_jaxpr = core.ClosedJaxpr(*jvp_jaxpr_thunk())  # consts can be tracers
+    _, args_batched = split_list(in_batched, [num_consts])
+    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, axis_size, args_batched * 2, False,
+                                          axis_name, main_type)
+    primals_batched, tangents_batched = split_list(all_batched, [num_out])
+    out_batched = map(op.or_, primals_batched, tangents_batched)
+    out_dims2.append([0 if b else not_mapped for b in out_batched])
+    batched_jvp_jaxpr, _ = batching.batch_jaxpr(
+        jvp_jaxpr, axis_size, args_batched * 2, out_batched * 2,
+        axis_name, main_type)
+    return batched_jvp_jaxpr.jaxpr, batched_jvp_jaxpr.consts
+
+  batched_outs = custom_jvp_call_jaxpr_p.bind(
+      *args, fun_jaxpr=batched_fun_jaxpr,
+      jvp_jaxpr_thunk=batched_jvp_jaxpr_thunk, num_consts=num_consts)
+  out_dims = out_dims2[0] if out_dims2 else out_dims1
+  return batched_outs, out_dims
+batching.axis_primitive_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
+
+xla.register_initial_style_primitive(custom_jvp_call_jaxpr_p)
 
 # If a (multi)linear function is defined with a custom jvp, then
-# custom_jvp_call_ can appear in jaxprs to be transposed. Since it's already
-# been linearized, we can drop the jvp rule.
-def _custom_jvp_call_transpose(params, jaxpr, args, ct, _, reduce_axes):
-  del params
-  return ad.backward_pass(jaxpr.jaxpr, reduce_axes, None, jaxpr.consts, args, ct)
-ad.primitive_transposes[custom_jvp_call_p] = _custom_jvp_call_transpose
+# custom_jvp_call_jaxpr can appear in jaxprs to be transposed. Since it's
+# already been linearized, we can drop the jvp rule.
+def _custom_jvp_call_jaxpr_transpose(reduce_axes, cts, *args, fun_jaxpr,
+                                     jvp_jaxpr_thunk, num_consts):
+  del jvp_jaxpr_thunk, num_consts
+  return ad.backward_pass(
+      fun_jaxpr.jaxpr, reduce_axes, False, fun_jaxpr.consts, args, cts)
+ad.reducing_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
+
+def custom_jvp_jaxpr_custom_partial_eval_rule(
+    saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
+    eqn: core.JaxprEqn
+  ) -> Tuple[Optional[core.JaxprEqn], core.JaxprEqn, List[bool], List[bool], List[core.Var]]:
+  # It doesn't make sense to unzip (i.e. break up) a custom_jvp function into
+  # constituent parts, so we always perform full remat. An alternative would be
+  # to allow the policy function to decide whether the value of a
+  # custom_jvp-decorated function's application should be saved or not.
+  # TODO(mattjj,jekbradbury): the user writing the custom_jvp-decorated function
+  # probably has a better idea for what to do under remat (e.g. if the function
+  # contains dots or not), so we should allow for more expressive interaction
+  # (e.g. allow the policy to depend on which custom_jvp-decorated function is
+  # being applied, or annotating the behavior where custom_vjp is called.)
+  inst_out = [True] * len(eqn.outvars)
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+  if any(unks_in):
+    unks_out = [True] * len(eqn.outvars)
+    return None, eqn, unks_out, inst_out, new_inst
+  else:
+    unks_out = [False] * len(eqn.outvars)
+    return eqn, eqn, unks_out, inst_out, new_inst
+pe.partial_eval_jaxpr_custom_rules[custom_jvp_call_jaxpr_p] = \
+    custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
 
 
 ### VJPs
@@ -722,6 +775,9 @@ xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 mlir.register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
+
+pe.partial_eval_jaxpr_custom_rules[custom_vjp_call_jaxpr_p] = \
+    custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
 
 
 def custom_gradient(fun):
@@ -1181,7 +1237,3 @@ def custom_vjp_by_custom_transpose(fun, fwd, bwd):
     return outs, tan_fn(tan_out_types, residuals, tangents)
 
   return fun
-
-
-# TODO(mattjj): remove these stubs, which exist to avoid breaking internal users
-custom_jvp_call_jaxpr_p = core.Primitive("custom_jvp_call_jaxpr")
