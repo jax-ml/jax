@@ -71,23 +71,6 @@ py_extension(
     ],
 )
 
-py_extension(
-    name = "_mlirRegisterEverything",
-    srcs = [
-        "@llvm-project//mlir:include/mlir-c/Bindings/Python/Interop.h",
-        "@llvm-project//mlir:include/mlir/Bindings/Python/PybindAdaptors.h",
-        "@llvm-project//mlir:lib/Bindings/Python/RegisterEverything.cpp",
-    ],
-    copts = COPTS,
-    deps = [
-        ":jaxlib_mlir_capi_shared_library",
-        "@llvm-project//mlir:CAPIConversionHeaders",
-        "@llvm-project//mlir:CAPIRegisterEverythingHeaders",
-        "@llvm-project//mlir:CAPITransformsHeaders",
-        "@pybind11",
-    ],
-)
-
 symlink_inputs(
     name = "_mlir_libs",
     rule = py_library,
@@ -98,7 +81,21 @@ symlink_inputs(
     }},
     deps = [
         ":_mlir",
-        ":_mlirRegisterEverything",
+        ":_site_initialize_0",
+    ],
+)
+
+# JAX-specific registrations.
+py_extension(
+    name = "_site_initialize_0",
+    srcs = ["_site_initialize_0.cc"],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
+        "@pybind11",
     ],
 )
 
@@ -138,8 +135,6 @@ cc_library(
 cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
-        "@llvm-project//mlir:CAPIConversionObjects",
-        "@llvm-project//mlir:CAPIRegisterEverythingObjects",
         "@llvm-project//mlir:CAPISparseTensorObjects",
         "@llvm-project//mlir:CAPITransformsObjects",
         "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
