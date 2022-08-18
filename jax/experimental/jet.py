@@ -61,6 +61,7 @@ import numpy as np
 import jax
 from jax import core
 from jax import lax
+from jax.custom_derivatives import custom_jvp_call_jaxpr_p
 from jax.interpreters import xla
 import jax.linear_util as lu
 import jax.numpy as jnp
@@ -680,6 +681,13 @@ def _lax_min_taylor_rule(primal_in, series_in):
     series_out = [select_min_and_avg_eq(*terms_in) for terms_in in zip(*series_in)]
     return primal_out, series_out
 jet_rules[lax.min_p] = _lax_min_taylor_rule
+
+def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
+                                jvp_jaxpr_thunk):
+  # TODO(mattjj): do something better than ignoring custom jvp rules for jet?
+  del jvp_jaxpr_thunk
+  return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
+jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
 
 def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
                       dimension_numbers, indices_are_sorted, unique_indices,
