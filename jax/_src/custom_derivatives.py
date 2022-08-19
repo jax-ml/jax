@@ -331,23 +331,6 @@ def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    call_jaxpr = new_params.pop('call_jaxpr')
-    num_consts = new_params.pop('num_consts')
-    jvp_jaxpr_thunk = new_params.pop('jvp_jaxpr_thunk')
-    fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr))
-
-    @lu.wrap_init
-    def jvp(*xs):
-      jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
-      n, ragged = divmod(len(xs), 2)
-      assert not ragged
-      primals, tangents = xs[num_consts:n], xs[n+num_consts:]
-      return core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *tangents)
-
-    return [fun, jvp], new_params
-
 def _apply_todos(todos, outs):
   todos_list = list(todos)
   while todos_list:
