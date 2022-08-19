@@ -1032,19 +1032,19 @@ def _get_monoid_reducer(monoid_op: Callable,
     # allow bitwise reductions for boolean and integer types
     _is_intlike = dtype == np.bool_ or dtypes.issubdtype(dtype, np.integer)
     if monoid_op is add:
-      return np.equal(aval.val, 0) and partial(_reduce_sum)
+      return _reduce_sum if np.equal(aval.val, 0) else None
     elif monoid_op is mul:
-      return np.equal(aval.val, 1) and _reduce_prod
+      return _reduce_prod if np.equal(aval.val, 1) else None
     elif monoid_op is bitwise_or and _is_intlike:
-      return np.equal(aval.val, _get_bitwise_or_identity(dtype)) and _reduce_or
+      return _reduce_or if np.equal(aval.val, _get_bitwise_or_identity(dtype)) else None
     elif monoid_op is bitwise_and and _is_intlike:
-      return np.equal(aval.val, _get_bitwise_and_identity(dtype)) and _reduce_and
+      return _reduce_and if np.equal(aval.val, _get_bitwise_and_identity(dtype)) else None
     elif monoid_op is bitwise_xor and _is_intlike:
-      return np.equal(aval.val, _get_bitwise_or_identity(dtype)) and _reduce_xor
+      return _reduce_xor if np.equal(aval.val, _get_bitwise_or_identity(dtype)) else None
     elif monoid_op is max:
-      return np.equal(aval.val, _get_max_identity(dtype)) and _reduce_max
+      return _reduce_max if np.equal(aval.val, _get_max_identity(dtype)) else None
     elif monoid_op is min:
-      return np.equal(aval.val, _get_min_identity(dtype)) and _reduce_min
+      return _reduce_min if np.equal(aval.val, _get_min_identity(dtype)) else None
   return None
 
 def _get_bitwise_and_identity(dtype: DType) -> Array:
