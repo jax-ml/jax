@@ -916,7 +916,10 @@ def xla_computation(fun: Callable,
               xla.sharding_to_proto, in_parts_flat)),
           result_shardings=(None if out_parts_flat is None else map(
               xla.sharding_to_proto, out_parts_flat)))
-      should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
+      if tuple_args is not None:
+        should_tuple = tuple_args
+      else:
+        dispatch.should_tuple_args(len(avals), backend.platform)
       built = xc._xla.mlir.mlir_module_to_xla_computation(
           mlir.module_to_string(lowering_result.module),
           use_tuple_args=should_tuple,

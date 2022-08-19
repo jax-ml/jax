@@ -329,6 +329,14 @@ def log_elapsed_time(fmt: str):
     logging.log(log_priority, fmt.format(elapsed_time=elapsed_time))
 
 
+def should_tuple_args(num_args: int, platform: str):
+  # pass long arg lists as tuple for TPU
+  if platform == "tpu":
+    return num_args > 2000
+  else:
+    return num_args > 100
+
+
 @profiler.annotate_function
 def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
                        donated_invars, always_lower: bool, keep_unused: bool,
@@ -430,7 +438,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
         "extra data movement anyway, so maybe you don't want it after all).")
 
   # pass long arg lists as tuple for TPU
-  tuple_args = len(abstract_args) > 100
+  tuple_args = should_tuple_args(len(abstract_args), backend.platform)
   axis_env = xla.AxisEnv(nreps, (), ())
   name_stack = util.new_name_stack(util.wrap_name(name, 'jit'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)

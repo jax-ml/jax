@@ -1199,11 +1199,6 @@ def find_replicas(jaxpr, axis_size, global_axis_size):
   return ReplicaInfo(jaxpr_replicas, num_local_replicas, num_global_replicas)
 
 
-def should_tuple_args(shards: ShardInfo):
-  # tuplify long arg lists for TPU
-  return len(shards.global_sharded_avals) > 100
-
-
 def stage_parallel_callable(
     pci: ParallelCallableInfo,
     fun: lu.WrappedFun,
@@ -1371,7 +1366,8 @@ def lower_parallel_callable(
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   replicated_args = [axis is None for axis in in_axes]
   module: Union[str, xc.XlaComputation]
-  tuple_args = should_tuple_args(shards)
+  tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
+                                          backend.platform)
   module_name = f"pmap_{fun.__name__}"
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
@@ -2638,7 +2634,8 @@ def lower_sharding_computation(
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   # 2. Build up the HLO
-  tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
+  tuple_args = dispatch.should_tuple_args(len(in_jaxpr_avals), backend.platform)
+
   in_op_shardings: Optional[List[Optional[xc.OpSharding]]]
   out_op_shardings: Optional[List[Optional[xc.OpSharding]]]
   axis_ctx: mlir.ShardingContext
@@ -2771,7 +2768,8 @@ def lower_mesh_computation(
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   # 2. Build up the HLO
-  tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
+  tuple_args = dispatch.should_tuple_args(len(in_jaxpr_avals), backend.platform)
+
   in_partitions: Optional[List[Optional[xc.OpSharding]]]
   out_partitions: Optional[List[Optional[xc.OpSharding]]]
   axis_ctx: mlir.AxisContext
