@@ -1574,9 +1574,12 @@ def _pred_bcast_select_mhlo(
     assert x.type == y.type, (x.type, y.type)
     assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
             pred_aval.shape, x_y_aval)
+    x_y_type = mlir.aval_to_ir_type(x_y_aval)
+    bcast_pred_type = ir.RankedTensorType.get(
+        x_y_type.shape, mlir.dtype_to_ir_type(np.dtype(np.bool_)))
     bcast_pred = mhlo.BroadcastInDimOp(
-        mlir.aval_to_ir_type(x_y_aval.update(dtype=np.dtype(np.bool_))),
-        pred, mlir.dense_int_elements(list(range(len(pred_aval.shape))))).result
+        bcast_pred_type, pred,
+        mlir.dense_int_elements(list(range(len(pred_aval.shape))))).result
     return mhlo.SelectOp(bcast_pred, x, y).results
 
 ### fori_loop
