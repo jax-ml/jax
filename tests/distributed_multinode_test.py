@@ -15,6 +15,8 @@
 import os
 import unittest
 
+from absl.testing import absltest
+
 import jax
 import jax._src.lib
 from jax._src import test_util as jtu
@@ -60,3 +62,6 @@ class MultiNodeGpuTest(jtu.JaxTestCase):
     y = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(x)
     self.assertEqual(y[0], jax.device_count())
     print(y)
+
+if __name__ == "__main__":
+  absltest.main(testLoader=jtu.JaxTestLoader())
