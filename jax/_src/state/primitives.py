@@ -21,6 +21,7 @@ from jax._src import ad_util
 from jax._src import pretty_printer as pp
 from jax._src.util import safe_map, safe_zip
 from jax.interpreters import ad
+from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 
 from jax._src.state.types import ShapedArrayRef, StateEffect
@@ -252,3 +253,28 @@ def _swap_transpose(g, ref, x, *idx):
   x_bar = ref_swap(ref, idx, ad_util.instantiate(g))
   return [None, x_bar] + [None] * len(idx)
 ad.primitive_transposes[swap_p] = _swap_transpose
+
+def addupdate_transpose(cts_in, ref, x, *idx):
+  # addupdate transpose is get
+  del cts_in, x
+  g = ref_get(ref, idx)
+  return [None, g] + [None] * len(idx)
+ad.primitive_transposes[addupdate_p] = addupdate_transpose
+
+## get/swap/addupdate partial_eval_custom rules
+
+def _state_partial_eval_custom(prim, saveable, unks_in, inst_in, eqn):
+  if any(unks_in):
+    res = [v for v, inst in zip(eqn.invars, inst_in) if not inst]
+    return None, eqn, [True] * len(eqn.outvars), [True] * len(eqn.outvars), res
+  elif saveable(get_p, *[var.aval for var in eqn.invars], **eqn.params):
+    return eqn, None, [False] * len(eqn.outvars), [False] * len(eqn.outvars), []
+  res = [v for v, inst in zip(eqn.invars, inst_in) if not inst]
+  return eqn, eqn, [False] * len(eqn.outvars), [True] * len(eqn.outvars), []
+
+pe.partial_eval_jaxpr_custom_rules[get_p] = partial(_state_partial_eval_custom,
+                                                    get_p)
+pe.partial_eval_jaxpr_custom_rules[swap_p] = partial(_state_partial_eval_custom,
+                                                     swap_p)
+pe.partial_eval_jaxpr_custom_rules[addupdate_p] = partial(
+    _state_partial_eval_custom, addupdate_p)

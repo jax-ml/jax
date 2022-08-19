@@ -34,6 +34,7 @@ from jax._src import state
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list)
 import jax.numpy as jnp
+import numpy as np
 
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
@@ -306,8 +307,9 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
       constvars=[])
   for _ in range(num_inputs):
     jaxpr_in_unknowns = [False] * len(discharged_consts) + [False, *in_unknowns]
-    _, _, out_unknowns, _, _ = _partial_eval_jaxpr_custom(
-        discharged_jaxpr, jaxpr_in_unknowns, _save_everything)
+    _, _, out_unknowns, _, _, = pe.partial_eval_jaxpr_custom(
+        discharged_jaxpr, jaxpr_in_unknowns, [True] * len(jaxpr_in_unknowns),
+          in_unknowns, False, _save_everything)
     out_unknowns = list(out_unknowns)
     if out_unknowns == in_unknowns:
       break
@@ -373,6 +375,8 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   known_vals = [t.pval.get_known() for t in known_tracers]
   empty_res = map(ad_util.zeros_like_aval, res_avals)
   jaxpr_known_args = [*known_vals, *empty_res]
+  # We assume the known inputs are nonlinear which is okay to do for AD but not
+  # necessarily okay for general partial eval.
   jaxpr_known_which_linear = (False,) * len(jaxpr_known_args)
   out_flat = for_p.bind(*jaxpr_known_args, jaxpr=jaxpr_known, nsteps=nsteps,
                         reverse=reverse, which_linear=jaxpr_known_which_linear)
@@ -467,6 +471,72 @@ def _convert_inputs_to_reads(
   jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [i_aval, *res_ref_avals, *orig_ref_avals])
   return jaxpr
+
+def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: List[bool]) -> core.Jaxpr:
+  def trans(i, *args):
+    # First we want to run the computation to read all the residual refs. We can
+    # do that by using partial evaluation with all linear inputs unknown.
+    res_jaxpr, tangent_jaxpr_, *_ = \
+        _partial_eval_jaxpr_custom(jaxpr, [False, *which_linear],
+                                   _save_everything)
+    res_args = [x for x, lin in zip(args, which_linear) if not lin]
+    res = core.eval_jaxpr(res_jaxpr, (), i, *res_args)
+
+    # Now that we have residual values, we run the tangent jaxpr. It takes as
+    # input the residuals, the loop index, and all the refs (at least, the ones
+    # that are used in the body). Luckily, `tangent_jaxpr_` has all known and
+    # unknown inputs!
+    tangent_jaxpr, used = pe.dce_jaxpr(tangent_jaxpr_, [])
+    used_res, (used_i,), used_ct = split_list(used, [len(res), 1])
+    primals_args = [*(r for u, r in zip(used_res, res) if u)]
+    if used_i:
+      primals_args = [*primals_args, i]
+    ct_args = [x for x, u in zip(args, used_ct) if u]
+    ad.backward_pass(
+        tangent_jaxpr, (), False, (), (*primals_args, *ct_args), ())
+    return []
+  jaxpr_trans, _, _ = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(trans), [v.aval for v in jaxpr.invars])
+  return jaxpr_trans
+
+def _for_transpose(in_cts, *args, jaxpr, nsteps, reverse, which_linear):
+  # if any in_ct is nonzero, we definitely want it in args_ (and the
+  # corresponding x in args could be an undefined primal, but doesnt have to be)
+  # for non-res stuff:
+  #   getting and setting => (nonzero ct, UndefinedPrimal arg)
+  #   just setting =>        (nonzero ct, not UndefinedPrimal, dummy value)
+  #   just getting =>        (zero ct   , UndefinedPrimal arg)
+  # for res stuff:
+  #                          (zero ct   , not UndefinedPrimal)
+  args_ = []
+  which_linear_transpose = []
+  for x, ct in zip(args, in_cts):
+    if   type(ct) is     ad_util.Zero and not ad.is_undefined_primal(x):
+      # this is a residual, take x!
+      args_.append(x)
+      which_linear_transpose.append(False)
+    elif type(ct) is     ad_util.Zero and     ad.is_undefined_primal(x):
+      # the loop was 'just getting', plug in a zero
+      args_.append(ad_util.zeros_like_aval(x.aval))
+      which_linear_transpose.append(False)
+    elif type(ct) is not ad_util.Zero and not ad.is_undefined_primal(x):
+      # the loop was 'just setting', grab that cotangent! x is dummy
+      args_.append(ct)
+      which_linear_transpose.append(False)
+    elif type(ct) is not ad_util.Zero and     ad.is_undefined_primal(x):
+      # the loop was 'getting and setting', grab that cotangent!
+      args_.append(ct)
+      which_linear_transpose.append(True)
+
+  jaxpr_transpose = transpose_jaxpr(jaxpr, which_linear)
+  assert len(args_) == len(jaxpr_transpose.invars) - 1
+  all_outs = for_p.bind(*args_, jaxpr=jaxpr_transpose, nsteps=nsteps,
+                        reverse=not reverse,
+                        which_linear=tuple(which_linear_transpose))
+  ct_outs = [ct if ad.is_undefined_primal(x) else None
+             for x, ct in zip(args, all_outs)]
+  return ct_outs
+ad.primitive_transposes[for_p] = _for_transpose
 
 ### Testing utility
 
