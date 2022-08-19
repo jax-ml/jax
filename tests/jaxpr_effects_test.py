@@ -27,6 +27,7 @@ from jax.config import config
 from jax.interpreters import ad
 from jax.experimental import maps
 from jax.experimental import pjit
+from jax.experimental import sharding
 from jax.interpreters import mlir
 from jax._src import ad_checkpoint
 from jax._src import lib as jaxlib
@@ -268,6 +269,9 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
   def test_xmap_inherits_effects(self):
+    if config.jax_array:
+      raise unittest.SkipTest('Xmap does not work properly with Arrays '
+                              'containing SingleDeviceSharding.')
 
     def f(x):
       effect_p.bind(effect='foo')
@@ -282,11 +286,15 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='bar')
       return x
-    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('x'),
-        out_axis_resources=pjit.PartitionSpec('x'))
+    mesh = maps.Mesh(np.array(jax.devices()), ['x'])
+    if config.jax_array:
+      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('x'))
+    else:
+      spec = pjit.PartitionSpec('x')
+    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
     with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
-      with maps.Mesh(np.array(jax.devices()), ['x']):
-        jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
+      with mesh:
+        jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
 
 
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):

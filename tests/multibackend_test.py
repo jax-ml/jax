@@ -32,6 +32,18 @@ FLAGS = config.FLAGS
 npr.seed(0)
 
 
+def _get_platform(arr):
+  if config.jax_array:
+    return arr._arrays[0].platform()
+  return arr.device_buffer.platform()
+
+
+def _get_device(arr):
+  if config.jax_array:
+    return arr.device()
+  return arr.device_buffer.device()
+
+
 class MultiBackendTest(jtu.JaxTestCase):
   """Tests jit targeting to different backends."""
 
@@ -46,14 +58,15 @@ class MultiBackendTest(jtu.JaxTestCase):
       raise SkipTest("Backend is not CPU or the device under test")
     @partial(jax.jit, backend=backend)
     def fun(x, y):
-        return jnp.matmul(x, y)
-    x = npr.uniform(size=(10,10))
-    y = npr.uniform(size=(10,10))
+      return jnp.matmul(x, y)
+
+    x = npr.uniform(size=(10, 10))
+    y = npr.uniform(size=(10, 10))
     z_host = np.matmul(x, y)
     z = fun(x, y)
     self.assertAllClose(z, z_host, rtol=1e-2)
     correct_platform = backend if backend else jtu.device_under_test()
-    self.assertEqual(z.device_buffer.platform(), correct_platform)
+    self.assertEqual(_get_platform(z), correct_platform)
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": f"_ordering={ordering}",
@@ -65,17 +78,20 @@ class MultiBackendTest(jtu.JaxTestCase):
       raise SkipTest("Backend is not CPU or the device under test")
     @partial(jax.jit, backend=outer)
     def fun(x, y):
-        @partial(jax.jit, backend=inner)
-        def infun(x, y):
-            return jnp.matmul(x, y)
-        return infun(x, y) + jnp.ones_like(x)
-    x = npr.uniform(size=(10,10))
-    y = npr.uniform(size=(10,10))
+
+      @partial(jax.jit, backend=inner)
+      def infun(x, y):
+        return jnp.matmul(x, y)
+
+      return infun(x, y) + jnp.ones_like(x)
+
+    x = npr.uniform(size=(10, 10))
+    y = npr.uniform(size=(10, 10))
     z_host = np.matmul(x, y) + np.ones_like(x)
     z = fun(x, y)
     self.assertAllClose(z, z_host, rtol=1e-2)
     correct_platform = outer if outer else jtu.device_under_test()
-    self.assertEqual(z.device_buffer.platform(), correct_platform)
+    self.assertEqual(_get_platform(z), correct_platform)
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": f"_ordering={ordering}",
@@ -96,12 +112,15 @@ class MultiBackendTest(jtu.JaxTestCase):
 
     @partial(jax.jit, backend=outer)
     def fun(x, y):
-        @partial(jax.jit, backend=inner)
-        def infun(x, y):
-            return jnp.matmul(x, y)
-        return infun(x, y) + jnp.ones_like(x)
-    x = npr.uniform(size=(10,10))
-    y = npr.uniform(size=(10,10))
+
+      @partial(jax.jit, backend=inner)
+      def infun(x, y):
+        return jnp.matmul(x, y)
+
+      return infun(x, y) + jnp.ones_like(x)
+
+    x = npr.uniform(size=(10, 10))
+    y = npr.uniform(size=(10, 10))
     self.assertRaises(ValueError, lambda: fun(x, y))
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -119,8 +138,8 @@ class MultiBackendTest(jtu.JaxTestCase):
     y = npr.uniform(size=(10,10))
     z = fun(x, y)
     w = jnp.sin(z)
-    self.assertEqual(z.device_buffer.platform(), backend)
-    self.assertEqual(w.device_buffer.platform(), backend)
+    self.assertEqual(_get_platform(z), backend)
+    self.assertEqual(_get_platform(w), backend)
 
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
   def testJitCpu(self):
@@ -134,17 +153,17 @@ class MultiBackendTest(jtu.JaxTestCase):
     b = x + jnp.ones_like(x)
     c = x + jnp.eye(2)
 
-    self.assertEqual(a.device_buffer.device(), jax.devices('cpu')[0])
-    self.assertEqual(b.device_buffer.device(), jax.devices('cpu')[0])
-    self.assertEqual(c.device_buffer.device(), jax.devices('cpu')[0])
+    self.assertEqual(_get_device(a), jax.devices('cpu')[0])
+    self.assertEqual(_get_device(b), jax.devices('cpu')[0])
+    self.assertEqual(_get_device(c), jax.devices('cpu')[0])
 
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
   def test_closed_over_values_device_placement(self):
     # see https://github.com/google/jax/issues/1431
     def f(): return jnp.add(3., 4.)
-    self.assertNotEqual(jax.jit(f)().device_buffer.device(),
+    self.assertNotEqual(_get_device(jax.jit(f)()),
                         jax.devices('cpu')[0])
-    self.assertEqual(jax.jit(f, backend='cpu')().device_buffer.device(),
+    self.assertEqual(_get_device(jax.jit(f, backend='cpu')()),
                      jax.devices('cpu')[0])
 
   @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
@@ -157,22 +176,22 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertNotEqual(default_dev.platform, "cpu")
 
     data_on_cpu = jax.device_put(1, device=cpus[0])
-    self.assertEqual(data_on_cpu.device_buffer.device(), cpus[0])
+    self.assertEqual(_get_device(data_on_cpu), cpus[0])
 
     def my_sin(x): return jnp.sin(x)
     # jit without any device spec follows the data
     result1 = jax.jit(my_sin)(2)
-    self.assertEqual(result1.device_buffer.device(), default_dev)
+    self.assertEqual(_get_device(result1), default_dev)
     result2 = jax.jit(my_sin)(data_on_cpu)
-    self.assertEqual(result2.device_buffer.device(), cpus[0])
+    self.assertEqual(_get_device(result2), cpus[0])
 
     # jit with `device` spec places the data on the specified device
     result3 = jax.jit(my_sin, device=cpus[0])(2)
-    self.assertEqual(result3.device_buffer.device(), cpus[0])
+    self.assertEqual(_get_device(result3), cpus[0])
 
     # jit with `backend` spec places the data on the specified backend
     result4 = jax.jit(my_sin, backend="cpu")(2)
-    self.assertEqual(result4.device_buffer.device(), cpus[0])
+    self.assertEqual(_get_device(result4), cpus[0])
 
   @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
   def test_indexing(self):
@@ -181,7 +200,7 @@ class MultiBackendTest(jtu.JaxTestCase):
 
     x = jax.device_put(np.ones(2), cpus[0])
     y = x[0]
-    self.assertEqual(y.device_buffer.device(), cpus[0])
+    self.assertEqual(_get_device(y), cpus[0])
 
   @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
   def test_sum(self):
@@ -190,7 +209,7 @@ class MultiBackendTest(jtu.JaxTestCase):
 
     x = jax.device_put(np.ones(2), cpus[0])
     y = x.sum()
-    self.assertEqual(y.device_buffer.device(), cpus[0])
+    self.assertEqual(_get_device(y), cpus[0])
 
 
 if __name__ == "__main__":

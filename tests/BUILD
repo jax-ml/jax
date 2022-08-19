@@ -37,12 +37,14 @@ jax_test(
     name = "api_test_with_array",
     srcs = ["api_test.py"],
     args = ["--jax_array=true"],
+    disable_configs = ["cpu_jax_array"],
     shard_count = 10,
 )
 
 jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
+    disable_configs = ["cpu_jax_array"],
     shard_count = 2,
 )
 
@@ -121,13 +123,6 @@ jax_test(
     srcs = ["dtypes_test.py"],
 )
 
-jax_test(
-    name = "dtypes_test_with_array",
-    srcs = ["dtypes_test.py"],
-    args = ["--jax_array=true"],
-    enable_configs = ["cpu"],
-)
-
 py_test(
     name = "errors_test",
     srcs = ["errors_test.py"],
@@ -189,6 +184,7 @@ py_test(
 jax_test(
     name = "xmap_test",
     srcs = ["xmap_test.py"],
+    disable_configs = ["cpu_jax_array"],
     shard_count = {
         "cpu": 10,
         "gpu": 4,
@@ -203,6 +199,7 @@ jax_test(
 jax_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
+    disable_configs = ["cpu_jax_array"],
     shard_count = {
         "cpu": 5,
         "gpu": 5,
@@ -508,6 +505,14 @@ jax_test(
     srcs = ["multibackend_test.py"],
 )
 
+# Enable on every backend because this is a multibackend test.
+jax_test(
+    name = "multibackend_test_with_array",
+    srcs = ["multibackend_test.py"],
+    args = ["--jax_array=true"],
+    disable_configs = ["cpu_jax_array"],
+)
+
 jax_test(
     name = "multi_device_test",
     srcs = ["multi_device_test.py"],
@@ -539,6 +544,8 @@ jax_test(
 jax_test(
     name = "pmap_test",
     srcs = ["pmap_test.py"],
+    # pmap already has array tests inside it.
+    disable_configs = ["cpu_jax_array"],
     shard_count = {
         "cpu": 15,
         "gpu": 30,
@@ -598,10 +605,10 @@ jax_test(
     name = "random_test",
     srcs = ["random_test.py"],
     shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 10,
-        "iree": 10,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 20,
+        "iree": 20,
     },
 )
 
@@ -719,6 +726,7 @@ jax_test(
     name = "checkify_test_with_array",
     srcs = ["checkify_test.py"],
     args = ["--jax_array=true"],
+    disable_configs = ["cpu_jax_array"],
 )
 
 jax_test(

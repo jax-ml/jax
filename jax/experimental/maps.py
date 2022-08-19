@@ -545,9 +545,6 @@ def xmap(fun: Callable,
       closure=(out_axes_entries, out_axes_treedef))
 
     if config.jax_array:
-      if any(not isinstance(a, Array) for a in args_flat):
-        raise ValueError('All arguments to pjit when `config.jax_array` is '
-                         'enabled should be `Array`s.')
       in_positional_semantics = (_PositionalSemantics.GLOBAL,) * len(args_flat)
     else:
       in_positional_semantics = tuple(

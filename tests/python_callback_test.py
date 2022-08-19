@@ -763,7 +763,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
                   axis_resources={'a': 'dev'})
     with maps.Mesh(np.array(jax.devices()), ['dev']):
-      out = f(jnp.arange(40.))
+      out = f(np.arange(40.))
     np.testing.assert_allclose(out, jnp.arange(1., 41.))
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -778,7 +778,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
                   axis_resources={'a': 'dev'})
     with maps.Mesh(np.array(jax.devices()), ['dev']):
-      out = f(jnp.arange(40.))
+      out = f(np.arange(40.))
     np.testing.assert_allclose(out, jnp.arange(1., 41.))
 
 

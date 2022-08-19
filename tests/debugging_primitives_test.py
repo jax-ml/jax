@@ -28,6 +28,7 @@ from jax import lax
 from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
+from jax.experimental import sharding
 from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
@@ -687,11 +688,17 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     def f(x):
       debug_print("{}", x, ordered=False)
       return x
-    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
-                  out_axis_resources=pjit.PartitionSpec('dev'))
-    with maps.Mesh(np.array(jax.devices()), ['dev']):
+    mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
+    if config.jax_array:
+      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
+      out_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec())
+    else:
+      spec = pjit.PartitionSpec('dev')
+      out_spec = pjit.PartitionSpec()
+    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
+    with mesh:
       with capture_stdout() as output:
-        f(jnp.arange(8, dtype=jnp.int32))
+        f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(), "[0 1 2 3 4 5 6 7]\n")
 
@@ -699,11 +706,10 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       y = x.dot(x)
       debug_print("{}", y, ordered=False)
       return y
-    f2 = pjit.pjit(f2, in_axis_resources=pjit.PartitionSpec('dev'),
-                   out_axis_resources=pjit.PartitionSpec())
+    f2 = pjit.pjit(f2, in_axis_resources=spec, out_axis_resources=out_spec)
     with maps.Mesh(np.array(jax.devices()), ['dev']):
       with capture_stdout() as output:
-        f2(jnp.arange(8, dtype=jnp.int32))
+        f2(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(), "140\n")
 
@@ -724,11 +730,16 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         x = x + 1
         return (i + 1, x)
       return lax.while_loop(cond, body, (0, x))[1]
-    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
-                  out_axis_resources=pjit.PartitionSpec('dev'))
-    with maps.Mesh(np.array(jax.devices()), ['dev']):
+
+    mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
+    if config.jax_array:
+      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
+    else:
+      spec = pjit.PartitionSpec('dev')
+    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
+    with mesh:
       with capture_stdout() as output:
-        f(jnp.arange(8, dtype=jnp.int32))
+        f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(),
           "[0 1 2 3 4 5 6 7]\n"
@@ -739,6 +750,10 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_xmap(self):
+    # TODO(b/243020374): Make xmap work properly with Arrays of different
+    # sharding.
+    if config.jax_array:
+      raise unittest.SkipTest('Does not work with Array.')
 
     if (jax.default_backend() in {"cpu", "gpu"}
         and jaxlib.xla_extension_version < 81):
@@ -764,14 +779,13 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_xmap(self):
-
     def f(x):
       debug_print("{}", x, ordered=False)
     f = maps.xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
                   axis_resources={'a': 'dev'})
     with maps.Mesh(np.array(jax.devices()), ['dev']):
       with capture_stdout() as output:
-        f(jnp.arange(40))
+        f(np.arange(40))
         jax.effects_barrier()
       lines = [f"{i}\n" for i in range(40)]
       self._assertLinesEqual(output(), "".join(lines))

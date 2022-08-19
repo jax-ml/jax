@@ -38,6 +38,7 @@ import jax.util
 from jax.interpreters import xla
 from jax.interpreters import mlir
 from jax.interpreters import batching
+from jax.experimental import array
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src import dispatch
 from jax._src import dtypes
@@ -2847,7 +2848,10 @@ class LazyConstantTest(jtu.JaxTestCase):
     if jit:
       op = jax.jit(op)
     result = op(input_type(value))
-    assert isinstance(result, jnp.DeviceArray)
+    if config.jax_array:
+      assert isinstance(result, array.Array)
+    else:
+      assert isinstance(result, jnp.DeviceArray)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype_in={}_dtype_out={}".format(
@@ -2860,10 +2864,16 @@ class LazyConstantTest(jtu.JaxTestCase):
     self.assertEqual(x.dtype, dtype_in)
     y = lax.convert_element_type(x, dtype_out)
     self.assertEqual(y.dtype, dtype_out)
-    if np.dtype(dtype_in) == np.dtype(dtype_out):
-      self.assertIs(x.device_buffer, y.device_buffer)
+    if config.jax_array:
+      x_buf = x._arrays[0]
+      y_buf = y._arrays[0]
     else:
-      self.assertFalse(x.device_buffer is y.device_buffer)
+      x_buf = x.device_buffer
+      y_buf = y.device_buffer
+    if np.dtype(dtype_in) == np.dtype(dtype_out):
+      self.assertIs(x_buf, y_buf)
+    else:
+      self.assertIsNot(x_buf, y_buf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fn={}_indexdtype={}"
@@ -3107,9 +3117,13 @@ class FooArray:
   ndim = property(lambda self: self.data.ndim - 1)
 
 def device_put_foo_array(x: FooArray, device):
+  if isinstance(x.data, array.Array):
+    return array._device_put_array(x.data, device)
   return dispatch._device_put_array(x.data, device)
 
 def foo_array_constant_handler(x, c):
+  if config.jax_array:
+    return array._array_mlir_constant_handler(x.data, c)
   return mlir._device_array_constant_handler(x.data, c)
 
 def make_lowering(*, shape):

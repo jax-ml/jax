@@ -34,6 +34,7 @@ from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2
 from jax.experimental import maps
+from jax.experimental import array
 from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
@@ -2459,7 +2460,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not DeviceArray
     _, vjp_fun = jax.vjp(cumprod, x)
     *_, ext_res = vjp_fun.args[0].args[0]
-    self.assertIsInstance(ext_res, jnp.DeviceArray)
+    if config.jax_array:
+      self.assertIsInstance(ext_res, array.Array)
+    else:
+      self.assertIsInstance(ext_res, jnp.DeviceArray)
 
   def test_scan_vmap_collectives(self):
     def scan_f(state, x):

@@ -1121,25 +1121,6 @@ class XMapArrayTest(XMapTestCase):
         for s in out.addressable_shards:
           self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
 
-  def test_xmap_array_mixed_inputs(self):
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    global_input_shape = (8, 2)
-    mesh_axes = P('x')
-    input_array, input_data = create_array(global_input_shape, global_mesh,
-                                           mesh_axes)
-
-    with jax._src.config.jax_array(True):
-      with global_mesh:
-        f = maps.xmap(
-              lambda x, y: (x @ x.T, y @ y.T),
-              in_axes=({0: "a"}, ["c", ...]),
-              out_axes=({0: "a"}, ["c", ...]),
-              axis_resources={"a": "x", "c": "x"})
-        with self.assertRaisesRegex(
-            ValueError, ('All arguments to pjit when `config.jax_array` is '
-                         'enabled should be `Array`s.')):
-          f(input_array, input_data)
-
   def test_xmap_array_double_input(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
