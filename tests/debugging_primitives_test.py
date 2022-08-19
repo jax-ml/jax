@@ -750,7 +750,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_xmap(self):
-    # TODO(b/243020374): Make xmap work properly with Arrays of different
+    # TODO(https://github.com/google/jax/issues/12016): Make xmap work properly
+    # with Arrays of different
     # sharding.
     if config.jax_array:
       raise unittest.SkipTest('Does not work with Array.')

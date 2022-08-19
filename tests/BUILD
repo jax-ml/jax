@@ -34,14 +34,6 @@ jax_test(
 )
 
 jax_test(
-    name = "api_test_with_array",
-    srcs = ["api_test.py"],
-    args = ["--jax_array=true"],
-    disable_configs = ["cpu_jax_array"],
-    shard_count = 10,
-)
-
-jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
     disable_configs = ["cpu_jax_array"],
@@ -505,14 +497,6 @@ jax_test(
     srcs = ["multibackend_test.py"],
 )
 
-# Enable on every backend because this is a multibackend test.
-jax_test(
-    name = "multibackend_test_with_array",
-    srcs = ["multibackend_test.py"],
-    args = ["--jax_array=true"],
-    disable_configs = ["cpu_jax_array"],
-)
-
 jax_test(
     name = "multi_device_test",
     srcs = ["multi_device_test.py"],
@@ -720,13 +704,6 @@ jax_test(
 jax_test(
     name = "checkify_test",
     srcs = ["checkify_test.py"],
-)
-
-jax_test(
-    name = "checkify_test_with_array",
-    srcs = ["checkify_test.py"],
-    args = ["--jax_array=true"],
-    disable_configs = ["cpu_jax_array"],
 )
 
 jax_test(

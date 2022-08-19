@@ -4016,7 +4016,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype in all_dtypes
       for func in ["array", "copy", "copy.copy", "copy.deepcopy"]))
   def testArrayCopy(self, dtype, func):
-    # TODO(b/243020374): Make this work with Array.
+    # TODO(https://github.com/google/jax/issues/12016): Make this work with Array.
     if config.jax_array:
       raise unittest.SkipTest("Does not work with Array.")
     x = jnp.ones(10, dtype=dtype)

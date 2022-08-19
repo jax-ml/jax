@@ -78,7 +78,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
       self.assertEqual(data.device_buffer.device(), device)
 
   def test_computation_follows_data(self):
-    # TODO(b/243020374): Figure out why this test does not work with Array.
+    # TODO(https://github.com/google/jax/issues/12016): Figure out why this test
+    # does not work with Array.
     if config.jax_array:
       self.skipTest("Does not work with Array. Needs more investigation.")
     if jax.device_count() < 5:
