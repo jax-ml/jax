@@ -509,35 +509,25 @@ static absl::Status CooMatmat_(cudaStream_t stream, void** buffers,
   cusparseDnMatDescr_t mat_b = 0;
   cusparseDnMatDescr_t mat_c = 0;
 
-  // All three matrices A, B, and C must have the same batch_count.
-  // TODO(tianjianlu): use batch_count from matrix descriptor.
-  int batch_count = 1;
-
-  // Three batch modes are supported, C_i = A_i B, C_i = A B_i, and
-  // Ci = A_i B_i, where `i` denotes the batch dimension. Use `batch_stride` to
-  // trigger individual mode, e.g., using `batch_stride_B = 0` in C_i = A_i B.
-  int batch_stride_A = d.A.rows * d.A.cols;
-  int batch_stride_B = d.B.rows * d.B.cols;
-  int batch_stride_C = d.C.rows * d.C.cols;
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateCoo(
       &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
       d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-    cusparseCooSetStridedBatch(
-        mat_a, /*batchCount=*/batch_count, /*batchStride=*/batch_stride_A)));
+    cusparseCooSetStridedBatch(mat_a, /*batchCount=*/d.A.batch_count,
+                               /*batchStride=*/d.A.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
       &mat_b, d.B.rows, d.B.cols,
       /*ld=*/d.B.cols, Bbuf, d.B.type, CUSPARSE_ORDER_ROW)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-    cusparseDnMatSetStridedBatch(
-      mat_b, /*batchCount=*/batch_count, /*batchStride=*/batch_stride_B)));
+    cusparseDnMatSetStridedBatch(mat_b, /*batchCount=*/d.B.batch_count,
+                                 /*batchStride=*/d.B.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
       &mat_c, d.C.rows, d.C.cols,
       /*ld=*/d.C.cols, Cbuf, d.C.type, CUSPARSE_ORDER_ROW)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-    cusparseDnMatSetStridedBatch(
-      mat_c, /*batchCount=*/batch_count, /*batchStride=*/batch_stride_C)));
+    cusparseDnMatSetStridedBatch(mat_c, /*batchCount=*/d.C.batch_count,
+                                 /*batchStride=*/d.C.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSpMM(
       handle.get(), d.op_A, /*opB=*/CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
       mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_ALG_DEFAULT, buf)));

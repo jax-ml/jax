@@ -61,11 +61,15 @@ struct SparseMatDescriptor {
   cudaDataType value_type;
   cusparseIndexType_t index_type;
   int rows, cols, nnz;
+  int batch_count = 1;
+  int batch_stride = 0;
 };
 
 struct DenseMatDescriptor {
   cudaDataType type;
   int rows, cols;
+  int batch_count = 1;
+  int batch_stride = 0;
 };
 
 struct DenseVecDescriptor {
