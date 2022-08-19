@@ -21,6 +21,7 @@ from jax.scipy.stats import gamma as gamma
 from jax.scipy.stats import geom as geom
 from jax.scipy.stats import laplace as laplace
 from jax.scipy.stats import logistic as logistic
+from jax.scipy.stats import multinomial as multinomial
 from jax.scipy.stats import multivariate_normal as multivariate_normal
 from jax.scipy.stats import nbinom as nbinom
 from jax.scipy.stats import norm as norm

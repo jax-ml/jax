@@ -565,6 +565,31 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(2,), (3,), (4,), (5,), (6,), (7,), (1,2), (1, 3), (1,4), (1,5)]
+      for dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 2)))
+  def testMultinomialLogPmf(self, shape, dtype):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.multinomial.logpmf
+    lax_fun = lsp_stats.multinomial.logpmf
+
+    def args_maker():
+      x = np.rint(rng(shape, dtype[0])).astype(dtype[0])
+      n = np.sum(x)
+      p = rng(shape, dtype[1])
+      # Normalize the array such that it sums it's entries sum to 1 (or close enough to)
+      p = (p + np.min(p)) / np.sum(p + np.min(p))
+      return [x, n, p]
+
+    with jtu.strict_promotion_if_dtypes_match(dtype):
+      scipy_fun = osp_stats.multinomial.logpmf
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                                tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_x={}_mean={}_cov={}".format(
           jtu.format_shape_dtype_string(x_shape, x_dtype),
           jtu.format_shape_dtype_string(mean_shape, mean_dtype)
