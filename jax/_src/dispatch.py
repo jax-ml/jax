@@ -160,6 +160,7 @@ class RuntimeTokenSet(threading.local):
       token[0].block_until_ready()
     for token in self.output_runtime_tokens.values():
       token.block_until_ready()
+    self.clear()
 
 runtime_tokens: RuntimeTokenSet = RuntimeTokenSet()
 
@@ -767,7 +768,7 @@ def _check_special(name, xla_shape, buf):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
-                device: Device, input_bufs):
+                has_host_callbacks: bool, device: Device, input_bufs):
   tokens = [runtime_tokens.get_token(eff, device) for eff in ordered_effects]
   tokens_flat = flatten(tokens)
   input_bufs = [*tokens_flat, *input_bufs]
@@ -776,7 +777,7 @@ def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
     num_output_tokens = len(ordered_effects) + (not can_execute_with_token and
         has_unordered_effects)
     token_bufs, output_bufs = util.split_list(output_bufs, [num_output_tokens])
-    if has_unordered_effects:
+    if has_unordered_effects or has_host_callbacks:
       if can_execute_with_token:
         runtime_tokens.set_output_runtime_token(device, runtime_token)
       else:
@@ -794,14 +795,15 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
                       result_handler: Callable,
                       has_unordered_effects: bool,
                       ordered_effects: List[core.Effect],
-                      kept_var_idx, host_callbacks, *args):
+                      kept_var_idx, has_host_callbacks: bool, *args):
   device, = compiled.local_devices()
   args, env = input_handler(args) if input_handler else (args, None)
   in_flat = flatten(device_put(x, device) for i, x in enumerate(args)
                     if i in kept_var_idx)
-  if has_unordered_effects or ordered_effects:
+  if has_unordered_effects or ordered_effects or has_host_callbacks:
     in_flat, token_handler = _add_tokens(
-        has_unordered_effects, ordered_effects, device, in_flat)
+        has_unordered_effects, ordered_effects, has_host_callbacks, device,
+        in_flat)
     if can_execute_with_token:
       out_flat, runtime_token = compiled.execute_with_token(in_flat)
     else:
@@ -811,7 +813,7 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
     out_flat = compiled.execute(in_flat)
   check_special(name, out_flat)
   out_bufs = unflatten(out_flat, output_buffer_counts)
-  if ordered_effects or has_unordered_effects:
+  if ordered_effects or has_unordered_effects or has_host_callbacks:
     out_bufs = token_handler(out_bufs, runtime_token)
   return result_handler(env, out_bufs)
 
@@ -822,7 +824,7 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
                         result_handler: Callable,
                         has_unordered_effects: bool,
                         ordered_effects: List[core.Effect],
-                        kept_var_idx, host_callbacks, *args):
+                        kept_var_idx, has_host_callbacks: bool, *args):
   if has_unordered_effects or ordered_effects:
     # TODO(sharadmv): support jit-of-pmap with effects
     raise NotImplementedError(
@@ -1021,7 +1023,7 @@ class XlaCompiledComputation(stages.XlaExecutable):
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,  # type: ignore  # noqa: F811
                           result_handler, has_unordered_effects,
-                          ordered_effects, kept_var_idx, host_callbacks)
+                          ordered_effects, kept_var_idx, bool(host_callbacks))
     return XlaCompiledComputation(compiled, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 
@@ -1044,7 +1046,7 @@ class XlaCompiledComputation(stages.XlaExecutable):
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
     unsafe_call = partial(_execute_trivial, jaxpr, device, consts, out_avals,
                           result_handlers, has_unordered_effects,
-                          ordered_effects, kept_var_idx, host_callbacks)
+                          ordered_effects, kept_var_idx, bool(host_callbacks))
     return XlaCompiledComputation(None, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 

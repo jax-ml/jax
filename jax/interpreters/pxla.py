@@ -1942,7 +1942,7 @@ class ExecuteReplicated:
   @profiler.annotate_function
   def __call__(self, *args):
     input_bufs = self.in_handler(args)
-    if self.has_unordered_effects:
+    if self.has_unordered_effects or self.has_host_callbacks:
       # TODO(sharadmv): simplify this logic when minimum jaxlib version is
       # bumped
       if can_execute_with_token:
