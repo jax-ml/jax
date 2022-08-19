@@ -546,6 +546,13 @@ def bench_slicing_compilation(state):
   while state:
     jax.jit(lambda x: (x[0], x[1], x[2])).lower(x).compile()
 
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_slicing_compilation2(state):
+  x = jnp.arange(3)
+  while state:
+    jax.jit(lambda x: (x[:1], x[1:2], x[2:3])).lower(x).compile()
+
 
 if __name__ == "__main__":
   google_benchmark.main()

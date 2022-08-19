@@ -3593,6 +3593,25 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
 
+  # Handle some special cases, falling back if error messages might differ.
+  if (arr.ndim > 0 and isinstance(idx, (int, np.integer)) and
+      not isinstance(idx, (bool, np.bool_)) and isinstance(arr.shape[0], int)):
+    if 0 <= idx < arr.shape[0]:
+      return lax.index_in_dim(arr, idx, keepdims=False)
+  if (arr.ndim > 0 and isinstance(arr.shape[0], int) and
+      isinstance(idx, slice) and
+      (type(idx.start) is int or idx.start is None) and
+      (type(idx.stop)  is int or idx.stop is  None) and
+      (type(idx.step)  is int or idx.step is  None)):
+    n = arr.shape[0]
+    start = idx.start if idx.start is not None else 0
+    stop  = idx.stop  if idx.stop  is not None else n
+    step  = idx.step  if idx.step  is not None else 1
+    if (0 <= start < n and 0 <= stop <= n and 0 < step and
+        (start, stop, step) != (0, n, 1)):
+      return lax.slice_in_dim(arr, start, stop, step)
+
+
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
   if (jax.config.jax_dynamic_shapes and type(idx) is slice and idx.step is None
       and (isinstance(idx.start, core.Tracer) or isinstance(idx.stop, core.Tracer))
