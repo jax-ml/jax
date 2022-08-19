@@ -195,9 +195,6 @@ _constant_handlers : Dict[type, ConstantHandler] = {}
 def register_constant_handler(type_: type, handler_fun: ConstantHandler):
   _constant_handlers[type_] = handler_fun
 
-def get_constant_handler(type_: type) -> ConstantHandler:
-  return _constant_handlers[type_]
-
 def ir_constants(val: Any,
                  canonicalize_types: bool = True) -> Sequence[ir.Value]:
   """Translate a Python `val` to an IR constant, canonicalizing its dtype.
@@ -1099,7 +1096,6 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
     else:
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
-      # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
     out, tokens = jaxpr_subcomp(
         ctx.module_context, jaxpr, ctx.tokens_in, _ir_consts(consts),

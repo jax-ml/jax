@@ -108,13 +108,8 @@ def apply_primitive(prim, *args, **params):
                                         **params)
   return compiled_fun(*args)
 
-# TODO(phawkins,frostig,mattjj): update code referring to
-# xla.apply_primitive to point here, or use simple_impl if that's why
-# it is using apply_primitive to begin with
+# TODO(phawkins): update code referring to xla.apply_primitive to point here.
 xla.apply_primitive = apply_primitive
-
-def simple_impl(prim):
-  prim.def_impl(partial(apply_primitive, prim))
 
 RuntimeToken = Any
 
