@@ -1523,6 +1523,33 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
           self.assertIsInstance(o, arr_type)
           self.assertArraysEqual(o._value, input_data)
 
+  @unittest.skip('The error is not raised yet. Enable this back once we raise '
+                 'the error in pjit again.')
+  def test_pjit_array_error(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
+
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    input_data = np.arange(
+        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+
+    with jax_array(True):
+      with global_mesh:
+        f = pjit(lambda x: x, in_axis_resources=AUTO,
+                 out_axis_resources=AUTO)
+
+        inp = jax.ShapedArray(input_data.shape, input_data.dtype)
+        compiled = f.lower(inp, _global_avals=True).compile()
+        inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
+                  for ip in compiled.input_shardings]
+        with self.assertRaisesRegex(
+            ValueError,
+            ('Passing sharding on pjit and on args while using the '
+             'auto spmd partitioner is not allowed. Please call the '
+             'compiled object on the inputs.')):
+          f(*inputs)
+
 
 class ArrayPjitTest(jtu.JaxTestCase):
 
