@@ -29,6 +29,7 @@ from jax._src.config import config
 from jax._src.util import prod, safe_zip
 from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
+from jax._src.numpy.ndarray import ndarray
 from jax.interpreters import pxla, xla, mlir
 from jax.experimental.sharding import (Sharding, SingleDeviceSharding,
                                        XLACompatibleSharding)
@@ -354,6 +355,7 @@ xla.canonicalize_dtype_handlers[Array] = pxla.identity
 api_util._shaped_abstractify_handlers[Array] = op.attrgetter('aval')
 ad_util.jaxval_adders[Array] = lax_internal.add
 ad_util.jaxval_zeros_likers[Array] = lax_internal.zeros_like_array
+ndarray.register(Array)
 
 
 def _array_mlir_constant_handler(val, canonicalize_types=True):
