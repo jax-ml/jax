@@ -13,8 +13,9 @@
 # limitations under the License.
 
 from jax._src.ops.scatter import (
-  segment_sum as segment_sum,
-  segment_prod as segment_prod,
-  segment_min as segment_min,
-  segment_max as segment_max,
+    segment_sum as segment_sum,
+    segment_prod as segment_prod,
+    segment_min as segment_min,
+    segment_max as segment_max,
+    segment_reduce as segment_reduce,
 )
