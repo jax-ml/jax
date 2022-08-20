@@ -570,11 +570,8 @@ local_result_handlers: Dict[Tuple[Type[core.AbstractValue], OutputType], PxlaRes
 
 def sda_array_result_handler(aval: ShapedArray, sharding, indices):
   sharding_spec = _get_sharding_specs([sharding], [aval])[0]
-  if type(aval.dtype) in core.custom_eltypes:
-    return aval.dtype.sharded_result_handler(aval, sharding, indices)
-  else:
-    return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
-                                                  indices)
+  return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
+                                                indices)
 local_result_handlers[(ShapedArray, OutputType.ShardedDeviceArray)] = sda_array_result_handler
 local_result_handlers[(ConcreteArray, OutputType.ShardedDeviceArray)] = sda_array_result_handler
 

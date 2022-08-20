@@ -527,7 +527,7 @@ view of the input.
 
 @_wraps(np.transpose, lax_description=_ARRAY_VIEW_DOC)
 def transpose(a, axes=None):
-  _stackable(a) or _check_arraylike("transpose", a)
+  _check_arraylike("transpose", a)
   axes = np.arange(ndim(a))[::-1] if axes is None else axes
   return lax.transpose(a, axes)
 
@@ -5107,31 +5107,27 @@ _set_shaped_array_attributes(ShapedArray)
 _set_shaped_array_attributes(DShapedArray)
 
 
-def _set_device_array_base_attributes(device_array, include=None):
+def _set_device_array_base_attributes(device_array):
   # Forward operators, methods, and properties on DeviceArray to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
-  def maybe_setattr(attr_name, target):
-    if not include or attr_name in include:
-      setattr(device_array, attr_name, target)
-
   for operator_name, function in _operators.items():
-    maybe_setattr(f"__{operator_name}__", function)
+    setattr(device_array, f"__{operator_name}__", function)
   for method_name in _nondiff_methods + _diff_methods:
-    maybe_setattr(method_name, globals()[method_name])
+    setattr(device_array, method_name, globals()[method_name])
   # TODO(jakevdp): remove tile method after August 2022
-  maybe_setattr("tile", _deprecate_function(tile, "arr.tile(...) is deprecated and will be removed. Use jnp.tile(arr, ...) instead."))
-  maybe_setattr("reshape", _reshape)
-  maybe_setattr("transpose", _transpose)
-  maybe_setattr("flatten", ravel)
-  maybe_setattr("flat", property(_notimplemented_flat))
-  maybe_setattr("T", property(transpose))
-  maybe_setattr("real", property(real))
-  maybe_setattr("imag", property(imag))
-  maybe_setattr("astype", _astype)
-  maybe_setattr("view", _view)
-  maybe_setattr("nbytes", property(_nbytes))
-  maybe_setattr("itemsize", property(_itemsize))
-  maybe_setattr("clip", _clip)
+  setattr(device_array, "tile", _deprecate_function(tile, "arr.tile(...) is deprecated and will be removed. Use jnp.tile(arr, ...) instead."))
+  setattr(device_array, "reshape", _reshape)
+  setattr(device_array, "transpose", _transpose)
+  setattr(device_array, "flatten", ravel)
+  setattr(device_array, "flat", property(_notimplemented_flat))
+  setattr(device_array, "T", property(transpose))
+  setattr(device_array, "real", property(real))
+  setattr(device_array, "imag", property(imag))
+  setattr(device_array, "astype", _astype)
+  setattr(device_array, "view", _view)
+  setattr(device_array, "nbytes", property(_nbytes))
+  setattr(device_array, "itemsize", property(_itemsize))
+  setattr(device_array, "clip", _clip)
 
 _set_device_array_base_attributes(device_array.DeviceArray)
 _set_device_array_base_attributes(Array)

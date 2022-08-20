@@ -698,7 +698,6 @@ def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
 
 def _convert_jax_impl(jax_impl: Callable, *,
                       multiple_results=True,
-                      with_physical_avals=False,
                       extra_name_stack: Optional[str] = None) -> Callable:
   """Convert the JAX implementation of a primitive.
 
@@ -718,10 +717,6 @@ def _convert_jax_impl(jax_impl: Callable, *,
   def wrapped(*tf_args: TfVal, _in_avals: Sequence[core.ShapedArray],
               _out_aval: core.ShapedArray,
               **kwargs) -> Sequence[TfVal]:
-
-    if with_physical_avals:
-      _in_avals = map(_jax_physical_aval, _in_avals)
-      _out_aval = _jax_physical_aval(_out_aval)
 
     # We wrap the jax_impl under _interpret_fun to abstract the TF values
     # from jax_impl and turn them into JAX abstract values.
@@ -765,31 +760,8 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal,
   return tuple(v for v, _ in out_with_avals)
 
 
-def _jax_physical_aval(aval: core.ShapedArray) -> core.ShapedArray:
-  """Converts JAX avals from logical to physical, if relevant.
-
-  JAX might have avals whose logical vs physical shape/dtype may
-  differ, and only the physical view is expected to possibly
-  relate to TF. TF impl rules should operate on the physical form.
-
-  A JAX logical aval might even correspond, in principle, to several
-  physical avals, but we don't support those here. Instead we assert
-  there is only one and return it.
-  """
-  if type(aval.dtype) in core.custom_eltypes:
-    aval, = aval.dtype.physical_avals(aval)
-    return aval
-  return aval
-
-def _jax_physical_dtype(dtype):
-  # assuming () is a fine stand-in shape
-  return _jax_physical_aval(core.ShapedArray((), dtype)).dtype
-
-
 def _aval_to_tf_shape(aval: core.ShapedArray) -> Tuple[Optional[int], ...]:
-
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
-  aval = _jax_physical_aval(aval)
   return tuple(map(lambda d: None if shape_poly.is_poly_dim(d) else d,
                    aval.shape))  # type: ignore[attr-defined]
 
@@ -799,12 +771,6 @@ _tf_np_dtype_for_float0 = np.int32
 def _to_tf_dtype(jax_dtype):
   # Note that converting _to_tf_dtype and _to_jax_dtype are not inverses,
   # due to float0 and 64-bit behavior.
-  try:
-    jax_dtype = _jax_physical_dtype(jax_dtype)
-  except TypeError:
-    # `jax_dtype` isn't actually a valid jax dtype (e.g. it is
-    # tf.float32), so there is no physical dtype anyway
-    pass
   if jax_dtype == dtypes.float0:
     jax_dtype = _tf_np_dtype_for_float0
   return tf.dtypes.as_dtype(jax_dtype)
@@ -868,13 +834,9 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     return tf_val, jax_dtype
 
 
-# TODO(frostig,mattjj): rename dtype argument to eltype, for now just
-# being consistent.
-def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
+def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
-  if dtype is not None:
-    shape = _jax_physical_aval(core.ShapedArray(shape, dtype)).shape
   dim_vars, dim_values = util.unzip2(_thread_local_state.shape_env)
   eval_shape, dim_avals = shape_poly.get_shape_evaluator(dim_vars, shape)
   shape_values, _ = util.unzip2(_interpret_fun(lu.wrap_init(eval_shape),
@@ -898,13 +860,11 @@ def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize
 class TensorFlowTracer(core.Tracer):
   """Tracer class that boxes a TF value and a JAX abstract value.
 
-  In addition to the TF value we carry the JAX abstract value because
-  there are some cases when it cannot be recovered from the value:
-  when we are converting with polymorphic shapes or when the JAX aval
-  has a custom element type. In these cases the shape of the value may
-  have dimensions set to `None`, or it may only correspond to the JAX
-  "physical" (TF/lowering-compatible) shape, so the JAX abstract value
-  may contain more precise information.
+  In addition to the TF value we carry the JAX abstract value because there is
+  one case when it cannot be recovered from the value: when we are converting
+  with polymorphic shapes, in which case the shape of the value may have
+  dimensions set to `None`, which the JAX abstract value may contain more
+  precise information.
 
   When the value has a partially-known shape, the dimensions marked as `None`
   must correspond to non-constant dimensions in the abstract value.
@@ -919,34 +879,32 @@ class TensorFlowTracer(core.Tracer):
                aval: core.AbstractValue):
     self._trace = trace
     self._aval = aval
-    phys_aval = _jax_physical_aval(self._aval)  # type: ignore[arg-type]
-
     if isinstance(val, (tf.Tensor, tf.Variable)):
       val_shape = val.shape
 
       if config.jax_enable_checks:
-        assert len(phys_aval.shape) == len(val_shape), f"_aval.shape={phys_aval.shape} different rank than val_shape={val_shape}"
+        assert len(self._aval.shape) == len(val_shape), f"_aval.shape={self._aval.shape} different rank than val_shape={val_shape}"
         # To compare types, we must handle float0 in JAX and x64 in TF
-        if phys_aval.dtype == dtypes.float0:
-          assert _to_tf_dtype(phys_aval.dtype) == val.dtype, f"expected {phys_aval.dtype} == {val.dtype}"
+        if self._aval.dtype == dtypes.float0:
+          assert _to_tf_dtype(self._aval.dtype) == val.dtype, f"expected {self._aval.dtype} == {val.dtype}"
         else:
-          assert phys_aval.dtype == _to_jax_dtype(val.dtype), f"expected {phys_aval.dtype} == {val.dtype}"
+          assert self._aval.dtype == _to_jax_dtype(val.dtype), f"expected {self._aval.dtype} == {val.dtype}"
 
-        for aval_dim, val_dim in zip(phys_aval.shape, val_shape):  # type: ignore[attr-defined]
+        for aval_dim, val_dim in zip(self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
-            assert shape_poly.is_poly_dim(aval_dim), f"expected {phys_aval.shape} == {val_shape}"  # type: ignore[attr-defined]
+            assert shape_poly.is_poly_dim(aval_dim), f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           elif not shape_poly.is_poly_dim(aval_dim):
-            assert aval_dim == val_dim, f"expected {phys_aval.shape} == {val_shape}"  # type: ignore[attr-defined]
+            assert aval_dim == val_dim, f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           else:
             # We have a TF value with known shape, and the abstract shape is a shape variable.
             try:
               aval_int = int(_eval_shape([aval_dim]))  # type: ignore
             except (TypeError, KeyError):
               continue
-            assert aval_int == val_dim, f"expected {phys_aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
+            assert aval_int == val_dim, f"expected {self._aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
 
     self.val = _tfval_to_tensor_jax_dtype(val,
-                                          phys_aval.dtype,
+                                          self._aval.dtype,
                                           memoize_constants=True)[0]  # type: ignore[attr-defined]
 
   @property
@@ -1666,7 +1624,7 @@ tf_impl[lax.bitcast_convert_type_p] = _bitcast_convert_type
 
 def _clamp(minval, operand, maxval, *, _in_avals, _out_aval):
   # The below permits mirroring the behavior of JAX when maxval < minval
-  op_shape_tf_val = _eval_shape(_in_avals[1].shape, _in_avals[1].dtype)
+  op_shape_tf_val = _eval_shape(_in_avals[1].shape)
   maxval = tf.broadcast_to(maxval, op_shape_tf_val)
   minval = tf.math.minimum(tf.broadcast_to(minval, op_shape_tf_val), maxval)
   return tf.clip_by_value(operand, minval, maxval)
@@ -1821,12 +1779,11 @@ def _broadcast_in_dim(operand, *, shape, broadcast_dimensions,
   # bcast_dims must be strictly increasing.
   # len(bcast_dims) == len(operand.shape)
   op_shape = _in_avals[0].shape
-  dtype = _in_avals[0].dtype
   add_1s_shape = [1] * len(shape)
   for i, broadcast_dim_i in enumerate(broadcast_dimensions):
     add_1s_shape[broadcast_dim_i] = op_shape[i]
-  with_1s = tf.reshape(operand, _eval_shape(add_1s_shape, dtype=dtype))
-  return tf.broadcast_to(with_1s, _eval_shape(shape, dtype=dtype))
+  with_1s = tf.reshape(operand, _eval_shape(add_1s_shape))
+  return tf.broadcast_to(with_1s, _eval_shape(shape))
 
 
 tf_impl_with_avals[lax.broadcast_in_dim_p] = _broadcast_in_dim
@@ -1841,21 +1798,20 @@ def _empty(*, eltype):
 tf_impl[lax_internal.empty_p] = _empty
 
 
-def _reshape(operand, *, new_sizes, dimensions, _in_avals, _out_aval):
+def _reshape(operand, *, new_sizes, dimensions):
   if dimensions is None:
     dimensions = tf.range(tf.rank(operand))
-  new_sizes_tf = _eval_shape(new_sizes, _in_avals[0].dtype)
+  new_sizes_tf = _eval_shape(new_sizes)
   return tf.reshape(tf.transpose(operand, dimensions), new_sizes_tf)
 
 
-tf_impl_with_avals[lax.reshape_p] = _reshape
+tf_impl[lax.reshape_p] = _reshape
 
 
 def _squeeze(operand, *, dimensions, _in_avals, _out_aval):
-  op_aval = _jax_physical_aval(_in_avals[0])
-  op_shape = op_aval.shape
+  op_shape = _in_avals[0].shape
   new_shape = tuple(d for i, d in enumerate(op_shape) if i not in dimensions)
-  new_shape_tf = _eval_shape(new_shape, op_aval.dtype)
+  new_shape_tf = _eval_shape(new_shape)
   return tf.reshape(operand, new_shape_tf)
 
 
@@ -2286,82 +2242,6 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
 tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 
-def _random_seed_impl(seeds: TfVal, *, impl, _in_avals, _out_aval):
-
-  def impl_wrapper(seeds: TfVal, *, impl):
-    return jax._src.prng.random_seed_impl_base(seeds, impl=impl)
-
-  converted_impl = _convert_jax_impl(
-      impl_wrapper, multiple_results=False, with_physical_avals=True,
-      extra_name_stack="random_seed")
-  return converted_impl(
-      seeds, impl=impl, _in_avals=_in_avals, _out_aval=_out_aval)
-
-tf_impl_with_avals[jax._src.prng.random_seed_p] = _random_seed_impl
-
-
-def _random_split_impl(keys: TfVal, *, count, _in_avals, _out_aval):
-  keys_aval, = _in_avals
-
-  def impl_wrapper(keys: TfVal, *, count):
-    return jax._src.prng.random_split_impl_base(
-        keys_aval.dtype.impl, keys, keys_aval.ndim, count=count)
-
-  converted_impl = _convert_jax_impl(
-      impl_wrapper, multiple_results=False, with_physical_avals=True,
-      extra_name_stack="random_split")
-  return converted_impl(
-      keys, count=count, _in_avals=_in_avals, _out_aval=_out_aval)
-
-tf_impl_with_avals[jax._src.prng.random_split_p] = _random_split_impl
-
-
-def _random_fold_in_impl(keys: TfVal, msgs: TfVal, *, _in_avals, _out_aval):
-  keys_aval, _ = _in_avals
-
-  def impl_wrapper(keys: TfVal, msgs: TfVal):
-    return jax._src.prng.random_fold_in_impl_base(
-        keys_aval.dtype.impl, keys, msgs, keys_aval.shape)
-
-  converted_impl = _convert_jax_impl(
-      impl_wrapper, multiple_results=False, with_physical_avals=True,
-      extra_name_stack="random_fold_in")
-  return converted_impl(
-      keys, msgs, _in_avals=_in_avals, _out_aval=_out_aval)
-
-tf_impl_with_avals[jax._src.prng.random_fold_in_p] = _random_fold_in_impl
-
-
-def _random_bits_impl(keys: TfVal, *, bit_width, shape, _in_avals, _out_aval):
-  keys_aval, = _in_avals
-
-  def impl_wrapper(keys: TfVal, **kwargs):
-    return jax._src.prng.random_bits_impl_base(
-        keys_aval.dtype.impl, keys, keys_aval.ndim,
-        bit_width=bit_width, shape=shape)
-
-  converted_impl = _convert_jax_impl(
-      impl_wrapper, multiple_results=False, with_physical_avals=True,
-      extra_name_stack="random_bits")
-  return converted_impl(keys, bit_width=bit_width, shape=shape,
-                        _in_avals=_in_avals, _out_aval=_out_aval)
-
-tf_impl_with_avals[jax._src.prng.random_bits_p] = _random_bits_impl
-
-
-def _random_wrap_impl(base_arr: TfVal, *, impl, _in_avals, _out_aval):
-  return base_arr
-
-tf_impl_with_avals[jax._src.prng.random_wrap_p] = _random_wrap_impl
-
-
-def _random_unwrap_impl(keys: TfVal, *, _in_avals, _out_aval):
-  return keys
-
-tf_impl_with_avals[jax._src.prng.random_unwrap_p] = _random_unwrap_impl
-
-
-
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   res = _convert_jax_impl(
       partial(jax._src.prng._threefry2x32_lowering, use_rolled_loops=False),
@@ -2449,7 +2329,7 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
 
   start_indices = _maybe_cast_to_int64(start_indices)
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
-  slice_sizes_tf = _eval_shape(slice_sizes, _in_avals[0].dtype)
+  slice_sizes_tf = _eval_shape(slice_sizes)
   out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf,
                      indices_are_sorted)
   out.set_shape(_aval_to_tf_shape(_out_aval))
@@ -2482,7 +2362,7 @@ def _dynamic_slice(operand, *start_indices, slice_sizes: core.Shape,
                    _in_avals: Sequence[core.ShapedArray],
                    _out_aval: core.ShapedArray):
   start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
-  slice_sizes_tf = _eval_shape(slice_sizes, dtype=_in_avals[0].dtype)
+  slice_sizes_tf = _eval_shape(slice_sizes)
 
   res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes_tf)
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
@@ -2643,7 +2523,7 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
     def select_one_carry(new_c: TfVal, c: TfVal, c_aval: core.ShapedArray) -> TfVal:
       pred_b_bcast = _broadcast_in_dim(
           pred_b,
-          shape=_jax_physical_aval(c_aval).shape,  # a JAX shape
+          shape=c_aval.shape,  # a JAX shape
           broadcast_dimensions=list(range(len(pred_b.shape))),
           _in_avals=cond_jaxpr.out_avals,
           _out_aval=core.ShapedArray(c_aval.shape, np.bool_))

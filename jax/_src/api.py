@@ -1107,9 +1107,6 @@ def _check_scalar(x):
 def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
   _check_arg(x)
   aval = core.get_aval(x)
-  if core.aval_has_custom_eltype(aval):
-    raise TypeError(
-        f"{name} with input element type {core.aval_eltype(aval).name}")
   if holomorphic:
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
@@ -1128,9 +1125,6 @@ _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 
 def _check_output_dtype_revderiv(name, holomorphic, x):
   aval = core.get_aval(x)
-  if core.aval_has_custom_eltype(aval):
-    raise TypeError(
-        f"{name} with output element type {core.aval_eltype(aval).name}")
   if holomorphic:
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires outputs with complex dtype, "
@@ -1208,9 +1202,6 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
   _check_arg(x)
   aval = core.get_aval(x)
-  if core.aval_has_custom_eltype(aval):
-    raise TypeError(
-        f"jacfwd with input element type {core.aval_eltype(aval).name}")
   if holomorphic:
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError("jacfwd with holomorphic=True requires inputs with complex "
@@ -2966,7 +2957,7 @@ class ShapeDtypeStruct:
   __slots__ = ["shape", "dtype", "named_shape"]
   def __init__(self, shape, dtype, named_shape=None):
     self.shape = shape
-    self.dtype = dtype if core.is_custom_eltype(dtype) else np.dtype(dtype)
+    self.dtype = np.dtype(dtype)
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: prod(self.shape))
