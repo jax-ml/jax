@@ -160,7 +160,15 @@ def count_device_put():
 
   def device_put_and_count(*args, **kwargs):
     count[0] += 1
-    return device_put(*args, **kwargs)
+    # device_put handlers might call `dispatch.device_put` (e.g. on an
+    # underlying payload or several). We only want to count these
+    # recursive puts once, so we skip counting more than the outermost
+    # one in such a call stack.
+    dispatch.device_put = device_put
+    try:
+      return device_put(*args, **kwargs)
+    finally:
+      dispatch.device_put = device_put_and_count
 
   dispatch.device_put = device_put_and_count
   try:
