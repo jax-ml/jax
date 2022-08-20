@@ -78,6 +78,7 @@ _zero_preserving_unary_primitives = [
   lax.atan_p,
   lax.atanh_p,
   lax.bessel_i1e_p,
+  lax.copy_p,
   lax.expm1_p,
   lax.log1p_p,
   lax.neg_p,
