@@ -1904,42 +1904,6 @@ class PmapCallInfo(NamedTuple):
   devices: Optional[Sequence[xc.Device]]
 
 
-def _check_in_pmap_sharding_with_arrays(args, in_axes_flat, in_devices):
-  from jax.experimental.sharding import PmapSharding, SingleDeviceSharding
-  from jax.experimental.array import Array
-
-  if not args:
-    return
-
-  first_device_assignment = None
-  for a, i in safe_zip(args, in_axes_flat):
-    if not isinstance(a, Array):
-      continue
-    if isinstance(a.sharding, SingleDeviceSharding):
-      continue
-    if not isinstance(a.sharding, PmapSharding):
-      raise NotImplementedError('pmap only works with PmapSharding.')
-    if first_device_assignment is None:
-      first_device_assignment = a.sharding._device_assignment
-    arr_sharding = a.sharding.sharded_dim
-    arr_device_assignment = a.sharding._device_assignment
-    if arr_sharding != i:
-      raise ValueError('Array and pmap sharding does not match. Got pmap '
-                       f'sharding: {i}, Array sharding: {arr_sharding} for '
-                       f'arg: {a}')
-    if (in_devices is not None and
-        arr_device_assignment is not None and
-        arr_device_assignment != in_devices):
-      raise ValueError('Devices passed to pmap and Array should be equal. '
-                       f'Got pmap devices: {in_devices}, Array devices: '
-                       f'{arr_device_assignment} for arg: {a}')
-    if (in_devices is None and
-        arr_device_assignment != first_device_assignment):
-      raise ValueError('Devices of all `Array` inputs should be the same. '
-                       f'Got array device: {arr_device_assignment}, '
-                       f'another array device: {first_device_assignment}')
-
-
 def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                   donate_tuple, global_arg_shapes, in_devices, args, kwargs):
   f = lu.wrap_init(fun)
@@ -1981,9 +1945,6 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
       in_tree, args, in_axes_flat, "pmap", kws=True)
 
   flat_fun, out_tree = flatten_fun(f, in_tree)
-
-  if config.jax_array:
-    _check_in_pmap_sharding_with_arrays(args, in_axes_flat, in_devices)
 
   if any(out_axis is None for out_axis in tree_flatten(out_axes)):
     raise NotImplementedError("None out_axes in pmap are not supported yet")

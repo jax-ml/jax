@@ -2707,6 +2707,11 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
 
   def testNoCopyIndexing1D(self):
+    # TODO(https://github.com/google/jax/issues/12016): Implement no copy
+    # indexing similar to SDA.
+    if config.jax_array:
+      self.skipTest('No copy indexing is not implemented for Array yet.')
+
     shape = (8, 4)
 
     if jax.device_count() < shape[0]:
@@ -2798,16 +2803,24 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   def test_repr(self):
     x = jax.device_put_replicated(1, jax.devices())
-    self.assertStartsWith(repr(x), 'ShardedDeviceArray')
+    if config.jax_array:
+      arr = 'Array'
+    else:
+      arr = 'ShardedDeviceArray'
+    self.assertStartsWith(repr(x), arr)
 
   def test_delete_is_idempotent(self):
     x = jax.device_put_replicated(1, jax.devices())
     x.delete()
     x.delete()
 
-    with self.assertRaisesRegex(ValueError,
-                                'ShardedDeviceArray has been deleted.'):
-      _ = x[0]
+    if config.jax_array:
+      with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
+        _ = x[0]
+    else:
+      with self.assertRaisesRegex(ValueError,
+                                  'ShardedDeviceArray has been deleted.'):
+        _ = x[0]
 
 
 class SpecToIndicesTest(jtu.JaxTestCase):
@@ -3075,11 +3088,14 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     f = jax.pmap(lambda x: x, in_axes=0, out_axes=0)
     with jax._src.config.jax_array(True):
-      with self.assertRaisesRegex(
-          ValueError,
-          ("Array and pmap sharding does not match. Got pmap sharding: 0, "
-           "Array sharding: None")):
-        f(a1)
+      out_array = f(a1)
+
+    with jax._src.config.jax_array(False):
+      out_sda = f(a1)
+
+    self.assertEqual(out_array.sharding.sharding_spec, out_sda.sharding_spec)
+    self.assertArraysEqual(out_array.sharding.devices,
+                           [d.device() for d in out_sda.device_buffers])
 
   def test_pmap_array_devices_mismatch(self):
     if jax.device_count() <= 1:
@@ -3090,51 +3106,15 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     f = jax.pmap(lambda x: x, devices=jax.devices()[::-1])
     with jax._src.config.jax_array(True):
-      with self.assertRaisesRegex(
-          ValueError, "Devices passed to pmap and Array should be equal."):
-        f(a1)
+      out_array = f(a1)
 
-  def test_pmap_array_devices_mismatch_between_arrays(self):
-    if jax.device_count() <= 1:
-      raise unittest.SkipTest('Skipping because this test needs more than '
-                              '1 device.')
-    input_shape = (jax.device_count(), 2)
-    a1, _ = create_input_array_for_pmap(input_shape)
-    a2, _ = create_input_array_for_pmap(input_shape, devices=jax.devices()[::-1])
+    with jax._src.config.jax_array(False):
+      out_sda = f(a1)
 
-    f = jax.pmap(lambda x, y: (x, y))
-    with jax._src.config.jax_array(True):
-      with self.assertRaisesRegex(
-          ValueError, "Devices of all `Array` inputs should be the same."):
-        f(a1, a2)
+    self.assertEqual(out_array.sharding.sharding_spec, out_sda.sharding_spec)
+    self.assertArraysEqual(out_array.sharding.devices,
+                           [d.device() for d in out_sda.device_buffers])
 
-
-class ArrayPmapMixin:
-
-  def setUp(self):
-    super().setUp()
-    self.array_enabled = config.jax_array
-    config.update('jax_array', True)
-
-  def tearDown(self):
-    config.update('jax_array', self.array_enabled)
-    super().tearDown()
-
-
-class ArrayPythonPmapTest(ArrayPmapMixin, PythonPmapTest):
-  pass
-
-class ArrayCppPmapTest(ArrayPmapMixin, CppPmapTest):
-  pass
-
-class ArrayVmapOfPmapTest(ArrayPmapMixin, VmapOfPmapTest):
-  pass
-
-class ArrayVmapPmapCollectivesTest(ArrayPmapMixin, VmapPmapCollectivesTest):
-  pass
-
-class ArrayPmapWithDevicesTest(ArrayPmapMixin, PmapWithDevicesTest):
-  pass
 
 class EagerPmapMixin:
 

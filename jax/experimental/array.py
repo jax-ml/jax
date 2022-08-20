@@ -120,7 +120,7 @@ class Array:
     if config.jax_enable_checks:
       assert all(db.dtype == self.dtype for db in self._arrays), (
           "Input arrays to `Array` must have matching dtypes, "
-          f"got: {[db.dtype for db in self._arrays]}")
+          f"got: {[db.dtype for db in self._arrays]}, aval type: {self.dtype}")
 
     # Rearrange arrays based on the device assignment.
     if isinstance(sharding, XLACompatibleSharding):
@@ -378,16 +378,23 @@ def _device_put_array(x, device: Optional[Device]):
 dispatch.device_put_handlers[Array] = _device_put_array
 
 
-def _array_shard_arg(x, devices, indices, mode):
-  # TODO(yashkatariya): Remove the `mode` handling and try to consolidate the
-  # code paths.
-  if mode == pxla.InputsHandlerMode.pmap:
-    # sharding mismatch between `Array` and pmap sharding is checked in api.py's
-    # `_check_in_pmap_sharding_with_arrays` function.
-    if isinstance(x.sharding, SingleDeviceSharding):
-      return pxla._shard_device_array(x, devices, indices, mode)
+def _array_pmap_shard_arg(x, devices, indices, mode):
+  if isinstance(x.sharding, SingleDeviceSharding):
+    return pxla._shard_device_array(x, devices, indices, mode)
+
+  # If the sharding of Array does not match pmap's sharding then take the slow
+  # path which is similar to what SDA does. This slow path reroute only happens
+  # for `pmap`.
+  if indices == tuple(x.sharding.devices_indices_map(x.shape).values()):
     return [buf if buf.device() == d else buf.copy_to_device(d)
             for buf, d in safe_zip(x._arrays, devices)]
+  else:
+    return pxla._shard_sharded_device_array_slow_path(x, devices, indices, mode)
+
+
+def _array_shard_arg(x, devices, indices, mode):
+  if mode == pxla.InputsHandlerMode.pmap:
+    return _array_pmap_shard_arg(x, devices, indices, mode)
   else:
     return x._arrays
 pxla.shard_arg_handlers[Array] = _array_shard_arg

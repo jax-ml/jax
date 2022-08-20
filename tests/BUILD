@@ -528,8 +528,6 @@ jax_test(
 jax_test(
     name = "pmap_test",
     srcs = ["pmap_test.py"],
-    # pmap already has array tests inside it.
-    disable_configs = ["cpu_jax_array"],
     shard_count = {
         "cpu": 15,
         "gpu": 30,

@@ -853,8 +853,16 @@ def _hashable_index(idx):
 # The fast path is handled directly in shard_args().
 # TODO(skye): is there a simpler way to rewrite this using sharding_spec?
 def _shard_sharded_device_array_slow_path(x, devices, indices, mode):
+  from jax.experimental.array import Array
+
   candidates = defaultdict(list)
-  for buf, idx in safe_zip(x.device_buffers, x.indices):
+  if isinstance(x, Array):
+    bufs = x._arrays
+    arr_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
+  else:
+    bufs = x.device_buffers
+    arr_indices = x.indices
+  for buf, idx in safe_zip(bufs, arr_indices):
     candidates[_hashable_index(idx)].append(buf)
 
   bufs = []
@@ -977,10 +985,13 @@ def _emap_impl(fun: lu.WrappedFun, *args,
       if isinstance(outval, (ShardedDeviceArray, jax.experimental.array.Array)):
         # We don't want to donate if it's already sharded.
         donate_argnums_ = ()
-      out = jax.pmap(lambda _, x: x, in_axes=(0, out_axis_src.get(axis_name)),
-                     out_axes=out_axis, devices=devices, backend=backend,
-                     donate_argnums=donate_argnums_)(
-                         np.arange(axis_size), outval)
+      out = jax.pmap(
+          lambda _, x: x,
+          in_axes=(0, out_axis_src.get(axis_name)),
+          out_axes=out_axis,
+          devices=(None if devices is None else list(devices)),
+          backend=backend,
+          donate_argnums=donate_argnums_)(np.arange(axis_size), outval)
       new_outvals.append(out)
   return new_outvals
 
@@ -1000,8 +1011,13 @@ def _multi_pmap(f: Callable, info: EmapInfo, names: List[core.AxisName],
   for i, name in reversed(list(enumerate(names))):
     in_axes = tuple(arg_axis[i] for arg_axis in all_axes)
     if any(in_axis is not None for in_axis in in_axes):
-      f = jax.pmap(f, in_axes=in_axes, axis_name=name, out_axes=0,
-                   backend=info.backend, devices=info.devices)
+      f = jax.pmap(
+          f,
+          in_axes=in_axes,
+          axis_name=name,
+          out_axes=0,
+          backend=info.backend,
+          devices=(None if info.devices is None else list(info.devices)))
       used_names.append(name)
   out_shard_axes = {name: i for i, name in enumerate(reversed(used_names))}
   return f, out_shard_axes
