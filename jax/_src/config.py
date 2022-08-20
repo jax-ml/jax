@@ -381,7 +381,8 @@ class Config:
       axis_env_state = context.axis_env_state
     return (axis_env_state, self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision, self.jax_dynamic_shapes,
-            self.jax_numpy_dtype_promotion, self.jax_default_device)
+            self.jax_numpy_dtype_promotion, self.jax_default_device,
+            self.jax_array)
 
 class NoDefault: pass
 no_default = NoDefault()
