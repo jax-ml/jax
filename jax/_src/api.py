@@ -50,6 +50,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import util
 from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
@@ -3267,9 +3268,27 @@ def clear_backends():
     raise RuntimeError("clear_backends is not supported in the jaxlib used."
                        "Please update your jaxlib package.")
 
+  # clear initialized backends
   xb._clear_backends()
   jax.lib.xla_bridge._backends = {}
+  clear_compilation_caches()
+
+def clear_compilation_caches():
+  # clear Python jit compilation caches (e.g. for Tracer inputs)
   dispatch.xla_callable.cache_clear()  # type: ignore
   dispatch.xla_primitive_callable.cache_clear()
+  # clear Python pmap compilation caches
+  pxla.parallel_callable.cache_clear()
+
+  # clear C++ jit compilation caches (e.g. for non-Tracer inputs/outputs)
   _cpp_jit_cache.clear()
   jax_jit.CompiledFunctionCache.clear_all()
+  # clear C++ pmap compilation caches
+  pmap_lib.CompiledFunctionCache().clear_all()  # TODO ???
+  pmap_lib.CompiledFunctionCache.clear_all()
+
+  # TODO clear pjit caches...? weakref_lru_cache specific to pjit
+
+def clear_all_caches():
+  clear_compilation_caches()
+  util.clear_all_caches()  # clears util.cache and util.weakref_lru_cache

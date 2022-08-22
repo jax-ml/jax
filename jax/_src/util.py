@@ -223,6 +223,7 @@ def cache(max_size=4096):
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
+    cached_calls.append(wrapper)
     return wrapper
   return wrap
 
@@ -230,7 +231,12 @@ memoize = cache(max_size=None)
 
 CacheInfo = namedtuple("CacheInfo", ["hits", "misses", "maxsize", "currsize"])
 
-def weakref_lru_cache(call: Callable, maxsize=2048):
+def clear_all_caches():
+  for f in cached_calls:
+    f.cache_clear()
+cached_calls = set()
+
+def weakref_lru_cache(call: Callable, maxsize: int = 2048):
   """
   Least recently used cache decorator with weakref support.
 
@@ -238,6 +244,12 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   and strong refs to all subsequent operations. In all other respects it should
   behave similar to `functools.lru_cache`.
   """
+  global cached_calls
+  cached_call = _weakref_lru_cache(call, maxsize)
+  cached_calls.add(cached_call)
+  return cached_call
+
+def _weakref_lru_cache(call: Callable, maxsize: int = 2048)
   if xla_extension_version >= 87:
     return xc.weakref_lru_cache(config._trace_context, call, maxsize)
   cache: Dict[Any, Any] = {}
