@@ -87,6 +87,8 @@ class State:
     if self.service:
       self.service.shutdown()
       self.service = None
+    if self.preemption_sync_manager:
+      self.preemption_sync_manager = None
 
   def initialize_preemption_sync_manager(self):
     if self.preemption_sync_manager is not None:
