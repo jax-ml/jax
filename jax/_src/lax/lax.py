@@ -2004,8 +2004,7 @@ mlir.register_lowering(cbrt_p, partial(_nary_lower_mhlo, mhlo.CbrtOp))
 pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
 
 def _pow_jvp_lhs(g, ans, x, y):
-  jac = mul(y, pow(x, select(eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))
-  return mul(g, jac)
+  return mul(g, mul(y, pow(x, sub(y, _ones(y)))))
 
 def _pow_jvp_rhs(g, ans, x, y):
   return mul(g, mul(log(_replace_zero(x)), ans))
