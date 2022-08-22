@@ -59,9 +59,10 @@ _lax_const = lax_internal._const
 def _isnan(x):
   return lax.ne(x, x)
 
+
 def _check_prng_key(key):
   # TODO(frostig): remove once we always enable_custom_prng
-  if type(key) is prng.PRNGKeyArray:
+  if isinstance(key, prng.PRNGKeyArray):
     return key, False
   elif _arraylike(key):
     if config.jax_enable_custom_prng:
@@ -69,21 +70,23 @@ def _check_prng_key(key):
           'Raw arrays as random keys to jax.random functions are deprecated. '
           'Assuming valid threefry2x32 key for now.',
           FutureWarning)
-    return prng.PRNGKeyArray(default_prng_impl(), key), True
+    return prng.random_wrap(key, impl=default_prng_impl()), True
   else:
     raise TypeError(f'unexpected PRNG key type {type(key)}')
 
+
 def _return_prng_keys(was_wrapped, key):
   # TODO(frostig): remove once we always enable_custom_prng
-  assert type(key) is prng.PRNGKeyArray, type(key)
+  assert isinstance(key, prng.PRNGKeyArray)
   if config.jax_enable_custom_prng:
     return key
   else:
-    return key.unsafe_raw_array() if was_wrapped else key
+    return prng.random_unwrap(key) if was_wrapped else key
+
 
 def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> jnp.ndarray:
-  key, _ = _check_prng_key(key)
-  return key._random_bits(bit_width, shape)
+  assert isinstance(key, prng.PRNGKeyArray)
+  return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
 
 PRNG_IMPLS = {
@@ -158,7 +161,8 @@ def unsafe_rbg_key(seed: int) -> KeyArray:
 def _fold_in(key: KeyArray, data: int) -> KeyArray:
   # Alternative to fold_in() to use within random samplers.
   # TODO(frostig): remove and use fold_in() once we always enable_custom_prng
-  return key._fold_in(jnp.uint32(data))
+  assert isinstance(key, prng.PRNGKeyArray)
+  return prng.random_fold_in(key, jnp.uint32(data))
 
 def fold_in(key: KeyArray, data: int) -> KeyArray:
   """Folds in data to a PRNG key to form a new PRNG key.
@@ -176,8 +180,10 @@ def fold_in(key: KeyArray, data: int) -> KeyArray:
 
 def _split(key: KeyArray, num: int = 2) -> KeyArray:
   # Alternative to split() to use within random samplers.
-  # TODO(frostig): remove and use split() once we always enable_custom_prng
-  return key._split(num)
+  # TODO(frostig): remove and use split(); we no longer need to wait
+  # to always enable_custom_prng
+  assert isinstance(key, prng.PRNGKeyArray)
+  return prng.random_split(key, count=num)
 
 def split(key: KeyArray, num: int = 2) -> KeyArray:
   """Splits a PRNG key into `num` new keys by adding a leading axis.
@@ -966,8 +972,7 @@ def _gamma_one(key: KeyArray, alpha, log_space):
     return lax.select(lax.eq(z, zero), jnp.finfo(z.dtype).tiny, z)
 
 
-def _gamma_grad(sample, a, *, prng_impl, log_space):
-  del prng_impl  # unused
+def _gamma_grad(sample, a, *, log_space):
   samples = jnp.reshape(sample, -1)
   alphas = jnp.reshape(a, -1)
   if log_space:
@@ -987,34 +992,38 @@ def _gamma_grad(sample, a, *, prng_impl, log_space):
     grads = vmap(gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
-def _gamma_impl(raw_key, a, *, prng_impl, log_space, use_vmap=False):
-  a_shape = jnp.shape(a)
+def _gamma_impl(key, a, *, log_space, use_vmap=False):
   # split key to match the shape of a
-  key_ndim = len(raw_key.shape) - len(prng_impl.key_shape)
-  key = raw_key.reshape((-1,) + prng_impl.key_shape)
-  key = vmap(prng_impl.split, in_axes=(0, None))(key, prod(a_shape[key_ndim:]))
-  keys = key.reshape((-1,) + prng_impl.key_shape)
-  keys = prng.PRNGKeyArray(prng_impl, keys)
-  alphas = jnp.reshape(a, -1)
+  a_shape = jnp.shape(a)
+  split_count = prod(a_shape[key.ndim:])
+  keys = key.flatten()
+  keys = vmap(_split, in_axes=(0, None))(keys, split_count)
+  keys = keys.flatten()
+  alphas = a.flatten()
+
   if use_vmap:
     samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
   else:
-    samples = lax.map(lambda args: _gamma_one(*args, log_space=log_space), (keys, alphas))
+    samples = lax.map(
+        lambda args: _gamma_one(*args, log_space=log_space), (keys, alphas))
 
   return jnp.reshape(samples, a_shape)
 
-def _gamma_batching_rule(batched_args, batch_dims, *, prng_impl, log_space):
-    k, a = batched_args
-    bk, ba = batch_dims
-    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
-    k = batching.bdim_at_front(k, bk, size)
-    a = batching.bdim_at_front(a, ba, size)
-    return random_gamma_p.bind(k, a, prng_impl=prng_impl, log_space=log_space), 0
+def _gamma_batching_rule(batched_args, batch_dims, *, log_space):
+  k, a = batched_args
+  bk, ba = batch_dims
+  size = next(
+      t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
+  k = batching.bdim_at_front(k, bk, size)
+  a = batching.bdim_at_front(a, ba, size)
+  return random_gamma_p.bind(k, a, log_space=log_space), 0
 
 random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
 random_gamma_p.def_abstract_eval(lambda key, a, **_: core.raise_to_shaped(a))
-ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a, **kwds: tangent * _gamma_grad(ans, a, **kwds))
+ad.defjvp2(
+    random_gamma_p, None,
+    lambda tangent, ans, key, a, **kwds: tangent * _gamma_grad(ans, a, **kwds))
 mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     partial(_gamma_impl, use_vmap=True),
     multiple_results=False))
@@ -1108,7 +1117,7 @@ def _gamma(key, a, shape, dtype, log_space=False):
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
-  return random_gamma_p.bind(key.unsafe_raw_array(), a, prng_impl=key.impl, log_space=log_space)
+  return random_gamma_p.bind(key, a, log_space=log_space)
 
 
 @partial(jit, static_argnums=(2, 3, 4), inline=True)
@@ -1217,10 +1226,13 @@ def poisson(key: KeyArray,
     ``shape is not None, or else by ``lam.shape``.
   """
   key, _ = _check_prng_key(key)
-  if key.impl is not prng.threefry_prng_impl:
+  # TODO(frostig): generalize underlying poisson implementation and
+  # remove this check (and use of core.get_aval)
+  key_impl = core.get_aval(key).dtype.impl
+  if key_impl is not prng.threefry_prng_impl:
     raise NotImplementedError(
         '`poisson` is only implemented for the threefry2x32 RNG, '
-        f'not {key.impl}')
+        f'not {key_impl}')
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
@@ -1619,6 +1631,7 @@ def orthogonal(
   Returns:
     A random array of shape `(*shape, n, n)` and specified dtype.
   """
+  key, _ = _check_prng_key(key)
   _check_shape("orthogonal", shape)
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
   z = normal(key, (*shape, n, n), dtype)
@@ -1644,6 +1657,7 @@ def generalized_normal(
   Returns:
     A random array with the specified shape and dtype.
   """
+  key, _ = _check_prng_key(key)
   _check_shape("generalized_normal", shape)
   keys = split(key)
   g = gamma(keys[0], 1/p, shape, dtype)
@@ -1672,9 +1686,10 @@ def ball(
   Returns:
     A random array of shape `(*shape, d)` and specified dtype.
   """
+  key, _ = _check_prng_key(key)
   _check_shape("ball", shape)
   d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
-  keys = split(key)
-  g = generalized_normal(keys[0], p, (*shape, d), dtype)
-  e = exponential(keys[1], shape, dtype)
+  k1, k2 = split(key)
+  g = generalized_normal(k1, p, (*shape, d), dtype)
+  e = exponential(k2, shape, dtype)
   return g / (((jnp.abs(g) ** p).sum(-1) + e) ** (1 / p))[..., None]

@@ -1383,6 +1383,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     bx = vmap(f1)(ax)
     self.assertAllClose(ax, bx, check_dtypes=False)
 
+  @jtu.skip_on_flag('jax_array', True)  # TODO(yashkatariya,frostig): fix
   def testVmapOfPmap2(self):
     N_DEVICES = jax.device_count()
     keys = random.split(random.PRNGKey(1), 13)  # [13, 2]
