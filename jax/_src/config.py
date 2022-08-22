@@ -655,6 +655,7 @@ parallel_functions_output_gda = config.define_bool_state(
 jax_array = config.define_bool_state(
     name='jax_array',
     default=False,
+    upgrade=True,
     help=('If True, new pjit behavior will be enabled and `jax.Array` will be '
           'used.'))
 
