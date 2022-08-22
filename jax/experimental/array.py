@@ -264,6 +264,9 @@ class Array:
     self._check_if_deleted()
     return list(self.sharding.device_set)
 
+  def to_py(self) -> np.ndarray:
+    return self._value
+
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()

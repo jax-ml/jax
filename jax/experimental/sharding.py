@@ -167,7 +167,7 @@ class MeshPspecSharding(XLACompatibleSharding):
     return set(self.mesh.devices.flat)
 
   def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+      self, global_shape: Shape) -> Mapping[Device, Index]:
     # TODO(yashkatariya): Remove this when utilities are moved to pxla.py.
     from jax.experimental import global_device_array
 
@@ -186,7 +186,7 @@ class MeshPspecSharding(XLACompatibleSharding):
       self,
       num_dimensions: int,
       axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
-  ) -> Optional[xc.OpSharding]:
+  ) -> xc.OpSharding:
     from jax.experimental.pjit import get_array_mapping
 
     array_mapping = get_array_mapping(self._parsed_pspec)
@@ -233,7 +233,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return {self._device}
 
   def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+      self, global_shape: Shape) -> Mapping[Device, Index]:
     return {self._device: (slice(None),) * len(global_shape)}
 
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
@@ -243,7 +243,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     return [self._device]
 
-  def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
+  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return _get_replicated_op_sharding()
 
 
@@ -324,7 +324,7 @@ class OpShardingSharding(XLACompatibleSharding):
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+      self, global_shape: Shape) -> Mapping[Device, Index]:
     indices = pxla.op_sharding_to_indices(self._op_sharding, global_shape,
                                           len(self._devices))
     return dict(safe_zip(self._devices, indices))
