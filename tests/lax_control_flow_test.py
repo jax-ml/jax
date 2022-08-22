@@ -2855,7 +2855,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     self.assertAllClose(ans, ans_discharged, check_dtypes=True, rtol=tol,
                         atol=tol)
     self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
-    jtu.check_grads(lambda *args: for_(n, f, args)[1].sum(), args, order=3)
+    jtu.check_grads(lambda *args: for_(n, f, args)[1].sum(), args, order=3,
+                    rtol=5e-3)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
