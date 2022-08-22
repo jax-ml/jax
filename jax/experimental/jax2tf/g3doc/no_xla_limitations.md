@@ -77,6 +77,8 @@ We provide support for convolutions as follows:
 * Input may be provided in any order (specified using `dimension_numbers`).
 * Only one of depthwise, atrous and transposed convolutions may be used at the
   same time, though depthwise atrous convolutions are supported.
+* Convolutions are known to have a somewhat higher numeric inaccuracy, so if you 
+  are using many large convolutions, this may lead to large deviations.
 
 ### XlaGather
 
