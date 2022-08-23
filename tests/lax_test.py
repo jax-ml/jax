@@ -1388,6 +1388,30 @@ class LaxTest(jtu.JaxTestCase):
     check_grads(op, args_maker(), 2, ["fwd", "rev"], eps=1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_input_type={input_type}_jit={jit}",
+       "input_type": input_type, "jit": jit}
+      for input_type in ["np.array", "jnp.array", "float", "np.float32"]
+      for jit in [True, False]))
+  def testEmptySqueezeReturnType(self, input_type, jit):
+    if input_type == "np.array":
+      operand = np.arange(5)
+    elif input_type == "jnp.array":
+      operand = jnp.arange(5)
+    elif input_type == "float":
+      operand = 2.0
+    elif input_type == "np.float32":
+      operand = np.float32(2.0)
+    else:
+      raise ValueError(f"Unrecognized input_type={input_type}")
+
+    op = lambda x: lax.squeeze(x, dimensions=())
+    if jit:
+      op = jax.jit(op)
+    result = op(operand)
+    expected_type = array.Array if config.jax_array else jnp.DeviceArray
+    self.assertIsInstance(result, expected_type)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
           jtu.format_shape_dtype_string(out_shape, dtype)),
