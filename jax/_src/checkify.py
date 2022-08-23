@@ -79,6 +79,7 @@ def _format_msg(msg, payloads):
 
 @dataclass(frozen=True)
 class Error:
+  """Error value!"""
   err: Bool
   code: Int
   msgs: Dict[int, str]
@@ -783,14 +784,28 @@ error_checks[assert_p] = assert_discharge_rule
 
 ## checkify api
 
+#: This is a change.
 ErrorCategory = enum.Enum('ErrorCategory', ['NAN', 'OOB', 'DIV', 'USER_CHECK'])
 
+#: Enables all :fun:checkify.check assertions.
 user_checks = frozenset({ErrorCategory.USER_CHECK})
+
+#: Checks if all floating-point operations output non-NaN values.
 nan_checks = frozenset({ErrorCategory.NAN})
+
+#: Checks if all indexing operations are in-bounds.
 index_checks = frozenset({ErrorCategory.OOB})
+
+#: Checks if no division-by-zero errors occur.
 div_checks = frozenset({ErrorCategory.DIV})
+
+#: :data:nan_checks + :data:div_checks
 float_checks = nan_checks | div_checks
+
+#: :data:float_checks + :data:index_checks
 automatic_checks = float_checks | index_checks
+
+#: :data:automatic_checks + :data:user_checks
 all_checks = automatic_checks | user_checks
 
 Out = TypeVar('Out')
@@ -801,7 +816,7 @@ def checkify(fun: Callable[..., Out],
              ) -> Callable[..., Tuple[Error, Out]]:
   """Functionalize `check` calls in `fun`, and optionally add run-time error checks.
 
-  Run-time errors are either user-added ``checkify.check`` assertions, or
+  Run-time errors are either user-added :func:`check` assertions, or
   automatically added checks like NaN checks, depending on the ``errors``
   argument.
 
@@ -811,28 +826,31 @@ def checkify(fun: Callable[..., Out],
   will correspond to the first error which occurred. ``err.throw()`` will raise
   a ValueError with the error message if an error occurred.
 
-  By default only user-added ``checkify.check`` assertions are enabled. You can
-  enable automatic checks through the ``errors`` argument.
+  By default only user-added :func:`check` assertions are enabled. You can
+  enable automatic checks through the ``errors`` argument:
 
-  The automatic check sets which can be enabled, and when an error is generated:
-    - ``user_checks``: a ``checkify.check`` evaluated to False.
-    - ``nan_checks``: a floating-point operation generated a NaN value
+    - :data:`user_checks`: :func:`check` evaluated to False.
+    - :data:`nan_checks`: a floating-point operation generated a NaN value
       as output.
-    - ``div_checks``: a division by zero.
-    - ``index_checks``: an index was out-of-bounds.
+    - :data:`div_checks`: a division by zero.
+    - :data:`float_checks`: :data:`nan_checks` and :data:`div_checks`.
+    - :data:`index_checks`: an index was out-of-bounds.
 
-  Multiple categories can be enabled together by creating a `Set` (eg.
-  ``errors={ErrorCategory.NAN, ErrorCategory.OOB}``). Multiple sets can be
-  re-combined (eg. ``errors=float_checks|user_checks``)
+  Multiple error-check sets can be re-combined through set operations (eg.
+  ``errors=float_checks|user_checks`` will enable both floating point error
+  checking and :func:`check` errors.)
 
   Args:
-    fun: Callable which can contain user checks (see ``check``).
-    errors: A set of ErrorCategory values which defines the set of enabled
+    fun:
+      Callable which can contain user checks (see ``check``).
+    errors:
+      A set of ErrorCategory values which defines the set of enabled
       checks. By default only explicit ``checks`` are enabled
       (``user_checks``). You can also for example enable NAN and
       DIV errors by passing the ``float_checks`` set, or for
       example combine multiple sets through set operations
       (``float_checks | user_checks``)
+
   Returns:
     A function which accepts the same arguments as ``fun`` and returns as output
     a pair where the first element is an ``Error`` value, representing the first
