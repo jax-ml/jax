@@ -75,17 +75,21 @@ hipDataType DtypeToHipDataType(const py::dtype& np_type) {
 // Returns the descriptor for a Sparse matrix.
 SparseMatDescriptor BuildSparseMatDescriptor(const py::dtype& data_dtype,
                                              const py::dtype& index_dtype,
-                                             int rows, int cols, int nnz) {
+                                             int rows, int cols, int nnz,
+                                             int batch_count,
+                                             int batch_stride) {
   hipDataType value_type = DtypeToHipDataType(data_dtype);
   hipsparseIndexType_t index_type = DtypeToHipSparseIndexType(index_dtype);
-  return SparseMatDescriptor{value_type, index_type, rows, cols, nnz};
+  return SparseMatDescriptor{
+    value_type, index_type, rows, cols, nnz, batch_count, batch_stride};
 }
 
 // Returns the descriptor for a Dense matrix.
 DenseMatDescriptor BuildDenseMatDescriptor(const py::dtype& data_dtype,
-                                           int rows, int cols) {
+                                           int rows, int cols, int batch_count,
+                                           int batch_stride) {
   hipDataType value_type = DtypeToHipDataType(data_dtype);
-  return DenseMatDescriptor{value_type, rows, cols};
+  return DenseMatDescriptor{value_type, rows, cols, batch_count, batch_stride};
 }
 
 // Returns the descriptor for a Dense vector.
@@ -106,7 +110,8 @@ std::pair<size_t, py::bytes> BuildCsrToDenseDescriptor(
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
-      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz,
+                               /*batch_count*/1, /*batch_stride*/0);
 
   hipsparseSpMatDescr_t mat_a = 0;
   hipsparseDnMatDescr_t mat_b = 0;
@@ -182,7 +187,8 @@ std::pair<size_t, py::bytes> BuildCsrFromDenseDescriptor(
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
-      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz,
+                               /*batch_count=*/1, /*batch_stride=*/0);
 
   hipsparseDnMatDescr_t mat_a = 0;
   hipsparseSpMatDescr_t mat_b = 0;
@@ -258,7 +264,8 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
-      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz,
+                               /*batch_count=*/1, /*batch_stride=*/0);
   DenseVecDescriptor x =
       BuildDenseVecDescriptor(x_dtype, transpose ? rows : cols);
   DenseVecDescriptor y =
@@ -305,11 +312,14 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
-      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz,
+                               /*batch_count=*/1, /*batch_stride=*/0);
   DenseMatDescriptor B =
-      BuildDenseMatDescriptor(b_dtype, transpose ? rows : cols, BCcols);
+      BuildDenseMatDescriptor(b_dtype, transpose ? rows : cols, BCcols,
+                              /*batch_count=*/1, /*batch_stride=*/0);
   DenseMatDescriptor C =
-      BuildDenseMatDescriptor(compute_dtype, transpose ? cols : rows, BCcols);
+      BuildDenseMatDescriptor(compute_dtype, transpose ? cols : rows, BCcols,
+                              /*batch_count=*/1, /*batch_stride=*/0);
   hipsparseOperation_t op_A = transpose ? HIPSPARSE_OPERATION_TRANSPOSE
                                        : HIPSPARSE_OPERATION_NON_TRANSPOSE;
 
@@ -353,7 +363,8 @@ std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
-      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz,
+                               /*batch_count=*/1, /*batch_stride=*/0);
 
   hipsparseSpMatDescr_t mat_a = 0;
   hipsparseDnMatDescr_t mat_b = 0;
@@ -389,7 +400,8 @@ std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
-      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz,
+                               /*batch_count=*/1, /*batch_stride=*/0);
 
   hipsparseDnMatDescr_t mat_a = 0;
   hipsparseSpMatDescr_t mat_b = 0;
@@ -425,7 +437,8 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
-      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz,
+                               /*batch_count=*/1, /*batch_stride=*/0);
   DenseVecDescriptor x =
       BuildDenseVecDescriptor(x_dtype, transpose ? rows : cols);
   DenseVecDescriptor y =
@@ -467,16 +480,31 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
 std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
     const py::dtype& data_dtype, const py::dtype& b_dtype,
     const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
-    int cols, int BCcols, int nnz, bool transpose) {
+    int cols, int BCcols, int nnz, bool transpose, int batch_count,
+    int lhs_batch_stride, int rhs_batch_stride) {
+  // Three batch modes are supported, C_i = A_i B, C_i = A B_i, and
+  // Ci = A_i B_i, where `i` denotes the batch dimension.
+  // All three matrices A, B, and C must have the same batch count.
+  // Use batch stride to trigger individual mode, e.g.,
+  // `rhs_batch_stride = 0` for C_i = A_i B.
   auto h = SparseHandlePool::Borrow();
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
-      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
+      BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz,
+                               batch_count, lhs_batch_stride);
   DenseMatDescriptor B =
-      BuildDenseMatDescriptor(b_dtype, transpose ? rows : cols, BCcols);
+      BuildDenseMatDescriptor(b_dtype, transpose ? rows : cols, BCcols,
+                              batch_count, rhs_batch_stride);
+  int C_rows = (transpose == true) ? cols : rows;
+  // TODO(tianjianlu): enable the selection of batch stride.
+  // The issue (https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643)
+  // in cusparse library does not allow batch_stride = 0.
+  // int C_batch_stride = (batch_count > 1)? C_rows * BCcols : 0;
+  int C_batch_stride = C_rows * BCcols;
   DenseMatDescriptor C =
-      BuildDenseMatDescriptor(compute_dtype, transpose ? cols : rows, BCcols);
+      BuildDenseMatDescriptor(compute_dtype, /*rows=*/C_rows, /*cols=*/BCcols,
+                              batch_count, C_batch_stride);
   hipsparseOperation_t op_A = transpose ? HIPSPARSE_OPERATION_TRANSPOSE
                                        : HIPSPARSE_OPERATION_NON_TRANSPOSE;
 
@@ -490,12 +518,21 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(
       hipsparseCreateCoo(&mat_a, A.rows, A.cols, A.nnz, empty, empty, empty,
                         A.index_type, HIPSPARSE_INDEX_BASE_ZERO, A.value_type)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+      hipsparseCooSetStridedBatch(
+          mat_a, /*batchCount=*/batch_count, /*batchStride=*/A.batch_stride)));
   JAX_THROW_IF_ERROR(
       JAX_AS_STATUS(hipsparseCreateDnMat(&mat_b, B.rows, B.cols, /*ld=*/B.cols,
                                         empty, B.type, HIPSPARSE_ORDER_ROW)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+      hipsparseDnMatSetStridedBatch(
+          mat_b, /*batchCount=*/batch_count, /*batchStride=*/B.batch_stride)));
   JAX_THROW_IF_ERROR(
       JAX_AS_STATUS(hipsparseCreateDnMat(&mat_c, C.rows, C.cols, /*ld=*/C.cols,
                                         empty, C.type, HIPSPARSE_ORDER_ROW)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+      hipsparseDnMatSetStridedBatch(
+          mat_c, /*batchCount=*/batch_count, /*batchStride=*/C.batch_stride)));
   size_t buffer_size;
   HipConst alpha = HipOne(C.type);
   HipConst beta = HipZero(C.type);
