@@ -2796,7 +2796,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
       return array.Array(
           stacked_aval,
           sharding.PmapSharding(np.array(devices), sharding_spec),
-          buffers, committed=True)
+          buffers, committed=True, _skip_checks=True)
     else:
       return pxla.make_sharded_device_array(stacked_aval, None, buffers)
 
@@ -2850,7 +2850,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
       sharding_spec = pxla._create_pmap_sharding_spec(aval)
       return array.Array(
           aval, sharding.PmapSharding(np.array(devices), sharding_spec),
-          [buf, *rest_bufs], committed=True)
+          [buf, *rest_bufs], committed=True, _skip_checks=True)
     else:
       return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
 

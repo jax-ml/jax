@@ -1961,6 +1961,35 @@ class ArrayPjitTest(jtu.JaxTestCase):
     g = pjit(lambda x: f(jnp.sin(x * 4 + 2)))
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
+  @jax._src.config.jax_array(True)
+  def test_fast_path_array(self):
+    devices = jax.devices()
+    if len(devices) < 8:
+      raise unittest.SkipTest("Test requires 8 global devices.")
+    mesh_devices = np.array([[devices[0], devices[2]],
+                             [devices[3], devices[1]],
+                             [devices[4], devices[6]],
+                             [devices[7], devices[5]]])
+    shape = (8, 2)
+    mesh = maps.Mesh(mesh_devices, ('x', 'y'))
+    s = MeshPspecSharding(mesh, P('x', 'y'))
+    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+
+    # Explicitly put on the ordering of devices which does not match the mesh
+    # ordering to make sure we reorder them in the constructor and the output
+    # is correct.
+    bufs = [jax.device_put(inp_data[s.device_indices(d, shape)], d)
+            for d in jax.local_devices()]
+    arr = array.Array(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+
+    f = pjit(lambda x: x, out_axis_resources=s)
+    out = f(arr)
+    self.assertArraysEqual([o.device() for o in out._arrays], list(mesh.devices.flat))
+    self.assertArraysEqual(out, inp_data)
+    out2 = f(out)
+    self.assertArraysEqual([o.device() for o in out2._arrays], list(mesh.devices.flat))
+    self.assertArraysEqual(out2, inp_data)
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

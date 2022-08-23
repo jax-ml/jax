@@ -198,6 +198,41 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, expected)
     self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
 
+  @jax._src.config.jax_array(True)
+  def test_wrong_num_arrays(self):
+    shape = (8, 2)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    bufs = [jax.device_put(inp_data[s.device_indices(d, shape)], d)
+            for d in jax.local_devices()]
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Expected 8 per-device arrays \(this is how many devices are addressable '
+        r'by the sharding\), but got 4'):
+      array.Array(jax.ShapedArray(shape, np.float32), s, bufs[:4], committed=True)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Expected 8 per-device arrays \(this is how many devices are addressable '
+        r'by the sharding\), but got 16'):
+      array.Array(jax.ShapedArray(shape, np.float32), s, bufs + bufs, committed=True)
+
+  @jax._src.config.jax_array(True)
+  def test_arrays_not_in_device_assignment(self):
+    if jax.device_count() < 4:
+      self.skipTest('Requires more than 4 devices')
+    shape = (8, 2)
+    mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    bufs = [jax.device_put(inp_data, d) for d in jax.devices()[2:4]]
+    with self.assertRaisesRegex(
+        ValueError,
+        "Some per-device arrays are placed on devices {2, 3}, which are "
+        "not used in the specified sharding"):
+      array.Array(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
