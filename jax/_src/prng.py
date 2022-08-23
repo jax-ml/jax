@@ -318,7 +318,7 @@ class KeyTy:
   @staticmethod
   def empty_mlir(ctx):
     aval_out, = ctx.avals_out
-    return mlir.ir_constants(np.empty(aval_out.dtype.impl.key_shape,
+    return mlir.ir_constants(np.zeros(aval_out.dtype.impl.key_shape,
                                       dtype=np.dtype('uint32')))
 
   @staticmethod
