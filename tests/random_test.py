@@ -38,7 +38,7 @@ from jax._src import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
 
-import jax._src.random
+from jax._src import random as jax_random
 from jax._src import prng as prng_internal
 
 from jax.config import config
@@ -56,7 +56,7 @@ def _prng_key_as_array(key):
 
 def _maybe_unwrap(key):
   # TODO(frostig): remove once we upgrade to always enable_custom_prng
-  unwrap = jax._src.prng.random_unwrap
+  unwrap = prng_internal.random_unwrap
   return unwrap(key) if config.jax_enable_custom_prng else key
 
 
@@ -236,8 +236,8 @@ class PrngTest(jtu.JaxTestCase):
 
     # TODO(frostig): remove once we always enable_custom_prng
     def random_bits(key, *args):
-      key, _ = jax._src.random._check_prng_key(key)
-      return jax._src.random._random_bits(key, *args)
+      key, _ = jax_random._check_prng_key(key)
+      return jax_random._random_bits(key, *args)
 
     key = random.PRNGKey(1701)
 
@@ -272,8 +272,8 @@ class PrngTest(jtu.JaxTestCase):
 
     # TODO(frostig): remove once we always enable_custom_prng
     def random_bits(key, *args):
-      key, _ = jax._src.random._check_prng_key(key)
-      return jax._src.random._random_bits(key, *args)
+      key, _ = jax_random._check_prng_key(key)
+      return jax_random._random_bits(key, *args)
 
     with jax.default_prng_impl(prng_name):
       key = random.PRNGKey(1701)
@@ -302,8 +302,8 @@ class PrngTest(jtu.JaxTestCase):
 
     # TODO(frostig): remove once we always enable_custom_prng
     def random_bits(key, *args):
-      key, _ = jax._src.random._check_prng_key(key)
-      return jax._src.random._random_bits(key, *args)
+      key, _ = jax_random._check_prng_key(key)
+      return jax_random._random_bits(key, *args)
 
     N = 10
     key = random.PRNGKey(1701)
@@ -1538,14 +1538,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     a, = jaxpr.invars
     self.assertIsInstance(a.aval, core.ShapedArray)
     self.assertEqual(a.aval.shape, (3, 4, 5))
-    self.assertIs(type(a.aval.dtype), jax._src.prng.KeyTy)
+    self.assertIs(type(a.aval.dtype), prng_internal.KeyTy)
     self.assertLen(jaxpr.eqns, 1)
     e, = jaxpr.eqns
     self.assertLen(e.outvars, 1)
     b, = e.outvars
     self.assertIsInstance(b.aval, core.ShapedArray)
     self.assertEqual(b.aval.shape, (3, 5, 4))
-    self.assertIs(type(b.aval.dtype), jax._src.prng.KeyTy)
+    self.assertIs(type(b.aval.dtype), prng_internal.KeyTy)
 
   def test_scan_lowering(self):
     ks = self.make_keys(3, 4)
@@ -1604,10 +1604,10 @@ class KeyArrayTest(jtu.JaxTestCase):
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 
-threefry_seed = jax._src.prng.threefry_seed
-threefry_split = jax._src.prng.threefry_split
-threefry_random_bits = jax._src.prng.threefry_random_bits
-threefry_fold_in = jax._src.prng.threefry_fold_in
+threefry_seed = prng_internal.threefry_seed
+threefry_split = prng_internal.threefry_split
+threefry_random_bits = prng_internal.threefry_random_bits
+threefry_fold_in = prng_internal.threefry_fold_in
 
 def _double_threefry_seed(seed):
   int_t = seed.dtype.type if hasattr(seed, 'dtype') else type(seed)

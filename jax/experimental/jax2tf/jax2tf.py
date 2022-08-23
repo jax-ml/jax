@@ -37,14 +37,14 @@ from jax.interpreters import partial_eval
 from jax.interpreters import pxla
 from jax.interpreters import xla
 
-import jax._src.prng
-import jax._src.random
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import prng
+from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lax import control_flow as lax_control_flow
@@ -2364,18 +2364,18 @@ tf_impl_with_avals[jax._src.prng.random_unwrap_p] = _random_unwrap_impl
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   res = _convert_jax_impl(
-      partial(jax._src.prng._threefry2x32_lowering, use_rolled_loops=False),
+      partial(prng._threefry2x32_lowering, use_rolled_loops=False),
       multiple_results=True, extra_name_stack="threefry")(
           *args, _in_avals=_in_avals, _out_aval=_out_aval)
   return res
 
 
-tf_impl_with_avals[jax._src.prng.threefry2x32_p] = _threefry2x32_jax_impl
+tf_impl_with_avals[prng.threefry2x32_p] = _threefry2x32_jax_impl
 
 # Use the vmap implementation, otherwise on TPU the performance is really bad
 # With use_vmap=True on, we get about the same performance for JAX and jax2tf.
 tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
-    partial(jax._src.random._gamma_impl, use_vmap=True),
+    partial(random_internal._gamma_impl, use_vmap=True),
     multiple_results=False, extra_name_stack="random_gamma")
 
 

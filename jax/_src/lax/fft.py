@@ -29,6 +29,7 @@ from jax import lax
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib import mlir_api_version
 from jax._src.lib import xla_client
 from jax._src.lib import pocketfft
 from jax._src.numpy.util import _promote_dtypes_complex, _promote_dtypes_inexact
@@ -106,7 +107,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
 
 def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   out_aval, = ctx.avals_out
-  if jax._src.lib.mlir_api_version < 31:
+  if mlir_api_version < 31:
     return [
         mhlo.FftOp(
             mlir.aval_to_ir_type(out_aval), x,

@@ -40,8 +40,8 @@ from jax import random
 from jax.core import ShapedArray
 from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
+from jax._src import config as jax_config
 from jax._src import device_array
-import jax._src.lib
 from jax._src.lib import xla_bridge
 from jax._src.util import prod, safe_map, safe_zip
 from jax.interpreters import pxla
@@ -2186,7 +2186,7 @@ class CppPmapTest(PythonPmapTest):
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
 
-    jax._src.config.update_thread_local_jit_state()
+    jax_config.update_thread_local_jit_state()
 
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
@@ -2733,7 +2733,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     devices = jax.local_devices()
     n_devices = len(devices)
     x = [np.arange(i, i + 4) for i in range(n_devices)]
-    with jax._src.config.jax_array(is_jax_array):
+    with jax_config.jax_array(is_jax_array):
       y = jax.device_put_sharded(x, devices)
     self.assertIsInstance(y, array_type)
     buffers = getattr(y, buffer_attr)
@@ -2749,7 +2749,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     devices = jax.local_devices()
     n_devices = len(devices)
     x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
-    with jax._src.config.jax_array(is_jax_array):
+    with jax_config.jax_array(is_jax_array):
       y1, y2 = jax.device_put_sharded(x, devices)
 
     self.assertIsInstance(y1, array_type)
@@ -2769,7 +2769,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
   def test_device_put_replicated(self, is_jax_array, array_type, buffer_attr):
     devices = jax.local_devices()
     x = np.arange(1, 5)
-    with jax._src.config.jax_array(is_jax_array):
+    with jax_config.jax_array(is_jax_array):
       y = jax.device_put_replicated(x, devices)
 
     self.assertIsInstance(y, array_type)
@@ -2785,7 +2785,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
   def test_device_put_replicated_pytree(self, is_jax_array, array_type, buffer_attr):
     devices = jax.local_devices()
     xs = {'a': np.arange(1, 5), 'b': np.arange(3)}
-    with jax._src.config.jax_array(is_jax_array):
+    with jax_config.jax_array(is_jax_array):
       ys = jax.device_put_replicated(xs, devices)
     self.assertIsInstance(ys, dict)
     y1, y2 = ys['a'], ys['b']
@@ -3027,7 +3027,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
     input_array, input_data = create_input_array_for_pmap(input_shape)
 
     f = jax.pmap(lambda x, y: x * y)
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       out = f(input_array, input_array)
 
     expected = input_data * input_data
@@ -3047,7 +3047,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
       return x, y
 
     f = jax.pmap(f)
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       out1, out2 = f(input_array, input_array)
 
     self.assertIsInstance(out1, array.Array)
@@ -3071,7 +3071,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
       return x, y
 
     f = jax.pmap(f, in_axes=(0, None), out_axes=(None, 0))
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       out1, out2 = f(a1, a2)
 
     self.assertIsInstance(out1, array.Array)
@@ -3088,10 +3088,10 @@ class ArrayPmapTest(jtu.JaxTestCase):
                                         sharded_dim_size=input_shape[0])
 
     f = jax.pmap(lambda x: x, in_axes=0, out_axes=0)
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       out_array = f(a1)
 
-    with jax._src.config.jax_array(False):
+    with jax_config.jax_array(False):
       out_sda = f(a1)
 
     self.assertEqual(out_array.sharding.sharding_spec, out_sda.sharding_spec)
@@ -3106,10 +3106,10 @@ class ArrayPmapTest(jtu.JaxTestCase):
     a1, _ = create_input_array_for_pmap(input_shape)
 
     f = jax.pmap(lambda x: x, devices=jax.devices()[::-1])
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       out_array = f(a1)
 
-    with jax._src.config.jax_array(False):
+    with jax_config.jax_array(False):
       out_sda = f(a1)
 
     self.assertEqual(out_array.sharding.sharding_spec, out_sda.sharding_spec)

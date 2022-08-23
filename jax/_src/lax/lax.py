@@ -49,7 +49,7 @@ from jax._src import util
 from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
                            split_list)
 from jax.tree_util import tree_map
-import jax._src.lib
+from jax._src.lib import mlir_api_version
 from jax._src.lib import pytree
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
@@ -1732,14 +1732,14 @@ mlir.register_lowering(tanh_p, partial(_nary_lower_mhlo, mhlo.TanhOp))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
-if jax._src.lib.mlir_api_version < 27:
+if mlir_api_version < 27:
   mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SinOp))
 else:
   mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SineOp))
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
-if jax._src.lib.mlir_api_version < 28:
+if mlir_api_version < 28:
   mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosOp))
 else:
   mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosineOp))
@@ -1761,7 +1761,7 @@ def asin_impl(x):
 
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
-if jax._src.lib.mlir_api_version < 31:
+if mlir_api_version < 31:
   mlir.register_lowering(asin_p, mlir.lower_fun(asin_impl,
                                                 multiple_results=False))
 else:
@@ -1794,7 +1794,7 @@ def atan_impl(x):
 
 atan_p = standard_unop(_float | _complex, 'atan')
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
-if jax._src.lib.mlir_api_version < 31:
+if mlir_api_version < 31:
   mlir.register_lowering(atan_p, mlir.lower_fun(atan_impl,
                                                 multiple_results=False))
 else:
@@ -1889,7 +1889,7 @@ ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
 
 bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
 xla.register_translation(bessel_i1e_p, standard_translate(bessel_i1e_p))
-if jax._src.lib.mlir_api_version < 32:
+if mlir_api_version < 32:
   xla.register_translation(bessel_i1e_p, standard_translate(bessel_i1e_p))
 else:
   mlir.register_lowering(bessel_i1e_p,
@@ -2148,7 +2148,7 @@ def _sub_transpose(t, x, y):
 sub_p = standard_naryop([_num, _num], 'sub')
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
-if jax._src.lib.mlir_api_version < 29:
+if mlir_api_version < 29:
   mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubOp))
 else:
   mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubtractOp))
@@ -2939,7 +2939,7 @@ ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(lt(max, operand), g, _zeros(operand)))
 batching.primitive_batchers[clamp_p] = _clamp_batch_rule
-if jax._src.lib.mlir_api_version < 30:
+if mlir_api_version < 30:
   mlir.register_lowering(
       clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp, explicit_type=True))
 else:
@@ -4217,7 +4217,7 @@ def _rng_uniform_lowering(ctx, a, b, *, shape):
   aval_out, = ctx.avals_out
   shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64),
                              canonicalize_types=False)
-  if jax._src.lib.mlir_api_version <= 22:
+  if mlir_api_version <= 22:
     return mhlo.RngUniformOp(a, b, shape).results
   else:
     return mhlo.RngOp(a, b, shape,

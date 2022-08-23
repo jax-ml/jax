@@ -33,6 +33,7 @@ from jax.experimental.sparse import coo as sparse_coo
 from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse.bcoo import BCOOInfo
 from jax import lax
+from jax._src.lib import xla_extension_version
 from jax._src.lib import gpu_sparse
 from jax._src.lib import xla_bridge
 from jax import jit
@@ -2329,7 +2330,7 @@ class SparseSolverTest(jtu.JaxTestCase):
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/cusolver")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
-  @unittest.skipIf(jax._src.lib.xla_extension_version < 86, "test requires jaxlib version 86")
+  @unittest.skipIf(xla_extension_version < 86, "test requires jaxlib version 86")
   @jtu.skip_on_devices("rocm")
   def test_sparse_qr_linear_solver(self, size, reorder, dtype):
     rng = rand_sparse(self.rng())

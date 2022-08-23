@@ -19,6 +19,7 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
+from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.util import prod
@@ -49,7 +50,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       ("mesh_fully_replicated", P()),
   )
   def test_jax_array_value(self, mesh_axes):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
       input_shape = (8, 2)
       arr, global_data = create_array(
@@ -61,7 +62,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertArraysEqual(arr._npy_value, global_data)
 
   def test_array_delete(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
       input_shape = (8, 2)
       arr, _ = create_array(
@@ -73,7 +74,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertIsNone(arr._arrays)
 
   def test_device_put(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       numpy_array = np.array([1, 2, 3])
       arr = jax.device_put(numpy_array, jax.devices()[0])
       self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
@@ -85,7 +86,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         self.assertEqual(i.index, (slice(None),))
 
   def test_device_put_array_delete(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       arr = jax.device_put(np.array([1, 2, 3]), jax.devices()[0])
       arr.delete()
       with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
@@ -94,7 +95,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertIsNone(arr._arrays)
 
   def test_array_device_get(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
       input_shape = (8, 2)
       arr, input_data = create_array(
@@ -102,7 +103,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertArraysEqual(jax.device_get(arr), input_data)
 
   def test_repr(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
       input_shape = (8, 2)
       arr, _ = create_array(
@@ -110,14 +111,14 @@ class JaxArrayTest(jtu.JaxTestCase):
       repr(arr)  # doesn't crash
 
   def test_jnp_array(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       arr = jnp.array([1, 2, 3])
       self.assertIsInstance(arr, array.Array)
       self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
       self.assertEqual(arr._committed, False)
 
   def test_jnp_array_jit_add(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       a = jnp.array([1, 2, 3])
       b = jnp.array([4, 5, 6])
       arr = jax.jit(lambda x, y: x + y)(a, b)
@@ -126,14 +127,14 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
 
   def test_jnp_array_jnp_add(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       arr = jnp.add(jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
       self.assertIsInstance(arr, array.Array)
       self.assertArraysEqual(arr, np.array([5, 7, 9]))
       self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
 
   def test_jnp_array_normal_add(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       a = jnp.array([1, 2, 3])
       b = jnp.array([4, 5, 6])
       arr = a + b
@@ -142,7 +143,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
 
   def test_array_sharded_astype(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
       input_shape = (8, 2)
       arr, input_data = create_array(
@@ -155,13 +156,13 @@ class JaxArrayTest(jtu.JaxTestCase):
         self.assertArraysEqual(i.data, input_data[i.index].astype(np.float32))
 
   def test_jnp_array_astype(self):
-    with jax._src.config.jax_array(True):
+    with jax_config.jax_array(True):
       arr = jnp.array([1, 2, 3])
       arr_float32 = arr.astype(jnp.float32)
       self.assertEqual(arr_float32.dtype, np.float32)
       self.assertArraysEqual(arr_float32, arr.astype(np.float32))
 
-  @jax._src.config.jax_array(True)
+  @jax_config.jax_array(True)
   def test_sharded_add(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
@@ -176,7 +177,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     for i in out.addressable_shards:
       self.assertArraysEqual(i.data, expected[i.index])
 
-  @jax._src.config.jax_array(True)
+  @jax_config.jax_array(True)
   def test_sharded_zeros_like(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
@@ -189,7 +190,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     for i in out.addressable_shards:
       self.assertArraysEqual(i.data, expected[i.index])
 
-  @jax._src.config.jax_array(True)
+  @jax_config.jax_array(True)
   def test_zeros_like(self):
     a = jnp.array([1, 2, 3], dtype=np.int32)
     out = jnp.zeros_like(a)

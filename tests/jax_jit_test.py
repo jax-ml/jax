@@ -19,6 +19,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import api
+from jax._src import abstract_arrays
 from jax import dtypes
 from jax._src import lib as jaxlib
 from jax import numpy as jnp
@@ -32,7 +33,7 @@ import numpy as np
 _EXCLUDED_TYPES = [np.ndarray]
 
 _SCALAR_NUMPY_TYPES = [
-    x for x in jax._src.abstract_arrays.array_types if x not in _EXCLUDED_TYPES
+    x for x in abstract_arrays.array_types if x not in _EXCLUDED_TYPES
 ]
 
 

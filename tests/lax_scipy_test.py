@@ -34,7 +34,7 @@ from jax.tree_util import tree_map
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
-import jax._src.lax.eigh
+from jax._src.lax import eigh as lax_eigh
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -576,9 +576,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     H = jnp.array(0.5 * (H + H.conj().T)).astype(dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
-        NotImplementedError, jax._src.lax.eigh.eigh, H)
+        NotImplementedError, lax_eigh.eigh, H)
       return
-    evs, V = jax._src.lax.eigh.eigh(H, termination_size=termination_size)
+    evs, V = lax_eigh.eigh(H, termination_size=termination_size)
     ev_exp, eV_exp = jnp.linalg.eigh(H)
     HV = jnp.dot(H, V, precision=lax.Precision.HIGHEST)
     vV = evs.astype(V.dtype)[None, :] * V

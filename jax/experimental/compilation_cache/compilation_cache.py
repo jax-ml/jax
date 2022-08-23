@@ -20,7 +20,7 @@ from typing import List, Optional
 
 import jax
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
-import jax._src.lib
+from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
 from absl import logging
 
@@ -83,7 +83,7 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
       ("compile_options",
        lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
       ("jax_lib version",
-       lambda hash_obj: hash_obj.update(bytes(jax._src.lib.version_str.encode('utf-8')))),
+       lambda hash_obj: hash_obj.update(bytes(jaxlib_version_str.encode('utf-8')))),
       ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
       ("XLA flags", _hash_xla_flags),
   ]

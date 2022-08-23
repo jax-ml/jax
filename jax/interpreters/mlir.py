@@ -35,6 +35,7 @@ from jax import linear_util as lu
 from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
@@ -1547,7 +1548,7 @@ def emit_python_callback(
     ) -> Tuple[List[ir.Value], Any, Any]:
   """Emits MHLO that calls back to a provided Python function."""
   platform = ctx.module_context.platform
-  if platform in {"tpu"} and jax._src.lib.version < (0, 3, 15):
+  if platform in {"tpu"} and jaxlib_version < (0, 3, 15):
     raise ValueError(
         "`EmitPythonCallback` on TPU only supported on jaxlib >= 0.3.15")
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
