@@ -10,6 +10,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.17 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.16...main).
+* Bugs
+  * Fix corner case issue in gradient of `lax.pow` with an exponent of zero
+    ({jax-issue}`12041`)
 * Breaking changes
   * {func}`jax.checkpoint`, also known as {func}`jax.remat`, no longer supports
     the `concrete` option, following the previous version's deprecation; see
