@@ -786,11 +786,25 @@ error_checks[assert_p] = assert_discharge_rule
 ErrorCategory = enum.Enum('ErrorCategory', ['NAN', 'OOB', 'DIV', 'USER_CHECK'])
 
 user_checks = frozenset({ErrorCategory.USER_CHECK})
+"""I am a docstring.
+"""
+
+#: Checks if all floating-point operations output non-NaN values.
 nan_checks = frozenset({ErrorCategory.NAN})
+
+#: Checks if all indexing operations are in-bounds.
 index_checks = frozenset({ErrorCategory.OOB})
+
+#: Checks if no division-by-zero errors occur.
 div_checks = frozenset({ErrorCategory.DIV})
+
+#: :data:nan_checks + :data:div_checks
 float_checks = nan_checks | div_checks
+
+#: :data:float_checks + :data:index_checks
 automatic_checks = float_checks | index_checks
+
+#: :data:automatic_checks + :data:user_checks
 all_checks = automatic_checks | user_checks
 
 Out = TypeVar('Out')

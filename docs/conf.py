@@ -67,7 +67,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'matplotlib.sphinxext.plot_directive',
-    'sphinx_autodoc_typehints',
+    # 'sphinx_autodoc_typehints',
     'myst_nb',
     "sphinx_remove_toctrees",
     'sphinx_copybutton',
