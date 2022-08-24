@@ -99,3 +99,12 @@ Parallelization (:code:`pmap`)
     device_count
     local_device_count
     process_count
+
+Callbacks
+---------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    pure_callback
+    debug.callback
