@@ -19,6 +19,7 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src import config as jax_config
 from jax.config import config
 from jax.experimental import array
 from jax.experimental.sharding import MeshPspecSharding
@@ -91,6 +92,7 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(s.data.to_py(), np.array([]))
     self.assertEqual(m3.dtype, np.float32)
 
+  @jax_config.jax_array(True)
   def test_checkpointing_with_array(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
@@ -127,8 +129,9 @@ class CheckpointTest(jtu.JaxTestCase):
     m1, m2, m3 = serialization.run_deserialization(
         [global_mesh, global_mesh, global_mesh1d],
         [pspec, P('x'), P(None)],
-        tspecs, return_arr_flavor=serialization.ArrayFlavor.Array)
+        tspecs)
 
+    self.assertIsInstance(m1, array.Array)
     self.assertArraysEqual(m1.addressable_shards[0].data.to_py(),
                            np.array([[0], [2]]))
     self.assertArraysEqual(m1.addressable_shards[1].data.to_py(),
@@ -136,6 +139,7 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertEqual(m1.addressable_shards[0].data.shape, (2, 1))
     self.assertEqual(m1.dtype, np.int32)
 
+    self.assertIsInstance(m2, array.Array)
     self.assertArraysEqual(m2.addressable_shards[0].data.to_py(),
                            np.array([[16, 17], [18, 19]]))
     self.assertArraysEqual(m2.addressable_shards[1].data.to_py(),
@@ -143,6 +147,7 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertEqual(m2.addressable_shards[0].data.shape, (2, 2))
     self.assertEqual(m2.dtype, np.int32)
 
+    self.assertIsInstance(m3, array.Array)
     for i, s in enumerate(m3.addressable_shards):
       self.assertEqual(s.index, (slice(None),))
       self.assertEqual(s.replica_id, i)

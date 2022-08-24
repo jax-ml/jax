@@ -15,7 +15,6 @@
 
 import abc
 import asyncio
-import enum
 import itertools
 from functools import partial
 import re
@@ -25,6 +24,7 @@ from absl import logging
 
 import jax
 from jax._src import distributed
+from jax._src.config import config
 from jax.experimental import global_device_array as gda
 from jax.experimental import array
 from jax.experimental import sharding
@@ -219,15 +219,9 @@ def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
   return num_bytes
 
 
-class ArrayFlavor(enum.Enum):
-  GDA = 0
-  Array = 1
-
-
 async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
                             global_shape=None, dtype=None,
-                            byte_limiter: Optional[_LimitInFlightBytes] = None,
-                            return_arr_flavor: ArrayFlavor = ArrayFlavor.GDA):
+                            byte_limiter: Optional[_LimitInFlightBytes] = None):
   t = await ts.open(ts.Spec(tensorstore_spec), open=True, context=TS_CONTEXT)
   shape = t.shape if global_shape is None else global_shape
   new_shard_shape = gda.get_shard_shape(tuple(shape), mesh, mesh_axes)
@@ -258,7 +252,7 @@ async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
       await byte_limiter.release_bytes(requested_bytes)
     return out
 
-  if return_arr_flavor == ArrayFlavor.Array:
+  if config.jax_array:
     inp_sharding = sharding.MeshPspecSharding(mesh, mesh_axes)
     return await create_async_array_from_callback(tuple(shape), inp_sharding, cb)
   else:
@@ -266,8 +260,7 @@ async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
 
 
 def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
-                        global_shapes=None, dtypes=None, concurrent_gb=32,
-                        return_arr_flavor=ArrayFlavor.GDA):
+                        global_shapes=None, dtypes=None, concurrent_gb=32):
   concurrent_bytes = concurrent_gb * 10**9
 
   async def _run_deserializer():
@@ -275,8 +268,7 @@ def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
     byte_limiter = _LimitInFlightBytes(concurrent_bytes)
 
     future_arrays = jax.tree_util.tree_map(
-        partial(async_deserialize, byte_limiter=byte_limiter,
-                return_arr_flavor=return_arr_flavor),
+        partial(async_deserialize, byte_limiter=byte_limiter),
         global_meshes, mesh_axes, tensorstore_specs,
         [None] * len(tensorstore_specs) if global_shapes is None else global_shapes,
         [None] * len(tensorstore_specs) if dtypes is None else dtypes)
