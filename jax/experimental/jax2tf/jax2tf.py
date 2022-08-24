@@ -1339,8 +1339,6 @@ tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(
 tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(
     lax_internal.atan_impl, multiple_results=False)
 
-tf_impl[lax.logistic_p] = tf.math.sigmoid
-
 def _atan2(y, x, **kwargs):
   if x.dtype.is_complex or y.dtype.is_complex:
     complex_component_dtype = {

@@ -91,7 +91,7 @@ def sigmoid(x: Array) -> Array:
   Args:
     x : input array
   """
-  return lax.logistic(x)
+  return expit(x)
 
 @jax.jit
 def silu(x: Array) -> Array:

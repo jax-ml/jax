@@ -103,7 +103,6 @@ Operators
     lgamma
     log
     log1p
-    logistic
     max
     min
     mul

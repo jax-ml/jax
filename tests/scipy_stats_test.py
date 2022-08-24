@@ -351,7 +351,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                              tol=3e-5)
+                              tol=1e-6)
       self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(1)
@@ -397,7 +397,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return list(map(rng, shapes, dtypes))
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=2e-5)
+                            tol=1e-6)
     self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(3)
