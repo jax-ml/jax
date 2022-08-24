@@ -14,7 +14,8 @@
 
 from functools import partial
 import operator as op
-from typing import Callable, Optional, List, Tuple, Sequence, Set, Union, Any
+from typing import (Callable, Optional, List, Tuple, Sequence, Set, Union, Any,
+                    FrozenSet)
 import types
 
 from absl import logging
@@ -302,7 +303,7 @@ def _remat_static_argnums(fun, static_argnums, args):
 
 class WrapHashably:
   val: Any
-  hash: Optional[int] = None
+  hash: int
   hashable: bool
 
   def __init__(self, val):
@@ -317,8 +318,10 @@ class WrapHashably:
     return self.hash
   def __eq__(self, other):
     if isinstance(other, WrapHashably):
-      try: return self.val == other.val
-      except: return self.val is other.val
+      if self.hashable and other.hashable:
+        return self.val == other.val
+      else:
+        return self.val is other.val
     return False
 
 # This caching is useful to avoid retracing even when static_argnums is used.
@@ -326,7 +329,7 @@ class WrapHashably:
 # On that benchmark, including this caching makes a ~10x difference (which can
 # be made arbitrary large by involving larger functions to be traced).
 @weakref_lru_cache
-def _dyn_args_fun(fun: Callable, static_argnums: Tuple[int, ...],
+def _dyn_args_fun(fun: Callable, static_argnums: FrozenSet[int],
                   static_args: Tuple[WrapHashably, ...], nargs: int):
   def new_fun(*dyn_args, **kwargs):
     static_args_, dyn_args_ = iter(static_args), iter(dyn_args)
