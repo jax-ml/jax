@@ -118,7 +118,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                ) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
-  The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
+  The :func:`jax.checkpoint` decorator, aliased to :func:`jax.remat`, provides a
   way to trade off computation time and memory cost in the context of automatic
   differentiation, especially with reverse-mode autodiff like :func:`jax.grad`
   and :func:`jax.vjp` but also with :func:`jax.linearize`.
@@ -153,10 +153,11 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
       generated from differentiation. This CSE prevention has costs because it
       can foil other optimizations, and because it can incur high overheads on
       some backends, especially GPU. The default is True because otherwise,
-      under a ``jit`` or ``pmap``, CSE can defeat the purpose of this decorator.
-      But in some settings, like when used inside a ``scan``, this CSE
-      prevention mechanism is unnecessary, in which case ``prevent_cse`` can be
-      set to False.
+      under a :func:`~jax.jit` or :func:`~jax.pmap`, CSE can defeat the purpose
+      of this decorator.
+      But in some settings, like when used inside a :func:`~jax.lax.scan`, this
+      CSE prevention mechanism is unnecessary, in which case ``prevent_cse`` can
+      be set to False.
     static_argnums: Optional, int or sequence of ints, a keyword-only argument
       indicating which argument values on which to specialize for tracing and
       caching purposes. Specifying arguments as static can avoid
@@ -200,11 +201,11 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   At that time, the value ``jnp.sin(2.0)`` is recomputed, along with the values
   ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))``.
 
-  While ``jax.checkpoint`` controls what values are stored from the forward-pass
-  to be used on the backward pass, the total amount of memory required to
-  evaluate a function or its VJP depends on many additional internal details of
-  that function. Those details include which numerical primitives are used,
-  how they're composed, where jit and control flow primitives like scan
+  While :func:`jax.checkpoint` controls what values are stored from the
+  forward-pass to be used on the backward pass, the total amount of memory
+  required to evaluate a function or its VJP depends on many additional internal
+  details of that function. Those details include which numerical primitives are
+  used, how they're composed, where jit and control flow primitives like scan
   are used, and other factors.
 
   The :func:`jax.checkpoint` decorator can be applied recursively to express
@@ -253,7 +254,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
 
   As an alternative to using ``static_argnums`` (and
   ``jax.ensure_compile_time_eval``), it may be easier to compute some values
-  outside the ``jax.checkpoint``-decorated function and then close over them.
+  outside the :func:`jax.checkpoint`-decorated function and then close over them.
   """
   @wraps(fun)
   @api_boundary

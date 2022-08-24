@@ -84,14 +84,14 @@ def start_trace(log_dir, create_perfetto_link: bool = False,
   """Starts a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
-  functions and JAX on-device operations. Use ``stop_trace()`` to end the trace
+  functions and JAX on-device operations. Use :func:`stop_trace` to end the trace
   and save the results to ``log_dir``.
 
   The resulting trace can be viewed with TensorBoard. Note that TensorBoard
   doesn't need to be running when collecting the trace.
 
   Only once trace may be collected a time. A RuntimeError will be raised if
-  ``start_trace()`` is called while another trace is running.
+  :func:`start_trace` is called while another trace is running.
 
   Args:
     log_dir: The directory to save the profiler trace to (usually the
@@ -188,7 +188,7 @@ def stop_trace():
   """Stops the currently-running profiler trace.
 
   The trace will be saved to the ``log_dir`` passed to the corresponding
-  ``start_trace()`` call. Raises a RuntimeError if a trace hasn't been started.
+  :func:`start_trace` call. Raises a RuntimeError if a trace hasn't been started.
   """
   with _profile_state.lock:
     if _profile_state.profile_session is None:

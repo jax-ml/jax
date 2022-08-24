@@ -483,7 +483,7 @@ class Lowered(Stage):
   carries a lowering together with the remaining information needed to
   later compile and execute it. It also provides a common API for
   querying properties of lowered computations across JAX's various
-  lowering paths (``jit``, ``pmap``, etc.).
+  lowering paths (:func:`~jax.jit`, :func:`~jax.pmap`, etc.).
   """
   __slots__ = ["args_info", "out_tree", "_lowering", "_no_kwargs"]
 

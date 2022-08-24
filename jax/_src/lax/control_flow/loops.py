@@ -128,7 +128,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
   each with an additional leading axis.
 
   When ``a`` is an array type or None, and ``b`` is an array type, the semantics
-  of ``scan`` are given roughly by this Python implementation::
+  of :func:`~scan` are given roughly by this Python implementation::
 
     def scan(f, init, xs, length=None):
       if xs is None:
@@ -144,10 +144,11 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
   types, and so multiple arrays can be scanned over at once and produce multiple
   output arrays. (None is actually an empty pytree.)
 
-  Also unlike that Python version, ``scan`` is a JAX primitive and is lowered to
-  a single XLA While HLO. That makes it useful for reducing compilation times
-  for jit-compiled functions, since native Python loop constructs in an ``@jit``
-  function are unrolled, leading to large XLA computations.
+  Also unlike that Python version, :func:`~scan` is a JAX primitive and is
+  lowered to a single XLA While HLO. That makes it useful for reducing
+  compilation times for JIT-compiled functions, since native Python
+  loop constructs in an :func:`~jax.jit` function are unrolled, leading to large
+  XLA computations.
 
   Finally, the loop-carried value ``carry`` must hold a fixed shape and dtype
   across all iterations (and not just be consistent up to NumPy rank/shape
@@ -1632,7 +1633,7 @@ def fori_loop(lower, upper, body_fun, init_val):
   call to :func:`jax.lax.while_loop` or a call to :func:`jax.lax.scan`. If the
   trip count is static (meaning known at tracing time, perhaps because ``lower``
   and ``upper`` are Python integer literals) then the ``fori_loop`` is
-  implemented in terms of ``scan`` and reverse-mode autodiff is supported;
+  implemented in terms of :func:`~scan` and reverse-mode autodiff is supported;
   otherwise, a ``while_loop`` is used and reverse-mode autodiff is not
   supported.  See those functions' docstrings for more information.
 
@@ -1702,19 +1703,20 @@ def map(f, xs):
   """Map a function over leading array axes.
 
   Like Python's builtin map, except inputs and outputs are in the form of
-  stacked arrays. Consider using the ``jax.vmap`` transform instead, unless you
+  stacked arrays. Consider using the :func:`~jax.vmap` transform instead, unless you
   need to apply a function element by element for reduced memory usage or
   heterogeneous computation with other control flow primitives.
 
-  When ``xs`` is an array type, the semantics of ``map`` are given by this
+  When ``xs`` is an array type, the semantics of :func:`~map` are given by this
   Python implementation::
 
     def map(f, xs):
       return np.stack([f(x) for x in xs])
 
-  Like ``scan``, ``map`` is implemented in terms of JAX primitives so many of
-  the same advantages over a Python loop apply: ``xs`` may be an arbitrary
-  nested pytree type, and the mapped computation is compiled only once.
+  Like :func:`~scan`, :func:`~map` is implemented in terms of JAX primitives so
+  many of the same advantages over a Python loop apply: ``xs`` may be an
+  arbitrary nested pytree type, and the mapped computation is compiled only
+  once.
 
   Args:
     f: a Python function to apply element-wise over the first axis or axes of
