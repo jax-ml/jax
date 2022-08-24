@@ -198,7 +198,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, expected)
     self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
 
-  @jax._src.config.jax_array(True)
+  @jax_config.jax_array(True)
   def test_wrong_num_arrays(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -218,7 +218,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         r'by the sharding\), but got 16'):
       array.Array(jax.ShapedArray(shape, np.float32), s, bufs + bufs, committed=True)
 
-  @jax._src.config.jax_array(True)
+  @jax_config.jax_array(True)
   def test_arrays_not_in_device_assignment(self):
     if jax.device_count() < 4:
       self.skipTest('Requires more than 4 devices')

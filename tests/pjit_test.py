@@ -1961,7 +1961,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     g = pjit(lambda x: f(jnp.sin(x * 4 + 2)))
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
-  @jax._src.config.jax_array(True)
+  @jax_array(True)
   def test_fast_path_array(self):
     devices = jax.devices()
     if len(devices) < 8:

@@ -58,7 +58,7 @@ from jax._src import test_util as jtu
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
-
+from jax._src import random as jax_random
 
 FLAGS = config.FLAGS
 
@@ -2585,7 +2585,7 @@ for dtype in (np.float32, np.float64):
     define(
         "random_gamma",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.jit(jax._src.random.gamma),
+        jax.jit(jax_random.gamma),
         [np.array([42, 43], dtype=np.uint32),
          RandArg(shape, dtype)],
         dtype=dtype)
