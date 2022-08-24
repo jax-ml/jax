@@ -813,19 +813,19 @@ def lower_jaxpr_to_fun(
     token_types = [token_type() for _ in effects]
   input_types = [*token_types, *input_types]
   output_types = [*output_token_types, *token_types, *output_types]
-  if input_output_aliases:
+  if input_output_aliases is not None:
     token_input_output_aliases = [None] * num_tokens
     input_output_aliases = [*token_input_output_aliases, *input_output_aliases]
     # Update the existing aliases to account for the new output values
     input_output_aliases = [None if a is None else a + num_output_tokens +
                             num_tokens for a in input_output_aliases]
-  if arg_shardings:
+  if arg_shardings is not None:
     token_shardings = [None] * num_tokens
     arg_shardings = [*token_shardings, *arg_shardings]
-  if result_shardings:
+  if result_shardings is not None:
     token_shardings = [None] * (num_tokens + num_output_tokens)
     result_shardings = [*token_shardings, *result_shardings]
-  if replicated_args:
+  if replicated_args is not None:
     token_replicated_args = [False] * num_tokens
     replicated_args = [*token_replicated_args, *replicated_args]
   flat_input_types = util.flatten(input_types)

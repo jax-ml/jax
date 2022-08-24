@@ -1393,10 +1393,13 @@ def lower_parallel_callable(
       raise ValueError("Ordered effects not supported in `pmap`.")
     unordered_effects = [eff for eff in closed_jaxpr.effects
                          if eff not in core.ordered_effects]
+    ordered_effects = [eff for eff in closed_jaxpr.effects
+                       if eff in core.ordered_effects]
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
-        unordered_effects, [],
+        unordered_effects,
+        ordered_effects,
         backend,
         backend.platform,
         mlir.ReplicaAxisContext(axis_env),
@@ -1411,6 +1414,7 @@ def lower_parallel_callable(
   return PmapComputation(module, pci=pci, replicas=replicas, parts=parts,
                          shards=shards, tuple_args=tuple_args,
                          unordered_effects=unordered_effects,
+                         ordered_effects=ordered_effects,
                          keepalive=keepalive, host_callbacks=host_callbacks)
 
 
@@ -1465,6 +1469,7 @@ class PmapExecutable(stages.XlaExecutable):
                shards: ShardInfo,
                tuple_args: bool,
                unordered_effects: List[core.Effect],
+               ordered_effects: List[core.Effect],
                host_callbacks: List[Any],
                keepalive: Any):
     devices = pci.devices
@@ -1581,7 +1586,8 @@ class PmapExecutable(stages.XlaExecutable):
     handle_args = InputsHandler(
         compiled.local_devices(), in_shardings, input_indices, InputsHandlerMode.pmap)
     execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args,
-                                    handle_outs, unordered_effects, keepalive,
+                                    handle_outs, unordered_effects,
+                                    ordered_effects, keepalive,
                                     bool(host_callbacks))
     fingerprint = getattr(compiled, "fingerprint", None)
 
@@ -1939,41 +1945,65 @@ def partitioned_sharding_spec(num_partitions: int,
 class ExecuteReplicated:
   """The logic to shard inputs, execute a replicated model, returning outputs."""
   __slots__ = ['xla_executable', 'backend', 'in_handler', 'out_handler',
-               'has_unordered_effects', 'keepalive', 'has_host_callbacks',
-               '__weakref__']
+               'has_unordered_effects', 'ordered_effects', 'keepalive',
+               'has_host_callbacks', '_local_devices', '__weakref__']
 
   def __init__(self, xla_executable, backend, in_handler: InputsHandler,
                out_handler: ResultsHandler,
-               unordered_effects: List[core.Effect], keepalive: Any,
+               unordered_effects: List[core.Effect],
+               ordered_effects: List[core.Effect], keepalive: Any,
                has_host_callbacks: bool):
     self.xla_executable = xla_executable
     self.backend = backend
     self.in_handler = in_handler
     self.out_handler = out_handler
     self.has_unordered_effects = bool(unordered_effects)
+    self.ordered_effects = ordered_effects
+    self._local_devices = self.xla_executable.local_devices()
+    if ordered_effects:
+      assert len(self._local_devices) == 1
     self.keepalive = keepalive
     self.has_host_callbacks = has_host_callbacks
+
+  def _call_with_tokens(self, input_bufs):
+    # TODO(sharadmv): simplify this logic when minimum jaxlib version is
+    # bumped
+    if self.ordered_effects:
+      device, = self._local_devices
+      tokens = [list(dispatch.runtime_tokens.get_token(eff, device))
+                for eff in self.ordered_effects]
+      input_bufs = [*tokens, *input_bufs]
+    num_output_tokens = len(self.ordered_effects) + (
+        not can_execute_with_token and self.has_unordered_effects)
+    if can_execute_with_token:
+      out_bufs, sharded_token = (
+          self.xla_executable.execute_sharded_on_local_devices_with_tokens(
+            input_bufs))
+      token_bufs, out_bufs = util.split_list(out_bufs, [num_output_tokens])
+      for i, device in enumerate(self._local_devices):
+        dispatch.runtime_tokens.set_output_runtime_token(
+            device, sharded_token.get_token(i))
+      for eff, token_buf in zip(self.ordered_effects, token_bufs):
+        dispatch.runtime_tokens.update_token(eff, token_buf)
+    else:
+      out_bufs = self.xla_executable.execute_sharded_on_local_devices(
+          input_bufs)
+      token_bufs, out_bufs = util.split_list(out_bufs, [num_output_tokens])
+      if self.has_unordered_effects:
+        unordered_token_buf, *token_bufs = token_bufs
+        for i, device in enumerate(self._local_devices):
+          token = (unordered_token_buf[i],)
+          dispatch.runtime_tokens.set_output_token(device, token)
+      for eff, token_buf in zip(self.ordered_effects, token_bufs):
+        dispatch.runtime_tokens.update_token(eff, token_buf)
+    return out_bufs
 
   @profiler.annotate_function
   def __call__(self, *args):
     input_bufs = self.in_handler(args)
-    if self.has_unordered_effects or self.has_host_callbacks:
-      # TODO(sharadmv): simplify this logic when minimum jaxlib version is
-      # bumped
-      if can_execute_with_token:
-        out_bufs, sharded_token = (
-            self.xla_executable.execute_sharded_on_local_devices_with_tokens(
-              input_bufs))
-        for i, device in enumerate(self.xla_executable.local_devices()):
-          dispatch.runtime_tokens.set_output_runtime_token(
-              device, sharded_token.get_token(i))
-      else:
-        out_bufs = self.xla_executable.execute_sharded_on_local_devices(
-            input_bufs)
-        token_bufs, *out_bufs = out_bufs
-        for i, device in enumerate(self.xla_executable.local_devices()):
-          token = (token_bufs[i],)
-          dispatch.runtime_tokens.set_output_token(device, token)
+    if (self.ordered_effects or self.has_unordered_effects or
+        self.has_host_callbacks):
+      out_bufs = self._call_with_tokens(input_bufs)
     else:
       out_bufs = self.xla_executable.execute_sharded_on_local_devices(
           input_bufs)
@@ -2676,10 +2706,12 @@ def lower_sharding_computation(
     raise ValueError("Ordered effects not supported in mesh computations.")
   unordered_effects = [eff for eff in closed_jaxpr.effects
                        if eff not in core.ordered_effects]
+  ordered_effects = [eff for eff in closed_jaxpr.effects
+                     if eff in core.ordered_effects]
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
       closed_jaxpr,
-      unordered_effects, [],
+      unordered_effects, ordered_effects,
       backend,
       backend.platform,
       axis_ctx,
@@ -2706,6 +2738,7 @@ def lower_sharding_computation(
       in_is_global=in_is_global,
       auto_spmd_lowering=False,
       unordered_effects=unordered_effects,
+      ordered_effects=ordered_effects,
       host_callbacks=host_callbacks,
       keepalive=keepalive)
 
@@ -2821,10 +2854,13 @@ def lower_mesh_computation(
       raise ValueError("Ordered effects not supported in mesh computations.")
     unordered_effects = [eff for eff in closed_jaxpr.effects
                          if eff not in core.ordered_effects]
+    ordered_effects = [eff for eff in closed_jaxpr.effects
+                       if eff in core.ordered_effects]
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
-        unordered_effects, [],
+        unordered_effects,
+        ordered_effects,
         backend,
         backend.platform,
         axis_ctx,
@@ -2850,6 +2886,7 @@ def lower_mesh_computation(
       in_is_global=in_is_global,
       auto_spmd_lowering=auto_spmd_lowering,
       unordered_effects=unordered_effects,
+      ordered_effects=ordered_effects,
       host_callbacks=host_callbacks,
       keepalive=keepalive)
 
@@ -2990,6 +3027,7 @@ class MeshExecutable(stages.XlaExecutable):
                _allow_propagation_to_outputs: bool,
                _allow_compile_replicated: bool,
                unordered_effects: List[core.Effect],
+               ordered_effects: List[core.Effect],
                host_callbacks: List[Any],
                keepalive: Any) -> MeshExecutable:
     if auto_spmd_lowering:
@@ -3067,7 +3105,8 @@ class MeshExecutable(stages.XlaExecutable):
       handle_args = InputsHandler(xla_executable.local_devices(), in_shardings,
                                   input_indices, InputsHandlerMode.pjit_or_xmap)
       unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
-                                      handle_outs, unordered_effects, keepalive,
+                                      handle_outs, unordered_effects,
+                                      ordered_effects, keepalive,
                                       bool(host_callbacks))
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
