@@ -21,7 +21,7 @@ load(
     "pytype_library",
 )
 
-licenses(["notice"])  # Apache 2
+licenses(["notice"])
 
 package(default_visibility = ["//visibility:private"])
 
