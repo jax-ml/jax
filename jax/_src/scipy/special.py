@@ -96,13 +96,10 @@ logit.defjvps(
     lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(_lax_const(x, 1), x))))
 
 
-@api.custom_jvp
 @_wraps(osp_special.expit, module='scipy.special', update_doc=False)
 def expit(x):
   x, = _promote_args_inexact("expit", x)
-  one = _lax_const(x, 1)
-  return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-expit.defjvps(lambda g, ans, x: g * ans * (_lax_const(ans, 1) - ans))
+  return lax.logistic(x)
 
 
 @_wraps(osp_special.logsumexp, module='scipy.special')
