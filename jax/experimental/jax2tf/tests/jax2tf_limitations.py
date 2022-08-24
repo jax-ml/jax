@@ -134,11 +134,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "random_categorical", "random_uniform", "random_randint",
       "reduce", "reduce_and", "reduce_prod", "reduce_or", "reduce_sum",
       "reduce_window_mul", "reduce_window_min", "reduce_window_max", "real",
-      "reshape", "rev", "rsqrt", "scatter_max", "scatter_min", "select_n",
-      "select_and_scatter_add", "shift_left", "shift_right_logical",
-      "shift_right_arithmetic", "sign", "sin", "sinh", "slice", "sqrt",
-      "squeeze", "stop_gradient", "sub", "tie_in", "transpose", "xor",
-      "zeros_like"
+      "reshape", "rev", "rsqrt", "select_n", "select_and_scatter_add",
+      "shift_left", "shift_right_logical", "shift_right_arithmetic", "sign",
+      "sin", "sinh", "slice", "sqrt", "squeeze", "stop_gradient", "sub",
+      "tie_in", "transpose", "xor", "zeros_like"
   }
 
   @classmethod
@@ -971,16 +970,33 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
+  def scatter(cls, harness):
+    return [
+        Jax2TfLimitation(
+            "out-of-bounds scatters are not supported in graph and eager mode",
+            dtypes=jtu.dtypes.all_inexact,
+            devices=("cpu", "gpu", "tpu"),
+            modes=("eager", "graph"),
+            expect_tf_error=True,
+            skip_comparison=True,
+            enabled=("modes_out_of_bounds" in harness.name and not harness.params["enable_xla"])),
+    ]
+
+  @classmethod
   def scatter_add(cls, harness):
-    return []
+    return cls.scatter(harness)
 
   @classmethod
   def scatter_mul(cls, harness):
-    return []
+    return cls.scatter(harness)
 
   @classmethod
-  def scatter(cls, harness):
-    return []
+  def scatter_max(cls, harness):
+    return cls.scatter(harness)
+
+  @classmethod
+  def scatter_min(cls, harness):
+    return cls.scatter(harness)
 
   @classmethod
   def select_and_gather_add(cls, harness):
