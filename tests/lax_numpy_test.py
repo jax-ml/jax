@@ -1611,8 +1611,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape2 in all_shapes
       for assume_unique in [False, True]
       for return_indices in [False, True]))
-  # TODO(b/242043996): compilation doesn't terminate (LLVM bug?)
-  @jtu.skip_on_devices("cpu")
   def testIntersect1d(self, shape1, dtype1, shape2, dtype2, assume_unique, return_indices):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
