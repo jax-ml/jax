@@ -1505,9 +1505,12 @@ class KeyArrayTest(jtu.JaxTestCase):
   # might also be a more general test of extended/custom eltypes. If
   # so, add a corresponding test to to CustomElementTypesTest as well.
 
-  def make_keys(self, *shape):
-    key = prng.seed_with_impl(prng.threefry_prng_impl, 28)
-    return jnp.reshape(jax.random.split(key, np.prod(shape)), shape)
+  def make_keys(self, *shape, seed=None):
+    if seed is None:
+      seed = 28
+    seeds = seed + jnp.arange(np.prod(shape), dtype=jnp.uint32)
+    make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+    return jnp.reshape(jax.vmap(make_key)(seeds), shape)
 
   # -- prng primitives
 
@@ -1521,7 +1524,39 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(keys, random.KeyArray)
     self.assertEqual(keys.shape, (3,))
 
-  # -- eltype-polymorphic operations
+  def test_eval_shape_keys_in(self):
+    def f(key):
+      return prng_internal.random_bits(key, bit_width=32, shape=(5,))
+    out = jax.eval_shape(f, self.make_keys())
+    self.assertEqual(out.shape, (5,))
+    self.assertEqual(out.dtype, np.dtype('uint32'))
+
+    def f(key):
+      return prng_internal.random_bits(key, bit_width=16, shape=(5,))
+    out = jax.eval_shape(f, self.make_keys())
+    self.assertEqual(out.shape, (5,))
+    self.assertEqual(out.dtype, np.dtype('uint16'))
+
+  def test_eval_shape_keys_out(self):
+    def f(seed):
+      return self.make_keys(seed=seed)
+    out = jax.eval_shape(f, 28)
+    self.assertEqual(out.shape, ())
+    # TODO(frostig): check dtype too when available
+
+  def test_eval_shape_keys_in_out(self):
+    def f(key):
+      return jax.random.split(key)
+    out = jax.eval_shape(f, self.make_keys())
+    self.assertEqual(out.shape, (2,))
+    # TODO(frostig): check dtype too when available
+
+  def test_vmap(self):
+    ks = self.make_keys(3, 4, 5)
+    ys = jax.vmap(jax.jit(lambda k: k.T))(ks)
+    self.assertEqual(ys.shape, (3, 5, 4))
+
+  # -- dtype-polymorphic operation (esp. lowerings)
 
   def test_scan_jaxpr(self):
     ks = self.make_keys(3, 4, 5)
@@ -1553,11 +1588,6 @@ class KeyArrayTest(jtu.JaxTestCase):
     _, out = jax.jit(f)(ks)  # doesn't crash
     self.assertIsInstance(out, random.KeyArray)
     self.assertEqual(out.shape, (3, 4))
-
-  def test_vmap(self):
-    ks = self.make_keys(3, 4, 5)
-    ys = jax.vmap(jax.jit(lambda k: k.T))(ks)
-    self.assertEqual(ys.shape, (3, 5, 4))
 
   def test_slice(self):
     ks = self.make_keys(3, 4)
