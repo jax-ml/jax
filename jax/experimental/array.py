@@ -252,7 +252,7 @@ class Array:
         sep = ' ' * len(prefix)
       return f"{prefix}{s},{sep}{dtype_str}"
     else:
-      return f"{prefix}{self.shape}{dtype_str}"
+      return f"{prefix}{self.shape}, {dtype_str}"
 
   def is_fully_addressable(self) -> bool:
     return self.sharding.is_fully_addressable()
@@ -338,12 +338,24 @@ class Array:
   @property
   def _value(self) -> np.ndarray:
     self._check_if_deleted()
-    if not self.is_fully_addressable():
-      raise RuntimeError("Fetching value for `jax.Array` that spans "
-                         "non-addressable devices is not possible. You can use "
-                         "`jax.experimental.multihost_utils.process_allgather` "
-                         "for this use case.")
+
     if self._npy_value is None:
+      if isinstance(self.sharding, XLACompatibleSharding):
+        try:
+          op_sharding = self.sharding._to_xla_op_sharding(self.ndim)
+          assert op_sharding is not None
+          if pxla.is_op_sharding_replicated(op_sharding):
+            self._npy_value = self._arrays[0].to_py()  # type: ignore
+            return cast(np.ndarray, self._npy_value)
+        except NotImplementedError:
+          pass
+
+      if not self.is_fully_addressable():
+        raise RuntimeError("Fetching value for `jax.Array` that spans "
+                           "non-addressable devices is not possible. You can use "
+                           "`jax.experimental.multihost_utils.process_allgather` "
+                           "for this use case.")
+
       self.copy_to_host_async()
       npy_value = np.empty(self.shape, self.dtype)
 
