@@ -24,7 +24,7 @@ from absl.testing import parameterized
 import jax
 from jax.config import config
 from jax._src import distributed
-import jax._src.lib
+from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 
 try:
@@ -108,7 +108,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       self.assertEqual(proc.returncode, 0)
       self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
 
-  @unittest.skipIf(jax._src.lib.xla_extension_version < 88,
+  @unittest.skipIf(xla_extension_version < 88,
                    "Test requires jaxlib 0.3.17 or newer")
   def test_distributed_jax_cuda_visible_devices(self):
     """Test jax_cuda_visible_devices works in distributed settings."""
