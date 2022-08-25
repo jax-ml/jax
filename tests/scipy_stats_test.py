@@ -576,11 +576,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     lax_fun = lsp_stats.multinomial.logpmf
 
     def args_maker():
-      x = np.rint(rng(shape, dtype[0])).astype(dtype[0])
+      x = np.rint(rng(shape, dtype[0]))
       n = np.sum(x)
       p = rng(shape, dtype[1])
       # Normalize the array such that it sums it's entries sum to 1 (or close enough to)
-      p = (p + np.min(p)) / np.sum(p + np.min(p))
+      p = p / np.sum(p)
       return [x, n, p]
 
     with jtu.strict_promotion_if_dtypes_match(dtype):
