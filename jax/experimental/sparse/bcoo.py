@@ -17,7 +17,7 @@
 import functools
 from functools import partial
 import operator
-from typing import Any, NamedTuple, Sequence, Tuple
+from typing import Any, NamedTuple, Optional, Sequence, Tuple
 import warnings
 
 import numpy as np
@@ -1784,6 +1784,69 @@ def bcoo_reshape(mat, *, new_sizes, dimensions):
 
   return BCOO((data, new_indices), shape=new_sizes)
 
+
+def bcoo_slice(mat, *, start_indices: Sequence[int], limit_indices: Sequence[int],
+               strides: Optional[Sequence[int]]=None):
+  """Sparse implementation of {func}`jax.lax.slice`.
+
+  Args:
+    operand: BCOO array to be reshaped.
+    start_indices: sequence of integers of length `mat.ndim` specifying the starting
+      indices of each slice.
+    limit_indices: sequence of integers of length `mat.ndim` specifying the ending
+      indices of each slice
+    strides: sequence of integers of length `mat.ndim` specifying the stride for
+      each slice
+
+  Returns:
+    out: BCOO array containing the slice.
+  """
+  if not isinstance(mat, BCOO):
+    raise ValueError(f"bcoo_slice: input should be BCOO array, got type(mat)={type(mat)}")
+  start_indices = [operator.index(i) for i in start_indices]
+  limit_indices = [operator.index(i) for i in limit_indices]
+  if strides is not None:
+    strides = [operator.index(i) for i in strides]
+  else:
+    strides = [1] * mat.ndim
+  if len(start_indices) != len(limit_indices) != len(strides) != mat.ndim:
+    raise ValueError(f"bcoo_slice: indices must have size mat.ndim={mat.ndim}")
+  if strides != [1] * mat.ndim:
+    raise NotImplementedError(f"non-unit strides; got {strides}")
+
+  if not all(0 <= start <= end <= size
+             for start, end, size in safe_zip(start_indices, limit_indices, mat.shape)):
+    raise ValueError(f"bcoo_slice: invalid indices. Got start_indices={start_indices}, "
+                     f"limit_indices={limit_indices} and shape={mat.shape}")
+
+  start_batch, start_sparse, start_dense = split_list(start_indices, [mat.n_batch, mat.n_sparse])
+  end_batch, end_sparse, end_dense = split_list(limit_indices, [mat.n_batch, mat.n_sparse])
+
+  data_slices = []
+  index_slices = []
+  for i, (start, end) in enumerate(zip(start_batch, end_batch)):
+    data_slices.append(slice(None) if mat.data.shape[i] != mat.shape[i] else slice(start, end))
+    index_slices.append(slice(None) if mat.indices.shape[i] != mat.shape[i] else slice(start, end))
+  data_slices.append(slice(None))
+  index_slices.extend([slice(None), slice(None)])
+  for i, (start, end) in enumerate(zip(start_dense, end_dense)):
+    data_slices.append(slice(start, end))
+  new_data = mat.data[tuple(data_slices)]
+  new_indices = mat.indices[tuple(index_slices)]
+  new_shape = [end - start for start, end in safe_zip(start_indices, limit_indices)]
+
+  if mat.n_sparse:
+    starts = jnp.expand_dims(jnp.array(start_sparse, dtype=new_indices.dtype), range(mat.n_batch + 1))
+    ends = jnp.expand_dims(jnp.array(end_sparse, dtype=new_indices.dtype), range(mat.n_batch + 1))
+    sparse_shape = jnp.array(mat.shape[mat.n_batch: mat.n_batch + mat.n_sparse], dtype=new_indices.dtype)
+
+    keep = jnp.all((new_indices >= starts) & (new_indices < ends), -1, keepdims=True)
+    new_indices = jnp.where(keep, new_indices - starts, sparse_shape)
+
+    keep_data = lax.expand_dims(keep[..., 0], range(mat.n_batch + 1, mat.n_batch + 1 + mat.n_dense))
+    new_data = jnp.where(keep_data, new_data, 0)
+
+  return BCOO((new_data, new_indices), shape=new_shape)
 
 def _tuple_replace(tup, ind, val):
   return tuple(val if i == ind else t for i, t in enumerate(tup))
