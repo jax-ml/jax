@@ -88,6 +88,20 @@ symlink_inputs(
 )
 
 symlink_inputs(
+    name = "chlo_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo/stablehlo:chlo_ops_py_files",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_chlo",
+    ],
+)
+
+symlink_inputs(
     name = "sparse_tensor_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
@@ -126,5 +140,19 @@ symlink_inputs(
     }},
     deps = [
         ":mlir",
+    ],
+)
+
+symlink_inputs(
+    name = "stablehlo_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo/stablehlo:stablehlo_ops_py_files",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_stablehlo",
     ],
 )
