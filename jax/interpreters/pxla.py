@@ -699,7 +699,7 @@ class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
       precomputed for efficiency. A list the same length as
       `device_buffers`. Each index indicates what portion of the full array is
       stored in the corresponding device buffer, i.e. `array[indices[i]] ==
-      device_buffers[i].to_py()`.
+      np.asarray(device_buffers[i])`.
   """
   __slots__ = [
       "aval", "device_buffers", "sharding_spec", "indices",
@@ -792,7 +792,7 @@ def _sda_value(self):
     self.copy_to_host_async()
     npy_value = np.empty(self.aval.shape, self.aval.dtype)
     for i in self.one_replica_buffer_indices:
-      npy_value[self.indices[i]] = self.device_buffers[i].to_py()
+      npy_value[self.indices[i]] = np.asarray(self.device_buffers[i])
     self._npy_value = npy_value
   return self._npy_value
 

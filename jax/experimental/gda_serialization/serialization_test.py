@@ -72,16 +72,16 @@ class CheckpointTest(jtu.JaxTestCase):
         [mesh_axes, P('x'), P(None)],
         tspecs)
 
-    self.assertArraysEqual(m1.local_shards[0].data.to_py(),
+    self.assertArraysEqual(np.asarray(m1.local_shards[0].data),
                            np.array([[0], [2]]))
-    self.assertArraysEqual(m1.local_shards[1].data.to_py(),
+    self.assertArraysEqual(np.asarray(m1.local_shards[1].data),
                            np.array([[1], [3]]))
     self.assertEqual(m1.local_shards[0].data.shape, (2, 1))
     self.assertEqual(m1.dtype, np.int32)
 
-    self.assertArraysEqual(m2.local_shards[0].data.to_py(),
+    self.assertArraysEqual(np.asarray(m2.local_shards[0].data),
                            np.array([[16, 17], [18, 19]]))
-    self.assertArraysEqual(m2.local_shards[1].data.to_py(),
+    self.assertArraysEqual(np.asarray(m2.local_shards[1].data),
                            np.array([[16, 17], [18, 19]]))
     self.assertEqual(m2.local_shards[0].data.shape, (2, 2))
     self.assertEqual(m2.dtype, np.int32)
@@ -89,7 +89,7 @@ class CheckpointTest(jtu.JaxTestCase):
     for i, s in enumerate(m3.local_shards):
       self.assertEqual(s.index, (slice(None),))
       self.assertEqual(s.replica_id, i)
-      self.assertArraysEqual(s.data.to_py(), np.array([]))
+      self.assertArraysEqual(np.asarray(s.data), np.array([]))
     self.assertEqual(m3.dtype, np.float32)
 
   @jax_config.jax_array(True)
@@ -132,17 +132,17 @@ class CheckpointTest(jtu.JaxTestCase):
         tspecs)
 
     self.assertIsInstance(m1, array.Array)
-    self.assertArraysEqual(m1.addressable_shards[0].data.to_py(),
+    self.assertArraysEqual(np.asarray(m1.addressable_shards[0].data),
                            np.array([[0], [2]]))
-    self.assertArraysEqual(m1.addressable_shards[1].data.to_py(),
+    self.assertArraysEqual(np.asarray(m1.addressable_shards[1].data),
                            np.array([[1], [3]]))
     self.assertEqual(m1.addressable_shards[0].data.shape, (2, 1))
     self.assertEqual(m1.dtype, np.int32)
 
     self.assertIsInstance(m2, array.Array)
-    self.assertArraysEqual(m2.addressable_shards[0].data.to_py(),
+    self.assertArraysEqual(np.asarray(m2.addressable_shards[0].data),
                            np.array([[16, 17], [18, 19]]))
-    self.assertArraysEqual(m2.addressable_shards[1].data.to_py(),
+    self.assertArraysEqual(np.asarray(m2.addressable_shards[1].data),
                            np.array([[16, 17], [18, 19]]))
     self.assertEqual(m2.addressable_shards[0].data.shape, (2, 2))
     self.assertEqual(m2.dtype, np.int32)
@@ -151,7 +151,7 @@ class CheckpointTest(jtu.JaxTestCase):
     for i, s in enumerate(m3.addressable_shards):
       self.assertEqual(s.index, (slice(None),))
       self.assertEqual(s.replica_id, i)
-      self.assertArraysEqual(s.data.to_py(), np.array([]))
+      self.assertArraysEqual(np.asarray(s.data), np.array([]))
     self.assertEqual(m3.dtype, np.float32)
 
   def test_checkpointing_with_bigger_shape(self):
@@ -192,7 +192,7 @@ class CheckpointTest(jtu.JaxTestCase):
     }
 
     for l in m1.local_shards:
-      self.assertArraysEqual(l.data.to_py(), expected_data[l.device.id])
+      self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
 
   def test_checkpointing_scalar(self):
     global_mesh = jtu.create_global_mesh((2,), ('x'))
@@ -216,7 +216,7 @@ class CheckpointTest(jtu.JaxTestCase):
     )
 
     for l in m1.local_shards:
-      self.assertArraysEqual(l.data.to_py(), data.astype(np.float32))
+      self.assertArraysEqual(np.asarray(l.data), data.astype(np.float32))
 
   def test_spec_has_metadata(self):
     spec = {

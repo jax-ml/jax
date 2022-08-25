@@ -303,7 +303,7 @@ for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
 
 def _device_array_constant_handler(val, canonicalize_types):
-  return _ndarray_constant_handler(val.device_buffer.to_py(),
+  return _ndarray_constant_handler(np.asarray(val.device_buffer),
                                    canonicalize_types)
 for t in device_array.device_array_types:
   register_constant_handler(t, _device_array_constant_handler)

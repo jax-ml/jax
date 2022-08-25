@@ -779,9 +779,9 @@ def check_special(name, bufs):
 def _check_special(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
   if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
-    if config.jax_debug_nans and np.any(np.isnan(buf.to_py())):
+    if config.jax_debug_nans and np.any(np.isnan(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
-    if config.jax_debug_infs and np.any(np.isinf(buf.to_py())):
+    if config.jax_debug_infs and np.any(np.isinf(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
@@ -1155,7 +1155,7 @@ def _copy_device_array_to_device(
   else:
     # buffers from different XLA backends are passed through the host.
     backend = xb.get_device_backend(device)
-    moved_buf = backend.buffer_from_pyval(x.device_buffer.to_py(), device)
+    moved_buf = backend.buffer_from_pyval(np.asarray(x.device_buffer), device)
   return device_array.make_device_array(x.aval, device, moved_buf)
 
 
@@ -1182,7 +1182,7 @@ def _copy_array_to_device(x: Array, device: Optional[xc.Device]) -> Array:
   else:
     # buffers from different XLA backends are passed through the host.
     backend = xb.get_device_backend(device)
-    moved_buf = backend.buffer_from_pyval(buf.to_py(), device)
+    moved_buf = backend.buffer_from_pyval(np.asarray(buf), device)
   return array.Array(
       x.aval, sharding.SingleDeviceSharding(moved_buf.device()), [moved_buf],
       committed=(device is not None))

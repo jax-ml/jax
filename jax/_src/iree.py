@@ -88,7 +88,7 @@ class IreeBuffer(xla_client.DeviceArrayBase):
   def copy_to_device(self, device):
     return self
 
-  def to_py(self) -> np.ndarray:
+  def __array__(self, dtype=None, context=None):
     return np.asarray(self._buffer)
 
   def to_iree(self):
@@ -104,8 +104,11 @@ class IreeBuffer(xla_client.DeviceArrayBase):
     return self  # no async
 
   # overrides repr on base class which expects _value and aval attributes
-  def __repr__(self): return f'IreeBuffer({self.to_py()})'
-  _value = property(to_py)
+  def __repr__(self): return f'IreeBuffer({np.asarray(self)})'
+
+  @property
+  def _value(self):
+    return np.asarray(self)
 
 class IreeExecutable:
 

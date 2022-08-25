@@ -1626,7 +1626,7 @@ input_handlers = {ty: default_input_handler for ty in
 
 def handle_result(aval: ShapedArray, buf):
   del aval  # Unused for now
-  return buf.to_py()
+  return np.asarray(buf)
 
 xla_translations = {}
 ```
@@ -1842,9 +1842,9 @@ class DeviceArray:
   shape = property(lambda self: self.aval.shape)
   ndim  = property(lambda self: self.aval.ndim)
 
-  def __array__(self): return self.buf.to_py()
-  def __repr__(self):  return repr(self.buf.to_py())
-  def __str__(self):   return str(self.buf.to_py())
+  def __array__(self): return np.asarray(self.buf)
+  def __repr__(self):  return repr(np.asarray(self.buf))
+  def __str__(self):   return str(np.asarray(self.buf))
 
   _neg = staticmethod(neg)
   _add = staticmethod(add)

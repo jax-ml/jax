@@ -135,7 +135,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(actual, pxla.ShardedDeviceArray)
     self.assertLen(actual.device_buffers, 1)
     self.assertAllClose(
-        actual.device_buffers[0].to_py(), expected, check_dtypes=False)
+        np.asarray(actual.device_buffers[0]), expected, check_dtypes=False)
     # Repro for a bug on device_buffer aval
     _ = repr(actual.device_buffers)
 
@@ -154,7 +154,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertIsInstance(actual, pxla.ShardedDeviceArray)
     self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(actual.device_buffers[0].to_py(), expected,
+    self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
                         check_dtypes=False)
 
   @jtu.with_mesh([('x', 2)])
@@ -191,7 +191,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual[:3], expected[:3], check_dtypes=False)
     self.assertIsInstance(actual, pxla.ShardedDeviceArray)
     self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(actual.device_buffers[0].to_py()[:3], expected[:3],
+    self.assertAllClose(np.asarray(actual.device_buffers[0])[:3], expected[:3],
                         check_dtypes=False)
 
   def testBasic1DWithMeshContextManager(self):
@@ -210,7 +210,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertIsInstance(actual, pxla.ShardedDeviceArray)
     self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(actual.device_buffers[0].to_py(), expected,
+    self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
                         check_dtypes=False)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
@@ -232,13 +232,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertLen(actual.device_buffers, 4)
 
     split0, split1 = np.split(expected, 2)
-    self.assertAllClose(actual.device_buffers[0].to_py(), split0,
+    self.assertAllClose(np.asarray(actual.device_buffers[0]), split0,
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[1].to_py(), split0,
+    self.assertAllClose(np.asarray(actual.device_buffers[1]), split0,
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[2].to_py(), split1,
+    self.assertAllClose(np.asarray(actual.device_buffers[2]), split1,
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[3].to_py(), split1,
+    self.assertAllClose(np.asarray(actual.device_buffers[3]), split1,
                         check_dtypes=False)
 
   def testBasic2DWithMeshContextManager(self):
@@ -261,13 +261,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertLen(actual.device_buffers, 4)
 
     split0, split1 = np.split(expected, 2)
-    self.assertAllClose(actual.device_buffers[0].to_py(), split0,
+    self.assertAllClose(np.asarray(actual.device_buffers[0]), split0,
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[1].to_py(), split0,
+    self.assertAllClose(np.asarray(actual.device_buffers[1]), split0,
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[2].to_py(), split1,
+    self.assertAllClose(np.asarray(actual.device_buffers[2]), split1,
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[3].to_py(), split1,
+    self.assertAllClose(np.asarray(actual.device_buffers[3]), split1,
                         check_dtypes=False)
 
   def testDifferentNestedMesh(self):
@@ -318,13 +318,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertLen(actual.device_buffers, 4)
 
     splits = np.split(expected, 4)
-    self.assertAllClose(actual.device_buffers[0].to_py(), splits[0],
+    self.assertAllClose(np.asarray(actual.device_buffers[0]), splits[0],
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[1].to_py(), splits[1],
+    self.assertAllClose(np.asarray(actual.device_buffers[1]), splits[1],
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[2].to_py(), splits[2],
+    self.assertAllClose(np.asarray(actual.device_buffers[2]), splits[2],
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[3].to_py(), splits[3],
+    self.assertAllClose(np.asarray(actual.device_buffers[3]), splits[3],
                         check_dtypes=False)
 
   @jtu.with_mesh([('x', 2)])
@@ -363,7 +363,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertIsInstance(actual, pxla.ShardedDeviceArray)
     self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(actual.device_buffers[0].to_py(), expected,
+    self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
                         check_dtypes=False)
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
@@ -390,7 +390,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertIsInstance(actual, array.Array)
     self.assertLen(actual.addressable_shards, 2)
-    self.assertAllClose(actual._arrays[0].to_py(), expected,
+    self.assertAllClose(np.asarray(actual._arrays[0]), expected,
                         check_dtypes=False)
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
@@ -419,7 +419,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertIsInstance(actual, array.Array)
     self.assertLen(actual.addressable_shards, 2)
-    self.assertAllClose(actual._arrays[0].to_py(), expected,
+    self.assertAllClose(np.asarray(actual._arrays[0]), expected,
                         check_dtypes=False)
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
@@ -842,13 +842,13 @@ class PJitTest(jtu.BufferDonationTestCase):
         ((jax.ShapedArray(x.shape, x.dtype, weak_type=False),) * 2, {}))
 
     splits = np.split(expected, 4)
-    self.assertAllClose(actual.device_buffers[0].to_py(), splits[0],
+    self.assertAllClose(np.asarray(actual.device_buffers[0]), splits[0],
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[1].to_py(), splits[1],
+    self.assertAllClose(np.asarray(actual.device_buffers[1]), splits[1],
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[2].to_py(), splits[2],
+    self.assertAllClose(np.asarray(actual.device_buffers[2]), splits[2],
                         check_dtypes=False)
-    self.assertAllClose(actual.device_buffers[3].to_py(), splits[3],
+    self.assertAllClose(np.asarray(actual.device_buffers[3]), splits[3],
                         check_dtypes=False)
 
     for obj in [lowered, compiled]:

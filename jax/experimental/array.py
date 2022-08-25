@@ -290,9 +290,6 @@ class Array:
     self._check_if_deleted()
     return list(self.sharding.device_set)
 
-  def to_py(self) -> np.ndarray:
-    return self._value
-
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
@@ -367,7 +364,7 @@ class Array:
 
       for s in self.addressable_shards:
         if not replica_id_exists or s.replica_id == 0:
-          npy_value[s.index] = s.data._arrays[0].to_py()  # type: ignore  # [union-attr]
+          npy_value[s.index] = np.asarray(s.data._arrays[0])  # type: ignore  # [union-attr]
       self._npy_value = npy_value  # type: ignore
     # https://docs.python.org/3/library/typing.html#typing.cast
     return cast(np.ndarray, self._npy_value)

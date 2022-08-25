@@ -386,8 +386,11 @@ class GlobalDeviceArray:
                      for s in self.local_shards if s.replica_id == 0]
     npy_value = np.empty(self.shape, self.dtype)
     for s in unique_shards:
-      npy_value[s.index] = s.data.to_py()
+      npy_value[s.index] = np.asarray(s.data)
     return npy_value
+
+  def __array__(self, dtype=None, context=None):
+    return self._value if dtype is None else self._value.astype(dtype)
 
   def local_data(self, index) -> DeviceArray:
     return pxla._set_aval(self._device_buffers[index])

@@ -103,7 +103,7 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
   def _pjit(inp):
     if isinstance(inp, GlobalDeviceArray):
       if inp.is_fully_replicated:
-        return inp.local_data(0).to_py()
+        return np.asarray(inp.local_data(0))
       global_mesh = inp.mesh
       in_axis_resources = FROM_GDA
     else:
@@ -119,7 +119,7 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
     with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
       out = pjit(lambda x: x, in_axis_resources=in_axis_resources,
                  out_axis_resources=None)(inp)
-    return out.local_data(0).to_py()
+    return np.asarray(out.local_data(0))
 
   with config_internal.parallel_functions_output_gda(True):
     return jax.tree_util.tree_map(_pjit, in_tree)

@@ -22,6 +22,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Deprecations:
   * The deprecated `DeviceArray.tile()` method has been removed. Use {func}`jax.numpy.tile`
     ({jax-issue}`#11944`).
+  * `DeviceArray.to_py()` has been deprecated. Use `np.asarray(x)` instead.
 
 ## jax 0.3.16
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.15...main).
