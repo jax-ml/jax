@@ -2953,9 +2953,9 @@ class LazyConstantTest(jtu.JaxTestCase):
       unary_op_types[r.op] = (unary_op_types.get(r.op, set()) |
                               {np.dtype(t) for t in r.dtypes})
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": f"_{op}", "op_name": op, "rec_dtypes": dtypes}
-      for op, dtypes in unary_op_types.items()))
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{op}", "op_name": op, "rec_dtypes": dtypes}
+      for op, dtypes in unary_op_types.items())
   def testUnaryWeakTypes(self, op_name, rec_dtypes):
     """Test that all lax unary ops propagate weak_type information appropriately."""
     # Find a valid dtype for the function.
@@ -2973,8 +2973,12 @@ class LazyConstantTest(jtu.JaxTestCase):
     lax_op = op(lax_val)
 
     self.assertAllClose(py_op, lax_op, check_dtypes=True)
-    self.assertTrue(py_op.aval.weak_type)
     self.assertFalse(lax_op.aval.weak_type)
+    if type(py_val) == bool:
+      # Booleans should have weak types stripped.
+      self.assertFalse(py_op.aval.weak_type)
+    else:
+      self.assertTrue(py_op.aval.weak_type)
 
   def testCumsumLengthOne(self):
     # regression test for issue 4672
