@@ -24,6 +24,7 @@ from jax import jit
 from jax import lax, core
 from jax.interpreters import ad
 import jax.numpy as jnp
+from jax.typing import ArrayLike, NDArray
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
 from jax._src.numpy.util import _wraps
@@ -1027,11 +1028,11 @@ def lpmn_values(m: int, n: int, z: jnp.ndarray, is_normalized: bool) -> jnp.ndar
 
 
 @partial(jit, static_argnums=(4,))
-def _sph_harm(m: jnp.ndarray,
-              n: jnp.ndarray,
-              theta: jnp.ndarray,
-              phi: jnp.ndarray,
-              n_max: int) -> jnp.ndarray:
+def _sph_harm(m: NDArray,
+              n: NDArray,
+              theta: NDArray,
+              phi: NDArray,
+              n_max: int) -> NDArray:
   """Computes the spherical harmonics."""
 
   cos_colatitude = jnp.cos(phi)

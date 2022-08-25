@@ -15,7 +15,7 @@
 
 import abc
 from functools import partial
-from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence
+from typing import Callable, Hashable, Iterator, NamedTuple, Sequence
 
 import numpy as np
 
@@ -35,6 +35,7 @@ from jax.experimental.sharding import (
 
 from jax._src import dispatch
 from jax._src import dtypes
+from jax.typing import NDArray
 from jax._src.api import jit, vmap
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
@@ -93,7 +94,7 @@ class PRNGImpl(NamedTuple):
 
 # -- PRNG key arrays
 
-def _check_prng_key_data(impl, key_data: jnp.ndarray):
+def _check_prng_key_data(impl, key_data: NDArray):
   ndim = len(impl.key_shape)
   if not all(hasattr(key_data, attr) for attr in ['ndim', 'shape', 'dtype']):
     raise TypeError("JAX encountered invalid PRNG key data: expected key_data "
@@ -136,9 +137,9 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   """
 
   impl: PRNGImpl
-  _base_array: jnp.ndarray
+  _base_array: NDArray
 
-  def __init__(self, impl, key_data: Any):
+  def __init__(self, impl, key_data: NDArray):
     assert not isinstance(key_data, core.Tracer)
     _check_prng_key_data(impl, key_data)
     self.impl = impl
@@ -806,8 +807,8 @@ def _is_threefry_prng_key(key: jnp.ndarray) -> bool:
     return False
 
 
-def threefry_seed(seed: jnp.ndarray) -> jnp.ndarray:
-  """Create a single raw threefry PRNG key from an integer seed.
+def threefry_seed(seed: NDArray) -> NDArray:
+  """Create a single raw threefry PRNG key given an integer seed.
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
@@ -1015,7 +1016,7 @@ def threefry_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
   return _threefry_split(key, int(num))  # type: ignore
 
 @partial(jit, static_argnums=(1,), inline=True)
-def _threefry_split(key, num) -> jnp.ndarray:
+def _threefry_split(key, num) -> NDArray:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 

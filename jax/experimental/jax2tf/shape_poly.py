@@ -42,14 +42,13 @@ import jax
 from jax._src.numpy import lax_numpy
 from jax._src import dtypes
 from jax._src.lax import lax
+from jax._src.typing.simple import DimSize, Shape
 import opt_einsum
 from jax import config
 from jax import core
 
 import numpy as np
 
-DimSize = core.DimSize
-Shape = core.Shape
 TfVal = Any
 # A dimension environment maps dimension variables to expressions that
 # compute the value of the dimension. These expressions refer to the

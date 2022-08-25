@@ -64,6 +64,7 @@ from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax.util import safe_map, safe_zip, split_list
 from jax._src.config import config
 from jax._src.lax.control_flow import _check_tree_and_avals
+from jax._src.lax import lax as _lax
 from jax._src.numpy import lax_numpy
 from jax._src.util import canonicalize_axis
 from jax.experimental import sparse

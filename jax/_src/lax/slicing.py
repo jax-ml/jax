@@ -40,12 +40,12 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.typing.simple import Shape
 
 xb = xla_bridge
 xc = xla_client
 
 Array = Any
-Shape = core.Shape
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip

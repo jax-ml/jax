@@ -37,6 +37,7 @@ import numpy as np
 from jax._src import dtypes
 from jax._src import config as jax_config
 from jax._src.config import FLAGS, config
+from jax._src.typing.simple import DimSize, Shape
 from jax.errors import (ConcretizationTypeError, TracerArrayConversionError,
                         TracerIntegerConversionError, UnexpectedTracerError)
 from jax import linear_util as lu
@@ -1598,13 +1599,6 @@ raise_to_shaped_mappings : Dict[type, Callable] = {
 }
 
 ### Operations on shapes and dimension sizes.
-
-# Shapes are tuples of dimension sizes, which are normally integers. We allow
-# modules to extend the set of dimension sizes to contain other types, e.g.,
-# symbolic dimensions in jax2tf.shape_poly.DimVar and masking.Poly.
-DimSize = Union[int, Any]  # extensible
-Shape = Sequence[DimSize]
-
 
 class InconclusiveDimensionOperation(Exception):
   """Raised when we cannot conclusively compute with symbolic dimensions."""

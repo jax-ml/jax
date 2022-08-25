@@ -64,7 +64,7 @@ def svd(a, full_matrices: bool = True, compute_uv: bool = True,
       vh = _H(u * sign[..., None, :].astype(u.dtype))
       return u, s, vh
     else:
-      return lax.rev(lax.sort(s, dimension=-1), dimensions=[s.ndim-1])
+      return lax.rev(lax.sort(s, dimension=-1), dimensions=[s.ndim-1])  # type: ignore
 
   return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 

@@ -44,6 +44,7 @@ from jax import lax
 from jax.core import ShapedArray, DShapedArray, ConcreteArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
+from jax.typing import ndarray
 
 from jax._src import device_array
 from jax._src import dtypes
@@ -52,7 +53,6 @@ from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator)
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.slicing import _getslice
-from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.reductions import (  # noqa: F401
   _ensure_optional_axes, _reduction_dims,
   alltrue, amin, amax, any, all, average, count_nonzero, cumsum, cumprod, cumproduct,
@@ -3586,12 +3586,12 @@ def take_along_axis(arr, indices, axis: Optional[int],
       j += 1
 
 
-  gather_indices = lax.concatenate(gather_indices, dimension=j)
+  gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map))
-  return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes),
+  return lax.gather(arr, gather_indices_arr, dnums, tuple(slice_sizes),
                     mode="fill" if mode is None else mode)
 
 ### Indexing

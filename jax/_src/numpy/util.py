@@ -20,10 +20,10 @@ from typing import (
 )
 import warnings
 
+from jax.typing import ndarray
 from jax._src.config import config
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
-from jax._src.numpy.ndarray import ndarray
 from jax._src.util import safe_zip, safe_map
 from jax._src import api
 from jax import core

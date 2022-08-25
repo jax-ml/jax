@@ -11,9 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 import abc
-from typing import Any, Tuple, Optional, Union
+from typing import Any, Optional, Tuple, Union
+from typing_extensions import Protocol
 
 from jax import core
 from jax.interpreters import pxla
@@ -42,6 +44,7 @@ class ndarray(metaclass=ArrayMeta):
   ndim: int
   shape: Tuple[int, ...]
   size: int
+  sharding: Any
 
   def __init__(self, shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):
@@ -292,3 +295,12 @@ ndarray.register(device_array.DeviceArray)
 for t in device_array.device_array_types:
   ndarray.register(t)
 ndarray.register(pxla._SDA_BASE_CLASS)
+
+
+
+class HasArrayMethod(Protocol):
+  def __array__(self) -> np.ndarray:
+    ...
+
+NDArray = Union[ndarray, core.Tracer]
+ArrayLike = Union[bool, int, float, complex, NDArray, np.ndarray, HasArrayMethod]
