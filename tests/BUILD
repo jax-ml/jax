@@ -90,17 +90,8 @@ py_test(
 )
 
 py_test(
-    name = "distributed_multinode_test",
-    srcs = ["distributed_multinode_test.py"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
-)
-
-py_test(
-    name = "distributed_test",
-    srcs = ["distributed_test.py"],
+    name = "multiprocess_gpu_test",
+    srcs = ["multiprocess_gpu_test.py"],
     args = [
         "--exclude_test_targets=MultiProcessGpuTest",
     ],
