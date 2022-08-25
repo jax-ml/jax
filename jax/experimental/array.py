@@ -257,7 +257,7 @@ class Array:
   def is_fully_addressable(self) -> bool:
     return self.sharding.is_fully_addressable()
 
-  def __array__(self, dtype=None):
+  def __array__(self, dtype=None, context=None):
     return np.asarray(self._value, dtype=dtype)
 
   def __dlpack__(self):
