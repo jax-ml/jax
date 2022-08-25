@@ -33,6 +33,7 @@ read -r -d '' setup_cmd <<EOF
 python3.8 -m pip install --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda_releases.html \
 && python3.8 -m pip install git+https://github.com/google/jax \
 && python3.8 -m pip install pytest \
+&& python3.8 -m pip install pytest-forked \
 && mkdir -p /workspace/outputs/
 EOF
 
@@ -40,9 +41,9 @@ EOF
 read -r -d '' cmd <<EOF
 date \
 && python3.8 -m pip  list | grep jax \
-&& python3.8 -m pytest -v  -s --continue-on-collection-errors \
+&& python3.8 -m pytest --forked -v -s --continue-on-collection-errors \
     --junit-xml=/workspace/outputs/junit_output_\${SLURM_PROCID}.xml \
-    /workspace/tests/distributed_multinode_test.py
+    /workspace/tests/multiprocess_gpu_test.py
 EOF
 
 # create run specific output directory for ease of analysis
