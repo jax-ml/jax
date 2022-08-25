@@ -36,6 +36,7 @@ from jax import lax
 from jax._src.lib import xla_extension_version
 from jax._src.lib import gpu_sparse
 from jax._src.lib import xla_bridge
+from jax._src.util import unzip2
 from jax import jit
 from jax import tree_util
 from jax import vmap
@@ -925,6 +926,50 @@ class BCOOTest(jtu.JaxTestCase):
       trans = jax.vmap(trans)
     Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
     self.assertArraysEqual(trans(M), trans(Msp).todense())
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_bcoo_slice(self, shape, dtype, n_batch, n_dense):
+    rng = self.rng()
+    sprng = rand_sparse(rng)
+    M = sprng(shape, dtype)
+    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
+
+    rng = self.rng()
+    slices = rng.randint(0, M.shape, (2, M.ndim)).T
+    slices.sort(1)
+    start_indices, limit_indices = unzip2(slices)
+    strides = None  # strides currently not implemented
+    kwds = dict(start_indices=start_indices, limit_indices=limit_indices, strides=strides)
+
+    dense_result = lax.slice(M, **kwds)
+    sparse_result = sparse.bcoo_slice(Msp, **kwds)
+
+    self.assertArraysEqual(dense_result, sparse_result.todense())
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}_idx={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, idx),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense,
+       "idx": idx}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)
+      for idx in [1, slice(1, 3)]))
+  def test_bcoo_getitem(self, shape, dtype, n_batch, n_dense, idx):
+    # Note: __getitem__ is currently only supported for simple slices and indexing
+    rng = self.rng()
+    sprng = rand_sparse(rng)
+    M = sprng(shape, dtype)
+    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
+    self.assertArraysEqual(M[idx], Msp[idx].todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
