@@ -860,30 +860,6 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(expected, primals)
     self.assertAllClose(np.zeros_like(x), tangents)
 
-  def testSimpleIndexingUsesSlice(self):
-    jaxpr = jax.make_jaxpr(lambda x: x[:2, :2])(jnp.ones((3, 4)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.slice_p)
-
-    jaxpr = jax.make_jaxpr(lambda x: x[:, 1::2])(jnp.ones((3, 4)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.slice_p)
-
-    jaxpr = jax.make_jaxpr(lambda x: x[0, :2, 1])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[1].primitive, lax.squeeze_p)
-
-    jaxpr = jax.make_jaxpr(lambda x: x[0, 0])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[1].primitive, lax.squeeze_p)
-
-    jaxpr = jax.make_jaxpr(lambda x: x[:, 1])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[1].primitive, lax.squeeze_p)
-
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/google/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
@@ -891,12 +867,9 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertNotIn('gather', str(jaxpr))
 
     jaxpr = jax.make_jaxpr(lambda x: x[0:6:1])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.slice_p)
-
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
     jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.slice_p)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
