@@ -402,7 +402,7 @@ def _shard_arg(arg, devices, arg_indices, mode):
 def shard_args(devices: Sequence[xb.xla_client.Device],
                indices: Sequence[Sequence[Index]],
                mode: InputsHandlerMode,
-               args) -> Sequence[Sequence[xb.xla_client.Buffer]]:
+               args) -> Sequence[Union[xb.ShardedBuffer, Sequence[xb.xla_client.Buffer]]]:
   """Shard each argument data array along its leading axis.
 
   Args:
@@ -565,7 +565,8 @@ def local_aval_to_result_handler(
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
-PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
+PxlaResultHandler = Callable[..., Callable[
+    [Union[List[xb.xla_client.Buffer], xb.ShardedBuffer]], Any]]
 local_result_handlers: Dict[Tuple[Type[core.AbstractValue], OutputType], PxlaResultHandler] = {}
 
 def sda_array_result_handler(aval: ShapedArray, sharding, indices):
@@ -2009,6 +2010,8 @@ class ExecuteReplicated:
           input_bufs)
     if dispatch.needs_check_special():
       for bufs in out_bufs:
+        if xb.use_sharded_buffer and isinstance(bufs, xb.xla_client.ShardedBuffer):
+          bufs = cast(xb.xla_client.ShardedBuffer, bufs).get_device_buffers()
         dispatch.check_special("parallel computation", bufs)
     return self.out_handler(out_bufs)
 

@@ -254,14 +254,18 @@ class GlobalDeviceArray:
 
   """
 
-  def __init__(self, global_shape: Shape, global_mesh: pxla.Mesh,
-               mesh_axes: MeshAxes, device_buffers: Sequence[DeviceArray],
+  def __init__(self,
+               global_shape: Shape,
+               global_mesh: pxla.Mesh,
+               mesh_axes: MeshAxes,
+               device_buffers: Union[xb.ShardedBuffer, Sequence[DeviceArray]],
                _gda_fast_path_args: Optional[_GdaFastPathArgs] = None,
                _enable_checks: bool = True):
     self._global_shape = global_shape
     self._global_mesh = global_mesh
     self._mesh_axes = mesh_axes
-    self._device_buffers = device_buffers
+    self._init_buffers(device_buffers)
+
     # Optionally precomputed for performance.
     self._gda_fast_path_args = _gda_fast_path_args
     self._current_process = xb.process_index()
@@ -272,7 +276,7 @@ class GlobalDeviceArray:
       self._local_devices = self._gda_fast_path_args.local_devices
 
     if _enable_checks or config.jax_enable_checks:
-      for db, ld in safe_zip(device_buffers, self._local_devices):
+      for db, ld in safe_zip(self._device_buffers, self._local_devices):
         if db.device() != ld:
           raise ValueError(
               "The `global_mesh.local_devices` and `device_buffers` device "
@@ -281,16 +285,50 @@ class GlobalDeviceArray:
 
     if _enable_checks or config.jax_enable_checks:
       ss = get_shard_shape(self._global_shape, self._global_mesh, self.mesh_axes)
-      assert all(db.shape == ss for db in device_buffers), (
+      assert all(db.shape == ss for db in self._device_buffers), (
           f"Expected shard shape {ss} doesn't match the device buffer "
           f"shape, got: {[db.shape for db in device_buffers]}")
 
-    dtype = device_buffers[0].dtype
+    if self._sharded_buffer is None:
+      dtype = device_buffers[0].dtype  # type: ignore
+    else:
+      dtype = self._sharded_buffer.dtype  # type: ignore
     if _enable_checks or config.jax_enable_checks:
-      assert all(db.dtype == dtype for db in device_buffers), (
+      assert all(db.dtype == dtype for db in self._device_buffers), (
           "Input arrays to GlobalDeviceArray must have matching dtypes, "
           f"got: {[db.dtype for db in device_buffers]}")
     self.dtype = dtype
+
+  def _init_buffers(self, device_buffers):
+    self._maybe_device_buffers = None
+
+    # ShardedBuffer is the fast path for managing sharded buffers that avoids
+    # creating python objects for every device.
+    if xb.use_sharded_buffer:
+      if isinstance(device_buffers, xb.xla_client.ShardedBuffer):
+        # if ShardedBuffer is provided, we don't need to use `_device_buffers`
+        self._sharded_buffer = device_buffers  # type: ignore
+      elif isinstance(device_buffers[0], DeviceArray):  # type: ignore
+        # if xla_client.Buffer is provided, we convert it to ShardedBuffer.
+        self._sharded_buffer = xb.xla_client.ShardedBuffer.create_sharded_buffer(
+            device_buffers)
+      else:
+        # if `device_buffers` is any other types that cannot
+        # be converted to ShardedBuffer, then we use `device_buffers`.
+        # TODO(yashkatariya,chky): Remove this branch once everyone is using
+        # sharded_buffer
+        self._sharded_buffer = None
+        self._maybe_device_buffers = device_buffers
+    else:
+      # TODO: Remove this after bumping the minimum jaxlib version.
+      self._sharded_buffer = None
+      self._maybe_device_buffers = device_buffers
+
+  @property
+  def _device_buffers(self):
+    if self._maybe_device_buffers is None:
+      self._maybe_device_buffers = self._sharded_buffer.get_device_buffers()  # type: ignore
+    return self._maybe_device_buffers
 
   def __eq__(self, other: object):
     raise NotImplementedError(
@@ -396,8 +434,13 @@ class GlobalDeviceArray:
     return pxla._set_aval(self._device_buffers[index])
 
   def block_until_ready(self):
-    for db in self._device_buffers:
-      db.block_until_ready()
+    # self._sharded_buffer can be None if xla_extension_version < 90 or
+    # _DeviceArray is used.
+    if self._sharded_buffer is None:
+      for db in self._device_buffers:
+        db.block_until_ready()
+    else:
+      self._sharded_buffer.block_until_ready() # type: ignore
     return self
 
   @classmethod
@@ -567,7 +610,11 @@ api_util._shaped_abstractify_handlers[GlobalDeviceArray] = \
 def _gda_shard_arg(x, devices, indices, mode):
   if mode == pxla.InputsHandlerMode.pmap:
     raise RuntimeError('GDA is not supported with pmap.')
-  return x._device_buffers
+  # self._sharded_buffer can be None if xla_extension_version < 90 or
+  # _DeviceArray is used.
+  if x._sharded_buffer is None:
+    return x._device_buffers
+  return x._sharded_buffer
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
 

@@ -51,6 +51,11 @@ traceback_util.register_exclusion(__file__)
 
 XlaBackend = xla_client._xla.Client
 
+use_sharded_buffer = xla_client._version >= 90
+# TODO(chky): Change ShardedBuffer to xla_client.ShardedBuffer when the minimum
+# jaxlib version is updated.
+ShardedBuffer = Any
+
 FLAGS = flags.FLAGS
 
 # TODO(phawkins): Remove jax_xla_backend.
