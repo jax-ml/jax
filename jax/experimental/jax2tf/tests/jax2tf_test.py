@@ -14,31 +14,32 @@
 """Tests for JAX2TF converted.
 
 Specific JAX primitive conversion tests are in primitives_test."""
-
-import unittest
+import collections
+import os
 from typing import Callable, Dict, Optional, Tuple
+import unittest
 
 from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
-
-from collections import OrderedDict
-import os
 
 import jax
 from jax import ad_checkpoint
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
+from jax._src import lib as jaxlib
+from jax._src import source_info_util
 from jax._src import test_util as jtu
+import jax._src.lib.xla_bridge
 from jax.config import config
 from jax.experimental import jax2tf
+from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.jax2tf.tests import tf_test_util
-import jax.interpreters.mlir as mlir
-from jax._src import source_info_util
-from jax._src import lib as jaxlib
-import jax._src.lib.xla_bridge
-
+from jax.experimental.pjit import FROM_GDA
+from jax.experimental.pjit import pjit
+from jax.interpreters import mlir
+from jax.interpreters.pxla import PartitionSpec as P
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
@@ -370,7 +371,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     default_float_type = jax2tf.dtype_of_val(4.)
     x = tf.Variable([4.], dtype=default_float_type)
     y = tf.Variable([4., 5.], dtype=default_float_type)
-    inputs = OrderedDict()
+    inputs = collections.OrderedDict()
     inputs['r'] = x
     inputs['d'] = y
     with tf.GradientTape(persistent=True) as tape:
@@ -1323,12 +1324,44 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
                                dim_args_spec=('0.0',))
 
     res = tf.function(f_tf, jit_compile=True, autograph=False)(x1)
-    self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
-                        jax_res)
+    self.assertAllClose(
+        tf.nest.map_structure(lambda t: t.numpy(), res), jax_res)
+
+  def test_global_device_array(self):
+
+    def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
+      if global_data is None:
+        global_data = np.arange(np.prod(global_shape)).reshape(global_shape)
+      return GlobalDeviceArray.from_callback(
+          global_shape, global_mesh, mesh_axes,
+          lambda idx: global_data[idx]), global_data
+
+    # Create GDA
+    global_mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh_axes = P(("x", "y"))
+    params, _ = create_gda((8, 2), global_mesh, mesh_axes)
+
+    def jax_func(input_data):
+      handle = pjit(
+          jnp.matmul,
+          in_axis_resources=(P("y", "x"), FROM_GDA),
+          out_axis_resources=None)
+      return handle(input_data, params)
+
+    with global_mesh:
+      tf_func = tf.function(
+          jax2tf.convert(jax_func, enable_xla=True),
+          jit_compile=True,
+      )
+      input_data = np.arange(16).reshape(2, 8)
+      jax_out = jax_func(input_data=input_data)
+      tf_out = tf_func(input_data=input_data)
+      # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
+      np.array_equal(jax_out._value, np.array(tf_out))
 
 
 if __name__ == "__main__":
   # TODO: Remove once tensorflow is 2.10.0 everywhere.
-  if not hasattr(tfxla, 'optimization_barrier'):
-    jax.config.update('jax_remat_opt_barrier', False)
+  if not hasattr(tfxla, "optimization_barrier"):
+    jax.config.update("jax_remat_opt_barrier", False)
   absltest.main(testLoader=jtu.JaxTestLoader())
