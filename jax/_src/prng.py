@@ -30,6 +30,8 @@ from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
+from jax.experimental.sharding import (
+    MeshPspecSharding, SingleDeviceSharding, PmapSharding, OpShardingSharding)
 
 from jax._src import dispatch
 from jax._src import dtypes
@@ -321,9 +323,8 @@ class KeyTy:
     phys_sharding_spec = pxla.ShardingSpec(
         sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
         mesh_mapping=sharding.sharding_spec.mesh_mapping)
-    phys_sharding = jax.experimental.sharding.PmapSharding(
-        devices=sharding.devices,
-        sharding_spec=phys_sharding_spec)
+    phys_sharding = PmapSharding(devices=sharding.devices,
+                                 sharding_spec=phys_sharding_spec)
 
     # set up grounded indices
     trailing_inds = [slice(None)] * len(key_shape)
@@ -339,8 +340,40 @@ class KeyTy:
     return handler
 
   @staticmethod
-  def global_sharded_result_handler(aval, sharding):
-    raise NotImplementedError  # TODO(frostig,yashkatariya): implement!
+  def global_sharded_result_handler(aval, out_sharding):
+    phys_aval, = KeyTy.physical_avals(aval)
+    key_shape = aval.dtype.impl.key_shape
+
+    # TODO(yashkatariya,frostig): remove this conditional and inline it when
+    # the transient config ever settles
+    if config.jax_array:
+      output_type = pxla.OutputType.Array
+    else:
+      output_type = pxla.OutputType.GlobalDeviceArray
+
+    phys_handler_maker = pxla.global_result_handlers[
+        (core.ShapedArray, output_type)]
+
+    if isinstance(out_sharding, SingleDeviceSharding):
+      phys_sharding = out_sharding
+    elif isinstance(out_sharding, MeshPspecSharding):
+      # TODO(yashkatariya,frostig): not covered by tests until we write a test
+      # that uses pjit with axis resource annotations (using GDA, not Array)
+      trailing_spec = [None] * len(key_shape)
+      phys_sharding = MeshPspecSharding(
+          out_sharding.mesh,
+          pxla.PartitionSpec(*out_sharding.spec, *trailing_spec))
+    else:
+      # TODO(yashkatariya,frostig): implement. Plan: accept an argument in
+      # this handler indicating whether the sharding came from XLA or not.
+      # Pass the sharding through if it's from XLA, otherwise maybe create
+      # a new op sharding with a trivially extended `tile_assignment_dimensions`
+      raise NotImplementedError
+
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding)
+    def handler(bufs):
+      return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs))
+    return handler
 
   # eltype-polymorphic primitive lowering rules
 

@@ -32,6 +32,7 @@ from jax import dtypes
 from jax import stages
 from jax.errors import JAXTypeError
 from jax import lax
+from jax import prng
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import maps
 from jax.experimental import PartitionSpec as P
@@ -87,10 +88,11 @@ def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
       global_shape, global_mesh, mesh_axes, lambda idx: global_data[idx]), global_data
 
 
-def create_array(global_shape, global_mesh, mesh_axes, global_data=None):
+def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
+                 dtype=np.float32):
   if global_data is None:
     global_data = np.arange(
-        prod(global_shape), dtype=np.float32).reshape(global_shape)
+        prod(global_shape), dtype=dtype).reshape(global_shape)
 
   if isinstance(mesh_axes, Sharding):
     sharding = mesh_axes
@@ -1819,6 +1821,44 @@ class ArrayPjitTest(jtu.JaxTestCase):
         with self.assertRaisesRegex(
             ValueError, 'Array sharding does not match the input sharding'):
           compiled(a2, a2)
+
+  @jax_array(True)
+  def test_globally_sharded_key_array_result_8x4_single_device(self):
+    input_shape = (8, 4)
+    seeds = jnp.arange(
+        prod(input_shape), dtype=np.uint32).reshape(input_shape)
+
+    @pjit
+    def make_keys(seeds):
+      make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+      return make_key(seeds)
+
+    out = make_keys(seeds)
+    self.assertIsInstance(out, jax.random.KeyArray)
+    self.assertEqual(out.shape, input_shape)
+    out.unsafe_raw_array()  # doesn't crash
+
+  # TODO(yashkatariya,frostig): re-enable together with implementation in the
+  # global result handler in `jax._src.prng.KeyTy`
+  @unittest.skip('XLA output sharding support not yet implemented')
+  @jax_array(True)
+  def test_globally_sharded_key_array_result_8x4_multi_device(self):
+    input_shape = (8, 4)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    spec = P('x', 'y')
+
+    seeds, _ = create_array(input_shape, mesh, spec, dtype=np.uint32)
+
+    # TODO(yashkatariya,frostig): also test pjit with axis resource annotations
+    @pjit
+    def make_keys(seeds):
+      make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+      return make_key(seeds)
+
+    # TODO(yashkatariya,frostig): also test shape, dype, maybe a reference
+    # value (from execution without pjit)
+    out = make_keys(seeds)
+    out.unsafe_raw_array()  # doesn't crash
 
   def test_array_device_assignment_mismatch_out_shardings(self):
     input_shape = (8, 2)
