@@ -16,7 +16,6 @@
 import abc
 from functools import partial
 from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence
-import warnings
 
 import numpy as np
 
@@ -24,7 +23,6 @@ import jax
 from jax import lax
 from jax import core
 from jax import numpy as jnp
-from jax import tree_util
 from jax.config import config
 from jax.dtypes import float0
 from jax.interpreters import ad
@@ -287,7 +285,8 @@ class KeyTy:
   # handlers
 
   @staticmethod
-  def physical_avals(aval):
+  def physical_avals(aval):  # TODO(frostig): rename to `grounded_avals`
+    # TODO(frostig): dedup with `keys_aval_to_base_arr_aval``
     return [core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),
                              jnp.dtype('uint32'))]
 
@@ -304,14 +303,44 @@ class KeyTy:
     return handler
 
   @staticmethod
-  def sharded_result_handler(aval, sharding, indices):
+  def local_sharded_result_handler(aval, sharding, indices):
     phys_aval, = KeyTy.physical_avals(aval)
+    key_shape = aval.dtype.impl.key_shape
+
+    # TODO(yashkatariya,frostig): remove this conditional and inline it when
+    # the transient config ever settles
+    if config.jax_array:
+      output_type = pxla.OutputType.Array
+    else:
+      output_type = pxla.OutputType.ShardedDeviceArray
     phys_handler_maker = pxla.local_result_handlers[
-        (core.ShapedArray, pxla.OutputType.ShardedDeviceArray)]
-    phys_handler = phys_handler_maker(phys_aval, sharding, indices)
+        (core.ShapedArray, output_type)]
+
+    # set up a grounded sharding (with a grounded sharding spec)
+    trailing_sharding = [pxla.NoSharding()] * len(key_shape)
+    phys_sharding_spec = pxla.ShardingSpec(
+        sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
+        mesh_mapping=sharding.sharding_spec.mesh_mapping)
+    phys_sharding = jax.experimental.sharding.PmapSharding(
+        devices=sharding.devices,
+        sharding_spec=phys_sharding_spec)
+
+    # set up grounded indices
+    trailing_inds = [slice(None)] * len(key_shape)
+    phys_indices = [(*inds, *trailing_inds) for inds in indices]
+
+    # make a physical handler
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, phys_indices)
+
+    # set up a handler that calls the physical one and wraps back up
     def handler(bufs):
       return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs))
+
     return handler
+
+  @staticmethod
+  def global_sharded_result_handler(aval, sharding):
+    raise NotImplementedError  # TODO(frostig,yashkatariya): implement!
 
   # eltype-polymorphic primitive lowering rules
 

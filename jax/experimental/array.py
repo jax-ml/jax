@@ -437,14 +437,21 @@ pxla.shard_arg_handlers[Array] = _array_shard_arg
 
 
 def _array_global_result_handler(global_aval, out_sharding):
-  return lambda bufs: Array(global_aval, out_sharding, bufs, committed=True,
-                            _skip_checks=True)
+  if core.aval_has_custom_eltype(global_aval):
+    return global_aval.dtype.global_sharded_result_handler(
+        global_aval, out_sharding)
+  else:
+    return lambda bufs: Array(global_aval, out_sharding, bufs, committed=True,
+                              _skip_checks=True)
 pxla.global_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_global_result_handler
 
 
 def _array_local_result_handler(aval, sharding, indices):
-  return lambda bufs: Array(aval, sharding, bufs, committed=True,
-                            _skip_checks=True)
+  if core.aval_has_custom_eltype(aval):
+    return aval.dtype.local_sharded_result_handler(aval, sharding, indices)
+  else:
+    return lambda bufs: Array(aval, sharding, bufs, committed=True,
+                              _skip_checks=True)
 pxla.local_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_local_result_handler
 pxla.local_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_local_result_handler
