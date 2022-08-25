@@ -30,6 +30,8 @@ from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
+from jax.experimental.sharding import (
+    MeshPspecSharding, SingleDeviceSharding, PmapSharding, OpShardingSharding)
 
 from jax._src import dispatch
 from jax._src import dtypes
@@ -321,9 +323,8 @@ class KeyTy:
     phys_sharding_spec = pxla.ShardingSpec(
         sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
         mesh_mapping=sharding.sharding_spec.mesh_mapping)
-    phys_sharding = jax.experimental.sharding.PmapSharding(
-        devices=sharding.devices,
-        sharding_spec=phys_sharding_spec)
+    phys_sharding = PmapSharding(devices=sharding.devices,
+                                 sharding_spec=phys_sharding_spec)
 
     # set up grounded indices
     trailing_inds = [slice(None)] * len(key_shape)
@@ -339,8 +340,29 @@ class KeyTy:
     return handler
 
   @staticmethod
-  def global_sharded_result_handler(aval, sharding):
-    raise NotImplementedError  # TODO(frostig,yashkatariya): implement!
+  def global_sharded_result_handler(aval, out_sharding, committed):
+    phys_aval, = KeyTy.physical_avals(aval)
+    phys_handler_maker = pxla.local_result_handlers[
+        (core.ShapedArray, pxla.OutputType.Array)]
+
+    if isinstance(out_sharding, SingleDeviceSharding):
+      phys_sharding = out_sharding
+    elif isinstance(out_sharding, MeshPspecSharding):
+      phys_sharding = MeshPspecSharding(
+          out_sharding.mesh, pxla.PartitionSpec(*out_sharding.spec, None))
+    else:
+      new_op_sharding = out_sharding._to_xla_op_sharding(aval.ndim).clone()
+      tad = list(new_op_sharding.tile_assignment_dimensions)
+      tad.append(1)
+      new_op_sharding.tile_assignment_dimensions = tad
+      phys_sharding = OpShardingSharding(
+          out_sharding._device_assignment, new_op_sharding)
+
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
+    def handler(bufs):
+      return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs))
+    return handler
+
 
   # eltype-polymorphic primitive lowering rules
 
