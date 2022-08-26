@@ -41,7 +41,7 @@ flags.DEFINE_string(
     'IREE compiler backend to use.')
 
 iree_compiler_map = {
-  "cpu" : "dylib",
+  "cpu" : "llvm-cpu",
   "cuda" : "cuda",
   "vmvx" : "vmvx",
   "vulkan" : "vulkan-spirv"
