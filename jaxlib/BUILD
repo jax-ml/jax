@@ -47,12 +47,14 @@ py_library(
         ":cpu_feature_guard",
         "//jaxlib/mlir",
         "//jaxlib/mlir:builtin_dialect",
+        "//jaxlib/mlir:chlo_dialect",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:mhlo_dialect",
         "//jaxlib/mlir:ml_program_dialect",
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:sparse_tensor_dialect",
+        "//jaxlib/mlir:stablehlo_dialect",
     ],
 )
 

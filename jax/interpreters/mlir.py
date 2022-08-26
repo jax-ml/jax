@@ -341,7 +341,10 @@ def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
   context = ir.Context()
   mhlo.register_mhlo_dialect(context)
-  chlo.register_chlo_dialect(context)
+  if jax._src.lib.mlir_api_version < 33:
+    chlo.register_chlo_dialect(context)
+  else:
+    chlo.register_dialect(context)
   return context
 
 
