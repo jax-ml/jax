@@ -90,13 +90,14 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
                    in root_trace_folder.iterdir()]
   latest_folder = max(trace_folders, key=os.path.getmtime)
   xplane = next(latest_folder.glob("*.xplane.pb"))
-  result = convert.xspace_to_tool_data([xplane], "trace_viewer^", None)
+  result, _ = convert.xspace_to_tool_data([xplane], "trace_viewer^", {})
 
   with gzip.open(str(latest_folder / "remote.trace.json.gz"), "wb") as fp:
     fp.write(result.encode("utf-8"))
 
   if not no_perfetto_link:
-    jax._src.profiler._host_perfetto_trace_file(str(log_dir_))
+    path = jax._src.profiler._write_perfetto_trace_file(str(log_dir_))
+    jax._src.profiler._host_perfetto_trace_file(path)
 
 def main(args):
   collect_profile(args.port, args.duration_in_ms, args.host, args.log_dir,
