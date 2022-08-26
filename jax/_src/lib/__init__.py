@@ -99,7 +99,17 @@ cpu_feature_guard.check_cpu_features()
 
 import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack
-import jaxlib.pocketfft as pocketfft
+
+# TODO(phawkins): remove pocketfft references when the minimum jaxlib version
+# is 0.3.17 or newer.
+try:
+  import jaxlib.pocketfft as pocketfft  # pytype: disable=import-error
+except ImportError:
+  pocketfft = None  # type: ignore
+try:
+  import jaxlib.ducc_fft as ducc_fft  # pytype: disable=import-error
+except ImportError:
+  ducc_fft = None  # type: ignore
 
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree

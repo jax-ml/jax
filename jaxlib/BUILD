@@ -29,6 +29,7 @@ package(default_visibility = ["//:__subpackages__"])
 py_library(
     name = "jaxlib",
     srcs = [
+        "ducc_fft.py",
         "gpu_linalg.py",
         "gpu_prng.py",
         "gpu_solver.py",
@@ -36,14 +37,13 @@ py_library(
         "init.py",
         "lapack.py",
         "mhlo_helpers.py",
-        "pocketfft.py",
         ":version",
         ":xla_client",
     ],
     data = [":xla_extension"],
     deps = [
+        ":_ducc_fft",
         ":_lapack",
-        ":_pocketfft",
         ":cpu_feature_guard",
         "//jaxlib/mlir",
         "//jaxlib/mlir:builtin_dialect",
@@ -178,40 +178,40 @@ pybind_extension(
     ],
 )
 
-# PocketFFT
+# DUCC (CPU FFTs)
 
 flatbuffer_cc_library(
-    name = "pocketfft_flatbuffers_cc",
-    srcs = ["pocketfft.fbs"],
+    name = "ducc_fft_flatbuffers_cc",
+    srcs = ["ducc_fft.fbs"],
 )
 
 cc_library(
-    name = "pocketfft_kernels",
-    srcs = ["pocketfft_kernels.cc"],
-    hdrs = ["pocketfft_kernels.h"],
-    copts = ["-fexceptions"],  # PocketFFT may throw.
+    name = "ducc_fft_kernels",
+    srcs = ["ducc_fft_kernels.cc"],
+    hdrs = ["ducc_fft_kernels.h"],
+    copts = ["-fexceptions"],  # DUCC may throw.
     features = ["-use_header_modules"],
     deps = [
-        ":pocketfft_flatbuffers_cc",
+        ":ducc_fft_flatbuffers_cc",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@ducc",
         "@flatbuffers//:runtime_cc",
-        "@pocketfft",
     ],
 )
 
 pybind_extension(
-    name = "_pocketfft",
-    srcs = ["pocketfft.cc"],
+    name = "_ducc_fft",
+    srcs = ["ducc_fft.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    module_name = "_pocketfft",
+    module_name = "_ducc_fft",
     deps = [
+        ":ducc_fft_flatbuffers_cc",
+        ":ducc_fft_kernels",
         ":kernel_pybind11_helpers",
-        ":pocketfft_flatbuffers_cc",
-        ":pocketfft_kernels",
         "@flatbuffers//:runtime_cc",
         "@pybind11",
     ],
@@ -222,9 +222,9 @@ cc_library(
     srcs = ["cpu_kernels.cc"],
     visibility = ["//visibility:public"],
     deps = [
+        ":ducc_fft_kernels",
         ":lapack_kernels",
         ":lapack_kernels_using_lapack",
-        ":pocketfft_kernels",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
     ],
     alwayslink = 1,
