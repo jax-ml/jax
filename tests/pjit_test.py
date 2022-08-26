@@ -1033,6 +1033,24 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(exe, stages.Compiled)
     self.assertArraysEqual(exe(x, x), x @ x)
 
+  def test_local_sharded_key_array_sda(self):
+    input_shape = (8, 4)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    seeds = jnp.arange(
+        prod(input_shape), dtype=np.uint32).reshape(input_shape)
+
+    with mesh:
+      def make_keys(seeds):
+        make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+        return make_key(seeds)
+
+      f = pjit(make_keys, in_axis_resources=P(None), out_axis_resources=P(None))
+
+      out = f(seeds)
+      self.assertIsInstance(out, jax.random.KeyArray)
+      self.assertEqual(out.shape, input_shape)
+      out.unsafe_raw_array()  # doesn't crash
+
 
 class GDAPjitTest(jtu.JaxTestCase):
 

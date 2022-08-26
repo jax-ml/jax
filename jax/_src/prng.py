@@ -319,12 +319,20 @@ class KeyTy:
         (core.ShapedArray, output_type)]
 
     # set up a grounded sharding (with a grounded sharding spec)
-    trailing_sharding = [pxla.NoSharding()] * len(key_shape)
-    phys_sharding_spec = pxla.ShardingSpec(
-        sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
-        mesh_mapping=sharding.sharding_spec.mesh_mapping)
-    phys_sharding = PmapSharding(devices=sharding.devices,
-                                 sharding_spec=phys_sharding_spec)
+    if isinstance(sharding, PmapSharding):
+      trailing_sharding = [pxla.NoSharding()] * len(key_shape)
+      phys_sharding_spec = pxla.ShardingSpec(
+          sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
+          mesh_mapping=sharding.sharding_spec.mesh_mapping)
+      phys_sharding = PmapSharding(devices=sharding.devices,
+                                   sharding_spec=phys_sharding_spec)
+    elif isinstance(sharding, MeshPspecSharding):
+      trailing_spec = [None] * len(key_shape)
+      phys_sharding = MeshPspecSharding(
+          sharding.mesh,
+          pxla.PartitionSpec(*sharding.spec, *trailing_spec))
+    else:
+      assert False, f'impossible sharding {sharding} in local sharded result handler'
 
     # set up grounded indices
     trailing_inds = [slice(None)] * len(key_shape)
