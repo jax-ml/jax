@@ -9,6 +9,7 @@ cc_library(
         "src/ducc0/infra/aligned_array.h",
         "src/ducc0/infra/error_handling.h",
         "src/ducc0/infra/mav.h",
+        "src/ducc0/infra/misc_utils.h",
         "src/ducc0/infra/simd.h",
         "src/ducc0/infra/threading.cc",
         "src/ducc0/infra/threading.h",
