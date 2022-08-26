@@ -31,10 +31,8 @@ build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
 
 ###########################################################################
 
-build:posix --copt=-fvisibility=hidden
-build:posix --copt=-Wno-sign-compare
-build:posix --cxxopt=-std=c++14
-build:posix --host_cxxopt=-std=c++14
+build:posix --cxxopt=-std=c++17
+build:posix --host_cxxopt=-std=c++17
 
 build:avx_posix --copt=-mavx
 build:avx_posix --host_copt=-mavx
@@ -75,8 +73,8 @@ build:windows --host_copt=-DNOGDI
 # https://devblogs.microsoft.com/cppblog/announcing-full-support-for-a-c-c-conformant-preprocessor-in-msvc/
 # otherwise, there will be some compiling error due to preprocessing.
 build:windows --copt=/Zc:preprocessor
-build:windows --cxxopt=/std:c++14
-build:windows --host_cxxopt=/std:c++14
+build:windows --cxxopt=/std:c++17
+build:windows --host_cxxopt=/std:c++17
 # Generate PDB files, to generate useful PDBs, in opt compilation_mode
 # --copt /Z7 is needed.
 build:windows --linkopt=/DEBUG
