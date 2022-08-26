@@ -432,6 +432,7 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
   _make_unary_elementwise_harness(prim=lax.sqrt_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.tan_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.tanh_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.logistic_p, dtype=dtype)
 
 for dtype in jtu.dtypes.all_floating:
   _make_unary_elementwise_harness(prim=lax.bessel_i0e_p, dtype=dtype)

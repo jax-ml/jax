@@ -188,7 +188,7 @@ class JetTest(jtu.JaxTestCase):
     primals = (primal_in, )
     series = (terms_in, )
 
-    y, terms = jax.experimental.jet._expit_taylor(primals, series)
+    y, terms = jax.experimental.jet._logistic_taylor(primals, series)
     expected_y, expected_terms = jvp_taylor(jax.scipy.special.expit, primals, series)
 
     atol = 1e-4
@@ -283,7 +283,7 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_tanh(self):       self.unary_check(jnp.tanh, lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
-  def test_expit(self):      self.unary_check(jax.scipy.special.expit, lims=[-100, 100], order=5)
+  def test_logistic(self):   self.unary_check(lax.logistic, lims=[-100, 100], order=5)
   @jtu.skip_on_devices("tpu")
   def test_expit2(self):     self.expit_check(lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")

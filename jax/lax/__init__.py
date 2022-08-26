@@ -139,6 +139,8 @@ from jax._src.lax.lax import (
   log1p as log1p,
   log1p_p as log1p_p,
   log_p as log_p,
+  logistic as logistic,
+  logistic_p as logistic_p,
   lt as lt,
   lt_p as lt_p,
   make_bint as make_bint,
