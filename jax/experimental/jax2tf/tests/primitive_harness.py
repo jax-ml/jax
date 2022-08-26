@@ -1238,38 +1238,41 @@ def _make_scatter_harness(name,
                           mode=lax.GatherScatterMode.FILL_OR_DROP,
                           dtype=np.float32,
                           dimension_numbers=((), (0,), (0,)),
-                          enable_xla=True):
+                          enable_and_disable_xla=False):
   dimension_numbers = lax.ScatterDimensionNumbers(*dimension_numbers)
-  define(
-      f_lax.__name__,
-      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}_mode={mode}_enablexla={enable_xla}"
-      .replace(" ", ""),
-      partial(
-          f_lax,
-          indices_are_sorted=indices_are_sorted,
-          unique_indices=unique_indices,
-          mode=mode), [
-              RandArg(shape, dtype),
-              StaticArg(scatter_indices),
-              RandArg(update_shape, dtype),
-              StaticArg(dimension_numbers)
-          ],
-      jax_unimplemented=[
-          Limitation(
-              "unimplemented",
-              dtypes=np.bool_,
-              enabled=(f_lax in [lax.scatter_add, lax.scatter_mul])),
-      ],
-      f_lax=f_lax,
-      shape=shape,
-      dtype=dtype,
-      scatter_indices=scatter_indices,
-      update_shape=update_shape,
-      dimension_numbers=dimension_numbers,
-      indices_are_sorted=indices_are_sorted,
-      unique_indices=unique_indices,
-      mode=mode,
-      enable_xla=enable_xla)
+  xla_options = [True, False] if enable_and_disable_xla else [True]
+
+  for enable_xla in xla_options:
+    define(
+        f_lax.__name__,
+        f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}_mode={mode}_enablexla={enable_xla}"
+        .replace(" ", ""),
+        partial(
+            f_lax,
+            indices_are_sorted=indices_are_sorted,
+            unique_indices=unique_indices,
+            mode=mode), [
+                RandArg(shape, dtype),
+                StaticArg(scatter_indices),
+                RandArg(update_shape, dtype),
+                StaticArg(dimension_numbers)
+            ],
+        jax_unimplemented=[
+            Limitation(
+                "unimplemented",
+                dtypes=np.bool_,
+                enabled=(f_lax in [lax.scatter_add, lax.scatter_mul])),
+        ],
+        f_lax=f_lax,
+        shape=shape,
+        dtype=dtype,
+        scatter_indices=scatter_indices,
+        update_shape=update_shape,
+        dimension_numbers=dimension_numbers,
+        indices_are_sorted=indices_are_sorted,
+        unique_indices=unique_indices,
+        mode=mode,
+        enable_xla=enable_xla)
 
 
 # Validate dtypes
@@ -1309,14 +1312,20 @@ _make_scatter_harness("indices_are_sorted", indices_are_sorted=True)
 
 # Validate different out-of-bounds modes
 for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
-             lax.GatherScatterMode.FILL_OR_DROP,
-             lax.GatherScatterMode.CLIP):
-  # Test with the indices in bounds
-  _make_scatter_harness("modes_in_bounds", mode=mode)
-  _make_scatter_harness("modes_out_of_bounds", mode=mode,
-                        shape=(5,),
-                        scatter_indices=np.array([[4], [77]]),
-                        update_shape=(2,))
+             lax.GatherScatterMode.FILL_OR_DROP):
+  for f_lax in [
+      lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min, lax.scatter
+  ]:
+    _make_scatter_harness("modes_in_bounds",
+                          f_lax=f_lax,
+                          mode=mode)
+    _make_scatter_harness("modes_out_of_bounds", mode=mode,
+                          shape=(1, 5),
+                          f_lax=f_lax,
+                          scatter_indices=np.array([10]),
+                          update_shape=(1,),
+                          dimension_numbers=((0,), (1,), (1,)),
+                          enable_and_disable_xla=True)
 
 # Validate no XLA scatters
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.boolean):
@@ -1324,54 +1333,64 @@ for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.bool
       lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min, lax.scatter
   ]:
     for shape, scatter_indices, update_shape, dimension_numbers in [
-        ((1,), (0,), (), ((), (0,), (0,))), # zero case
-        ((1, 1), (0,), (1,), ((0,), (0,), (0,))),
-        ((1, 1, 1), (0,), (1, 1), ((0, 1), (0,), (0,))),
-        ((1, 50, 3), (32,), (1, 3), ((0, 1), (1,), (1,))),
-        ((1, 2, 3), [1], (1, 3), ((0, 1), (1,), (1,))), # slice 2nd dim
-        ((1, 2, 3), [0], (2, 3), ((0, 1), (0,), (0,))), # slice 1st dim
-        ((1, 2, 3), [1, 2], (1,), ((0,), (1, 2), (1, 2))), # 2nd and 3rd
-        ((4, 2, 3), [3, 2], (2,), ((0,), (0, 2), (0, 2))), # 1st and 3rd
-        ((4, 2, 3, 5), [0, 4], (4, 3), ((0, 1), (1, 3), (1, 3))), # 2nd and 4th
-        ((5, 6, 7), [[0, 1],[2, 3]], (2, 7), ((1,), (0, 1), (0, 1))), # .at[((3,4),(5,5))] shapes
-        ((5, 6, 7), [[[0],[1]],[[2],[3]]], (5, 2, 2, 7), ((0, 3), (1,), (1,))), # .at[:, ((3,4),(5,5))] shapes
-        ((5, 6, 7), [[[0, 1],[2, 3]],[[4, 0],[1, 2]]], (5,2,2), ((0,), (1, 2), (1, 2))), # .at[:, ((3,4),(5,5)), 3] shapes
+        ((1,), [0], (), ((), (0,), (0,))),  # zero case
+        ((1, 1), [0], (1,), ((0,), (0,), (0,))),
+        ((1, 1, 1), [0], (1, 1), ((0, 1), (0,), (0,))),
+        ((1, 50, 3), [32], (1, 3), ((0, 1), (1,), (1,))),
+        ((1, 2, 3), [1], (1, 3), ((0, 1), (1,), (1,))),  # slice 2nd dim
+        ((1, 2, 3), [0], (2, 3), ((0, 1), (0,), (0,))),  # slice 1st dim
+        ((1, 2, 3), [1, 2], (1,), ((0,), (1, 2), (1, 2))),  # 2nd and 3rd
+        ((4, 2, 3), [3, 2], (2,), ((0,), (0, 2), (0, 2))),  # 1st and 3rd
+        ((4, 2, 3, 5), [0, 4], (4, 3), ((0, 1), (1, 3), (1, 3))),  # 2nd and 4th
+        ((5, 6, 7), [[0, 1], [2, 3]], (2, 7),
+         ((1,), (0, 1), (0, 1))),  # .at[((3,4),(5,5))] shapes
+        ((5, 6, 7), [[[0], [1]], [[2], [3]]], (5, 2, 2, 7),
+         ((0, 3), (1,), (1,))),  # .at[:, ((3,4),(5,5))] shapes
+        ((5, 6, 7), [[[0, 1], [2, 3]], [[4, 0], [1, 2]]], (5, 2, 2),
+         ((0,), (1, 2), (1, 2))),  # .at[:, ((3,4),(5,5)), 3] shapes
+        ((1, 125), [0], (1,), ((0,), (1,), (1,))),
     ]:
-      _make_scatter_harness("no_xla_unique_indices",
-                          shape=shape,
-                          f_lax=f_lax,
-                          unique_indices=True,
-                          scatter_indices=np.array(scatter_indices),
-                          update_shape=update_shape,
-                          mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
-                          dtype=dtype,
-                          dimension_numbers=dimension_numbers,
-                          enable_xla=False,
-                          )
+      for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+                   lax.GatherScatterMode.FILL_OR_DROP):
+        _make_scatter_harness(
+            "no_xla_unique_indices",
+            shape=shape,
+            f_lax=f_lax,
+            unique_indices=True,
+            scatter_indices=np.array(scatter_indices),
+            update_shape=update_shape,
+            mode=mode,
+            dtype=dtype,
+            dimension_numbers=dimension_numbers,
+            enable_and_disable_xla=True)
 
-# Validate no XLA scatters with non-unique indices with an indexing depth of 1
+# Validate no XLA scatters with non-unique indices with an indexing depth of 1.
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.boolean):
+  # Note that lax.scatter currently does not work here.
   for f_lax in [
       lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min
   ]:
     for shape, scatter_indices, update_shape, dimension_numbers in [
-        ((1,), [[0],[0]], (2,), ((), (0,), (0,))), # .at[((0,0),)]
-        ((3,), [[1],[0],[1]], (3,), ((), (0,), (0,))), # .at[((1,0,1),)]
-        ((2, 3), [[[2],[2],[2]]], (2, 1, 3), ((0,), (1,), (1,))), # 2nd dim, .at[:, ((2,2,2),)]
+        ((1,), [[0],[0]], (2,), ((), (0,), (0,))),  # .at[((0,0),)]
+        ((3,), [[1],[0],[1]], (3,), ((), (0,), (0,))),  # .at[((1,0,1),)]
+        ((2, 3), [[[2],[2],[2]]], (2, 1, 3), ((0,), (1,), (1,))),  # 2nd dim, .at[:, ((2,2,2),)]
         ((3, 5, 40), [[1],[1]], (3, 5, 2), ((0, 1), (2,), (2,))),
         ((3, 5, 4), [[1],[1]], (3, 2, 4), ((0, 2), (1,), (1,))),
     ]:
-      _make_scatter_harness("no_xla_non_unique_indices",
-                          shape=shape,
-                          f_lax=f_lax,
-                          unique_indices=False,
-                          scatter_indices=np.array(scatter_indices),
-                          update_shape=update_shape,
-                          mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
-                          dtype=dtype,
-                          dimension_numbers=dimension_numbers,
-                          enable_xla=False,
-                          )
+      for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+                   lax.GatherScatterMode.FILL_OR_DROP):
+        _make_scatter_harness(
+            "no_xla_non_unique_indices",
+            shape=shape,
+            f_lax=f_lax,
+            unique_indices=False,
+            scatter_indices=np.array(scatter_indices),
+            update_shape=update_shape,
+            mode=mode,
+            dtype=dtype,
+            dimension_numbers=dimension_numbers,
+            enable_and_disable_xla=True)
+
 
 for dtype in jtu.dtypes.all:
   arg_shape = (2, 3)
