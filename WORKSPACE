@@ -27,8 +27,8 @@ http_archive(
 #    path = "/path/to/tensorflow",
 # )
 
-load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
-pocketfft()
+load("//third_party/ducc:workspace.bzl", ducc = "repo")
+ducc()
 
 # Initialize TensorFlow's external dependencies.
 load("@org_tensorflow//tensorflow:workspace3.bzl", "tf_workspace3")

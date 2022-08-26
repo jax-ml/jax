@@ -17,6 +17,6 @@ limitations under the License.
 
 namespace jax {
 
-void PocketFft(void* out, void** in, XlaCustomCallStatus*);
+void DuccFft(void* out, void** in, XlaCustomCallStatus*);
 
 }  // namespace jax
