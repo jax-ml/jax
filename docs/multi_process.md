@@ -64,7 +64,9 @@ The API {func}`jax.distributed.initialize` takes several arguments, namely:
     cluster will connect.
   * `num_processes`: the number of processes in the cluster
   * `process_id`: the ID number of this process, in the range `[0 ..
-  num_processes)`.
+    num_processes)`.
+  * `local_device_ids`: Restricts the visible devices of the current process to
+    ``local_device_ids``.
 
 For example on GPU, a typical usage is:
 
@@ -76,9 +78,11 @@ jax.distributed.initialize(coordinator_address="192.168.0.1:1234",
                            process_id=0)
 ```
 
-On Cloud TPU, you can simply call {func}`jax.distributed.initialize()` with no
-arguments. Default values for the arguments will be chosen automatically using
-the TPU pod metadata:
+On Cloud TPU and Slurm environments, you can simply call {func}`jax.distributed.initialize()` with no
+arguments. Default values for the arguments will be chosen automatically.
+When running on GPUs with Slurm, it is assumed that one process is started per GPU, i.e. each process will
+be assigned only one visible local device. Otherwise it is assumed that one process is started per host,
+i.e. each process will be assigned all local devices.
 
 ```python
 import jax

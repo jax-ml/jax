@@ -16,13 +16,13 @@ import atexit
 import os
 import functools
 
-from typing import Any, Optional
+from typing import Any, Optional, Union, Sequence
 
 from absl import logging
-from jax._src import cloud_tpu_init
+from jax._src.clusters import ClusterEnv
 from jax._src.config import config
-from jax._src.lib import xla_bridge
 from jax._src.lib import xla_extension
+
 
 class State:
   process_id: int = 0
@@ -33,24 +33,18 @@ class State:
   def initialize(self,
                  coordinator_address: Optional[str] = None,
                  num_processes: Optional[int] = None,
-                 process_id: Optional[int] = None):
+                 process_id: Optional[int] = None,
+                 local_device_ids: Optional[Union[int, Sequence[int]]] = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS', None))
+    if isinstance(local_device_ids, int):
+      local_device_ids = [local_device_ids]
 
-    if cloud_tpu_init.running_in_cloud_tpu_vm:
-      worker_endpoints = cloud_tpu_init.get_metadata(
-          'worker-network-endpoints').split(',')
-      if coordinator_address is None:
-        coordinator_address = worker_endpoints[0].split(':')[2] + ':8476'
-      if num_processes is None:
-        num_processes = xla_bridge.process_count()
-      if process_id is None:
-        process_id = int(cloud_tpu_init.get_metadata('agent-worker-number'))
-
-      if num_processes != len(worker_endpoints):
-        raise RuntimeError('Number of workers does not equal the number of '
-                           'processes. Auto detecting process_id is not possible.'
-                           'Please pass process_id manually.')
+    (coordinator_address,
+     num_processes,
+     process_id,
+     local_device_ids) = ClusterEnv.auto_detect_unset_distributed_params(
+      coordinator_address, num_processes, process_id, local_device_ids)
 
     if coordinator_address is None:
       raise ValueError('coordinator_address should be defined.')
@@ -58,6 +52,12 @@ class State:
       raise ValueError('Number of processes must be defined.')
     if process_id is None:
       raise ValueError('The process id of the current process must be defined.')
+
+    if local_device_ids:
+      visible_devices = ','.join(str(x) for x in local_device_ids) # type: ignore[union-attr]
+      logging.info('JAX distributed initialized with visible devices: %s', visible_devices)
+      config.update("jax_cuda_visible_devices", visible_devices)
+      config.update("jax_rocm_visible_devices", visible_devices)
 
     self.process_id = process_id
 
@@ -104,7 +104,8 @@ global_state = State()
 
 def initialize(coordinator_address: Optional[str] = None,
                num_processes: Optional[int] = None,
-               process_id: Optional[int] = None):
+               process_id: Optional[int] = None,
+               local_device_ids: Optional[Union[int, Sequence[int]]] = None):
   """Initializes the JAX distributed system.
 
   Calling :func:`~jax.distributed.initialize` prepares JAX for execution on
@@ -117,24 +118,26 @@ def initialize(coordinator_address: Optional[str] = None,
     * it performs health checking, ensuring that all processes shut down if any process dies, and
     * it is used for distributed checkpointing.
 
-  If you are using GPU, you must provide the ``coordinator_address``,
-  ``num_processes``, and ``process_id`` arguments to :func:`~jax.distributed.initialize`.
+  If you are using TPU or Slurm, all arguments are optional: if omitted, they
+  will be chosen automatically.
 
-  If you are using TPU, all arguments are optional: if omitted, they
-  will be chosen automatically from the Cloud TPU metadata.
+  Otherwise, you must provide the ``coordinator_address``,
+  ``num_processes``, and ``process_id`` arguments to :func:`~jax.distributed.initialize`.
 
   Args:
     coordinator_address: the IP address of process `0` and a port on which that
       process should launch a coordinator service. The choice of
       port does not matter, so long as the port is available on the coordinator
       and all processes agree on the port.
-      May be ``None`` only on TPU, in which case it will be chosen automatically.
-    num_processes: Number of processes. May be ``None`` only on TPU, in
-      which case it will be chosen automatically based on the TPU slice.
+      May be ``None`` only on supported environments, in which case it will be chosen automatically.
+    num_processes: Number of processes. May be ``None`` only on supported environments, in
+      which case it will be chosen automatically.
     process_id: The ID number of the current process. The ``process_id`` values across
       the cluster must be a dense range ``0``, ``1``, ..., ``num_processes - 1``.
-      May be ``None`` only on TPU; if ``None`` it will be chosen from the TPU slice
-      metadata.
+      May be ``None`` only on supported environments; if ``None`` it will be chosen automatically.
+    local_device_ids: Restricts the visible devices of the current process to ``local_device_ids``.
+      If ``None``, defaults to all local devices being visible to the process except when processes
+      are launched via Slurm on GPUs. In that case, it will default to a single device per process.
 
   Raises:
     RuntimeError: If :func:`~jax.distributed.initialize` is called more than once.
@@ -153,7 +156,7 @@ def initialize(coordinator_address: Optional[str] = None,
 
   >>> jax.distributed.initialize(coordinator_address='10.0.0.1:1234', num_processes=2, process_id=1)  # doctest: +SKIP
   """
-  global_state.initialize(coordinator_address, num_processes, process_id)
+  global_state.initialize(coordinator_address, num_processes, process_id, local_device_ids)
   atexit.register(shutdown)
 
 

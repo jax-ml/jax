@@ -209,5 +209,20 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     self.assertEqual(y[0], jax.device_count())
     print(y)
 
+  def test_gpu_multi_node_transparent_initialize_and_psum(self):
+
+    jax.distributed.initialize()
+
+    print(f"Total devices: {jax.device_count()}, "
+          f"Devices per task: {jax.local_device_count()}")
+
+    self.assertEqual(jax.device_count(), int(os.environ['SLURM_NTASKS']))
+    self.assertEqual(jax.local_device_count(), 1)
+
+    x = jnp.ones(jax.local_device_count())
+    y = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(x)
+    self.assertEqual(y[0], jax.device_count())
+    print(y)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
