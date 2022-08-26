@@ -3180,6 +3180,8 @@ def named_scope(
     ...   logits = w.dot(x)
     ...   return jax.nn.relu(logits)
   """
+  if not isinstance(name, str):
+    raise ValueError("named_scope name argument must be a string.")
   with source_info_util.extend_name_stack(name):
     yield
 
