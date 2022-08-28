@@ -820,10 +820,10 @@ def _to_jax_dtype(tf_dtype):
 
 def _maybe_decode_gda(gda_or_py_object: Any):
   """Convert GlobalDeviceArray into numpy object."""
-  if jax.process_count() != 1:
-    raise RuntimeError("GlobalDeviceArray does not support multi-process"
-                       f" currently. Process num = {jax.process_count()}")
   if isinstance(gda_or_py_object, GlobalDeviceArray):
+    if jax.process_count() != 1:
+      raise RuntimeError("GlobalDeviceArray does not support multi-process"
+                         f" currently. Process num = {jax.process_count()}")
     return gda_or_py_object._value
   return gda_or_py_object
 
