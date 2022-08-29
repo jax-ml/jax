@@ -5,7 +5,7 @@ inside of JIT-ted functions.
 
 ## Debugging with `jax.debug.print` and other debugging callbacks
 
-**TL;DR** Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`jax.pmap`-, and `pjit`-decorated functions:
+**TL;DR** Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`pmap`-, and `pjit`-decorated functions:
 
 ```python
 import jax
@@ -291,5 +291,5 @@ Because `jax.debug.breakpoint` is a just an application of `jax.debug.callback`,
 * Can inspect many values at the same time, up and down the call stack
 
 #### Limitations
-* Need to potentially use many breakpoints pinpoint the source of an error
+* Need to potentially use many breakpoints to pinpoint the source of an error
 * Materializes many intermediates
