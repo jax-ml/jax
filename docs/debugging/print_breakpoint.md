@@ -291,5 +291,5 @@ Because `jax.debug.breakpoint` is a just an application of `jax.debug.callback`,
 * Can inspect many values at the same time, up and down the call stack
 
 #### Limitations
-* Need to potentially use many breakpoints pinpoint the source of an error
+* Need to potentially use many breakpoints to pinpoint the source of an error
 * Materializes many intermediates
