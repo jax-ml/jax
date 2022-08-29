@@ -13,8 +13,9 @@
 # limitations under the License.
 """Module for discharging state primitives."""
 from functools import partial
-
 from typing import Any, Dict, List, Sequence, Tuple
+
+import numpy as np
 
 from jax import core
 from jax import lax
@@ -37,7 +38,8 @@ zip, unsafe_zip = safe_zip, zip
 # into a "pure" jaxpr that takes in and outputs values and no longer has the
 # `StateEffect` effect.
 
-def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any]) -> Tuple[core.Jaxpr, List[Any]]:
+def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any]
+                    ) -> Tuple[core.Jaxpr, List[Any]]:
   """Converts a jaxpr that takes in `Ref`s into one that doesn't."""
   in_avals = [core.ShapedArray(v.aval.shape, v.aval.dtype)
               if type(v.aval) is ShapedArrayRef
@@ -46,20 +48,67 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any]) -> Tuple[core.Jaxp
   new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
   return new_jaxpr, new_consts
 
-def _dynamic_index(x, idx):
-  if not idx: return x
-  ndim = len(x.shape)
-  starts = [*idx] + [lax.full_like(idx[0], 0, shape=())] * (ndim - len(idx))
-  sizes = (1,) * len(idx) + x.shape[len(idx):]
-  out = lax.dynamic_slice(x, starts, sizes)
-  return out.reshape(x.shape[len(idx):])
+def _get_discharge(x, idx, indexed_dims):
+  if not any(indexed_dims):
+    return x
+  if all(not i.shape for i in idx):
+    return _dynamic_index(x, idx, indexed_dims)
+  else:
+    return _prepend_gather(x, idx, indexed_dims)
 
-def _dynamic_update_index(x, idx, val):
-  if not idx: return val
-  ndim = len(x.shape)
-  starts = [*idx] + [lax.full_like(idx[0], 0, shape=())] * (ndim - len(idx))
-  update = val.reshape((1,) * len(idx) + x.shape[len(idx):])
-  return lax.dynamic_update_slice(x, update, starts)
+def _prepend_gather(x, idx, indexed_dims):
+  indexer = _indexer(idx, indexed_dims)
+  # NumPy advanced int indexing won't prepend w/ only one dim, so add dummy.
+  return x[None][(np.array(0, 'int32'), *indexer)]
+
+def _prepend_scatter(x, idx, indexed_dims, val, *, add=False):
+  indexer = _indexer(idx, indexed_dims)
+  if add:
+    return x[None].at[(0, *indexer)].add(val)[0]
+  return x[None].at[(0, *indexer)].set(val)[0]
+
+def _indexer(idx, indexed_dims):
+  idx_ = iter(idx)
+  indexer = tuple([next(idx_) if b else slice(None) for b in indexed_dims])
+  assert next(idx_, None) is None
+  return indexer
+
+def _swap_discharge(x, val, idx, indexed_dims):
+  if not any(indexed_dims):
+    z, x_new = x, val
+  elif all(not i.shape for i in idx):
+    z = _dynamic_index(x, idx, indexed_dims)
+    x_new = _dynamic_update_index(x, idx, val, indexed_dims)
+  else:
+    z = _prepend_gather(x, idx, indexed_dims)
+    x_new = _prepend_scatter(x, idx, indexed_dims, val)
+  return z, x_new
+
+def _addupdate_discharge(x, val, idx, indexed_dims):
+  if not any(indexed_dims):
+    return x + val
+  if all(not i.shape for i in idx):
+    y = val + _dynamic_index(x, idx, indexed_dims)
+    return _dynamic_update_index(x, idx, y, indexed_dims)
+  else:
+    return _prepend_scatter(x, idx, indexed_dims, val, add=True)
+
+def _dynamic_index(x, idx, indexed_dims):
+  assert isinstance(idx, (list, tuple)) and idx
+  idx_ = iter(idx)
+  starts = [next(idx_) if b else np.int32(0) for b in indexed_dims]
+  assert next(idx_, None) is None
+  sizes = [1 if b else size for b, size in zip(indexed_dims, x.shape)]
+  out = lax.dynamic_slice(x, starts, sizes)
+  return lax.squeeze(out, [i for i, b in enumerate(indexed_dims) if b])
+
+def _dynamic_update_index(x, idx, val, indexed_dims):
+  assert isinstance(idx, (list, tuple)) and idx
+  idx_ = iter(idx)
+  starts = [next(idx_) if b else np.int32(0) for b in indexed_dims]
+  assert next(idx_, None) is None
+  sizes = [1 if b else size for b, size in zip(indexed_dims, x.shape)]
+  return lax.dynamic_update_slice(x, val.reshape(sizes), starts)
 
 def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
                                 *args: Any):
@@ -84,23 +133,25 @@ def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
     if eqn.primitive is get_p:
        # `y <- x[i]` becomes `y = ds x i`
       x, *idx = in_vals
-      write(eqn.outvars[0], _dynamic_index(x, idx))
+      y = _get_discharge(x, idx, eqn.params['indexed_dims'])
+      write(eqn.outvars[0], y)
     elif eqn.primitive is swap_p:
       # `z, x[i] <- x[i], val` becomes:
       #    z = ds x i
       #    x = dus x i val
-      x, val, *idx = in_vals
-      write(eqn.outvars[0], _dynamic_index(x, idx))
       assert isinstance(eqn.invars[0], core.Var)
-      write(eqn.invars[0], _dynamic_update_index(x, idx, val))
+      x, val, *idx = in_vals
+      z, x_new = _swap_discharge(x, val, idx, eqn.params['indexed_dims'])
+      write(eqn.outvars[0], z)
+      write(eqn.invars[0] , x_new)
     elif eqn.primitive is addupdate_p:
       # `x[i] += val` becomes:
       #    y = ds x i
       #    z = y + val
       #    x = dus x i z
-      x, val, *idx = in_vals
-      ans = _dynamic_update_index(x, idx, val + _dynamic_index(x, idx))
       assert isinstance(eqn.invars[0], core.Var)
+      x, val, *idx = in_vals
+      ans = _addupdate_discharge(x, val, idx, eqn.params['indexed_dims'])
       write(eqn.invars[0], ans)
     else:
       # Default primitive rule, similar to `core.eval_jaxpr`. Note that here

@@ -42,8 +42,8 @@ from jax import linear_util as lu
 
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,
-                        tuple_delete, as_hashable_function,
-                        HashableFunction, HashableWrapper, weakref_lru_cache)
+                           tuple_delete, as_hashable_function,
+                           HashableFunction, HashableWrapper, weakref_lru_cache)
 import jax._src.pretty_printer as pp
 from jax._src import lib
 from jax._src.lib import jax_jit

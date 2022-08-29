@@ -25,7 +25,8 @@ from jax._src import device_array
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
 from jax._src.lib import xla_bridge, xla_client
-from jax._src.util import safe_map, safe_zip, split_list
+from jax._src.util import (safe_map, safe_zip, split_list, tuple_insert,
+                           tuple_delete, prod)
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
@@ -64,6 +65,9 @@ class ShapedArrayRef(core.AbstractValue):
     assert core.symbolic_equal_shape(self.shape, other.shape)
     assert self.dtype == other.dtype
     return self
+
+  ndim = property(lambda self: len(self.shape))
+  size = property(lambda self: prod(self.shape))
 
   @core.aval_method
   @staticmethod
@@ -105,3 +109,13 @@ class ShapedArrayRef(core.AbstractValue):
 
 
 core.raise_to_shaped_mappings[ShapedArrayRef] = lambda aval, _: aval
+
+def _map_ref(size, axis, aval):
+  if axis is None: return aval
+  return ShapedArrayRef(tuple_delete(aval.shape, axis), aval.dtype)
+
+def _unmap_ref(size, axis_name, axis, aval):
+  if axis is None: return aval
+  return ShapedArrayRef(tuple_insert(aval.shape, axis, size), aval.dtype)
+
+core.aval_mapping_handlers[ShapedArrayRef] = (_map_ref, _unmap_ref)
