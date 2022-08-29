@@ -5,7 +5,7 @@ inside of JIT-ted functions.
 
 ## Debugging with `jax.debug.print` and other debugging callbacks
 
-**TL;DR** Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`jax.pmap`-, and `pjit`-decorated functions:
+**TL;DR** Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`pmap`-, and `pjit`-decorated functions:
 
 ```python
 import jax
