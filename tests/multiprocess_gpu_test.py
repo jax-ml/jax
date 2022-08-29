@@ -151,15 +151,15 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 @unittest.skipIf(
     os.environ.get("SLURM_JOB_NUM_NODES", None) != "2",
     "Slurm environment with at least two nodes needed!")
-class MultiNodeGpuTest(jtu.JaxTestCase):
+class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
   def test_gpu_multi_node_initialize_and_psum(self):
 
     # Hookup the ENV vars expected to be set already in the SLURM environment
-    nodelist = os.environ.get("SLURM_STEP_NODELIST", None)
-    if nodelist is not None:
-      coordinator_address = nodelist.split('[')[0] + \
-                            nodelist.split('[')[1].split(',')[0]
+    coordinator_address = os.environ.get("SLURM_STEP_NODELIST", None)
+    if coordinator_address is not None and '[' in coordinator_address:
+      coordinator_address = coordinator_address.split('[')[0] + \
+                            coordinator_address.split('[')[1].split(',')[0]
     num_tasks = os.environ.get("SLURM_NPROCS", None)
     taskid = os.environ.get("SLURM_PROCID", None)
     localid = os.environ.get("SLURM_LOCALID", None)
@@ -173,6 +173,9 @@ class MultiNodeGpuTest(jtu.JaxTestCase):
     self.assertEqual(
         coordinator_address is None or num_tasks is None or taskid is None,
         False)
+
+    # os.environ["CUDA_VISIBLE_DEVICES"] = localid #WAR for Bug:12119
+    jax.config.update("jax_cuda_visible_devices", localid)
 
     jax.distributed.initialize(coordinator_address=f'{coordinator_address}:{port}',
                                num_processes=int(num_tasks),

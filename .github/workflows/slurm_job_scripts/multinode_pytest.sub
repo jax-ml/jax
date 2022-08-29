@@ -6,8 +6,7 @@
 #SBATCH -J "ci-jax-gpu"         # job name
 #SBATCH --exclusive             # exclusive node access
 #SBATCH --mem=0                 # all mem avail
-#SBATCH --mail-type=FAIL        # only send email on failure
-#SBATCH --ntasks-per-node=1     # 1 tasks per machine for now
+#SBATCH --mail-type=FAIL        # only send email on failures
 #SBATCH --overcommit            # Needed for pytorch
 
 set -x
@@ -57,6 +56,7 @@ OUTFILE="${OUTPUT_DIR}/output-%j-%n.txt"
 # that the processes are launched together
 echo $setup_cmd
 srun -o $OUTFILE -e $OUTFILE \
+    --ntasks-per-node=1 \
     --container-writable \
     --container-image="$CONTAINER" \
     --container-name=$CONTAINER_NAME \
@@ -70,6 +70,7 @@ wait
 # Run the actual pytest command
 echo $cmd
 srun -o $OUTFILE -e $OUTFILE \
+    --ntasks-per-node=8 \
     --open-mode=append \
     --container-writable \
     --container-image="$CONTAINER" \
