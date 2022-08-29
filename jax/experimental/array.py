@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import operator as op
+import functools
 import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
@@ -31,8 +32,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
 from jax._src.numpy.ndarray import ndarray
 from jax.interpreters import pxla, xla, mlir
-from jax.experimental.sharding import (Sharding, SingleDeviceSharding,
-                                       XLACompatibleSharding)
+from jax.experimental.sharding import (
+    Sharding, SingleDeviceSharding, XLACompatibleSharding, device_replica_id_map)
 
 Shape = Tuple[int, ...]
 Device = xc.Device
@@ -81,13 +82,7 @@ class Shard:
 
   @property
   def replica_id(self) -> int:
-    try:
-      device_replica_id_fn = self._sharding.device_replica_id_map  # pytype: disable=attribute-error
-    except AttributeError:
-      raise ValueError('Cannot calculate replica ids from sharding: '
-                       f'{self._sharding}. Please create a device to replica id '
-                       'mapping for your sharding.') from None
-    return device_replica_id_fn(self._global_shape)[self.device]
+    return device_replica_id_map(self._sharding, self._global_shape)[self.device]
 
 
 def _reconstruct_array(fun, args, arr_state, aval_state):

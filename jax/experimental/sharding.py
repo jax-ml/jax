@@ -79,10 +79,6 @@ class XLACompatibleSharding(Sharding):
     raise NotImplementedError('Subclasses should implement this method.')
 
   @abc.abstractmethod
-  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
-    raise NotImplementedError('Subclasses should implement this method.')
-
-  @abc.abstractmethod
   def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -133,10 +129,18 @@ def _hashed_index(x) -> int:
 
 
 @functools.lru_cache(maxsize=4096)
-def _device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]:
+def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]:
+  try:
+    device_indices_map_fn = sharding.devices_indices_map
+  except AttributeError:
+    raise ValueError(
+        f'Cannot calculate replica ids from sharding: {sharding}. Please '
+        'create a device to index mapping for your sharding from which replica '
+        'ids will be calculated.') from None
+
   index_to_replica: Dict[int, int] = Counter()
   out = {}
-  for device, index in sharding.devices_indices_map(global_shape).items():
+  for device, index in device_indices_map_fn(global_shape).items():
     h_index = _hashed_index(index)
     replica_id = index_to_replica[h_index]
     index_to_replica[h_index] += 1
@@ -208,9 +212,6 @@ class MeshPspecSharding(XLACompatibleSharding):
     # `get_shard_indices` is cached.
     return global_device_array.get_shard_indices(global_shape, self.mesh, self.spec)
 
-  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
-    return _device_replica_id_map(self, global_shape)
-
   @pxla.maybe_cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.mesh.devices.flat)
@@ -270,9 +271,6 @@ class SingleDeviceSharding(XLACompatibleSharding):
       self, global_shape: Shape) -> Mapping[Device, Index]:
     return {self._device: (slice(None),) * len(global_shape)}
 
-  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
-    return {self._device: 0}
-
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
     return [self._device]
@@ -297,9 +295,6 @@ class PmapSharding(XLACompatibleSharding):
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
     return {d: i for d, i in safe_zip(self.devices.flat, indices)}  # type: ignore
-
-  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
-    return _device_replica_id_map(self, global_shape)
 
   @pxla.maybe_cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
@@ -373,9 +368,6 @@ class OpShardingSharding(XLACompatibleSharding):
     indices = pxla.op_sharding_to_indices(self._op_sharding, global_shape,
                                           len(self._devices))
     return dict(safe_zip(self._devices, indices))
-
-  def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
-    return _device_replica_id_map(self, global_shape)
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:

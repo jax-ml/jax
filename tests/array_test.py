@@ -61,6 +61,54 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertArraysEqual(arr._value, global_data)
       self.assertArraysEqual(arr._npy_value, global_data)
 
+  @parameterized.named_parameters(
+      ("mesh_x_y", P("x", "y"),
+       # There are more slices but for convienient purposes, checking for only
+       # 2. The indices + shard_shape + replica_id should be unique enough.
+       ((slice(0, 2), slice(0, 1)), (slice(0, 2), slice(1, 2))),
+       (2, 1),
+       [0, 0, 0, 0, 0, 0, 0, 0], False),
+      ("mesh_x", P("x"),
+       ((slice(0, 2), slice(None)), (slice(0, 2), slice(None))),
+       (2, 2),
+       [0, 1, 0, 1, 0, 1, 0, 1], False),
+      ("mesh_y", P("y"),
+       ((slice(0, 4), slice(None)), (slice(4, 8), slice(None))),
+       (4, 2),
+       [0, 0, 1, 1, 2, 2, 3, 3], False),
+      ("mesh_none_y", P(None, "y"),
+       ((slice(None), slice(0, 1)), (slice(None), slice(1, 2))),
+       (8, 1),
+       [0, 0, 1, 1, 2, 2, 3, 3], False),
+      ("mesh_xy", P(("x", "y")),
+       ((slice(0, 1), slice(None)), (slice(1, 2), slice(None))),
+       (1, 2),
+       [0, 0, 0, 0, 0, 0, 0, 0], False),
+      ("mesh_fully_replicated", P(),
+       ((slice(None), slice(None)), (slice(None), slice(None))),
+       (8, 2),
+       [0, 1, 2, 3, 4, 5, 6, 7], True),
+  )
+  def test_array_2d_shard(self, mesh_axes, expected_index, expected_shard_shape,
+                        expected_replica_ids, expected_is_fully_replicated):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    s = sharding.MeshPspecSharding(global_mesh, mesh_axes)
+    arr, global_input_data = create_array(global_input_shape, s)
+    self.assertEqual(arr.ndim, 2)
+    self.assertEqual(arr.size, 16)
+    self.assertEqual(arr.addressable_shards[0].index, expected_index[0])
+    self.assertEqual(arr.addressable_shards[1].index, expected_index[1])
+    replica_ids = [i.replica_id for i in arr.addressable_shards]
+    self.assertListEqual(replica_ids, expected_replica_ids)
+    self.assertListEqual([i.device.id for i in arr.addressable_shards],
+                         [0, 1, 2, 3, 4, 5, 6, 7])
+    self.assertEqual(arr.is_fully_replicated(), expected_is_fully_replicated)
+    for s in arr.addressable_shards:
+      self.assertEqual(s.data.aval,
+                       jax.ShapedArray(expected_shard_shape, s.data.dtype))
+      self.assertArraysEqual(s.data, global_input_data[s.index])
+
   def test_array_delete(self):
     with jax_config.jax_array(True):
       global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -84,6 +132,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         self.assertArraysEqual(i.data, numpy_array)
         self.assertEqual(i.device, jax.devices()[0])
         self.assertEqual(i.index, (slice(None),))
+        self.assertEqual(i.replica_id, 0)
 
   def test_device_put_array_delete(self):
     with jax_config.jax_array(True):
