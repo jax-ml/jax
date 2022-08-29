@@ -373,13 +373,13 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.eqns[2].primitive, state.get_p)
     self.assertEqual(jaxpr.eqns[3].primitive, state.get_p)
 
-  @parameterized.parameters(
+  @parameterized.parameters(jtu.cases_from_list([
       dict(ref_shape=ref_shape, ref_bdim=ref_bdim, idx_shape=idx_shape,
            indexed_dims=indexed_dims, idx_bdims=idx_bdims, out_bdim=out_bdim,
            op=op)
-      for ref_shape in [(1,), (2, 3), ()]
+      for ref_shape in [(1,), (2, 3), (4, 5, 6)]
       for ref_bdim in range(1 + len(ref_shape))
-      for idx_shape in [(), (2,),(5, 6)]
+      for idx_shape in [(), (1,), (2,), (5, 6)]
       for indexed_dims in it.product([True, False], repeat=len(ref_shape))
       for idx_bdims in it.product([None, *range(1 + len(idx_shape))],
                                   repeat=sum(indexed_dims))
@@ -397,7 +397,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
                                     *indexer)])
               or [jnp.ones(x_ref.shape, x_ref.dtype)[None][(0, *indexer)]])
       ]
-  )
+  ]))
   def test_vmap(self, ref_shape, ref_bdim, idx_shape, indexed_dims,
                     idx_bdims, out_bdim, op):
 
