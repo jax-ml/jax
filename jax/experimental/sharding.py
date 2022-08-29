@@ -15,7 +15,7 @@
 import abc
 import functools
 from collections import Counter
-from typing import Sequence, Tuple, Optional, Mapping, Dict, Set, Union
+from typing import Sequence, Tuple, Optional, Mapping, Dict, Set, Union, cast
 
 from jax._src.util import safe_zip
 from jax._src.lib import xla_bridge as xb
@@ -33,6 +33,8 @@ XLADeviceAssignment = Sequence[Device]
 
 class Sharding(metaclass=abc.ABCMeta):
 
+  # Abstract methods below that subclasses should implement.
+
   @abc.abstractproperty
   def device_set(self) -> Set[Device]:
     """A unique set of devices that this sharding represents.
@@ -40,6 +42,18 @@ class Sharding(metaclass=abc.ABCMeta):
     Devices can be non-addressable too.
     """
     raise NotImplementedError('Subclasses should implement this method.')
+
+  @abc.abstractmethod
+  def devices_indices_map(
+      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+    raise NotImplementedError('Subclasses should implement this method.')
+
+  @abc.abstractmethod
+  def shard_shape(self, global_shape: Shape) -> Shape:
+    raise NotImplementedError('Subclasses should implement this method.')
+
+  #############################################################################
+  # Default implementations below that all subclasses will inherit.
 
   @pxla.maybe_cached_property
   def addressable_devices(self) -> Set[Device]:
@@ -55,13 +69,10 @@ class Sharding(metaclass=abc.ABCMeta):
                      global_shape: Shape) -> Optional[Index]:
     return self.devices_indices_map(global_shape)[device]
 
-  @abc.abstractmethod
-  def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
-    raise NotImplementedError('Subclasses should implement this method.')
-
 
 class XLACompatibleSharding(Sharding):
+
+  # Abstract methods below that subclasses should implement.
 
   @abc.abstractproperty
   def _device_assignment(self) -> XLADeviceAssignment:
@@ -71,14 +82,37 @@ class XLACompatibleSharding(Sharding):
   def device_replica_id_map(self, global_shape: Shape) -> Mapping[Device, int]:
     raise NotImplementedError('Subclasses should implement this method.')
 
+  @abc.abstractmethod
+  def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
+    raise NotImplementedError('Subclasses should implement this method.')
+
+  #############################################################################
+  # Default implementations below that all subclasses will inherit.
+
   @pxla.maybe_cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     process_index = xb.process_index()
     return [d for d in self._device_assignment if d.process_index == process_index]
 
-  @abc.abstractmethod
-  def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
-    raise NotImplementedError('Subclasses should implement this method.')
+  @functools.lru_cache(maxsize=4096)
+  def shard_shape(self, global_shape: Shape) -> Shape:
+    op_sharding = cast(xc.OpSharding, self._to_xla_op_sharding(len(global_shape)))
+    if pxla.is_op_sharding_replicated(op_sharding):
+      return global_shape
+    partitions, _ = pxla._get_num_ways_dim_sharded(op_sharding)
+    assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
+    out = []
+    for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
+      quotient, remainder = divmod(s, p)
+      if remainder != 0:
+        raise ValueError(
+            f"Sharding {self} implies that array axis {dim} is partitioned "
+            f"{p} times, but the dimension size is {s} "
+            f"(full shape: {global_shape}, "
+            f"per-dimension tiling factors: {partitions} should evenly divide "
+            "the shape)")
+      out.append(quotient)
+    return tuple(out)
 
 
 @functools.lru_cache()
@@ -273,6 +307,17 @@ class PmapSharding(XLACompatibleSharding):
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError("pmap doesn't use OpSharding.")
+
+  @functools.lru_cache(maxsize=4096)
+  def shard_shape(self, global_shape: Shape) -> Shape:
+    sharded_dim = None
+    for i, s in enumerate(self.sharding_spec.sharding):
+      if isinstance(s, pxla.Unstacked):
+        sharded_dim = i
+        break
+    if sharded_dim is None:
+      return global_shape
+    return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
 
 
 # TODO(yashkatariya): Remove this when minimum_jaxlib version is 0.3.17

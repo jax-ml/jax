@@ -118,22 +118,32 @@ class Array:
     self._committed = committed
     self._npy_value = None
 
-    # TODO(yashkatariya): Add a check here which checks if the expected shard
-    # shape matches the shape of _arrays. A similar check exists for GDA.
+    if not _skip_checks or config.jax_enable_checks:
+      ss = self.sharding.shard_shape(self.shape)
+      for db in self._arrays:
+        if db.shape != ss:
+          raise ValueError(
+              f"Expected shard shape {ss} doesn't match the buffer "
+              f"shape {db.shape} for buffer: {db}")
 
     if not _skip_checks or config.jax_enable_checks:
-      assert all(db.dtype == self.dtype for db in self._arrays), (
-          "Input arrays to `Array` must have matching dtypes, "
-          f"got: {[db.dtype for db in self._arrays]}, aval type: {self.dtype}")
+      for db in self._arrays:
+        if db.dtype != self.dtype:
+          raise ValueError(
+              "Input buffers to `Array` must have matching dtypes. "
+              f"Got {db.dtype}, expected {self.dtype} for buffer: {db}")
 
     # Don't rearrange if skip_checks is enabled because this assumes that the
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
     # (like pjit, xmap, etc).
     if not _skip_checks:
-      addressable_device_assignment = self.sharding._addressable_device_assignment
       # Rearrange arrays based on the device assignment.
+      # TODO(yashkatariya): Add a similar check for shardings that are not
+      # XLACompatibleSharding. But leave the rearragement to XLACompatibleSharding
+      # only.
       if isinstance(sharding, XLACompatibleSharding):
+        addressable_device_assignment = self.sharding._addressable_device_assignment
         if len(self._arrays) != len(addressable_device_assignment):
           raise ValueError(
               f"Expected {len(addressable_device_assignment)} per-device arrays "
@@ -271,7 +281,7 @@ class Array:
     return to_dlpack(self)
 
   def __reduce__(self):
-    fun, args, arr_state = self._value.__reduce__()
+    fun, args, arr_state = self._value.__reduce__()  # type: ignore
     aval_state = {'weak_type': self.aval.weak_type,
                   'named_shape': self.aval.named_shape}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
