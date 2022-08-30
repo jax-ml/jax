@@ -165,6 +165,10 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   def ndim(self):
     return len(self.shape)
 
+  @property
+  def dtype(self):
+    return KeyTy(self.impl)
+
   def _is_scalar(self):
     base_ndim = len(self.impl.key_shape)
     return self._base_array.ndim == base_ndim
@@ -270,21 +274,7 @@ def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   return base_arr_shape[:-base_ndim]
 
 
-class KeyTy:
-  impl: Hashable  # prng.PRNGImpl. TODO(mattjj,frostig): protocol really
-  def __init__(self, impl):
-    self.impl = impl
-  @property
-  def name(self) -> str:
-    return f'key<{self.impl.tag}>'
-  def __repr__(self) -> str:
-    return self.name
-  def __eq__(self, other):
-    return type(other) is KeyTy and self.impl is other.impl
-  def __hash__(self) -> int:
-    return hash((self.__class__, self.impl))
-
-  # handlers
+class KeyTyRules:
 
   @staticmethod
   def physical_avals(aval):  # TODO(frostig): rename to `grounded_avals`
@@ -294,7 +284,7 @@ class KeyTy:
 
   @staticmethod
   def aval_to_ir_types(aval):
-    phys_aval, = KeyTy.physical_avals(aval)
+    phys_aval, = KeyTyRules.physical_avals(aval)
     return mlir.aval_to_ir_types(phys_aval)
 
   @staticmethod
@@ -306,7 +296,7 @@ class KeyTy:
 
   @staticmethod
   def local_sharded_result_handler(aval, sharding, indices):
-    phys_aval, = KeyTy.physical_avals(aval)
+    phys_aval, = KeyTyRules.physical_avals(aval)
     key_shape = aval.dtype.impl.key_shape
 
     # TODO(yashkatariya,frostig): remove this conditional and inline it when
@@ -349,7 +339,7 @@ class KeyTy:
 
   @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed):
-    phys_aval, = KeyTy.physical_avals(aval)
+    phys_aval, = KeyTyRules.physical_avals(aval)
     key_shape = aval.dtype.impl.key_shape
 
     # TODO(yashkatariya,frostig): remove this conditional and inline it when
@@ -463,6 +453,28 @@ class KeyTy:
         ctx, gather_lower, x, indices,
         avals_in=[keys_aval_to_base_arr_aval(aval_x), aval_indices],
         avals_out=[keys_aval_to_base_arr_aval(aval_y)])
+
+
+class KeyTy:
+  impl: Hashable  # prng.PRNGImpl. TODO(mattjj,frostig): protocol really
+  _rules = KeyTyRules
+
+  def __init__(self, impl):
+    self.impl = impl
+
+  @property
+  def name(self) -> str:
+    return f'key<{self.impl.tag}>'
+
+  def __repr__(self) -> str:
+    return self.name
+
+  def __eq__(self, other):
+    return type(other) is KeyTy and self.impl is other.impl
+
+  def __hash__(self) -> int:
+    return hash((self.__class__, self.impl))
+
 
 core.custom_eltypes.add(KeyTy)
 

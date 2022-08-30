@@ -25,9 +25,10 @@ import operator
 from operator import attrgetter
 import threading
 import types
-from typing import (Any, Callable, ClassVar, DefaultDict, Dict, Generator,
-                    Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
-                    Type, Union, cast, Iterable, Hashable)
+from typing import (Any, Callable, ClassVar, DefaultDict, Dict,
+                    Generator, Hashable, Iterable, Iterator, List,
+                    NamedTuple, Optional, Sequence, Set, Tuple, Type,
+                    Union, cast)
 import warnings
 from weakref import ref
 

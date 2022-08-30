@@ -1227,8 +1227,8 @@ def poisson(key: KeyArray,
   """
   key, _ = _check_prng_key(key)
   # TODO(frostig): generalize underlying poisson implementation and
-  # remove this check (and use of core.get_aval)
-  key_impl = core.get_aval(key).dtype.impl
+  # remove this check
+  key_impl = key.dtype.impl
   if key_impl is not prng.threefry_prng_impl:
     raise NotImplementedError(
         '`poisson` is only implemented for the threefry2x32 RNG, '
