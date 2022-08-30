@@ -165,6 +165,10 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   def ndim(self):
     return len(self.shape)
 
+  @property
+  def dtype(self):
+    return KeyTy(self.impl)
+
   def _is_scalar(self):
     base_ndim = len(self.impl.key_shape)
     return self._base_array.ndim == base_ndim

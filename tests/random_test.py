@@ -1515,6 +1515,23 @@ class KeyArrayTest(jtu.JaxTestCase):
     make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
     return jnp.reshape(jax.vmap(make_key)(seeds), shape)
 
+  def test_dtype_property(self):
+    k1, k2 = self.make_keys(), self.make_keys()
+    self.assertEqual(k1.dtype, k2.dtype)
+
+    k3, k4 = jax.random.split(k1, 2)
+    self.assertEqual(k1.dtype, k3.dtype)
+    self.assertEqual(k3.dtype, k4.dtype)
+
+    g = []
+    def f(k):
+      g.append(k.dtype)
+      return jax.random.split(k)
+    _ = jax.jit(f)(k1)
+    self.assertEqual(g[0], k1.dtype)
+    self.assertEqual(g[0], k2.dtype)
+
+
   # -- prng primitives
 
   def test_random_wrap_vmap(self):
