@@ -43,7 +43,7 @@ xs = jnp.arange(3.)
 
 def f(x):
   jax.debug.print("x: {}", x)
-  y = np.sin(x)
+  y = jnp.sin(x)
   jax.debug.print("y: {}", y)
   return y
 jax.vmap(f)(xs)
