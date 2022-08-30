@@ -1082,6 +1082,18 @@ class MapTrace(core.Trace):
                            for v, s, dst in zip(out, outaxes, out_axes_thunk()))
     return map(partial(MapTracer, self), out, outaxes)
 
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+    fake_primitive = types.SimpleNamespace(
+        multiple_results=True, bind=partial(primitive.bind, fun, jvp))
+    return self.process_primitive(fake_primitive, tracers, {})
+
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
+                              out_trees):
+    fake_primitive = types.SimpleNamespace(
+        multiple_results=True, bind=partial(primitive.bind, fun, fwd, bwd,
+                                            out_trees=out_trees))
+    return self.process_primitive(fake_primitive, tracers, {})
+
   def process_axis_index(self, frame):
     fake_primitive = types.SimpleNamespace(
         multiple_results=False, bind=lambda _: jax.lax.axis_index(frame.name))

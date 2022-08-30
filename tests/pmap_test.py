@@ -3123,7 +3123,39 @@ class EagerPmapMixin:
     super().tearDown()
 
 class EagerPythonPmapTest(EagerPmapMixin, PythonPmapTest):
-  pass
+
+  def test_custom_jvp(self):
+
+    @jax.custom_jvp
+    def foo(x):
+      return jnp.exp(x)
+    @foo.defjvp
+    def foo_jvp(xs, ts):
+      (x,), (t,) = xs, ts
+      return foo(x), t * 4.
+
+    f = lambda x, t: jax.jvp(foo, (x,), (t,))
+    x = jnp.arange(
+        jax.local_device_count() * 5, dtype=jnp.dtype('float32')).reshape((
+          jax.local_device_count(), 5))
+    self.assertAllClose(self.pmap(f)(x, x), jax.vmap(f)(x, x))
+
+  def test_custom_vjp(self):
+
+    @jax.custom_vjp
+    def foo(x):
+      return jnp.exp(x)
+
+    def foo_fwd(x):
+      return foo(x), x
+    def foo_bwd(_, g):
+      return (g * 5.,)
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    f = jax.grad(foo)
+    x = jnp.arange(jax.local_device_count(), dtype=jnp.dtype('float32'))
+    self.assertAllClose(self.pmap(f)(x), jax.vmap(f)(x))
+
 
 class EagerCppPmapTest(EagerPmapMixin, CppPmapTest):
   pass
