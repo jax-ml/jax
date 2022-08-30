@@ -961,6 +961,18 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
+@weakref_lru_cache
+def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
+  """Move n invars to constvars. Like an inverse of convert_constvars_Jaxpr."""
+  config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  constvars, invars = split_list(jaxpr.invars, [n])
+  lifted_jaxpr = Jaxpr(constvars=tuple(constvars), invars=invars,
+                       outvars=jaxpr.outvars, eqns=jaxpr.eqns,
+                       effects=jaxpr.effects)
+  config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
+  return lifted_jaxpr
+
+
 def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   env_vars, invars = split_list(jaxpr.invars, [num_env_vars])
@@ -1269,6 +1281,15 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool],
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.invars)
   return _dce_jaxpr(jaxpr, tuple(used_outputs), tuple(instantiate))
+
+def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
+                     instantiate: Union[bool, Sequence[bool]] = False,
+                     ) -> Tuple[Jaxpr, List[bool], List[bool]]:
+  jaxpr_ = convert_constvars_jaxpr(jaxpr)
+  new_jaxpr_, used_inputs_ = dce_jaxpr(jaxpr_, used_outputs)
+  used_consts, used_inputs = split_list(used_inputs_, [len(jaxpr.constvars)])
+  new_jaxpr = convert_invars_to_constvars(new_jaxpr_, sum(used_consts))
+  return new_jaxpr, used_consts, used_inputs
 
 @weakref_lru_cache
 def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...],

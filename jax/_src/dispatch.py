@@ -529,21 +529,14 @@ def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:
               for j in itertools.chain([jaxpr], core.subjaxprs(jaxpr))
               for e in j.eqns for v in e.outvars))
 
-def _prune_unused_inputs(
-    jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, Set[int], Set[int]]:
-  used = {v for v in jaxpr.outvars if isinstance(v, core.Var)}
-  # TODO(zhangqiaorjc): Improve the DCE algorithm by also pruning primitive
-  # applications that do not produce used outputs. Must handle side-effecting
-  # primitives and nested jaxpr.
-  used.update(
-      v for eqn in jaxpr.eqns for v in eqn.invars if isinstance(v, core.Var))
-  kept_const_idx, new_constvars = util.unzip2(
-      (i, v) for i, v in enumerate(jaxpr.constvars) if v in used)
-  kept_var_idx, new_invars = util.unzip2(
-      (i, v) for i, v in enumerate(jaxpr.invars) if v in used)
-  new_jaxpr = core.Jaxpr(new_constvars, new_invars, jaxpr.outvars, jaxpr.eqns,
-                         jaxpr.effects)
-  return new_jaxpr, set(kept_const_idx), set(kept_var_idx)
+def _prune_unused_inputs(jaxpr: core.Jaxpr
+                         ) -> Tuple[core.Jaxpr, Set[int], Set[int]]:
+  used_outputs = [True] * len(jaxpr.outvars)
+  new_jaxpr, used_consts, used_inputs = pe.dce_jaxpr_consts(jaxpr, used_outputs)
+  kept_const_idx = {i for i, b in enumerate(used_consts) if b}
+  kept_var_idx = {i for i, b in enumerate(used_inputs) if b}
+  out = new_jaxpr, kept_const_idx, kept_var_idx
+  return out
 
 
 # We can optionally set a Jaxpr rewriter that can be applied just before
