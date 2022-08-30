@@ -115,7 +115,6 @@ LAX_OPS = [
     # TODO(b/143135720): on GPU, tanh has only ~float32 precision.
     op_record("tanh", 1, float_dtypes + complex_dtypes, jtu.rand_small,
               {np.float64: 1e-9, np.complex128: 1e-7}),
-    op_record("logistic", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("sin", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("cos", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("atan2", 2, float_dtypes, jtu.rand_default),
@@ -2960,8 +2959,6 @@ class LazyConstantTest(jtu.JaxTestCase):
       for op, dtypes in unary_op_types.items())
   def testUnaryWeakTypes(self, op_name, rec_dtypes):
     """Test that all lax unary ops propagate weak_type information appropriately."""
-    if op_name == "bitwise_not":
-      raise unittest.SkipTest("https://github.com/google/jax/issues/12066")
     # Find a valid dtype for the function.
     for dtype in [np.float_, np.int_, np.complex_, np.bool_]:
       dtype = dtypes.canonicalize_dtype(dtype)
