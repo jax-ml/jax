@@ -97,6 +97,8 @@ def arg_spec(x: Any) -> ArgSpec:
   aval = xla.abstractify(x)
   try:
     if config.jax_array:
+      if isinstance(x.sharding, PmapSharding):
+        return aval, None
       return aval, (x.sharding if x._committed else None)
     else:
       return aval, x._device
@@ -275,10 +277,6 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
 xla.xla_call_p.def_impl(_xla_call_impl)
 
 
-TracedJaxprInfo = collections.namedtuple(
-    'TracedJaxprInfo', ['jaxpr', 'out_jaxpr_avals', 'consts'])
-
-
 def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
                      *arg_specs):
   # TODO(yashkatariya): Remove the local imports from here when the functions
@@ -288,26 +286,16 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
 
   in_avals, in_shardings = util.unzip2(arg_specs)
 
-  with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
-                        "in {elapsed_time} sec"):
-    jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(
-        fun, in_avals, debug_info=pe.debug_info_final(fun, "jit"))
-  traced_jaxpr_info = TracedJaxprInfo(jaxpr, out_jaxpr_avals, consts)
-
-  # If jaxpr has the pmap primitive or if `backend` is provided on `jit`, then
-  # take the lower_xla_callable lowering path. This is because pmap's programming
-  # model is not compatible with lower_sharding_computation.
   # Specifying backend on `jit` is not supported when Array is enabled. So take
   # the `lower_xla_callable` path which can handle it.
-  if (jaxpr_has_primitive(jaxpr, 'xla_pmap') or
-      any(isinstance(s, sharding.PmapSharding) for s in in_shardings) or
-      backend is not None):
+  # TODO(yashkatariya): Figure out what to do with the backend argument in `jit`
+  if backend is not None:
     arg_specs = tuple(
         (a, s._device) if isinstance(s, sharding.SingleDeviceSharding) else (a, None)
         for a, s in zip(in_avals, in_shardings))
     return lower_xla_callable(
-        fun, None, backend, name, donated_invars, False, keep_unused, *arg_specs,
-        traced_jaxpr_info=traced_jaxpr_info).compile().unsafe_call
+        fun, None, backend, name, donated_invars, False, keep_unused,
+        *arg_specs).compile().unsafe_call
 
   committed = any(i is not None for i in in_shardings)
   da = pjit._get_and_check_device_assignment(
@@ -318,10 +306,10 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
   # the number of output avals at this stage. lower_sharding_computation will
   # apply it to all out_avals.
   return pxla.lower_sharding_computation(
-      fun, 'xla_callable', name, in_shardings, pjit._UNSPECIFIED,
+      fun, 'jit', name, in_shardings, pjit._UNSPECIFIED,
       donated_invars, in_avals,
       in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
-      committed=committed, traced_jaxpr_info=traced_jaxpr_info).compile(
+      committed=committed).compile(
           _allow_propagation_to_outputs=True).unsafe_call
 
 
@@ -359,11 +347,32 @@ def should_tuple_args(num_args: int, platform: str):
     return num_args > 100
 
 
+def raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, name, jaxpr):
+  if nreps > 1:
+    warnings.warn(
+        f"The jitted function {name} includes a pmap. Using "
+         "jit-of-pmap can lead to inefficient data movement, as the outer jit "
+         "does not preserve sharded data representations and instead collects "
+         "input and output arrays onto a single device. "
+         "Consider removing the outer jit unless you know what you're doing. "
+         "See https://github.com/google/jax/issues/2926.")
+
+  if nreps > xb.device_count(backend):
+    raise ValueError(
+        f"compiling computation `{name}` that requires {nreps} replicas, but "
+        f"only {xb.device_count(backend)} XLA devices are available.")
+
+  if xb.process_count() > 1 and (nreps > 1 or
+                                 jaxpr_has_primitive(jaxpr, "xla_pmap")):
+    raise NotImplementedError(
+        "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
+        "extra data movement anyway, so maybe you don't want it after all).")
+
+
 @profiler.annotate_function
 def lower_xla_callable(
     fun: lu.WrappedFun, device, backend, name, donated_invars,
-    always_lower: bool, keep_unused: bool, *arg_specs,
-    traced_jaxpr_info: Optional[TracedJaxprInfo] = None):
+    always_lower: bool, keep_unused: bool, *arg_specs):
   """Lower into XLA.
 
   Args:
@@ -386,16 +395,11 @@ def lower_xla_callable(
     assert abstract_args == (None,) * len(abstract_args)
     abstract_args = [aval for aval, _ in fun.in_type]
 
-  if traced_jaxpr_info is None:
-    with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
-                          "for jit in {elapsed_time} sec"):
-      jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
-          fun, pe.debug_info_final(fun, "jit"))
-    out_avals, kept_outputs = util.unzip2(out_type)
-  else:
-    jaxpr, out_avals, consts = traced_jaxpr_info
-    kept_outputs = [True] * len(out_avals)
-    out_type = tuple(zip(out_avals, kept_outputs))
+  with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
+                        "for jit in {elapsed_time} sec"):
+    jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
+        fun, pe.debug_info_final(fun, "jit"))
+  out_avals, kept_outputs = util.unzip2(out_type)
 
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
@@ -447,25 +451,7 @@ def lower_xla_callable(
       msg = f"Compiling {fun.__name__} ({id(fun)} for args {abstract_args}."
     logging.log(log_priority, msg)
 
-  if nreps > 1:
-    warnings.warn(
-        f"The jitted function {name} includes a pmap. Using "
-         "jit-of-pmap can lead to inefficient data movement, as the outer jit "
-         "does not preserve sharded data representations and instead collects "
-         "input and output arrays onto a single device. "
-         "Consider removing the outer jit unless you know what you're doing. "
-         "See https://github.com/google/jax/issues/2926.")
-
-  if nreps > xb.device_count(backend):
-    raise ValueError(
-        f"compiling computation `{name}` that requires {nreps} replicas, but "
-        f"only {xb.device_count(backend)} XLA devices are available.")
-
-  if xb.process_count() > 1 and (nreps > 1 or
-                                 jaxpr_has_primitive(jaxpr, "xla_pmap")):
-    raise NotImplementedError(
-        "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
-        "extra data movement anyway, so maybe you don't want it after all).")
+  raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, name, jaxpr)
 
   # pass long arg lists as tuple for TPU
   tuple_args = should_tuple_args(len(abstract_args), backend.platform)
@@ -860,7 +846,8 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
                         result_handler: Callable,
                         has_unordered_effects: bool,
                         ordered_effects: List[core.Effect],
-                        kept_var_idx, has_host_callbacks: bool, *args):
+                        kept_var_idx, has_host_callbacks: bool,
+                        *args, from_lower_sharding_computation: bool = False):
   if has_unordered_effects or ordered_effects:
     # TODO(sharadmv): support jit-of-pmap with effects
     raise NotImplementedError(
@@ -874,6 +861,8 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
   out_flat = [bufs[0] for bufs in out_bufs_flat_rep]
   check_special(name, out_flat)
   out_bufs = unflatten(out_flat, output_buffer_counts)
+  if from_lower_sharding_computation:
+    return result_handler(out_bufs)
   return result_handler(None, out_bufs)
 
 
@@ -1015,6 +1004,17 @@ def compile_or_get_cached(backend, computation, compile_options,
   return backend_compile(backend, computation, compile_options, host_callbacks)
 
 
+def get_buffer_counts(out_avals, ordered_effects, has_unordered_effects):
+  buffer_counts = [aval_to_num_buffers(aval) for aval in out_avals]
+  if ordered_effects or has_unordered_effects:
+    num_output_tokens = len(ordered_effects)
+    # TODO(sharadmv): remove check when minimum jaxlib version is bumped
+    if not can_execute_with_token:
+      num_output_tokens += has_unordered_effects
+    buffer_counts = ([1] * num_output_tokens) + buffer_counts
+  return buffer_counts
+
+
 class XlaCompiledComputation(stages.XlaExecutable):
   def __init__(self, xla_executable, in_avals, kept_var_idx, unsafe_call,
                keepalive: Any):
@@ -1049,13 +1049,8 @@ class XlaCompiledComputation(stages.XlaExecutable):
                           "in {elapsed_time} sec"):
       compiled = compile_or_get_cached(backend, xla_computation, options,
                                        host_callbacks)
-    buffer_counts = [aval_to_num_buffers(aval) for aval in out_avals]
-    if ordered_effects or has_unordered_effects:
-      num_output_tokens = len(ordered_effects)
-      # TODO(sharadmv): remove check when minimum jaxlib version is bumped
-      if not can_execute_with_token:
-        num_output_tokens += has_unordered_effects
-      buffer_counts = ([1] * num_output_tokens) + buffer_counts
+    buffer_counts = get_buffer_counts(out_avals, ordered_effects,
+                                      has_unordered_effects)
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,  # type: ignore  # noqa: F811
                           result_handler, has_unordered_effects,

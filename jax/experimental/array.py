@@ -33,7 +33,8 @@ from jax._src.api import device_put
 from jax._src.numpy.ndarray import ndarray
 from jax.interpreters import pxla, xla, mlir
 from jax.experimental.sharding import (
-    Sharding, SingleDeviceSharding, XLACompatibleSharding, device_replica_id_map)
+    Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
+    device_replica_id_map)
 
 Shape = Tuple[int, ...]
 Device = xc.Device
@@ -446,6 +447,12 @@ def _array_shard_arg(x, devices, indices, mode):
     if isinstance(x.sharding, SingleDeviceSharding):
       return [buf if buf.device() == d else buf.copy_to_device(d)
               for buf, d in safe_zip(x._arrays, devices)]
+    # If PmapSharding exists, then do a round trip via host. This will happen
+    # if the input Array containing PmapSharding takes the jit path
+    # i.e. `apply_primitive` or `xla_callable_uncached`. `jit(pmap)` is the most
+    # common case where this will happen.
+    elif isinstance(x.sharding, PmapSharding):
+      return pxla.device_put(x._value, devices, replicate=True)
     else:
       return x._arrays
 pxla.shard_arg_handlers[Array] = _array_shard_arg
