@@ -804,8 +804,8 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
   aval_out, = ctx.avals_out
   if type(aval_out.dtype) in core.custom_eltypes:
-    return aval_out.dtype.slice_mlir(ctx, x, start_indices, limit_indices,
-                                     strides)
+    return aval_out.dtype._rules.slice_mlir(
+        ctx, x, start_indices, limit_indices, strides)
   return mhlo.SliceOp(x,
                       mlir.dense_int_elements(start_indices),
                       mlir.dense_int_elements(limit_indices),
@@ -905,7 +905,8 @@ batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
   aval_out, = ctx.avals_out
   if type(aval_out.dtype) in core.custom_eltypes:
-    return aval_out.dtype.dynamic_slice_mlir(ctx, x, start_indices, slice_sizes)
+    return aval_out.dtype._rules.dynamic_slice_mlir(
+        ctx, x, start_indices, slice_sizes)
   return mhlo.DynamicSliceOp(x, start_indices,
                              mlir.dense_int_elements(slice_sizes)).results
 
@@ -1003,7 +1004,7 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
   if type(aval_out.dtype) in core.custom_eltypes:
-    return aval_out.dtype.dynamic_update_slice_mlir(
+    return aval_out.dtype._rules.dynamic_update_slice_mlir(
         ctx, x, update, *start_indices)
   return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
                                    start_indices).results
@@ -1318,7 +1319,7 @@ def _gather_lower(ctx, operand, indices, *,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
   if type(aval_out.dtype) in core.custom_eltypes:
-    return aval_out.dtype.gather_mlir(
+    return aval_out.dtype._rules.gather_mlir(
         ctx, operand, indices, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
         indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)

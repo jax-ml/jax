@@ -3018,17 +3018,7 @@ class LaxNamedShapeTest(jtu.JaxTestCase):
       (out,), _ = lax.psum_p.abstract_eval(aval1, axes=('i',), axis_index_groups=None)
       self.assertEqual(out, expected)
 
-
-class FooTy:
-  name = 'foo'
-  def __hash__(self) -> int:
-    return hash(FooTy)
-  def __eq__(self, other) -> bool:
-    return type(other) is FooTy
-  def __repr__(self) -> str:
-    return self.name
-  __str__ = __repr__
-
+class FooTyRules:
   # handlers
 
   @staticmethod
@@ -3114,6 +3104,19 @@ class FooTy:
     return mlir.delegate_lowering(ctx, gather_lower, x, indices,
                                   avals_in=[aval_x_raw, aval_indices],
                                   avals_out=[aval_y_raw])
+
+
+class FooTy:
+  name = 'foo'
+  _rules = FooTyRules
+
+  def __hash__(self) -> int:
+    return hash(FooTy)
+  def __eq__(self, other) -> bool:
+    return type(other) is FooTy
+  def __repr__(self) -> str:
+    return self.name
+  __str__ = __repr__
 
 # primitives
 

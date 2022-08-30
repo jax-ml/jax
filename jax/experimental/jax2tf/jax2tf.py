@@ -779,7 +779,7 @@ def _jax_physical_aval(aval: core.ShapedArray) -> core.ShapedArray:
   there is only one and return it.
   """
   if type(aval.dtype) in core.custom_eltypes:
-    aval, = aval.dtype.physical_avals(aval)
+    aval, = aval.dtype._rules.physical_avals(aval)
     return aval
   return aval
 

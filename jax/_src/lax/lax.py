@@ -2835,7 +2835,7 @@ def _broadcast_in_dim_partial_eval(
 def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   aval_out, = ctx.avals_out
   if type(aval_out.dtype) in core.custom_eltypes:
-    return aval_out.dtype.broadcast_in_dim_mlir(
+    return aval_out.dtype._rules.broadcast_in_dim_mlir(
         ctx, x, *dyn_shape, shape=shape,
         broadcast_dimensions=broadcast_dimensions)
   if dyn_shape:
@@ -3319,7 +3319,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
   if type(aval_out.dtype) in core.custom_eltypes:
-    return aval_out.dtype.transpose_mlir(ctx, x, permutation=permutation)
+    return aval_out.dtype._rules.transpose_mlir(ctx, x, permutation=permutation)
   return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
@@ -4734,6 +4734,6 @@ empty_p = core.Primitive('empty')
 empty_p.def_abstract_eval(lambda *, eltype: core.ShapedArray((), eltype))
 def _empty_lower(ctx, *, eltype):
   if type(eltype) in core.custom_eltypes:
-    return eltype.empty_mlir(ctx)
+    return eltype._rules.empty_mlir(ctx)
   return mlir.ir_constants(np.zeros((), np.dtype(eltype)))
 mlir.register_lowering(empty_p, _empty_lower)
