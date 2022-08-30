@@ -44,7 +44,6 @@ from jax import lax
 from jax.core import ShapedArray, DShapedArray, ConcreteArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
-from jax.typing import ndarray
 
 from jax._src import device_array
 from jax._src import dtypes
@@ -77,6 +76,7 @@ from jax._src.numpy.util import (  # noqa: F401
   _register_stackable, _stackable, _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
+from jax._src.typing.ndarray import ndarray
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis)
 from jax.experimental.array import Array

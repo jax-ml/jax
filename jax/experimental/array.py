@@ -30,11 +30,11 @@ from jax._src.config import config
 from jax._src.util import prod, safe_zip
 from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
+from jax._src.typing.ndarray import ndarray
 from jax.interpreters import pxla, xla, mlir
 from jax.experimental.sharding import (
     Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map)
-from jax.typing import ndarray
 
 Shape = Tuple[int, ...]
 Device = xc.Device

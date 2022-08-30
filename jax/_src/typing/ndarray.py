@@ -297,10 +297,12 @@ for t in device_array.device_array_types:
 ndarray.register(pxla._SDA_BASE_CLASS)
 
 
-
 class HasArrayMethod(Protocol):
   def __array__(self) -> np.ndarray:
     ...
 
-NDArray = Union[ndarray, core.Tracer]
-ArrayLike = Union[bool, int, float, complex, NDArray, np.ndarray, HasArrayMethod]
+
+ArrayLike = Union[bool, int, float, complex, ndarray, core.Tracer, np.ndarray, HasArrayMethod]
+
+# TODO(jakevdp): make this an alias of jax._src.array.Array when available (#12049)
+Array = Union[ndarray, core.Tracer]

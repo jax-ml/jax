@@ -35,7 +35,7 @@ from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
-from jax.typing import NDArray
+from jax._src.typing import ndarray as typing
 from jax._src.util import prod, canonicalize_axis
 
 
@@ -85,7 +85,7 @@ def _return_prng_keys(was_wrapped, key):
     return prng.random_unwrap(key) if was_wrapped else key
 
 
-def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> NDArray:
+def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> typing.Array:
   assert isinstance(key, prng.PRNGKeyArray)
   return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
@@ -240,7 +240,7 @@ def uniform(key: KeyArray,
             shape: Union[Sequence[int], NamedShape] = (),
             dtype: DTypeLikeFloat = dtypes.float_,
             minval: RealArray = 0.,
-            maxval: RealArray = 1.) -> NDArray:
+            maxval: RealArray = 1.) -> typing.Array:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
@@ -264,7 +264,7 @@ def uniform(key: KeyArray,
   return _uniform(key, shape, dtype, minval, maxval)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2), inline=True)
-def _uniform(key, shape, dtype, minval, maxval) -> NDArray:
+def _uniform(key, shape, dtype, minval, maxval) -> typing.Array:
   _check_shape("uniform", shape)
   if not jnp.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -383,7 +383,7 @@ def _randint(key, shape, minval, maxval, dtype):
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
 
-def shuffle(key: KeyArray, x: Array, axis: int = 0) -> NDArray:
+def shuffle(key: KeyArray, x: Array, axis: int = 0) -> typing.Array:
   """Shuffle the elements of an array uniformly at random along an axis.
 
   Args:
@@ -404,7 +404,7 @@ def shuffle(key: KeyArray, x: Array, axis: int = 0) -> NDArray:
 def permutation(key: KeyArray,
                 x: Union[int, Array],
                 axis: int = 0,
-                independent: bool = False) -> NDArray:
+                independent: bool = False) -> typing.Array:
   """Returns a randomly permuted array or range.
 
   Args:
@@ -433,7 +433,7 @@ def permutation(key: KeyArray,
 
 
 @partial(jit, static_argnums=(2,), inline=True)
-def _shuffle(key, x, axis) -> NDArray:
+def _shuffle(key, x, axis) -> typing.Array:
   # On parallel architectures, Fisher-Yates is more expensive than doing
   # multiple sorts. This algorithm is based on one developed and analyzed by
   # tjablin@. We sort according to randomly-generated 32bit keys, but those keys
@@ -465,7 +465,7 @@ def choice(key: KeyArray,
            shape: Sequence[int] = (),
            replace: bool = True,
            p: Optional[RealArray] = None,
-           axis: int = 0) -> NDArray:
+           axis: int = 0) -> typing.Array:
   """Generates a random sample from a given array.
 
   .. warning::
@@ -539,7 +539,7 @@ def choice(key: KeyArray,
 
 def normal(key: KeyArray,
            shape: Union[Sequence[int], NamedShape] = (),
-           dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+           dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample standard normal random values with given shape and float dtype.
 
   Args:
@@ -561,7 +561,7 @@ def normal(key: KeyArray,
   return _normal(key, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2), inline=True)
-def _normal(key, shape, dtype) -> NDArray:
+def _normal(key, shape, dtype) -> typing.Array:
   if dtypes.issubdtype(dtype, np.complexfloating):
     sqrt2 = np.array(np.sqrt(2), dtype)
 
@@ -574,7 +574,7 @@ def _normal(key, shape, dtype) -> NDArray:
     return _normal_real(key, shape, dtype) # type: ignore
 
 @partial(jit, static_argnums=(1, 2), inline=True)
-def _normal_real(key, shape, dtype) -> NDArray:
+def _normal_real(key, shape, dtype) -> typing.Array:
   _check_shape("normal", shape)
   lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
   hi = np.array(1., dtype)
@@ -587,7 +587,7 @@ def multivariate_normal(key: KeyArray,
                         cov: RealArray,
                         shape: Optional[Sequence[int]] = None,
                         dtype: DTypeLikeFloat = dtypes.float_,
-                        method: str = 'cholesky') -> NDArray:
+                        method: str = 'cholesky') -> typing.Array:
   """Sample multivariate normal random values with given mean and covariance.
 
   Args:
@@ -621,7 +621,7 @@ def multivariate_normal(key: KeyArray,
   return _multivariate_normal(key, mean, cov, shape, dtype, method)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4, 5), inline=True)
-def _multivariate_normal(key, mean, cov, shape, dtype, method) -> NDArray:
+def _multivariate_normal(key, mean, cov, shape, dtype, method) -> typing.Array:
   if not np.ndim(mean) >= 1:
     msg = "multivariate_normal requires mean.ndim >= 1, got mean.ndim == {}"
     raise ValueError(msg.format(np.ndim(mean)))
@@ -655,7 +655,7 @@ def truncated_normal(key: KeyArray,
                      lower: RealArray,
                      upper: RealArray,
                      shape: Optional[Union[Sequence[int], NamedShape]] = None,
-                     dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+                     dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
@@ -686,7 +686,7 @@ def truncated_normal(key: KeyArray,
   return _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4), inline=True)
-def _truncated_normal(key, lower, upper, shape, dtype) -> NDArray:
+def _truncated_normal(key, lower, upper, shape, dtype) -> typing.Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(lower), np.shape(upper))
   else:
@@ -711,7 +711,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> NDArray:
 
 def bernoulli(key: KeyArray,
               p: RealArray = np.float32(0.5),
-              shape: Optional[Union[Sequence[int], NamedShape]] = None) -> NDArray:
+              shape: Optional[Union[Sequence[int], NamedShape]] = None) -> typing.Array:
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
@@ -737,7 +737,7 @@ def bernoulli(key: KeyArray,
   return _bernoulli(key, p, shape)  # type: ignore
 
 @partial(jit, static_argnums=(2,), inline=True)
-def _bernoulli(key, p, shape) -> NDArray:
+def _bernoulli(key, p, shape) -> typing.Array:
   if shape is None:
     # TODO: Use the named part of `p` as well
     shape = np.shape(p)
@@ -751,7 +751,7 @@ def beta(key: KeyArray,
          a: RealArray,
          b: RealArray,
          shape: Optional[Sequence[int]] = None,
-         dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+         dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Beta random values with given shape and float dtype.
 
   Args:
@@ -802,7 +802,7 @@ def _beta(key, a, b, shape, dtype):
 
 def cauchy(key: KeyArray,
            shape: Sequence[int] = (),
-           dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+           dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Cauchy random values with given shape and float dtype.
 
   Args:
@@ -834,7 +834,7 @@ def _cauchy(key, shape, dtype):
 def dirichlet(key: KeyArray,
               alpha: RealArray,
               shape: Optional[Sequence[int]] = None,
-              dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+              dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Dirichlet random values with given shape and float dtype.
 
   Args:
@@ -892,7 +892,7 @@ def _softmax(x, axis):
 
 def exponential(key: KeyArray,
                 shape: Sequence[int] = (),
-                dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+                dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Exponential random values with given shape and float dtype.
 
   Args:
@@ -1056,7 +1056,7 @@ batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 def gamma(key: KeyArray,
           a: RealArray,
           shape: Optional[Sequence[int]] = None,
-          dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+          dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Gamma random values with given shape and float dtype.
 
   Args:
@@ -1090,7 +1090,7 @@ def gamma(key: KeyArray,
 def loggamma(key: KeyArray,
              a: RealArray,
              shape: Optional[Sequence[int]] = None,
-             dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+             dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample log-gamma random values with given shape and float dtype.
 
   This function is implemented such that the following will hold for a
@@ -1231,7 +1231,7 @@ def _poisson(key, lam, shape, dtype):
 def poisson(key: KeyArray,
             lam: RealArray,
             shape: Optional[Sequence[int]] = None,
-            dtype: DTypeLikeInt = dtypes.int_) -> NDArray:
+            dtype: DTypeLikeInt = dtypes.int_) -> typing.Array:
   """Sample Poisson random values with given shape and integer dtype.
 
   Args:
@@ -1266,7 +1266,7 @@ def poisson(key: KeyArray,
 
 def gumbel(key: KeyArray,
            shape: Sequence[int] = (),
-           dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+           dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Gumbel random values with given shape and float dtype.
 
   Args:
@@ -1297,7 +1297,7 @@ def _gumbel(key, shape, dtype):
 def categorical(key: KeyArray,
                 logits: RealArray,
                 axis: int = -1,
-                shape: Optional[Sequence[int]] = None) -> NDArray:
+                shape: Optional[Sequence[int]] = None) -> typing.Array:
   """Sample random values from categorical distributions.
 
   Args:
@@ -1334,7 +1334,7 @@ def categorical(key: KeyArray,
 
 def laplace(key: KeyArray,
             shape: Sequence[int] = (),
-            dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+            dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Laplace random values with given shape and float dtype.
 
   Args:
@@ -1365,7 +1365,7 @@ def _laplace(key, shape, dtype):
 
 def logistic(key: KeyArray,
              shape: Sequence[int] = (),
-             dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+             dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample logistic random values with given shape and float dtype.
 
   Args:
@@ -1396,7 +1396,7 @@ def _logistic(key, shape, dtype):
 def pareto(key: KeyArray,
            b: RealArray,
            shape: Optional[Sequence[int]] = None,
-           dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+           dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Pareto random values with given shape and float dtype.
 
   Args:
@@ -1437,7 +1437,7 @@ def _pareto(key, b, shape, dtype):
 def t(key: KeyArray,
       df: RealArray,
       shape: Sequence[int] = (),
-      dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+      dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample Student's t random values with given shape and float dtype.
 
   Args:
@@ -1480,7 +1480,7 @@ def _t(key, df, shape, dtype):
 
 def rademacher(key: KeyArray,
                shape: Sequence[int],
-               dtype: DTypeLikeInt = dtypes.int_) -> NDArray:
+               dtype: DTypeLikeInt = dtypes.int_) -> typing.Array:
   """Sample from a Rademacher distribution.
 
   Args:
@@ -1507,7 +1507,7 @@ def _rademacher(key, shape, dtype):
 
 def maxwell(key: KeyArray,
             shape: Sequence[int] = (),
-            dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+            dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample from a one sided Maxwell distribution.
 
   The scipy counterpart is `scipy.stats.maxwell`.
@@ -1543,7 +1543,7 @@ def double_sided_maxwell(key: KeyArray,
                          loc: RealArray,
                          scale: RealArray,
                          shape: Sequence[int] = (),
-                         dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+                         dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample from a double sided Maxwell distribution.
 
   Samples using:
@@ -1589,7 +1589,7 @@ def weibull_min(key: KeyArray,
                 scale: RealArray,
                 concentration: RealArray,
                 shape: Sequence[int] = (),
-                dtype: DTypeLikeFloat = dtypes.float_) -> NDArray:
+                dtype: DTypeLikeFloat = dtypes.float_) -> typing.Array:
   """Sample from a Weibull distribution.
 
   The scipy counterpart is `scipy.stats.weibull_min`.
@@ -1637,7 +1637,7 @@ def orthogonal(
   n: int,
   shape: Sequence[int] = (),
   dtype: DTypeLikeFloat = dtypes.float_
-) -> NDArray:
+) -> typing.Array:
   """Sample uniformly from the orthogonal group O(n).
 
   If the dtype is complex, sample uniformly from the unitary group U(n).
@@ -1665,7 +1665,7 @@ def generalized_normal(
   p: float,
   shape: Sequence[int] = (),
   dtype: DTypeLikeFloat = dtypes.float_
-) -> NDArray:
+) -> typing.Array:
   """Sample from the generalized normal distribution.
 
   Args:

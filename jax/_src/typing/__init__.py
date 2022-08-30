@@ -11,17 +11,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-
-from jax._src.typing.ndarray import (
-    ndarray as ndarray,
-    NDArray as NDArray,
-    ArrayLike as ArrayLike,
-)
-
-from jax._src.typing.simple import (
-    DimSize as DimSize,
-    Dtype as Dtype,
-    DtypeLike as DtypeLike,
-    Shape as Shape,
-)
+from jax._src.typing.simple import DimSize, Dtype, DtypeLike, Shape

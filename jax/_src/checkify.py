@@ -61,8 +61,8 @@ def setnewattr(obj, name, val):
 
 ## Error value data type and functional assert.
 
-Bool = Union[bool, core.Tracer]
-Int = Union[int, core.Tracer]
+Bool = Union[bool, jnp.ndarray, core.Tracer]
+Int = Union[int, jnp.ndarray, core.Tracer]
 Payload = Union[np.ndarray, jnp.ndarray, core.Tracer]
 
 # For now, the payload needs to be a fixed-size array: 3 int32s, used for the

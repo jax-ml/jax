@@ -14,8 +14,8 @@
 
 
 from typing import Any, Optional, Sequence, Tuple, Union, cast as type_cast
-from jax.typing import NDArray
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.typing.ndarray import Array
 from jax._src.util import prod
 from jax._src.lax import lax
 from jax._src.lax import convolution
@@ -127,7 +127,7 @@ def conv_general_dilated_local(
     rhs_dilation: Optional[Sequence[int]] = None,
     dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
     precision: lax.PrecisionLike = None
-) -> NDArray:
+) -> Array:
   """General n-dimensional unshared convolution operator with optional dilation.
 
   Also known as locally connected layer, the operation is equivalent to

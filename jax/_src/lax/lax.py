@@ -44,7 +44,6 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.typing import ArrayLike, NDArray, Shape
 import jax._src.pretty_printer as pp
 from jax._src import util
 from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
@@ -66,6 +65,11 @@ from jax._src.lax.utils import (
   standard_translate,
 )
 from jax._src.lax import slicing
+from jax._src.typing import Shape
+from jax._src.typing.ndarray import ArrayLike, Array
+
+# TODO(jakevdp): switch to typing.DtypeLike
+DtypeLike = Any
 
 xb = xla_bridge
 xc = xla_client
@@ -193,14 +197,12 @@ def _dyn_shape_staging_rule(trace, prim, out_aval, *args, **params):
 
 
 ### traceables
-Array = Any
-DType = Any
 
-def neg(x: ArrayLike) -> NDArray:
+def neg(x: ArrayLike) -> Array:
   r"""Elementwise negation: :math:`-x`."""
   return neg_p.bind(x)
 
-def sign(x: ArrayLike) -> NDArray:
+def sign(x: ArrayLike) -> Array:
   r"""Elementwise sign.
 
   For floating-point inputs, returns
@@ -224,7 +226,7 @@ def sign(x: ArrayLike) -> NDArray:
   """
   return sign_p.bind(x)
 
-def nextafter(x1: ArrayLike, x2: ArrayLike) -> NDArray:
+def nextafter(x1: ArrayLike, x2: ArrayLike) -> Array:
   r"""Returns the next representable value after `x1` in the direction of `x2`.
 
   Note that in some environments flush-denormal-to-zero semantics is used.
@@ -240,11 +242,11 @@ def nextafter(x1: ArrayLike, x2: ArrayLike) -> NDArray:
   """
   return nextafter_p.bind(x1, x2)
 
-def floor(x: ArrayLike) -> NDArray:
+def floor(x: ArrayLike) -> Array:
   r"""Elementwise floor: :math:`\left\lfloor x \right\rfloor`."""
   return floor_p.bind(x)
 
-def ceil(x: ArrayLike) -> NDArray:
+def ceil(x: ArrayLike) -> Array:
   r"""Elementwise ceiling: :math:`\left\lceil x \right\rceil`."""
   return ceil_p.bind(x)
 
@@ -254,7 +256,7 @@ class RoundingMethod(enum.IntEnum):
 
 def round(x: ArrayLike,
           rounding_method: RoundingMethod = RoundingMethod.AWAY_FROM_ZERO
-          ) -> NDArray:
+          ) -> Array:
   r"""Elementwise round.
 
   Rounds values to the nearest integer.
@@ -271,7 +273,7 @@ def round(x: ArrayLike,
   rounding_method = RoundingMethod(rounding_method)
   return round_p.bind(x, rounding_method=rounding_method)
 
-def is_finite(x: ArrayLike) -> NDArray:
+def is_finite(x: ArrayLike) -> Array:
   r"""Elementwise :math:`\mathrm{isfinite}`.
 
   For each element x returns `True` if and only if x is not :math:`\pm\infty` or
@@ -279,178 +281,178 @@ def is_finite(x: ArrayLike) -> NDArray:
   """
   return is_finite_p.bind(x)
 
-def exp(x: ArrayLike) -> NDArray:
+def exp(x: ArrayLike) -> Array:
   r"""Elementwise exponential: :math:`e^x`."""
   return exp_p.bind(x)
 
-def expm1(x: ArrayLike) -> NDArray:
+def expm1(x: ArrayLike) -> Array:
   r"""Elementwise :math:`e^{x} - 1`."""
   return expm1_p.bind(x)
 
-def log(x: ArrayLike) -> NDArray:
+def log(x: ArrayLike) -> Array:
   r"""Elementwise natural logarithm: :math:`\mathrm{log}(x)`."""
   return log_p.bind(x)
 
-def log1p(x: ArrayLike) -> NDArray:
+def log1p(x: ArrayLike) -> Array:
   r"""Elementwise :math:`\mathrm{log}(1 + x)`."""
   return log1p_p.bind(x)
 
-def tanh(x: ArrayLike) -> NDArray:
+def tanh(x: ArrayLike) -> Array:
   r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`."""
   return tanh_p.bind(x)
 
-def sin(x: ArrayLike) -> NDArray:
+def sin(x: ArrayLike) -> Array:
   r"""Elementwise sine: :math:`\mathrm{sin}(x)`."""
   return sin_p.bind(x)
 
-def cos(x: ArrayLike) -> NDArray:
+def cos(x: ArrayLike) -> Array:
   r"""Elementwise cosine: :math:`\mathrm{cos}(x)`."""
   return cos_p.bind(x)
 
-def atan2(x: ArrayLike, y: ArrayLike) -> NDArray:
+def atan2(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise arc tangent of two variables:
     :math:`\mathrm{atan}({x \over y})`."""
   return atan2_p.bind(x, y)
 
-def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> NDArray:
+def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete beta integral."""
   return regularized_incomplete_beta_p.bind(a, b, x)
 
-def lgamma(x: ArrayLike) -> NDArray:
+def lgamma(x: ArrayLike) -> Array:
   r"""Elementwise log gamma: :math:`\mathrm{log}(\Gamma(x))`."""
   return lgamma_p.bind(x)
 
-def digamma(x: ArrayLike) -> NDArray:
+def digamma(x: ArrayLike) -> Array:
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
 
-def igamma(a: ArrayLike, x: ArrayLike) -> NDArray:
+def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
   return igamma_p.bind(a, x)
 
-def igammac(a: ArrayLike, x: ArrayLike) -> NDArray:
+def igammac(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise complementary regularized incomplete gamma function."""
   return igammac_p.bind(a, x)
 
-def igamma_grad_a(a: ArrayLike, x: ArrayLike) -> NDArray:
+def igamma_grad_a(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise derivative of the regularized incomplete gamma function."""
   return igamma_grad_a_p.bind(a, x)
 
-def random_gamma_grad(a: ArrayLike, x: ArrayLike) -> NDArray:
+def random_gamma_grad(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
   return random_gamma_grad_p.bind(a, x)
 
-def bessel_i0e(x: ArrayLike) -> NDArray:
+def bessel_i0e(x: ArrayLike) -> Array:
   r"""Exponentially scaled modified Bessel function of order 0:
   :math:`\mathrm{i0e}(x) = e^{-|x|} \mathrm{i0}(x)`
   """
   return bessel_i0e_p.bind(x)
 
-def bessel_i1e(x: ArrayLike) -> NDArray:
+def bessel_i1e(x: ArrayLike) -> Array:
   r"""Exponentially scaled modified Bessel function of order 1:
   :math:`\mathrm{i1e}(x) = e^{-|x|} \mathrm{i1}(x)`
   """
   return bessel_i1e_p.bind(x)
 
-def erf(x: ArrayLike) -> NDArray:
+def erf(x: ArrayLike) -> Array:
   r"""Elementwise error function: :math:`\mathrm{erf}(x)`."""
   return erf_p.bind(x)
 
-def erfc(x: ArrayLike) -> NDArray:
+def erfc(x: ArrayLike) -> Array:
   r"""Elementwise complementary error function:
     :math:`\mathrm{erfc}(x) = 1 - \mathrm{erf}(x)`."""
   return erfc_p.bind(x)
 
-def erf_inv(x: ArrayLike) -> NDArray:
+def erf_inv(x: ArrayLike) -> Array:
   r"""Elementwise inverse error function: :math:`\mathrm{erf}^{-1}(x)`."""
   return erf_inv_p.bind(x)
 
-def real(x: ArrayLike) -> NDArray:
+def real(x: ArrayLike) -> Array:
   r"""Elementwise extract real part: :math:`\mathrm{Re}(x)`.
 
   Returns the real part of a complex number.
   """
   return real_p.bind(x)
 
-def imag(x: ArrayLike) -> NDArray:
+def imag(x: ArrayLike) -> Array:
   r"""Elementwise extract imaginary part: :math:`\mathrm{Im}(x)`.
 
   Returns the imaginary part of a complex number.
   """
   return imag_p.bind(x)
 
-def complex(x: ArrayLike, y: ArrayLike) -> NDArray:
+def complex(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise make complex number: :math:`x + jy`.
 
   Builds a complex number from real and imaginary parts.
   """
   return complex_p.bind(x, y)
 
-def conj(x: ArrayLike) -> NDArray:
+def conj(x: ArrayLike) -> Array:
   r"""Elementwise complex conjugate function: :math:`\overline{x}`."""
   return conj_p.bind(x, input_dtype=_dtype(x))
 
-def abs(x: ArrayLike) -> NDArray:
+def abs(x: ArrayLike) -> Array:
   r"""Elementwise absolute value: :math:`|x|`."""
   return abs_p.bind(x)
 
-def pow(x: ArrayLike, y: ArrayLike) -> NDArray:
+def pow(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise power: :math:`x^y`."""
   return pow_p.bind(x, y)
 
-def integer_pow(x: ArrayLike, y: int) -> NDArray:
+def integer_pow(x: ArrayLike, y: int) -> Array:
   r"""Elementwise power: :math:`x^y`, where :math:`y` is a fixed integer."""
   return integer_pow_p.bind(x, y=y)
 
-def sqrt(x: ArrayLike) -> NDArray:
+def sqrt(x: ArrayLike) -> Array:
   r"""Elementwise square root: :math:`\sqrt{x}`."""
   return sqrt_p.bind(x)
 
-def rsqrt(x: ArrayLike) -> NDArray:
+def rsqrt(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}`."""
   return rsqrt_p.bind(x)
 
-def cbrt(x: ArrayLike) -> NDArray:
+def cbrt(x: ArrayLike) -> Array:
   r"""Elementwise cube root: :math:`\sqrt[3]{x}`."""
   return cbrt_p.bind(x)
 
-def bitwise_not(x: ArrayLike) -> NDArray:
+def bitwise_not(x: ArrayLike) -> Array:
   r"""Elementwise NOT: :math:`\neg x`."""
   return not_p.bind(x)
 
-def bitwise_and(x: ArrayLike, y: ArrayLike) -> NDArray:
+def bitwise_and(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise AND: :math:`x \wedge y`."""
   return and_p.bind(x, y)
 
-def bitwise_or(x: ArrayLike, y: ArrayLike) -> NDArray:
+def bitwise_or(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise OR: :math:`x \vee y`."""
   return or_p.bind(x, y)
 
-def bitwise_xor(x: ArrayLike, y: ArrayLike) -> NDArray:
+def bitwise_xor(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise exclusive OR: :math:`x \oplus y`."""
   return xor_p.bind(x, y)
 
-def population_count(x: ArrayLike) -> NDArray:
+def population_count(x: ArrayLike) -> Array:
   r"""Elementwise popcount, count the number of set bits in each element."""
   return population_count_p.bind(x)
 
-def clz(x: ArrayLike) -> NDArray:
+def clz(x: ArrayLike) -> Array:
   r"""Elementwise count-leading-zeros."""
   return clz_p.bind(x)
 
-def add(x: ArrayLike, y: ArrayLike) -> NDArray:
+def add(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise addition: :math:`x + y`."""
   return add_p.bind(x, y)
 
-def sub(x: ArrayLike, y: ArrayLike) -> NDArray:
+def sub(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise subtraction: :math:`x - y`."""
   return sub_p.bind(x, y)
 
-def mul(x: ArrayLike, y: ArrayLike) -> NDArray:
+def mul(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise multiplication: :math:`x \times y`."""
   return mul_p.bind(x, y)
 
-def div(x: ArrayLike, y: ArrayLike) -> NDArray:
+def div(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise division: :math:`x \over y`.
 
   Integer division overflow
@@ -459,7 +461,7 @@ def div(x: ArrayLike, y: ArrayLike) -> NDArray:
   """
   return div_p.bind(x, y)
 
-def rem(x: ArrayLike, y: ArrayLike) -> NDArray:
+def rem(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise remainder: :math:`x \bmod y`.
 
   The sign of the result is taken from the dividend,
@@ -472,57 +474,57 @@ def rem(x: ArrayLike, y: ArrayLike) -> NDArray:
   """
   return rem_p.bind(x, y)
 
-def max(x: ArrayLike, y: ArrayLike) -> NDArray:
+def max(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise maximum: :math:`\mathrm{max}(x, y)`
 
   For complex numbers, uses a lexicographic comparison on the
   `(real, imaginary)` pairs."""
   return max_p.bind(x, y)
 
-def min(x: ArrayLike, y: ArrayLike) -> NDArray:
+def min(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise minimum:  :math:`\mathrm{min}(x, y)`
 
   For complex numbers, uses a lexicographic comparison on the
   `(real, imaginary)` pairs."""
   return min_p.bind(x, y)
 
-def shift_left(x: ArrayLike, y: ArrayLike) -> NDArray:
+def shift_left(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise left shift: :math:`x \ll y`."""
   return shift_left_p.bind(x, y)
 
-def shift_right_arithmetic(x: ArrayLike, y: ArrayLike) -> NDArray:
+def shift_right_arithmetic(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise arithmetic right shift: :math:`x \gg y`."""
   return shift_right_arithmetic_p.bind(x, y)
 
-def shift_right_logical(x: ArrayLike, y: ArrayLike) -> NDArray:
+def shift_right_logical(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise logical right shift: :math:`x \gg y`."""
   return shift_right_logical_p.bind(x, y)
 
-def eq(x: ArrayLike, y: ArrayLike) -> NDArray:
+def eq(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise equals: :math:`x = y`."""
   return eq_p.bind(x, y)
 
-def ne(x: ArrayLike, y: ArrayLike) -> NDArray:
+def ne(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise not-equals: :math:`x \neq y`."""
   return ne_p.bind(x, y)
 
-def ge(x: ArrayLike, y: ArrayLike) -> NDArray:
+def ge(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise greater-than-or-equals: :math:`x \geq y`."""
   return ge_p.bind(x, y)
 
-def gt(x: ArrayLike, y: ArrayLike) -> NDArray:
+def gt(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise greater-than: :math:`x > y`."""
   return gt_p.bind(x, y)
 
-def le(x: ArrayLike, y: ArrayLike) -> NDArray:
+def le(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise less-than-or-equals: :math:`x \leq y`."""
   return le_p.bind(x, y)
 
-def lt(x: ArrayLike, y: ArrayLike) -> NDArray:
+def lt(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise less-than: :math:`x < y`."""
   return lt_p.bind(x, y)
 
-def convert_element_type(operand: ArrayLike, new_dtype: DType) -> NDArray:
+def convert_element_type(operand: ArrayLike, new_dtype: DtypeLike) -> Array:
   """Elementwise cast.
 
   Wraps XLA's `ConvertElementType
@@ -541,7 +543,7 @@ def convert_element_type(operand: ArrayLike, new_dtype: DType) -> NDArray:
     operand = operand.__jax_array__()  # type: ignore
   return _convert_element_type(operand, new_dtype, weak_type=False)
 
-def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DType] = None,
+def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DtypeLike] = None,
                           weak_type: bool = False):
   from jax.experimental import array
 
@@ -573,12 +575,12 @@ def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DType] = None,
 
   if ((old_dtype, old_weak_type) == (new_dtype, new_weak_type)
       and isinstance(operand, (core.Tracer, device_array.DeviceArray, array.Array))):
-    return operand
+    return type_cast(Array, operand)
   else:
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
                                        weak_type=new_weak_type)
 
-def bitcast_convert_type(operand: ArrayLike, new_dtype: DType) -> NDArray:
+def bitcast_convert_type(operand: ArrayLike, new_dtype: DtypeLike) -> Array:
   """Elementwise bitcast.
 
   Wraps XLA's `BitcastConvertType
@@ -597,7 +599,7 @@ def bitcast_convert_type(operand: ArrayLike, new_dtype: DType) -> NDArray:
   new_dtype = dtypes.canonicalize_dtype(new_dtype)
   return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
 
-def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> NDArray:
+def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
   r"""Elementwise clamp.
 
   Returns :math:`\mathrm{clamp}(x) = \begin{cases}
@@ -608,7 +610,7 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> NDArray:
   """
   return clamp_p.bind(min, x, max)
 
-def concatenate(operands: Union[NDArray, Sequence[ArrayLike]], dimension: int) -> NDArray:
+def concatenate(operands: Union[Array, Sequence[ArrayLike]], dimension: int) -> Array:
   """Concatenates a sequence of arrays along `dimension`.
 
   Wraps XLA's `Concatenate
@@ -681,8 +683,8 @@ PrecisionType = Precision
 PrecisionLike = Union[None, str, PrecisionType, Tuple[str, str],
                       Tuple[PrecisionType, PrecisionType]]
 
-def dot(lhs: NDArray, rhs: NDArray, precision: PrecisionLike = None,
-        preferred_element_type: Optional[DType] = None) -> NDArray:
+def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
+        preferred_element_type: Optional[DtypeLike] = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot
@@ -719,7 +721,7 @@ DotDimensionNumbers = Tuple[Tuple[Sequence[int], Sequence[int]],
 
 def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
-                preferred_element_type: Optional[DType] = None) -> NDArray:
+                preferred_element_type: Optional[DtypeLike] = None) -> Array:
   """More general contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -756,7 +758,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
                             precision=canonicalize_precision(precision),
                             preferred_element_type=preferred_element_type)
 
-def broadcast(operand: ArrayLike, sizes: Sequence[int]) -> NDArray:
+def broadcast(operand: ArrayLike, sizes: Sequence[int]) -> Array:
   """Broadcasts an array, adding new leading dimensions
 
   Args:
@@ -774,7 +776,7 @@ def broadcast(operand: ArrayLike, sizes: Sequence[int]) -> NDArray:
   return broadcast_in_dim(operand, tuple(sizes) + np.shape(operand), dims)
 
 def broadcast_in_dim(operand: ArrayLike, shape: Shape,
-                     broadcast_dimensions: Sequence[int]) -> NDArray:
+                     broadcast_dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `BroadcastInDim
   <https://www.tensorflow.org/xla/operation_semantics#broadcastindim>`_
   operator.
@@ -795,7 +797,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
 
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
       and isinstance(operand, (device_array.DeviceArray, core.Tracer, array.Array))):
-    return operand
+    return type_cast(Array, operand)
   if config.jax_dynamic_shapes:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
@@ -806,12 +808,12 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
       operand, *dyn_shape, shape=tuple(static_shape),
       broadcast_dimensions=tuple(broadcast_dimensions))
 
-def broadcast_to_rank(x: NDArray, rank: int) -> NDArray:
+def broadcast_to_rank(x: Array, rank: int) -> Array:
   """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""
   return broadcast(x, (1,) * (rank - x.ndim))
 
 def reshape(operand: ArrayLike, new_sizes: Shape,
-            dimensions: Optional[Sequence[int]] = None) -> NDArray:
+            dimensions: Optional[Sequence[int]] = None) -> Array:
   """Wraps XLA's `Reshape
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
@@ -862,7 +864,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
   if (np.shape(operand) and same_shape and same_dims
       and isinstance(operand, (core.Tracer, device_array.DeviceArray, array.Array))):
-    return operand
+    return type_cast(Array, operand)
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
 
@@ -871,7 +873,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
       dimensions=None if dims is None or same_dims else dims)
 
 def pad(operand: ArrayLike, padding_value: ArrayLike,
-        padding_config: Sequence[Tuple[int, int, int]]) -> NDArray:
+        padding_config: Sequence[Tuple[int, int, int]]) -> Array:
   """Applies low, high, and/or interior padding to an array.
 
   Wraps XLA's `Pad
@@ -892,14 +894,14 @@ def pad(operand: ArrayLike, padding_value: ArrayLike,
   """
   return pad_p.bind(operand, padding_value, padding_config=tuple(padding_config))
 
-def rev(operand: ArrayLike, dimensions: Sequence[int]) -> NDArray:
+def rev(operand: ArrayLike, dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `Rev
   <https://www.tensorflow.org/xla/operation_semantics#rev_reverse>`_
   operator.
   """
   return rev_p.bind(operand, dimensions=tuple(dimensions))
 
-def select(pred: ArrayLike, on_true: ArrayLike, on_false: ArrayLike) -> NDArray:
+def select(pred: ArrayLike, on_true: ArrayLike, on_false: ArrayLike) -> Array:
   """Wraps XLA's `Select
   <https://www.tensorflow.org/xla/operation_semantics#select>`_
   operator.
@@ -908,7 +910,7 @@ def select(pred: ArrayLike, on_true: ArrayLike, on_false: ArrayLike) -> NDArray:
   # select(). This is because it implements `select_n`.
   return select_n_p.bind(pred, on_false, on_true)
 
-def select_n(which: ArrayLike, *cases: ArrayLike) -> NDArray:
+def select_n(which: ArrayLike, *cases: ArrayLike) -> Array:
   """Selects array values from multiple cases.
 
   Generalizes XLA's `Select
@@ -934,26 +936,28 @@ def select_n(which: ArrayLike, *cases: ArrayLike) -> NDArray:
   return select_n_p.bind(which, *cases)
 
 
-def transpose(operand: ArrayLike, permutation: Sequence[int]) -> NDArray:
+def transpose(operand: ArrayLike, permutation: Sequence[int]) -> Array:
   """Wraps XLA's `Transpose
   <https://www.tensorflow.org/xla/operation_semantics#transpose>`_
   operator.
   """
+  from jax.experimental import array
+
   permutation = tuple(operator.index(d) for d in permutation)
   if (permutation == tuple(range(np.ndim(operand)))
-      and isinstance(operand, (core.Tracer, device_array.DeviceArray))):
-    return operand
+      and isinstance(operand, (core.Tracer, device_array.DeviceArray, array.Array))):
+    return type_cast(Array, operand)
   else:
     return transpose_p.bind(operand, permutation=permutation)
 
 def argmin(operand: ArrayLike, axis: int,
-           index_dtype: DType) -> Tuple[Array, Array]:
+           index_dtype: DtypeLike) -> Tuple[Array, Array]:
   """Computes the index of the minimum element along ``axis``."""
   return argmin_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
 
 def argmax(operand: ArrayLike, axis: int,
-           index_dtype: DType) -> Tuple[Array, Array]:
+           index_dtype: DtypeLike) -> Tuple[Array, Array]:
   """Computes the index of the maximum element along ``axis``."""
   return argmax_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
@@ -1052,13 +1056,13 @@ def _get_monoid_reducer(monoid_op: Callable,
       return _reduce_min if np.equal(aval.val, _get_min_identity(dtype)) else None
   return None
 
-def _get_bitwise_and_identity(dtype: DType) -> np.ndarray:
+def _get_bitwise_and_identity(dtype: DtypeLike) -> np.ndarray:
   return np.array(-1, dtype)
 
-def _get_bitwise_or_identity(dtype: DType) -> np.ndarray:
+def _get_bitwise_or_identity(dtype: DtypeLike) -> np.ndarray:
   return np.array(0, dtype)
 
-def _get_max_identity(dtype: DType) -> np.ndarray:
+def _get_max_identity(dtype: DtypeLike) -> np.ndarray:
   if dtypes.issubdtype(dtype, np.inexact):
     return np.array(-np.inf, dtype)
   elif dtypes.issubdtype(dtype, np.integer):
@@ -1068,7 +1072,7 @@ def _get_max_identity(dtype: DType) -> np.ndarray:
   else:
     raise ValueError(f"Unsupported dtype for max: {dtype}")
 
-def _get_min_identity(dtype: DType) -> np.ndarray:
+def _get_min_identity(dtype: DtypeLike) -> np.ndarray:
   if dtypes.issubdtype(dtype, np.inexact):
     return np.array(np.inf, dtype)
   elif dtypes.issubdtype(dtype, np.integer):
@@ -1078,25 +1082,25 @@ def _get_min_identity(dtype: DType) -> np.ndarray:
   else:
     raise ValueError(f"Unsupported dtype for min: {dtype}")
 
-def _reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> NDArray:
+def _reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_sum_p.bind(operand, axes=tuple(axes))
 
-def _reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> NDArray:
+def _reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_prod_p.bind(operand, axes=tuple(axes))
 
-def _reduce_max(operand: ArrayLike, axes: Sequence[int]) -> NDArray:
+def _reduce_max(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_max_p.bind(operand, axes=tuple(axes))
 
-def _reduce_min(operand: ArrayLike, axes: Sequence[int]) -> NDArray:
+def _reduce_min(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_min_p.bind(operand, axes=tuple(axes))
 
-def _reduce_or(operand: ArrayLike, axes: Sequence[int]) -> NDArray:
+def _reduce_or(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_or_p.bind(operand, axes=tuple(axes))
 
-def _reduce_and(operand: ArrayLike, axes: Sequence[int]) -> NDArray:
+def _reduce_and(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_and_p.bind(operand, axes=tuple(axes))
 
-def _reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> NDArray:
+def _reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_xor_p.bind(operand, axes=tuple(axes))
 
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
@@ -1135,14 +1139,14 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
     dimension = canonicalize_axis(dimension, len(operand.shape))
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, num_keys=1)[0]
 
-def sort_key_val(keys: NDArray, values: ArrayLike, dimension: int = -1,
-                 is_stable: bool = True) -> Tuple[NDArray, NDArray]:
+def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
+                 is_stable: bool = True) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies the same permutation to ``values``."""
   dimension = canonicalize_axis(dimension, len(keys.shape))
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
-def top_k(operand: ArrayLike, k: int) -> Tuple[NDArray, NDArray]:
+def top_k(operand: ArrayLike, k: int) -> Tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the last axis of ``operand``."""
   k = int(k)
   if k < 0:
@@ -1153,7 +1157,7 @@ def tie_in(x: Any, y: T) -> T:
   """Deprecated. Ignores ``x`` and returns ``y``."""
   return y
 
-def full(shape: Shape, fill_value: ArrayLike, dtype: Optional[DType] = None) -> NDArray:
+def full(shape: Shape, fill_value: ArrayLike, dtype: Optional[DtypeLike] = None) -> Array:
   """Returns an array of `shape` filled with `fill_value`.
 
   Args:
@@ -1171,7 +1175,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: Optional[DType] = None) -> 
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
   return broadcast(fill_value, shape)
 
-def zeros_like_shaped_array(aval: ArrayLike) -> NDArray:
+def zeros_like_shaped_array(aval: ArrayLike) -> Array:
   assert isinstance(aval, ShapedArray)
   if aval.dtype == dtypes.float0:
     scalar_zero = np.zeros((), dtype=aval.dtype)
@@ -1181,14 +1185,14 @@ def zeros_like_shaped_array(aval: ArrayLike) -> NDArray:
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
-def iota(dtype: DType, size: int) -> NDArray:
+def iota(dtype: DtypeLike, size: int) -> Array:
   """Wraps XLA's `Iota
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
   return broadcasted_iota(dtype, (size,), 0)
 
-def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> NDArray:
+def broadcasted_iota(dtype: DtypeLike, shape: Shape, dimension: int) -> Array:
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = canonicalize_shape(shape)
@@ -1199,7 +1203,7 @@ def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> NDArray:
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension)
 
-def _eye(dtype: DType, shape: Shape, offset: int) -> NDArray:
+def _eye(dtype: DtypeLike, shape: Shape, offset: int) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -1207,7 +1211,7 @@ def _eye(dtype: DType, shape: Shape, offset: int) -> NDArray:
                 broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False)
 
-def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> NDArray:
+def _delta(dtype: DtypeLike, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
   axes = map(int, axes)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -1219,7 +1223,7 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> NDArray:
                                        new_dtype=dtype, weak_type=False)
   return broadcast_in_dim(result, shape, axes)
 
-def _tri(dtype: DType, shape: Shape, offset: int) -> NDArray:
+def _tri(dtype: DtypeLike, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -1260,7 +1264,7 @@ def stop_gradient(x: T) -> T:
 
 def reduce_precision(operand: Union[float, Array],
                      exponent_bits: int,
-                     mantissa_bits: int) -> NDArray:
+                     mantissa_bits: int) -> Array:
   """Wraps XLA's `ReducePrecision
   <https://www.tensorflow.org/xla/operation_semantics#reduceprecision>`_
   operator.
@@ -1271,15 +1275,17 @@ def reduce_precision(operand: Union[float, Array],
     operator.index, mantissa_bits, "mantissa_bits argument of lax.reduce_precision")
   return reduce_precision_p.bind(operand, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits)
 
-def squeeze(array: ArrayLike, dimensions: Sequence[int]) -> NDArray:
+def squeeze(operand: ArrayLike, dimensions: Sequence[int]) -> Array:
   """Squeeze any number of size 1 dimensions from an array."""
-  ndim = np.ndim(array)
-  dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
-  if not dimensions and isinstance(array, (core.Tracer, device_array.DeviceArray)):
-    return array
-  return squeeze_p.bind(array, dimensions=dimensions)
+  from jax.experimental import array
 
-def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> NDArray:
+  ndim = np.ndim(operand)
+  dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
+  if not dimensions and isinstance(operand, (core.Tracer, device_array.DeviceArray, array.Array)):
+    return type_cast(Array, operand)
+  return squeeze_p.bind(operand, dimensions=dimensions)
+
+def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> Array:
   """Insert any number of size 1 dimensions into an array."""
   if len(set(dimensions)) != len(dimensions):
     raise ValueError(f'repeated axis in lax.expand_dims: {dimensions}')
@@ -1297,8 +1303,8 @@ def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> NDArray:
 
 ### convenience wrappers around traceables
 
-def full_like(x: ArrayLike, fill_value: ArrayLike, dtype: Optional[DType] = None,
-              shape: Optional[Shape] = None) -> NDArray:
+def full_like(x: ArrayLike, fill_value: ArrayLike, dtype: Optional[DtypeLike] = None,
+              shape: Optional[Shape] = None) -> Array:
   """Create a full array like np.full based on the example array `x`.
 
   Args:
@@ -1331,8 +1337,8 @@ def full_like(x: ArrayLike, fill_value: ArrayLike, dtype: Optional[DType] = None
   return val
 
 
-def collapse(operand: NDArray, start_dimension: int,
-             stop_dimension: int) -> NDArray:
+def collapse(operand: Array, start_dimension: int,
+             stop_dimension: int) -> Array:
   """Collapses dimensions of an array into a single dimension.
 
   For example, if ``operand`` is an array with shape ``[2, 3, 4]``,
@@ -1355,8 +1361,8 @@ def collapse(operand: NDArray, start_dimension: int,
   return reshape(operand, new_shape)
 
 
-def batch_matmul(lhs: NDArray, rhs: NDArray,
-                 precision: PrecisionLike = None) -> NDArray:
+def batch_matmul(lhs: Array, rhs: Array,
+                 precision: PrecisionLike = None) -> Array:
   """Batch matrix multiplication."""
   if _min(lhs.ndim, rhs.ndim) < 2:
     raise ValueError('Arguments to batch_matmul must be at least 2D, got {}, {}'
@@ -1374,11 +1380,11 @@ def batch_matmul(lhs: NDArray, rhs: NDArray,
 # These functions also exist in the XLA client library, but we treat them
 # as non-primitive to maintain a smaller set of autodiff primitives.
 
-def square(x: ArrayLike) -> NDArray:
+def square(x: ArrayLike) -> Array:
   r"""Elementwise square: :math:`x^2`."""
   return integer_pow(x, 2)
 
-def reciprocal(x: ArrayLike) -> NDArray:
+def reciprocal(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`."""
   return integer_pow(x, -1)
 
@@ -1393,39 +1399,39 @@ def _upcast_fp16_for_computation(f):
 
   return f_wrapped
 
-def tan(x: ArrayLike) -> NDArray:
+def tan(x: ArrayLike) -> Array:
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
   return tan_p.bind(x)
 
-def asin(x: ArrayLike) -> NDArray:
+def asin(x: ArrayLike) -> Array:
   r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
   return asin_p.bind(x)
 
-def acos(x: ArrayLike) -> NDArray:
+def acos(x: ArrayLike) -> Array:
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
   return acos_p.bind(x)
 
-def atan(x: ArrayLike) -> NDArray:
+def atan(x: ArrayLike) -> Array:
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
   return atan_p.bind(x)
 
-def sinh(x: ArrayLike) -> NDArray:
+def sinh(x: ArrayLike) -> Array:
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
   return sinh_p.bind(x)
 
-def cosh(x: ArrayLike) -> NDArray:
+def cosh(x: ArrayLike) -> Array:
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
   return cosh_p.bind(x)
 
-def asinh(x: ArrayLike) -> NDArray:
+def asinh(x: ArrayLike) -> Array:
   r"""Elementwise inverse hyperbolic sine: :math:`\mathrm{asinh}(x)`."""
   return asinh_p.bind(x)
 
-def acosh(x: ArrayLike) -> NDArray:
+def acosh(x: ArrayLike) -> Array:
   r"""Elementwise inverse hyperbolic cosine: :math:`\mathrm{acosh}(x)`."""
   return acosh_p.bind(x)
 
-def atanh(x: ArrayLike) -> NDArray:
+def atanh(x: ArrayLike) -> Array:
   r"""Elementwise inverse hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
   return atanh_p.bind(x)
 
@@ -1448,7 +1454,7 @@ ShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
 
-def zeros_like_array(x: ArrayLike) -> NDArray:
+def zeros_like_array(x: ArrayLike) -> Array:
   return full_like(x, 0)
 
 for t in itertools.chain(
@@ -2453,7 +2459,7 @@ def _masked(padded_value, logical_shape, dimensions, value=0):
 
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: Optional[DType]):
+                            preferred_element_type: Optional[DtypeLike]):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if not all(np.all(np.greater_equal(d, 0)) and np.all(np.less(d, lhs.ndim))
              for d in (lhs_contracting, lhs_batch)):
@@ -2529,7 +2535,7 @@ def tuple_delete(tup, idx):
 
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: Optional[DType]):
+                            preferred_element_type: Optional[DtypeLike]):
   input_dtype = naryop_dtype_rule(_input_dtype, [_any, _any], 'dot_general', lhs, rhs)
   if preferred_element_type is None:
     return input_dtype
@@ -2537,7 +2543,7 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
   return preferred_element_type
 
 def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
-                               preferred_element_type: Optional[DType],
+                               preferred_element_type: Optional[DtypeLike],
                                swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = g.ndim - y.ndim + len(x_batch) + 2 * len(x_contract)
@@ -2554,7 +2560,7 @@ def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
                    tuple(out_axes))
 
 def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision,
-                               preferred_element_type: Optional[DType]):
+                               preferred_element_type: Optional[DtypeLike]):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   return _dot_general_transpose_lhs(
@@ -2565,7 +2571,7 @@ def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision,
 
 def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
                             precision,
-                            preferred_element_type: Optional[DType]):
+                            preferred_element_type: Optional[DtypeLike]):
   lhs, rhs = batched_args
   new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
       (lhs.ndim, rhs.ndim), batch_dims, dimension_numbers)
@@ -4624,7 +4630,7 @@ _two: Callable = partial(full_like, shape=(), fill_value=2)
 dtype: Callable = partial(dtypes.dtype, canonicalize=True)
 _dtype: Callable = partial(dtypes.dtype, canonicalize=True)
 
-def _isnan(x: ArrayLike) -> NDArray:
+def _isnan(x: ArrayLike) -> Array:
   return ne(x, x)
 
 def _iscomplex(x) -> bool:

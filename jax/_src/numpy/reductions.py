@@ -23,11 +23,11 @@ import numpy as np
 import jax
 from jax import core
 from jax import lax
-from jax.typing import ndarray
 from jax._src import api
 from jax._src import dtypes
 from jax._src.numpy.util import _broadcast_to, _check_arraylike, _complex_elem_type, _promote_dtypes_inexact, _where, _wraps
 from jax._src.lax import lax as lax_internal
+from jax._src.typing.ndarray import ndarray
 from jax._src.util import canonicalize_axis as _canonicalize_axis, maybe_named_axis
 
 
