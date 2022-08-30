@@ -28,7 +28,7 @@ from jax.experimental.sharding import (
 from jax import core
 from jax import linear_util as lu
 from jax import stages
-from jax._src.api import _check_callable, _check_arg, devices
+from jax._src.api import _check_callable, _check_arg, local_devices
 from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
@@ -922,9 +922,12 @@ def _pjit_lower_cached(
   else:
     # Pass `in_is_global` here because this path is taken by both host local
     # avals and global avals.
+    # TODO(yashkatariya): Don't set committed to True always. Infer that from
+    # the arguments just like dispatch.py in `sharded_lowering`.
     return pxla.lower_sharding_computation(
         fun, 'pjit', name, in_shardings, out_shardings, donated_invars,
-        jaxpr.in_avals, in_is_global=in_is_global)
+        jaxpr.in_avals, in_is_global=in_is_global, keep_unused=True,
+        committed=True)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,
@@ -1519,7 +1522,7 @@ def _get_and_check_device_assignment(shardings, pjit_mesh):
   if first_device_assignment is None and not pjit_mesh.empty:
     return mesh_devices
   if first_device_assignment is None:
-    return [config.jax_default_device or devices()[0]]
+    return [config.jax_default_device or local_devices()[0]]
   return first_device_assignment
 
 

@@ -548,6 +548,8 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
 
 def _convert_element_type(operand: Array, new_dtype: Optional[DType] = None,
                           weak_type: bool = False):
+  from jax.experimental import array
+
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
   old_dtype = dtypes.dtype(operand, canonicalize=False)
@@ -575,7 +577,7 @@ def _convert_element_type(operand: Array, new_dtype: Optional[DType] = None,
     old_weak_type = False
 
   if ((old_dtype, old_weak_type) == (new_dtype, new_weak_type)
-      and isinstance(operand, (core.Tracer, device_array.DeviceArray))):
+      and isinstance(operand, (core.Tracer, device_array.DeviceArray, array.Array))):
     return operand
   else:
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
@@ -794,8 +796,10 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
+  from jax.experimental import array
+
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
-      and isinstance(operand, (device_array.DeviceArray, core.Tracer))):
+      and isinstance(operand, (device_array.DeviceArray, core.Tracer, array.Array))):
     return operand
   if config.jax_dynamic_shapes:
     # We must gate this behavior under a flag because otherwise the errors
@@ -850,6 +854,8 @@ def reshape(operand: Array, new_sizes: Shape,
     >>> reshape(y, (6,), (1, 0))
     DeviceArray([0, 3, 1, 4, 2, 5], dtype=int32)
   """
+  from jax.experimental import array
+
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
   same_shape = core.symbolic_equal_shape(np.shape(operand), new_sizes)
@@ -860,7 +866,7 @@ def reshape(operand: Array, new_sizes: Shape,
     dims = api_util._ensure_index_tuple(dimensions)
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
   if (np.shape(operand) and same_shape and same_dims
-      and isinstance(operand, (core.Tracer, device_array.DeviceArray))):
+      and isinstance(operand, (core.Tracer, device_array.DeviceArray, array.Array))):
     return operand
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)

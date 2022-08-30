@@ -1451,7 +1451,10 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(1).block_until_ready()
     with jtu.count_device_put() as count:
       jax.jit(random.split)(key)
-    self.assertEqual(count[0], 1)  # 1 for the argument device_put
+    if config.jax_array:
+      self.assertEqual(count[0], 0)
+    else:
+      self.assertEqual(count[0], 1)  # 1 for the argument device_put
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_dtype={dtype}", "dtype": dtype}

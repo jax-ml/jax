@@ -101,9 +101,6 @@ def pure_callback_lowering(ctx, *args, callback, **params):
   if ctx.module_context.platform == "TPU" and jaxlib.version < (0, 3, 15):
     raise NotImplementedError("Pure callbacks on TPU not supported. "
                               "Please upgrade to a jaxlib >= 0.3.15.")
-  if isinstance(ctx.module_context.axis_context,
-                (mlir.SPMDAxisContext, mlir.ShardingContext)):
-    raise NotImplementedError("Sharding for pure callback not implemented.")
 
   def _callback(*flat_args):
     return tuple(pure_callback_p.impl(*flat_args, callback=callback, **params))

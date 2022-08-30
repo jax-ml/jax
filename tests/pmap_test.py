@@ -137,8 +137,6 @@ class PythonPmapTest(jtu.JaxTestCase):
   def pmap(self):
     return src_api._python_pmap
 
-  # TODO(yashkatariya): Re-enable when unsafe_buffer_pointer is implemented
-  @unittest.skipIf(config.jax_array, "Array does not yet implement unsafe_buffer_pointer")
   def testDeviceBufferToArray(self):
     sda = self.pmap(lambda x: x)(jnp.ones((jax.device_count(), 2)))
 

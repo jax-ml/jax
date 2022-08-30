@@ -38,6 +38,7 @@ import jax.util
 from jax.interpreters import xla
 from jax.interpreters import mlir
 from jax.interpreters import batching
+from jax.interpreters import pxla
 from jax.experimental import array
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src import dispatch
@@ -3042,6 +3043,14 @@ class FooTy:
       return FooArray(aval.shape, buf)
     return handler
 
+  @staticmethod
+  def global_sharded_result_handler(aval, out_sharding, committed):
+    def handler(bufs):
+      buf, = bufs
+      buf.aval = core.ShapedArray(buf.shape, buf.dtype)
+      return FooArray(aval.shape, buf)
+    return handler
+
   # eltype-polymorphic primitive lowering rules
 
   @staticmethod
@@ -3152,6 +3161,12 @@ def device_put_foo_array(x: FooArray, device):
     return array._device_put_array(x.data, device)
   return dispatch._device_put_array(x.data, device)
 
+def shard_foo_array_handler(x, devices, indices, mode):
+  device, = devices
+  if isinstance(x.data, array.Array):
+    return array._device_put_array(x.data, device)
+  return dispatch._device_put_array(x.data, device)
+
 def foo_array_constant_handler(x, c):
   if config.jax_array:
     return array._array_mlir_constant_handler(x.data, c)
@@ -3186,6 +3201,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     xla.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy())
     dispatch.device_put_handlers[FooArray] = device_put_foo_array
+    pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
     mlir.register_lowering(bake_p, mlir.lower_fun(bake_lowering, False))

@@ -281,6 +281,15 @@ class Array:
                   'named_shape': self.aval.named_shape}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
+  def unsafe_buffer_pointer(self):
+    assert len(self._arrays) == 1
+    return self._arrays[0].unsafe_buffer_pointer()
+
+  @property
+  def __cuda_array_interface__(self):
+    assert len(self._arrays) == 1
+    return self._arrays[0].__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
+
   # TODO(yashkatariya): Remove this method when everyone is using devices().
   def device(self) -> Device:
     self._check_if_deleted()
@@ -434,19 +443,25 @@ def _array_shard_arg(x, devices, indices, mode):
   if mode == pxla.InputsHandlerMode.pmap:
     return _array_pmap_shard_arg(x, devices, indices, mode)
   else:
-    return x._arrays
+    if isinstance(x.sharding, SingleDeviceSharding):
+      return [buf if buf.device() == d else buf.copy_to_device(d)
+              for buf, d in safe_zip(x._arrays, devices)]
+    else:
+      return x._arrays
 pxla.shard_arg_handlers[Array] = _array_shard_arg
 
 
-def _array_global_result_handler(global_aval, out_sharding):
+def _array_global_result_handler(global_aval, out_sharding, committed):
+  if global_aval.dtype == dtypes.float0:
+    return lambda _: np.zeros(global_aval.shape, dtypes.float0)  # type: ignore
   if core.aval_has_custom_eltype(global_aval):
     return global_aval.dtype.global_sharded_result_handler(
-        global_aval, out_sharding)
-  else:
-    return lambda bufs: Array(global_aval, out_sharding, bufs, committed=True,
-                              _skip_checks=True)
+        global_aval, out_sharding, committed)
+  return lambda bufs: Array(global_aval, out_sharding, bufs,
+                            committed=committed, _skip_checks=True)
 pxla.global_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_global_result_handler
+pxla.global_result_handlers[(core.AbstractToken, pxla.OutputType.Array)] = lambda *_: lambda *_: core.token
 
 
 def _array_local_result_handler(aval, sharding, indices):

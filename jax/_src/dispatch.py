@@ -97,8 +97,6 @@ def arg_spec(x: Any) -> ArgSpec:
   aval = xla.abstractify(x)
   try:
     if config.jax_array:
-      if isinstance(x.sharding, PmapSharding):
-        return aval, None
       return aval, (x.sharding if x._committed else None)
     else:
       return aval, x._device
@@ -182,7 +180,7 @@ def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
   _, arg_devices = util.unzip2(arg_specs)
   donated_invars = (False,) * len(arg_specs)
   if config.jax_array:
-    # This will be resolved in _xla_callable_device.
+    # This will be resolved in sharded_lowering.
     device = None
   else:
     device = _device_from_arg_devices(arg_devices)
@@ -277,6 +275,10 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
 xla.xla_call_p.def_impl(_xla_call_impl)
 
 
+TracedJaxprInfo = collections.namedtuple(
+    'TracedJaxprInfo', ['jaxpr', 'out_jaxpr_avals', 'consts'])
+
+
 def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
                      *arg_specs):
   # TODO(yashkatariya): Remove the local imports from here when the functions
@@ -286,29 +288,40 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
 
   in_avals, in_shardings = util.unzip2(arg_specs)
 
-  # TODO(yashkatariya): Remove this and make `SingleDeviceSharding` go through
-  # lower_sharding_computation and resolve all the errors once that happens.
-  # For pmap, keep using the fallback by checking the jaxpr and then wrapping it
-  # in a lu.Wrappedfun again.
-  if any(s is None or isinstance(s, sharding.SingleDeviceSharding) for s in in_shardings):
+  with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
+                        "in {elapsed_time} sec"):
+    jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(
+        fun, in_avals, debug_info=pe.debug_info_final(fun, "jit"))
+  traced_jaxpr_info = TracedJaxprInfo(jaxpr, out_jaxpr_avals, consts)
+
+  # If jaxpr has the pmap primitive or if `backend` is provided on `jit`, then
+  # take the lower_xla_callable lowering path. This is because pmap's programming
+  # model is not compatible with lower_sharding_computation.
+  # Specifying backend on `jit` is not supported when Array is enabled. So take
+  # the `lower_xla_callable` path which can handle it.
+  if (jaxpr_has_primitive(jaxpr, 'xla_pmap') or
+      any(isinstance(s, sharding.PmapSharding) for s in in_shardings) or
+      backend is not None):
     arg_specs = tuple(
         (a, s._device) if isinstance(s, sharding.SingleDeviceSharding) else (a, None)
         for a, s in zip(in_avals, in_shardings))
-    return lower_xla_callable(fun, device, backend, name, donated_invars, False,
-                              keep_unused, *arg_specs).compile().unsafe_call
+    return lower_xla_callable(
+        fun, None, backend, name, donated_invars, False, keep_unused, *arg_specs,
+        traced_jaxpr_info=traced_jaxpr_info).compile().unsafe_call
 
+  committed = any(i is not None for i in in_shardings)
   da = pjit._get_and_check_device_assignment(
       (i for i in in_shardings if i is not None), pxla.EMPTY_ENV.physical_mesh)
   in_shardings = [sharding.OpShardingSharding.get_replicated(da) if i is None else i
                   for i in in_shardings]
-
   # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
   # the number of output avals at this stage. lower_sharding_computation will
   # apply it to all out_avals.
   return pxla.lower_sharding_computation(
       fun, 'xla_callable', name, in_shardings, pjit._UNSPECIFIED,
       donated_invars, in_avals,
-      in_is_global=(True,) * len(arg_specs)).compile(
+      in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
+      committed=committed, traced_jaxpr_info=traced_jaxpr_info).compile(
           _allow_propagation_to_outputs=True).unsafe_call
 
 
@@ -347,9 +360,10 @@ def should_tuple_args(num_args: int, platform: str):
 
 
 @profiler.annotate_function
-def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
-                       donated_invars, always_lower: bool, keep_unused: bool,
-                       *arg_specs):
+def lower_xla_callable(
+    fun: lu.WrappedFun, device, backend, name, donated_invars,
+    always_lower: bool, keep_unused: bool, *arg_specs,
+    traced_jaxpr_info: Optional[TracedJaxprInfo] = None):
   """Lower into XLA.
 
   Args:
@@ -371,11 +385,18 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   else:
     assert abstract_args == (None,) * len(abstract_args)
     abstract_args = [aval for aval, _ in fun.in_type]
-  with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
-                        "for jit in {elapsed_time} sec"):
-    jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
-        fun, pe.debug_info_final(fun, "jit"))
-  out_avals, kept_outputs = util.unzip2(out_type)
+
+  if traced_jaxpr_info is None:
+    with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
+                          "for jit in {elapsed_time} sec"):
+      jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
+          fun, pe.debug_info_final(fun, "jit"))
+    out_avals, kept_outputs = util.unzip2(out_type)
+  else:
+    jaxpr, out_avals, consts = traced_jaxpr_info
+    kept_outputs = [True] * len(out_avals)
+    out_type = tuple(zip(out_avals, kept_outputs))
+
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError("Encountered an unexpected tracer.")
 

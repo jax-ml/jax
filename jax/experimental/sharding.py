@@ -348,7 +348,9 @@ class OpShardingSharding(XLACompatibleSharding):
     return self._hash
 
   def __repr__(self):
-    return repr(self._op_sharding)
+    if pxla.is_op_sharding_replicated(self._op_sharding):
+      return 'OpShardingSharding(REPLICATED)'
+    return f'OpShardingSharding({repr(self._op_sharding)})'
 
   def is_compatible_aval(self, aval_shape: Shape):
     num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(self._op_sharding)

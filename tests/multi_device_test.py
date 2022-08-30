@@ -224,6 +224,33 @@ class MultiDeviceTest(jtu.JaxTestCase):
     y = jax.device_put(1, devices[2]) + jnp.ones((2, 3))
     self.assert_committed_to_device(y, devices[2])
 
+  def test_single_input_committed_multi_output(self):
+    if jax.device_count() < 3:
+      self.skipTest("Test requires 3 devices")
+    devices = self.get_devices()
+
+    @jax.jit
+    def f(a, b, c, d, e):
+      return a, b, c, d, e
+
+    outs = f(jax.device_put(1, devices[2]), jnp.array(2), jnp.array(3),
+             jnp.array(4), jnp.array(5))
+    for o in outs:
+      self.assert_committed_to_device(o, devices[2])
+
+  def test_different_devices_input_error(self):
+    if jax.device_count() < 2:
+      self.skipTest("Test requires 2 devices")
+    devices = self.get_devices()
+
+    a = jax.device_put(1, devices[0])
+    b = jax.device_put(2, devices[1])
+
+    # Don't look for the message because the Array and non-Array path raise
+    # slightly different error messages.
+    with self.assertRaises(ValueError):
+      _ = a + b
+
   def test_transpose(self):
     if jax.device_count() < 3:
       self.skipTest("test requires 3 devices")

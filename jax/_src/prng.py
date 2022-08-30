@@ -348,7 +348,7 @@ class KeyTy:
     return handler
 
   @staticmethod
-  def global_sharded_result_handler(aval, out_sharding):
+  def global_sharded_result_handler(aval, out_sharding, committed):
     phys_aval, = KeyTy.physical_avals(aval)
     key_shape = aval.dtype.impl.key_shape
 
@@ -378,7 +378,7 @@ class KeyTy:
       # a new op sharding with a trivially extended `tile_assignment_dimensions`
       raise NotImplementedError
 
-    phys_handler = phys_handler_maker(phys_aval, phys_sharding)
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
     def handler(bufs):
       return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs))
     return handler
