@@ -138,7 +138,7 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
 
 def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
                     ) -> Sequence[ir.Type]:
-  if type(aval.dtype) in core.custom_eltypes:
+  if core.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.aval_to_ir_types(aval)
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
 

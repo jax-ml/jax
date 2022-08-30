@@ -1496,7 +1496,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 class KeyArrayTest(jtu.JaxTestCase):
   # Key arrays involve:
   # * a Python key array type, backed by an underlying uint32 "base" array,
-  # * an abstract shaped array with key eltype,
+  # * an abstract shaped array with key element type,
   # * primitives that return or operate on such shaped arrays,
   # * compiler lowerings,
   # * a device-side data representation...
@@ -1504,8 +1504,8 @@ class KeyArrayTest(jtu.JaxTestCase):
   #
   # A handful of these tests follow CustomElementTypesTest in
   # lax_tests.py as an example. If you add a test here (e.g. testing
-  # lowering of an key-eltyped shaped array), consider whether it
-  # might also be a more general test of extended/custom eltypes. If
+  # lowering of an key-dtyped shaped array), consider whether it
+  # might also be a more general test of opaque element types. If
   # so, add a corresponding test to to CustomElementTypesTest as well.
 
   def make_keys(self, *shape, seed=None):

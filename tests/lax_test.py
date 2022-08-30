@@ -3038,7 +3038,7 @@ class FooTyRules:
       return FooArray(aval.shape, buf)
     return handler
 
-  # eltype-polymorphic primitive lowering rules
+  # element-type-polymorphic primitive lowering rules
 
   @staticmethod
   def empty_mlir(ctx):
@@ -3194,7 +3194,7 @@ def bake_vmap(batched_args, batch_dims):
 class CustomElementTypesTest(jtu.JaxTestCase):
 
   def setUp(self):
-    core.custom_eltypes.add(FooTy)
+    core.opaque_dtypes.add(FooTy)
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy())
     xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
@@ -3210,7 +3210,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     batching.primitive_batchers[bake_p] = bake_vmap
 
   def tearDown(self):
-    core.custom_eltypes.remove(FooTy)
+    core.opaque_dtypes.remove(FooTy)
     del core.pytype_aval_mappings[FooArray]
     del xla.canonicalize_dtype_handlers[FooArray]
     del xla.pytype_aval_mappings[FooArray]

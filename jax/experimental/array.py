@@ -461,7 +461,7 @@ pxla.shard_arg_handlers[Array] = _array_shard_arg
 def _array_global_result_handler(global_aval, out_sharding, committed):
   if global_aval.dtype == dtypes.float0:
     return lambda _: np.zeros(global_aval.shape, dtypes.float0)  # type: ignore
-  if core.aval_has_custom_eltype(global_aval):
+  if core.is_opaque_dtype(global_aval.dtype):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed)
   return lambda bufs: Array(global_aval, out_sharding, bufs,
@@ -472,7 +472,7 @@ pxla.global_result_handlers[(core.AbstractToken, pxla.OutputType.Array)] = lambd
 
 
 def _array_local_result_handler(aval, sharding, indices):
-  if core.aval_has_custom_eltype(aval):
+  if core.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.local_sharded_result_handler(
         aval, sharding, indices)
   else:

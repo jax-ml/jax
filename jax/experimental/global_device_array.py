@@ -619,7 +619,7 @@ pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
 
 def _gda_array_result_handler(global_aval, out_sharding, committed):
-  if core.aval_has_custom_eltype(global_aval):
+  if core.is_opaque_dtype(global_aval.dtype):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed)
   global_mesh, out_axis_resources = out_sharding.mesh, out_sharding.spec

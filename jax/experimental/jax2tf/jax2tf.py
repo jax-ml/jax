@@ -778,7 +778,7 @@ def _jax_physical_aval(aval: core.ShapedArray) -> core.ShapedArray:
   physical avals, but we don't support those here. Instead we assert
   there is only one and return it.
   """
-  if type(aval.dtype) in core.custom_eltypes:
+  if core.is_opaque_dtype(aval.dtype):
     aval, = aval.dtype._rules.physical_avals(aval)
     return aval
   return aval
@@ -881,8 +881,6 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     return tf_val, jax_dtype
 
 
-# TODO(frostig,mattjj): rename dtype argument to eltype, for now just
-# being consistent.
 def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
@@ -1845,10 +1843,10 @@ def _broadcast_in_dim(operand, *, shape, broadcast_dimensions,
 tf_impl_with_avals[lax.broadcast_in_dim_p] = _broadcast_in_dim
 
 
-def _empty(*, eltype):
-  if type(eltype) in core.custom_eltypes:
+def _empty(*, dtype):
+  if core.is_opaque_dtype(dtype):
     raise NotImplementedError  # TODO(frostig,mattjj): jax2tf handlers
-  return tf.constant(np.array(0, dtype=eltype))
+  return tf.constant(np.array(0, dtype=dtype))
 
 
 tf_impl[lax_internal.empty_p] = _empty
