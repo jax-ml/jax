@@ -567,11 +567,9 @@ def jaxpr_replicas(jaxpr) -> int:
     jaxpr = jaxpr.jaxpr
   return max(unsafe_map(eqn_replicas, jaxpr.eqns), default=1)
 
-# TODO(mattjj): this function assumes that only pmap has a parameter named
-# axis_size, and that it corresponds to cross-replica mapping
 def eqn_replicas(eqn):
   call_jaxpr = eqn.params.get("call_jaxpr")
-  if call_jaxpr:
+  if call_jaxpr and eqn.primitive.name == 'xla_pmap':
     return eqn.params.get('axis_size', 1) * jaxpr_replicas(call_jaxpr)
   elif eqn.primitive in xla._initial_style_primitives:
     return initial_style_primitive_replicas(eqn.params)
