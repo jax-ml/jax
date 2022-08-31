@@ -754,7 +754,8 @@ batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 
 
 def random_unwrap(keys):
-  assert isinstance(keys, PRNGKeyArray)
+  if not isinstance(keys, PRNGKeyArray):
+    raise TypeError(f'random_unwrap takes key array operand, got {type(keys)}')
   return random_unwrap_p.bind(keys)
 
 random_unwrap_p = core.Primitive('random_unwrap')
