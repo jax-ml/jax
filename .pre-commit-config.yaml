@@ -9,19 +9,19 @@
 
 repos:
 - repo: https://gitlab.com/pycqa/flake8
-  rev: '4.0.1'
+  rev: '5.0.4'
   hooks:
   - id: flake8
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: 'v0.942'
+  rev: 'v0.971'
   hooks:
   - id: mypy
     files: jax/
     additional_dependencies: [types-requests==2.27.16, jaxlib==0.3.5]
 
 - repo: https://github.com/mwouts/jupytext
-  rev: v1.13.8
+  rev: v1.14.1
   hooks:
   - id: jupytext
     args: [--sync]

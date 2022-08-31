@@ -28,7 +28,10 @@ from jax import lax
 from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
+from jax.experimental import sharding
+from jax._src import ad_checkpoint
 from jax._src import debugging
+from jax._src import dispatch
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -66,6 +69,10 @@ if jaxlib.version < (0, 3, 15):
   disabled_backends.append("tpu")
 
 class DebugPrintTest(jtu.JaxTestCase):
+
+  def tearDown(self):
+    super().tearDown()
+    dispatch.runtime_tokens.clear()
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_simple_debug_print_works_in_eager_mode(self):
@@ -106,6 +113,19 @@ class DebugPrintTest(jtu.JaxTestCase):
     self.assertEqual(output(), "x: 2\n")
 
   @jtu.skip_on_devices(*disabled_backends)
+  def test_can_stage_out_debug_print_with_donate_argnums(self):
+    if jax.default_backend() not in {"gpu", "tpu"}:
+      raise unittest.SkipTest("Donate argnums not supported.")
+    def f(x, y):
+      debug_print('x: {x}', x=x)
+      return x + y
+    f = jax.jit(f, donate_argnums=0)
+    with capture_stdout() as output:
+      f(2, 3)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print(self):
     @jax.jit
     def f(x):
@@ -114,6 +134,33 @@ class DebugPrintTest(jtu.JaxTestCase):
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_can_stage_out_ordered_print_with_donate_argnums(self):
+    if jax.default_backend() not in {"gpu", "tpu"}:
+      raise unittest.SkipTest("Donate argnums not supported.")
+    def f(x, y):
+      debug_print('x: {x}', x=x, ordered=True)
+      return x + y
+    f = jax.jit(f, donate_argnums=0)
+    with capture_stdout() as output:
+      f(2, 3)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_can_stage_out_prints_with_donate_argnums(self):
+    if jax.default_backend() not in {"gpu", "tpu"}:
+      raise unittest.SkipTest("Donate argnums not supported.")
+    def f(x, y):
+      debug_print('x: {x}', x=x, ordered=True)
+      debug_print('x: {x}', x=x)
+      return x + y
+    f = jax.jit(f, donate_argnums=0)
+    with capture_stdout() as output:
+      f(2, 3)
+      jax.effects_barrier()
+    self.assertEqual(output(), "x: 2\nx: 2\n")
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_double_stage_out_ordered_print(self):
@@ -283,6 +330,136 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # `debug_print` should be dropped by `partial_eval` because of no
     # output data-dependence.
     self.assertEqual(output(), "")
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  def test_remat_of_debug_print(self, ordered):
+    def f_(x):
+      y = ad_checkpoint.checkpoint_name(x + 1., "y")
+      z = ad_checkpoint.checkpoint_name(y * 2., "z")
+      debug_print('y: {}, z: {}', y, z, ordered=ordered)
+      return ad_checkpoint.checkpoint_name(jnp.exp(z), "w")
+
+    # Policy that saves everything so the debug callback will be saved
+    f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen once since it gets saved and isn't
+    # rematerialized.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n")
+
+    # Policy that saves nothing so everything gets rematerialized, including the
+    # debug callback
+    f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen twice since it is rematerialized.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
+
+    # Policy that does not save `z` so we will need to rematerialize the print
+    f = ad_checkpoint.checkpoint(
+        f_, policy=ad_checkpoint.save_any_names_but_these("z"))
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen twice since it is rematerialized.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
+
+    def save_everything_but_these_names(*names_not_to_save):
+      names_not_to_save = frozenset(names_not_to_save)
+      def policy(prim, *_, **params):
+        if prim is ad_checkpoint.name_p:
+          return params['name'] not in names_not_to_save
+        return True # Save everything else
+      return policy
+
+    # Policy that saves everything but `y`
+    f = ad_checkpoint.checkpoint(
+        f_, policy=save_everything_but_these_names("y"))
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen once because `y` is not rematerialized and
+    # we won't do extra materialization.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n")
+
+    # Policy that saves everything but `y` and `z`
+    f = ad_checkpoint.checkpoint(
+        f_, policy=save_everything_but_these_names("y", "z"))
+
+    with capture_stdout() as output:
+      jax.grad(f)(2.)
+      jax.effects_barrier()
+    # We expect the print to happen twice because both `y` and `z` have been
+    # rematerialized and we don't have to do any extra rematerialization to
+    # print.
+    self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debug_print_in_staged_out_custom_jvp(self):
+
+    @jax.jit
+    def f(x):
+      @jax.custom_jvp
+      def g(x):
+        debug_print("hello: {x}", x=x)
+        return x
+      def g_jvp(primals, tangents):
+        (x,), (t,) = primals, tangents
+        debug_print("goodbye: {x} {t}", x=x, t=t)
+        return x, t
+      g.defjvp(g_jvp)
+      return g(x)
+
+    with capture_stdout() as output:
+      f(2.)
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello: 2.0\n")
+
+    with capture_stdout() as output:
+      jax.jvp(f, (2.,), (3.,))
+      jax.effects_barrier()
+    self.assertEqual(output(), "goodbye: 2.0 3.0\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debug_print_in_staged_out_custom_vjp(self):
+
+    @jax.jit
+    def f(x):
+      @jax.custom_vjp
+      def g(x):
+        debug_print("hello: {x}", x=x)
+        return x
+      def g_fwd(x):
+        debug_print("hello fwd: {x}", x=x)
+        return x, x
+      def g_bwd(x, g):
+        debug_print("hello bwd: {x} {g}", x=x, g=g)
+        return (g,)
+      g.defvjp(fwd=g_fwd, bwd=g_bwd)
+      return g(x)
+
+    with capture_stdout() as output:
+      f(2.)
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello: 2.0\n")
+
+    with capture_stdout() as output:
+      _, f_vjp = jax.vjp(f, 2.)
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello fwd: 2.0\n")
+
+    with capture_stdout() as output:
+      f_vjp(3.0)
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello bwd: 2.0 3.0\n")
 
 class DebugPrintControlFlowTest(jtu.JaxTestCase):
 
@@ -511,11 +688,17 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     def f(x):
       debug_print("{}", x, ordered=False)
       return x
-    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
-                  out_axis_resources=pjit.PartitionSpec('dev'))
-    with maps.Mesh(np.array(jax.devices()), ['dev']):
+    mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
+    if config.jax_array:
+      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
+      out_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec())
+    else:
+      spec = pjit.PartitionSpec('dev')
+      out_spec = pjit.PartitionSpec()
+    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
+    with mesh:
       with capture_stdout() as output:
-        f(jnp.arange(8, dtype=jnp.int32))
+        f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(), "[0 1 2 3 4 5 6 7]\n")
 
@@ -523,11 +706,10 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       y = x.dot(x)
       debug_print("{}", y, ordered=False)
       return y
-    f2 = pjit.pjit(f2, in_axis_resources=pjit.PartitionSpec('dev'),
-                   out_axis_resources=pjit.PartitionSpec())
+    f2 = pjit.pjit(f2, in_axis_resources=spec, out_axis_resources=out_spec)
     with maps.Mesh(np.array(jax.devices()), ['dev']):
       with capture_stdout() as output:
-        f2(jnp.arange(8, dtype=jnp.int32))
+        f2(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(), "140\n")
 
@@ -548,11 +730,16 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         x = x + 1
         return (i + 1, x)
       return lax.while_loop(cond, body, (0, x))[1]
-    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
-                  out_axis_resources=pjit.PartitionSpec('dev'))
-    with maps.Mesh(np.array(jax.devices()), ['dev']):
+
+    mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
+    if config.jax_array:
+      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
+    else:
+      spec = pjit.PartitionSpec('dev')
+    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
+    with mesh:
       with capture_stdout() as output:
-        f(jnp.arange(8, dtype=jnp.int32))
+        f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(),
           "[0 1 2 3 4 5 6 7]\n"
@@ -563,6 +750,11 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_xmap(self):
+    # TODO(https://github.com/google/jax/issues/12016): Make xmap work properly
+    # with Arrays of different
+    # sharding.
+    if config.jax_array:
+      raise unittest.SkipTest('Does not work with Array.')
 
     if (jax.default_backend() in {"cpu", "gpu"}
         and jaxlib.xla_extension_version < 81):
@@ -588,14 +780,13 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_xmap(self):
-
     def f(x):
       debug_print("{}", x, ordered=False)
     f = maps.xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
                   axis_resources={'a': 'dev'})
     with maps.Mesh(np.array(jax.devices()), ['dev']):
       with capture_stdout() as output:
-        f(jnp.arange(40))
+        f(np.arange(40))
         jax.effects_barrier()
       lines = [f"{i}\n" for i in range(40)]
       self._assertLinesEqual(output(), "".join(lines))
@@ -622,6 +813,60 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     self._assertLinesEqual(
         output(), "hello: 0\nhello: 1\nhello: 2\n"
         "hello: 1\nhello: 2\n")
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_incorrectly_formatted_string(self):
+
+    @jax.jit
+    def f(x):
+      debug_print("hello: {x}", x)
+      return x
+
+    with self.assertRaises(KeyError):
+      f(jnp.arange(2))
+      jax.effects_barrier()
+
+    @jax.jit
+    def f(x):
+      debug_print("hello: {}", x=x)
+      return x
+
+    with self.assertRaises(IndexError):
+      f(jnp.arange(2))
+      jax.effects_barrier()
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_format_string_errors_with_unused_args(self):
+
+    @jax.jit
+    def f(x):
+      debug_print("hello: {x}", x=x, y=x)
+      return x
+
+    with self.assertRaisesRegex(ValueError, "Unused keyword arguments"):
+      f(jnp.arange(2))
+      jax.effects_barrier()
+
+    @jax.jit
+    def g(x):
+      debug_print("hello", x)
+      return x
+
+    with self.assertRaisesRegex(ValueError, "Unused positional arguments"):
+      g(jnp.arange(2))
+      jax.effects_barrier()
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_accidental_fstring(self):
+
+    @jax.jit
+    def f(x):
+      debug_print(f"hello: {x}", x=x)
+      return x
+
+    with self.assertRaisesRegex(ValueError, "You may be passing an f-string"):
+      f(jnp.arange(2))
+      jax.effects_barrier()
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

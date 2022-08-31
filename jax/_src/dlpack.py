@@ -15,6 +15,7 @@
 from jax import core
 from jax import numpy as jnp
 from jax._src import device_array
+from jax._src import dispatch
 from jax._src.lib import xla_client
 from jax._src.lib import xla_bridge
 
@@ -38,11 +39,17 @@ def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False)
       undefined behavior if the DLPack consumer writes to a buffer that JAX
       owns.
   """
-  if not isinstance(x, device_array.DeviceArray):
-    raise TypeError("Argument to to_dlpack must be a DeviceArray, got {}"
+  from jax.experimental import array
+  if not isinstance(x, (device_array.DeviceArray, array.Array)):
+    raise TypeError("Argument to to_dlpack must be a DeviceArray or Array, got {}"
                     .format(type(x)))
+  if isinstance(x, array.Array):
+    assert len(x._arrays) == 1
+    buf = x._arrays[0]
+  else:
+    buf = x.device_buffer
   return xla_client._xla.buffer_to_dlpack_managed_tensor(
-      x.device_buffer, take_ownership=take_ownership)
+      buf, take_ownership=take_ownership)
 
 def from_dlpack(dlpack):
   """Returns a ``DeviceArray`` representation of a DLPack tensor.
@@ -63,4 +70,4 @@ def from_dlpack(dlpack):
   xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
-  return device_array.make_device_array(aval, buf.device(), buf)  # pytype: disable=attribute-error
+  return dispatch.maybe_create_array_from_da(buf, aval, buf.device())

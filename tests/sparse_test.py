@@ -33,8 +33,10 @@ from jax.experimental.sparse import coo as sparse_coo
 from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse.bcoo import BCOOInfo
 from jax import lax
+from jax._src.lib import xla_extension_version
 from jax._src.lib import gpu_sparse
 from jax._src.lib import xla_bridge
+from jax._src.util import unzip2
 from jax import jit
 from jax import tree_util
 from jax import vmap
@@ -60,8 +62,8 @@ GPU_LOWERING_ENABLED = gpu_sparse and (gpu_sparse.cuda_is_supported or
                                        gpu_sparse.rocm_is_supported)
 
 class BcooDotGeneralProperties(NamedTuple):
-  lhs_shape: Tuple[int]
-  rhs_shape: Tuple[int]
+  lhs_shape: Tuple[int, ...]
+  rhs_shape: Tuple[int, ...]
   dtype: np.dtype
   n_batch: int
   n_dense: int
@@ -924,6 +926,50 @@ class BCOOTest(jtu.JaxTestCase):
       trans = jax.vmap(trans)
     Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
     self.assertArraysEqual(trans(M), trans(Msp).todense())
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_bcoo_slice(self, shape, dtype, n_batch, n_dense):
+    rng = self.rng()
+    sprng = rand_sparse(rng)
+    M = sprng(shape, dtype)
+    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
+
+    rng = self.rng()
+    slices = rng.randint(0, M.shape, (2, M.ndim)).T
+    slices.sort(1)
+    start_indices, limit_indices = unzip2(slices)
+    strides = None  # strides currently not implemented
+    kwds = dict(start_indices=start_indices, limit_indices=limit_indices, strides=strides)
+
+    dense_result = lax.slice(M, **kwds)
+    sparse_result = sparse.bcoo_slice(Msp, **kwds)
+
+    self.assertArraysEqual(dense_result, sparse_result.todense())
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}_idx={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, idx),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense,
+       "idx": idx}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)
+      for idx in [1, slice(1, 3)]))
+  def test_bcoo_getitem(self, shape, dtype, n_batch, n_dense, idx):
+    # Note: __getitem__ is currently only supported for simple slices and indexing
+    rng = self.rng()
+    sprng = rand_sparse(rng)
+    M = sprng(shape, dtype)
+    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
+    self.assertArraysEqual(M[idx], Msp[idx].todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
@@ -2317,6 +2363,39 @@ class SparseRandomTest(jtu.JaxTestCase):
       * np.prod(batch_shape) * np.prod(dense_shape))
     num_nonzero = (mat_dense != 0).sum()
     self.assertAlmostEqual(int(num_nonzero), approx_expected_num_nonzero, delta=2)
+
+
+class SparseSolverTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_re{}_({})".format(reorder,
+        jtu.format_shape_dtype_string((size, size), dtype)),
+       "size": size, "reorder": reorder, "dtype": dtype}
+      for size in [20, 50, 100]
+      for reorder in [0, 1, 2, 3]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/cusolver")
+  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  @unittest.skipIf(xla_extension_version < 86, "test requires jaxlib version 86")
+  @jtu.skip_on_devices("rocm")
+  def test_sparse_qr_linear_solver(self, size, reorder, dtype):
+    rng = rand_sparse(self.rng())
+    a = rng((size, size), dtype)
+    nse = (a != 0).sum()
+    data, indices, indptr = sparse.csr_fromdense(a, nse=nse)
+
+    rng_k = jtu.rand_default(self.rng())
+    b = rng_k([size], dtype)
+
+    def args_maker():
+      return data, indices, indptr, b
+
+    tol = 1e-8
+    def sparse_solve(data, indices, indptr, b):
+      return sparse.linalg.spsolve(data, indices, indptr, b, tol, reorder)
+    x = sparse_solve(data, indices, indptr, b)
+
+    self.assertAllClose(a @ x, b, rtol=1e-2)
+    self._CompileAndCheck(sparse_solve, args_maker)
 
 
 if __name__ == "__main__":

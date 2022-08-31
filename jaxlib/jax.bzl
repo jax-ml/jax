@@ -14,7 +14,7 @@
 
 """Bazel macros used by the JAX build."""
 
-load("@org_tensorflow//tensorflow/core/platform/default:build_config.bzl", _pyx_library = "pyx_library")
+load("@org_tensorflow//tensorflow/tsl/platform/default:build_config.bzl", _pyx_library = "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", _if_windows = "if_windows", _pybind_extension = "pybind_extension")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
@@ -36,14 +36,13 @@ jax_internal_packages = []
 jax_test_util_visibility = []
 loops_visibility = []
 
-absl_logging_py_deps = []
-absl_testing_py_deps = []
-cloudpickle_py_deps = []
-numpy_py_deps = []
-pil_py_deps = []
-portpicker_py_deps = []
-scipy_py_deps = []
-tensorflow_py_deps = []
+def py_deps(_package):
+    """Returns the Bazel deps for Python package `package`."""
+
+    # We assume the user has installed all dependencies in their Python environment.
+    # This indirection exists because in Google's internal build we build
+    # dependencies from source with Bazel, but that's not something most people would want.
+    return []
 
 jax_extra_deps = []
 jax2tf_deps = []
@@ -132,6 +131,7 @@ def jax_test(
         name,
         srcs,
         args = [],
+        env = {},
         shard_count = None,
         deps = [],
         disable_backends = None,  # buildifier: disable=unused-variable
@@ -162,6 +162,7 @@ def jax_test(
             name = name + "_" + backend,
             srcs = srcs,
             args = test_args,
+            env = env,
             deps = [
                 "//jax",
                 "//jax:test_util",

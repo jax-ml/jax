@@ -27,6 +27,8 @@ import weakref
 from absl import logging
 import numpy as np
 
+from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.config import config
 
 Seq = Sequence
@@ -236,6 +238,8 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   and strong refs to all subsequent operations. In all other respects it should
   behave similar to `functools.lru_cache`.
   """
+  if xla_extension_version >= 87:
+    return xc.weakref_lru_cache(config._trace_context, call, maxsize)
   cache: Dict[Any, Any] = {}
   hits = misses = 0
   lock = threading.Lock()

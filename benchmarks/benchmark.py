@@ -83,7 +83,7 @@ def benchmark(f: Callable[[], Any], iters: Optional[int] = None,
 
 
 def benchmark_suite(prepare: Callable[..., Callable], params_list: List[Dict],
-                    name: str, target_total_secs: int = None):
+                    name: str, target_total_secs: Optional[int] = None):
   """Benchmarks a function for several combinations of parameters.
 
   Prints the summarized results in a table..

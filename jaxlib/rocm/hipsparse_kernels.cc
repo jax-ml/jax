@@ -449,12 +449,21 @@ static absl::Status CooMatmat_(hipStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsparseCreateCoo(
       &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
       d.A.index_type, HIPSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      hipsparseCooSetStridedBatch(mat_a, /*batchCount=*/d.A.batch_count,
+                                 /*batchStride=*/d.A.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsparseCreateDnMat(
       &mat_b, d.B.rows, d.B.cols,
       /*ld=*/d.B.cols, Bbuf, d.B.type, HIPSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      hipsparseDnMatSetStridedBatch(mat_b, /*batchCount=*/d.B.batch_count,
+                                   /*batchStride=*/d.B.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsparseCreateDnMat(
       &mat_c, d.C.rows, d.C.cols,
       /*ld=*/d.C.cols, Cbuf, d.C.type, HIPSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      hipsparseDnMatSetStridedBatch(mat_c, /*batchCount=*/d.C.batch_count,
+                                   /*batchStride=*/d.C.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsparseSpMM(
       handle.get(), d.op_A, /*opB=*/HIPSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
       mat_a, mat_b, &beta, mat_c, d.C.type, HIPSPARSE_SPMM_ALG_DEFAULT, buf)));

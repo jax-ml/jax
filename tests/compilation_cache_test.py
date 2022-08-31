@@ -30,7 +30,8 @@ import jax
 from jax import jit, lax, pmap
 from jax._src.util import prod
 import jax._src.test_util as jtu
-import jax._src.lib
+from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
 import numpy as np
 
 from jax.config import config
@@ -48,9 +49,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
       super().tearDown()
       cc._cache = None
 
-  @unittest.skipIf(jax._src.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_compile_options(self):
-    compile_options_not_filled = jax._src.lib.xla_bridge.get_compile_options(
+    compile_options_not_filled = xla_bridge.get_compile_options(
                       num_replicas=1, num_partitions=1)
     compile_options_filled = self.filled_compile_options()
     filled_hash1 = self.get_hashed_value(cc._hash_compile_options, compile_options_filled)
@@ -60,7 +60,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertNotEqual(filled_hash1, not_filled_hash3)
 
   def test_executable_build_options(self):
-    compile_options_not_filled = jax._src.lib.xla_bridge.get_compile_options(
+    compile_options_not_filled = xla_bridge.get_compile_options(
                       num_replicas=1, num_partitions=1)
     compile_options_filled = self.filled_compile_options()
     filled_hash1 = self.get_hashed_value(cc._hash_executable_build_options,
@@ -73,7 +73,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertNotEqual(filled_hash1, not_filled_hash3)
 
   def test_debug_options(self):
-    compile_options = jax._src.lib.xla_bridge.get_compile_options(
+    compile_options = xla_bridge.get_compile_options(
                       num_replicas=1, num_partitions=1)
     hash1 = self.get_hashed_value(cc._hash_debug_options,
                    compile_options.executable_build_options.debug_options)
@@ -85,11 +85,11 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertNotEqual(hash1, hash3)
 
   def test_hash_platform(self):
-    hash1 = self.get_hashed_value(cc._hash_platform, jax._src.lib.xla_bridge.get_backend())
-    hash2 = self.get_hashed_value(cc._hash_platform, jax._src.lib.xla_bridge.get_backend())
+    hash1 = self.get_hashed_value(cc._hash_platform, xla_bridge.get_backend())
+    hash2 = self.get_hashed_value(cc._hash_platform, xla_bridge.get_backend())
     self.assertEqual(hash1, hash2)
-    if jax._src.lib.xla_bridge.get_backend().platform != "cpu":
-        cpu_backend = jax._src.lib.xla_bridge.get_backend("cpu")
+    if xla_bridge.get_backend().platform != "cpu":
+        cpu_backend = xla_bridge.get_backend("cpu")
         hash3 = self.get_hashed_value(cc._hash_platform, cpu_backend)
         self.assertNotEqual(hash1, hash3)
 
@@ -116,27 +116,27 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_same_hash_key(self):
     computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
-    compile_options = jax._src.lib.xla_bridge.get_compile_options(
+    compile_options = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
-    backend = jax._src.lib.xla_bridge.get_backend()
+    backend = xla_bridge.get_backend()
     self.assertEqual(cc.get_cache_key(computation, compile_options, backend),
                      cc.get_cache_key(computation, compile_options, backend))
 
   def test_different_hash_key(self):
     computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
-    compile_options_not_filled = jax._src.lib.xla_bridge.get_compile_options(
+    compile_options_not_filled = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
     compile_options_filled = self.filled_compile_options()
-    backend = jax._src.lib.xla_bridge.get_backend()
+    backend = xla_bridge.get_backend()
     self.assertNotEqual(cc.get_cache_key(computation, compile_options_not_filled, backend),
                         cc.get_cache_key(computation, compile_options_filled, backend))
 
   def test_different_computations(self):
     computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
     computation2 = jax.xla_computation(lambda x, y: x * y)(2, 2)
-    compile_options = jax._src.lib.xla_bridge.get_compile_options(
+    compile_options = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
-    backend = jax._src.lib.xla_bridge.get_backend()
+    backend = xla_bridge.get_backend()
     self.assertNotEqual(cc.get_cache_key(computation1, compile_options, backend),
                         cc.get_cache_key(computation2, compile_options, backend))
 
@@ -145,9 +145,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
       raise unittest.SkipTest("TODO(b/240151176)")
 
     computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
-    compile_options = jax._src.lib.xla_bridge.get_compile_options(
+    compile_options = xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1)
-    backend = jax._src.lib.xla_bridge.get_backend()
+    backend = xla_bridge.get_backend()
 
     orig_xla_flags = os.getenv("XLA_FLAGS")
     orig_argv = sys.argv
@@ -187,9 +187,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
       computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
-      compile_options = jax._src.lib.xla_bridge.get_compile_options(
+      compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
-      backend = jax._src.lib.xla_bridge.get_backend()
+      backend = xla_bridge.get_backend()
       self.assertEqual(cc.get_executable(computation, compile_options, backend), None)
 
   def test_diff_executables(self):
@@ -197,9 +197,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
       cc.initialize_cache(tmpdir)
       computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
       computation2 = jax.xla_computation(lambda x, y: x * y)(2, 2)
-      compile_options = jax._src.lib.xla_bridge.get_compile_options(
+      compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
-      backend = jax._src.lib.xla_bridge.get_backend()
+      backend = xla_bridge.get_backend()
       executable1 = backend.compile(computation1, compile_options)
       executable2 = backend.compile(computation2, compile_options)
       cc.put_executable("computation1", computation1, compile_options,
@@ -213,16 +213,16 @@ class CompilationCacheTest(jtu.JaxTestCase):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
       computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
-      compile_options = jax._src.lib.xla_bridge.get_compile_options(
+      compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
-      backend = jax._src.lib.xla_bridge.get_backend()
+      backend = xla_bridge.get_backend()
       executable = backend.compile(computation, compile_options)
       cc.put_executable("alambda", computation, compile_options, executable,
                         backend)
       deserialized_executable = cc.get_executable(computation, compile_options, backend)
       inputs_to_executable = (np.array(1, dtype=np.int32), np.array(2, dtype=np.int32))
-      expected = jax._src.lib.xla_client.execute_with_python_values(executable, inputs_to_executable, backend)
-      actual = jax._src.lib.xla_client.execute_with_python_values(deserialized_executable, inputs_to_executable, backend)
+      expected = xla_client.execute_with_python_values(executable, inputs_to_executable, backend)
+      actual = xla_client.execute_with_python_values(deserialized_executable, inputs_to_executable, backend)
       self.assertEqual(expected, actual)
 
   def test_pmap(self):
@@ -304,15 +304,15 @@ class CompilationCacheTest(jtu.JaxTestCase):
     return debug_options_obj
 
   def filled_compile_options(self):
-    compile_options = jax._src.lib.xla_client.CompileOptions()
+    compile_options = xla_client.CompileOptions()
     compile_options.num_replicas = 1
     compile_options.num_partitions = 1
-    shape = jax._src.lib.xla_client.Shape.array_shape(np.dtype(np.float32), [2])
+    shape = xla_client.Shape.array_shape(np.dtype(np.float32), [2])
     shape_array = [shape, shape]
     compile_options.argument_layouts = shape_array
     compile_options.executable_build_options.result_layout = shape
 
-    device_assignment = jax._src.lib.xla_client.DeviceAssignment.create(np.ndarray(shape=(2,2)))
+    device_assignment = xla_client.DeviceAssignment.create(np.ndarray(shape=(2,2)))
     compile_options.device_assignment = device_assignment
     compile_options.executable_build_options.device_assignment = device_assignment
     return compile_options

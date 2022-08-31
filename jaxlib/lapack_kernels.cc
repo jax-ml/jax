@@ -661,7 +661,7 @@ void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   const T* a_in = reinterpret_cast<T*>(data[4]);
 
   // bool* select (T, T) = reinterpret_cast<bool* (T, T)>(data[5]);
-  bool (*select)(T, T);
+  bool (*select)(T, T) = nullptr;
 
   void** out = reinterpret_cast<void**>(out_tuple);
   T* a_work = reinterpret_cast<T*>(out[0]);
@@ -672,8 +672,7 @@ void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   int* sdim_out = reinterpret_cast<int*>(out[4]);
   int* info_out = reinterpret_cast<int*>(out[5]);
 
-  bool* b_work;
-  if (sort == 'N') b_work = new bool[n];
+  bool* b_work = (sort != 'N') ? (new bool[n]) : nullptr;
 
   T work_query;
   int lwork = -1;
@@ -722,7 +721,7 @@ void ComplexGees<T>::Kernel(void* out_tuple, void** data,
   const T* a_in = reinterpret_cast<T*>(data[4]);
 
   // bool* select (T, T) = reinterpret_cast<bool* (T, T)>(data[5]);
-  bool (*select)(T);
+  bool (*select)(T) = nullptr;
 
   void** out = reinterpret_cast<void**>(out_tuple);
   T* a_work = reinterpret_cast<T*>(out[0]);
@@ -733,8 +732,7 @@ void ComplexGees<T>::Kernel(void* out_tuple, void** data,
   int* sdim_out = reinterpret_cast<int*>(out[4]);
   int* info_out = reinterpret_cast<int*>(out[5]);
 
-  bool* b_work = nullptr;
-  if (sort != 'N') b_work = new bool[n];
+  bool* b_work = (sort != 'N') ? (new bool[n]) : nullptr;
 
   T work_query;
   int lwork = -1;

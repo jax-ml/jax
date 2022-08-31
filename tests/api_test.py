@@ -54,13 +54,16 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
+from jax.experimental import array, sharding
+from jax._src import config as jax_config
+from jax._src import custom_derivatives
 from jax._src import device_array
-import jax._src.lib
+from jax._src import prng
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
-import jax._src.util
+import jax._src.util as jax_util
 from jax._src.ad_checkpoint import saved_residuals
 from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_name
 
@@ -71,7 +74,13 @@ FLAGS = config.FLAGS
 
 python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
-jaxlib_version = jax._src.lib.version
+
+
+def _check_instance(self, x):
+  if config.jax_array:
+    self.assertIsInstance(x, array.Array)
+  else:
+    self.assertIsInstance(x, device_array.DeviceArray)
 
 
 class CPPJitTest(jtu.BufferDonationTestCase):
@@ -230,9 +239,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       assert len(side) == 3
 
   def test_jit_device(self):
+    if config.jax_array:
+      self.skipTest('The device parameter of jit has been deprecated. Array '
+                    'is not compatible with it and will not work.')
     device = jax.devices()[-1]
     x = self.jit(lambda x: x, device=device)(3.)
-    self.assertIsInstance(x, jnp.DeviceArray)
+    _check_instance(self, x)
     self.assertEqual(x.device_buffer.device(), device)
 
   @jtu.skip_on_devices("cpu")
@@ -255,11 +267,19 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(f(1).device(), system_default_device)
 
     with jax.default_device(test_device):
-      # Explicit `device` or `backend` argument to jit overrides default_device
-      self.assertEqual(
-          jax.jit(f, device=system_default_device)(1).device(),
-          system_default_device)
-      self.assertEqual(jax.jit(f, backend="cpu")(1).platform(), "cpu")
+      # Skip this for jax.Array because using the device argument of `jit` is
+      # deprecated.
+      if not config.jax_array:
+        # Explicit `device` or `backend` argument to jit overrides default_device
+        self.assertEqual(
+            jax.jit(f, device=system_default_device)(1).device(),
+            system_default_device)
+      out = jax.jit(f, backend="cpu")(1)
+      if config.jax_array:
+        self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
+        self.assertEqual(out._arrays[0].platform(), "cpu")
+      else:
+        self.assertEqual(out.platform(), "cpu")
 
       # Sticky input device overrides default_device
       sticky = jax.device_put(1, system_default_device)
@@ -542,6 +562,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertAllClose(x * 2 - 3., y)
 
   def test_trivial_computations(self):
+    if config.jax_array:
+      raise unittest.SkipTest('Does not work with Array')
     x = jnp.array([1, 2, 3])
     y = self.jit(lambda x: x)(x)
     self.assertIs(x, y)
@@ -692,7 +714,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     jitted_f = self.jit(lambda a: a + 1)
     jitted_f(1)
-    self.assertIsInstance(jitted_f(2), device_array.Buffer)
+    if config.jax_array:
+      out = jitted_f(2)
+      self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
+      self.assertIsInstance(out._arrays[0], device_array.Buffer)
+    else:
+      self.assertIsInstance(jitted_f(2), device_array.Buffer)
 
   @jtu.skip_on_devices("cpu")
   def test_explicit_backend(self):
@@ -702,8 +729,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     result = jitted_f(1.)
     result_cpu = jitted_f_cpu(1.)
-    self.assertEqual(result.device_buffer.platform(), jtu.device_under_test())
-    self.assertEqual(result_cpu.device_buffer.platform(), "cpu")
+    if config.jax_array:
+      buf = result._arrays[0]
+      buf_cpu = result_cpu._arrays[0]
+    else:
+      buf = result.device_buffer
+      buf_cpu = result_cpu.device_buffer
+    self.assertEqual(buf.platform(), jtu.device_under_test())
+    self.assertEqual(buf_cpu.platform(), "cpu")
 
   @jtu.skip_on_devices("cpu")
   def test_device_to_device_copy_between_backends(self):
@@ -735,16 +768,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_omnistaging(self):
     # See https://github.com/google/jax/issues/5206
 
-    # TODO(frostig): remove once we always enable_custom_prng
-    def _prng_key_as_array(key):
-      return key.unsafe_raw_array() if config.jax_enable_custom_prng else key
-
-    # TODO(frostig): remove once we always enable_custom_prng
-    def _array_as_prng_key(arr):
+    # TODO(frostig): remove `wrap` once we always enable_custom_prng
+    def wrap(arr):
       arr = np.array(arr, dtype=np.uint32)
       if config.jax_enable_custom_prng:
-        return jax._src.prng.PRNGKeyArray(
-            jax._src.prng.threefry_prng_impl, arr)
+        return prng.random_wrap(arr, impl=jax.random.default_prng_impl())
       else:
         return arr
 
@@ -755,10 +783,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       key_list[0] = key
       return jax.random.normal(subkey, ())
 
-    key_list[0] = _array_as_prng_key([2384771982, 3928867769])
+    key_list[0] = wrap([2384771982, 3928867769])
     init()
     self.jit(init)()
-    self.assertIsInstance(_prng_key_as_array(key_list[0]), core.Tracer)
+    self.assertIsInstance(key_list[0], core.Tracer)
+    del key_list[0]
 
   def test_jit_wrapped_attributes(self):
     def f(x: int) -> int:
@@ -1041,7 +1070,10 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     jitted_f = self.jit(lambda x, y: x, keep_unused=True)
     with jtu.count_device_put() as count:
       _ = jitted_f(1, 2)
-    self.assertEqual(count[0], 1)
+    if config.jax_array:
+      self.assertEqual(count[0], 2)
+    else:
+      self.assertEqual(count[0], 1)
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_jit_lower_compile_compiler_ir(self):
@@ -1107,7 +1139,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(x, f(x))
 
   def test_hitting_cpp_path(self):
-    if not self.use_cpp_jit:
+    if not self.use_cpp_jit or config.jax_array:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     jit_impl = dispatch._xla_call_impl
@@ -1155,6 +1187,17 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(count[0], 0)  # no compiles
     self.assertArraysAllClose(ans, expected, check_dtypes=True)
 
+  def test_cache_key_defaults(self):
+    # https://github.com/google/jax/discussions/11875
+    if not self.use_cpp_jit or config.jax_array:
+      raise unittest.SkipTest("this test only applies to _cpp_jit")
+    f = self.jit(lambda x: (x ** 2).sum())
+    self.assertEqual(f._cache_size(), 0)
+    x = jnp.arange(5.0)
+    for _ in range(3):
+      _ = f(x)
+    self.assertEqual(f._cache_size(), 1)
+
 
 class PythonJitTest(CPPJitTest):
 
@@ -1164,22 +1207,32 @@ class PythonJitTest(CPPJitTest):
 
 class APITest(jtu.JaxTestCase):
 
-  def test_grad_item(self):
-    def f(x):
-      if x.astype(bool).item():
-        return x ** 2
-      else:
-        return x
-    out = jax.grad(f)(2.0)
-    self.assertEqual(out, 4)
+  @parameterized.named_parameters(
+      ('array', True),
+      ('no_array', False)
+  )
+  def test_grad_item(self, array_enabled):
+    with jax_config.jax_array(array_enabled):
+      def f(x):
+        if x.astype(bool).item():
+          return x ** 2
+        else:
+          return x
+      out = jax.grad(f)(2.0)
+      self.assertEqual(out, 4)
 
-  def test_jit_item(self):
-    def f(x):
-      return x.item()
-    x = jnp.array(1.0)
-    self.assertEqual(f(x), x)
-    with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
-      jax.jit(f)(x)
+  @parameterized.named_parameters(
+      ('array', True),
+      ('no_array', False)
+  )
+  def test_jit_item(self, array_enabled):
+    with jax_config.jax_array(array_enabled):
+      def f(x):
+        return x.item()
+      x = jnp.array(1.0)
+      self.assertEqual(f(x), x)
+      with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
+        jax.jit(f)(x)
 
   def test_grad_bad_input(self):
     def f(x):
@@ -1403,7 +1456,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_and_get(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
-    self.assertIsInstance(dx, device_array.DeviceArray)
+    _check_instance(self, dx)
     self.assertIsInstance(dx, jnp.ndarray)
     self.assertNotIsInstance(dx, np.ndarray)
     x2 = api.device_get(dx)
@@ -1426,7 +1479,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
-    self.assertIsInstance(x, device_array.DeviceArray)
+    _check_instance(self, x)
     y = [x, 2]
     y2 = api.device_get(y)
     self.assertIsInstance(y2, list)
@@ -1442,9 +1495,17 @@ class APITest(jtu.JaxTestCase):
     d1, d2 = api.local_devices()[:2]
     data = self.rng().randn(*shape).astype(np.float32)
     x = api.device_put(data, device=d1)
-    self.assertEqual(x.device_buffer.device(), d1)
+    if config.jax_array:
+      self.assertEqual(x.device(), d1)
+    else:
+      self.assertEqual(x.device_buffer.device(), d1)
+
     y = api.device_put(x, device=d2)
-    self.assertEqual(y.device_buffer.device(), d2)
+    if config.jax_array:
+      self.assertEqual(y.device(), d2)
+    else:
+      self.assertEqual(y.device_buffer.device(), d2)
+
     np.testing.assert_array_equal(data, np.array(y))
     # Make sure these don't crash
     api.device_put(x)
@@ -1458,11 +1519,17 @@ class APITest(jtu.JaxTestCase):
     np_arr = np.array([1,2,3])
     scalar = 1
     device_arr = jnp.array([1,2,3])
-    assert device_arr.device_buffer.device() is default_device
+    if config.jax_array:
+      assert device_arr.device() is default_device
+    else:
+      assert device_arr.device_buffer.device() is default_device
 
     for val in [np_arr, device_arr, scalar]:
       x = api.device_put(val, device=cpu_device)
-      self.assertEqual(x.device_buffer.device(), cpu_device)
+      if config.jax_array:
+        self.assertEqual(x.device(), cpu_device)
+      else:
+        self.assertEqual(x.device_buffer.device(), cpu_device)
 
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
@@ -1943,18 +2010,21 @@ class APITest(jtu.JaxTestCase):
 
   def test_devicearray_repr(self):
     x = device_put(jnp.zeros(3))
-    self.assertIsInstance(x, device_array.DeviceArray)
+    _check_instance(self, x)
     repr(x)  # doesn't crash
 
     x = device_put(jnp.full(3, 1 + 1j))
-    self.assertIsInstance(x, device_array.DeviceArray)
+    _check_instance(self, x)
     repr(x)  # doesn't crash
 
   def test_devicearray_delete(self):
     x = device_put(1.)
     x.delete()
-    self.assertRaisesRegex(RuntimeError, "DeviceArray has been deleted.",
-                           lambda: repr(x))
+    if config.jax_array:
+      msg = "Array has been deleted."
+    else:
+      msg = "DeviceArray has been deleted."
+    self.assertRaisesRegex(RuntimeError, msg, lambda: repr(x))
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
@@ -2275,6 +2345,8 @@ class APITest(jtu.JaxTestCase):
                            np.zeros((4, 2), dtype=float0))
 
   def test_float0_error(self):
+    if config.jax_array:
+      raise unittest.SkipTest('Does not work with Array')
     # float0 is incompatible with other dtypes
     float0_array = jax.grad(lambda x: x+0., allow_int=True)(1)
     error_text = "float0s do not support any operations by design"
@@ -2815,11 +2887,15 @@ class APITest(jtu.JaxTestCase):
 
   def test_device_array_repr(self):
     rep = jnp.ones(()) + 1.
-    self.assertStartsWith(repr(rep), "DeviceArray")
+    if config.jax_array:
+      msg = 'Array'
+    else:
+      msg = 'DeviceArray'
+    self.assertStartsWith(repr(rep), msg)
 
   def test_device_array_hash(self):
     rep = jnp.ones((1,)) + 1.
-    self.assertIsInstance(rep, device_array.DeviceArray)
+    _check_instance(self, rep)
     self.assertNotIsInstance(rep, collections.abc.Hashable)
     with self.assertRaisesRegex(TypeError, 'unhashable type'):
       hash(rep)
@@ -2910,6 +2986,8 @@ class APITest(jtu.JaxTestCase):
     grad(lambda x: x[0])(CustomNode([0.]))
 
   def test_trivial_computations(self):
+    if config.jax_array:
+      raise unittest.SkipTest('Does not work with Array')
     x = jnp.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
     self.assertIs(x, y)
@@ -3088,8 +3166,7 @@ class APITest(jtu.JaxTestCase):
       _ = self._saved_tracer+1
 
   def test_escaped_tracer_shape_dtype(self):
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                r"shape \(4, 3\) and dtype int32"):
+    with self.assertRaisesRegex(core.UnexpectedTracerError, r"int32\[4,3\]"):
       jax.jit(self.helper_save_tracer)(jnp.ones((4, 3), dtype=jnp.int32))
       _ = self._saved_tracer+1
 
@@ -3911,10 +3988,45 @@ class RematTest(jtu.JaxTestCase):
     expected = f_lin_expected(3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_remat_grad_python_control_flow(self):
-    @partial(api.remat, concrete=True)
+  def test_remat_concrete_error(self):
+    @api.remat  # no static_argnums or concrete
     def g(x):
       if x > 0:
+        return lax.sin(x)
+      else:
+        return lax.cos(x)
+
+    with self.assertRaisesRegex(core.ConcretizationTypeError, "static_argnums"):
+      g(3.)
+
+    @partial(api.remat, static_argnums=(0,))  # using static_argnums but...
+    def g(x):
+      if x > 0:  # jnp operations still get staged!
+        return lax.sin(x)
+      else:
+        return lax.cos(x)
+
+    with self.assertRaisesRegex(core.ConcretizationTypeError, "static_argnums"):
+      g(jnp.array(3.))
+
+    # But don't raise an error mentioning static_argnums here:
+    @api.remat
+    def g(x):
+      jax.jit(lambda: 0 if jnp.add(1, 1) else 0)()
+      return lax.sin(x)
+
+    try:
+      g(jnp.array(3.))
+    except core.ConcretizationTypeError as e:
+      msg = str(e)
+    self.assertNotIn('static_argnums', msg)
+
+  def test_remat_grad_python_control_flow_static_argnums(self):
+    @partial(api.remat, static_argnums=(0,))
+    def g(x):
+      with jax.ensure_compile_time_eval():
+        x_pos = x > 0
+      if x_pos:
         return lax.sin(x), 3.
       else:
         return lax.cos(x), 4.
@@ -3930,6 +4042,87 @@ class RematTest(jtu.JaxTestCase):
     ans = api.grad(f)(2.)
     expected = np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_grad_python_control_flow_unhashable_static_argnums(self):
+    @partial(api.remat, static_argnums=(0,))
+    def g(x):
+      x = x.val
+      with jax.ensure_compile_time_eval():
+        x_pos = x > 0
+      if x_pos:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    class A:
+      def __init__(self, val):
+        self.val = val
+      def __hash__(self):
+        raise TypeError
+
+    ans = f(A(2.))
+    expected = np.sin(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(lambda x: f(A(x)))(2.)
+    expected = np.cos(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_retracing(self):
+    # This is *not* a very important behavior; remat doesn't need to provide
+    # caching guarantees with the same importance as jit. But even so, in the
+    # interest of not redoing tracing work (and thus make jax.remat more
+    # feasible to use in eager mode), this test checks that we don't re-trace
+    # the remat-decorated function.
+    count = 0
+
+    @api.remat
+    def g(x):
+      nonlocal count
+      count += 1
+      return lax.sin(x), 3.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    for _ in range(10):
+      y = f(2.)
+      y.block_until_ready()
+    self.assertEqual(count, 1)
+
+  def test_remat_static_agnums_retracing(self):
+    # This is *not* a super important behavior; remat doesn't need to provide
+    # caching guarantees with the same importance as jit. But even so, in the
+    # interest of not redoing tracing work (and thus make jax.remat more
+    # feasible to use in eager mode), this test checks that we don't re-trace
+    # the remat-decorated function *even with static_argnums*. See also the
+    # above test, which doesn't check for static_argnums.
+    count = 0
+
+    @partial(api.remat, static_argnums=(0,))
+    def g(x):
+      nonlocal count
+      count += 1
+      with jax.ensure_compile_time_eval():
+        x_pos = x > 0
+      if x_pos:
+        return lax.sin(x), 3.
+      else:
+        return lax.cos(x), 4.
+
+    def f(x):
+      x, _ = g(x)
+      return x
+
+    for _ in range(10):
+      y = f(2.)
+      y.block_until_ready()
+    self.assertEqual(count, 1)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -4304,7 +4497,7 @@ class RematTest(jtu.JaxTestCase):
     with assertEvals(3):
       vjp(v)
 
-    @jax._src.util.curry
+    @jax_util.curry
     def call(f, *args):
       return jax.core.call(
           jax.linear_util.wrap_init(lambda *args: [f(*args)]),
@@ -4784,6 +4977,33 @@ class RematTest(jtu.JaxTestCase):
         f_vjp(1.)[0].block_until_ready()
     self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
 
+  def test_vjp_caching_static_argnums(self):
+    identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
+                         static_argnums=(1,))
+    _, f_vjp = jax.vjp(identity, 1., True)
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      for _ in range(20):
+        f_vjp(1.)[0].block_until_ready()
+    self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
+
+  def test_fwd_caching(self):
+    # see above test also
+    identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      for _ in range(20):
+        y, _ = jax.vjp(identity, 1.)
+        y.block_until_ready()
+    self.assertEqual(count[0], 1)
+
+  def test_fwd_caching_static_argnums(self):
+    # see above test also
+    identity = jax.checkpoint(jax.jit(lambda x: 2 * x), static_argnums=(0,))
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      for _ in range(20):
+        y = identity(1.)
+        y.block_until_ready()
+    self.assertEqual(count[0], 1)
+
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
@@ -4851,7 +5071,6 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
                     modes=['fwd', 'rev'])
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_scan_policy(self):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     to_scan = lambda c, _: (jnp.sin(c), jnp.sin(c))
@@ -4864,7 +5083,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_scan_funky_custom_jvp(self):
     def scan_apply(f, x):
       y, _ = lax.scan(lambda x, _: (f(x), None), x, None, length=1)
@@ -4921,7 +5139,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 2)  # +1 b/c dce fixed point
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_scan_funky_custom_jvp2(self):
     # Like the above test but instead of using jit inside custom_jvp, use scan.
 
@@ -5081,7 +5298,6 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
                     modes=['fwd', 'rev'])
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_cond_policy(self):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     f = new_checkpoint(lambda x: lax.cond(x > 0, jnp.sin, lambda x: x, x),
@@ -5093,7 +5309,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_cond_funky_custom_jvp(self):
     def cond_apply(f, x):
       return lax.cond(x.sum() > -jnp.inf, f, lambda x: x, x)
@@ -5149,7 +5364,6 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
-  @unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
   def test_remat_of_cond_funky_custom_jvp2(self):
     # Like the above test but instead of using jit inside custom_jvp, use cond.
 
@@ -5395,7 +5609,6 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 0)
 
 
-@unittest.skipIf(not config.after_neurips, "skip until neurips deadline")
 class DCETest(jtu.JaxTestCase):
 
   def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: List[bool],
@@ -5580,9 +5793,9 @@ class DCETest(jtu.JaxTestCase):
       return out, out
 
     def f(xs):
-      return lax.scan(scanned_f, 1., xs)
+      return lax.scan(scanned_f, jnp.array(1., 'float32'), xs)
 
-    xs = jnp.arange(10.)
+    xs = jnp.arange(10., dtype='float32')
     jaxpr = api.make_jaxpr(lambda xs: api.linearize(f, xs)[1])(xs).jaxpr
 
     jaxpr, used_inputs = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars))
@@ -6431,15 +6644,15 @@ class CustomJVPTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    ans = api.grad(api.grad(api.remat(g)))(2.)
+    ans = api.grad(api.grad(new_checkpoint(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.remat(api.grad(g)))(2.)
+    ans = api.grad(new_checkpoint(api.grad(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.grad(api.grad(api.remat(g))))(2.)
+    ans = api.grad(api.grad(api.grad(new_checkpoint(g))))(2.)
     expected = api.grad(api.grad(api.grad(g)))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -6666,11 +6879,10 @@ class CustomJVPTest(jtu.JaxTestCase):
     # This is a unit test for an internal API. We include it so as not to
     # regress https://github.com/google/jax/issues/9567. For an explanation of
     # this helper function, see https://github.com/google/jax/issues/6415.
-    from jax._src.custom_derivatives import _maybe_perturbed
     def f(x):
       def g(y, _):
         z = y * x
-        self.assertTrue(_maybe_perturbed(z))
+        self.assertTrue(custom_derivatives._maybe_perturbed(z))
         return y, None
       g(1, None)
       return lax.scan(g, 1, xs=None, length=1)[0]
@@ -6679,12 +6891,11 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_maybe_perturbed_int_regression(self):
     # see https://github.com/google/jax/discussions/9951
-    from jax._src.custom_derivatives import closure_convert
 
     @jax.jit
     def f():
       x = jnp.array(1)
-      _, aux_args = closure_convert(lambda: x)
+      _, aux_args = custom_derivatives.closure_convert(lambda: x)
       self.assertEmpty(aux_args)
     f()
 

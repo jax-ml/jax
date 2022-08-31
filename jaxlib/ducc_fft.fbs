@@ -15,20 +15,20 @@ limitations under the License.
 
 namespace jax;
 
-enum PocketFftDtype : byte {
+enum DuccFftDtype : byte {
   COMPLEX64 = 0,
   COMPLEX128 = 1,
 }
 
-enum PocketFftType : byte {
+enum DuccFftType : byte {
   C2C = 0,
   C2R = 1,
   R2C = 2,
 }
 
-table PocketFftDescriptor {
-  dtype:PocketFftDtype;
-  fft_type:PocketFftType;
+table DuccFftDescriptor {
+  dtype:DuccFftDtype;
+  fft_type:DuccFftType;
   shape:[uint64];
   strides_in:[uint64];
   strides_out:[uint64];
@@ -37,4 +37,4 @@ table PocketFftDescriptor {
   scale:double;
 }
 
-root_type PocketFftDescriptor;
+root_type DuccFftDescriptor;

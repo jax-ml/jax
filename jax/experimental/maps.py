@@ -457,7 +457,6 @@ def xmap(fun: Callable,
     specified. This is in line with the current multi-host :py:func:`pmap`
     programming model.
   """
-  warn("xmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
 
   if isinstance(in_axes, list) and not _is_axes_leaf(in_axes):
@@ -546,9 +545,6 @@ def xmap(fun: Callable,
       closure=(out_axes_entries, out_axes_treedef))
 
     if config.jax_array:
-      if any(not isinstance(a, Array) for a in args_flat):
-        raise ValueError('All arguments to pjit when `config.jax_array` is '
-                         'enabled should be `Array`s.')
       in_positional_semantics = (_PositionalSemantics.GLOBAL,) * len(args_flat)
     else:
       in_positional_semantics = tuple(
@@ -717,9 +713,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
       tiling_method = pxla.TileManual(manual_mesh_axes)
     else:
       tiling_method = pxla.TileVectorize()
-    in_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(i)).normalize()
+    in_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(i))
                     for i in mesh_in_axes]
-    out_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(o)).normalize()
+    out_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(o))
                      for o in mesh_out_axes]
     return pxla.lower_mesh_computation(
         f, 'xmap', name, mesh,
@@ -1858,7 +1854,9 @@ def _check_no_loop_collectives(jaxpr, loop_axis_resources):
 
 
 def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
-  from jax.experimental.pjit import sharding_constraint_p, ParsedPartitionSpec
+  from jax.experimental.pjit import (
+      sharding_constraint_p, ParsedPartitionSpec, get_unconstrained_dims,
+      OpShardingSharding)
 
   rec = lambda jaxpr: _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name)
   if isinstance(jaxpr, core.ClosedJaxpr):
@@ -1873,11 +1871,16 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
     new_eqns.append(eqn.replace(
       outvars=tmp_outvars, params=dict(eqn.params, **new_jaxpr_params)))
     for outvar, tmpvar in zip(eqn.outvars, tmp_outvars):
+      mps = MeshPspecSharding._from_parsed_pspec(
+          resource_env.physical_mesh, ParsedPartitionSpec((), ()))
+      unconstrained_dims = get_unconstrained_dims(mps)
+      op_sharding_sharding = OpShardingSharding.get_replicated(
+          mps._device_assignment)
       new_eqns.append(core.JaxprEqn(
           [tmpvar], [outvar], sharding_constraint_p,
           dict(resource_env=resource_env,
-               sharding=MeshPspecSharding._from_parsed_pspec(
-                   resource_env.physical_mesh, ParsedPartitionSpec((), ()))),
+               sharding=op_sharding_sharding,
+               unconstrained_dims=unconstrained_dims),
           set(),
           eqn.source_info))
   return jaxpr.replace(eqns=new_eqns)

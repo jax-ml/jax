@@ -17,7 +17,7 @@ limitations under the License.
 // JAX-generated HLO code from outside of JAX.
 
 #include "jaxlib/lapack_kernels.h"
-#include "jaxlib/pocketfft_kernels.h"
+#include "jaxlib/ducc_fft_kernels.h"
 #include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
 
 namespace jax {
@@ -105,7 +105,7 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "lapack_cgees", ComplexGees<std::complex<float>>::Kernel, "Host");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "lapack_zgees", ComplexGees<std::complex<double>>::Kernel, "Host");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("pocketfft", PocketFft, "Host");
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("ducc_fft", DuccFft, "Host");
 
 }  // namespace
 }  // namespace jax

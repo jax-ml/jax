@@ -16,8 +16,7 @@ import contextlib
 import functools
 from functools import partial
 import itertools as it
-from typing import Any, Callable, Dict, List, Tuple, Optional
-
+from typing import Any, Callable, Dict, List, Tuple, Sequence, Optional, Union
 import jax
 from jax.interpreters import partial_eval as pe
 from jax.config import config
@@ -174,7 +173,7 @@ def recast_to_float0(primal, tangent):
 # errors if you will)
 def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
                   consts, primals_in, cotangents_in):
-  if all(type(ct) is Zero for ct in cotangents_in):
+  if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
     return map(lambda v: Zero(v.aval), jaxpr.invars)
 
   def write_cotangent(prim, v, ct):
@@ -638,42 +637,10 @@ def _closed_call_transpose(params, jaxpr, args, ct, cts_in_avals, reduce_axes):
 primitive_transposes[core.closed_call_p] = _closed_call_transpose
 
 
-def remat_transpose(params, call_jaxpr, primals_in, cotangents_in,
-                    cotangent_in_avals, reduce_axes):
-  unknowns = map(is_undefined_primal, primals_in)
-  primal_jaxpr, tangent_jaxpr, _, _ = \
-      pe.partial_eval_jaxpr_nounits(_close_jaxpr(call_jaxpr), unknowns=unknowns,
-                                    instantiate=True)  # type: ignore
-  args, in_tree = tree_flatten((primals_in, cotangents_in))
-  transpose = lu.hashable_partial(lu.wrap_init(_remat_transpose), primal_jaxpr,
-                                  tangent_jaxpr, reduce_axes)
-  flat_transpose, out_tree = flatten_fun_nokwargs(transpose, in_tree)
-  flat_cotangents_out = pe.remat_call_p.bind(flat_transpose, *args, **params)
-  return tree_unflatten(out_tree(), flat_cotangents_out)
-primitive_transposes[pe.remat_call_p] = remat_transpose
-
-def _remat_transpose(primal_jaxpr, tangent_jaxpr, reduce_axes,
-                     primals_tangents_in, cotangents_in):
-  primals_in  = [x for x in primals_tangents_in if not is_undefined_primal(x)]
-  tangents_in = [x for x in primals_tangents_in if     is_undefined_primal(x)]
-  res = core.jaxpr_as_fun(primal_jaxpr)(*primals_in)
-  cotangents_out_ = backward_pass(tangent_jaxpr.jaxpr, reduce_axes, False, (),
-                                  (*res, *tangents_in), cotangents_in)
-  cotangents_out = iter(cotangents_out_[len(res):])
-  outs = [next(cotangents_out) if is_undefined_primal(x) else Zero.from_value(x)
-          for x in primals_tangents_in]
-  assert next(cotangents_out, None) is None
-  return outs
-
-@weakref_lru_cache
-def _close_jaxpr(jaxpr: core.Jaxpr) -> core.ClosedJaxpr:
-  return core.ClosedJaxpr(jaxpr, [])
-
 @lu.transformation_with_aux
 def nonzero_outputs(*args, **kwargs):
   results = yield args, kwargs
   yield results, [type(r) is not Zero for r in results]
-
 
 def map_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
@@ -717,9 +684,12 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
   return tuple(arg_cts)
 
 
-def jvp_jaxpr(jaxpr, nonzeros, instantiate):
-  inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
-  return _jvp_jaxpr(jaxpr, tuple(nonzeros), inst)
+def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
+              instantiate: Union[bool, Sequence[bool]]
+              ) -> Tuple[core.ClosedJaxpr, List[bool]]:
+  if type(instantiate) is bool:
+    instantiate = (instantiate,) * len(jaxpr.out_avals)
+  return _jvp_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate))
 
 @weakref_lru_cache
 def _jvp_jaxpr(jaxpr, nonzeros, instantiate):

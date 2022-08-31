@@ -917,7 +917,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                    polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
     with self.assertRaisesRegex(TypeError,
-                                "Argument 'b' of type <class 'jax.experimental.jax2tf.shape_poly._DimPolynomial'> is not a valid JAX type"):
+                                "Argument 'b' .*DimPoly.*not a valid JAX type"):
       jax2tf.convert(lambda x: jnp.prod(x.shape),
                      polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
@@ -1163,7 +1163,8 @@ def _make_harness(group_name: str, name: str,
   match the expected exception string.
 
   enable_and_disable_xla=True means that we generate two harnesses,
-  one with enable_xla=False.
+  one with enable_xla=False and one with enable_xal=True. Otherwise we create
+  only one harness with enable_xla=True.
   """
   if enable_and_disable_xla:
     return [
@@ -1189,7 +1190,8 @@ def _make_harness(group_name: str, name: str,
                  dtype=np.float32,
                  poly_axes=poly_axes, check_result=check_result,
                  skip_jax_run=skip_jax_run, expect_error=expect_error,
-                 tol=tol)
+                 tol=tol,
+                 **params)
 
 
 _f32 = np.float32
@@ -1632,6 +1634,31 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   poly_axes=[None, 0],
                   expect_error=(core.InconclusiveDimensionOperation,
                                 "the product of the known dimensions must be even")),
+    _make_harness("reduce_window", "min",
+                  # x.shape = (b, 8)
+                  lambda x: lax.reduce_window(x, np.array(1., _f32), lax.min,
+                                              (2, 2), (1, 1), "VALID"),
+                  [RandArg((3, 8), _f32)],
+                  poly_axes=[0],
+                  enable_and_disable_xla=True),
+    _make_harness("reduce_window", "add",
+                  # x.shape = (b, 8)
+                  lambda x: lax.reduce_window(x, 0, lax.add, (2, 2), (1, 1),
+                                              "VALID"),
+                  [RandArg((3, 8), _f32)],
+                  poly_axes=[0],
+                  enable_and_disable_xla=True),
+    # https://github.com/google/jax/issues/11804
+    # Use the reshape trick to simulate a polymorphic dimension of 16*b.
+    # (See test "conv_general_dilated.1d_1" above for more details.)
+    _make_harness("reduce_window", "add",
+                  # x.shape = (1, 16*b, 1)
+                  lambda x: lax.reduce_window(
+                      jnp.reshape(x, (1, -1, 1)),
+                      0., lax.add, (1, 4, 1), (1, 2, 1), "SAME"),
+                  [RandArg((1, 128, 16), _f32)],
+                  poly_axes=[1],
+                  enable_and_disable_xla=True),
     # TODO(necula): not yet supported, but also unlikely to come up.
     # _make_harness("random_uniform", "odd",
     #               lambda key, a: jax.random.uniform(key, (2 * a.shape[0] + 1, a.shape[1]),
@@ -1885,7 +1912,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="conv_general_dilated_1d_1err_poly_axes=[1, None]"
+      #one_containing="reduce_window_add_noxla_poly_axes=[1]",
   )
   def test_prim(self, harness: Harness):
     _test_one_harness(self, harness)

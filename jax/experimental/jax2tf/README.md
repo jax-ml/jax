@@ -250,7 +250,7 @@ attempting to save its conversion to a SavedModel will fail with:
 ValueError: Error when tracing gradients for SavedModel
 ```
 
-You have two options, either pass `enable_gradients=False` to `jax2tf.convert`, or
+You have two options, either pass `with_gradient=False` to `jax2tf.convert`, or
 set `tf.saved_model.SaveOption(experimental_custom_gradients=False)`. In either case,
 you will not be able to compute the gradients of the function loaded from the SavedModel.
 

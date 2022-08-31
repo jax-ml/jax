@@ -291,9 +291,21 @@ def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
     compute_dtype = data_dtype
     compute_type = data_type
 
+  # TODO(tianjianlu): use user-defined batch count after enabling batch mode.
+  batch_count = 1
+
+  # TODO(tianjianlu): use batch stride to trigger different mode of batch
+  # computation. Currently batch_stride = 0 is not allowed because of the issue
+  # in cusparse https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643
+  # Set batch stride to be the matrix size for now.
+  lhs_batch_stride = rows * cols
+  B_rows = rows if transpose else cols
+  rhs_batch_stride =  B_rows * Ccols
+
   buffer_size, opaque = gpu_sparse.build_coo_matmat_descriptor(
       data_dtype, x_dtype, compute_dtype, index_dtype,
-      rows, cols, Ccols, nnz, transpose)
+      rows, cols, Ccols, nnz, transpose, batch_count, lhs_batch_stride,
+      rhs_batch_stride)
   out_size = cols if transpose else rows
 
   out = custom_call(

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from setuptools import setup
+from setuptools.dist import Distribution
 import os
 
 __version__ = None
@@ -29,9 +30,11 @@ cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
 if cuda_version and cudnn_version:
   __version__ += f"+cuda{cuda_version.replace('.', '')}-cudnn{cudnn_version.replace('.', '')}"
 
-nightly = os.environ.get('JAXLIB_NIGHTLY')
-if nightly:
-  project_name = 'jaxlib-nightly'
+class BinaryDistribution(Distribution):
+  """This class makes 'bdist_wheel' include an ABI tag on the wheel."""
+
+  def has_ext_modules(self):
+    return True
 
 setup(
     name=project_name,
@@ -43,7 +46,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=['jaxlib', 'jaxlib.xla_extension'],
     python_requires='>=3.7',
-    install_requires=['scipy>=1.5', 'numpy>=1.19', 'absl-py'],
+    install_requires=['scipy>=1.5', 'numpy>=1.20', 'absl-py'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
     classifiers=[
@@ -71,4 +74,5 @@ setup(
         'jaxlib.xla_extension': ['*.pyi'],
     },
     zip_safe=False,
+    distclass=BinaryDistribution,
 )

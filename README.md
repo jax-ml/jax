@@ -388,7 +388,7 @@ Some standouts:
 
 JAX is written in pure Python, but it depends on XLA, which needs to be
 installed as the `jaxlib` package. Use the following instructions to install a
-binary package with `pip`, or to [build JAX from
+binary package with `pip` or `conda`, or to [build JAX from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
@@ -432,9 +432,6 @@ operating system, CUDA, and CuDNN are possible, but require [building from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 * CUDA 11.1 or newer is *required*.
-  * You may be able to use older CUDA versions if you [build from source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source),
-    but there are known bugs in CUDA in all CUDA versions older than 11.1, so we
-    do not ship prebuilt binaries for older CUDA versions.
 * The supported cuDNN versions for the prebuilt wheels are:
   * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
     installation is new enough, since it supports additional functionality.
@@ -514,6 +511,36 @@ jax.tools.colab_tpu.setup_tpu()
 ```
 Colab TPU runtimes use an older TPU architecture than Cloud TPU VMs, so installing `jax[tpu]` should be avoided on Colab.
 If for any reason you would like to update the jax & jaxlib libraries on a Colab TPU runtime, follow the CPU instructions above (i.e. install `jax[cpu]`).
+
+### Conda installation
+
+There is a community-supported Conda build of `jax`. To install using `conda`,
+simply run
+
+```bash
+conda install jax -c conda-forge
+```
+
+To install on a machine with an NVidia GPU, run
+```bash
+conda install jax cuda-nvcc -c conda-forge -c nvidia
+```
+
+Note the `cudatoolkit` distributed by `conda-forge` is missing `ptxas`, which
+JAX requires. You must therefore either install the `cuda-nvcc` package from
+the `nvidia` channel, or install CUDA on your machine separately so that `ptxas`
+is in your path. The channel order above is important (`conda-forge` before
+`nvidia`). We are working on simplifying this.
+
+If you would like to override which release of CUDA is used by JAX, or to
+install the CUDA build on a machine without GPUs, follow the instructions in the
+[Tips & tricks](https://conda-forge.org/docs/user/tipsandtricks.html#installing-cuda-enabled-packages-like-tensorflow-and-pytorch)
+section of the `conda-forge` website.
+
+See the `conda-forge`
+[jaxlib](https://github.com/conda-forge/jaxlib-feedstock#installing-jaxlib) and
+[jax](https://github.com/conda-forge/jax-feedstock#installing-jax) repositories
+for more details.
 
 ### Building JAX from source
 See [Building JAX from

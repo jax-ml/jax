@@ -120,7 +120,7 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
 @partial(jit, static_argnames=('output',))
 def _schur(a, output):
   if output == "complex":
-    a = a.astype(dtypes._to_complex_dtype(a.dtype))
+    a = a.astype(dtypes.to_complex_dtype(a.dtype))
   return lax_linalg.schur(a)
 
 @_wraps(scipy.linalg.schur)

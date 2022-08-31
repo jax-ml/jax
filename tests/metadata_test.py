@@ -18,6 +18,7 @@ from absl.testing import absltest
 from jax._src import test_util as jtu
 
 import jax
+from jax._src import config as jax_config
 from jax import numpy as jnp
 
 from jax.config import config
@@ -90,21 +91,21 @@ class MetadataTest(jtu.JaxTestCase):
     # Sanity check
     self.assertIn("/tests/metadata_test.py", make_hlo())
 
-    with jax._src.config.hlo_source_file_canonicalization_regex(".*/tests/"):
+    with jax_config.hlo_source_file_canonicalization_regex(".*/tests/"):
       hlo = make_hlo()
       self.assertIn("metadata_test.py", hlo)
       self.assertNotIn("tests/", hlo)
       self.assertNotIn("/metadata_test.py", hlo)
 
-    with jax._src.config.hlo_source_file_canonicalization_regex("no_match_xxx"):
+    with jax_config.hlo_source_file_canonicalization_regex("no_match_xxx"):
       hlo = make_hlo()
       self.assertIn("/tests/metadata_test.py", hlo)
 
-    with jax._src.config.hlo_source_file_canonicalization_regex(".*"):
+    with jax_config.hlo_source_file_canonicalization_regex(".*"):
       hlo = make_hlo()
       self.assertNotIn("test.py", hlo)
 
-    with jax._src.config.hlo_source_file_canonicalization_regex("test"):
+    with jax_config.hlo_source_file_canonicalization_regex("test"):
       hlo = make_hlo()
       self.assertIn("/s/metadata_.py", hlo)
 

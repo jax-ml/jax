@@ -17,6 +17,7 @@ import pickle
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 try:
   import cloudpickle
@@ -27,8 +28,8 @@ import jax
 from jax import core
 from jax import numpy as jnp
 from jax.config import config
+from jax.interpreters import pxla
 from jax._src import test_util as jtu
-import jax._src.lib
 
 config.parse_flags_with_absl()
 
@@ -92,6 +93,19 @@ class PickleTest(jtu.JaxTestCase):
     self.assertArraysEqual(x, y)
     self.assertIsInstance(y, type(x))
     self.assertEqual(x.aval, y.aval)
+
+  @parameterized.parameters(
+      (pxla.PartitionSpec(),),
+      (pxla.PartitionSpec(None),),
+      (pxla.PartitionSpec('x', None),),
+      (pxla.PartitionSpec(None, 'y'),),
+      (pxla.PartitionSpec('x', 'y'),),
+      (pxla.PartitionSpec(('x', 'y'),),),
+  )
+  def testPickleOfPartitionSpecs(self, partition_spec):
+    restored_partition_spec = pickle.loads(pickle.dumps(partition_spec))
+    self.assertIsInstance(restored_partition_spec, pxla.PartitionSpec)
+    self.assertTupleEqual(partition_spec, restored_partition_spec)
 
   def testPickleX64(self):
     with jax.experimental.enable_x64():

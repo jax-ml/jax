@@ -194,7 +194,7 @@ class GDATest(jtu.JaxTestCase):
     for i, s in enumerate(gda.local_shards):
       self.assertEqual(s.index, (slice(None),))
       self.assertEqual(s.replica_id, i)
-      self.assertArraysEqual(s.data.to_py(), np.array([]))
+      self.assertArraysEqual(np.asarray(s.data), np.array([]))
     self.assertEqual(gda.dtype, np.float32)
     self.assertEqual(
         gda_lib.get_shard_shape(global_input_shape, global_mesh, mesh_axes),
@@ -249,10 +249,10 @@ class GDATest(jtu.JaxTestCase):
     gda = GlobalDeviceArray.from_batched_callback(
         global_input_shape, global_mesh, mesh_axes, cb)
     expected_first_shard_value = np.array([[0, 1]])
-    self.assertArraysEqual(gda.local_data(0).to_py(),
+    self.assertArraysEqual(np.asarray(gda.local_data(0)),
                            expected_first_shard_value)
     expected_second_shard_value = np.array([[2, 3]])
-    self.assertArraysEqual(gda.local_data(1).to_py(),
+    self.assertArraysEqual(np.asarray(gda.local_data(1)),
                            expected_second_shard_value)
 
   def test_gda_batched_callback_with_devices(self):
@@ -275,10 +275,10 @@ class GDATest(jtu.JaxTestCase):
     gda = GlobalDeviceArray.from_batched_callback_with_devices(
         global_input_shape, global_mesh, mesh_axes, cb)
     expected_first_shard_value = np.array([[0, 1], [2, 3]], dtype=np.float32)
-    self.assertArraysEqual(gda.local_data(0).to_py(),
+    self.assertArraysEqual(np.asarray(gda.local_data(0)),
                            expected_first_shard_value)
     expected_second_shard_value = np.array([[0, 1], [2, 3]], dtype=np.float32)
-    self.assertArraysEqual(gda.local_data(1).to_py(),
+    self.assertArraysEqual(np.asarray(gda.local_data(1)),
                            expected_second_shard_value)
 
   def test_gda_str_repr(self):

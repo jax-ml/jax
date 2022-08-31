@@ -30,10 +30,11 @@ from jax.experimental import maps
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import pxla
+from jax.experimental.sharding import OpShardingSharding
 from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
 from jax._src import source_info_util, traceback_util
 from jax._src.lax import control_flow as cf
+from jax._src.config import config
 from jax import lax
 from jax._src.util import (as_hashable_function, unzip2, split_list, safe_map,
                            safe_zip)
@@ -67,7 +68,7 @@ Payload = Union[np.ndarray, jnp.ndarray, core.Tracer]
 # For now, the payload needs to be a fixed-size array: 3 int32s, used for the
 # OOB message.
 # TODO(lenamartens): Relax this fixed-size constraint.
-init_payload = np.ones((3,), np.int32)
+init_payload = lambda: np.ones((3,), np.int32)
 
 
 def _format_msg(msg, payloads):
@@ -85,7 +86,15 @@ class Error:
   msgs: Dict[int, str]
   # There might be many msgs with a {payload}, but only one msg will
   # ever be active for an Error instance, so only one Payload is tracked.
-  payload: Payload = init_payload
+  payload: Payload
+
+  def __init__(self, err: Bool, code: Int, msgs: Dict[int, str], payload: Optional[Payload] = None):
+    # We can't directly assign to members of a frozen dataclass, even in __init__.
+    object.__setattr__(self, "err", err)
+    object.__setattr__(self, "code", code)
+    object.__setattr__(self, "msgs", msgs)
+    object.__setattr__(self, "payload",
+                       init_payload() if payload is None else payload)
 
   def get(self) -> Optional[str]:
     """Returns error message is error happened, None if no error happened."""
@@ -120,7 +129,7 @@ next_code = it.count(1).__next__  # globally unique ids, could be uuid4
 def assert_func(error: Error, pred: Bool, msg: str,
                 payload: Optional[Payload]) -> Error:
   code = next_code()
-  payload = init_payload if payload is None else payload
+  payload = init_payload() if payload is None else payload
   out_err = error.err | jnp.logical_not(pred)
   out_code = lax.select(error.err, error.code, code)
   out_payload = lax.select(error.err, error.payload, payload)
@@ -680,19 +689,25 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
                      in_positional_semantics, out_positional_semantics):
   checked_jaxpr, msgs = checkify_jaxpr(jaxpr, error, enabled_errors)
   new_vals_in = [error.err, error.code, error.payload, *vals_in]
-  # TODO(lenamartens, yashkatariya): replace with OpShardingSharding.
-  sharding = pxla._create_mesh_pspec_sharding(pxla.thread_resources.env.physical_mesh,
-                                              pxla.PartitionSpec(None))
-  pos_sem = maps._positional_semantics.val
-  new_in_shardings = (*[sharding]*3, *in_shardings)
-  new_out_shardings = (*[sharding]*3, *out_shardings)
+
+  sharding = OpShardingSharding.get_replicated(
+      list(resource_env.physical_mesh.devices.flat))
+  new_in_shardings = (*[sharding] * 3, *in_shardings)
+  new_out_shardings = (*[sharding] * 3, *out_shardings)
+
+  if config.jax_array:
+    pos_sem = maps._PositionalSemantics.GLOBAL
+  else:
+    pos_sem = maps._positional_semantics.val
+
   if not isinstance(in_positional_semantics, Iterable):
     in_positional_semantics = (in_positional_semantics,)
   if not isinstance(out_positional_semantics, Iterable):
     out_positional_semantics = (out_positional_semantics,)
-  new_positional_sems_in = (*[pos_sem]*3, *in_positional_semantics)
-  new_positional_sems_out = (*[pos_sem]*3, *out_positional_semantics)
-  new_donated_invars = (*[False]*3, *donated_invars)
+  new_positional_sems_in = (*[pos_sem] * 3, *in_positional_semantics)
+  new_positional_sems_out = (*[pos_sem] * 3, *out_positional_semantics)
+  new_donated_invars = (*[False] * 3, *donated_invars)
+
   err, code, payload, *vals_out = pjit.pjit_p.bind(
       *new_vals_in,
       jaxpr=checked_jaxpr,

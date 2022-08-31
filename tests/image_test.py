@@ -42,16 +42,8 @@ except ImportError:
 
 try:
   from PIL import Image as PIL_Image
-  # TODO(jakevdp): remove this try/except when pillow requirement is updated.
-  try:
-    # pillow >=9.1.0
-    PIL_Resampling = PIL_Image.Resampling
-  except AttributeError:
-    # pillow <9.1.0
-    PIL_Resampling = PIL_Image
 except ImportError:
   PIL_Image = None
-  PIL_Resampling = None
 
 config.parse_flags_with_absl()
 
@@ -114,10 +106,10 @@ class ImageTest(jtu.JaxTestCase):
     args_maker = lambda: (rng(image_shape, dtype),)
     def pil_fn(x):
       pil_methods = {
-        "nearest": PIL_Resampling.NEAREST,
-        "bilinear": PIL_Resampling.BILINEAR,
-        "bicubic": PIL_Resampling.BICUBIC,
-        "lanczos3": PIL_Resampling.LANCZOS,
+        "nearest": PIL_Image.Resampling.NEAREST,
+        "bilinear": PIL_Image.Resampling.BILINEAR,
+        "bicubic": PIL_Image.Resampling.BICUBIC,
+        "lanczos3": PIL_Image.Resampling.LANCZOS,
       }
       img = PIL_Image.fromarray(x.astype(np.float32))
       out = np.asarray(img.resize(target_shape[::-1], pil_methods[method]),

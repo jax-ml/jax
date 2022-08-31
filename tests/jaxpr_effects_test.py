@@ -20,7 +20,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
-from jax import ad_checkpoint
 from jax import core
 from jax import lax
 from jax import linear_util as lu
@@ -28,12 +27,15 @@ from jax.config import config
 from jax.interpreters import ad
 from jax.experimental import maps
 from jax.experimental import pjit
+from jax.experimental import sharding
 from jax.interpreters import mlir
+from jax._src import ad_checkpoint
 from jax._src import lib as jaxlib
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import control_flow as lcf
+from jax._src.lib import can_execute_with_token
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -63,6 +65,8 @@ core.ordered_effects.add('while2')
 lcf.allowed_effects.add('while')
 lcf.allowed_effects.add('while1')
 lcf.allowed_effects.add('while2')
+
+ad_checkpoint.remat_allowed_effects.add('remat')
 
 # TODO(sharadmv): remove jaxlib guards for TPU tests when jaxlib minimum
 #                 version is >= 0.3.15
@@ -220,6 +224,14 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, "Effects not supported"):
       jax.make_jaxpr(lambda x: jax.linearize(f, x)[1](x))(2.)
 
+  def test_new_remat_allows_certain_effects(self):
+    @ad_checkpoint.checkpoint
+    def f(x):
+      x, = effect_p.bind(x, effect='remat')
+      return x
+    jaxpr = jax.make_jaxpr(f)(2.)
+    self.assertSetEqual(jaxpr.effects, {"remat"})
+
   def test_custom_jvp_primitive_inherits_effects(self):
 
     @jax.custom_jvp
@@ -257,6 +269,9 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
   def test_xmap_inherits_effects(self):
+    if config.jax_array:
+      raise unittest.SkipTest('Xmap does not work properly with Arrays '
+                              'containing SingleDeviceSharding.')
 
     def f(x):
       effect_p.bind(effect='foo')
@@ -271,11 +286,15 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='bar')
       return x
-    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('x'),
-        out_axis_resources=pjit.PartitionSpec('x'))
+    mesh = maps.Mesh(np.array(jax.devices()), ['x'])
+    if config.jax_array:
+      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('x'))
+    else:
+      spec = pjit.PartitionSpec('x')
+    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
     with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
-      with maps.Mesh(np.array(jax.devices()), ['x']):
-        jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
+      with mesh:
+        jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
 
 
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
@@ -456,10 +475,14 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     # First output should be output token
     result_types = mhlo.body.operations[0].type.results
-    self.assertLen(list(result_types), 2)
-    self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
-    self.assertLen(list(result_types), 2)
-    self.assertEqual(str(result_types[1]), 'tensor<f32>')
+    if not can_execute_with_token:
+      self.assertLen(list(result_types), 2)
+      self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
+      self.assertLen(list(result_types), 2)
+      self.assertEqual(str(result_types[1]), 'tensor<f32>')
+    else:
+      self.assertLen(list(result_types), 1)
+      self.assertEqual(str(result_types[0]), 'tensor<f32>')
 
   def test_lowered_jaxpr_with_ordered_effects_takes_in_dummy_inputs(self):
     @jax.jit

@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,20 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""Stax has moved to jax.example_libraries.stax
-
-jax.experimental.stax is deprecated and will delegate to
-jax.example_libraries.stax with a warning for backwards-compatibility
-for a limited time.
-"""
-
-import warnings
-
-from jax.example_libraries.stax import *    # noqa: F401,F403
-
-_HAS_DYNAMIC_ATTRIBUTES = True
-
-warnings.warn('jax.experimental.stax is deprecated, '
-              'import jax.example_libraries.stax instead',
-              FutureWarning)
+"""Module for state."""
+from jax._src.state.types import ShapedArrayRef, StateEffect
+from jax._src.state.primitives import (ref_get, ref_set, ref_swap,
+                                       ref_addupdate, get_p, swap_p,
+                                       addupdate_p)
+from jax._src.state.discharge import discharge_state

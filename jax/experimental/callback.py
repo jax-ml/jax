@@ -264,9 +264,7 @@ def _custom_derivative_call_jaxpr_callback_rule(primitive, trace, *tracers,
   vals = [t.val for t in tracers]
 
   new_closed_jaxpr = callback_jaxpr(fun_jaxpr, trace.callback, strip_calls=trace.strip_calls)
-  if primitive == cd.custom_jvp_call_jaxpr_p:
-    thunk_name = 'jvp_jaxpr_thunk'
-  elif primitive == cd.custom_vjp_call_jaxpr_p:
+  if primitive == cd.custom_vjp_call_jaxpr_p:
     thunk_name = 'fwd_jaxpr_thunk'
     params['bwd'] = callback_subtrace(params['bwd'], main)
   else:
@@ -287,7 +285,5 @@ def _custom_derivative_call_jaxpr_callback_rule(primitive, trace, *tracers,
                        num_consts=new_num_consts, **params)
   return safe_map(trace.pure, out)
 
-custom_callback_rules[cd.custom_jvp_call_jaxpr_p] = partial(
-    _custom_derivative_call_jaxpr_callback_rule, cd.custom_jvp_call_jaxpr_p)
 custom_callback_rules[cd.custom_vjp_call_jaxpr_p] = partial(
     _custom_derivative_call_jaxpr_callback_rule, cd.custom_vjp_call_jaxpr_p)

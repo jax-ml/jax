@@ -29,16 +29,16 @@ import jax
 from jax import core
 from jax.errors import UnexpectedTracerError
 from jax import lax
-from jax import linear_util as lu
 from jax import random
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2
 from jax.experimental import maps
-from jax.interpreters import partial_eval as pe
+from jax.experimental import array
 from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
+from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
 
 from jax.config import config
@@ -101,7 +101,7 @@ SCAN_IMPLS_WITH_FOR = [
     (partial(lax.scan, unroll=2), 'unroll2'),
     (scan_with_new_checkpoint , 'new_checkpoint'),
     (scan_with_new_checkpoint2, 'new_checkpoint2'),
-    (scan_with_for, 'for'),
+    (scan_with_for, 'for_loop'),
 ]
 
 
@@ -138,9 +138,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    jax._src.lax.control_flow._initial_style_open_jaxpr.cache_clear()
-    jax._src.lax.control_flow._initial_style_jaxpr.cache_clear()
-    jax._src.lax.control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
+    lax_control_flow._initial_style_open_jaxpr.cache_clear()
+    lax_control_flow._initial_style_jaxpr.cache_clear()
+    lax_control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
 
   def testCallableErrors(self):
     not_callable = 42
@@ -1596,6 +1596,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     if scan is scan_with_new_checkpoint2:
       rtol = {np.float64: 1e-12, np.float32: 1e-4}
+    elif scan is scan_with_for:
+      rtol = {np.float64: 1e-12, np.float32: 1e-4}
     else:
       rtol = {np.float64: 1e-14, np.float32: 1e-4}
 
@@ -1609,7 +1611,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
        "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testScanGrad(self, jit_scan, jit_f, scan):
     rng = self.rng()
@@ -1635,13 +1637,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = jax.grad(lambda c, as_: list(scan_reference(f, c, as_))[0].sum())(c, as_)
     if scan is scan_with_new_checkpoint:
       rtol = {np.float32: 5e-5, np.float64: 1e-13}
+      atol = 1e-5
+    elif scan is scan_with_for:
+      rtol = {np.float32: 2e-5, np.float64: 1e-13}
+      atol = {np.float32: 6e-2, np.float64: 1e-13}
     else:
       rtol = {np.float32: 2e-5, np.float64: 1e-13}
-    self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol, atol=1e-5)
+      atol = 1e-5
+    self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol, atol=atol)
 
     rtol = 5e-3 if scan is not scan_with_new_checkpoint2 else 5e-2
+    atol = 5e-2 if "tpu" in jtu.device_under_test() else 1e-3
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
-                    atol=1e-3, rtol=rtol)
+                    atol=atol, rtol=rtol)
 
   @jtu.skip_on_devices("tpu")  # TPU lacks precision for this test.
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
@@ -1784,7 +1792,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{scan_name}",
        "scan": scan_impl}
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def testScanHigherOrderDifferentiation(self, scan):
     d = 0.75
     def f(c, a):
@@ -1805,7 +1813,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
        "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
-      for scan_impl, scan_name in SCAN_IMPLS
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR
       for in_axes in itertools.product([None, 0, 1], [None, 0, 1, 2])
       if in_axes != (None, None))
   def testScanVmap(self, jit_scan, jit_f, in_axes, scan):
@@ -1871,7 +1879,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": "_impl={}".format(scan_name), "scan": scan_impl}
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def testScanVmapFixpoint(self, scan):
     def f(carry_init):
       def scan_body(c, x):
@@ -2453,7 +2461,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not DeviceArray
     _, vjp_fun = jax.vjp(cumprod, x)
     *_, ext_res = vjp_fun.args[0].args[0]
-    self.assertIsInstance(ext_res, jnp.DeviceArray)
+    if config.jax_array:
+      self.assertIsInstance(ext_res, array.Array)
+    else:
+      self.assertIsInstance(ext_res, jnp.DeviceArray)
 
   def test_scan_vmap_collectives(self):
     def scan_f(state, x):
@@ -2545,7 +2556,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": "impl={}".format(scan_name), "scan": scan_impl}
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def test_scan_hoisting_consts(self, scan):
     A = jnp.arange(4.).reshape(2, 2)
     B = jnp.arange(4.).reshape(2, 2) + 1.
@@ -2562,320 +2573,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
 
 class ForLoopTest(jtu.JaxTestCase):
-
-  def test_cant_eval_get_primitive(self):
-    with self.assertRaises(ValueError):
-      for_loop.get_p.bind(jnp.ones(5))
-
-  def test_cant_eval_swap_primitive(self):
-    with self.assertRaises(ValueError):
-      for_loop.swap_p.bind(jnp.ones(5), jnp.zeros(5))
-
-  def test_cant_eval_addupdate_primitive(self):
-    with self.assertRaises(ValueError):
-      for_loop.addupdate_p.bind(jnp.ones(5), jnp.zeros(5))
-
-  def test_get_abstract_eval(self):
-    ref_aval = for_loop.ShapedArrayRef((1, 2, 3), jnp.float32)
-    out_aval, effect = for_loop.get_p.abstract_eval(ref_aval, 0)
-    self.assertSetEqual(effect, {for_loop.State})
-    self.assertTupleEqual(out_aval.shape, (2, 3))
-    self.assertEqual(out_aval.dtype, jnp.float32)
-
-  def test_get_abstract_aval_must_take_in_refs(self):
-    with self.assertRaises(ValueError):
-      for_loop.get_p.abstract_eval(core.ShapedArray((1, 2, 3), jnp.float32))
-
-  def test_swap_abstract_eval(self):
-    ref_aval = for_loop.ShapedArrayRef((1, 2, 3), jnp.float32)
-    val_aval = core.ShapedArray((2, 3), jnp.float32)
-    out_aval, effect = for_loop.swap_p.abstract_eval(ref_aval, val_aval, 0)
-    self.assertSetEqual(effect, {for_loop.State})
-    self.assertTupleEqual(out_aval.shape, (2, 3))
-    self.assertEqual(out_aval.dtype, jnp.float32)
-
-  def test_swap_abstract_eval_must_take_in_refs(self):
-    with self.assertRaises(ValueError):
-      for_loop.swap_p.abstract_eval(core.ShapedArray((1, 2, 3), jnp.float32),
-                                    core.ShapedArray((1, 2, 3), jnp.float32))
-
-  def test_swap_checks_for_correct_shapes(self):
-    with self.assertRaises(ValueError):
-      for_loop.swap_p.abstract_eval(
-          for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
-          core.ShapedArray((2, 3), jnp.float32))
-    with self.assertRaises(ValueError):
-      for_loop.swap_p.abstract_eval(
-          for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
-          core.ShapedArray((1, 2, 3, 4), jnp.float32))
-    for_loop.swap_p.abstract_eval(
-        for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
-        core.ShapedArray((2, 3), jnp.float32), 1)
-
-  def test_addupdate_abstract_eval(self):
-    ref_aval = for_loop.ShapedArrayRef((1, 2, 3), jnp.float32)
-    val_aval = core.ShapedArray((2, 3), jnp.float32)
-    out_avals, effect = for_loop.addupdate_p.abstract_eval(ref_aval, val_aval,
-                                                           0)
-    self.assertSetEqual(effect, {for_loop.State})
-    self.assertListEqual(out_avals, [])
-
-  def test_addupdate_abstract_eval_must_take_in_refs(self):
-    with self.assertRaises(ValueError):
-      for_loop.addupdate_p.abstract_eval(core.ShapedArray((1, 2, 3), jnp.float32),
-                                    core.ShapedArray((1, 2, 3), jnp.float32))
-
-  def test_addupdate_checks_for_correct_shapes(self):
-    with self.assertRaises(ValueError):
-      for_loop.addupdate_p.abstract_eval(
-          for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
-          core.ShapedArray((2, 3), jnp.float32))
-    with self.assertRaises(ValueError):
-      for_loop.addupdate_p.abstract_eval(
-          for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
-          core.ShapedArray((1, 2, 3, 4), jnp.float32))
-    for_loop.addupdate_p.abstract_eval(
-        for_loop.ShapedArrayRef((1, 2, 3), jnp.float32),
-        core.ShapedArray((2, 3), jnp.float32), 1)
-
-  def test_can_represent_get_and_swap_in_jaxprs(self):
-
-    def body(x):
-      x[()] = jnp.int32(1)
-      x[()] = jnp.int32(2)
-      return (x[()],)
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
-    self.assertLen(consts, 0)
-    self.assertListEqual(out_avals, [core.ShapedArray((), jnp.int32)])
-    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.swap_p)
-    self.assertEqual(jaxpr.eqns[1].primitive, for_loop.swap_p)
-    self.assertEqual(jaxpr.eqns[2].primitive, for_loop.get_p)
-
-  def test_can_represent_addupdate_in_jaxprs(self):
-
-    def body(x):
-      for_loop.ref_addupdate(x, (), jnp.int32(1))
-      return (x[()],)
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
-    self.assertLen(consts, 0)
-    self.assertListEqual(out_avals, [core.ShapedArray((), jnp.int32)])
-    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.addupdate_p)
-
-  def test_get_custom_pretty_printing_rule(self):
-    def body(x_ref):
-      x = x_ref[()]
-      return [x]
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
-    self.assertIn("b:i32[] <- a[]", jaxpr.pretty_print(use_color=False))
-
-  def test_set_custom_pretty_printing_rule(self):
-    def body(x_ref):
-      x_ref[()] = jnp.int32(2)
-      return []
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
-    self.assertIn("a[] <- 2", jaxpr.pretty_print(use_color=False))
-
-  def test_swap_custom_pretty_printing_rule(self):
-    def body(x_ref):
-      x = for_loop.ref_swap(x_ref, (), jnp.int32(2))
-      return [x]
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
-    self.assertIn("b:i32[], a[] <- a[], 2", jaxpr.pretty_print(use_color=False))
-
-  def test_addupdate_custom_pretty_printing_rule(self):
-    def body(x_ref):
-      for_loop.ref_addupdate(x_ref, (), jnp.int32(2))
-      return []
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [for_loop.ShapedArrayRef((), jnp.int32)])
-    self.assertIn("a[] += 2", jaxpr.pretty_print(use_color=False))
-
-  def test_get_jvp(self):
-
-    def f(r):
-      x = r[()]
-      return jnp.cos(x)
-
-    def g(r, rdot):
-      return jax.jvp(f, (r,), (rdot,))
-
-    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32')),
-                for_loop.ShapedArrayRef((), jnp.dtype('float32'))]
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(lu.wrap_init(g), in_avals)
-    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.get_p)
-    self.assertEqual(jaxpr.eqns[1].primitive, for_loop.get_p)
-
-  def test_swap_jvp(self):
-
-    def f(a):
-      x = a[()]
-      a[()] = jnp.sin(x)
-      return a[()]
-
-    def g(r, rdot):
-      return jax.jvp(f, (r,), (rdot,))
-
-    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32')),
-                for_loop.ShapedArrayRef((), jnp.dtype('float32'))]
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(lu.wrap_init(g), in_avals)
-    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.get_p)
-    self.assertEqual(jaxpr.eqns[1].primitive, for_loop.get_p)
-    self.assertEqual(jaxpr.eqns[2].primitive, lax.sin_p)
-    self.assertEqual(jaxpr.eqns[3].primitive, lax.cos_p)
-    self.assertEqual(jaxpr.eqns[4].primitive, lax.mul_p)
-    self.assertEqual(jaxpr.eqns[5].primitive, for_loop.swap_p)
-    self.assertEqual(jaxpr.eqns[6].primitive, for_loop.swap_p)
-
-  def test_addupdate_jvp(self):
-
-    def f(a):
-      for_loop.ref_addupdate(a, (), 1.)
-      return a[()]
-
-    def g(r, rdot):
-      return jax.jvp(f, (r,), (rdot,))
-
-    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32')),
-                for_loop.ShapedArrayRef((), jnp.dtype('float32'))]
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(lu.wrap_init(g), in_avals)
-    self.assertEqual(jaxpr.eqns[0].primitive, for_loop.addupdate_p)
-    self.assertEqual(jaxpr.eqns[1].primitive, for_loop.addupdate_p)
-    self.assertEqual(jaxpr.eqns[2].primitive, for_loop.get_p)
-    self.assertEqual(jaxpr.eqns[3].primitive, for_loop.get_p)
-
-  def test_discharge_get(self):
-    def f(a_ref):
-      a = for_loop.ref_get(a_ref, ())
-      return [a + 1]
-    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
-    # Discharging should just turn this into a jaxpr that just adds 1.
-    discharged_jaxpr, _ = for_loop.discharge_state(stateful_jaxpr, consts)
-    self.assertLen(discharged_jaxpr.invars, 1)
-    self.assertLen(discharged_jaxpr.outvars, 2)
-    self.assertEqual(discharged_jaxpr.eqns[0].primitive, lax.add_p)
-    # Should be able to evaluate this jaxpr
-    self.assertListEqual(core.eval_jaxpr(discharged_jaxpr, (),
-                                         jnp.float32(1.)), [2., 1.])
-
-  def test_discharge_get_with_slice(self):
-    def f(a_ref):
-      a = for_loop.ref_get(a_ref, (0, 1))
-      return [a + 1]
-    in_avals = [for_loop.ShapedArrayRef((4, 3, 2), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
-    # Discharging should just turn this into a jaxpr that just adds 1.
-    discharged_jaxpr, _ = for_loop.discharge_state(stateful_jaxpr, consts)
-    self.assertLen(discharged_jaxpr.invars, 1)
-    self.assertLen(discharged_jaxpr.outvars, 2)
-    self.assertIn(lax.dynamic_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
-    # Should be able to evaluate this jaxpr
-    inval = jnp.arange(24., dtype=jnp.float32).reshape((4, 3, 2))
-    outval, refval = core.eval_jaxpr(discharged_jaxpr, (), inval)
-    self.assertTrue((outval == inval[0, 1] + 1).all())
-    self.assertTrue((refval == inval).all())
-
-  def test_discharge_set(self):
-    def f(a_ref, b):
-      for_loop.ref_set(a_ref, (), b + 1)
-      return []
-    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32')),
-                core.ShapedArray((), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
-    # Discharging should just turn this into a jaxpr that ignores the first
-    # value and returns second value plus 1.
-    discharged_jaxpr, _ = for_loop.discharge_state(stateful_jaxpr, consts)
-    self.assertLen(discharged_jaxpr.invars, 2)
-    self.assertLen(discharged_jaxpr.outvars, 1)
-    self.assertEqual(core.eval_jaxpr(discharged_jaxpr, (), jnp.float32(0.),
-                                     jnp.float32(1.))[0], 2.)
-    self.assertEqual(core.eval_jaxpr(discharged_jaxpr, (), jnp.float32(2.),
-                                     jnp.float32(1.))[0], 2.)
-
-  def test_discharge_set_with_slice(self):
-    def f(a_ref):
-      for_loop.ref_set(a_ref, (0, 1), jnp.ones(2, dtype=jnp.dtype('float32')))
-      return []
-    in_avals = [for_loop.ShapedArrayRef((4, 3, 2), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
-    # Discharging should just turn this into a jaxpr that just adds 1.
-    discharged_jaxpr, _ = for_loop.discharge_state(stateful_jaxpr, consts)
-    self.assertLen(discharged_jaxpr.invars, 1)
-    self.assertLen(discharged_jaxpr.outvars, 1)
-    self.assertIn(lax.dynamic_update_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
-    self.assertIn(lax.dynamic_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
-    # Should be able to evaluate this jaxpr
-    inval = jnp.arange(24., dtype=jnp.float32).reshape((4, 3, 2))
-    refval, = core.eval_jaxpr(discharged_jaxpr, (), inval)
-    self.assertTrue((refval == inval.at[0, 1].set(1.)).all())
-
-  def test_discharge_addupdate(self):
-    def f(a_ref, b):
-      for_loop.ref_addupdate(a_ref, (), b + 1)
-      return []
-    in_avals = [for_loop.ShapedArrayRef((), jnp.dtype('float32')),
-                core.ShapedArray((), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
-    # Discharging should just turn this into a jaxpr that adds the first value,
-    # second value, and 1.
-    discharged_jaxpr, _ = for_loop.discharge_state(stateful_jaxpr, consts)
-    self.assertLen(discharged_jaxpr.invars, 2)
-    self.assertLen(discharged_jaxpr.outvars, 1)
-    self.assertEqual(core.eval_jaxpr(discharged_jaxpr, (), jnp.float32(0.),
-                                     jnp.float32(1.))[0], 2.)
-    self.assertEqual(core.eval_jaxpr(discharged_jaxpr, (), jnp.float32(2.),
-                                     jnp.float32(1.))[0], 4.)
-
-  def test_discharge_addupdate_with_slice(self):
-    def f(a_ref):
-      for_loop.ref_addupdate(a_ref, (0, 1),
-                             jnp.ones(2, dtype=jnp.dtype('float32')))
-      return []
-    in_avals = [for_loop.ShapedArrayRef((4, 3, 2), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
-    discharged_jaxpr, _ = for_loop.discharge_state(stateful_jaxpr, consts)
-    self.assertLen(discharged_jaxpr.invars, 1)
-    self.assertLen(discharged_jaxpr.outvars, 1)
-    self.assertIn(lax.dynamic_update_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
-    self.assertIn(lax.add_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
-    self.assertIn(lax.dynamic_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
-    inval = jnp.arange(24., dtype=jnp.float32).reshape((4, 3, 2))
-    refval, = core.eval_jaxpr(discharged_jaxpr, (), inval)
-    self.assertTrue((refval == inval.at[0, 1].add(1.)).all())
-
-  def test_discharge_jaxpr_with_multiple_outputs(self):
-    def f(a_ref):
-      a = for_loop.ref_get(a_ref, ())
-      b = a + 1
-      return [a, b]
-    in_avals = [for_loop.ShapedArrayRef((4,), jnp.dtype('float32'))]
-    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
-    discharged_jaxpr, _ = for_loop.discharge_state(stateful_jaxpr, consts)
-    self.assertLen(discharged_jaxpr.invars, 1)
-    self.assertLen(discharged_jaxpr.outvars, 3)
-    inval = jnp.arange(4., dtype=jnp.float32)
-    a, b, refval = core.eval_jaxpr(discharged_jaxpr, (), inval)
-    self.assertTrue((a == inval).all())
-    self.assertTrue((b == inval + 1).all())
-    self.assertTrue((refval == inval).all())
 
   def test_for_loop_impl_trivial(self):
     out = for_loop.for_loop(5, lambda i, _: None, None)
@@ -3094,6 +2791,19 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
               if v.aval.shape == (2, 32)]
     self.assertLen(consts, 2)
 
+    def loss(A):
+      def step(x, i):
+        return jnp.matmul(A, x), None
+      init_x = jnp.zeros(A.shape[-1:])
+      last_x, _ = for_loop.scan(step, init_x, jnp.arange(10))
+      return jnp.sum(last_x)
+
+    A = jnp.zeros((3, 3))
+    # The second DUS was unnecessarily replicating A across time.
+    # We check XLA because _scan_impl is "underneath" the jaxpr language.
+    s = str(jax.xla_computation(jax.grad(loss))(A).as_hlo_text())
+    assert s.count("dynamic-update-slice(") < 2
+
   def test_for_loop_fixpoint_correctly_identifies_loop_varying_residuals(self):
 
     def body(i, refs):
@@ -3115,6 +2825,39 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     np.testing.assert_allclose(actual_tangents[0], expected_tangents[0])
     np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_jit_for={}_f={}_nsteps={}".format(
+        jit_for, for_body_name, nsteps),
+        "jit_for": jit_for, "f": for_body, "body_shapes": body_shapes,
+        "ref": ref, "n": nsteps}
+      for jit_for in [False, True]
+      for for_body_name, for_body, ref, body_shapes, nsteps in [
+        ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
+        ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
+        ("sincos", for_body_sincos, sincos_ref, [(4,), (4,)], 4),
+        ("sincostan", for_body_sincostan, sincostan_ref, [(4,), (4,)], 4),
+        ("accum", for_body_accum, accum_ref, [(4,), (4,)], 3),
+        ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
+        ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
+      ])
+  def test_for_grad(self, jit_for, f, ref, body_shapes, n):
+    for_ = for_loop.for_loop
+    rng = self.rng()
+
+    args = [rng.randn(*s) for s in body_shapes]
+
+    if jit_for:
+      for_ = jax.jit(for_, static_argnums=(0, 1))
+    tol = {np.float64: 1e-12, np.float32: 1e-4}
+    ans = jax.grad(lambda args: for_(         n, f, args)[1].sum())(args)
+    ans_discharged = jax.grad(
+        lambda args: for_reference(n, f, args)[1].sum())(args)
+    expected = jax.grad(lambda args: ref(*args)[1].sum())(args)
+    self.assertAllClose(ans, ans_discharged, check_dtypes=True, rtol=tol,
+                        atol=tol)
+    self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
+    jtu.check_grads(lambda *args: for_(n, f, args)[1].sum(), args, order=3,
+                    rtol=5e-3)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

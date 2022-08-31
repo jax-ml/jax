@@ -73,8 +73,8 @@ from jax._src.numpy.ufuncs import (  # noqa: F401
 from jax._src.numpy.util import (  # noqa: F401
   _arraylike, _broadcast_arrays, _broadcast_to, _check_arraylike,
   _complex_elem_type, _promote_args, _promote_args_inexact, _promote_dtypes,
-  _promote_dtypes_inexact, _promote_shapes, _register_stackable, _stackable,
-  _where, _wraps)
+  _promote_dtypes_numeric, _promote_dtypes_inexact, _promote_shapes,
+  _register_stackable, _stackable, _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
@@ -413,7 +413,7 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
     raise NotImplementedError("string values for `bins` not implemented.")
   _check_arraylike("histogram_bin_edges", a, bins)
   a = ravel(a)
-  dtype = dtypes._to_inexact_dtype(_dtype(a))
+  dtype = dtypes.to_inexact_dtype(_dtype(a))
   if _ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
   bins = core.concrete_or_error(operator.index, bins,
@@ -527,7 +527,7 @@ view of the input.
 
 @_wraps(np.transpose, lax_description=_ARRAY_VIEW_DOC)
 def transpose(a, axes=None):
-  _check_arraylike("transpose", a)
+  _stackable(a) or _check_arraylike("transpose", a)
   axes = np.arange(ndim(a))[::-1] if axes is None else axes
   return lax.transpose(a, axes)
 
@@ -1616,14 +1616,14 @@ def pad(array, pad_width, mode="constant", **kwargs):
 
 
 @_wraps(np.stack, skip_params=['out'])
-def stack(arrays, axis: int = 0, out=None):
+def stack(arrays, axis: int = 0, out=None, dtype=None):
   if not len(arrays):
     raise ValueError("Need at least one array to stack.")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.stack is not supported.")
   if isinstance(arrays, (np.ndarray, ndarray)):
     axis = _canonicalize_axis(axis, arrays.ndim)
-    return concatenate(expand_dims(arrays, axis + 1), axis=axis)
+    return concatenate(expand_dims(arrays, axis + 1), axis=axis, dtype=dtype)
   else:
     _stackable(*arrays) or _check_arraylike("stack", *arrays)
     shape0 = shape(arrays[0])
@@ -1633,7 +1633,7 @@ def stack(arrays, axis: int = 0, out=None):
       if shape(a) != shape0:
         raise ValueError("All input arrays must have the same shape.")
       new_arrays.append(expand_dims(a, axis))
-    return concatenate(new_arrays, axis=axis)
+    return concatenate(new_arrays, axis=axis, dtype=dtype)
 
 @_wraps(np.tile)
 def tile(A, reps):
@@ -1650,9 +1650,9 @@ def tile(A, reps):
                         [k for pair in zip(reps, A_shape) for k in pair])
   return reshape(result, tuple(np.multiply(A_shape, reps)))
 
-def _concatenate_array(arr, axis: int):
+def _concatenate_array(arr, axis: int, dtype=None):
   # Fast path for concatenation when the input is an ndarray rather than a list.
-  arr = asarray(arr)
+  arr = asarray(arr, dtype=dtype)
   if arr.ndim == 0 or arr.shape[0] == 0:
     raise ValueError("Need at least one array to concatenate.")
   if axis is None:
@@ -1665,26 +1665,29 @@ def _concatenate_array(arr, axis: int):
   return lax.reshape(arr, shape, dimensions)
 
 @_wraps(np.concatenate)
-def concatenate(arrays, axis: int = 0):
+def concatenate(arrays, axis: int = 0, dtype=None):
   if isinstance(arrays, (np.ndarray, ndarray)):
-    return _concatenate_array(arrays, axis)
+    return _concatenate_array(arrays, axis, dtype=dtype)
   _stackable(*arrays) or _check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
   if axis is None:
-    return concatenate([ravel(a) for a in arrays], axis=0)
+    return concatenate([ravel(a) for a in arrays], axis=0, dtype=dtype)
   if hasattr(arrays[0], "concatenate"):
-    return arrays[0].concatenate(arrays[1:], axis)
+    return arrays[0].concatenate(arrays[1:], axis, dtype=dtype)
   axis = _canonicalize_axis(axis, ndim(arrays[0]))
-  arrays = _promote_dtypes(*arrays)
+  if dtype is None:
+    arrays = _promote_dtypes(*arrays)
+  else:
+    arrays = [asarray(arr, dtype=dtype) for arr in arrays]
   # lax.concatenate can be slow to compile for wide concatenations, so form a
   # tree of concatenations as a workaround especially for op-by-op mode.
   # (https://github.com/google/jax/issues/653).
   k = 16
   if len(arrays) == 1:
-    return asarray(arrays[0])
+    return asarray(arrays[0], dtype=dtype)
   else:
     while len(arrays) > 1:
       arrays = [lax.concatenate(arrays[i:i+k], axis)
@@ -1693,33 +1696,33 @@ def concatenate(arrays, axis: int = 0):
 
 
 @_wraps(np.vstack)
-def vstack(tup):
+def vstack(tup, dtype=None):
   if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_2d)(tup)
   else:
     arrs = [atleast_2d(m) for m in tup]
-  return concatenate(arrs, axis=0)
+  return concatenate(arrs, axis=0, dtype=dtype)
 row_stack = vstack
 
 
 @_wraps(np.hstack)
-def hstack(tup):
+def hstack(tup, dtype=None):
   if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_1d)(tup)
     arr0_ndim = arrs.ndim - 1
   else:
     arrs = [atleast_1d(m) for m in tup]
     arr0_ndim = arrs[0].ndim
-  return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1)
+  return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1, dtype=dtype)
 
 
 @_wraps(np.dstack)
-def dstack(tup):
+def dstack(tup, dtype=None):
   if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_3d)(tup)
   else:
     arrs = [atleast_3d(m) for m in tup]
-  return concatenate(arrs, axis=2)
+  return concatenate(arrs, axis=2, dtype=dtype)
 
 
 @_wraps(np.column_stack)
@@ -1870,7 +1873,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
   # We can't use the ndarray class because we need to handle internal buffers
   # (See https://github.com/google/jax/issues/8950)
-  ndarray_types = (device_array.DeviceArray, core.Tracer)
+  ndarray_types = (device_array.DeviceArray, core.Tracer, Array)
 
   if not _any(isinstance(leaf, ndarray_types) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
@@ -2175,9 +2178,9 @@ def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   _check_arraylike("linspace", start, stop)
 
   if dtype is None:
-    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
+    dtype = dtypes.to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = dtypes._to_inexact_dtype(dtype)
+  computation_dtype = dtypes.to_inexact_dtype(dtype)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
 
@@ -2234,9 +2237,9 @@ def _logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
   """Implementation of logspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "logspace")
   if dtype is None:
-    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
+    dtype = dtypes.to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = dtypes._to_inexact_dtype(dtype)
+  computation_dtype = dtypes.to_inexact_dtype(dtype)
   _check_arraylike("logspace", start, stop)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
@@ -2256,9 +2259,9 @@ def _geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   """Implementation of geomspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "geomspace")
   if dtype is None:
-    dtype = dtypes._to_inexact_dtype(result_type(start, stop))
+    dtype = dtypes.to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
-  computation_dtype = dtypes._to_inexact_dtype(dtype)
+  computation_dtype = dtypes.to_inexact_dtype(dtype)
   _check_arraylike("geomspace", start, stop)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
@@ -3268,7 +3271,7 @@ def sort(a, axis: Optional[int] = -1, kind='quicksort', order=None):
 def sort_complex(a):
   _check_arraylike("sort_complex", a)
   a = lax.sort(a, dimension=0)
-  return lax.convert_element_type(a, dtypes._to_complex_dtype(a.dtype))
+  return lax.convert_element_type(a, dtypes.to_complex_dtype(a.dtype))
 
 @_wraps(np.lexsort)
 @partial(jit, static_argnames=('axis',))
@@ -3482,10 +3485,10 @@ def _normalize_index(index, axis_size):
   else:
     axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
                                              _dtype(index))
-  return lax.select(
-    lax.lt(index, _lax_const(index, 0)),
-    lax.add(index, axis_size_val),
-    index)
+  if isinstance(index, (int, np.integer)):
+    return lax.add(index, axis_size_val) if index < 0 else index
+  else:
+    return lax.select(index < 0, lax.add(index, axis_size_val), index)
 
 
 TAKE_ALONG_AXIS_DOC = """
@@ -3589,7 +3592,25 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
-  arr = asarray(arr)
+
+  # Handle some special cases, falling back if error messages might differ.
+  if (arr.ndim > 0 and isinstance(idx, (int, np.integer)) and
+      not isinstance(idx, (bool, np.bool_)) and isinstance(arr.shape[0], int)):
+    if 0 <= idx < arr.shape[0]:
+      return lax.index_in_dim(arr, idx, keepdims=False)
+  if (arr.ndim > 0 and isinstance(arr.shape[0], int) and
+      isinstance(idx, slice) and
+      (type(idx.start) is int or idx.start is None) and
+      (type(idx.stop)  is int or idx.stop is  None) and
+      (type(idx.step)  is int or idx.step is  None)):
+    n = arr.shape[0]
+    start = idx.start if idx.start is not None else 0
+    stop  = idx.stop  if idx.stop  is not None else n
+    step  = idx.step  if idx.step  is not None else 1
+    if (0 <= start < n and 0 <= stop <= n and 0 < step and
+        (start, stop, step) != (0, n, 1)):
+      return lax.slice_in_dim(arr, start, stop, step)
+
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
   if (jax.config.jax_dynamic_shapes and type(idx) is slice and idx.step is None
@@ -4097,10 +4118,9 @@ def _gcd_body_fn(xs):
 @jit
 def gcd(x1, x2):
   _check_arraylike("gcd", x1, x2)
-  if (not issubdtype(_dtype(x1), integer) or
-      not issubdtype(_dtype(x2), integer)):
-    raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = _promote_dtypes(x1, x2)
+  if not issubdtype(_dtype(x1), integer):
+    raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = broadcast_arrays(x1, x2)
   gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn, (abs(x1), abs(x2)))
   return gcd
@@ -4111,6 +4131,8 @@ def gcd(x1, x2):
 def lcm(x1, x2):
   _check_arraylike("lcm", x1, x2)
   x1, x2 = _promote_dtypes(x1, x2)
+  if not issubdtype(_dtype(x1), integer):
+    raise ValueError("Arguments to jax.numpy.lcm must be integers.")
   d = gcd(x1, x2)
   return where(d == 0, _lax_const(d, 0),
                abs(multiply(x1, floor_divide(x2, d))))
@@ -4715,14 +4737,6 @@ _diff_methods = ["choose", "conj", "conjugate", "copy", "cumprod", "cumsum",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "trace", "var"]
 
-
-def _deprecate_function(fun, msg):
-  @functools_wraps(fun)
-  def wrapped(*args, **kwargs):
-    warnings.warn(msg, FutureWarning)
-    return fun(*args, **kwargs)
-  return wrapped
-
 # These methods are mentioned explicitly by nondiff_methods, so we create
 # _not_implemented implementations of them here rather than in __init__.py.
 # TODO(phawkins): implement these.
@@ -4732,7 +4746,7 @@ _NOT_IMPLEMENTED = ['argpartition']
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch
-_JAX_ARRAY_TYPES = (device_array.DeviceArray, core.Tracer)
+_JAX_ARRAY_TYPES = (device_array.DeviceArray, core.Tracer, Array)
 _HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
 
 def __array_module__(self, types):
@@ -4771,6 +4785,8 @@ def _multi_slice(arr,
 def _unstack(x):
   return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
 setattr(device_array.DeviceArray, "_unstack", _unstack)
+setattr(Array, '_unstack', _unstack)
+
 def _chunk_iter(x, size):
   if size > x.shape[0]:
     yield x
@@ -4781,6 +4797,7 @@ def _chunk_iter(x, size):
     if tail:
       yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
 setattr(device_array.DeviceArray, "_chunk_iter", _chunk_iter)
+setattr(Array, '_chunk_iter', _chunk_iter)
 
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
@@ -5055,8 +5072,6 @@ def _set_shaped_array_attributes(shaped_array):
   # Forward methods and properties using core.{aval_method, aval_property}:
   for method_name in _nondiff_methods + _diff_methods:
     setattr(shaped_array, method_name, core.aval_method(globals()[method_name]))
-  # TODO(jakevdp): remove tile method after August 2022
-  setattr(shaped_array, "tile", core.aval_method(_deprecate_function(tile, "arr.tile(...) is deprecated and will be removed. Use jnp.tile(arr, ...) instead.")))
   setattr(shaped_array, "reshape", core.aval_method(_reshape))
   setattr(shaped_array, "transpose", core.aval_method(_transpose))
   setattr(shaped_array, "flatten", core.aval_method(ravel))
@@ -5082,27 +5097,29 @@ _set_shaped_array_attributes(ShapedArray)
 _set_shaped_array_attributes(DShapedArray)
 
 
-def _set_device_array_base_attributes(device_array):
+def _set_device_array_base_attributes(device_array, include=None):
   # Forward operators, methods, and properties on DeviceArray to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
+  def maybe_setattr(attr_name, target):
+    if not include or attr_name in include:
+      setattr(device_array, attr_name, target)
+
   for operator_name, function in _operators.items():
-    setattr(device_array, f"__{operator_name}__", function)
+    maybe_setattr(f"__{operator_name}__", function)
   for method_name in _nondiff_methods + _diff_methods:
-    setattr(device_array, method_name, globals()[method_name])
-  # TODO(jakevdp): remove tile method after August 2022
-  setattr(device_array, "tile", _deprecate_function(tile, "arr.tile(...) is deprecated and will be removed. Use jnp.tile(arr, ...) instead."))
-  setattr(device_array, "reshape", _reshape)
-  setattr(device_array, "transpose", _transpose)
-  setattr(device_array, "flatten", ravel)
-  setattr(device_array, "flat", property(_notimplemented_flat))
-  setattr(device_array, "T", property(transpose))
-  setattr(device_array, "real", property(real))
-  setattr(device_array, "imag", property(imag))
-  setattr(device_array, "astype", _astype)
-  setattr(device_array, "view", _view)
-  setattr(device_array, "nbytes", property(_nbytes))
-  setattr(device_array, "itemsize", property(_itemsize))
-  setattr(device_array, "clip", _clip)
+    maybe_setattr(method_name, globals()[method_name])
+  maybe_setattr("reshape", _reshape)
+  maybe_setattr("transpose", _transpose)
+  maybe_setattr("flatten", ravel)
+  maybe_setattr("flat", property(_notimplemented_flat))
+  maybe_setattr("T", property(transpose))
+  maybe_setattr("real", property(real))
+  maybe_setattr("imag", property(imag))
+  maybe_setattr("astype", _astype)
+  maybe_setattr("view", _view)
+  maybe_setattr("nbytes", property(_nbytes))
+  maybe_setattr("itemsize", property(_itemsize))
+  maybe_setattr("clip", _clip)
 
 _set_device_array_base_attributes(device_array.DeviceArray)
 _set_device_array_base_attributes(Array)

@@ -919,6 +919,7 @@ class BatchingTest(jtu.JaxTestCase):
     _ = hessian(f)(R)  # don't crash on UnshapedArray
 
   def testIssue489(self):
+    # https://github.com/google/jax/issues/489
     def f(key):
       def body_fn(uk):
         key = uk[1]

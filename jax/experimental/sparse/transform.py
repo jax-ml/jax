@@ -78,6 +78,7 @@ _zero_preserving_unary_primitives = [
   lax.atan_p,
   lax.atanh_p,
   lax.bessel_i1e_p,
+  lax.copy_p,
   lax.expm1_p,
   lax.log1p_p,
   lax.neg_p,
@@ -758,6 +759,13 @@ def _todense_sparse_rule(spenv, spvalue, *, tree):
 
 sparse_rules[sparse.todense_p] = _todense_sparse_rule
 
+def _slice_sparse_rule(spenv, *operands, **params):
+  args = spvalues_to_arrays(spenv, operands)
+  out = sparse.bcoo_slice(*args, **params)
+  return arrays_to_spvalues(spenv, [out])
+
+sparse_rules[lax.slice_p] = _slice_sparse_rule
+
 
 #------------------------------------------------------------------------------
 # BCOO methods derived from sparsify
@@ -774,6 +782,25 @@ def _reshape(self, *args, **kwargs):
 def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
                            mode=None, fill_value=None):
   # mirrors lax_numpy._rewriting_take.
+
+  # Handle some special cases, falling back if error messages might differ.
+  if (arr.ndim > 0 and isinstance(idx, (int, np.integer)) and
+      not isinstance(idx, (bool, np.bool_)) and isinstance(arr.shape[0], int)):
+    if 0 <= idx < arr.shape[0]:
+      return sparsify(lambda arr: lax.index_in_dim(arr, idx, keepdims=False))(arr)
+  if (arr.ndim > 0 and isinstance(arr.shape[0], int) and
+      isinstance(idx, slice) and
+      (type(idx.start) is int or idx.start is None) and
+      (type(idx.stop)  is int or idx.stop is  None) and
+      (type(idx.step)  is int or idx.step is  None)):
+    n = arr.shape[0]
+    start = idx.start if idx.start is not None else 0
+    stop  = idx.stop  if idx.stop  is not None else n
+    step  = idx.step  if idx.step  is not None else 1
+    if (0 <= start < n and 0 <= stop <= n and 0 < step and
+        (start, stop, step) != (0, n, 1)):
+      return sparsify(lambda arr: lax.slice_in_dim(arr, start, stop, step))(arr)
+
   treedef, static_idx, dynamic_idx = lax_numpy._split_index_for_jit(idx, arr.shape)
   result = sparsify(
       lambda arr, idx: lax_numpy._gather(arr, treedef, static_idx, idx, indices_are_sorted,

@@ -27,6 +27,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
+#include "third_party/gpus/cuda/include/cusolverSp.h"
 #include "jaxlib/cuda/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_helpers.h"
@@ -48,6 +49,24 @@ template <>
   }
   if (stream) {
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnSetStream(handle, stream)));
+  }
+  return Handle(pool, handle, stream);
+}
+
+template <>
+/*static*/ absl::StatusOr<SpSolverHandlePool::Handle>
+SpSolverHandlePool::Borrow(cudaStream_t stream) {
+  SpSolverHandlePool* pool = Instance();
+  absl::MutexLock lock(&pool->mu_);
+  cusolverSpHandle_t handle;
+  if (pool->handles_[stream].empty()) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpCreate(&handle)));
+  } else {
+    handle = pool->handles_[stream].back();
+    pool->handles_[stream].pop_back();
+  }
+  if (stream) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpSetStream(handle, stream)));
   }
   return Handle(pool, handle, stream);
 }
@@ -329,6 +348,103 @@ void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
   if (!s.ok()) {
     XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
                                   s.message().length());
+  }
+}
+
+// csrlsvqr: Linear system solve via Sparse QR
+
+static absl::Status Csrlsvqr_(cudaStream_t stream, void** buffers,
+                              const char* opaque, size_t opaque_len,
+                              int& singularity) {
+  auto s = UnpackDescriptor<CsrlsvqrDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const CsrlsvqrDescriptor& d = **s;
+
+  // This is the handle to the CUDA session. Gets a cusolverSp handle.
+  auto h = SpSolverHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
+
+  cusparseMatDescr_t matdesc = nullptr;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateMatDescr(&matdesc)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(cusparseSetMatType(matdesc, CUSPARSE_MATRIX_TYPE_GENERAL)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      cusparseSetMatIndexBase(matdesc, CUSPARSE_INDEX_BASE_ZERO)));
+
+  switch (d.type) {
+    case CusolverType::F32: {
+      float* csrValA = static_cast<float*>(buffers[0]);
+      int* csrRowPtrA = static_cast<int*>(buffers[1]);
+      int* csrColIndA = static_cast<int*>(buffers[2]);
+      float* b = static_cast<float*>(buffers[3]);
+      float* x = static_cast<float*>(buffers[4]);
+
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpScsrlsvqr(
+          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA,
+          b, (float)d.tol, d.reorder, x, &singularity)));
+
+      break;
+    }
+    case CusolverType::F64: {
+      double* csrValA = static_cast<double*>(buffers[0]);
+      int* csrRowPtrA = static_cast<int*>(buffers[1]);
+      int* csrColIndA = static_cast<int*>(buffers[2]);
+      double* b = static_cast<double*>(buffers[3]);
+      double* x = static_cast<double*>(buffers[4]);
+
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpDcsrlsvqr(
+          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA,
+          b, d.tol, d.reorder, x, &singularity)));
+
+      break;
+    }
+    case CusolverType::C64: {
+      cuComplex* csrValA = static_cast<cuComplex*>(buffers[0]);
+      int* csrRowPtrA = static_cast<int*>(buffers[1]);
+      int* csrColIndA = static_cast<int*>(buffers[2]);
+      cuComplex* b = static_cast<cuComplex*>(buffers[3]);
+      cuComplex* x = static_cast<cuComplex*>(buffers[4]);
+
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpCcsrlsvqr(
+          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA,
+          b, (float)d.tol, d.reorder, x, &singularity)));
+
+      break;
+    }
+    case CusolverType::C128: {
+      cuDoubleComplex* csrValA = static_cast<cuDoubleComplex*>(buffers[0]);
+      int* csrRowPtrA = static_cast<int*>(buffers[1]);
+      int* csrColIndA = static_cast<int*>(buffers[2]);
+      cuDoubleComplex* b = static_cast<cuDoubleComplex*>(buffers[3]);
+      cuDoubleComplex* x = static_cast<cuDoubleComplex*>(buffers[4]);
+
+      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpZcsrlsvqr(
+          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA,
+          b, (float)d.tol, d.reorder, x, &singularity)));
+
+      break;
+    }
+  }
+
+  cusparseDestroyMatDescr(matdesc);
+  return absl::OkStatus();
+}
+
+void Csrlsvqr(cudaStream_t stream, void** buffers, const char* opaque,
+              size_t opaque_len, XlaCustomCallStatus* status) {
+  // Is >= 0 if A is singular.
+  int singularity = -1;
+
+  auto s = Csrlsvqr_(stream, buffers, opaque, opaque_len, singularity);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
+  }
+
+  if (singularity >= 0) {
+    auto s = std::string("Singular matrix in linear solve.");
+    XlaCustomCallStatusSetFailure(status, s.c_str(), s.length());
   }
 }
 
