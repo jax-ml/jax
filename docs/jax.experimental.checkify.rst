@@ -1,28 +1,22 @@
 jax.experimental.checkify module
 =====================================
 
-.. module:: jax.experimental.checkify
+
+.. automodule:: jax.experimental.checkify
 
 API
 ---
 
-.. autodata:: all_checks
-   :no-value:
+.. autosummary::
+   :toctree: _autosummary
 
-.. autodata:: user_checks
-
-.. autodata:: nan_checks
-   :no-value:
-
-.. autodata:: index_checks
-   :no-value:
-
-.. autodata:: div_checks
-   :no-value:
-
-.. autodata:: float_checks
-   :no-value:
-
-.. autodata:: automatic_checks
-   :no-value:
-
+   checkify
+   check
+   check_error
+   user_checks
+   nan_checks
+   index_checks
+   div_checks
+   float_checks
+   automatic_checks
+   all_checks

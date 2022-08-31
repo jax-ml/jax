@@ -80,7 +80,6 @@ def _format_msg(msg, payloads):
 
 @dataclass(frozen=True)
 class Error:
-  """Error value!"""
   err: Bool
   code: Int
   msgs: Dict[int, str]
@@ -857,19 +856,20 @@ def checkify(fun: Callable[..., Out],
 
   Args:
     fun:
-      Callable which can contain user checks (see ``check``).
+      Callable which can contain user checks (see :func:`check`).
     errors:
       A set of ErrorCategory values which defines the set of enabled
-      checks. By default only explicit ``checks`` are enabled
-      (``user_checks``). You can also for example enable NAN and
-      DIV errors by passing the ``float_checks`` set, or for
+      checks. By default only explicit :func:`check` are enabled
+      (:data:`user_checks`). You can also for example enable NAN and
+      DIV errors by passing the :data:`float_checks` set, or for
       example combine multiple sets through set operations
       (``float_checks | user_checks``)
 
   Returns:
     A function which accepts the same arguments as ``fun`` and returns as output
     a pair where the first element is an ``Error`` value, representing the first
-    failed ``check``, and the second element is the original output of ``fun``.
+    failed :func:`check`, and the second element is the original output of
+    ``fun``.
 
   For example:
 
