@@ -470,7 +470,7 @@ class KeyTy:
     return self.name
 
   def __eq__(self, other):
-    return type(other) is KeyTy and self.impl is other.impl
+    return type(other) is KeyTy and self.impl == other.impl
 
   def __hash__(self) -> int:
     return hash((self.__class__, self.impl))
@@ -1009,9 +1009,12 @@ def _threefry_fold_in(key, data):
   return threefry_2x32(key, threefry_seed(data))
 
 
-@partial(jit, static_argnums=(1, 2), inline=True)
 def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
+  return _threefry_random_bits(key, bit_width, shape)
+
+@partial(jit, static_argnums=(1, 2), inline=True)
+def _threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   if not _is_threefry_prng_key(key):
     raise TypeError("threefry_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
