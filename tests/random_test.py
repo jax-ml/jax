@@ -1544,6 +1544,42 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(keys, random.KeyArray)
     self.assertEqual(keys.shape, (3,))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_internal" if use_internal else "",
+       "use_internal": use_internal}
+      for use_internal in [False, True]))
+  def test_random_unwrap(self, use_internal):
+    unwrap = prng_internal.random_unwrap if use_internal else random.key_data
+    def f(k): return unwrap(k)
+    k = self.make_keys(3, 4)
+    out = f(k)
+    self.assertEqual(out.dtype, np.dtype('uint32'))
+    self.assertEqual(out.shape[:2], (3, 4))
+    out = jax.jit(f)(k)
+    self.assertEqual(out.dtype, np.dtype('uint32'))
+    self.assertEqual(out.shape[:2], (3, 4))
+    out = jax.vmap(f)(k)
+    self.assertEqual(out.dtype, np.dtype('uint32'))
+    self.assertEqual(out.shape[:2], (3, 4))
+    out = jax.vmap(jax.jit(f))(k)
+    self.assertEqual(out.dtype, np.dtype('uint32'))
+    self.assertEqual(out.shape[:2], (3, 4))
+
+    # TODO(frostig): simplify when we always enable_custom_prng
+    if not (config.jax_enable_custom_prng and use_internal):
+      return
+
+    x = jnp.arange(12, dtype=np.dtype('uint32')).reshape(3, 4)
+    self.assertRaisesRegex(
+        TypeError, 'random_unwrap takes key array operand, got .*',
+        lambda: f(x))
+    self.assertRaisesRegex(
+        TypeError, 'random_unwrap takes key array operand, got .*',
+        lambda: jax.jit(f)(x))
+    self.assertRaisesRegex(
+        TypeError, 'random_unwrap takes key array operand, got .*',
+        lambda: jax.vmap(f)(x))
+
   def test_eval_shape_keys_in(self):
     def f(key):
       return prng_internal.random_bits(key, bit_width=32, shape=(5,))

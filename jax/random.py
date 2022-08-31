@@ -155,6 +155,7 @@ from jax._src.random import (
   gamma as gamma,
   generalized_normal as generalized_normal,
   gumbel as gumbel,
+  key_data as key_data,
   laplace as laplace,
   logistic as logistic,
   loggamma as loggamma,

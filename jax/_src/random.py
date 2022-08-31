@@ -199,6 +199,14 @@ def split(key: KeyArray, num: int = 2) -> KeyArray:
   key, wrapped = _check_prng_key(key)
   return _return_prng_keys(wrapped, _split(key, num))
 
+def _key_data(keys: KeyArray) -> jnp.ndarray:
+  assert isinstance(keys, prng.PRNGKeyArray)
+  return prng.random_unwrap(keys)
+
+def key_data(keys: KeyArray) -> jnp.ndarray:
+  keys, _ = _check_prng_key(keys)
+  return _key_data(keys)
+
 
 ### random samplers
 
