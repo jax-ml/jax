@@ -20,6 +20,7 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
+from jax._src import dispatch
 from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
@@ -189,7 +190,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     with jax_config.jax_array(True):
       arr = jnp.array([1, 2, 3])
       self.assertIsInstance(arr, array.Array)
-      self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
+      self.assertTrue(dispatch.is_single_device_sharding(arr.sharding))
       self.assertEqual(arr._committed, False)
 
   def test_jnp_array_jit_add(self):
@@ -271,7 +272,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     out = jnp.zeros_like(a)
     expected = np.zeros(a.shape, dtype=np.int32)
     self.assertArraysEqual(out, expected)
-    self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
+    self.assertTrue(dispatch.is_single_device_sharding(out.sharding))
 
   @jax_config.jax_array(True)
   def test_wrong_num_arrays(self):

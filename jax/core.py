@@ -2162,6 +2162,7 @@ aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
     ConcreteArray: (_map_shaped_array, _unmap_shaped_array),
+    AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
 }
 
 @contextmanager

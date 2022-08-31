@@ -30,6 +30,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import device_array
+from jax._src import dispatch
 from jax import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util
@@ -1322,7 +1323,7 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
   # (so it works in staged-out code as well as 'eager' code). Related to
   # equi-sharding.
   if (config.jax_array and hasattr(x, 'sharding') and
-      not isinstance(x.sharding, sharding.SingleDeviceSharding)):
+      not dispatch.is_single_device_sharding(x.sharding)):
     return array.make_array_from_callback(
         fill_shape, x.sharding, lambda idx: val[idx])  # type: ignore[arg-type]
   return val
