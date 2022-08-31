@@ -558,6 +558,20 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
       f()
       jax.effects_barrier()
 
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_callback_with_wrongly_specified_64_bit_dtype(self):
+    if config.jax_enable_x64:
+      raise unittest.SkipTest("Test only needed when 64-bit mode disabled.")
+
+    @jax.jit
+    def f():
+      return jax.pure_callback(lambda: np.float64(1.),
+                               core.ShapedArray((), np.float64))
+
+    with self.assertRaises(ValueError):
+      f()
+      jax.effects_barrier()
+
   def test_can_vmap_pure_callback(self):
 
     @jax.jit

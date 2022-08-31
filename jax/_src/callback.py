@@ -14,18 +14,17 @@
 """Module for JAX callbacks."""
 from __future__ import annotations
 
-import functools
-
 from typing import Any, Callable, Sequence
 
 from jax import core
 from jax import tree_util
+from jax._src import dtypes
 from jax._src import lib as jaxlib
 from jax._src import util
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
-
+import numpy as np
 
 # `pure_callback_p` is the main primitive for staging out Python pure callbacks.
 pure_callback_p = core.Primitive("pure_callback")
@@ -113,6 +112,11 @@ def pure_callback_lowering(ctx, *args, callback, **params):
 
 mlir.register_lowering(pure_callback_p, pure_callback_lowering)
 
+def _check_shape_dtype(shape_dtype):
+  dt = np.dtype(shape_dtype.dtype)
+  if dtypes.canonicalize_dtype(dt) != dt:
+    raise ValueError(
+        "Cannot return 64-bit values when `jax_enable_x64` is disabled")
 
 def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
                   *args: Any, vectorized: bool = False, **kwargs: Any):
@@ -121,6 +125,7 @@ def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
     return tree_util.tree_leaves(callback(*args, **kwargs))
 
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
+  tree_util.tree_map(_check_shape_dtype, result_shape_dtypes)
   result_avals = tree_util.tree_map(
       lambda x: core.ShapedArray(x.shape, x.dtype), result_shape_dtypes)
   flat_result_avals, out_tree = tree_util.tree_flatten(result_avals)
