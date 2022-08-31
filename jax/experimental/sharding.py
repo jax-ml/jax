@@ -286,6 +286,17 @@ class PmapSharding(XLACompatibleSharding):
     # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
 
+  def __eq__(self, other):
+    if not isinstance(other, PmapSharding):
+      return False
+    return (self.sharding_spec == other.sharding_spec and
+            np.array_equal(self.devices, other.devices))
+
+  def __hash__(self):
+    if not hasattr(self, '_hash'):
+      self._hash = hash((tuple(self.devices.flat), self.sharding_spec))
+    return self._hash
+
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:
     return set(self.devices.flat)

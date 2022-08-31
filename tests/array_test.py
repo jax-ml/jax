@@ -420,5 +420,29 @@ class ShardingTest(jtu.JaxTestCase):
         r"factors: \[4, 2\] should evenly divide the shape\)"):
       mps.shard_shape((8, 3))
 
+  @jax_config.jax_array(True)
+  def test_pmap_sharding_hash_eq(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test needs >= 2 devices.')
+
+    shape = (2, 2)
+    num_elements = prod(shape)
+    inp_data = np.arange(num_elements).reshape(shape)
+    out = jax.pmap(lambda x: x)(inp_data)
+    self.assertIsInstance(out.sharding, sharding.PmapSharding)
+    # Populate the device_indices_map cache.
+    _ = out.sharding.devices_indices_map(shape)
+    cache_info1 = sharding.PmapSharding.devices_indices_map.cache_info()
+
+    inp_data2 = np.arange(num_elements, num_elements + num_elements).reshape(shape)
+    out2 = jax.pmap(lambda x: x)(inp_data2)
+    # Populate the device_indices_map cache.
+    _ = out2.sharding.devices_indices_map(shape)
+    cache_info2 = sharding.PmapSharding.devices_indices_map.cache_info()
+
+    self.assertGreater(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
