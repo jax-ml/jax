@@ -2351,7 +2351,7 @@ def indices(dimensions, dtype=int32, sparse=False):
 
 
 _TOTAL_REPEAT_LENGTH_DOC = """\
-Jax adds the optional `total_repeat_length` parameter which specifies the total
+JAX adds the optional `total_repeat_length` parameter which specifies the total
 number of repeat, and defaults to sum(repeats). It must be specified for repeat
 to be compilable. If `sum(repeats)` is larger than the specified
 `total_repeat_length` the remaining values will be discarded. In the case of
@@ -2362,7 +2362,8 @@ will be repeated.
 
 @_wraps(np.repeat, lax_description=_TOTAL_REPEAT_LENGTH_DOC)
 def repeat(a, repeats, axis: Optional[int] = None, *, total_repeat_length=None):
-  _check_arraylike("repeat", a, repeats)
+  _check_arraylike("repeat", a)
+  core.is_special_dim_size(repeats) or _check_arraylike("repeat", repeats)
 
   if axis is None:
     a = ravel(a)
@@ -2371,9 +2372,14 @@ def repeat(a, repeats, axis: Optional[int] = None, *, total_repeat_length=None):
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
   assert isinstance(axis, int)  # to appease mypy
 
-  # If total_repeat_length is not given, can't compile, use a default.
+  if core.is_special_dim_size(repeats):
+    if total_repeat_length is not None:
+      raise ValueError("jnp.repeat with a DimPolynomial `repeats` is supported only "
+                       "when `total_repeat_length` is None")
+
+  # If total_repeat_length is not given, use a default.
   if total_repeat_length is None:
-    repeats = core.concrete_or_error(np.array, repeats,
+    repeats = core.concrete_or_error(None, repeats,
       "When jit-compiling jnp.repeat, the total number of repeats must be static. "
       "To fix this, either specify a static value for `repeats`, or pass a static "
       "value to `total_repeat_length`.")
