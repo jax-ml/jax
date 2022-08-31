@@ -438,8 +438,19 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
 # TODO(mattjj): de-duplicate with _cond_partial_eval
 def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   index_uk, *ops_uk = unks_in
-  assert not index_uk  # only possible with old-style remat
   branches = eqn.params['branches']
+
+  # Instantiate all inputs (b/c jaxpr_staged will take all inputs).
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+  del inst_in
+
+  # NOTE(mattjj): I think it should be impossible for the index to be unknown,
+  # but asserting that caused a test failure in diffrax. So we handle it: if it
+  # is unknown, stage out the whole cond.
+  if index_uk:
+    all_true = [True] * len(branches[0].out_avals)
+    return None, eqn, all_true, all_true, new_inst
 
   # First, compute output unknowns (unks_out), where an output of the cond is
   # unknown if it would be unknown on any of the branches.
@@ -476,12 +487,6 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
       branches_staged_, all_res_avals, res_avals_per_branch)
   assert all(all(map(core.typematch, j.out_avals, branches_known[0].out_avals))
              for j in branches_known[1:])
-
-  # Instantiate all inputs (b/c jaxpr_staged takes all inputs, corresponding to
-  # passing in_inst argument to partial_eval_jaxpr_custom above).
-  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
-              if type(x) is core.Var and not inst]
-  del inst_in
 
   # Create residual variables.
   newvar = core.gensym()
@@ -593,8 +598,6 @@ def _ordered_unique(xs):
 
 def _cond_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn,
                    ) -> Tuple[List[bool], core.JaxprEqn]:
-  if not config.after_neurips:
-    return [True] * len(eqn.params['jaxpr'].in_avals), eqn
   closed_branches = eqn.params['branches']
   branches = [closed_jaxpr.jaxpr for closed_jaxpr in closed_branches]
 
@@ -667,6 +670,12 @@ def _cond_transpose(reduce_axes, cts, *args, branches, linear):
   out = [next(out_iter) if l else None for l in linear]
   assert next(out_iter, None) is None
   return [None] + out
+
+def _cond_axis_substitution(params, subst, traverse):
+  if not traverse:
+    return params
+  branches = tuple(core.subst_axis_names_jaxpr(jaxpr, subst) for jaxpr in params['branches'])
+  return dict(params, branches=branches)
 
 def _cond_typecheck(*in_atoms, branches, linear):
   avals = [x.aval for x in in_atoms]
@@ -750,6 +759,7 @@ pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.axis_primitive_batchers[cond_p] = _cond_batching_rule
 xla.register_initial_style_primitive(cond_p)
 core.custom_typechecks[cond_p] = _cond_typecheck
+core.axis_substitution_rules[cond_p] = _cond_axis_substitution
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
 

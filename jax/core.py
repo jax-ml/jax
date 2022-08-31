@@ -25,9 +25,10 @@ import operator
 from operator import attrgetter
 import threading
 import types
-from typing import (Any, Callable, ClassVar, DefaultDict, Dict, Generator,
-                    Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
-                    Type, Union, cast, Iterable, Hashable)
+from typing import (Any, Callable, ClassVar, DefaultDict, Dict,
+                    Generator, Hashable, Iterable, Iterator, List,
+                    NamedTuple, Optional, Sequence, Set, Tuple, Type,
+                    Union, cast)
 import warnings
 from weakref import ref
 
@@ -42,8 +43,8 @@ from jax import linear_util as lu
 
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,
-                        tuple_delete, as_hashable_function,
-                        HashableFunction, HashableWrapper, weakref_lru_cache)
+                           tuple_delete, as_hashable_function,
+                           HashableFunction, HashableWrapper, weakref_lru_cache)
 import jax._src.pretty_printer as pp
 from jax._src import lib
 from jax._src.lib import jax_jit
@@ -500,7 +501,8 @@ def escaped_tracer_error(tracer, detail=None):
   num_frames = FLAGS.jax_tracer_error_num_traceback_frames
   msg = ('Encountered an unexpected tracer. A function transformed by JAX '
          'had a side effect, allowing for a reference to an intermediate value '
-         f'with shape {tracer.shape} and dtype {tracer.dtype} to escape.\n'
+         f'with type {tracer.aval.str_short()} wrapped in a '
+         f'{type(tracer).__name__} to escape the scope of the transformation.\n'
          'JAX transformations require that functions explicitly return their '
          'outputs, and disallow saving intermediate values to global state.')
   dbg = getattr(tracer, '_debug_info', None)
@@ -914,10 +916,11 @@ def new_main(trace_type: Type[Trace],
       if leaked_tracers: raise leaked_tracer_error("trace", t(), leaked_tracers)
 
 @contextmanager
-def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
+def new_base_main(trace_type: Type[Trace],
+                  **payload) -> Generator[MainTrace, None, None]:
   # See comments in https://github.com/google/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
-  main = MainTrace(0, trace_type)
+  main = MainTrace(0, trace_type, **payload)
   prev_dynamic, stack.dynamic = stack.dynamic, main
   prev_base, stack.stack[0] = stack.stack[0], main
   _update_thread_local_jit_state(stack.dynamic)
@@ -1132,7 +1135,7 @@ def lattice_join(x: Optional[AbstractValue],
 # For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
 Value = Any
 
-def valid_jaxtype(x):
+def valid_jaxtype(x) -> bool:
   try:
     concrete_aval(x)
   except TypeError:
@@ -1187,16 +1190,42 @@ def concrete_or_error(force: Any, val: Any, context=""):
     return force(val)
 
 
-def _short_dtype_name(dtype):
-  return (dtype.name.replace('float', 'f').replace('uint', 'u')
-                    .replace('int', 'i').replace('complex', 'c'))
+# TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
+
+custom_eltypes: Set[Any] = set()
+
+# TODO(frostig): update inliners of the four functions below to call them
+def has_custom_eltype(x: Any):
+  return aval_has_custom_eltype(get_aval(x))
+
+def eltype(x: Any):
+  return aval_eltype(get_aval(x))
+
+def aval_has_custom_eltype(aval: UnshapedArray):
+  return is_custom_eltype(aval.dtype)
+
+def aval_eltype(aval: UnshapedArray):
+  return aval.dtype
+
+def is_custom_eltype(eltype):
+  return type(eltype) in custom_eltypes
+
+def _short_dtype_name(dtype) -> str:
+  if type(dtype) in custom_eltypes:
+    return str(dtype)
+  else:
+    return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
+                      .replace('int'  , 'i').replace('complex', 'c'))
+
+def _dtype_object(dtype):
+  return dtype if type(dtype) in custom_eltypes else np.dtype(dtype)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
   array_abstraction_level = 4
 
   def __init__(self, dtype, weak_type=False):
-    self.dtype = np.dtype(dtype)
+    self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
 
   def update(self, dtype=None, weak_type=None):
@@ -1264,7 +1293,7 @@ class ShapedArray(UnshapedArray):
 
   def __init__(self, shape, dtype, weak_type=False, named_shape=None):
     self.shape = canonicalize_shape(shape)
-    self.dtype = np.dtype(dtype)
+    self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
@@ -1393,8 +1422,14 @@ class ConcreteArray(ShapedArray):
   _float           = concretization_function_error(float, True)
   _complex         = concretization_function_error(complex, True)
 
+# TODO(frostig,mattjj): rename to primal_eltype_to_tangent_eltype
 def primal_dtype_to_tangent_dtype(primal_dtype):
-  if not dtypes.issubdtype(primal_dtype, np.inexact):
+  # TODO(frostig,mattjj): determines that all custom eltypes have
+  # float0 tangent type, which works fine for all our current custom
+  # eltype applications. We may some day want to delegate this
+  # decision to the eltype.
+  if (type(primal_dtype) in custom_eltypes or
+      not dtypes.issubdtype(primal_dtype, np.inexact)):
     return dtypes.float0
   else:
     return primal_dtype
@@ -1417,7 +1452,7 @@ class DShapedArray(UnshapedArray):
   shape: Tuple[AxisSize, ...]  # noqa: F821
   array_abstraction_level: int = 3
 
-  def __init__(self, shape, dtype, weak_type):
+  def __init__(self, shape, dtype, weak_type=False):
     self.shape = shape
     self.dtype = dtype
     self.weak_type = weak_type
@@ -1474,6 +1509,7 @@ class DConcreteArray(DShapedArray):
 pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
 
 
+# TODO(mattjj): remove this, replace with arrays of bints
 class AbstractBInt(AbstractValue):
   __slots__ = ['bound']
   bound: int
@@ -1486,11 +1522,16 @@ class AbstractBInt(AbstractValue):
     return type(other) is AbstractBInt and self.bound == other.bound
   def __hash__(self) -> int:
     return hash((type(self), self.bound))
+  def at_least_vspace(self):
+    return self  # should return float0 array
+  def join(self, other):
+    return self
 
 class BInt:
   val: Any  # Union[int, Array]
   bound: int
   def __init__(self, val, bound):
+    assert 0 <= val <= bound
     self.val = val
     self.bound = bound
   def __repr__(self) -> str:
@@ -1879,6 +1920,9 @@ class NamedShape:
     return total
 
   def __str__(self):
+    # TODO(mattjj,frostig): revise not to miss commas
+    if not self.__named:
+      return str(self.__positional)
     return (f"({', '.join(map(str, self.__positional))}{', ' if self.__named else ''}"
             f"{', '.join(f'{k}={v}' for k, v in self.__named.items())})")
 

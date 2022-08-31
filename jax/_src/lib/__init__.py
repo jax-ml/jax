@@ -99,7 +99,17 @@ cpu_feature_guard.check_cpu_features()
 
 import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack
-import jaxlib.pocketfft as pocketfft
+
+# TODO(phawkins): remove pocketfft references when the minimum jaxlib version
+# is 0.3.17 or newer.
+try:
+  import jaxlib.pocketfft as pocketfft  # pytype: disable=import-error
+except ImportError:
+  pocketfft = None  # type: ignore
+try:
+  import jaxlib.ducc_fft as ducc_fft  # pytype: disable=import-error
+except ImportError:
+  ducc_fft = None  # type: ignore
 
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
@@ -116,6 +126,10 @@ import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
 # number that can be used to perform changes without breaking the main
 # branch on the Jax github.
 xla_extension_version = getattr(xla_client, '_version', 0)
+
+can_execute_with_token = (
+    xla_extension_version >= 89 and
+    hasattr(xla_client.Executable, "execute_with_token"))
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version

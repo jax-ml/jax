@@ -16,6 +16,7 @@
 import itertools
 from typing import Any, Callable, Optional, Sequence, Union
 
+import jax
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
@@ -124,22 +125,16 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   # We keep here the explicit set of groups for which we don't have limitations
   harness_groups_no_limitations = {
-      "abs", "add", "add_any", "and", "atan2",
-      "bitcast_convert_type", "broadcast", "broadcast_in_dim", "cbrt", "ceil",
-      "clamp", "concatenate", "cos", "cosh", "complex", "conj",
-      "convert_element_type",
-      "cummax", "cummin", "device_put", "dynamic_slice",
-      "dynamic_update_slice", "exp", "eq", "floor", "gather", "ge", "gt",
-      "imag",
-      "iota", "is_finite", "le", "lt", "log", "mul", "ne", "neg", "not",
-      "or", "pad", "population_count",
-      "random_categorical", "random_split", "random_uniform", "random_randint",
-      "reduce",
-      "reduce_and", "reduce_prod", "reduce_or", "reduce_sum",
-      "reduce_window_add", "reduce_window_mul", "reduce_window_min",
-      "reduce_window_max",
-      "real", "reshape", "rev", "rsqrt", "scatter_max", "scatter_min",
-      "select_n", "select_and_scatter_add",
+      "abs", "add", "add_any", "and", "atan2", "bitcast_convert_type",
+      "broadcast", "broadcast_in_dim", "cbrt", "ceil", "clamp", "concatenate",
+      "cos", "cosh", "complex", "conj", "convert_element_type", "cummax",
+      "cummin", "device_put", "dynamic_slice", "dynamic_update_slice", "exp",
+      "eq", "floor", "gather", "ge", "gt", "imag", "iota", "is_finite", "le",
+      "lt", "log", "mul", "ne", "neg", "not", "or", "pad", "population_count",
+      "random_categorical", "random_uniform", "random_randint",
+      "reduce", "reduce_and", "reduce_prod", "reduce_or", "reduce_sum",
+      "reduce_window_mul", "reduce_window_min", "reduce_window_max", "real",
+      "reshape", "rev", "rsqrt", "select_n", "select_and_scatter_add",
       "shift_left", "shift_right_logical", "shift_right_arithmetic", "sign",
       "sin", "sinh", "slice", "sqrt", "squeeze", "stop_gradient", "sub",
       "tie_in", "transpose", "xor", "zeros_like"
@@ -157,6 +152,18 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         description="May return different but still correct results",
         dtypes=[np.complex64, np.complex128],
         custom_assert=custom_assert)
+
+  @classmethod
+  def random_seed(cls, handess: primitive_harness.Harness):
+    return [custom_random_keys_output()]
+
+  @classmethod
+  def random_split(cls, handess: primitive_harness.Harness):
+    return [custom_random_keys_output()]
+
+  @classmethod
+  def random_fold_in(cls, handess: primitive_harness.Harness):
+    return [custom_random_keys_output()]
 
   @classmethod
   def acos(cls, harness: primitive_harness.Harness):
@@ -211,8 +218,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def asin(cls, harness: primitive_harness.Harness):
     return [
-        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4),
-        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12),
+        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4,
+                       modes=("eager", "graph", "compiled")),
+        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12,
+                       modes=("eager", "graph", "compiled")),
         cls.helper_get_trig_custom_limitation(np.sin)
     ]
 
@@ -399,6 +408,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def dot_general(cls, harness: primitive_harness.Harness):
+    prefer_elem = harness.params["preferred_element_type"]
     return [
         missing_tf_kernel(dtypes=[np.bool_],),
         # TODO(b/189287598)
@@ -409,7 +419,13 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             ],
             devices="gpu",
             modes=("eager", "graph", "compiled"),
-            enabled=(harness.params["preferred_element_type"] is not None),
+            enabled=(prefer_elem is not None),
+            skip_comparison=True),
+        # TODO(b/241740367) - note this only occurs when X64 is enabled.
+        Jax2TfLimitation(
+            "Large tolerances when upcasting with preferred_element_type on CPU (b/241740367)",
+            devices=["cpu", "gpu", "tpu"],
+            enabled=prefer_elem and np.dtype(harness.dtype) < np.dtype(prefer_elem),
             skip_comparison=True),
         # JAX performs float16 matmuls in float32 on CPU, so the JAX result
         # may be more precise.
@@ -899,6 +915,28 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return cls.reduce_max(harness)
 
   @classmethod
+  def reduce_window_add(cls, harness: primitive_harness.Harness):
+    return [
+        Jax2TfLimitation(
+            "Small deviations on GPU for large inputs and enable_xla=False",
+            dtypes=[np.float32],
+            devices="gpu",
+            modes=("eager", "graph", "compiled"),
+            expect_tf_error=False,
+            skip_comparison=False,
+            enabled=not harness.params["enable_xla"],
+            tol=3e-5),
+        Jax2TfLimitation(
+            "Large deviations on TPU for enable_xla=False",
+            dtypes=[np.float16, np.float32],
+            devices="tpu",
+            modes=("eager", "graph", "compiled"),
+            expect_tf_error=False,
+            skip_comparison=True,
+            enabled=not harness.params["enable_xla"]),
+    ]
+
+  @classmethod
   def regularized_incomplete_beta(cls, harness: primitive_harness.Harness):
     return [
         custom_numeric(dtypes=np.float64, tol=1e-14),
@@ -932,16 +970,33 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
+  def scatter(cls, harness):
+    return [
+        Jax2TfLimitation(
+            "out-of-bounds scatters are not supported in graph and eager mode",
+            dtypes=jtu.dtypes.all_inexact,
+            devices=("cpu", "gpu", "tpu"),
+            modes=("eager", "graph"),
+            expect_tf_error=True,
+            skip_comparison=True,
+            enabled=("modes_out_of_bounds" in harness.name and not harness.params["enable_xla"])),
+    ]
+
+  @classmethod
   def scatter_add(cls, harness):
-    return []
+    return cls.scatter(harness)
 
   @classmethod
   def scatter_mul(cls, harness):
-    return []
+    return cls.scatter(harness)
 
   @classmethod
-  def scatter(cls, harness):
-    return []
+  def scatter_max(cls, harness):
+    return cls.scatter(harness)
+
+  @classmethod
+  def scatter_min(cls, harness):
+    return cls.scatter(harness)
 
   @classmethod
   def select_and_gather_add(cls, harness):
@@ -1243,6 +1298,24 @@ def custom_numeric(
       custom_assert=custom_assert,
       enabled=enabled,
       tol=tol)
+
+def custom_random_keys_output():
+  def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
+    # TODO(frostig): Don't need this conditional once we always
+    # enable_custom_prng. We can even assert the isinstance instead.
+    def unwrap_keys(keys):
+      if isinstance(keys, jax.random.KeyArray):
+        return jax._src.prng.random_unwrap(keys)
+      else:
+        return keys
+
+    tst.assertAllClose(unwrap_keys(result_jax), result_tf,
+                       atol=tol, rtol=tol, err_msg=err_msg)
+
+  return custom_numeric(
+      description="Returns JAX key arrays, so compare underlying base array",
+      modes=("eager", "graph", "compiled"),
+      custom_assert=custom_assert)
 
 
 def missing_tf_kernel(*,

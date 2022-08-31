@@ -77,6 +77,7 @@ from jax._src.lax.lax import (
   conj_p as conj_p,
   convert_element_type as convert_element_type,
   convert_element_type_p as convert_element_type_p,
+  copy_p as copy_p,
   cos as cos,
   cos_p as cos_p,
   cosh as cosh,
@@ -328,6 +329,7 @@ from jax._src.lax.fft import (
 )
 from jax._src.lax.parallel import (
   all_gather as all_gather,
+  all_gather_p as all_gather_p,
   all_to_all as all_to_all,
   all_to_all_p as all_to_all_p,
   axis_index as axis_index,

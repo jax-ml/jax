@@ -19,12 +19,12 @@ import jaxlib.mlir.dialects.mhlo as mhlo
 
 
 from .mhlo_helpers import custom_call
-from . import _pocketfft
+from . import _ducc_fft
 import numpy as np
 
 from jaxlib import xla_client
 
-for _name, _value in _pocketfft.registrations().items():
+for _name, _value in _ducc_fft.registrations().items():
   xla_client.register_custom_call_target(_name, _value, platform="cpu")
 
 FftType = xla_client.FftType
@@ -34,7 +34,7 @@ _C2C = 0
 _C2R = 1
 _R2C = 2
 
-def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
+def _ducc_fft_descriptor(shape: List[int], dtype, fft_type: FftType,
                           fft_lengths: List[int]) -> bytes:
   n = len(shape)
   assert len(fft_lengths) >= 1
@@ -44,7 +44,7 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
   forward = fft_type in (FftType.FFT, FftType.RFFT)
   is_double = np.finfo(dtype).dtype == np.float64
   if fft_type == FftType.RFFT:
-    pocketfft_type = _R2C
+    ducc_fft_type = _R2C
 
     assert dtype in (np.float32, np.float64), dtype
     out_dtype = np.dtype(np.complex64 if dtype == np.float32 else np.complex128)
@@ -54,7 +54,7 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
     out_shape[-1] = out_shape[-1] // 2 + 1
 
   elif fft_type == FftType.IRFFT:
-    pocketfft_type = _C2R
+    ducc_fft_type = _C2R
     assert np.issubdtype(dtype, np.complexfloating), dtype
 
     out_dtype = np.dtype(np.float32 if dtype == np.complex64 else np.float64)
@@ -64,7 +64,7 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
     out_shape[-1] = fft_lengths[-1]
     assert (out_shape[-1] // 2 + 1) == shape[-1]
   else:
-    pocketfft_type = _C2C
+    ducc_fft_type = _C2C
 
     assert np.issubdtype(dtype, np.complexfloating), dtype
     out_dtype = dtype
@@ -79,13 +79,13 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
   # Builds a PocketFftDescriptor flatbuffer. This descriptor is passed to the
   # C++ kernel to describe the FFT to perform.
   strides_in = []
-  stride = dtype.itemsize
+  stride = 1
   for d in reversed(shape):
     strides_in.append(stride)
     stride *= d
 
   strides_out = []
-  stride = out_dtype.itemsize
+  stride = 1
   for d in reversed(out_shape):
     strides_out.append(stride)
     stride *= d
@@ -93,10 +93,10 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
   axes = [n - len(fft_lengths) + d for d in range(len(fft_lengths))]
 
   scale = 1. if forward else (1. / np.prod(fft_lengths))
-  descriptor = _pocketfft.pocketfft_descriptor(
+  descriptor = _ducc_fft.ducc_fft_descriptor(
     shape=shape if fft_type != FftType.IRFFT else out_shape,
     is_double=is_double,
-    fft_type=pocketfft_type,
+    fft_type=ducc_fft_type,
       fft_lengths=fft_lengths,
     strides_in=list(reversed(strides_in)),
     strides_out=list(reversed(strides_out)),
@@ -107,13 +107,13 @@ def _pocketfft_descriptor(shape: List[int], dtype, fft_type: FftType,
   return descriptor, out_dtype, out_shape
 
 
-def pocketfft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
-  """PocketFFT kernel for CPU."""
+def ducc_fft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
+  """DUCC FFT kernel for CPU."""
   a_type = ir.RankedTensorType(a.type)
   n = len(a_type.shape)
 
   fft_lengths = list(fft_lengths)
-  descriptor_bytes, out_dtype, out_shape = _pocketfft_descriptor(
+  descriptor_bytes, out_dtype, out_shape = _ducc_fft_descriptor(
       list(a_type.shape), dtype, fft_type, fft_lengths)
 
   if out_dtype == np.float32:
@@ -141,7 +141,7 @@ def pocketfft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
           np.frombuffer(descriptor_bytes, dtype=np.uint8), type=u8_type))
   layout = tuple(range(n - 1, -1, -1))
   return custom_call(
-      "pocketfft",
+      "ducc_fft",
       [ir.RankedTensorType.get(out_shape, out_type)],
       [descriptor, a],
       operand_layouts=[[0], layout],

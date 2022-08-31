@@ -59,11 +59,15 @@ struct SparseMatDescriptor {
   hipDataType value_type;
   hipsparseIndexType_t index_type;
   int rows, cols, nnz;
+  int batch_count = 1;
+  int batch_stride = 0;
 };
 
 struct DenseMatDescriptor {
   hipDataType type;
   int rows, cols;
+  int batch_count = 1;
+  int batch_stride = 0;
 };
 
 struct DenseVecDescriptor {

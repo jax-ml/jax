@@ -299,7 +299,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a, = args_maker()
     w1, _ = jnp.linalg.eig(a)
     w2 = jnp.linalg.eigvals(a)
-    self.assertAllClose(w1, w2, rtol={np.complex128: 1e-14})
+    self.assertAllClose(w1, w2, rtol={np.complex64: 1e-5, np.complex128: 1e-14})
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testEigvalsInf(self):
@@ -538,6 +538,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-3)
     self._CompileAndCheck(jnp_fn, args_maker)
+
+  def testStringInfNorm(self):
+    err, msg = ValueError, r"Invalid order 'inf' for vector norm."
+    with self.assertRaisesRegex(err, msg):
+      jnp.linalg.norm(jnp.array([1.0, 2.0, 3.0]), ord="inf")
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_full_matrices={}_compute_uv={}_hermitian={}".format(
@@ -919,7 +924,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}".format(
            jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
-      for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
+      for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50),
+                    (3, 4, 5), (2, 3, 4, 5)]
       for dtype in float_types + complex_types))
   def testMatrixRank(self, shape, dtype):
     rng = jtu.rand_default(self.rng())

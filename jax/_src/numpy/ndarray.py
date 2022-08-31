@@ -18,7 +18,6 @@ from typing import Any, Tuple, Optional, Union
 from jax import core
 from jax.interpreters import pxla
 from jax._src import device_array
-from jax.experimental import array
 import numpy as np
 
 
@@ -293,4 +292,3 @@ ndarray.register(device_array.DeviceArray)
 for t in device_array.device_array_types:
   ndarray.register(t)
 ndarray.register(pxla._SDA_BASE_CLASS)
-ndarray.register(array.Array)

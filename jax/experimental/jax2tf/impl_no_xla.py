@@ -42,24 +42,22 @@ DType = Any
 PrecisionType = Any
 
 
-def _xla_disabled_error(primitive_name: str,
-                        extra_msg: Optional[str] = None) -> Exception:
+def _error(primitive_name: str, suffix_msg: str = "") -> Exception:
   msg = f"Call to {primitive_name} cannot be converted with enable_xla=False."
-  if extra_msg:
-    msg += f" {extra_msg}"
+  if suffix_msg:
+    msg += (f" {suffix_msg} - See source code for the precise conditions under "
+             "which it can be converted without XLA.")
   return NotImplementedError(msg)
 
-
-def _conv_error(msg):
-  suffix = ("See source code for the precise conditions under which "
-            "convolutions can be converted without XLA.")
-  return _xla_disabled_error("conv_general_dilated", f"{msg} - {suffix}")
-
+_conv_error = lambda msg: _error("conv_general_dilated", msg)
+_reduce_error = lambda msg: _error("reduce_window", msg)
+_scatter_error = lambda msg: _error("scatter_(update/add/multiply/min/max)", msg
+                                   )
 
 def _unimplemented(name):
 
   def op(*arg, **kwargs):
-    raise _xla_disabled_error(name)
+    raise _error(name)
 
   return op
 
@@ -73,16 +71,20 @@ def _invert_permutation(perm):
 
 def _transpose_with_shape(x: TfVal, x_shape: core.Shape, permutation) -> Tuple[TfVal, core.Shape]:
   """Computes transposition of x and its shape.
+
   x_shape matches x.shape in the known dimensions, and it has dimension
-  polynomials elsewhere, while x.shape has None."""
+  polynomials elsewhere, while x.shape has None.
+  """
   return tf.transpose(x, perm=permutation), tuple(x_shape[i] for i in permutation)
+
 
 def _transpose_for_tf_conv(lhs, lhs_shape: core.Shape,
                            rhs, rhs_shape: core.Shape, dimension_numbers):
   """Tranposes lhs and rhs to respectively NHWC and HWIO so they can be passed to TF functions.
 
   The shapes passed in and returned may contain polynomials, and thus may
-  be different than lhs.shape and rhs.shape."""
+  be different than lhs.shape and rhs.shape.
+  """
   # TODO(marcvanzee): Add tests for this ops for shape polymorphism.
   lhs_perm, rhs_perm, _ = dimension_numbers
 
@@ -120,10 +122,11 @@ def pads_to_padtype(in_shape, window_shape, window_strides, padding) -> str:
 
 def _pad_spatial_dims(x, x_shape, padding):
   """Pads `x` using `padding`, which specifies padding for the spatial dimensions."""
-  # Add empty padding for batch and feature dimensions.
-  no_pad = ((0, 0),)
   padding = tuple(padding)
-  padding = no_pad + padding + no_pad
+  if len(padding) == len(x_shape) - 2:
+    # If necessary, add empty padding for batch and feature dimensions.
+    no_pad = ((0, 0),)
+    padding = no_pad + padding + no_pad
   x = tf.pad(x, padding)
   assert len(x.shape) == len(padding)
   x_shape = tuple(p0 + xs + p1 for xs, (p0, p1) in zip(x_shape, padding))
@@ -193,6 +196,7 @@ def _normalize_padding_and_dilations(
     padding = list(padding) + [(0, 0)]
   return padding, lhs_dilation, rhs_dilation
 
+
 def _normalize_window_strides(window_strides):
   """Ensure window_strides has length 4."""
   # Some TF ops require len(window_strides) == 4 while others do not. We simply
@@ -205,11 +209,13 @@ def _normalize_window_strides(window_strides):
     window_strides = [1] + list(window_strides) + [1]
   return window_strides
 
+
 def _normalize_output_perm(output_perm, is_conv1d):
   """Ensure that output_perm has length 4."""
   if is_conv1d:
     output_perm = list(output_perm) + [1]
   return output_perm
+
 
 def _validate_conv_features(
       is_transpose, is_atrous, is_depthwise, feature_group_count,
@@ -353,6 +359,10 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
+  # Unused arguments.
+  del precision
+  del preferred_element_type
+
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_ndim, rhs_ndim = len(lhs.shape), len(rhs.shape)
 
@@ -467,8 +477,6 @@ def _interior_padding(operand, padding_value, padding_config, operand_shape):
 
 def _pad(operand, padding_value, *, padding_config,
          _in_avals: Sequence[core.ShapedArray], _out_aval: core.ShapedArray):
-  low, high, interior = util.unzip3(padding_config)
-
   # Do only the interior padding first. This is rarely needed.
   if any(i != 0 for _, _, i in padding_config):
     operand = _interior_padding(operand, padding_value, padding_config,
@@ -512,90 +520,201 @@ tf_impl_no_xla[lax.argmin_p] = partial(_argminmax, True)
 tf_impl_no_xla[lax.argmax_p] = partial(_argminmax, False)
 
 
-# _reduce_windown currently only supports reduce_window_max and
-# reduce_window_sum.
-# TODO(bchetioui): this function is not exhaustive wrt which
-# reduce_window_max or reduce_window_sum cases can be translated into a call to
-# max_pool or avg_pool. Further investigation is needed to fully flesh it out.
-def _reduce_window(operand, *, window_dimensions, window_strides, padding,
-            base_dilation, window_dilation, _in_avals, _out_aval, name=None) -> TfVal:
-
-  def error(msg):
-    suffix = ("See source code for the precise conditions under which "
-              "reduce_window can be converted without XLA.")
-    return _xla_disabled_error(name, f"{msg} - {suffix}")
-
-  dtype = operand.dtype
-  # Contrarily to the main path, tf.int8 is actually a valid type for
-  # tf.nn.max_pool.
-  if name == "reduce_window_max" and dtype in [
+def _validate_reduce_window_inputs(operand_shape, computation_name, dtype,
+                                   window_dimensions, window_strides,
+                                   base_dilation, window_dilation):
+  if computation_name not in ["min", "max", "add"]:
+    raise _reduce_error("Reduction function should be either min, max, or add.")
+  if computation_name in ["min", "max"] and dtype in [
       tf.bool, tf.uint32, tf.uint64, tf.complex64, tf.complex128
   ]:
-    raise error(f"tf.nn.max_pool does not support operands of type {dtype}")
-  if name == "reduce_window_sum" and operand.dtype not in [
+    raise _reduce_error("Min/max pool does not support operands of type "
+                        f"{dtype}")
+  if computation_name == "min" and dtype in [tf.uint8, tf.uint16]:
+    # TODO(marcvanzee): We currently implement min pooling by negating the
+    # input, but this doesn't work for uint. We could work around it using
+    # tf.math.reduce_min.
+    raise _reduce_error(f"Min pool does not support operands of type {dtype}")
+  if computation_name == "add" and dtype not in [
       tf.float16, tf.float32, tf.float64
   ]:
-    raise error(f"tf.nn.avg_pool does not support operands of type {dtype}")
-  has_batch_dim = window_dimensions[0] == 1
-  has_channel_dim = window_dimensions[-1] == 1
-  nb_spatial_dimensions = len(operand.shape) - has_batch_dim - has_channel_dim
-  if nb_spatial_dimensions < 1 or nb_spatial_dimensions > 3:
-    raise error("TensorFlow can only handle pooling for arrays with 1, 2, or "
-                "3 spatial dimensions")
-  # TODO(bchetioui): does a simple conversion with another base dilation exist?
-  if list(base_dilation) != [1] * len(operand.shape):
-    raise error("Unimplemented support for base dilation")
-  # TODO(bchetioui): does a simple conversion with another window_dilation
-  # exist? The whole story seems similar to convolution.
-  if list(window_dilation) != [1] * len(operand.shape):
-    raise error("Unimplemented support for window dilation")
+    raise _reduce_error("Add pooling does not support operands of type "
+                        f"{dtype}")
 
-  tf_padding = pads_to_padtype(operand.shape, window_dimensions, window_strides, padding)
-  if tf_padding == "EXPLICIT":
-    raise error("Padding should either be 'VALID' or 'SAME'.")
+  if (len(operand_shape) != len(window_dimensions) != len(window_strides) !=
+      len(window_dilation)):
+    raise _reduce_error("Input shapes, window dimensions, window stride "
+                        "dimensions, and window dilation dimensions should "
+                        "match.")
 
-  # ReduceWindow in XLA takes an array of rank N as a parameter, but
-  # tf.nn.max_pool / tf.nn.avg_pool take an array of rank N+2, with a default
-  # shape of the form [batch_size] + input_spatial_shape + [num_channels]
-  tf_operand = operand
-  tf_window_dimensions = list(window_dimensions)
-  tf_window_strides = list(window_strides)
-  if not has_batch_dim:
-    tf_operand = tf.expand_dims(tf_operand, 0)
-    tf_window_dimensions = [1] + tf_window_dimensions
-    tf_window_strides = [1] + tf_window_strides
-  if not has_channel_dim:
-    tf_operand = tf.expand_dims(tf_operand, -1)
-    tf_window_dimensions.append(1)
-    tf_window_strides.append(1)
-  tf_data_format = "N" + "DHW"[-nb_spatial_dimensions:] + "C"
+  has_only_spatial_dims = True
+  if len(operand_shape) > 4:
+    raise _reduce_error("Only 1D or 2D input are supported.")
+  if len(operand_shape) > 2:
+    # operand_shape = (batch, spatial_dims, ..., channel).
+    has_only_spatial_dims = False
 
-  if name == "reduce_window_max":
-    result = tf.nn.max_pool(tf_operand, tf_window_dimensions, tf_window_strides,
-                            tf_padding, tf_data_format)
-  elif name == "reduce_window_sum":
-    avg = tf.nn.avg_pool(tf_operand, tf_window_dimensions, tf_window_strides,
-                         tf_padding, tf_data_format)
-    result = avg * np.prod(tf_window_dimensions)
+    for name, value in [("window_dimensions", window_dimensions),
+                        ("window_strides", window_strides),
+                        ("window_dilation", window_dilation)]:
+      if value[0] != value[-1] != 1:
+        raise _reduce_error("Only 1D or 2D input are supported, expected "
+                            f"{name}=(1, spatial_dims, ..., 1), but got "
+                            f"{value}")
+
+  if list(base_dilation) != [1] * len(operand_shape):
+    # TODO(marcvanzee): Add support for base dilations. We can do this using
+    # a scatter on operand.
+    raise _reduce_error("Unimplemented support for base dilation.")
+
+  return has_only_spatial_dims
+
+
+def _padding_reduce_window(operand, operand_shape, computation_name,
+                           window_dimensions, window_strides, padding):
+  padding_type = pads_to_padtype(operand_shape, window_dimensions,
+                                 window_strides, padding)
+
+  # https://github.com/google/jax/issues/11874.
+  needs_manual_padding = (
+      padding_type == "SAME" and computation_name == "add" and
+      window_dimensions != [1] * len(operand_shape))
+
+  if needs_manual_padding or padding_type == "EXPLICIT":
+    operand, operand_shape = _pad_spatial_dims(operand, operand_shape, padding)
+    padding_type = "VALID"
+
+  return operand, operand_shape, padding_type
+
+
+def _reshape_reduce_window(operand, operand_shape, window_dimensions,
+                           window_strides, window_dilation, *,
+                           has_only_spatial_dims):
+  # Reshape inputs so they are accepted by tf.nn.pool, which expects batch and
+  # channel dimensions for operand but not for any of the other inputs.
+  if has_only_spatial_dims:  # len(operand_shape) <= 2
+    # Call eval_shape on a shape that may contain polynomials, otherwise TF does
+    # not know what to do with polynomials in the shape.
+    operand_shape = jax2tf._eval_shape(operand_shape)
+    # Add batch and channel dimensions to operand.
+    operand = tf.reshape(operand, (1,) + operand_shape + (1,))
   else:
-    raise error("Only reduce_window_max and reduce_window_sum are supported.")
+    # This branch assumes operand.shape = (batch, spatial_dims, ..., channel),
+    # and dimensions, strides, dilation are all (1, spatial_values, ..., 1).
+    # Input validation for this is done in _validate_reduce_window_inputs.
+    window_dimensions = window_dimensions[1:-1]
+    window_strides = window_strides[1:-1]
+    window_dilation = window_dilation[1:-1]
 
-  if not has_batch_dim:
-    result = tf.squeeze(result, 0)
-  if not has_channel_dim:
-    result = tf.squeeze(result, -1)
-  return result
+  return operand, window_dimensions, window_strides, window_dilation
 
 
-# pylint: disable=protected-access
-tf_impl_no_xla[lax.reduce_window_sum_p] = (
-    partial(_reduce_window, name="reduce_window_sum"))
+def _reduce_monoid(operand, window_dimensions, window_strides, padding,
+                   base_dilation, window_dilation, computation_name,
+                   _in_avals: Sequence[core.ShapedArray],
+                   _out_aval: core.ShapedArray):
+  dtype = operand.dtype
+  # In presence of shape polymorphism, operand.shape may contain None. The
+  # actual dimension polynomial shapes are in _in_avals.
+  operand_shape = _in_avals[0].shape
+
+  # TODO(marcvanzee): Put reduce_window arguments into dataclass, similar to
+  # Gather, to simplify function calls.
+  has_only_spatial_dims = _validate_reduce_window_inputs(
+      operand_shape, computation_name, dtype, window_dimensions, window_strides,
+      base_dilation, window_dilation)
+
+  operand, operand_shape, padding_type = _padding_reduce_window(
+      operand, operand_shape, computation_name, window_dimensions,
+      window_strides, padding)
+
+  operand, window_dimensions, window_strides, dilations = _reshape_reduce_window(
+      operand,
+      operand_shape,
+      window_dimensions,
+      window_strides,
+      window_dilation,
+      has_only_spatial_dims=has_only_spatial_dims)
+
+  def tf_pool(inputs, pooling_type):
+    result = tf.nn.pool(
+        inputs,
+        window_shape=window_dimensions,
+        pooling_type=pooling_type,
+        padding=padding_type,
+        strides=window_strides,
+        dilations=dilations)
+
+    if has_only_spatial_dims:
+      # If the input only had spatial dimensions we need to contract the batch
+      # and channel dimensions before returning the output.
+      result = tf.squeeze(result, [0, -1])
+
+    jax2tf._assert_matching_abstract_shape(result, _out_aval.shape)
+    return result
+
+  negate = lambda x: tf.multiply(x, tf.constant(-1, dtype))
+  if computation_name == "max":
+    return tf_pool(operand, "MAX")
+  elif computation_name == "min":
+    return negate(tf_pool(negate(operand), "MAX"))
+  elif computation_name == "add":
+    # TODO(marcvanzee): This may give very large deviations on TPU when using
+    # floats as inputs. Alternatively, we could implement this using a
+    # convolution with an all-1's kernel.
+    return tf.multiply(tf_pool(operand, "AVG"), np.prod(window_dimensions))
+
+
+def _reduce_window(*args, jaxpr, consts, window_dimensions,
+                   window_strides, padding, base_dilation, window_dilation,
+                   _in_avals: Sequence[core.ShapedArray],
+                   _out_aval: Tuple[core.ShapedArray, ...]
+                   ) -> Tuple[TfVal, ...]:
+  assert len(consts) == 0, "Reduction computation cannot have constants"
+  operands, init_values = util.split_list(args, [len(args) // 2])
+
+  if len(operands) != 1 or len(init_values) != 1:
+    raise _reduce_error("jax2tf does not support variadic reduce_window")
+
+  operand, init_value = operands[0], init_values[0]
+  # Infer operation type from jaxpr.
+  if (len(jaxpr.eqns) != 1 or
+      len(jaxpr.eqns[0].invars) != 2 or
+      len(jaxpr.eqns[0].outvars) != 1 or
+      jaxpr.eqns[0].primitive.name not in ["min", "max", "add"]):
+    raise _reduce_error("Reduction function should be either min, max, or add.")
+
+  computation_name = jaxpr.eqns[0].primitive.name
+  result = _reduce_monoid(operand,
+                          window_dimensions=window_dimensions,
+                          window_strides=window_strides,
+                          padding=padding,
+                          base_dilation=base_dilation,
+                          window_dilation=window_dilation,
+                          computation_name=computation_name,
+                          _in_avals=(_in_avals[0],),  # Don't pass init_value.
+                          _out_aval=_out_aval[0])     # Returns single value.
+
+  reduce_fn = {
+      "min": tf.minimum,
+      "max": tf.maximum,
+      "add": tf.add,
+  }[computation_name]
+  result = reduce_fn(result, init_value)
+
+  # The outut is expected to be wrapped in a tuple, and since we don't use
+  # variadic reductions, this tuple always contains a single element.
+  return (result,)
+
+
+tf_impl_no_xla[lax.reduce_window_min_p] = (
+    partial(_reduce_monoid, computation_name="min"))
 tf_impl_no_xla[lax.reduce_window_max_p] = (
-    partial(_reduce_window, name="reduce_window_max"))
-# pylint: enable=protected-access
+    partial(_reduce_monoid, computation_name="max"))
+tf_impl_no_xla[lax.reduce_window_sum_p] = (
+    partial(_reduce_monoid, computation_name="add"))
 
-tf_impl_no_xla[lax.reduce_window_min_p] = _unimplemented("reduce_window_min")
-tf_impl_no_xla[lax.reduce_window_p] = _unimplemented("reduce_window")
+tf_impl_no_xla[lax.reduce_window_p] = _reduce_window
 
 tf_impl_no_xla[lax.reduce_p] = _unimplemented("reduce")
 
@@ -845,7 +964,7 @@ def _gather(operand, start_indices, *, dimension_numbers,
   error_msg = (f"Unsupported arguments for gather: {gather_args}, errors:\n" +
                "\n".join(errors))
 
-  raise _xla_disabled_error("gather", error_msg)
+  raise _error("gather", error_msg)
 
 
 tf_impl_no_xla[lax.gather_p] = _gather
@@ -899,8 +1018,10 @@ def _dynamic_update_slice(operand, update, *start_indices,
 tf_impl_no_xla[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 
-def shift_axes_forward(operand, axes: tuple, inverse: bool=False,
-                       forward: bool=True):
+def shift_axes_forward(operand,
+                       axes: Tuple[int, ...],
+                       inverse: bool = False,
+                       forward: bool = True):
   """Shifts the tuple of axes to the front of an array"""
   other_axes = tuple([i for i in range(len(operand.shape)) if i not in axes])
   fwd_order = axes + other_axes if forward else other_axes + axes
@@ -908,37 +1029,21 @@ def shift_axes_forward(operand, axes: tuple, inverse: bool=False,
   return tf.transpose(operand, order)
 
 def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
-  def error(msg):
-    suffix = ("See source code for the precise conditions under which "
-              "scatter_(update/add/multiply/min/max) ops can be converted without XLA.")
-    return _xla_disabled_error("scatter_(update/add/multiply/min/max)", f"{msg} - {suffix}")
 
-  def _sparse_scatter(
-    operand,
-    scatter_indices,
-    updates,
-    update_jaxpr,
-    update_consts,
-    dimension_numbers,
-    indices_are_sorted: bool,
-    unique_indices: bool,
-    mode,
-    _in_avals: Sequence[core.ShapedArray],
-    _out_aval: core.ShapedArray):
-    """
-    Implementation of scatter specialised to indexing from the
-    front axes. This covers unique indices and non-unique indices
-    of single depth.
+  def _sparse_scatter(operand, scatter_indices, updates, unique_indices, mode,
+                      _in_avals: Sequence[core.ShapedArray],
+                      _out_aval: core.ShapedArray):
+    """Implementation of scatter specialised to indexing from the front axes.
 
-    Note on unique indices: `tf.tensor_scatter_nd_update` interprets
-    indices thusly: every axis except the final one encodes a batch
-    dimension, the final axis encoding the actual indices to scatter in to.
-    It enforces, at least one, batch dimension so we add an empty
-    dimension to indices and updates if lacking.
+    This covers unique indices and non-unique indices of single depth.
+    Note on unique indices: `tf.tensor_scatter_nd_update` interprets indices
+    thusly: every axis except the final one encodes a batch dimension, the final
+    axis encoding the actual indices to scatter in to. It enforces, at least
+    one, batch dimension so we add an empty dimension to indices and updates if
+    lacking.
 
-    Note on non-unique indices: There is no tf op for non single depth
-    indexing. But if indexing is single depth, this can be viewed as a
-    segment op.
+    Note on non-unique indices: There is no tf op for non-single depth indexing,
+    but if indexing is single depth, this can be viewed as a segment op.
     """
     # Infer unique indices from lack of batch dimension
     unique_indices = unique_indices or (len(scatter_indices.shape) == 1)
@@ -951,72 +1056,80 @@ def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
         updated_suboperand = updated_suboperand[None]
       y = tf.tensor_scatter_nd_update(operand, scatter_indices, updated_suboperand)
     else:
-      if (scatter_indices.shape[-1] == 1) and (unsorted_segment_op != None):
+      if (scatter_indices.shape[-1] == 1) and unsorted_segment_op:
         # If only indexing into the first dimension, it's a segment op
-        operand_update = unsorted_segment_op(updates, tf.squeeze(scatter_indices, -1), operand.shape[0])
+        operand_update = unsorted_segment_op(updates,
+                                             tf.squeeze(scatter_indices, -1),
+                                             operand.shape[0])
         y = update_op(operand, operand_update)
       else:
-        raise error("Scatter supports unique indices. Scatter also supports non-unique indices with indexing into only one dimension for (add, mul, min, max)")
+        raise _scatter_error(
+            "Scatter only supports non-unique "
+            "indices with indexing into only one dimension for (add, mul, min, "
+            "max)")
     return y
 
-  def sparse_scatter(
-    operand,
-    scatter_indices,
-    updates,
-    update_jaxpr,
-    update_consts,
-    dimension_numbers,
-    indices_are_sorted: bool,
-    unique_indices: bool,
-    mode,
-    _in_avals: Sequence[core.ShapedArray],
-    _out_aval: core.ShapedArray):
+  def sparse_scatter(operand, scatter_indices, updates, update_jaxpr,
+                     update_consts, dimension_numbers, indices_are_sorted: bool,
+                     unique_indices: bool, mode,
+                     _in_avals: Sequence[core.ShapedArray],
+                     _out_aval: core.ShapedArray):
     """
     Wrapper around the scatter function.
     The underlying tf ops `tf.tensor_scatter_nd_update` and
     `tf.math.unsorted_segment_*` index from the front dimensions.
     `tf.math.unsorted_segment_*` indexs to a depth 1 from the front.
-    `tf.tensor_scatter_nd_update` indexs from the front dimensions onwards
-    , with no ability to skip a dimension. This function
-    shifts the axes to be indexed to the front then calls a front-specific
-    implementation, then inverse-shifts the output.
+    `tf.tensor_scatter_nd_update` indexs from the front dimensions onwards,
+    with no ability to skip a dimension. This function shifts the axes to be
+    indexed to the front then calls a front-specific implementation, then
+    inverse-shifts the output.
 
     scatter_dims_to_operand_dims: dimensions which the scatter indexes in to.
       We shift these to the front to match tf syntax. All other dims are batch
     update_window_dims: dimensions which are not batch dimensions. We shift
       these to the back as the remaining dimensions are batch dimensions.
     """
-    ud = dimension_numbers.update_window_dims
-    wd = dimension_numbers.inserted_window_dims
-    sd = dimension_numbers.scatter_dims_to_operand_dims
-    dtype = operand.dtype # assume updates has same dtype as operand
+    del update_jaxpr, update_consts, indices_are_sorted  # Unused arguments
+
+    update_window_dims = dimension_numbers.update_window_dims
+    inserted_window_dims = dimension_numbers.inserted_window_dims
+    scatter_to_operand_dims = dimension_numbers.scatter_dims_to_operand_dims
+
+    dtype = operand.dtype  # assume updates has same dtype as operand
     if dtype in [tf.bool, tf.complex64]:
-      raise error(f"Scatter does not support operands of type {dtype}")
-    if not (wd == sd):
-      raise error("Complex scatters are not supported")
-    if not (mode == lax.GatherScatterMode.PROMISE_IN_BOUNDS):
-      raise error("Only scatter mode `PROMISE_IN_BOUNDS` is supported")
+      raise _scatter_error(f"Scatter does not support operands of type {dtype}")
+
+    if inserted_window_dims != scatter_to_operand_dims:
+      raise _scatter_error("Complex scatters are not supported")
+
+    if (mode != lax.GatherScatterMode.FILL_OR_DROP and
+        mode != lax.GatherScatterMode.PROMISE_IN_BOUNDS):
+      # The OOB behavior for tf.scatter is as follows:
+      # - When running in eager or graph mode, it throws an error.
+      #   TODO(marcvanzee): Fix this case by removing the OOB indices.
+      # - When running in compile mode, the OOB indices are dropped, which is
+      #   the same behavior as FILL_OR_DROP and PROMISE_IN_BOUNDS.
+      # To ensure correctness, we disallow CLIP mode for now.
+      raise _scatter_error("Only scatter modes `FILL_OR_DROP` and "
+                           "`PROMISE_IN_BOUNDS` are supported.")
+
     # Shift axes to the front to match tf syntax, inverse afterwards
-    fwd = partial(shift_axes_forward, axes=sd)
+    fwd = partial(shift_axes_forward, axes=scatter_to_operand_dims)
     inv = partial(fwd, inverse=True)
-    # shift update value axes to the back, so batch are at the front
-    updates_shifted = shift_axes_forward(updates, axes=ud, forward=False)
-    return inv(_sparse_scatter(
-      fwd(operand),
-      scatter_indices,
-      updates_shifted,
-      update_jaxpr,
-      update_consts,
-      dimension_numbers,
-      indices_are_sorted,
-      unique_indices,
-      mode,
-      _in_avals,
-      _out_aval,
-    ))
+
+    # Shift update value axes to the back, so batch are at the front
+    updates_shifted = shift_axes_forward(
+        updates, axes=update_window_dims, forward=False)
+
+    return inv(
+        _sparse_scatter(
+            fwd(operand), scatter_indices, updates_shifted, unique_indices,
+            mode, _in_avals, _out_aval))
   return sparse_scatter
 
-tf_impl_no_xla[lax.scatter_p] = convert_scatter_jax_to_tf(lambda x,y: y) # just replace with the update
+
+tf_impl_no_xla[lax.scatter_p] = convert_scatter_jax_to_tf(
+    lambda x, y: y)  # just replace with the update
 tf_impl_no_xla[lax.scatter_add_p] = convert_scatter_jax_to_tf(tf.add,      tf.math.unsorted_segment_sum)
 tf_impl_no_xla[lax.scatter_mul_p] = convert_scatter_jax_to_tf(tf.multiply, tf.math.unsorted_segment_prod)
 tf_impl_no_xla[lax.scatter_min_p] = convert_scatter_jax_to_tf(tf.minimum,  tf.math.unsorted_segment_min)

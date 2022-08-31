@@ -18,6 +18,7 @@ from functools import partial, partialmethod
 import operator
 from typing import (Any, List, Optional, Union)
 import weakref
+import warnings
 
 import numpy as np
 
@@ -146,7 +147,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def _value(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      self._npy_value = self.device_buffer.to_py()  # pytype: disable=attribute-error  # bind-properties
+      self._npy_value = np.asarray(self.device_buffer)  # pytype: disable=attribute-error  # bind-properties
       self._npy_value.flags.writeable = False
     return self._npy_value
 
@@ -265,6 +266,15 @@ for device_array in [DeviceArray]:
     return np.asarray(self._value, dtype=dtype)
 
   setattr(device_array, "__array__", __array__)
+
+  # TODO(phawkins): delete this code path after the deprecation for .to_py()
+  # expires in Nov 2022.
+  def to_py(self):
+    warnings.warn("The .to_py() method on JAX arrays is deprecated. Use "
+                  "np.asarray(...) instead.", category=FutureWarning)
+    return np.asarray(self._value)
+
+  setattr(device_array, "to_py", to_py)
 
   def __dlpack__(self):
     from jax.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top

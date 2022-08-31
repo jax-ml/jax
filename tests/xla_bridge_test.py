@@ -85,8 +85,8 @@ class XlaBridgeTest(jtu.JaxTestCase):
         msg = str(w[-1].message)
         self.assertIn("Did you run your code on all TPU hosts?", msg)
 
-      with mock.patch("jax._src.lib.xla_client.make_tpu_client",
-                      side_effect=_mock_tpu_client):
+      with mock.patch.object(xc, "make_tpu_client",
+                             side_effect=_mock_tpu_client):
         xb.tpu_client_timer_callback(0.01)
 
 

@@ -173,8 +173,10 @@ backwards compatibility implications for `jax`. The JAX Python code can then use
 this version number to maintain backwards compatibility, e.g.:
 
 ```
+from jax._src.lib import xla_extension_version
+
 # 123 is the new version number for _version in xla_client.py
-if jax._src.lib.xla_extension_version >= 123:
+if xla_extension_version >= 123:
   # Use new code path
   ...
 else:

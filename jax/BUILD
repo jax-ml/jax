@@ -17,15 +17,12 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "//jaxlib:jax.bzl",
-    "absl_logging_py_deps",
-    "absl_testing_py_deps",
     "jax_extra_deps",
     "jax_internal_packages",
     "jax_test_util_visibility",
-    "numpy_py_deps",
+    "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
-    "scipy_py_deps",
 )
 
 licenses(["notice"])
@@ -73,7 +70,7 @@ py_library(
     ] + jax_test_util_visibility,
     deps = [
         ":jax",
-    ] + absl_testing_py_deps + numpy_py_deps,
+    ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
 py_library_providing_imports_info(
@@ -118,7 +115,7 @@ py_library_providing_imports_info(
                ":enable_jaxlib_build": [":jaxlib_deps"],
                "//conditions:default": [],
            }) +
-           numpy_py_deps + scipy_py_deps + jax_extra_deps,
+           py_deps("numpy") + py_deps("scipy") + jax_extra_deps,
 )
 
 py_library(
@@ -137,14 +134,13 @@ py_library_providing_imports_info(
     visibility = ["//visibility:public"],
     deps = [
         ":jax",
-    ] + absl_logging_py_deps + numpy_py_deps,
+    ] + py_deps("absl/logging") + py_deps("numpy"),
 )
 
 pytype_library(
     name = "stax",
     srcs = [
         "example_libraries/stax.py",
-        "experimental/stax.py",
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],
@@ -163,7 +159,6 @@ pytype_library(
     name = "optimizers",
     srcs = [
         "example_libraries/optimizers.py",
-        "experimental/optimizers.py",
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],

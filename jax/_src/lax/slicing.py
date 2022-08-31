@@ -50,6 +50,8 @@ Shape = core.Shape
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+_dtype = partial(dtypes.dtype, canonicalize=True)
+
 
 def slice(operand: Array, start_indices: Sequence[int],
           limit_indices: Sequence[int],
@@ -263,7 +265,7 @@ def gather(operand: Array, start_indices: Array,
   parsed_mode = GatherScatterMode.from_any(mode)
   if parsed_mode == GatherScatterMode.FILL_OR_DROP:
     if fill_value is None:
-      dtype = lax._dtype(operand)
+      dtype = _dtype(operand)
       if dtypes.issubdtype(dtype, np.inexact):
         fill_value = np.nan
       elif dtypes.issubdtype(dtype, np.signedinteger):
@@ -800,6 +802,10 @@ batching.primitive_batchers[slice_p] = _slice_batching_rule
 
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
+  aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype._rules.slice_mlir(
+        ctx, x, start_indices, limit_indices, strides)
   return mhlo.SliceOp(x,
                       mlir.dense_int_elements(start_indices),
                       mlir.dense_int_elements(limit_indices),
@@ -897,6 +903,10 @@ ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 
 def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
+  aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype._rules.dynamic_slice_mlir(
+        ctx, x, start_indices, slice_sizes)
   return mhlo.DynamicSliceOp(x, start_indices,
                              mlir.dense_int_elements(slice_sizes)).results
 
@@ -993,6 +1003,9 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype._rules.dynamic_update_slice_mlir(
+        ctx, x, update, *start_indices)
   return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
                                    start_indices).results
 
@@ -1305,6 +1318,12 @@ def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
+  if type(aval_out.dtype) in core.custom_eltypes:
+    return aval_out.dtype._rules.gather_mlir(
+        ctx, operand, indices, dimension_numbers=dimension_numbers,
+        slice_sizes=slice_sizes, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
     return gather_fill_fn(
@@ -2026,14 +2045,15 @@ def _dynamic_slice_indices(operand, start_indices: Any):
     if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))
-    start_indices = [i for i in start_indices]
-  return [np.asarray(i + d if i < 0 else i, lax._dtype(i))
-          if isinstance(i, (int, np.integer)) and core.is_constant_dim(d)
-          else lax.select(
-              lax.lt(i, lax._const(i, 0)),
-              lax.add(i, lax.convert_element_type(core.dimension_as_value(d), lax._dtype(i))),
-              i)
-          for i, d in zip(start_indices, operand.shape)]
+    start_indices = list(start_indices)
+  result = []
+  for i, d in zip(start_indices, operand.shape):
+    if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
+      result.append(lax.convert_element_type(i + d, _dtype(i)) if i < 0 else i)
+    else:
+      d = lax.convert_element_type(core.dimension_as_value(d), _dtype(i))
+      result.append(lax.select(i < 0, i + d, i))
+  return result
 
 
 # TODO(mattjj): getslice is a prototype for dynamic shapes, revise or remove it

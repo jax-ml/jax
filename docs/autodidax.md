@@ -6,7 +6,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.13.8
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3
   name: python3
@@ -251,7 +251,7 @@ def swap(f): return lambda x, y: f(y, x)
 ```{code-cell} ipython3
 class ShapedArray:
   array_abstraction_level = 1
-  shape: Tuple[int]
+  shape: Tuple[int, ...]
   dtype: np.dtype
 
   def __init__(self, shape, dtype):
@@ -722,7 +722,7 @@ register_pytree_node(dict,
 class PyTreeDef(NamedTuple):
   node_type: NodeType
   node_metadata: Hashable
-  child_treedefs: Tuple['PyTreeDef']
+  child_treedefs: Tuple['PyTreeDef', ...]
 
 class Leaf: pass
 leaf = Leaf()
@@ -1564,7 +1564,8 @@ def xla_call_impl(*args, jaxpr: Jaxpr, num_consts: int):
 impl_rules[xla_call_p] = xla_call_impl
 
 @lru_cache()
-def xla_callable(hashable_jaxpr: IDHashable, hashable_consts: Tuple[IDHashable]):
+def xla_callable(hashable_jaxpr: IDHashable,
+                 hashable_consts: Tuple[IDHashable, ...]):
   jaxpr: Jaxpr = hashable_jaxpr.val
   typecheck_jaxpr(jaxpr)
   consts = [x.val for x in hashable_consts]
@@ -1625,7 +1626,7 @@ input_handlers = {ty: default_input_handler for ty in
 
 def handle_result(aval: ShapedArray, buf):
   del aval  # Unused for now
-  return buf.to_py()
+  return np.asarray(buf)
 
 xla_translations = {}
 ```
@@ -1841,9 +1842,9 @@ class DeviceArray:
   shape = property(lambda self: self.aval.shape)
   ndim  = property(lambda self: self.aval.ndim)
 
-  def __array__(self): return self.buf.to_py()
-  def __repr__(self):  return repr(self.buf.to_py())
-  def __str__(self):   return str(self.buf.to_py())
+  def __array__(self): return np.asarray(self.buf)
+  def __repr__(self):  return repr(np.asarray(self.buf))
+  def __str__(self):   return str(np.asarray(self.buf))
 
   _neg = staticmethod(neg)
   _add = staticmethod(add)

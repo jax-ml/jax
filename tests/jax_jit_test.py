@@ -19,6 +19,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import api
+from jax._src import abstract_arrays
 from jax import dtypes
 from jax._src import lib as jaxlib
 from jax import numpy as jnp
@@ -32,7 +33,7 @@ import numpy as np
 _EXCLUDED_TYPES = [np.ndarray]
 
 _SCALAR_NUMPY_TYPES = [
-    x for x in jax._src.abstract_arrays.array_types if x not in _EXCLUDED_TYPES
+    x for x in abstract_arrays.array_types if x not in _EXCLUDED_TYPES
 ]
 
 
@@ -112,7 +113,7 @@ class JaxJitTest(jtu.JaxTestCase):
     complex_type = dtypes.canonicalize_dtype(np.complex128)
 
     # int
-    res = _cpp_device_put(1, device).to_py()
+    res = np.asarray(_cpp_device_put(1, device))
     self.assertEqual(res, 1)
     self.assertEqual(res.dtype, int_type)
     # We also compare to the Python Jax API, to make sure we have the exact
@@ -121,20 +122,20 @@ class JaxJitTest(jtu.JaxTestCase):
     self.assertEqual(jnp.asarray(1).dtype, res.dtype)
 
     # float
-    res = _cpp_device_put(1.0, device).to_py()
+    res = np.asarray(_cpp_device_put(1.0, device))
     self.assertEqual(res, 1.0)
     self.assertEqual(res.dtype, float_type)
     self.assertEqual(jnp.asarray(1.0).dtype, res.dtype)
 
     # bool
     for bool_value in [True, False]:
-      res = _cpp_device_put(bool_value, device).to_py()
+      res = np.asarray(_cpp_device_put(bool_value, device))
       self.assertEqual(res, np.asarray(bool_value))
       self.assertEqual(res.dtype, np.bool_)
       self.assertEqual(jnp.asarray(bool_value).dtype, res.dtype)
 
     # Complex
-    res = _cpp_device_put(1 + 1j, device).to_py()
+    res = np.asarray(_cpp_device_put(1 + 1j, device))
     self.assertEqual(res, 1 + 1j)
     self.assertEqual(res.dtype, complex_type)
     self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)

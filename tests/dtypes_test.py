@@ -26,6 +26,7 @@ import numpy as np
 import jax
 from jax._src import dtypes
 from jax import numpy as jnp
+from jax.experimental import array
 
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -75,7 +76,13 @@ def identity(x):
   return x
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
+def _check_instance(self, x):
+  if config.jax_array:
+    self.assertIsInstance(x, array.Array)
+  else:
+    self.assertIsInstance(x, jnp.DeviceArray)
+
+
 class DtypesTest(jtu.JaxTestCase):
 
   def test_canonicalize_type(self):
@@ -224,7 +231,7 @@ class DtypesTest(jtu.JaxTestCase):
   def testScalarInstantiation(self, scalar_type):
     a = scalar_type(1)
     self.assertEqual(a.dtype, jnp.dtype(scalar_type))
-    self.assertIsInstance(a, jnp.DeviceArray)
+    _check_instance(self, a)
     self.assertEqual(0, jnp.ndim(a))
     self.assertIsInstance(np.dtype(scalar_type).type(1), scalar_type)
 
@@ -296,7 +303,6 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
 
 
-@jtu.with_config(jax_numpy_dtype_promotion='strict')
 class TestPromotionTables(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -518,7 +524,11 @@ class TestPromotionTables(jtu.JaxTestCase):
   def testDeviceArrayRepr(self, dtype, weak_type):
     val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     rep = repr(val)
-    self.assertStartsWith(rep, 'DeviceArray(')
+    if config.jax_array:
+      msg = 'Array('
+    else:
+      msg = 'DeviceArray('
+    self.assertStartsWith(rep, msg)
     if weak_type:
       self.assertEndsWith(rep, f"dtype={val.dtype.name}, weak_type=True)")
     else:

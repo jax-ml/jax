@@ -12,6 +12,7 @@ dist/
 .mypy_cache/
 .pytype/
 docs/build
+*_pb2.py
 docs/notebooks/.ipynb_checkpoints/
 docs/_autosummary
 .idea

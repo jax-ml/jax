@@ -111,14 +111,13 @@ def matrix_power(a, n):
 @jit
 def matrix_rank(M, tol=None):
   M, = _promote_dtypes_inexact(jnp.asarray(M))
-  if M.ndim > 2:
-    raise TypeError("array should have 2 or fewer dimensions")
   if M.ndim < 2:
     return jnp.any(M != 0).astype(jnp.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
   if tol is None:
-    tol = S.max() * np.max(M.shape).astype(S.dtype) * jnp.finfo(S.dtype).eps
-  return jnp.sum(S > tol)
+    tol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
+  tol = jnp.expand_dims(tol, np.ndim(tol))
+  return jnp.sum(S > tol, axis=-1)
 
 
 @custom_jvp
@@ -469,6 +468,13 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
       # code has slightly different type promotion semantics, so we need a
       # special case too.
       return jnp.sum(jnp.abs(x), axis=axis, keepdims=keepdims)
+    elif isinstance(ord, str):
+      msg = f"Invalid order '{ord}' for vector norm."
+      if ord == "inf":
+        msg += "Use 'jax.numpy.inf' instead."
+      if ord == "-inf":
+        msg += "Use '-jax.numpy.inf' instead."
+      raise ValueError(msg)
     else:
       abs_x = jnp.abs(x)
       ord = lax_internal._const(abs_x, ord)

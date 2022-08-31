@@ -18,12 +18,13 @@ https://github.com/google/flax/tree/main/examples/sst2
 
 import functools
 from typing import Any, Callable, Optional
+from typing_extensions import TypeAlias
 
 from flax import linen as nn
 import jax
 from jax import numpy as jnp
 
-Array = jnp.ndarray
+Array: TypeAlias = jnp.ndarray
 
 
 def sequence_mask(lengths: Array, max_length: int) -> Array:

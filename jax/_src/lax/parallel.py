@@ -714,10 +714,21 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
   replica_groups = _replica_groups_mhlo(
       _replica_groups(ctx.module_context.axis_env, named_axes,
                       axis_index_groups))
-  def all_reduce(x_dtype, x):
+  axis_context = ctx.module_context.axis_context
+  is_manual = isinstance(axis_context, mlir.SPMDAxisContext)
+
+  def all_reduce(aval, x):
+    if is_manual:
+      channel = ctx.module_context.new_channel()
+      other_args = dict(
+          channel_handle=mhlo.ChannelHandle.get(
+              channel, mlir.DEVICE_TO_DEVICE_TYPE),
+          use_global_device_ids=ir.BoolAttr.get(True))
+    else:
+      other_args = {}
     op = mhlo.AllReduceOp(
-        x.type, x, replica_groups=replica_groups, channel_handle=None)
-    scalar_aval = core.ShapedArray((), x_dtype)
+        x.type, x, replica_groups=replica_groups, **other_args)
+    scalar_aval = core.ShapedArray((), aval.dtype)
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer_block):
@@ -729,7 +740,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
       mhlo.ReturnOp(util.flatten(out_nodes))
     return op.result
 
-  return [all_reduce(aval.dtype, x) for aval, x in zip(ctx.avals_in, args)]
+  return [all_reduce(aval, x) for aval, x in zip(ctx.avals_in, args)]
 
 
 def _psum_transpose_rule(cts, *args, axes, axis_index_groups):

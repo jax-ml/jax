@@ -121,10 +121,7 @@ def sparse_array_shape_handler(a):
   )
 
 def sparse_array_device_put_handler(a, device):
-  return (
-    xb.get_device_backend(device).buffer_from_pyval(a.data, device),
-    xb.get_device_backend(device).buffer_from_pyval(a.indices, device)
-  )
+  return (*dispatch.device_put(a.data, device), *dispatch.device_put(a.indices, device))
 
 core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval

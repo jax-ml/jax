@@ -446,7 +446,7 @@ class Lowered(Stage):
                      lowering: XlaLowering,
                      in_tree: tree_util.PyTreeDef,
                      in_avals,
-                     donate_argnums: Tuple[int],
+                     donate_argnums: Tuple[int, ...],
                      out_tree: tree_util.PyTreeDef,
                      no_kwargs: bool = False):
     """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.

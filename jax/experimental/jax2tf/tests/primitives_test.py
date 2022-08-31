@@ -102,7 +102,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses,
       include_jax_unimpl=False,
-      #one_containing="custom_linear_solve_"
+      #one_containing="scatter_modes_out_of_bounds_shape=float32[1,5]",
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
@@ -125,6 +125,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       if (config.jax2tf_default_experimental_native_lowering and
           "does not work with custom calls" in str(e)):
         logging.warning("Supressing error %s", e)
+      else:
+        raise e
 
   def test_primitive_coverage(self):
     """Fail if there are JAX primitives that are not implemented."""

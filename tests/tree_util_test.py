@@ -14,6 +14,7 @@
 
 import collections
 import functools
+import pickle
 import re
 import unittest
 
@@ -368,6 +369,13 @@ class TreeTest(jtu.JaxTestCase):
 
   def testTreeDefWithEmptyDictStringRepresentation(self):
     self.assertEqual(str(tree_util.tree_structure({})), "PyTreeDef({})")
+
+  @parameterized.parameters(*TREES)
+  @unittest.skipIf(pytree_version < 3, "Requires jaxlib 0.3.16")
+  def testPickleRoundTrip(self, tree):
+    treedef = tree_util.tree_structure(tree)
+    treedef_restored = pickle.loads(pickle.dumps(treedef))
+    self.assertEqual(treedef, treedef_restored)
 
 
 class RavelUtilTest(jtu.JaxTestCase):

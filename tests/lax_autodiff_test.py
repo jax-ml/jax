@@ -529,6 +529,26 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(rev, (np.array([[6., 5., 4.], [3., 2., 1.]]),), 2,
                 rtol={np.float32: 3e-3})
 
+  def testPowSecondDerivative(self):
+    # https://github.com/google/jax/issues/12033
+    x, y = 4.0, 0.0
+    expected = ((0.0, 1/x), (1/x, np.log(x) ** 2))
+
+    with self.subTest("jacfwd"):
+      result_fwd = jax.jacfwd(jax.jacfwd(lax.pow, (0, 1)), (0, 1))(x, y)
+      self.assertAllClose(result_fwd, expected)
+
+    with self.subTest("jacrev"):
+      result_rev = jax.jacrev(jax.jacrev(lax.pow, (0, 1)), (0, 1))(x, y)
+      self.assertAllClose(result_rev, expected)
+
+    with self.subTest("zero to the zero"):
+      result = jax.grad(lax.pow)(0.0, 0.0)
+      # TODO(jakevdp) special-case zero in a way that doesn't break other cases
+      # See https://github.com/google/jax/pull/12041#issuecomment-1222766191
+      # self.assertEqual(result, 0.0)
+      self.assertAllClose(result, np.nan)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}".format(
           jtu.format_shape_dtype_string(pred_shape, np.bool_),

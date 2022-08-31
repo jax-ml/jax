@@ -30,7 +30,7 @@ from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
 logging._warn_preinit_stderr = 0
 
-import jax._src.lib
+import jax._src.lib as lib
 from jax._src.config import flags, bool_env, int_env
 from jax._src import distributed
 from jax._src.lib import tpu_driver_client
@@ -50,6 +50,11 @@ traceback_util.register_exclusion(__file__)
 
 
 XlaBackend = xla_client._xla.Client
+
+use_sharded_buffer = xla_client._version >= 90
+# TODO(chky): Change ShardedBuffer to xla_client.ShardedBuffer when the minimum
+# jaxlib version is updated.
+ShardedBuffer = Any
 
 FLAGS = flags.FLAGS
 
@@ -76,6 +81,14 @@ flags.DEFINE_integer(
     'Optional profile version for XLA compilation. '
     'This is meaningful only when XLA is configured to '
     'support the remote compilation profile feature.')
+flags.DEFINE_string(
+    'jax_cuda_visible_devices', 'all',
+    'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
+    'comma-separate list of integer device IDs.')
+flags.DEFINE_string(
+    'jax_rocm_visible_devices', 'all',
+    'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
+    'comma-separate list of integer device IDs.')
 
 def get_compile_options(
     num_replicas: int,
@@ -140,8 +153,8 @@ def get_compile_options(
     compile_options.device_assignment = device_assignment
 
   debug_options = compile_options.executable_build_options.debug_options
-  if jax._src.lib.cuda_path is not None:
-    debug_options.xla_gpu_cuda_data_dir = jax._src.lib.cuda_path
+  if lib.cuda_path is not None:
+    debug_options.xla_gpu_cuda_data_dir = lib.cuda_path
 
   if FLAGS.jax_disable_most_optimizations:
 
@@ -149,7 +162,7 @@ def get_compile_options(
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
-  if jax._src.lib.xla_extension_version >= 68:
+  if lib.xla_extension_version >= 68:
     compile_options.profile_version = FLAGS.jax_xla_profile_version
   return compile_options
 
@@ -212,19 +225,28 @@ register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
 
 
-def make_gpu_client(platform_name=None):
+def make_gpu_client(*, platform_name, visible_devices_flag):
+  visible_devices = getattr(FLAGS, visible_devices_flag, "all")
+  # Pass allowed_devices unconditionally when jaxlib 0.3.15 is the minimum.
+  kwargs = {}
+  if visible_devices != "all":
+    kwargs["allowed_devices"] = {int(x) for x in visible_devices.split(",")}
   return xla_client.make_gpu_client(
     distributed_client=distributed.global_state.client,
     node_id=distributed.global_state.process_id,
-    platform_name=platform_name)
+    platform_name=platform_name,
+    **kwargs)
 
 if hasattr(xla_client, "make_gpu_client"):
   register_backend_factory(
-      'cuda', partial(make_gpu_client, platform_name='cuda'),
+      'cuda', partial(make_gpu_client, platform_name='cuda',
+      visible_devices_flag='jax_cuda_visible_devices'),
       priority=200)
   register_backend_factory(
-      'rocm', partial(make_gpu_client, platform_name='rocm'),
+      'rocm', partial(make_gpu_client, platform_name='rocm',
+      visible_devices_flag='jax_rocm_visible_devices'),
       priority=200)
+
 
 if hasattr(xla_client, "make_tpu_client"):
   register_backend_factory(

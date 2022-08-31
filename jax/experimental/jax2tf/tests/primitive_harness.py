@@ -58,7 +58,7 @@ from jax._src import test_util as jtu
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
-
+from jax._src import random as jax_random
 
 FLAGS = config.FLAGS
 
@@ -828,7 +828,7 @@ for prim in [lax.argmin_p, lax.argmax_p]:
   for index_dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned:
     _make_argminmax_harness(prim, "index_dtype", index_dtype=index_dtype)
 
-      # Some special cases, with equal elements and NaN
+  # Some special cases, with equal elements and NaN
   for name, operand in [
       ("nan_0", np.array([np.nan, np.nan, 2., -2., -np.nan, -np.nan], np.float32)),
       ("nan_1", np.array([np.nan, -np.nan, 2., -2.], np.float32)),
@@ -1238,38 +1238,41 @@ def _make_scatter_harness(name,
                           mode=lax.GatherScatterMode.FILL_OR_DROP,
                           dtype=np.float32,
                           dimension_numbers=((), (0,), (0,)),
-                          enable_xla=True):
+                          enable_and_disable_xla=False):
   dimension_numbers = lax.ScatterDimensionNumbers(*dimension_numbers)
-  define(
-      f_lax.__name__,
-      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}_mode={mode}_enablexla={enable_xla}"
-      .replace(" ", ""),
-      partial(
-          f_lax,
-          indices_are_sorted=indices_are_sorted,
-          unique_indices=unique_indices,
-          mode=mode), [
-              RandArg(shape, dtype),
-              StaticArg(scatter_indices),
-              RandArg(update_shape, dtype),
-              StaticArg(dimension_numbers)
-          ],
-      jax_unimplemented=[
-          Limitation(
-              "unimplemented",
-              dtypes=np.bool_,
-              enabled=(f_lax in [lax.scatter_add, lax.scatter_mul])),
-      ],
-      f_lax=f_lax,
-      shape=shape,
-      dtype=dtype,
-      scatter_indices=scatter_indices,
-      update_shape=update_shape,
-      dimension_numbers=dimension_numbers,
-      indices_are_sorted=indices_are_sorted,
-      unique_indices=unique_indices,
-      mode=mode,
-      enable_xla=enable_xla)
+  xla_options = [True, False] if enable_and_disable_xla else [True]
+
+  for enable_xla in xla_options:
+    define(
+        f_lax.__name__,
+        f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}_mode={mode}_enablexla={enable_xla}"
+        .replace(" ", ""),
+        partial(
+            f_lax,
+            indices_are_sorted=indices_are_sorted,
+            unique_indices=unique_indices,
+            mode=mode), [
+                RandArg(shape, dtype),
+                StaticArg(scatter_indices),
+                RandArg(update_shape, dtype),
+                StaticArg(dimension_numbers)
+            ],
+        jax_unimplemented=[
+            Limitation(
+                "unimplemented",
+                dtypes=np.bool_,
+                enabled=(f_lax in [lax.scatter_add, lax.scatter_mul])),
+        ],
+        f_lax=f_lax,
+        shape=shape,
+        dtype=dtype,
+        scatter_indices=scatter_indices,
+        update_shape=update_shape,
+        dimension_numbers=dimension_numbers,
+        indices_are_sorted=indices_are_sorted,
+        unique_indices=unique_indices,
+        mode=mode,
+        enable_xla=enable_xla)
 
 
 # Validate dtypes
@@ -1309,14 +1312,20 @@ _make_scatter_harness("indices_are_sorted", indices_are_sorted=True)
 
 # Validate different out-of-bounds modes
 for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
-             lax.GatherScatterMode.FILL_OR_DROP,
-             lax.GatherScatterMode.CLIP):
-  # Test with the indices in bounds
-  _make_scatter_harness("modes_in_bounds", mode=mode)
-  _make_scatter_harness("modes_out_of_bounds", mode=mode,
-                        shape=(5,),
-                        scatter_indices=np.array([[4], [77]]),
-                        update_shape=(2,))
+             lax.GatherScatterMode.FILL_OR_DROP):
+  for f_lax in [
+      lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min, lax.scatter
+  ]:
+    _make_scatter_harness("modes_in_bounds",
+                          f_lax=f_lax,
+                          mode=mode)
+    _make_scatter_harness("modes_out_of_bounds", mode=mode,
+                          shape=(1, 5),
+                          f_lax=f_lax,
+                          scatter_indices=np.array([10]),
+                          update_shape=(1,),
+                          dimension_numbers=((0,), (1,), (1,)),
+                          enable_and_disable_xla=True)
 
 # Validate no XLA scatters
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.boolean):
@@ -1324,54 +1333,64 @@ for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.bool
       lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min, lax.scatter
   ]:
     for shape, scatter_indices, update_shape, dimension_numbers in [
-        ((1,), (0,), (), ((), (0,), (0,))), # zero case
-        ((1, 1), (0,), (1,), ((0,), (0,), (0,))),
-        ((1, 1, 1), (0,), (1, 1), ((0, 1), (0,), (0,))),
-        ((1, 50, 3), (32,), (1, 3), ((0, 1), (1,), (1,))),
-        ((1, 2, 3), [1], (1, 3), ((0, 1), (1,), (1,))), # slice 2nd dim
-        ((1, 2, 3), [0], (2, 3), ((0, 1), (0,), (0,))), # slice 1st dim
-        ((1, 2, 3), [1, 2], (1,), ((0,), (1, 2), (1, 2))), # 2nd and 3rd
-        ((4, 2, 3), [3, 2], (2,), ((0,), (0, 2), (0, 2))), # 1st and 3rd
-        ((4, 2, 3, 5), [0, 4], (4, 3), ((0, 1), (1, 3), (1, 3))), # 2nd and 4th
-        ((5, 6, 7), [[0, 1],[2, 3]], (2, 7), ((1,), (0, 1), (0, 1))), # .at[((3,4),(5,5))] shapes
-        ((5, 6, 7), [[[0],[1]],[[2],[3]]], (5, 2, 2, 7), ((0, 3), (1,), (1,))), # .at[:, ((3,4),(5,5))] shapes
-        ((5, 6, 7), [[[0, 1],[2, 3]],[[4, 0],[1, 2]]], (5,2,2), ((0,), (1, 2), (1, 2))), # .at[:, ((3,4),(5,5)), 3] shapes
+        ((1,), [0], (), ((), (0,), (0,))),  # zero case
+        ((1, 1), [0], (1,), ((0,), (0,), (0,))),
+        ((1, 1, 1), [0], (1, 1), ((0, 1), (0,), (0,))),
+        ((1, 50, 3), [32], (1, 3), ((0, 1), (1,), (1,))),
+        ((1, 2, 3), [1], (1, 3), ((0, 1), (1,), (1,))),  # slice 2nd dim
+        ((1, 2, 3), [0], (2, 3), ((0, 1), (0,), (0,))),  # slice 1st dim
+        ((1, 2, 3), [1, 2], (1,), ((0,), (1, 2), (1, 2))),  # 2nd and 3rd
+        ((4, 2, 3), [3, 2], (2,), ((0,), (0, 2), (0, 2))),  # 1st and 3rd
+        ((4, 2, 3, 5), [0, 4], (4, 3), ((0, 1), (1, 3), (1, 3))),  # 2nd and 4th
+        ((5, 6, 7), [[0, 1], [2, 3]], (2, 7),
+         ((1,), (0, 1), (0, 1))),  # .at[((3,4),(5,5))] shapes
+        ((5, 6, 7), [[[0], [1]], [[2], [3]]], (5, 2, 2, 7),
+         ((0, 3), (1,), (1,))),  # .at[:, ((3,4),(5,5))] shapes
+        ((5, 6, 7), [[[0, 1], [2, 3]], [[4, 0], [1, 2]]], (5, 2, 2),
+         ((0,), (1, 2), (1, 2))),  # .at[:, ((3,4),(5,5)), 3] shapes
+        ((1, 125), [0], (1,), ((0,), (1,), (1,))),
     ]:
-      _make_scatter_harness("no_xla_unique_indices",
-                          shape=shape,
-                          f_lax=f_lax,
-                          unique_indices=True,
-                          scatter_indices=np.array(scatter_indices),
-                          update_shape=update_shape,
-                          mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
-                          dtype=dtype,
-                          dimension_numbers=dimension_numbers,
-                          enable_xla=False,
-                          )
+      for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+                   lax.GatherScatterMode.FILL_OR_DROP):
+        _make_scatter_harness(
+            "no_xla_unique_indices",
+            shape=shape,
+            f_lax=f_lax,
+            unique_indices=True,
+            scatter_indices=np.array(scatter_indices),
+            update_shape=update_shape,
+            mode=mode,
+            dtype=dtype,
+            dimension_numbers=dimension_numbers,
+            enable_and_disable_xla=True)
 
-# Validate no XLA scatters with non-unique indices with an indexing depth of 1
+# Validate no XLA scatters with non-unique indices with an indexing depth of 1.
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex) - set(jtu.dtypes.boolean):
+  # Note that lax.scatter currently does not work here.
   for f_lax in [
       lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min
   ]:
     for shape, scatter_indices, update_shape, dimension_numbers in [
-        ((1,), [[0],[0]], (2,), ((), (0,), (0,))), # .at[((0,0),)]
-        ((3,), [[1],[0],[1]], (3,), ((), (0,), (0,))), # .at[((1,0,1),)]
-        ((2, 3), [[[2],[2],[2]]], (2, 1, 3), ((0,), (1,), (1,))), # 2nd dim, .at[:, ((2,2,2),)]
+        ((1,), [[0],[0]], (2,), ((), (0,), (0,))),  # .at[((0,0),)]
+        ((3,), [[1],[0],[1]], (3,), ((), (0,), (0,))),  # .at[((1,0,1),)]
+        ((2, 3), [[[2],[2],[2]]], (2, 1, 3), ((0,), (1,), (1,))),  # 2nd dim, .at[:, ((2,2,2),)]
         ((3, 5, 40), [[1],[1]], (3, 5, 2), ((0, 1), (2,), (2,))),
         ((3, 5, 4), [[1],[1]], (3, 2, 4), ((0, 2), (1,), (1,))),
     ]:
-      _make_scatter_harness("no_xla_non_unique_indices",
-                          shape=shape,
-                          f_lax=f_lax,
-                          unique_indices=False,
-                          scatter_indices=np.array(scatter_indices),
-                          update_shape=update_shape,
-                          mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS,
-                          dtype=dtype,
-                          dimension_numbers=dimension_numbers,
-                          enable_xla=False,
-                          )
+      for mode in (lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+                   lax.GatherScatterMode.FILL_OR_DROP):
+        _make_scatter_harness(
+            "no_xla_non_unique_indices",
+            shape=shape,
+            f_lax=f_lax,
+            unique_indices=False,
+            scatter_indices=np.array(scatter_indices),
+            update_shape=update_shape,
+            mode=mode,
+            dtype=dtype,
+            dimension_numbers=dimension_numbers,
+            enable_and_disable_xla=True)
+
 
 for dtype in jtu.dtypes.all:
   arg_shape = (2, 3)
@@ -2384,14 +2403,14 @@ for dtype in jtu.dtypes.all:
                            dtype=dtype)
     # Test the dimensions, but only for int32 (to keep the # of tests small)
     if dtype == np.int32:
-        _make_reduce_harness(name, nr_operands=nr_operands,
-                             computation=computation, init_value=init_value,
-                             dimensions=(1,),
-                             dtype=dtype)
-        _make_reduce_harness(name, nr_operands=nr_operands,
-                             computation=computation, init_value=init_value,
-                             dimensions=(0, 1),
-                             dtype=dtype)
+      _make_reduce_harness(name, nr_operands=nr_operands,
+                           computation=computation, init_value=init_value,
+                           dimensions=(1,),
+                           dtype=dtype)
+      _make_reduce_harness(name, nr_operands=nr_operands,
+                           computation=computation, init_value=init_value,
+                           dimensions=(0, 1),
+                           dtype=dtype)
 
 def _make_reduce_window_harness(name,
                                 *,
@@ -2404,10 +2423,9 @@ def _make_reduce_window_harness(name,
                                 window_strides=(1, 1),
                                 dtype=np.float32,
                                 padding=((0, 0), (0, 0)),
-                                requires_xla=True):
+                                requires_xla=False):
   prim_name = f"reduce_window_{computation.__name__}"
   limitations = []
-
   xla_opts = [True] if requires_xla else [True, False]
 
   for enable_xla in xla_opts:
@@ -2439,6 +2457,18 @@ def _make_reduce_window_harness(name,
         window_dilation=window_dilation,
         enable_xla=enable_xla)
 
+def requires_xla_for_reduce(name, dtype):
+  if name not in ["min", "max", "add"]:
+    return True
+  if name in ["min", "max"] and dtype in [
+      np.bool_, np.uint32, np.uint64, np.complex64, np.complex128
+  ]:
+    return True
+  if name == "min" and dtype in [np.uint8, np.uint16]:
+    return True
+  if name == "add" and dtype not in [np.float16, np.float32, np.float64]:
+    return True
+  return False
 
 # Validate dtypes across all execution paths
 # This first harness runs the tests for all dtypes using default values for
@@ -2446,42 +2476,53 @@ def _make_reduce_window_harness(name,
 # several execution paths. Variations of other parameters can thus safely
 # skip testing their corresponding default value.
 for dtype in jtu.dtypes.all:
-  for computation, init_value, requires_xla in [
-      (lax.min, _get_min_identity(dtype), True),  # path through reduce_window_min
-      (lax.max, _get_max_identity(dtype), False),  # path through TF reduce_window_max
-      (lax.max, 1, True),  # path through reduce_window
-      (lax.add, 0, False),  # path_through reduce_window_sum
-      (lax.add, 1, True),  # path through reduce_window
-      (lax.mul, 0, True),  # path through reduce_window
-      (lax.mul, 1, True),  # path through reduce_window
-      (lax.mul, 2, True),  # path through reduce_window
+  for computation, init_value in [
+      (lax.min, _get_min_identity(dtype)),  # path through reduce_window_min
+      (lax.max, _get_max_identity(dtype)),  # path through TF reduce_window_max
+      (lax.max, 1),  # path through reduce_window
+      (lax.add, 0),  # path_through reduce_window_sum
+      (lax.add, 1),  # path through reduce_window
+      (lax.mul, 0),  # path through reduce_window
+      (lax.mul, 1),  # path through reduce_window
+      (lax.mul, 2),  # path through reduce_window
   ]:
-    if dtype == np.bool_ and (computation in [lax.add, lax.mul]):
+    if dtype == np.bool_ and computation in [lax.add, lax.mul]:
       continue
     _make_reduce_window_harness(
-        "dtypes", dtype=dtype, computation=computation, init_value=init_value)
+        "dtypes",
+        dtype=dtype,
+        computation=computation,
+        init_value=init_value,
+        requires_xla=requires_xla_for_reduce(computation.__name__, dtype))
+
 # Validate window_dimensions
 _make_reduce_window_harness("window_dimensions", window_dimensions=(1, 1))
 # Validate window_strides
 _make_reduce_window_harness("window_strides", window_strides=(1, 2))
 # Validate padding
-_make_reduce_window_harness("padding", padding=((1, 2), (0, 3)))
+_make_reduce_window_harness("padding", padding=((1, 2), (0, 3)),
+                            requires_xla=True)
 # Validate base_dilation
-_make_reduce_window_harness("base_dilation", base_dilation=(1, 2))
+_make_reduce_window_harness("base_dilation", base_dilation=(1, 2),
+                            requires_xla=True)
 # Validate window_dilation
 _make_reduce_window_harness("window_dilation", window_dilation=(1, 2))
-# Validate squeezing behavior and dimensions in tf.nn.max_pool
-for shape, window_dimensions in [
-    ((2,), (2,)),  # 1 spatial dimension, left and right squeeze
-    ((2, 1), (2, 1)),  # 1 spatial dimension, left squeeze
-    ((1, 2), (1, 2)),  # 1 spatial dimension, right squeeze
-    ((1, 2, 1), (1, 2, 1)),  # 1 spatial dimension no squeeze
-    ((2, 4), (2, 2)),  # 2 spatial dimensions, left and right squeeze
-    ((2, 4, 3), (2, 2, 2)),  # 3 spatial dimensions, left and right squeeze
-    ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1))  # 3 spatial dimensions, no squeeze
+# Validate batch and channel dimensions behavior. lax.reduce_window accepts
+# inputs that either have or do not have batch and channel dimensions.
+# N=batch, DHW=spatial, C=channel.
+# Without XLA only supports 1D/2D reductions.
+for shape, window_dimensions, requires_xla in [
+    ((2,), (2,), False),  # W
+    ((2, 1), (2, 1), False),  # WC
+    ((1, 2), (1, 2), False),  # NW
+    ((1, 2, 1), (1, 2, 1), False),  # NWC
+    ((2, 4), (2, 2), False),  # HW
+    ((1, 2, 4, 1), (1, 2, 2, 1), False),  # NHWC
+    ((2, 4, 3), (2, 2, 2), True),  # DHW
+    ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1), True)  # NDHWC
 ]:
   _make_reduce_window_harness(
-      "squeeze_dim",
+      "batch_channel_dims",
       computation=lax.max,
       shape=shape,
       dtype=np.float32,
@@ -2490,17 +2531,42 @@ for shape, window_dimensions in [
       window_dilation=tuple([1] * len(shape)),
       padding=tuple([(0, 0)] * len(shape)),
       window_strides=tuple([1] * len(shape)),
-      window_dimensions=window_dimensions)
+      window_dimensions=window_dimensions,
+      requires_xla=requires_xla)
 
-# This corresponds to SAME padding.
+for computation, id_value in [(lax.max, _get_max_identity(np.float32)),
+                              (lax.min, _get_min_identity(np.float32)),
+                              (lax.add, 0.)]:
+  _make_reduce_window_harness(
+      "same_padding",
+      shape=(112, 112),
+      init_value=id_value,
+      computation=computation,
+      window_dimensions=(3, 3),
+      window_strides=(2, 2),
+      padding="SAME")
+
+# A few additional test cases for manual padding, which is applied when calling
+# reduce_window with lax.add, SAME padding and window_dimensions != (1, 1, ...).
+for window_dimensions, window_strides in [((2, 2), (1, 1)), ((3, 3), (2, 2)),
+                                          ((13, 13), (5, 6))]:
+  _make_reduce_window_harness(
+      "manual_padding",
+      shape=(12, 12),
+      init_value=0.,
+      computation=lax.add,
+      window_dimensions=window_dimensions,
+      window_strides=window_strides,
+      padding="SAME")
+
 _make_reduce_window_harness(
-    "same_padding",
-    shape=(112, 112),
-    init_value=-np.inf,
-    computation=lax.max,
-    window_dimensions=(3, 3),
-    window_strides=(2, 2),
-    padding=((0, 1), (0, 1)),
+    "init_value_1d",
+    shape=(1, 16000),
+    init_value=1.0,
+    computation=lax.min,
+    window_dimensions=[1, 401],
+    window_strides=[1, 160],
+    padding="VALID",
     requires_xla=False)
 
 def _make_reducer_harness(prim,
@@ -2538,7 +2604,7 @@ for dtype in (np.float32, np.float64):
     define(
         "random_gamma",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.jit(jax._src.random.gamma),
+        jax.jit(jax_random.gamma),
         [np.array([42, 43], dtype=np.uint32),
          RandArg(shape, dtype)],
         dtype=dtype)

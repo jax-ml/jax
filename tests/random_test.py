@@ -37,7 +37,9 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
-import jax._src.random
+
+from jax._src import random as jax_random
+from jax._src import prng as prng_internal
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -52,6 +54,11 @@ def _prng_key_as_array(key):
   # TODO(frostig): remove once we upgrade to always enable_custom_prng
   return key.unsafe_raw_array() if config.jax_enable_custom_prng else key
 
+def _maybe_unwrap(key):
+  # TODO(frostig): remove once we upgrade to always enable_custom_prng
+  unwrap = prng_internal.random_unwrap
+  return unwrap(key) if config.jax_enable_custom_prng else key
+
 
 PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
               ('rbg', prng.rbg_prng_impl),
@@ -61,7 +68,7 @@ PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
 class RandomValuesCase(NamedTuple):
   name: str
   prng_impl: str
-  shape: Tuple[int]
+  shape: Tuple[int, ...]
   dtype: Any
   params: dict
   expected: np.ndarray
@@ -226,22 +233,28 @@ class PrngTest(jtu.JaxTestCase):
 
   def testRngRandomBits(self):
     # Test specific outputs to ensure consistent random values between JAX versions.
+
+    # TODO(frostig): remove once we always enable_custom_prng
+    def random_bits(key, *args):
+      key, _ = jax_random._check_prng_key(key)
+      return jax_random._random_bits(key, *args)
+
     key = random.PRNGKey(1701)
 
-    bits8 = jax._src.random._random_bits(key, 8, (3,))
+    bits8 = random_bits(key, 8, (3,))
     expected8 = np.array([216, 115,  43], dtype=np.uint8)
     self.assertArraysEqual(bits8, expected8)
 
-    bits16 = jax._src.random._random_bits(key, 16, (3,))
+    bits16 = random_bits(key, 16, (3,))
     expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
     self.assertArraysEqual(bits16, expected16)
 
-    bits32 = jax._src.random._random_bits(key, 32, (3,))
+    bits32 = random_bits(key, 32, (3,))
     expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits32, expected32)
 
     with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
-      bits64 = jax._src.random._random_bits(key, 64, (3,))
+      bits64 = random_bits(key, 64, (3,))
     if config.x64_enabled:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
@@ -257,23 +270,28 @@ class PrngTest(jtu.JaxTestCase):
     # on every PRNG implementation. Instead of values, only checks
     # that shapes/dtypes are as expected.
 
+    # TODO(frostig): remove once we always enable_custom_prng
+    def random_bits(key, *args):
+      key, _ = jax_random._check_prng_key(key)
+      return jax_random._random_bits(key, *args)
+
     with jax.default_prng_impl(prng_name):
       key = random.PRNGKey(1701)
 
-      bits8 = jax._src.random._random_bits(key, 8, (3,))
+      bits8 = random_bits(key, 8, (3,))
       self.assertEqual(bits8.shape, (3,))
       self.assertEqual(bits8.dtype, np.dtype('uint8'))
 
-      bits16 = jax._src.random._random_bits(key, 16, (3,))
+      bits16 = random_bits(key, 16, (3,))
       self.assertEqual(bits16.shape, (3,))
       self.assertEqual(bits16.dtype, np.dtype('uint16'))
 
-      bits32 = jax._src.random._random_bits(key, 32, (3,))
+      bits32 = random_bits(key, 32, (3,))
       self.assertEqual(bits32.shape, (3,))
       self.assertEqual(bits32.dtype, np.dtype('uint32'))
 
       with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
-        bits64 = jax._src.random._random_bits(key, 64, (3,))
+        bits64 = random_bits(key, 64, (3,))
       expected_dtype = np.dtype('uint64' if config.x64_enabled else 'uint32')
       self.assertEqual(bits64.shape, (3,))
       self.assertEqual(bits64.dtype, expected_dtype)
@@ -281,11 +299,16 @@ class PrngTest(jtu.JaxTestCase):
   def testRngRandomBitsViewProperty(self):
     # TODO: add 64-bit if it ever supports this property.
     # TODO: will this property hold across endian-ness?
+
+    # TODO(frostig): remove once we always enable_custom_prng
+    def random_bits(key, *args):
+      key, _ = jax_random._check_prng_key(key)
+      return jax_random._random_bits(key, *args)
+
     N = 10
     key = random.PRNGKey(1701)
     nbits = [8, 16, 32]
-    rand_bits = [jax._src.random._random_bits(key, n, (N * 64 // n,))
-                 for n in nbits]
+    rand_bits = [random_bits(key, n, (N * 64 // n,)) for n in nbits]
     rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
     assert np.all(rand_bits_32 == rand_bits_32[0])
 
@@ -430,8 +453,7 @@ class PrngTest(jtu.JaxTestCase):
     key = random.PRNGKey(1701)
     self.assertEqual(key.shape, ())
     self.assertEqual(key[None].shape, (1,))
-    self.assertRaisesRegex(IndexError, 'Too many indices for PRNGKeyArray.*',
-                           lambda: key[0])
+    self.assertRaisesRegex(IndexError, 'Too many indices.*', lambda: key[0])
 
   def test_key_array_indexing_nd(self):
     if not config.jax_enable_custom_prng:
@@ -450,9 +472,9 @@ class PrngTest(jtu.JaxTestCase):
                       (1,) * 6)
     self.assertEqual(keys[..., 1:, None].shape, (2, 2, 1))
     self.assertEqual(keys[None, 0, ..., 1, None].shape, (1, 1))
-    self.assertRaisesRegex(IndexError, 'Too many indices for PRNGKeyArray.*',
+    self.assertRaisesRegex(IndexError, 'Too many indices.*',
                            lambda: keys[0, 1, 2])
-    self.assertRaisesRegex(IndexError, 'Too many indices for PRNGKeyArray.*',
+    self.assertRaisesRegex(IndexError, 'Too many indices.*',
                            lambda: keys[0, 1, None, 2])
 
 
@@ -639,7 +661,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis):
     # This is the function API that we test against (note that self.rng().choice differs)
     np_choice = np.random.default_rng(0).choice
-    p_dtype = dtypes._to_inexact_dtype(dtype)
+    p_dtype = dtypes.to_inexact_dtype(dtype)
 
     key = self.seed_prng(0)
     is_range = type(input_range_or_shape) is int
@@ -1405,18 +1427,18 @@ class LaxRandomTest(jtu.JaxTestCase):
       jax.eval_shape(f, 0)  # doesn't error
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_seed={seed}_type={type}", "seed": seed, "type": type}
-      for type in ["int", "np.array", "jnp.array"]
+      {"testcase_name": f"_seed={seed}_type={type_}", "seed": seed, "type_": type_}
+      for type_ in ["int", "np.array", "jnp.array"]
       for seed in [-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)]))
-  def test_prng_jit_invariance(self, seed, type):
-    if type == "int" and seed == (1 << 64) - 1:
+  def test_prng_jit_invariance(self, seed, type_):
+    if type_ == "int" and seed == (1 << 64) - 1:
       self.skipTest("Expected failure: Python int too large.")
     if not config.x64_enabled and seed > np.iinfo(np.int32).max:
       self.skipTest("Expected failure: Python int too large.")
-    type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
-    args_maker = lambda: [type(seed)]
-    make_prng = lambda seed: _prng_key_as_array(self.seed_prng(seed))
-    self._CompileAndCheck(make_prng, args_maker)
+    type_ = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type_]
+    args_maker = lambda: [type_(seed)]
+    f = lambda s: _maybe_unwrap(self.seed_prng(s))
+    self._CompileAndCheck(f, args_maker)
 
   def test_prng_errors(self):
     seed = np.iinfo(np.int64).max + 1
@@ -1426,10 +1448,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       jax.jit(self.seed_prng)(seed)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
-    key = _prng_key_as_array(self.seed_prng(1)).block_until_ready()
+    key = self.seed_prng(1).block_until_ready()
     with jtu.count_device_put() as count:
       jax.jit(random.split)(key)
-    self.assertEqual(count[0], 1)  # 1 for the argument device_put
+    if config.jax_array:
+      self.assertEqual(count[0], 0)
+    else:
+      self.assertEqual(count[0], 1)  # 1 for the argument device_put
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_dtype={dtype}", "dtype": dtype}
@@ -1468,10 +1493,171 @@ class LaxRandomTest(jtu.JaxTestCase):
     jax.jit(f).lower()
 
 
-threefry_seed = jax._src.prng.threefry_seed
-threefry_split = jax._src.prng.threefry_split
-threefry_random_bits = jax._src.prng.threefry_random_bits
-threefry_fold_in = jax._src.prng.threefry_fold_in
+class KeyArrayTest(jtu.JaxTestCase):
+  # Key arrays involve:
+  # * a Python key array type, backed by an underlying uint32 "base" array,
+  # * an abstract shaped array with key eltype,
+  # * primitives that return or operate on such shaped arrays,
+  # * compiler lowerings,
+  # * a device-side data representation...
+  # Test it all!
+  #
+  # A handful of these tests follow CustomElementTypesTest in
+  # lax_tests.py as an example. If you add a test here (e.g. testing
+  # lowering of an key-eltyped shaped array), consider whether it
+  # might also be a more general test of extended/custom eltypes. If
+  # so, add a corresponding test to to CustomElementTypesTest as well.
+
+  def make_keys(self, *shape, seed=None):
+    if seed is None:
+      seed = 28
+    seeds = seed + jnp.arange(np.prod(shape), dtype=jnp.uint32)
+    make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+    return jnp.reshape(jax.vmap(make_key)(seeds), shape)
+
+  def test_dtype_property(self):
+    k1, k2 = self.make_keys(), self.make_keys()
+    self.assertEqual(k1.dtype, k2.dtype)
+
+    k3, k4 = jax.random.split(k1, 2)
+    self.assertEqual(k1.dtype, k3.dtype)
+    self.assertEqual(k3.dtype, k4.dtype)
+
+    g = []
+    def f(k):
+      g.append(k.dtype)
+      return jax.random.split(k)
+    _ = jax.jit(f)(k1)
+    self.assertEqual(g[0], k1.dtype)
+    self.assertEqual(g[0], k2.dtype)
+
+
+  # -- prng primitives
+
+  def test_random_wrap_vmap(self):
+    f = partial(prng_internal.random_wrap, impl=prng.threefry_prng_impl)
+    base_arr = jnp.arange(6, dtype=jnp.uint32).reshape(3, 2)
+    keys = jax.vmap(f, in_axes=0)(base_arr)
+    self.assertIsInstance(keys, random.KeyArray)
+    self.assertEqual(keys.shape, (3,))
+    keys = jax.vmap(f, in_axes=1)(base_arr.T)
+    self.assertIsInstance(keys, random.KeyArray)
+    self.assertEqual(keys.shape, (3,))
+
+  def test_eval_shape_keys_in(self):
+    def f(key):
+      return prng_internal.random_bits(key, bit_width=32, shape=(5,))
+    out = jax.eval_shape(f, self.make_keys())
+    self.assertEqual(out.shape, (5,))
+    self.assertEqual(out.dtype, np.dtype('uint32'))
+
+    def f(key):
+      return prng_internal.random_bits(key, bit_width=16, shape=(5,))
+    out = jax.eval_shape(f, self.make_keys())
+    self.assertEqual(out.shape, (5,))
+    self.assertEqual(out.dtype, np.dtype('uint16'))
+
+  def test_eval_shape_keys_out(self):
+    def f(seed):
+      return self.make_keys(seed=seed)
+    out = jax.eval_shape(f, 28)
+    self.assertEqual(out.shape, ())
+    # TODO(frostig): check dtype too when available
+
+  def test_eval_shape_keys_in_out(self):
+    def f(key):
+      return jax.random.split(key)
+    out = jax.eval_shape(f, self.make_keys())
+    self.assertEqual(out.shape, (2,))
+    # TODO(frostig): check dtype too when available
+
+  def test_vmap(self):
+    ks = self.make_keys(3, 4, 5)
+    ys = jax.vmap(jax.jit(lambda k: k.T))(ks)
+    self.assertEqual(ys.shape, (3, 5, 4))
+
+  # -- dtype-polymorphic operation (esp. lowerings)
+
+  def test_scan_jaxpr(self):
+    ks = self.make_keys(3, 4, 5)
+    f = lambda ks: jax.lax.scan(lambda _, k: (None, k.T), None, ks)
+    jaxpr = jax.make_jaxpr(f)(ks).jaxpr
+    # { lambda ; a:key<fry>[3,4,5]. let
+    #     b:key<fry>[3,5,4] = scan[
+    #       jaxpr={ lambda ; c:key<fry>[4,5]. let
+    #           d:key<fry>[5,4] = transpose[permutation=(1, 0)] c
+    #         in (d,) }
+    #     ] a
+    #   in (b,) }
+    self.assertLen(jaxpr.invars, 1)
+    a, = jaxpr.invars
+    self.assertIsInstance(a.aval, core.ShapedArray)
+    self.assertEqual(a.aval.shape, (3, 4, 5))
+    self.assertIs(type(a.aval.dtype), prng_internal.KeyTy)
+    self.assertLen(jaxpr.eqns, 1)
+    e, = jaxpr.eqns
+    self.assertLen(e.outvars, 1)
+    b, = e.outvars
+    self.assertIsInstance(b.aval, core.ShapedArray)
+    self.assertEqual(b.aval.shape, (3, 5, 4))
+    self.assertIs(type(b.aval.dtype), prng_internal.KeyTy)
+
+  def test_scan_lowering(self):
+    ks = self.make_keys(3, 4)
+    f = lambda ks: jax.lax.scan(lambda _, k: (None, k.T), None, ks)
+    _, out = jax.jit(f)(ks)  # doesn't crash
+    self.assertIsInstance(out, random.KeyArray)
+    self.assertEqual(out.shape, (3, 4))
+
+  def test_slice(self):
+    ks = self.make_keys(3, 4)
+    ys = jax.jit(lambda x: lax.slice_in_dim(x, 1, 3))(ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (2, 4))
+
+  def test_dynamic_slice(self):
+    ks = self.make_keys(3, 4)
+    ys = jax.jit(lambda x, i: lax.dynamic_slice_in_dim(x, i, 2))(ks, 1)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (2, 4))
+
+  def test_transpose(self):
+    ks = self.make_keys(3, 4)
+    ys = jax.jit(lambda x: x.T)(ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (4, 3))
+
+  def test_gather(self):
+    ks = self.make_keys(3, 4)
+    ys = jax.jit(lambda x: x[1])(ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (4,))
+
+    ks = self.make_keys(3, 4, 5)
+
+    ys = jax.jit(lambda x: x[1])(ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (4, 5))
+
+    ys = jax.jit(lambda x: x[1, 2:4])(ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (2, 5))
+
+    ys = jax.jit(lambda x: x[1, 2:4, 3])(ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (2,))
+
+    ys = jax.jit(lambda x: x[:, 2:4, 3:4])(ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (3, 2, 1))
+
+  # TODO(frostig,mattjj): more polymorphic primitives tests
+
+
+threefry_seed = prng_internal.threefry_seed
+threefry_split = prng_internal.threefry_split
+threefry_random_bits = prng_internal.threefry_random_bits
+threefry_fold_in = prng_internal.threefry_fold_in
 
 def _double_threefry_seed(seed):
   int_t = seed.dtype.type if hasattr(seed, 'dtype') else type(seed)
@@ -1500,7 +1686,8 @@ double_threefry_prng_impl = prng.PRNGImpl(
     seed=_double_threefry_seed,
     split=_double_threefry_split,
     random_bits=_double_threefry_random_bits,
-    fold_in=_double_threefry_fold_in)
+    fold_in=_double_threefry_fold_in,
+    tag='fry2')
 
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
@@ -1514,9 +1701,40 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
     self.assertEqual(keys.shape, (10,))
 
   def test_vmap_fold_in_shape(self):
+    # broadcast with scalar
+    keys = random.split(self.seed_prng(73), 2)
+    msgs = jnp.arange(3)
+    out = vmap(lambda i: random.fold_in(keys[0], i))(msgs)
+    self.assertEqual(out.shape, (3,))
+    out = vmap(lambda k: random.fold_in(k, msgs[0]))(keys)
+    self.assertEqual(out.shape, (2,))
+    out = vmap(random.fold_in, in_axes=(None, 0))(keys[0], msgs)
+    self.assertEqual(out.shape, (3,))
+    out = vmap(random.fold_in, in_axes=(0, None))(keys, msgs[0])
+    self.assertEqual(out.shape, (2,))
+
+    # vmap all
+    msgs = jnp.arange(2)
+    out = vmap(random.fold_in)(keys, msgs)
+    self.assertEqual(out.shape, (2,))
+
+    # nested vmap
+    keys = random.split(self.seed_prng(73), 2 * 3).reshape((2, 3))
+    msgs = jnp.arange(2 * 3).reshape((2, 3))
+    out = vmap(vmap(random.fold_in), in_axes=(0, 1))(keys, msgs.T)
+    self.assertEqual(out.shape, (2, 3))
+    out = vmap(vmap(random.fold_in), in_axes=(1, 0))(keys, msgs.T)
+    self.assertEqual(out.shape, (3, 2))
+
+  def test_vmap_split_mapped_key(self):
     key = self.seed_prng(73)
-    keys = vmap(lambda i: random.fold_in(key, i))(jnp.arange(3))
-    self.assertEqual(keys.shape, (3,))
+    mapped_keys = random.split(key, num=3)
+    forloop_keys = [random.split(k) for k in mapped_keys]
+    vmapped_keys = vmap(random.split)(mapped_keys)
+    self.assertEqual(vmapped_keys.shape, (3, 2))
+    for fk, vk in zip(forloop_keys, vmapped_keys):
+      self.assertArraysEqual(fk.unsafe_raw_array(),
+                             vk.unsafe_raw_array())
 
   def test_cannot_add(self):
     key = self.seed_prng(73)
@@ -1528,24 +1746,27 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
           "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_prng_key(self):
     key = self.seed_prng(73)
-    jax.grad(lambda x: 1., allow_int=True)(key)  # does not crash
+    with self.assertRaisesRegex(TypeError, 'input element type key<fry2>'):
+      jax.grad(lambda x: 1., allow_int=True)(key)
 
-@skipIf(not config.jax_enable_custom_prng,
-        'custom PRNG tests require config.jax_enable_custom_prng')
+
+# TODO(frostig): remove `with_config` we always enable_custom_prng
+@jtu.with_config(jax_default_prng_impl='rbg')
 class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def seed_prng(self, seed):
     return random.rbg_key(seed)
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_split_shape(self):
     key = self.seed_prng(73)
     keys = random.split(key, 10)
     self.assertEqual(keys.shape, (10,))
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_vmap_fold_in_shape(self):
-    key = self.seed_prng(73)
-    keys = vmap(lambda i: random.fold_in(key, i))(jnp.arange(3))
-    self.assertEqual(keys.shape, (3,))
+    LaxRandomWithCustomPRNGTest.test_vmap_fold_in_shape(self)
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_vmap_split_not_mapped_key(self):
     key = self.seed_prng(73)
     single_split_key = random.split(key)
@@ -1555,6 +1776,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
       self.assertArraysEqual(vk.unsafe_raw_array(),
                              single_split_key.unsafe_raw_array())
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_vmap_split_mapped_key(self):
     key = self.seed_prng(73)
     mapped_keys = random.split(key, num=3)
@@ -1574,6 +1796,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     self.assertEqual(rand_nums.shape, (3,))
     self.assertArraysEqual(rand_nums, jnp.array(forloop_rand_nums))
 
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_cannot_add(self):
     key = self.seed_prng(73)
     self.assertRaisesRegex(
@@ -1582,9 +1805,11 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
 
   @skipIf(np.__version__ == "1.21.0",
           "https://github.com/numpy/numpy/issues/19305")
+  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_grad_of_prng_key(self):
     key = self.seed_prng(73)
-    jax.grad(lambda x: 1., allow_int=True)(key)  # does not crash
+    with self.assertRaisesRegex(TypeError, 'input element type key<.?rbg>'):
+      jax.grad(lambda x: 1., allow_int=True)(key)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
     return  # this test doesn't apply to the RBG PRNG
@@ -1593,16 +1818,19 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     # TODO(mattjj): enable this test if/when RngBitGenerator supports it
     raise SkipTest('8-bit types not supported with RBG PRNG')
 
+
+# TODO(frostig): remove `with_config` we always enable_custom_prng
+@jtu.with_config(jax_default_prng_impl='unsafe_rbg')
 class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
   def seed_prng(self, seed):
-    return prng.seed_with_impl(prng.unsafe_rbg_prng_impl, seed)
+    return random.unsafe_rbg_key(seed)
 
 def like(keys):
   return jnp.ones(keys.shape)
 
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
-class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
+class JnpWithKeyArrayTest(jtu.JaxTestCase):
   def test_reshape(self):
     key = random.PRNGKey(123)
     keys = random.split(key, 4)
@@ -1619,10 +1847,14 @@ class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (3,))
 
   def test_concatenate(self):
+    self.skipTest('jnp.concatenate on key arrays') # TODO(frostig)
     key = random.PRNGKey(123)
     keys = random.split(key, 2)
-    out = jnp.concatenate([keys, keys, keys], axis=0)
     ref = jnp.concatenate([like(keys)] * 3, axis=0)
+    out = jnp.concatenate([keys, keys, keys], axis=0)
+    self.assertEqual(out.shape, ref.shape)
+    self.assertEqual(out.shape, (6,))
+    out = jax.jit(lambda xs: jnp.concatenate(xs, axis=0))([keys, keys, keys])
     self.assertEqual(out.shape, ref.shape)
     self.assertEqual(out.shape, (6,))
 
@@ -1654,15 +1886,19 @@ class JnpWithPRNGKeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (3,))
 
   def test_append(self):
+    self.skipTest('jnp.append on key arrays') # TODO(frostig)
     key = random.PRNGKey(123)
     out = jnp.append(key,       key)
     ref = jnp.append(like(key), like(key))
     self.assertEqual(out.shape, ref.shape)
     self.assertEqual(out.shape, (2,))
-    out_ = jnp.append(out,       out)
-    ref_ = jnp.append(like(out), like(out))
-    self.assertEqual(out_.shape, ref_.shape)
-    self.assertEqual(out_.shape, (4,))
+    out1 = jnp.append(out,       out)
+    ref1 = jnp.append(like(out), like(out))
+    self.assertEqual(out1.shape, ref1.shape)
+    self.assertEqual(out1.shape, (4,))
+    out2 = jax.jit(jnp.append)(key, key)
+    self.assertEqual(out2.shape, ref.shape)
+    self.assertEqual(out2.shape, (6,))
 
   def test_ravel(self):
     key = random.PRNGKey(123)

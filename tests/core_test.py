@@ -39,6 +39,7 @@ from jax._src import util
 from jax._src import test_util as jtu
 from jax._src.abstract_arrays import make_shaped_array
 from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow as lax_control_flow
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -396,9 +397,9 @@ class JaxprTypeChecks(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    jax._src.lax.control_flow._initial_style_open_jaxpr.cache_clear()
-    jax._src.lax.control_flow._initial_style_jaxpr.cache_clear()
-    jax._src.lax.control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
+    lax_control_flow._initial_style_open_jaxpr.cache_clear()
+    lax_control_flow._initial_style_jaxpr.cache_clear()
+    lax_control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
 
   def test_check_jaxpr_correct(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr

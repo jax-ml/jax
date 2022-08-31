@@ -21,6 +21,7 @@ from absl.testing import absltest
 import jax
 import jax.numpy as jnp
 from jax import lax
+from jax.experimental import array
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge
 
@@ -60,15 +61,27 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
   def assert_committed_to_device(self, data, device):
     """Asserts that the data is committed to the device."""
-    self.assertIsNotNone(data._device)
-    self.assertEqual(data.device_buffer.device(), device)
+    if config.jax_array:
+      self.assertTrue(data._committed)
+      self.assertEqual(data.device(), device)
+    else:
+      self.assertIsNotNone(data._device)
+      self.assertEqual(data.device_buffer.device(), device)
 
   def assert_uncommitted_to_device(self, data, device):
     """Asserts that the data is on the device but not committed to it."""
-    self.assertIsNone(data._device)
-    self.assertEqual(data.device_buffer.device(), device)
+    if config.jax_array:
+      self.assertFalse(data._committed)
+      self.assertEqual(data.device(), device)
+    else:
+      self.assertIsNone(data._device)
+      self.assertEqual(data.device_buffer.device(), device)
 
   def test_computation_follows_data(self):
+    # TODO(https://github.com/google/jax/issues/12016): Figure out why this test
+    # does not work with Array.
+    if config.jax_array:
+      self.skipTest("Does not work with Array. Needs more investigation.")
     if jax.device_count() < 5:
       self.skipTest("test requires 5 devices")
     devices = self.get_devices()
@@ -183,7 +196,10 @@ class MultiDeviceTest(jtu.JaxTestCase):
     devices = self.get_devices()
 
     def f(): return lax.add(3., 4.)
-    self.assertIsInstance(f(), jnp.DeviceArray)
+    if config.jax_array:
+      self.assertIsInstance(f(), array.Array)
+    else:
+      self.assertIsInstance(f(), jnp.DeviceArray)
     self.assert_uncommitted_to_device(f(), devices[0])
     self.assert_uncommitted_to_device(jax.jit(f)(), devices[0])
     self.assert_committed_to_device(jax.jit(f, device=devices[1])(),
@@ -207,6 +223,33 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assert_uncommitted_to_device(z, devices[0])
     y = jax.device_put(1, devices[2]) + jnp.ones((2, 3))
     self.assert_committed_to_device(y, devices[2])
+
+  def test_single_input_committed_multi_output(self):
+    if jax.device_count() < 3:
+      self.skipTest("Test requires 3 devices")
+    devices = self.get_devices()
+
+    @jax.jit
+    def f(a, b, c, d, e):
+      return a, b, c, d, e
+
+    outs = f(jax.device_put(1, devices[2]), jnp.array(2), jnp.array(3),
+             jnp.array(4), jnp.array(5))
+    for o in outs:
+      self.assert_committed_to_device(o, devices[2])
+
+  def test_different_devices_input_error(self):
+    if jax.device_count() < 2:
+      self.skipTest("Test requires 2 devices")
+    devices = self.get_devices()
+
+    a = jax.device_put(1, devices[0])
+    b = jax.device_put(2, devices[1])
+
+    # Don't look for the message because the Array and non-Array path raise
+    # slightly different error messages.
+    with self.assertRaises(ValueError):
+      _ = a + b
 
   def test_transpose(self):
     if jax.device_count() < 3:

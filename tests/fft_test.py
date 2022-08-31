@@ -30,11 +30,7 @@ from jax._src.numpy.util import _promote_dtypes_complex
 from jax.config import config
 config.parse_flags_with_absl()
 
-numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
-if numpy_version < (1, 20):
-  FFT_NORMS = [None, "ortho"]
-else:
-  FFT_NORMS = [None, "ortho", "forward", "backward"]
+FFT_NORMS = [None, "ortho", "forward", "backward"]
 
 
 float_dtypes = jtu.dtypes.floating
@@ -108,12 +104,37 @@ class FftTest(jtu.JaxTestCase):
     x = rng((10,), np.complex64)
     self.assertAllClose(np.fft.fft(x).astype(np.complex64),
                         lax.fft(x, "FFT", fft_lengths=(10,)))
+    self.assertAllClose(np.fft.fft(x).astype(np.complex64),
+                        lax.fft(x, "fft", fft_lengths=(10,)))
+
+  def testLaxFftErrors(self):
+    with self.assertRaises(
+      ValueError,
+      msg="FFT input shape (14, 15) must have at least as many input "
+          "dimensions as fft_lengths (4, 5, 6)"):
+      lax.fft(np.ones((14, 15)), fft_type="fft", fft_lengths=(4, 5, 6))
+    with self.assertRaises(
+      ValueError,
+      msg="FFT input shape (14, 15) minor dimensions must be equal to "
+          "fft_lengths (17,)"):
+      lax.fft(np.ones((14, 15)), fft_type="fft", fft_lengths=(17,))
+    with self.assertRaises(
+      ValueError,
+      msg="RFFT input shape (14, 15) minor dimensions must be equal to "
+          "fft_lengths (14, 15,)"):
+      lax.fft(np.ones((2, 14, 15)), fft_type="rfft", fft_lengths=(14, 12))
+    with self.assertRaises(
+      ValueError,
+      msg="IRFFT input shape (14, 15) minor dimensions must be equal to "
+          "all except the last fft_length, got fft_lengths=(14, 15,)"):
+      lax.fft(np.ones((2, 14, 15)), fft_type="irfft", fft_lengths=(13, 15))
 
   @parameterized.parameters((np.float32,), (np.float64,))
   def testLaxIrfftDoesNotMutateInputs(self, dtype):
     if dtype == np.float64 and not config.x64_enabled:
       raise self.skipTest("float64 requires jax_enable_x64=true")
-    x = (1 + 1j) * jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=dtypes._to_complex_dtype(dtype))
+    x = (1 + 1j) * jnp.array([[1.0, 2.0], [3.0, 4.0]],
+                             dtype=dtypes.to_complex_dtype(dtype))
     y = np.asarray(jnp.fft.irfft2(x))
     z = np.asarray(jnp.fft.irfft2(x))
     self.assertAllClose(y, z)

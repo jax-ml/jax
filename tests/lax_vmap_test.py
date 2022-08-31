@@ -665,7 +665,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     axes = range(ndims - fft_ndims, ndims)
     fft_lengths = tuple(shape[axis] for axis in axes)
     op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
-    self._CheckBatching(op, 5, bdims, [shape], [np.complex64], rng)
+    self._CheckBatching(op, 5, bdims, [shape], [np.complex64], rng,
+                        rtol=1e-5)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}_bdims={}"

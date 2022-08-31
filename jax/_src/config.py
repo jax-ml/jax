@@ -381,7 +381,8 @@ class Config:
       axis_env_state = context.axis_env_state
     return (axis_env_state, self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision, self.jax_dynamic_shapes,
-            self.jax_numpy_dtype_promotion, self.jax_default_device)
+            self.jax_numpy_dtype_promotion, self.jax_default_device,
+            self.jax_array)
 
 class NoDefault: pass
 no_default = NoDefault()
@@ -488,7 +489,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   `_update_thread_local_jit_state` in core.py to prevent circular imports.
   """
   dynamic_trace_state: Optional[Any] = None
-  axis_env_state: Optional[Hashable] = None
+  axis_env_state: Hashable = ()
   numpy_rank_promotion: Optional[str] = None
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
@@ -654,6 +655,7 @@ parallel_functions_output_gda = config.define_bool_state(
 jax_array = config.define_bool_state(
     name='jax_array',
     default=False,
+    upgrade=True,
     help=('If True, new pjit behavior will be enabled and `jax.Array` will be '
           'used.'))
 
@@ -875,13 +877,6 @@ config.define_bool_state(
     default=(lib.version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
-# TODO(mattjj): remove after May 19 2022, NeurIPS submission deadline
-config.define_bool_state(
-    name='after_neurips',
-    default=True,
-    upgrade=True,
-    help='Gate changes until after NeurIPS 2022 deadline.')
-
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(
     name='jax_coordination_service',
@@ -896,6 +891,13 @@ config.define_bool_state(
     name='jax_experimental_subjaxpr_lowering_cache',
     default=False,
     help='Enable using a cache for lowering subjaxprs.')
+
+# TODO(sharadmv,mattjj): set default to True, then remove
+config.define_bool_state(
+    name='jax_eager_pmap',
+    default=True,
+    upgrade=True,
+    help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:

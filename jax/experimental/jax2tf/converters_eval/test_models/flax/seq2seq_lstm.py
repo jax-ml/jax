@@ -127,7 +127,7 @@ class Decoder(nn.Module):
     teacher_force: See docstring on Seq2seq module.
     vocab_size: Size of the vocabulary.
   """
-  init_state: Tuple[Any]
+  init_state: Tuple[Any, ...]
   teacher_force: bool
   vocab_size: int
 

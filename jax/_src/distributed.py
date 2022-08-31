@@ -72,8 +72,10 @@ class State:
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
 
+    # Set init_timeout to 5 min to leave time for all the processes to connect
     self.client = xla_extension.get_distributed_runtime_client(
-        coordinator_address, process_id, config.jax_coordination_service)
+        coordinator_address, process_id, config.jax_coordination_service,
+        init_timeout=300)
     logging.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
@@ -87,6 +89,8 @@ class State:
     if self.service:
       self.service.shutdown()
       self.service = None
+    if self.preemption_sync_manager:
+      self.preemption_sync_manager = None
 
   def initialize_preemption_sync_manager(self):
     if self.preemption_sync_manager is not None:
@@ -102,45 +106,53 @@ global_state = State()
 def initialize(coordinator_address: Optional[str] = None,
                num_processes: Optional[int] = None,
                process_id: Optional[int] = None):
-  """Initialize distributed system for topology discovery.
+  """Initializes the JAX distributed system.
 
-  Currently, calling ``initialize`` sets up the multi-host GPU backend and Cloud
-  TPU backend.
+  Calling :func:`~jax.distributed.initialize` prepares JAX for execution on
+  multi-host GPU and Cloud TPU. :func:`~jax.distributed.initialize` must be
+  called before performing any JAX computations.
 
-  If you are on GPU platform, you will have to provide the coordinator_address
-  and other args to the `initialize` API.
+  The JAX distributed system serves a number of roles:
 
-  If you are on TPU platform, the coordinator_address and other args will be
-  auto detected but you have the option to provide it too.
+    * it allows JAX processes to discover each other and share topology information,
+    * it performs health checking, ensuring that all processes shut down if any process dies, and
+    * it is used for distributed checkpointing.
+
+  If you are using GPU, you must provide the ``coordinator_address``,
+  ``num_processes``, and ``process_id`` arguments to :func:`~jax.distributed.initialize`.
+
+  If you are using TPU, all arguments are optional: if omitted, they
+  will be chosen automatically from the Cloud TPU metadata.
 
   Args:
-    coordinator_address: IP address and port of the coordinator. The choice of
+    coordinator_address: the IP address of process `0` and a port on which that
+      process should launch a coordinator service. The choice of
       port does not matter, so long as the port is available on the coordinator
       and all processes agree on the port.
-      Can be None only for TPU platform. If coordinator_address is None on TPU,
-      then it will be auto detected.
-    num_processes: Number of processes. Can be None only for TPU platform and
-      if None will be determined from the TPU slice metadata.
-    process_id: Id of the current process. Can be None only for TPU platform and
-      if None will default to the current TPU worker id determined via the TPU
-      slice metadata.
+      May be ``None`` only on TPU, in which case it will be chosen automatically.
+    num_processes: Number of processes. May be ``None`` only on TPU, in
+      which case it will be chosen automatically based on the TPU slice.
+    process_id: The ID number of the current process. The ``process_id`` values across
+      the cluster must be a dense range ``0``, ``1``, ..., ``num_processes - 1``.
+      May be ``None`` only on TPU; if ``None`` it will be chosen from the TPU slice
+      metadata.
 
   Raises:
-    RuntimeError: If `distributed.initialize` is called more than once.
+    RuntimeError: If :func:`~jax.distributed.initialize` is called more than once.
 
   Example:
 
-  Suppose there are two GPU hosts, and host 0 is the designated coordinator
+  Suppose there are two GPU processs, and process 0 is the designated coordinator
   with address ``10.0.0.1:1234``. To initialize the GPU cluster, run the
   following commands before anything else.
 
-  On host 0:
+  On process 0:
 
-  >>> jax.distributed.initialize('10.0.0.1:1234', 2, 0)  # doctest: +SKIP
+  >>> jax.distributed.initialize(coordinator_address='10.0.0.1:1234', num_processes=2, process_id=0)  # doctest: +SKIP
 
-  On host 1:
+  On process 1:
 
-  >>> jax.distributed.initialize('10.0.0.1:1234', 2, 1)  # doctest: +SKIP
+  >>> jax.distributed.initialize(coordinator_address='10.0.0.1:1234', num_processes=2, process_id=1)  # doctest: +SKIP
   """
   global_state.initialize(coordinator_address, num_processes, process_id)
   atexit.register(shutdown)

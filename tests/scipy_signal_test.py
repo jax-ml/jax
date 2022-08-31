@@ -61,10 +61,10 @@ default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 _TPU_FFT_TOL = 0.15
 
 def _real_dtype(dtype):
-  return jnp.finfo(dtypes._to_inexact_dtype(dtype)).dtype
+  return jnp.finfo(dtypes.to_inexact_dtype(dtype)).dtype
 
 def _complex_dtype(dtype):
-  return dtypes._to_complex_dtype(dtype)
+  return dtypes.to_complex_dtype(dtype)
 
 
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
@@ -133,7 +133,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     kwds = dict(axis=axis, type=type, bp=bp)
 
     def osp_fun(x):
-      return osp_signal.detrend(x, **kwds).astype(dtypes._to_inexact_dtype(x.dtype))
+      return osp_signal.detrend(x, **kwds).astype(dtypes.to_inexact_dtype(x.dtype))
     jsp_fun = partial(jsp_signal.detrend, **kwds)
 
     if jtu.device_under_test() == 'tpu':
@@ -365,7 +365,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       kwargs['nperseg'] = nperseg
     else:
       kwargs['window'] = jnp.array(osp_signal.get_window('hann', nperseg),
-                                   dtype=dtypes._to_complex_dtype(dtype))
+                                   dtype=dtypes.to_complex_dtype(dtype))
     if use_noverlap:
       kwargs['noverlap'] = noverlap
 

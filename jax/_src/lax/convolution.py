@@ -19,6 +19,7 @@ from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from jax._src.lib import mlir_api_version
 from jax import core
 from jax._src import dtypes
 from jax._src.lax import lax
@@ -701,7 +702,7 @@ def _conv_general_dilated_lower(
     output_spatial_dimensions=list(out_spec[2:]))
   num_spatial_dims = len(rhs_spec) - 2
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
-  if jax._src.lib.mlir_api_version < 24:
+  if mlir_api_version < 24:
     op = mhlo.ConvOp
   else:
     op = mhlo.ConvolutionOp

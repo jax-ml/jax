@@ -160,7 +160,15 @@ def count_device_put():
 
   def device_put_and_count(*args, **kwargs):
     count[0] += 1
-    return device_put(*args, **kwargs)
+    # device_put handlers might call `dispatch.device_put` (e.g. on an
+    # underlying payload or several). We only want to count these
+    # recursive puts once, so we skip counting more than the outermost
+    # one in such a call stack.
+    dispatch.device_put = device_put
+    try:
+      return device_put(*args, **kwargs)
+    finally:
+      dispatch.device_put = device_put_and_count
 
   dispatch.device_put = device_put_and_count
   try:
@@ -884,6 +892,9 @@ class BufferDonationTestCase(JaxTestCase):
   def _assertDeleted(self, x, deleted):
     if hasattr(x, "device_buffer"):
       self.assertEqual(x.device_buffer.is_deleted(), deleted)
+    elif hasattr(x, "_arrays"):
+      for buffer in x._arrays:
+        self.assertEqual(buffer.is_deleted(), deleted)
     else:
       for buffer in x.device_buffers:
         self.assertEqual(buffer.is_deleted(), deleted)
@@ -908,7 +919,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   local_devices = list(api.local_devices())
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(local_devices[:size]).reshape(shape)
+  mesh_devices = np.array(local_devices[:size]).reshape(shape)  # type: ignore
   with Mesh(mesh_devices, axis_names):
     yield
 
