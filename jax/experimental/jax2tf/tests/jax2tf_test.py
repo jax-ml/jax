@@ -1336,11 +1336,12 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
           global_shape, global_mesh, mesh_axes,
           lambda idx: global_data[idx]), global_data
 
-    # Create GDA
     global_mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     mesh_axes = P(("x", "y"))
     params, _ = create_gda((8, 2), global_mesh, mesh_axes)
+    input_data = np.arange(16).reshape(2, 8)
 
+    # Test 1: use GDA as constants
     def jax_func(input_data):
       handle = pjit(
           jnp.matmul,
@@ -1353,11 +1354,28 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
           jax2tf.convert(jax_func, enable_xla=True),
           jit_compile=True,
       )
-      input_data = np.arange(16).reshape(2, 8)
       jax_out = jax_func(input_data=input_data)
       tf_out = tf_func(input_data=input_data)
       # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
       np.array_equal(jax_out._value, np.array(tf_out))
+
+    # Test 2: use GDA as JAX function input
+    def jax_func_2(input_data, params):
+      handle = pjit(
+          jnp.matmul,
+          in_axis_resources=(P("y", "x"), P(("x", "y"),)),
+          out_axis_resources=None)
+      return handle(input_data, params)
+
+    with global_mesh:
+      tf_func_2 = tf.function(
+          jax2tf.convert(jax_func_2, enable_xla=True),
+          jit_compile=True,
+      )
+      jax_out_2 = jax_func_2(input_data=input_data, params=params)
+      tf_out_2 = tf_func_2(input_data=input_data, params=params)
+      # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
+      np.array_equal(jax_out_2._value, np.array(tf_out_2))
 
 
 if __name__ == "__main__":
