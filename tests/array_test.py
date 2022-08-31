@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for GlobalDeviceArray."""
 
+import os
 from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
@@ -22,6 +23,7 @@ import jax.numpy as jnp
 from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_bridge as xb
 from jax._src.util import prod
 from jax.experimental import PartitionSpec as P
 from jax.experimental import sharding
@@ -29,6 +31,29 @@ from jax.experimental import array
 
 from jax.config import config
 config.parse_flags_with_absl()
+
+
+prev_xla_flags = None
+
+# Run all tests with 8 CPU devices.
+def setUpModule():
+  global prev_xla_flags
+  prev_xla_flags = os.getenv("XLA_FLAGS")
+  flags_str = prev_xla_flags or ""
+  # Don't override user-specified device count, or other XLA flags.
+  if "xla_force_host_platform_device_count" not in flags_str:
+    os.environ["XLA_FLAGS"] = (flags_str +
+                               " --xla_force_host_platform_device_count=8")
+  # Clear any cached backends so new CPU backend will pick up the env var.
+  xb.get_backend.cache_clear()
+
+# Reset to previous configuration in case other test modules will be run.
+def tearDownModule():
+  if prev_xla_flags is None:
+    del os.environ["XLA_FLAGS"]
+  else:
+    os.environ["XLA_FLAGS"] = prev_xla_flags
+  xb.get_backend.cache_clear()
 
 
 def create_array(shape, sharding, global_data=None):
@@ -233,7 +258,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     a, input_data = create_array(
         input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
     out = jnp.zeros_like(a)
-    expected = jnp.zeros(input_data.shape, dtype=np.int32)
+    expected = jnp.zeros(input_data.shape, dtype=np.int64)
     self.assertArraysEqual(out, expected)
     self.assertLen(out.addressable_shards, 8)
     for i in out.addressable_shards:
@@ -317,6 +342,21 @@ class JaxArrayTest(jtu.JaxTestCase):
         "Input buffers to `Array` must have matching dtypes. "
         "Got int32, expected float32"):
       array.Array(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+
+  @jax_config.jax_array(True)
+  def test_array_shards_committed(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >= 2 devices.')
+
+    x = jnp.array([1, 2, 3])
+    for s in x.addressable_shards:
+      self.assertEqual(s.data._committed, x._committed)
+      self.assertFalse(s.data._committed)
+
+    y = jax.device_put(x, jax.devices()[1])
+    for s in y.addressable_shards:
+      self.assertEqual(s.data._committed, y._committed)
+      self.assertTrue(s.data._committed)
 
 
 class ShardingTest(jtu.JaxTestCase):

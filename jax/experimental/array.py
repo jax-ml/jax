@@ -314,8 +314,8 @@ class Array:
       device = db.device()
       # Wrap the device arrays in `Array` until C++ returns an Array instead
       # of a DA.
-      array = Array(db.aval, SingleDeviceSharding(device), [db], committed=True,
-                    _skip_checks=True)
+      array = Array(db.aval, SingleDeviceSharding(device), [db],
+                    committed=self._committed, _skip_checks=True)
       out.append(Shard(device, self.sharding, self.shape, array))
     return out
 
@@ -389,8 +389,9 @@ setattr(Array, "__hash__", None)
 
 def make_array_from_callback(shape: Shape, sharding: Sharding,
                              data_callback: Callable[[Optional[Index]], ArrayLike]) -> Array:
+  device_to_index_map = sharding.devices_indices_map(shape)
   arrays = [
-      device_put(data_callback(sharding.device_indices(device, shape)), device)
+      device_put(data_callback(device_to_index_map[device]), device)
       for device in sharding.addressable_devices
   ]
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
