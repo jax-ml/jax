@@ -46,16 +46,19 @@ async def create_async_array_from_callback(
     data_callback: Callable[[array.Index], asyncio.Future],
 ):
   device_to_index_map = inp_sharding.devices_indices_map(global_shape)
+  addressable_da = inp_sharding._addressable_device_assignment
   future_arrays = [data_callback(device_to_index_map[d])  # type: ignore
-                   for d in inp_sharding._addressable_device_assignment]
+                   for d in addressable_da]
   # Pause here and come back to `from_async_callback()` when future_arrays are
   # ready. device_put cannot happen with future_arrays.
   local_arrays = await asyncio.gather(*future_arrays)
 
   dbs = [jax.device_put(array, device)
-         for array, device in zip(local_arrays, inp_sharding._addressable_device_assignment)]
+         for array, device in zip(local_arrays, addressable_da)]
   aval = jax.ShapedArray(global_shape, dbs[0].dtype)
-  return array.Array(aval, inp_sharding, dbs, committed=True)
+  return array.Array(
+      aval, inp_sharding, dbs, committed=True,
+      _fast_path_args=array._ArrayFastPathArgs(device_to_index_map, addressable_da))
 
 
 async def create_async_gda_from_callback(
