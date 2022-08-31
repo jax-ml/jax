@@ -247,6 +247,9 @@ def pjit(fun: Callable,
   [ 0.5  2.   4.   6.   8.  10.  12.  10. ]
   """
   _check_callable(fun)
+  if not config.jax_array:
+    raise ValueError('in_axis_resources and out_axis_resouces should not '
+                     'be the unspecified singleton value.')
 
   if not config.jax_array and (_is_unspecified(in_axis_resources) or
                                _is_unspecified(out_axis_resources)):
