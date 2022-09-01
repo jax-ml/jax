@@ -470,6 +470,17 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     dispatch.runtime_tokens.clear()
 
   @jtu.skip_on_devices(*disabled_backends)
+  def test_pure_callback_passes_ndarrays_without_jit(self):
+
+    def cb(x):
+      self.assertIs(type(x), np.ndarray)
+      return x
+
+    def f(x):
+      return jax.pure_callback(cb, x, x)
+    f(jnp.array(2.))
+
+  @jtu.skip_on_devices(*disabled_backends)
   def test_simple_pure_callback(self):
 
     @jax.jit
