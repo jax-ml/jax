@@ -227,7 +227,6 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
         order=2,
         rtol={jnp.float32: 6e-2, jnp.float64: 2e-3})
 
-  @jtu.skip_on_devices("rocm")  # rtol and atol needs to be adjusted for ROCm
   def test_custom_linear_solve_cholesky(self):
 
     def positive_definite_solve(a, b):

@@ -409,7 +409,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self.assertAllClose(actual, expected, rtol=1.1e-7, atol=3e-8)
 
-  @jtu.skip_on_devices("rocm")  # rtol and atol needs to be adjusted for ROCm
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmOrderZeroDegreeOne(self):
     """Tests the spherical harmonics of order one and degree zero."""
