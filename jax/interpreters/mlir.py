@@ -608,10 +608,13 @@ def lower_jaxpr_to_module(
     ]
   out_avals = jaxpr.out_avals
   if result_shardings is not None:
-    out_avals = [
-        sharded_aval(out_aval, out_sharding)
-        for out_aval, out_sharding in zip(out_avals, result_shardings)
-    ]
+    out_avals = []
+    for out_aval, out_sharding in zip(jaxpr.out_avals, result_shardings):
+      if (out_aval is not core.abstract_token and
+          core.is_opaque_dtype(out_aval.dtype)):
+        out_aval, = out_aval.dtype._rules.physical_avals(out_aval)
+      out_avals.append(sharded_aval(out_aval, out_sharding))
+
   platforms_with_donation = ("cuda", "rocm", "tpu")
   if platform in platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(

@@ -76,10 +76,11 @@ def tearDownModule():
   jtu.restore_spmd_lowering_flag()
 
 
-def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
+def create_gda(global_shape, global_mesh, mesh_axes, global_data=None,
+               dtype=np.float32):
   if global_data is None:
     global_data = np.arange(
-        prod(global_shape), dtype=np.float32).reshape(global_shape)
+        prod(global_shape), dtype=dtype).reshape(global_shape)
 
   if isinstance(mesh_axes, Sharding):
     mesh_axes = mesh_axes.spec
@@ -1419,6 +1420,26 @@ class GDAPjitTest(jtu.JaxTestCase):
       compiled = f.lower(jax.ShapedArray(global_input_shape, jnp.float32)).compile()
       compiled(g1)  # no error
 
+  @parallel_functions_output_gda(True)
+  def test_globally_sharded_key_array_8x4_multi_device(self):
+    input_shape = (8, 4)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    spec = P('x', 'y')
+
+    seeds, _ = create_gda(input_shape, mesh, spec, dtype=np.uint32)
+
+    with mesh:
+      @partial(pjit, in_axis_resources=spec, out_axis_resources=spec)
+      def make_keys(seeds):
+        make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+        return make_key(seeds)
+
+      out = make_keys(seeds)
+      self.assertIsInstance(out, jax.random.KeyArray)
+      self.assertEqual(out.shape, input_shape)
+      out.unsafe_raw_array()  # doesn't crash
+
+
 class AutoShardingPjitTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -1856,26 +1877,40 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, input_shape)
     out.unsafe_raw_array()  # doesn't crash
 
-  # TODO(yashkatariya,frostig): re-enable together with implementation in the
-  # global result handler in `jax._src.prng.KeyTy`
-  @unittest.skip('XLA output sharding support not yet implemented')
   @jax_array(True)
-  def test_globally_sharded_key_array_result_8x4_multi_device(self):
+  def test_globally_sharded_key_array_8x4_multi_device_with_out_sharding(self):
     input_shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     spec = P('x', 'y')
 
     seeds, _ = create_array(input_shape, mesh, spec, dtype=np.uint32)
 
-    # TODO(yashkatariya,frostig): also test pjit with axis resource annotations
+    @partial(pjit, out_axis_resources=MeshPspecSharding(mesh, P('x', 'y')))
+    def make_keys(seeds):
+      make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+      return make_key(seeds)
+
+    out = make_keys(seeds)
+    self.assertIsInstance(out, jax.random.KeyArray)
+    self.assertEqual(out.shape, input_shape)
+    out.unsafe_raw_array()  # doesn't crash
+
+  @jax_array(True)
+  def test_globally_sharded_key_array_8x4_multi_device(self):
+    input_shape = (8, 4)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    spec = P('x', 'y')
+
+    seeds, _ = create_array(input_shape, mesh, spec, dtype=np.uint32)
+
     @pjit
     def make_keys(seeds):
       make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
       return make_key(seeds)
 
-    # TODO(yashkatariya,frostig): also test shape, dype, maybe a reference
-    # value (from execution without pjit)
     out = make_keys(seeds)
+    self.assertIsInstance(out, jax.random.KeyArray)
+    self.assertEqual(out.shape, input_shape)
     out.unsafe_raw_array()  # doesn't crash
 
   def test_array_device_assignment_mismatch_out_shardings(self):

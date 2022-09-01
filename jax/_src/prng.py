@@ -288,6 +288,17 @@ class KeyTyRules:
     return mlir.aval_to_ir_types(phys_aval)
 
   @staticmethod
+  def physical_op_sharding(aval, sharding):
+    op_sharding = sharding._to_xla_op_sharding(aval.ndim)
+    key_shape = aval.dtype.impl.key_shape
+
+    new_op_sharding = op_sharding.clone()
+    tad = list(new_op_sharding.tile_assignment_dimensions)
+    tad.extend([1] * len(key_shape))
+    new_op_sharding.tile_assignment_dimensions = tad
+    return new_op_sharding
+
+  @staticmethod
   def result_handler(sticky_device, aval):
     def handler(_, buf):
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
@@ -338,7 +349,8 @@ class KeyTyRules:
     return handler
 
   @staticmethod
-  def global_sharded_result_handler(aval, out_sharding, committed):
+  def global_sharded_result_handler(aval, out_sharding, committed,
+                                    is_out_sharding_from_xla):
     phys_aval, = KeyTyRules.physical_avals(aval)
     key_shape = aval.dtype.impl.key_shape
 
@@ -355,20 +367,20 @@ class KeyTyRules:
     if isinstance(out_sharding, SingleDeviceSharding):
       phys_sharding = out_sharding
     elif isinstance(out_sharding, MeshPspecSharding):
-      # TODO(yashkatariya,frostig): not covered by tests until we write a test
-      # that uses pjit with axis resource annotations (using GDA, not Array)
       trailing_spec = [None] * len(key_shape)
       phys_sharding = MeshPspecSharding(
           out_sharding.mesh,
           pxla.PartitionSpec(*out_sharding.spec, *trailing_spec))
     else:
-      # TODO(yashkatariya,frostig): implement. Plan: accept an argument in
-      # this handler indicating whether the sharding came from XLA or not.
-      # Pass the sharding through if it's from XLA, otherwise maybe create
-      # a new op sharding with a trivially extended `tile_assignment_dimensions`
-      raise NotImplementedError
+      if is_out_sharding_from_xla:
+        phys_sharding = out_sharding
+      else:
+        phys_sharding = OpShardingSharding(
+            out_sharding._device_assignment,
+            KeyTyRules.physical_op_sharding(aval, out_sharding))
 
-    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed,
+                                      is_out_sharding_from_xla)
     def handler(bufs):
       return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs))
     return handler
@@ -492,9 +504,17 @@ def device_put_key_array(x: PRNGKeyArray, device):
 dispatch.device_put_handlers[PRNGKeyArray] = device_put_key_array
 
 def key_array_shard_arg_handler(x: PRNGKeyArray, devices, indices, mode):
+  # TODO(frostig): Remove the need for `core.get_aval`.
+  key_shape = core.get_aval(x).dtype.impl.key_shape
   arr = x.unsafe_raw_array()
-  return pxla.shard_arg_handlers[type(arr)](arr, devices, indices, mode)
+
+  # TODO(yashkatariya,frostig): This assumes that the last dimensions are not
+  # sharded. This is only true when enable_custom_prng is True.
+  trailing_inds = [slice(None)] * len(key_shape)
+  phys_indices = [(*inds, *trailing_inds) for inds in indices]
+  return pxla.shard_arg_handlers[type(arr)](arr, devices, phys_indices, mode)
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
+
 
 def key_array_constant_handler(x, canonicalize_dtypes):
   arr = x.unsafe_raw_array()

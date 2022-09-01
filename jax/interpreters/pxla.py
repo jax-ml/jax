@@ -249,7 +249,7 @@ def _op_sharding_to_numpy_indices(
       axis_indices.append([slice(None)])
     elif n_shards > 1:
       shard_size, ragged = divmod(dim, n_shards)
-      assert not ragged, (dim, n_shards, dim)
+      assert not ragged, (dim, n_shards)
       axis_indices.append([slice(i * shard_size, (i + 1) * shard_size)
                            for i in range(n_shards)])
     else:
@@ -589,7 +589,8 @@ local_result_handlers[(ConcreteArray, OutputType.ShardedDeviceArray)] = sda_arra
 
 
 def global_aval_to_result_handler(
-    aval: core.AbstractValue, out_sharding, committed: bool
+    aval: core.AbstractValue, out_sharding, committed: bool,
+    is_out_sharding_from_xla: bool
 ) -> Callable[[List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
@@ -599,6 +600,8 @@ def global_aval_to_result_handler(
       Used for creating GSDAs.
     global_mesh: The global device mesh that generated this output. Used
       for creating GSDAs.
+    is_out_sharding_from_xla: True, if the out_sharding comes from XLA i.e.
+      the sharding is extracted from the HLO.
 
   Returns:
     A function for handling the Buffers that will eventually be produced
@@ -611,7 +614,7 @@ def global_aval_to_result_handler(
     output_type = OutputType.GlobalDeviceArray
   try:
     return global_result_handlers[(type(aval), output_type)](
-        aval, out_sharding, committed)
+        aval, out_sharding, committed, is_out_sharding_from_xla)
   except KeyError as err:
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
@@ -1846,13 +1849,15 @@ def local_avals_to_results_handler(
 def global_avals_to_results_handler(
     global_out_avals: Sequence[ShapedArray],
     shardings: Sequence[XLACompatibleSharding],
-    committed: bool) -> ResultsHandler:
+    committed: bool,
+    are_out_shardings_from_xla: Sequence[bool]) -> ResultsHandler:
   from jax.experimental.sharding import MeshPspecSharding
 
   if config.jax_parallel_functions_output_gda or config.jax_array:
     handlers = [
-        global_aval_to_result_handler(global_aval, s, committed)
-        for global_aval, s in safe_zip(global_out_avals, shardings)
+        global_aval_to_result_handler(global_aval, s, committed, x)
+        for global_aval, s, x in safe_zip(global_out_avals, shardings,
+                                          are_out_shardings_from_xla)
     ]
     return ResultsHandler(handlers, shardings, global_out_avals)
   else:
@@ -2689,7 +2694,7 @@ def lower_sharding_computation(
   # 1. Trace to jaxpr and preprocess/verify it
   with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
                                  "in {elapsed_time} sec"):
-    jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(
+    jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
         fun, global_in_avals, debug_info=pe.debug_info_final(fun, api_name))
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -2700,12 +2705,10 @@ def lower_sharding_computation(
               global_in_avals, in_shardings)
 
   if _is_unspecified(out_shardings):
-    out_shardings = (_UNSPECIFIED,) * len(out_jaxpr_avals)
+    out_shardings = (_UNSPECIFIED,) * len(global_out_avals)
 
   # mypy doesn't understand that out_sharding here is always a sequence.
-  assert len(out_shardings) == len(out_jaxpr_avals), (len(out_shardings), len(out_jaxpr_avals))  # type: ignore
-
-  global_out_avals = out_jaxpr_avals
+  assert len(out_shardings) == len(global_out_avals), (len(out_shardings), len(global_out_avals))  # type: ignore
 
   if keep_unused:
     kept_var_idx = set(range(len(global_in_avals)))
@@ -2738,16 +2741,25 @@ def lower_sharding_computation(
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
-    in_op_shardings = [
-        None if aval is core.abstract_token else i._to_xla_op_sharding(aval.ndim)
-        for aval, i in safe_zip(global_in_avals, in_shardings)
-    ]
+    in_op_shardings = []
+    for aval, i in safe_zip(global_in_avals, in_shardings):
+      if aval is core.abstract_token:
+        in_op_shardings.append(None)
+      elif core.is_opaque_dtype(aval.dtype):
+        in_op_shardings.append(aval.dtype._rules.physical_op_sharding(aval, i))
+      else:
+        in_op_shardings.append(i._to_xla_op_sharding(aval.ndim))
+
     # TODO(yashkatariya): Fix the HLO produced if out_partitions is
     # [None, OpShardingProto] has the sharding annotations.
-    out_op_shardings = [
-        None if _is_unspecified(o) or aval is core.abstract_token else o._to_xla_op_sharding(aval.ndim)
-        for aval, o in safe_zip(global_out_avals, out_shardings)
-    ]
+    out_op_shardings = []
+    for aval, o in safe_zip(global_out_avals, out_shardings):
+      if _is_unspecified(o) or aval is core.abstract_token:
+        out_op_shardings.append(None)
+      elif core.is_opaque_dtype(aval.dtype):
+        out_op_shardings.append(aval.dtype._rules.physical_op_sharding(aval, o))
+      else:
+        out_op_shardings.append(o._to_xla_op_sharding(aval.ndim))
     replicated_args = [False] * len(global_in_avals)
     axis_ctx = mlir.ShardingContext(first_sharding)
   else:
@@ -2899,16 +2911,25 @@ def lower_mesh_computation(
   out_partitions: Optional[List[Optional[xc.OpSharding]]]
   axis_ctx: mlir.AxisContext
   if spmd_lowering:
-    in_partitions = [
-        None if _is_auto(i) else i._to_xla_op_sharding(aval.ndim)
-        for aval, i in safe_zip(global_in_avals, in_shardings)
-    ]
+    in_partitions = []
+    for aval, i in safe_zip(global_in_avals, in_shardings):
+      if _is_auto(i):
+        in_partitions.append(None)
+      elif core.is_opaque_dtype(aval.dtype):
+        in_partitions.append(aval.dtype._rules.physical_op_sharding(aval, i))
+      else:
+        in_partitions.append(i._to_xla_op_sharding(aval.ndim))
+
     # TODO(yashkatariya): Fix the HLO produced if out_partitions is
     # [None, OpShardingProto] has the sharding annotations.
-    out_partitions = [
-        None if _is_auto(o) or _is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
-        for aval, o in safe_zip(global_out_avals, out_shardings)
-    ]
+    out_partitions = []
+    for aval, o in safe_zip(global_out_avals, out_shardings):
+      if _is_auto(o) or _is_unspecified(o):
+        out_partitions.append(None)
+      elif core.is_opaque_dtype(aval.dtype):
+        out_partitions.append(aval.dtype._rules.physical_op_sharding(aval, o))
+      else:
+        out_partitions.append(o._to_xla_op_sharding(aval.ndim))
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = mlir.SPMDAxisContext(mesh)
   else:
@@ -3158,8 +3179,9 @@ class MeshExecutable(stages.XlaExecutable):
       assert not auto_spmd_lowering
       in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore
+      are_out_shardings_from_xla = [False] * len(global_out_avals)
       handle_outs = global_avals_to_results_handler(
-          global_out_avals, out_shardings, committed)  # type: ignore  # arg-type
+          global_out_avals, out_shardings, committed, are_out_shardings_from_xla)  # type: ignore  # arg-type
       unsafe_call = backend.compile_replicated(computation, compile_options,
                                                host_callbacks, input_avals,
                                                input_indices, in_shardings,
@@ -3174,22 +3196,34 @@ class MeshExecutable(stages.XlaExecutable):
 
       if auto_spmd_lowering:
         assert mesh is not None
-        in_shardings, out_shardings = _get_mesh_pspec_shardings_from_executable(
+        in_shardings_xla, out_shardings_xla = _get_mesh_pspec_shardings_from_executable(
             xla_executable, mesh)
+        in_shardings = [x if _is_auto(i) else i
+                        for x, i in safe_zip(in_shardings_xla, in_shardings)]
+        out_shardings_tuple = [
+            (x, True) if _is_auto(o) else (o, False)
+            for x, o in safe_zip(out_shardings_xla, out_shardings)
+        ]
+        out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
       elif out_shardings and any(_is_unspecified(o) for o in out_shardings):
         assert mesh is None
         _, out_shardings_xla = _get_op_sharding_shardings_from_executable(
             xla_executable, device_assignment,
             len(global_in_avals), len(global_out_avals))
-        out_shardings = [x if _is_unspecified(o) else o
-                        for x, o in safe_zip(out_shardings_xla, out_shardings)]
+        out_shardings_tuple = [
+            (x, True) if _is_unspecified(o) else (o, False)
+            for x, o in safe_zip(out_shardings_xla, out_shardings)
+        ]
+        out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
+      else:
+        are_out_shardings_from_xla = [False] * len(global_out_avals)
 
       in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore
-      handle_outs = global_avals_to_results_handler(
-          global_out_avals, out_shardings, committed)  # type: ignore  # arg-type
       handle_args = InputsHandler(xla_executable.local_devices(), in_shardings,
                                   input_indices, InputsHandlerMode.pjit_or_xmap)
+      handle_outs = global_avals_to_results_handler(
+          global_out_avals, out_shardings, committed, are_out_shardings_from_xla)  # type: ignore  # arg-type
 
       # This path is taken for `jit(pmap)` cases. Nothing else should flow
       # through this path. This is exactly same to what happens in `jit`.

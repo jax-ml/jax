@@ -3019,9 +3019,17 @@ class FooTyRules:
   # handlers
 
   @staticmethod
+  def physical_avals(aval):
+    return [core.ShapedArray((*aval.shape, 2), jnp.dtype('uint32'))]
+
+  @staticmethod
   def aval_to_ir_types(aval):
-    aval2 = core.ShapedArray((*aval.shape, 2), jnp.dtype('uint32'))
+    aval2, = FooTyRules.physical_avals(aval)
     return mlir.aval_to_ir_types(aval2)
+
+  @staticmethod
+  def physical_op_sharding(aval, sharding):
+    return sharding._to_xla_op_sharding(aval.ndim)
 
   @staticmethod
   def result_handler(sticky_device, aval):
@@ -3031,7 +3039,8 @@ class FooTyRules:
     return handler
 
   @staticmethod
-  def global_sharded_result_handler(aval, out_sharding, committed):
+  def global_sharded_result_handler(aval, out_sharding, committed,
+                                    is_out_sharding_from_xla):
     def handler(bufs):
       buf, = bufs
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)

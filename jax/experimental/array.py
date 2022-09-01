@@ -486,12 +486,13 @@ def _array_shard_arg(x, devices, indices, mode):
 pxla.shard_arg_handlers[Array] = _array_shard_arg
 
 
-def _array_global_result_handler(global_aval, out_sharding, committed):
+def _array_global_result_handler(global_aval, out_sharding, committed,
+                                 is_out_sharding_from_xla):
   if global_aval.dtype == dtypes.float0:
     return lambda _: np.zeros(global_aval.shape, dtypes.float0)  # type: ignore
   if core.is_opaque_dtype(global_aval.dtype):
     return global_aval.dtype._rules.global_sharded_result_handler(
-        global_aval, out_sharding, committed)
+        global_aval, out_sharding, committed, is_out_sharding_from_xla)
 
   # Calculate the indices and addressable device assignment once during
   # compilation and pass it to the constructor.
