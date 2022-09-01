@@ -1192,33 +1192,24 @@ def concrete_or_error(force: Any, val: Any, context=""):
 
 # TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
 
-custom_eltypes: Set[Any] = set()
+opaque_dtypes: Set[Any] = set()
 
 # TODO(frostig): update inliners of the four functions below to call them
-def has_custom_eltype(x: Any):
-  return aval_has_custom_eltype(get_aval(x))
+def has_opaque_dtype(x: Any):
+  return is_opaque_dtype(get_aval(x).dtype)
 
-def eltype(x: Any):
-  return aval_eltype(get_aval(x))
-
-def aval_has_custom_eltype(aval: UnshapedArray):
-  return is_custom_eltype(aval.dtype)
-
-def aval_eltype(aval: UnshapedArray):
-  return aval.dtype
-
-def is_custom_eltype(eltype):
-  return type(eltype) in custom_eltypes
+def is_opaque_dtype(dtype):
+  return type(dtype) in opaque_dtypes
 
 def _short_dtype_name(dtype) -> str:
-  if type(dtype) in custom_eltypes:
+  if type(dtype) in opaque_dtypes:
     return str(dtype)
   else:
     return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
                       .replace('int'  , 'i').replace('complex', 'c'))
 
 def _dtype_object(dtype):
-  return dtype if type(dtype) in custom_eltypes else np.dtype(dtype)
+  return dtype if type(dtype) in opaque_dtypes else np.dtype(dtype)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
@@ -1422,13 +1413,12 @@ class ConcreteArray(ShapedArray):
   _float           = concretization_function_error(float, True)
   _complex         = concretization_function_error(complex, True)
 
-# TODO(frostig,mattjj): rename to primal_eltype_to_tangent_eltype
 def primal_dtype_to_tangent_dtype(primal_dtype):
-  # TODO(frostig,mattjj): determines that all custom eltypes have
-  # float0 tangent type, which works fine for all our current custom
-  # eltype applications. We may some day want to delegate this
-  # decision to the eltype.
-  if (type(primal_dtype) in custom_eltypes or
+  # TODO(frostig,mattjj): determines that all opaque dtypes have
+  # float0 tangent type, which works fine for all our current opaque
+  # dtype applications. We may some day want to delegate this
+  # decision to the dtype rules.
+  if (is_opaque_dtype(primal_dtype) or
       not dtypes.issubdtype(primal_dtype, np.inexact)):
     return dtypes.float0
   else:

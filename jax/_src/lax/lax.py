@@ -1246,7 +1246,7 @@ def stop_gradient(x: T) -> T:
   """
   def stop(x):
     # only bind primitive on inexact dtypes, to avoid some staging
-    if core.has_custom_eltype(x):
+    if core.has_opaque_dtype(x):
       return x
     elif (dtypes.issubdtype(_dtype(x), np.floating) or
         dtypes.issubdtype(_dtype(x), np.complexfloating)):
@@ -2826,7 +2826,7 @@ def _broadcast_in_dim_partial_eval(
 
 def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
   aval_out, = ctx.avals_out
-  if type(aval_out.dtype) in core.custom_eltypes:
+  if core.is_opaque_dtype(aval_out.dtype):
     return aval_out.dtype._rules.broadcast_in_dim_mlir(
         ctx, x, *dyn_shape, shape=shape,
         broadcast_dimensions=broadcast_dimensions)
@@ -3310,7 +3310,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
-  if type(aval_out.dtype) in core.custom_eltypes:
+  if core.is_opaque_dtype(aval_out.dtype):
     return aval_out.dtype._rules.transpose_mlir(ctx, x, permutation=permutation)
   return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 
@@ -4557,7 +4557,7 @@ def _check_same_dtypes(name, ignore_fp_precision, *ttypes):
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
-  if any(type(t) in core.custom_eltypes for t in ttypes):
+  if any(core.is_opaque_dtype(t) for t in ttypes):
     return  # TODO(mattjj,frostig): do some checking, friend
   types = map(np.dtype, ttypes)  # canonicalize
   if ignore_fp_precision:
@@ -4720,12 +4720,12 @@ def _check_user_dtype_supported(dtype, fun_name=None):
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype), stacklevel=3)
 
 
-def empty(eltype):
-  return empty_p.bind(eltype=eltype)
+def empty(dtype):
+  return empty_p.bind(dtype=dtype)
 empty_p = core.Primitive('empty')
-empty_p.def_abstract_eval(lambda *, eltype: core.ShapedArray((), eltype))
-def _empty_lower(ctx, *, eltype):
-  if type(eltype) in core.custom_eltypes:
-    return eltype._rules.empty_mlir(ctx)
-  return mlir.ir_constants(np.zeros((), np.dtype(eltype)))
+empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
+def _empty_lower(ctx, *, dtype):
+  if core.is_opaque_dtype(dtype):
+    return dtype._rules.empty_mlir(ctx)
+  return mlir.ir_constants(np.zeros((), np.dtype(dtype)))
 mlir.register_lowering(empty_p, _empty_lower)

@@ -189,7 +189,7 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
     # * unpack upfront into shape[0] many keyarray slices
     # * return iter over these unpacked slices
     # Whatever we do, we'll want to do it by overriding
-    # ShapedArray._iter when the eltype is KeyTy...
+    # ShapedArray._iter when the element type is KeyTy...
     return (PRNGKeyArray(self.impl, k) for k in iter(self._base_array))
 
   # TODO(frostig): are all of the stackable methods below (reshape,
@@ -373,7 +373,7 @@ class KeyTyRules:
       return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs))
     return handler
 
-  # eltype-polymorphic primitive lowering rules
+  # element-type-polymorphic primitive lowering rules
 
   @staticmethod
   def empty_mlir(ctx):
@@ -476,7 +476,7 @@ class KeyTy:
     return hash((self.__class__, self.impl))
 
 
-core.custom_eltypes.add(KeyTy)
+core.opaque_dtypes.add(KeyTy)
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = (

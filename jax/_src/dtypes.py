@@ -91,7 +91,7 @@ def to_complex_dtype(dtype):
 @functools.lru_cache(maxsize=None)
 def _canonicalize_dtype(x64_enabled, dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  if type(dtype) in jax.core.custom_eltypes:
+  if jax.core.is_opaque_dtype(dtype):
     return dtype
   try:
     dtype = np.dtype(dtype)
