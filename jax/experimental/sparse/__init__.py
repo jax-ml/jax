@@ -194,6 +194,7 @@ from jax.experimental.sparse.bcoo import (
     bcoo_dot_general_p as bcoo_dot_general_p,
     bcoo_dot_general_sampled as bcoo_dot_general_sampled,
     bcoo_dot_general_sampled_p as bcoo_dot_general_sampled_p,
+    bcoo_dynamic_slice as bcoo_dynamic_slice,
     bcoo_extract as bcoo_extract,
     bcoo_extract_p as bcoo_extract_p,
     bcoo_fromdense as bcoo_fromdense,

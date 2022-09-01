@@ -766,6 +766,13 @@ def _slice_sparse_rule(spenv, *operands, **params):
 
 sparse_rules[lax.slice_p] = _slice_sparse_rule
 
+def _dynamic_slice_sparse_rule(spenv, *operands, **params):
+  args = spvalues_to_arrays(spenv, operands)
+  out = sparse.bcoo_dynamic_slice(args[0], args[1:], **params)
+  return arrays_to_spvalues(spenv, [out])
+
+sparse_rules[lax.dynamic_slice_p] = _dynamic_slice_sparse_rule
+
 
 #------------------------------------------------------------------------------
 # BCOO methods derived from sparsify
