@@ -125,6 +125,9 @@ def PRNGKey(seed: int) -> KeyArray:
 
   """
   impl = default_prng_impl()
+  if np.ndim(seed):
+    raise TypeError("PRNGKey accepts a scalar seed, but was given an array of"
+                    f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
   key = prng.seed_with_impl(impl, seed)
   return _return_prng_keys(True, key)
 
@@ -162,6 +165,12 @@ def _fold_in(key: KeyArray, data: int) -> KeyArray:
   # Alternative to fold_in() to use within random samplers.
   # TODO(frostig): remove and use fold_in() once we always enable_custom_prng
   assert isinstance(key, prng.PRNGKeyArray)
+  if key.ndim:
+    raise TypeError("fold_in accepts a single key, but was given a key array of"
+                    f"shape {key.shape} != (). Use jax.vmap for batching.")
+  if np.ndim(data):
+    raise TypeError("fold_in accepts a scalar, but was given an array of"
+                    f"shape {np.shape(data)} != (). Use jax.vmap for batching.")
   return prng.random_fold_in(key, jnp.uint32(data))
 
 def fold_in(key: KeyArray, data: int) -> KeyArray:
@@ -183,6 +192,9 @@ def _split(key: KeyArray, num: int = 2) -> KeyArray:
   # TODO(frostig): remove and use split(); we no longer need to wait
   # to always enable_custom_prng
   assert isinstance(key, prng.PRNGKeyArray)
+  if key.ndim:
+    raise TypeError("split accepts a single key, but was given a key array of"
+                    f"shape {key.shape} != (). Use jax.vmap for batching.")
   return prng.random_split(key, count=num)
 
 def split(key: KeyArray, num: int = 2) -> KeyArray:
