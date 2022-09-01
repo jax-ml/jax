@@ -46,7 +46,7 @@ def download_dataset(dir_path, nb_classes):
         print(f'Failed to fetch {cls_filename}')
   return classes
 
-def load_classes(dir_path, classes, batch_size=256, test_ratio=0.1,
+def get_datasets(dir_path, classes, batch_size=256, test_ratio=0.1,
                  max_items_per_class=4096):
   x, y = np.empty([0, 784]), np.empty([0])
   for idx, cls in enumerate(classes):
