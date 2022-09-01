@@ -514,6 +514,30 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(jit(func)(M), M + 1)
     self.assertArraysEqual(jit(func)(Msp), M + 1)
 
+  def testSparseSlice(self):
+    M = jnp.arange(24).reshape(2, 3, 4)
+    Msp = BCOO.fromdense(M)
+    @self.sparsify
+    def func(M):
+      return lax.slice(M, (0, 1, 2), (1, 3, 3))
+    expected = M[:1, 1:3, 2:3]
+    self.assertArraysEqual(func(M), expected)
+    self.assertArraysEqual(func(Msp).todense(), expected)
+    self.assertArraysEqual(jit(func)(M), expected)
+    self.assertArraysEqual(jit(func)(Msp).todense(), expected)
+
+  def testSparseDynamicSlice(self):
+    M = jnp.arange(24).reshape(2, 3, 4)
+    Msp = BCOO.fromdense(M)
+    @self.sparsify
+    def func(M):
+      return lax.dynamic_slice(M, (0, 1, 2), (1, 1, 3))
+    expected = M[:1, 1:2, 1:4]
+    self.assertArraysEqual(func(M), expected)
+    self.assertArraysEqual(func(Msp).todense(), expected)
+    self.assertArraysEqual(jit(func)(M), expected)
+    self.assertArraysEqual(jit(func)(Msp).todense(), expected)
+
   def testWeakTypes(self):
     # Regression test for https://github.com/google/jax/issues/8267
     M = jnp.arange(12, dtype='int32').reshape(3, 4)

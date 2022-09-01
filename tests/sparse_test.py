@@ -950,8 +950,37 @@ class BCOOTest(jtu.JaxTestCase):
 
     dense_result = lax.slice(M, **kwds)
     sparse_result = sparse.bcoo_slice(Msp, **kwds)
+    sparse_result_jit = jax.jit(partial(sparse.bcoo_slice, **kwds))(Msp)
 
     self.assertArraysEqual(dense_result, sparse_result.todense())
+    self.assertArraysEqual(dense_result, sparse_result_jit.todense())
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_bcoo_dynamic_slice(self, shape, dtype, n_batch, n_dense):
+    rng = self.rng()
+    sprng = rand_sparse(rng)
+    M = sprng(shape, dtype)
+    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
+
+    rng = self.rng()
+    # Note: test out-of-range start indices
+    start_indices = rng.randint(-max(M.shape), max(M.shape), M.ndim)
+    slice_sizes = rng.randint(0, M.shape, M.ndim)
+    kwds = dict(start_indices=start_indices, slice_sizes=slice_sizes)
+
+    dense_result = lax.dynamic_slice(M, **kwds)
+    sparse_result = sparse.bcoo_dynamic_slice(Msp, **kwds)
+    sparse_result_jit = partial(sparse.bcoo_dynamic_slice, slice_sizes=slice_sizes)(Msp, start_indices)
+
+    self.assertArraysEqual(dense_result, sparse_result.todense())
+    self.assertArraysEqual(dense_result, sparse_result_jit.todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}_idx={}".format(
