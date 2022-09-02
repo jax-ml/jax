@@ -14,6 +14,8 @@
 """Module for JAX callbacks."""
 from __future__ import annotations
 
+import functools
+
 from typing import Any, Callable, Sequence
 
 from jax import core
@@ -21,6 +23,7 @@ from jax import tree_util
 from jax._src import dtypes
 from jax._src import lib as jaxlib
 from jax._src import util
+from jax._src import dispatch
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
@@ -33,11 +36,12 @@ pure_callback_p.multiple_results = True
 map, unsafe_map = util.safe_map, map
 
 
-@pure_callback_p.def_impl
 def pure_callback_impl(*args, result_avals, callback: Callable[..., Any],
                        vectorized: bool):
   del vectorized, result_avals
   return callback(*args)
+pure_callback_p.def_impl(functools.partial(dispatch.apply_primitive,
+                                           pure_callback_p))
 
 
 @pure_callback_p.def_abstract_eval
@@ -102,7 +106,7 @@ def pure_callback_lowering(ctx, *args, callback, **params):
                               "Please upgrade to a jaxlib >= 0.3.15.")
 
   def _callback(*flat_args):
-    return tuple(pure_callback_p.impl(*flat_args, callback=callback, **params))
+    return tuple(pure_callback_impl(*flat_args, callback=callback, **params))
 
   result, _, keepalive = mlir.emit_python_callback(
       ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out, False,
