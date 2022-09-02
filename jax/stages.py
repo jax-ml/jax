@@ -17,6 +17,8 @@ JAX transformations that compile just in time for execution, such as
 ``jax.jit`` and ``jax.pmap``, also support a common means of explicit
 lowering and compilation *ahead of time*. This module defines types
 that represent the stages of this process.
+
+For more, see the `AOT walkthrough <https://jax.readthedocs.io/en/latest/aot.html>`_.
 """
 
 from jax._src.stages import (

@@ -30,6 +30,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
 
    faq
    async_dispatch
+   aot
    jaxpr
    notebooks/convolutions
    pytrees
