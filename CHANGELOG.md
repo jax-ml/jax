@@ -10,6 +10,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.3.18 (Unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.17...main).
+* Changes
+  * Ahead-of-time lowering and compilation functionality (tracked in
+    {jax-issue}`#7733`) is stable and public. See [the
+    overview](https://jax.readthedocs.io/en/latest/aot.html) and the API docs
+    for {mod}`jax.stages`.
 
 ## jax 0.3.17 (Aug 31, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.16...jax-v0.3.17).
