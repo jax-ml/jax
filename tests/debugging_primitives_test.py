@@ -11,15 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import contextlib
 import collections
 import functools
-import io
 import textwrap
 import unittest
-from unittest import mock
-
-from typing import Callable, Generator
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -40,13 +35,6 @@ import numpy as np
 config.parse_flags_with_absl()
 
 debug_print = debugging.debug_print
-
-@contextlib.contextmanager
-def capture_stdout() -> Generator[Callable[[], str], None, None]:
-  with mock.patch('sys.stdout', new_callable=io.StringIO) as fp:
-    def _read() -> str:
-      return fp.getvalue()
-    yield _read
 
 def _format_multiline(text):
   return textwrap.dedent(text).lstrip()
@@ -78,7 +66,7 @@ class DebugPrintTest(jtu.JaxTestCase):
   def test_simple_debug_print_works_in_eager_mode(self):
     def f(x):
       debug_print('x: {}', x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
@@ -87,7 +75,7 @@ class DebugPrintTest(jtu.JaxTestCase):
   def test_debug_print_works_with_named_format_strings(self):
     def f(x):
       debug_print('x: {x}', x=x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
@@ -97,7 +85,7 @@ class DebugPrintTest(jtu.JaxTestCase):
     def f(x):
       debug_print('x: {x}', x=x)
       debug_print('y: {y}', y=x + 1)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\ny: 3\n")
@@ -107,7 +95,7 @@ class DebugPrintTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       debug_print('x: {x}', x=x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
@@ -120,7 +108,7 @@ class DebugPrintTest(jtu.JaxTestCase):
       debug_print('x: {x}', x=x)
       return x + y
     f = jax.jit(f, donate_argnums=0)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2, 3)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
@@ -130,7 +118,7 @@ class DebugPrintTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       debug_print('x: {x}', x=x, ordered=True)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
@@ -143,7 +131,7 @@ class DebugPrintTest(jtu.JaxTestCase):
       debug_print('x: {x}', x=x, ordered=True)
       return x + y
     f = jax.jit(f, donate_argnums=0)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2, 3)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
@@ -157,7 +145,7 @@ class DebugPrintTest(jtu.JaxTestCase):
       debug_print('x: {x}', x=x)
       return x + y
     f = jax.jit(f, donate_argnums=0)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2, 3)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\nx: 2\n")
@@ -168,7 +156,7 @@ class DebugPrintTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       debug_print('x: {x}', x=x, ordered=True)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
@@ -179,7 +167,7 @@ class DebugPrintTest(jtu.JaxTestCase):
     def f(x):
       struct = dict(foo=x)
       debug_print('x: {}', struct, ordered=True)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(np.array(2, np.int32))
       jax.effects_barrier()
     self.assertEqual(output(), f"x: {str(dict(foo=np.array(2, np.int32)))}\n")
@@ -190,7 +178,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     @jax.vmap
     def f(x):
       debug_print('hello: {}', x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(jnp.arange(2))
       jax.effects_barrier()
     self.assertEqual(output(), "hello: 0\nhello: 1\n")
@@ -199,7 +187,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     @functools.partial(jax.vmap, in_axes=(0, 1))
     def f(x, y):
       debug_print('hello: {} {}', x, y)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(jnp.arange(2), jnp.arange(2)[None])
       jax.effects_barrier()
     self.assertEqual(output(), "hello: 0 [0]\nhello: 1 [1]\n")
@@ -211,14 +199,14 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # [[0, 1],
     #  [2, 3],
     #  [4, 5]]
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       # Should print over 0-axis then 1-axis
       jax.vmap(jax.vmap(f))(jnp.arange(6).reshape((3, 2)))
       jax.effects_barrier()
     self.assertEqual(
         output(),
         "hello: 0\nhello: 2\nhello: 4\nhello: 1\nhello: 3\nhello: 5\n")
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       # Should print over 1-axis then 0-axis
       jax.vmap(jax.vmap(f, in_axes=0), in_axes=1)(jnp.arange(6).reshape((3, 2)))
       jax.effects_barrier()
@@ -229,7 +217,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
   def test_debug_print_jvp_rule(self):
     def f(x):
       debug_print('x: {}', x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.jvp(f, (1.,), (1.,))
       jax.effects_barrier()
     self.assertEqual(output(), "x: 1.0\n")
@@ -237,7 +225,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
   def test_debug_print_vjp_rule(self):
     def f(x):
       debug_print('x: {}', x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.vjp(f, 1.)
       jax.effects_barrier()
     self.assertEqual(output(), "x: 1.0\n")
@@ -259,7 +247,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       x = print_tangent(x)
       return x
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       x = jnp.array(1., jnp.float32)
       jax.jvp(f, (x,), (x,))
       jax.effects_barrier()
@@ -284,13 +272,13 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       x = print_tangent(x)
       return x
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       x = jnp.array(1., jnp.float32)
       y, f_lin = jax.linearize(f, x)
       jax.effects_barrier()
     self.assertEqual(output(), "")
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       _ = f_lin(x)
       jax.effects_barrier()
     expected = jnp.cos(jnp.array(1., jnp.float32))
@@ -314,7 +302,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       x = print_grad(x)
       return jnp.sin(x)
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.grad(f)(jnp.array(1., jnp.float32))
       jax.effects_barrier()
     expected = jnp.cos(jnp.array(1., jnp.float32))
@@ -324,7 +312,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     def f(x):
       debug_print('should never be called: {}', x)
       return x
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.linear_transpose(f, 1.)(1.)
       jax.effects_barrier()
     # `debug_print` should be dropped by `partial_eval` because of no
@@ -344,7 +332,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # Policy that saves everything so the debug callback will be saved
     f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
       jax.effects_barrier()
     # We expect the print to happen once since it gets saved and isn't
@@ -355,7 +343,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # debug callback
     f = ad_checkpoint.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
       jax.effects_barrier()
     # We expect the print to happen twice since it is rematerialized.
@@ -365,7 +353,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     f = ad_checkpoint.checkpoint(
         f_, policy=ad_checkpoint.save_any_names_but_these("z"))
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
       jax.effects_barrier()
     # We expect the print to happen twice since it is rematerialized.
@@ -383,7 +371,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     f = ad_checkpoint.checkpoint(
         f_, policy=save_everything_but_these_names("y"))
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
       jax.effects_barrier()
     # We expect the print to happen once because `y` is not rematerialized and
@@ -394,7 +382,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     f = ad_checkpoint.checkpoint(
         f_, policy=save_everything_but_these_names("y", "z"))
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.grad(f)(2.)
       jax.effects_barrier()
     # We expect the print to happen twice because both `y` and `z` have been
@@ -418,12 +406,12 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       g.defjvp(g_jvp)
       return g(x)
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2.)
       jax.effects_barrier()
     self.assertEqual(output(), "hello: 2.0\n")
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       jax.jvp(f, (2.,), (3.,))
       jax.effects_barrier()
     self.assertEqual(output(), "goodbye: 2.0 3.0\n")
@@ -446,17 +434,17 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       g.defvjp(fwd=g_fwd, bwd=g_bwd)
       return g(x)
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2.)
       jax.effects_barrier()
     self.assertEqual(output(), "hello: 2.0\n")
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       _, f_vjp = jax.vjp(f, 2.)
       jax.effects_barrier()
     self.assertEqual(output(), "hello fwd: 2.0\n")
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f_vjp(3.0)
       jax.effects_barrier()
     self.assertEqual(output(), "hello bwd: 2.0 3.0\n")
@@ -480,7 +468,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
         debug_print("carry: {carry}, x: {x}", carry=carry, x=x, ordered=ordered)
         return carry + 1, x + 1
       return lax.scan(_body, 2, xs)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(jnp.arange(2))
       jax.effects_barrier()
     self.assertEqual(
@@ -501,7 +489,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
         debug_print("x: {x}", x=x, ordered=ordered)
         return x + 1
       return lax.fori_loop(0, 5, _body, x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2)
       jax.effects_barrier()
     expected = _format_multiline("""
@@ -533,7 +521,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
         debug_print("x: {x}", x=x, ordered=ordered)
         return x + 1
       return lax.while_loop(_cond, _body, x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(5)
       jax.effects_barrier()
     self.assertEqual(output(), _format_multiline("""
@@ -556,7 +544,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       def _body(x):
         return x + 1
       return lax.while_loop(_cond, _body, x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(5)
       jax.effects_barrier()
     self.assertEqual(output(), _format_multiline("""
@@ -568,7 +556,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       x: 10
       """))
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(10)
       jax.effects_barrier()
     # Should run the cond once
@@ -589,13 +577,13 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
         debug_print("false: {}", x, ordered=ordered)
         return x
       return lax.cond(x < 5, true_fun, false_fun, x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(5)
       jax.effects_barrier()
     self.assertEqual(output(), _format_multiline("""
       false: 5
       """))
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(4)
       jax.effects_barrier()
     self.assertEqual(output(), _format_multiline("""
@@ -618,19 +606,19 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
         debug_print("b3: {}", x, ordered=ordered)
         return x
       return lax.switch(x, (b1, b2, b3), x)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(0)
       jax.effects_barrier()
     self.assertEqual(output(), _format_multiline("""
       b1: 0
       """))
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(1)
       jax.effects_barrier()
     self.assertEqual(output(), _format_multiline("""
       b2: 1
       """))
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(2)
       jax.effects_barrier()
     self.assertEqual(output(), _format_multiline("""
@@ -664,7 +652,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     @jax.pmap
     def f(x):
       debug_print("hello: {}", x, ordered=False)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(jnp.arange(jax.local_device_count()))
       jax.effects_barrier()
     lines = [f"hello: {i}\n" for i in range(jax.local_device_count())]
@@ -674,7 +662,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     def f2(x):
       debug_print('hello: {}', x)
       debug_print('hello: {}', x + 2)
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f2(jnp.arange(2))
       jax.effects_barrier()
     self._assertLinesEqual(output(), "hello: 0\nhello: 1\nhello: 2\nhello: 3\n")
@@ -697,7 +685,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       out_spec = pjit.PartitionSpec()
     f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
     with mesh:
-      with capture_stdout() as output:
+      with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(), "[0 1 2 3 4 5 6 7]\n")
@@ -708,7 +696,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       return y
     f2 = pjit.pjit(f2, in_axis_resources=spec, out_axis_resources=out_spec)
     with maps.Mesh(np.array(jax.devices()), ['dev']):
-      with capture_stdout() as output:
+      with jtu.capture_stdout() as output:
         f2(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(), "140\n")
@@ -738,7 +726,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       spec = pjit.PartitionSpec('dev')
     f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
     with mesh:
-      with capture_stdout() as output:
+      with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
         jax.effects_barrier()
       self.assertEqual(output(),
@@ -771,7 +759,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
                   out_axis_resources=pjit.PartitionSpec())
     with maps.Mesh(np.array(jax.devices()), ['dev']):
-      with capture_stdout() as output:
+      with jtu.capture_stdout() as output:
         f(jnp.arange(8, dtype=jnp.int32) * 2)
         lines = ["0: 0", "1: 2", "2: 4", "3: 6", "4: 8", "5: 10", "6: 12",
                  "7: 14", "Out: 7.0", ""]
@@ -785,7 +773,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     f = maps.xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
                   axis_resources={'a': 'dev'})
     with maps.Mesh(np.array(jax.devices()), ['dev']):
-      with capture_stdout() as output:
+      with jtu.capture_stdout() as output:
         f(np.arange(40))
         jax.effects_barrier()
       lines = [f"{i}\n" for i in range(40)]
@@ -806,7 +794,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         return x + 1
       return lax.while_loop(cond, body, x)
 
-    with capture_stdout() as output:
+    with jtu.capture_stdout() as output:
       f(jnp.arange(2))
       jax.effects_barrier()
 
