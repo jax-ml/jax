@@ -57,6 +57,11 @@ class RefEffect:
   def __hash__(self):
     return hash((self.__class__, self.ref_aval))
 
+  def replace(self, *, ref_aval: Optional[ShapedArrayRef] = None):
+    if ref_aval is None:
+      ref_aval = self.ref_aval
+    return self.__class__(ref_aval)
+
 class ReadEffect(RefEffect):
   def __str__(self):
     return f"Read<{self.ref_aval}>"

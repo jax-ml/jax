@@ -1723,7 +1723,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": "_impl={}".format(scan_name), "scan": scan_impl}
-      for scan_impl, scan_name in SCAN_IMPLS)
+      for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def testIssue711(self, scan):
     # Tests reverse-mode differentiation through a scan for which the scanned
     # function also involves reverse-mode differentiation.

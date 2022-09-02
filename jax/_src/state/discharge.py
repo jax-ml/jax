@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for discharging state primitives."""
+from __future__ import annotations
+import dataclasses
 from functools import partial
-from typing import Any, Dict, List, Sequence, Tuple
+
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing_extensions import Protocol
 
 import numpy as np
 
@@ -21,9 +25,10 @@ from jax import core
 from jax import lax
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
-from jax._src.util import safe_map, safe_zip
+from jax._src.util import safe_map, safe_zip, split_list
 
-from jax._src.state.types import ShapedArrayRef
+from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
+                                  AccumEffect)
 from jax._src.state.primitives import get_p, swap_p, addupdate_p
 
 ## JAX utilities
@@ -36,7 +41,7 @@ zip, unsafe_zip = safe_zip, zip
 # Let's say we have a jaxpr that takes in `Ref`s and outputs regular JAX values
 # (`Ref`s should never be outputs from jaxprs). We'd like to convert that jaxpr
 # into a "pure" jaxpr that takes in and outputs values and no longer has the
-# `StateEffect` effect.
+# `Read/Write/Accum` effects.
 
 def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any]
                     ) -> Tuple[core.Jaxpr, List[Any]]:
@@ -47,6 +52,81 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any]
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr, consts))
   new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
   return new_jaxpr, new_consts
+
+@dataclasses.dataclass
+class Environment:
+  env: Dict[core.Var, Any]
+
+  def read(self, v: core.Atom) -> Any:
+    if type(v) is core.Literal:
+      return v.val
+    assert isinstance(v, core.Var)
+    return self.env[v]
+
+  def write(self, v: core.Var, val: Any) -> None:
+    self.env[v] = val
+
+class DischargeRule(Protocol):
+
+  def __call__(self, in_avals: Sequence[core.AbstractValue], *args: Any,
+      **params: Any) -> Tuple[Sequence[Optional[Any]], Sequence[Any]]:
+    ...
+
+_discharge_rules: dict[core.Primitive, DischargeRule] = {}
+
+def register_discharge_rule(prim: core.Primitive):
+  def register(f: DischargeRule):
+    _discharge_rules[prim] = f
+  return register
+
+def _has_refs(eqn: core.JaxprEqn):
+  return any(isinstance(v.aval, ShapedArrayRef) for v in eqn.invars)
+
+def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
+                                *args: Any):
+  env = Environment({})
+
+  map(env.write, jaxpr.constvars, consts)
+  # Here some args may correspond to `Ref` avals but they'll be treated like
+  # regular values in this interpreter.
+  map(env.write, jaxpr.invars, args)
+
+  for eqn in jaxpr.eqns:
+    if _has_refs(eqn):
+      if eqn.primitive not in _discharge_rules:
+        raise NotImplementedError("No state discharge rule implemented for "
+            f"primitive: {eqn.primitive}")
+      invals = map(env.read, eqn.invars)
+      in_avals = [v.aval for v in eqn.invars]
+      new_invals, ans = _discharge_rules[eqn.primitive](in_avals, *invals,
+                                                        **eqn.params)
+      for new_inval, invar in zip(new_invals, eqn.invars):
+        if new_inval is not None:
+          env.write(invar, new_inval)
+    else:
+      # Default primitive rule, similar to `core.eval_jaxpr`. Note that here
+      # we assume any higher-order primitives inside of the jaxpr are *not*
+      # stateful.
+      subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
+      ans = eqn.primitive.bind(*subfuns, *map(env.read, eqn.invars),
+                               **bind_params)
+    if eqn.primitive.multiple_results:
+      map(env.write, eqn.outvars, ans)
+    else:
+      env.write(eqn.outvars[0], ans)
+  # By convention, we return the outputs of the jaxpr first and then the final
+  # values of the `Ref`s. Callers to this function should be able to split
+  # them up by looking at `len(jaxpr.outvars)`.
+  out_vals = map(env.read, jaxpr.outvars)
+  ref_vals = map(
+      env.read, [v for v in jaxpr.invars if type(v.aval) is ShapedArrayRef])
+  return out_vals + ref_vals
+
+@register_discharge_rule(get_p)
+def _get_discharge_rule(_: Sequence[core.AbstractValue], x, *non_slice_idx,
+                        indexed_dims: Sequence[bool]):
+  y = _get_discharge(x, non_slice_idx, indexed_dims)
+  return (None,) * (len(non_slice_idx) + 1), y
 
 def _get_discharge(x, idx, indexed_dims):
   if not any(indexed_dims):
@@ -73,6 +153,14 @@ def _indexer(idx, indexed_dims):
   assert next(idx_, None) is None
   return indexer
 
+@register_discharge_rule(swap_p)
+def _swap_discharge_rule(_: Sequence[core.AbstractValue], x, val, *non_slice_idx,
+                         indexed_dims: Sequence[bool]):
+  if not any(indexed_dims):
+    z, x_new = x, val
+  z, x_new = _swap_discharge(x, val, non_slice_idx, indexed_dims)
+  return (x_new, None) + (None,) * len(non_slice_idx), z
+
 def _swap_discharge(x, val, idx, indexed_dims):
   if not any(indexed_dims):
     z, x_new = x, val
@@ -83,6 +171,12 @@ def _swap_discharge(x, val, idx, indexed_dims):
     z = _prepend_gather(x, idx, indexed_dims)
     x_new = _prepend_scatter(x, idx, indexed_dims, val)
   return z, x_new
+
+@register_discharge_rule(addupdate_p)
+def _addupdate_discharge_rule(_: Sequence[core.AbstractValue], x, val,
+                              *non_slice_idx, indexed_dims: Sequence[bool]):
+  ans = _addupdate_discharge(x, val, non_slice_idx, indexed_dims)
+  return (ans, None) + (None,) * len(non_slice_idx), []
 
 def _addupdate_discharge(x, val, idx, indexed_dims):
   if not any(indexed_dims):
@@ -110,63 +204,20 @@ def _dynamic_update_index(x, idx, val, indexed_dims):
   sizes = [1 if b else size for b, size in zip(indexed_dims, x.shape)]
   return lax.dynamic_update_slice(x, val.reshape(sizes), starts)
 
-def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
-                                *args: Any):
-  env: Dict[core.Var, Any] = {}
-
-  def read(v: core.Atom) -> Any:
-    if type(v) is core.Literal:
-      return v.val
-    assert isinstance(v, core.Var)
-    return env[v]
-
-  def write(v: core.Var, val: Any) -> None:
-    env[v] = val
-
-  map(write, jaxpr.constvars, consts)
-  # Here some args may correspond to `Ref` avals but they'll be treated like
-  # regular values in this interpreter.
-  map(write, jaxpr.invars, args)
-
-  for eqn in jaxpr.eqns:
-    in_vals = map(read, eqn.invars)
-    if eqn.primitive is get_p:
-       # `y <- x[i]` becomes `y = ds x i`
-      x, *idx = in_vals
-      y = _get_discharge(x, idx, eqn.params['indexed_dims'])
-      write(eqn.outvars[0], y)
-    elif eqn.primitive is swap_p:
-      # `z, x[i] <- x[i], val` becomes:
-      #    z = ds x i
-      #    x = dus x i val
-      assert isinstance(eqn.invars[0], core.Var)
-      x, val, *idx = in_vals
-      z, x_new = _swap_discharge(x, val, idx, eqn.params['indexed_dims'])
-      write(eqn.outvars[0], z)
-      write(eqn.invars[0] , x_new)
-    elif eqn.primitive is addupdate_p:
-      # `x[i] += val` becomes:
-      #    y = ds x i
-      #    z = y + val
-      #    x = dus x i z
-      assert isinstance(eqn.invars[0], core.Var)
-      x, val, *idx = in_vals
-      ans = _addupdate_discharge(x, val, idx, eqn.params['indexed_dims'])
-      write(eqn.invars[0], ans)
-    else:
-      # Default primitive rule, similar to `core.eval_jaxpr`. Note that here
-      # we assume any higher-order primitives inside of the jaxpr are *not*
-      # stateful.
-      subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-      ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
-      if eqn.primitive.multiple_results:
-        map(write, eqn.outvars, ans)
-      else:
-        write(eqn.outvars[0], ans)
-  # By convention, we return the outputs of the jaxpr first and then the final
-  # values of the `Ref`s. Callers to this function should be able to split
-  # them up by looking at `len(jaxpr.outvars)`.
-  out_vals = map(read, jaxpr.outvars)
-  ref_vals = map(
-      read, [v for v in jaxpr.invars if type(v.aval) is ShapedArrayRef])
-  return out_vals + ref_vals
+@register_discharge_rule(core.closed_call_p)
+def _closed_call_discharge_rule(in_avals: Sequence[core.AbstractValue], *args,
+                                call_jaxpr: core.ClosedJaxpr):
+  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  num_outs = len(jaxpr.outvars)
+  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
+  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr,
+                                             discharged_consts)
+  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr))
+  out_and_ref_vals = core.closed_call_p.bind(fun, *args,
+                                             call_jaxpr=discharged_closed_jaxpr)
+  out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
+  ref_vals_iter = iter(ref_vals)
+  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, ShapedArrayRef)
+                     else None for aval in in_avals)
+  assert next(ref_vals_iter, None) is None
+  return new_invals, out_vals

@@ -17,4 +17,4 @@ from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
 from jax._src.state.primitives import (ref_get, ref_set, ref_swap,
                                        ref_addupdate, get_p, swap_p,
                                        addupdate_p)
-from jax._src.state.discharge import discharge_state
+from jax._src.state.discharge import discharge_state, register_discharge_rule
