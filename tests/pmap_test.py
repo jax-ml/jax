@@ -3105,6 +3105,34 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_array.sharding.devices,
                            [d.device() for d in out_sda.device_buffers])
 
+  def test_amap(self):
+    # Copied from an example mattjj@ posted in a chat thread.
+
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >= 2 devices.')
+
+    def amap(f, xs):
+      ys = [f(jax.device_put(x, x.device())) for x in xs]
+      return jax.device_put_sharded(ys, [y.device() for y in ys])
+
+    # leading axis is batch dim (i.e. mapped/parallel dim), of size 2
+    x = jnp.array([[1., 0., 0.],
+                   [0., 2., 3.]])
+
+    # first pmapped computation
+    y = jax.pmap(jnp.sin)(x)
+
+    def dynamic_shape_function(y):
+      nonzero_idx = y != 0
+      results = y[nonzero_idx] ** 2
+      return y.at[nonzero_idx].set(results)
+    z = amap(dynamic_shape_function, y)
+
+    # second pmapped computation
+    w = jax.pmap(jnp.cos)(z)
+
+    self.assertArraysEqual(w, jnp.cos(jnp.sin(x) ** 2))
+
 
 class EagerPmapMixin:
 

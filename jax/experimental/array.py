@@ -245,8 +245,20 @@ class Array:
     if self.ndim == 0:
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
-      # chunk_iter is added to Array in lax_numpy.py similar to DA.
-      return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
+      assert self.is_fully_replicated() or self.is_fully_addressable()
+      # TODO(yashkatariya,mattjj): Handle more cases that can hit the 1 device
+      # sharding case. This will be possible when __getitem__ is implemented.
+      # Use DA like __iter__ when sharding is SingleDeviceSharding.
+      if len(self.sharding.device_set) == 1:
+        # chunk_iter is added to Array in lax_numpy.py similar to DA.
+        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
+      elif isinstance(self.sharding, PmapSharding):
+        return (s.data for s in self.addressable_shards)
+      else:
+        # TODO(yashkatariya,mattjj): Avoid this round trip and figure out a better
+        # way to handle this when you have arbitrary sharding.
+        val = self._value
+        return (val[i] for i in range(val.shape[0]))
 
   def item(self):
     if dtypes.issubdtype(self.dtype, np.complexfloating):

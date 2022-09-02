@@ -28,6 +28,7 @@ from jax._src.util import prod
 from jax.experimental import PartitionSpec as P
 from jax.experimental import sharding
 from jax.experimental import array
+from jax.experimental import maps
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -342,6 +343,48 @@ class JaxArrayTest(jtu.JaxTestCase):
         "Input buffers to `Array` must have matching dtypes. "
         "Got int32, expected float32"):
       array.Array(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+
+  @jax_config.jax_array(True)
+  def test_array_iter_pmap_sharding(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >= 2 devices.')
+
+    x = jnp.array([[1., 0., 0.], [0., 2., 3.]])
+    y = jax.pmap(jnp.sin)(x)
+    self.assertArraysEqual([a.device() for a in y],
+                           [a.device() for a in y._arrays])
+    for a in y:
+      self.assertIsInstance(a, array.Array)
+      self.assertEqual(a._committed, y._committed)
+
+    sin_x = iter(np.sin(x))
+    for i, j in zip(iter(y), sin_x):
+      self.assertArraysAllClose(i, j)
+
+  @jax_config.jax_array(True)
+  def test_array_iter_mesh_pspec_sharding_multi_device(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    arr, input_data = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+
+    for i, j in zip(iter(arr), iter(input_data)):
+      self.assertArraysEqual(i, j)
+
+  @jax_config.jax_array(True)
+  def test_array_iter_mesh_pspec_sharding_single_device(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >= 2 devices.')
+
+    single_dev = jax.devices()[1:2]
+    mesh = maps.Mesh(np.array(single_dev), ('x'))
+    input_shape = (8, 2)
+    arr, input_data = create_array(
+        input_shape, sharding.MeshPspecSharding(mesh, P('x')))
+
+    for i, j in zip(arr, iter(input_data)):
+      self.assertArraysEqual(i, j)
+      self.assertEqual(i.device(), single_dev[0])
 
   @jax_config.jax_array(True)
   def test_array_shards_committed(self):
