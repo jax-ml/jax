@@ -89,6 +89,9 @@ def scan_with_new_checkpoint2(f, *args, **kwargs):
 def scan_with_for(f, *args, **kwargs):
   return for_loop.scan(f, *args, **kwargs)
 
+def scan_with_remat_for(f, *args, **kwargs):
+  return jax.remat(lambda *args: for_loop.scan(f, *args, **kwargs))(*args)
+
 SCAN_IMPLS = [
     (lax.scan, 'unroll1'),
     (partial(lax.scan, unroll=2), 'unroll2'),
@@ -102,7 +105,25 @@ SCAN_IMPLS_WITH_FOR = [
     (scan_with_new_checkpoint , 'new_checkpoint'),
     (scan_with_new_checkpoint2, 'new_checkpoint2'),
     (scan_with_for, 'for_loop'),
+    (scan_with_remat_for, 'for_loop_remat'),
 ]
+
+def remat_of_for_loop(nsteps, body, state, **kwargs):
+  return jax.remat(lambda state: for_loop.for_loop(nsteps, body, state,
+                                                   **kwargs))(state)
+
+FOR_LOOP_IMPLS = [
+    (for_loop.for_loop, 'for_loop'),
+    (jax.jit(for_loop.for_loop, static_argnums=(0, 1)), 'jit_for_loop'),
+    (remat_of_for_loop, 'remat_for_loop'),
+]
+
+
+def _for_loop_impls(f):
+  return parameterized.named_parameters(
+      dict(testcase_name=impl_name, for_impl=for_impl)
+      for for_impl, impl_name in FOR_LOOP_IMPLS
+      )(f)
 
 
 def while_loop_new_checkpoint(cond_fun, body_fun, init_val):
@@ -2571,82 +2592,89 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jax.grad(f)(1.)  # doesn't crash
 
-
 class ForLoopTest(jtu.JaxTestCase):
 
-  def test_for_loop_impl_trivial(self):
-    out = for_loop.for_loop(5, lambda i, _: None, None)
+  @_for_loop_impls
+  def test_for_loop_impl_trivial(self, for_impl):
+    out = for_impl(5, lambda i, _: None, None)
     self.assertEqual(out, None)
 
-  def test_for_loop_can_write_to_ref(self):
+  @_for_loop_impls
+  def test_for_loop_can_write_to_ref(self, for_impl):
     def body(_, x_ref):
       x_ref[()] = jnp.float32(1.)
-    out = for_loop.for_loop(1, body, jnp.float32(0.))
+    out = for_impl(1, body, jnp.float32(0.))
     self.assertEqual(out, 1.)
 
     def body2(i, x_ref):
       x_ref[()] = jnp.float32(i)
-    out = for_loop.for_loop(2, body2, jnp.float32(0.))
+    out = for_impl(2, body2, jnp.float32(0.))
     self.assertEqual(out, 1.)
 
     def body3(i, x_ref):
       x_ref[()] = jnp.float32(i) * 2.
-    out = for_loop.for_loop(2, body3, jnp.float32(0.))
+    out = for_impl(2, body3, jnp.float32(0.))
     self.assertEqual(out, 2.)
 
-  def test_for_loop_can_write_to_multiple_refs(self):
+  @_for_loop_impls
+  def test_for_loop_can_write_to_multiple_refs(self, for_impl):
     def body(_, refs):
       x_ref, y_ref = refs
       x_ref[()] = jnp.float32(1.)
       y_ref[()] = jnp.float32(2.)
-    x, y = for_loop.for_loop(1, body, (jnp.float32(0.), jnp.float32(0.)))
+    x, y = for_impl(1, body, (jnp.float32(0.), jnp.float32(0.)))
     self.assertEqual(x, 1.)
     self.assertEqual(y, 2.)
 
-  def test_for_loop_can_read_from_ref(self):
+  @_for_loop_impls
+  def test_for_loop_can_read_from_ref(self, for_impl):
     def body(_, x_ref):
       x_ref[()]
-    x = for_loop.for_loop(1, body, jnp.float32(0.))
+    x = for_impl(1, body, jnp.float32(0.))
     self.assertEqual(x, 0.)
 
-  def test_for_loop_can_read_from_and_write_to_ref(self):
+  @_for_loop_impls
+  def test_for_loop_can_read_from_and_write_to_ref(self, for_impl):
     def body(_, x_ref):
       x = x_ref[()]
       x_ref[()] = x + jnp.float32(1.)
-    x = for_loop.for_loop(5, body, jnp.float32(0.))
+    x = for_impl(5, body, jnp.float32(0.))
     self.assertEqual(x, 5.)
 
-  def test_for_loop_can_read_from_and_write_to_refs(self):
+  @_for_loop_impls
+  def test_for_loop_can_read_from_and_write_to_refs(self, for_impl):
     def body2(_, refs):
       x_ref, y_ref = refs
       x = x_ref[()]
       y_ref[()] = x + 1.
       x_ref[()] = x + 1.
-    x, y = for_loop.for_loop(5, body2, (0., 0.))
+    x, y = for_impl(5, body2, (0., 0.))
     self.assertEqual(x, 5.)
     self.assertEqual(y, 5.)
 
-  def test_for_loop_can_read_from_and_write_to_ref_slice(self):
+  @_for_loop_impls
+  def test_for_loop_can_read_from_and_write_to_ref_slice(self, for_impl):
     def body(i, x_ref):
       x = x_ref[i]
       x_ref[i] = x + jnp.float32(1.)
-    x = for_loop.for_loop(4, body, jnp.ones(4, jnp.float32))
+    x = for_impl(4, body, jnp.ones(4, jnp.float32))
     np.testing.assert_allclose(x, 2 * jnp.ones(4, jnp.float32))
 
     def body2(i, x_ref):
       x = x_ref[i, 0]
       x_ref[i, 1] = x + x_ref[i, 1]
-    x = for_loop.for_loop(4, body2, jnp.arange(8.).reshape((4, 2)))
+    x = for_impl(4, body2, jnp.arange(8.).reshape((4, 2)))
     np.testing.assert_allclose(
         x, jnp.array([[0., 1.], [2., 5.], [4., 9.], [6., 13.]]))
 
-  def test_for_loop_can_implement_cumsum(self):
+  @_for_loop_impls
+  def test_for_loop_can_implement_cumsum(self, for_impl):
     def cumsum(x):
       def body(i, refs):
         x_ref, accum_ref = refs
         accum_ref[i + 1] = accum_ref[i] + x_ref[i]
       accum = jnp.zeros(x.shape[0] + 1, x.dtype)
-      _, accum_out = for_loop.for_loop(x.shape[0], body, (x, accum))
+      _, accum_out = for_impl(x.shape[0], body, (x, accum))
       return accum_out[1:]
 
     key = jax.random.PRNGKey(0)
@@ -2708,18 +2736,20 @@ def for_body_reverse(i, refs):
 
 reverse_ref = lambda x, y: (x, x[::-1])
 
-identity = lambda x, y: (x, y)
+def for_body_noop(i, refs):
+  pass
+noop_ref = lambda x, y: (x, y)
 for_reference = for_loop.discharged_for_loop
 
 
 class ForLoopTransformationTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_for={}_f={}_nsteps={}".format(
-        jit_for, for_body_name, nsteps),
-        "jit_for": jit_for, "f": for_body, "body_shapes": body_shapes,
-        "ref": ref, "n": nsteps}
-      for jit_for in [False, True]
+      {"testcase_name": "_f={}_nsteps={}_impl={}".format(
+        for_body_name, nsteps, impl_name),
+        "f": for_body, "body_shapes": body_shapes,
+        "ref": ref, "n": nsteps, "for_impl": for_impl}
+      for for_impl, impl_name in FOR_LOOP_IMPLS
       for for_body_name, for_body, ref, body_shapes, nsteps in [
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
         ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
@@ -2729,14 +2759,12 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
       ])
-  def test_for_jvp(self, jit_for, f, ref, body_shapes, n):
-    for_ = for_loop.for_loop
+  def test_for_jvp(self, f, ref, body_shapes, n, for_impl):
+    for_ = for_impl
     rng = self.rng()
 
     args = [rng.randn(*s) for s in body_shapes]
 
-    if jit_for:
-      for_ = jax.jit(for_, static_argnums=(0, 1))
     tol = {np.float64: 1e-12, np.float32: 1e-4}
     ans = jax.jvp(     lambda *args: for_(         n, f, args), args, args)
     ans_discharged = jax.jvp(lambda *args: for_reference(n, f, args), args, args)
@@ -2746,11 +2774,11 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     jtu.check_grads(partial(for_, n, f), (args,), order=3, modes=["fwd"])
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_for={}_f={}_nsteps={}".format(
-        jit_for, for_body_name, nsteps),
-        "jit_for": jit_for, "f": for_body, "body_shapes": body_shapes,
-        "ref": ref, "n": nsteps}
-      for jit_for in [False, True]
+      {"testcase_name": "_f={}_nsteps={}_impl={}".format(
+        for_body_name, nsteps, impl_name),
+        "f": for_body, "body_shapes": body_shapes,
+        "ref": ref, "n": nsteps, "for_impl": for_impl}
+      for for_impl, impl_name in FOR_LOOP_IMPLS
       for for_body_name, for_body, ref, body_shapes, nsteps in [
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
         ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
@@ -2760,14 +2788,12 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
       ])
-  def test_for_linearize(self, jit_for, f, ref, body_shapes, n):
-    for_ = for_loop.for_loop
+  def test_for_linearize(self, f, ref, body_shapes, n, for_impl):
+    for_ = for_impl
     rng = self.rng()
 
     args = [rng.randn(*s) for s in body_shapes]
 
-    if jit_for:
-      for_ = jax.jit(for_, static_argnums=(0, 1))
     tol = {np.float64: 1e-12, np.float32: 1e-4}
     ans = jax.linearize(lambda *args: for_(         n, f, args), *args)[1](*args)
     ans_discharged = jax.linearize(lambda *args: for_reference(n, f, args),
@@ -2804,7 +2830,9 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     s = str(jax.xla_computation(jax.grad(loss))(A).as_hlo_text())
     assert s.count("dynamic-update-slice(") < 2
 
-  def test_for_loop_fixpoint_correctly_identifies_loop_varying_residuals(self):
+  @_for_loop_impls
+  def test_for_loop_fixpoint_correctly_identifies_loop_varying_residuals(
+    self, for_impl):
 
     def body(i, refs):
       a_ref, b_ref, c_ref = refs
@@ -2815,7 +2843,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
       c_ref[i] = x * b
     def f(a, b):
       c = jnp.zeros_like(a)
-      _, b, c = for_loop.for_loop(5, body, (a, b, c))
+      _, b, c = for_impl(5, body, (a, b, c))
       return b, c
     a = jnp.arange(5.) + 1.
     b = 1.
@@ -2826,12 +2854,13 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_for={}_f={}_nsteps={}".format(
-        jit_for, for_body_name, nsteps),
-        "jit_for": jit_for, "f": for_body, "body_shapes": body_shapes,
-        "ref": ref, "n": nsteps}
-      for jit_for in [False, True]
+      {"testcase_name": "_f={}_nsteps={}_impl={}".format(
+        for_body_name, nsteps, impl_name),
+        "f": for_body, "body_shapes": body_shapes,
+        "ref": ref, "n": nsteps, "for_impl": for_impl}
+      for for_impl, impl_name in FOR_LOOP_IMPLS
       for for_body_name, for_body, ref, body_shapes, nsteps in [
+        ("noop", for_body_noop, noop_ref, [(4,), (4,)], 4),
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
         ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
         ("sincos", for_body_sincos, sincos_ref, [(4,), (4,)], 4),
@@ -2840,14 +2869,12 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
       ])
-  def test_for_grad(self, jit_for, f, ref, body_shapes, n):
-    for_ = for_loop.for_loop
+  def test_for_grad(self, f, ref, body_shapes, n, for_impl):
+    for_ = for_impl
     rng = self.rng()
 
     args = [rng.randn(*s) for s in body_shapes]
 
-    if jit_for:
-      for_ = jax.jit(for_, static_argnums=(0, 1))
     tol = {np.float64: 1e-12, np.float32: 1e-4}
     ans = jax.grad(lambda args: for_(         n, f, args)[1].sum())(args)
     ans_discharged = jax.grad(
@@ -2857,7 +2884,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
                         atol=tol)
     self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
     jtu.check_grads(lambda *args: for_(n, f, args)[1].sum(), args, order=3,
-                    rtol=5e-3)
+                    rtol=7e-3, atol=1e-2)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
