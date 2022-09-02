@@ -1,0 +1,20 @@
+jax.stages package
+==================
+
+.. automodule:: jax.stages
+
+Classes
+-------
+
+.. currentmodule:: jax.stages
+
+.. autoclass:: Wrapped
+   :members: lower
+   :special-members: __call__
+
+.. autoclass:: Lowered
+   :members: in_tree, out_tree, compile, as_text, compiler_ir
+
+.. autoclass:: Compiled
+   :members: in_tree, out_tree, as_text, cost_analysis, memory_analysis, runtime_executable
+   :special-members: __call__

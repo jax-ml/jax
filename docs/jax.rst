@@ -24,6 +24,7 @@ Subpackages
     jax.ops
     jax.profiler
     jax.random
+    jax.stages
     jax.tree_util
 
 .. toctree::

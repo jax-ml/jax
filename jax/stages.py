@@ -11,6 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Interfaces to stages of the compiled execution process.
+
+JAX transformations that compile just in time for execution, such as
+``jax.jit`` and ``jax.pmap``, also support a common means of explicit
+lowering and compilation *ahead of time*. This module defines types
+that represent the stages of this process.
+
+For more, see the `AOT walkthrough <https://jax.readthedocs.io/en/latest/aot.html>`_.
+"""
 
 from jax._src.stages import (
   Compiled as Compiled,
