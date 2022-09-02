@@ -826,12 +826,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(
             dtypes=[np.float32, np.complex64], devices=("cpu", "gpu"),
             tol=1e-5),
-        custom_numeric(
-            dtypes=[np.float64, np.complex128],
-            modes=("eager", "graph"),
-            tol=1e-13),
-        custom_numeric(
-            dtypes=[np.float64, np.complex128], modes=("compiled"), tol=1e-14),
+        custom_numeric(dtypes=[np.float64, np.complex128], tol=1e-13),
         custom_numeric(
             custom_assert=custom_assert,
             description=("May return different, but also correct, results when "
