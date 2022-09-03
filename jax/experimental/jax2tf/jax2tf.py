@@ -270,7 +270,7 @@ def convert(fun_jax: Callable,
 
   Returns:
     A version of `fun_jax` that expects TfVals as arguments (or
-    tuple/lists/dicts) thereof, and returns TfVals as outputs, and uses
+    tuple/lists/dicts thereof), and returns TfVals as outputs, and uses
     only TensorFlow ops.
   """
   if experimental_native_lowering == "default":
