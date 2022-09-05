@@ -436,11 +436,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       # Use eager mode only for when all arg_shapes are known, in order to
       # check expected_shapeenv.
       arg_dtypes = (_f32,) * len(arg_shapes)
-      def f_tf(*args_tf):
-        avals = tuple(map(shape_poly.arg_aval, arg_shapes, arg_dtypes, polymorphic_shapes))
-        dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(avals)
-        dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(get_dim_values_jax,
-                                                         args_tf, avals, "")
+      def f_tf(*tf_args):
+        avals = shape_poly.args_avals(
+            arg_shapes, arg_dtypes, polymorphic_shapes)  # The function under test
+        dim_vars, get_dim_values = shape_poly.prepare_dim_var_env(avals)
+        dim_values, _ = util.unzip2(jax2tf.jax2tf._interpret_fun(lu.wrap_init(get_dim_values),
+                                                                 tf_args, avals, ""))
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
         return dict(zip(dim_vars, dim_values))
