@@ -741,30 +741,20 @@ def get_shape_evaluator(dim_vars: Sequence[str], shape: Sequence[DimSize]) ->\
   return (eval_shape,
           tuple(core.ShapedArray((), np.int32) for _ in dim_vars))
 
-def args_avals(
-    arg_shapes: Sequence[Sequence[Optional[int]]],
-    arg_jax_dtypes: Sequence[DType],
-    polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]]) -> \
-  Sequence[core.ShapedArray]:
+def arg_aval(
+    arg_shape: Sequence[Optional[int]],
+    arg_jax_dtype: DType,
+    polymorphic_shape: Optional[Union[str, PolyShape]]) -> core.ShapedArray:
   """Computes abstract values.
 
   Args:
-    arg_shapes: the shapes for the arguments, possibly having None dimensions.
-    arg_dtypes: the inferred JAX dtypes for the args.
-    polymorphic_shapes: the polymorphic specifications for the arguments.
-  Returns: a sequence of abstract values corresponding to the arguments.
+    arg_shape: the shape for the argument, possibly having None dimensions.
+    arg_dtype: the inferred JAX dtype for the arg.
+    polymorphic_shape: the polymorphic specifications for the argument.
+  Returns: the JAX abstract value for the argument.
   """
-
-  def input_aval(arg_shape: Sequence[Optional[int]],
-                 arg_jax_dtype: DType,
-                 polymorphic_shape: Optional[str]) -> core.ShapedArray:
-    """The abstract value for an input."""
-    aval_shape = _parse_spec(polymorphic_shape, arg_shape)
-    return core.ShapedArray(aval_shape, arg_jax_dtype)
-
-  avals = tuple(map(input_aval, arg_shapes, arg_jax_dtypes, polymorphic_shapes))  # type: ignore
-  return avals
-
+  aval_shape = _parse_spec(polymorphic_shape, arg_shape)
+  return core.ShapedArray(aval_shape, arg_jax_dtype)
 
 def prepare_dim_var_env(args_avals: Sequence[core.AbstractValue]) -> \
     Tuple[Sequence[str], Callable]:
