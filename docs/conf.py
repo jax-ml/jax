@@ -159,6 +159,8 @@ html_theme = 'sphinx_book_theme'
 html_theme_options = {
     'logo_only': True,
     'show_toc_level': 2,
+    'repository_url': 'https://github.com/google/jax',
+    'use_repository_button': True,     # add a "link to repository" button
 }
 
 # The name of an image file (relative to this directory) to place at the top
