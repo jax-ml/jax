@@ -2247,7 +2247,7 @@ def _reduce(*operands: TfVal,
 tf_impl_with_avals[lax.reduce_p] = _reduce
 
 
-# We use lax.cumred_tpu_impl to convert cummax,
+# We use lax.cumred_reduce_window_impl to convert cummax,
 # cummin, cumsum and cumprod. This is efficient on TPU, but the complexity is
 # O(n^2) on other backends. This may be implemented using associative_scan
 # instead to favor different backends.
@@ -2260,7 +2260,7 @@ def _cumred(lax_reduce_fn: Callable,
                              multiple_results=False,
                              extra_name_stack=extra_name_stack)
   else:
-    return _convert_jax_impl(partial(lax_control_flow.cumred_tpu_impl,
+    return _convert_jax_impl(partial(lax_control_flow.cumred_reduce_window_impl,
                                      lax_reduce_window_fn),
                              multiple_results=False,
                              extra_name_stack=extra_name_stack)

@@ -1912,9 +1912,8 @@ def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
 
 
 
-def cumred_tpu_impl(window_reduce: Callable, x, *, axis: int, reverse: bool):
-  # On TPU, an implementation using reduce_window is handled specially by the
-  # compiler and is efficient. On other backends, it is O(n^2).
+def cumred_reduce_window_impl(window_reduce: Callable, x, *, axis: int,
+                              reverse: bool):
   n = x.shape[axis]
   if n == 0:
     return x
@@ -1924,6 +1923,19 @@ def cumred_tpu_impl(window_reduce: Callable, x, *, axis: int, reverse: bool):
   window_dims = [1] * x.ndim
   window_dims[axis] = n
   return window_reduce(x, window_dims, strides, padding)
+
+
+def cumred_gpu_impl(window_reduce: Callable, reduce_fn: Callable, x, *,
+                    axis: int, reverse: bool):
+  # On GPU, reduce_window is executed in a single fusion and associative_scan
+  # is split into multiple to materialize intermediate calculations.
+  # On small inputs reduce_window is faster being a single fusion,
+  # but on larger ones is slower because of O(n^2) complexity.
+  # This conservative value of the threshold was obtained via benchmarking.
+  if x.shape[axis] > 32:
+    return associative_scan(reduce_fn, x, reverse=reverse, axis=axis)
+  return cumred_reduce_window_impl(window_reduce, x, axis=axis, reverse=reverse)
+
 
 def _cumred_batch_rule(prim, batched_args, batch_dims, *, axis: int,
                        reverse: bool):
@@ -1939,24 +1951,29 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
   return dtypes.canonicalize_dtype(operand.dtype)
 
 
-def _cumulative_reduction_primitive(name,
-                                    reduce_fn,
-                                    tpu_reduce_window_fn):
+def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
   reducer_p = lax.standard_primitive(
     _cumred_shape_rule, partial(_cumred_dtype_rule, name),
     name)
   batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
                                                    reducer_p)
-  mlir.register_lowering(
-      reducer_p,
-      mlir.cache_lowering(
-          mlir.lower_fun(partial(associative_scan, reduce_fn),
-                         multiple_results=False)))
-  mlir.register_lowering(
-      reducer_p,
-      mlir.lower_fun(partial(cumred_tpu_impl, tpu_reduce_window_fn),
-                     multiple_results=False),
-      platform='tpu')
+
+  def register_lowering(fn, platform=None):
+    mlir.register_lowering(
+        reducer_p,
+        mlir.cache_lowering(mlir.lower_fun(fn, multiple_results=False)),
+        platform=platform)
+
+  # Default for platforms not treated specially below.
+  register_lowering(partial(associative_scan, reduce_fn))
+  # On GPU, we choose between window reduction and associative scan
+  # based on the input size.
+  for platform in ['cuda', 'rocm']:
+    register_lowering(
+        partial(cumred_gpu_impl, reduce_window_fn, reduce_fn), platform)
+  # On TPU, an implementation using reduce_window is handled specially by the
+  # compiler and is efficient. On other backends, it is O(n^2).
+  register_lowering(partial(cumred_reduce_window_impl, reduce_window_fn), 'tpu')
   return reducer_p
 
 cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, windowed_reductions._reduce_window_sum)
