@@ -208,6 +208,7 @@ class JaxprEqn(NamedTuple):
   def replace(self, *args, **kwargs):
     return self._replace(*args, **kwargs)
 
+# TODO(mattjj): call typecheck rules here, so we dont form bad eqns
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
   source_info = source_info or source_info_util.new_source_info()
   if config.jax_enable_checks:

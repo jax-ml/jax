@@ -2079,10 +2079,14 @@ def _pmap_partial_eval_custom_res_maker(params_known, aval):
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
   new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
+  _, donated_invars = partition_list(used_inputs, eqn.params['donated_invars'])
+  _, glb_arg_shps = partition_list(used_inputs, eqn.params['global_arg_shapes'])
   _, in_axes = partition_list(used_inputs, eqn.params['in_axes'])
   _, out_axes = partition_list(used_outputs, eqn.params['out_axes'])
-  new_params = dict(eqn.params, call_jaxpr=new_jaxpr, in_axes=tuple(in_axes),
-                    out_axes=tuple(out_axes))
+  new_params = dict(eqn.params, call_jaxpr=new_jaxpr,
+                    donated_invars=donated_invars,
+                    global_arg_shapes=glb_arg_shps,
+                    in_axes=tuple(in_axes), out_axes=tuple(out_axes))
   if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
     return used_inputs, None
   else:
@@ -2682,6 +2686,7 @@ def lower_sharding_computation(
   # Device assignment across all inputs and outputs should be the same. This
   # is checked in pjit.
   if inp_device_assignment is not None:
+    assert not in_shardings, "if device_assignment given, no in_shardings"
     device_assignment = inp_device_assignment
     backend = xb.get_device_backend(device_assignment[0])
     first_sharding = None
@@ -2743,7 +2748,7 @@ def lower_sharding_computation(
   if (not (jaxpr.effects or has_outfeed) and
       (not jaxpr.eqns and all(kept_outputs) or not jaxpr.outvars) and
       all(_is_unspecified(o) for o in out_shardings) and  # type: ignore
-      not hasattr(backend, "compile_replicated")):
+      not hasattr(backend, "compile_replicated")):  # this means 'not pathways'
     return MeshComputation(
         str(name_stack), None, True, donated_invars, jaxpr=jaxpr, consts=consts,
         global_in_avals=global_in_avals, global_out_avals=global_out_avals,
