@@ -51,6 +51,12 @@ config.parse_flags_with_absl()
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
+  def setUp(self):
+    super().setUp()
+    # TODO(b/252943725): re-enable these tests
+    if config.jax_array and config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("Test disabled for JAX_ARRAY")
+
   def test_empty(self):
     f_jax = lambda x, y: x
     self.ConvertAndCompare(f_jax, 0.7, 1)
@@ -117,8 +123,16 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_nested_jit(self):
     f_jax = jax.jit(lambda x: jnp.sin(jax.jit(jnp.cos)(x)))
-    f_tf = jax2tf.convert(f_jax)
-    np.testing.assert_allclose(f_jax(0.7), f_tf(0.7))
+    x = 0.7
+    self.ConvertAndCompare(f_jax, x)
+
+  def test_nested_jit_pytree(self):
+    @jax.jit
+    def f_jax(xy):
+      x, y = xy
+      return x + y
+    xy = (0.7, 0.8)
+    self.ConvertAndCompare(f_jax, xy)
 
   def test_nested_jit_is_compiled(self):
     # Check that nested jax.jit are compiled with tf.function(jit_compile=True)
@@ -1241,8 +1255,17 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 def get_serialized_computation(
     f_jax: Callable,
     *args,
-    abstracted_axes: Optional[Tuple[Dict[int, str]]] = None) -> str:
-  lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
+    abstracted_axes: Optional[Tuple[Dict[int, str]]] = None,
+    use_pjit: bool = False,
+    in_axis_resources = None,
+    out_axis_resources = None) -> str:
+  if use_pjit:
+    assert not abstracted_axes
+    lowered = pjit(f_jax,
+                   in_axis_resources=in_axis_resources,
+                   out_axis_resources=out_axis_resources).lower(*args)
+  else:
+    lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
   mhlo_module = lowered.compiler_ir(dialect='mhlo')
   mhlo_module_text = mlir.module_to_string(mhlo_module)
   if jaxlib.version <= (0, 3, 14):
@@ -1364,23 +1387,29 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
       # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
       np.array_equal(jax_out._value, np.array(tf_out))
 
-    # Test 2: use GDA as JAX function input
-    def jax_func_2(input_data, params):
-      handle = pjit(
-          jnp.matmul,
-          in_axis_resources=(P("y", "x"), P(("x", "y"),)),
-          out_axis_resources=None)
-      return handle(input_data, params)
+  @jtu.with_mesh([("x", 2)])
+  def test_pjit_basic1D(self):
+    def func_jax(x, y):
+      return x + y
 
-    with global_mesh:
-      tf_func_2 = tf.function(
-          jax2tf.convert(jax_func_2, enable_xla=True),
-          jit_compile=True,
-      )
-      jax_out_2 = jax_func_2(input_data=input_data, params=params)
-      tf_out_2 = tf_func_2(input_data=input_data, params=params)
-      # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
-      np.array_equal(jax_out_2._value, np.array(tf_out_2))
+    shape = (8, 10)
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    in_axis_resources = (P("x"), P("x"))
+    out_axis_resources = None
+    res_jax = pjit(func_jax,
+                   in_axis_resources=in_axis_resources,
+                   out_axis_resources=out_axis_resources)(x, x)
+    module = get_serialized_computation(func_jax, x, x,
+                                        use_pjit=True,
+                                        in_axis_resources=in_axis_resources,
+                                        out_axis_resources=out_axis_resources)
+    def f_tf(x_tf, y_tf):
+      return tfxla.call_module([x_tf, y_tf],
+                               module=module,
+                               Tout=[x.dtype],
+                               Sout=[x.shape])
+    res_tf = tf.function(f_tf, jit_compile=True, autograph=False)(x, x)[0]
+    self.assertAllClose(res_tf.numpy(), res_jax)
 
 
 if __name__ == "__main__":

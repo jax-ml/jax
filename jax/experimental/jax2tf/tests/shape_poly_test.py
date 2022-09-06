@@ -696,6 +696,16 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                             dict(a="(_,)", b="(4,)")],
         expected_output_signature=tf.TensorSpec([4]))
 
+  def test_with_nested_jit(self):
+    @jax.jit
+    def f_jax(x):
+      return jnp.sin(x)
+
+    self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([1, None])],
+        polymorphic_shapes=["1, b"])
+
   def test_with_custom_vjp(self):
     """Shape-polymorphic custom VJP."""
 
