@@ -1240,9 +1240,45 @@ def call_partial_eval_custom_rule(
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
   return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
+
+def closed_call_partial_eval_custom_rule(
+    jaxpr_param_name: str,
+    saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
+    eqn: JaxprEqn, *, res_aval: ResAvalUpdater = _default_res_aval_updater,
+  ) -> Tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], List[Var]]:
+  # TODO(sharadmv,mattjj): dedup this rule with call_partial_eval_custom_rule.
+  closed_jaxpr = eqn.params[jaxpr_param_name]
+  jaxpr = convert_constvars_jaxpr(closed_jaxpr.jaxpr)
+  unks_in = [False] * len(closed_jaxpr.consts) + list(unks_in)
+  inst_in = [False] * len(closed_jaxpr.consts) + list(inst_in)
+  jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
+      partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False, saveable)
+  ins_known, _ = partition_list(unks_in, eqn.invars)
+  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
+  _, ins_staged = partition_list(inst_in, eqn.invars)
+  _, out_binders_staged = partition_list(inst_out, eqn.outvars)
+  newvar = core.gensym([jaxpr_known, jaxpr_staged])
+  params_known = {**eqn.params, jaxpr_param_name: core.ClosedJaxpr(jaxpr_known,
+    ())}
+  params_staged = {**eqn.params, jaxpr_param_name:
+      core.ClosedJaxpr(jaxpr_staged, ())}
+  residuals = [newvar(res_aval(params_known, var.aval))
+               for var in jaxpr_staged.invars[:num_res]]
+  eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
+                            eqn.primitive, params_known, jaxpr_known.effects, eqn.source_info)
+  eqn_staged = new_jaxpr_eqn([*residuals, *ins_staged], out_binders_staged,
+                             eqn.primitive, params_staged,
+                             jaxpr_staged.effects, eqn.source_info)
+  assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is Var and not inst]
+  return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
+
 partial_eval_jaxpr_custom_rules[core.call_p] = \
     partial(call_partial_eval_custom_rule, 'call_jaxpr',
             lambda _, __, ___, ____, _____, x, y: (x, y))
+partial_eval_jaxpr_custom_rules[core.closed_call_p] = \
+    partial(closed_call_partial_eval_custom_rule, 'call_jaxpr')
 partial_eval_jaxpr_custom_rules[core.named_call_p] = \
     partial(call_partial_eval_custom_rule, 'call_jaxpr',
             lambda _, __, ___, ____, _____, x, y: (x, y))
