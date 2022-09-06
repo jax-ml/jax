@@ -136,6 +136,9 @@ class _LimitInFlightBytes:
     self._cv = asyncio.Condition(lock=asyncio.Lock())
 
   async def wait_for_bytes(self, requested_bytes):
+    if requested_bytes >= self._max_bytes:
+      raise ValueError('Requested more bytes than we reserved space for: '
+                       f'{requested_bytes} > {self._max_bytes}')
     async with self._cv:
       await self._cv.wait_for(lambda: self._available_bytes > requested_bytes)
       self._available_bytes -= requested_bytes
@@ -249,7 +252,7 @@ async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
     if dtype is not None:
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
-      return out.astype(dtype)
+      out = out.astype(dtype)
 
     if byte_limiter is not None:
       await byte_limiter.release_bytes(requested_bytes)
