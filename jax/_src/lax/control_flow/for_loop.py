@@ -51,7 +51,9 @@ T = TypeVar('T')
 class Ref(Generic[T]): pass
 Array = Any
 
-StateEffect = state.StateEffect
+ReadEffect = state.ReadEffect
+WriteEffect = state.WriteEffect
+AccumEffect = state.AccumEffect
 ShapedArrayRef = state.ShapedArrayRef
 ref_set = state.ref_set
 ref_get = state.ref_get

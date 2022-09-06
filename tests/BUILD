@@ -317,9 +317,9 @@ jax_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
     shard_count = {
-        "cpu": 20,
-        "gpu": 20,
-        "tpu": 20,
+        "cpu": 30,
+        "gpu": 30,
+        "tpu": 30,
         "iree": 10,
     },
 )

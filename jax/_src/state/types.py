@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for state types."""
+from __future__ import annotations
 from functools import partial
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -44,11 +45,29 @@ zip, unsafe_zip = safe_zip, zip
 
 Array = Any
 
-class _StateEffect:
-  def __repr__(self):
-    return "State"
-  __str__ = __repr__
-StateEffect = _StateEffect()
+class RefEffect:
+  def __init__(self, ref_aval: ShapedArrayRef):
+    self.ref_aval = ref_aval
+
+  def __eq__(self, other):
+    if not isinstance(other, self.__class__):
+      return False
+    return self.ref_aval is other.ref_aval
+
+  def __hash__(self):
+    return hash((self.__class__, self.ref_aval))
+
+class ReadEffect(RefEffect):
+  def __str__(self):
+    return f"Read<{self.ref_aval}>"
+
+class WriteEffect(RefEffect):
+  def __str__(self):
+    return f"Write<{self.ref_aval}>"
+
+class AccumEffect(RefEffect):
+  def __str__(self):
+    return f"Accum<{self.ref_aval}>"
 
 # ## `Ref`s
 
