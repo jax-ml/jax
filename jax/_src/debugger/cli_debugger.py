@@ -27,7 +27,7 @@ DebuggerFrame = debugger_core.DebuggerFrame
 class CliDebugger(cmd.Cmd):
   """A text-based debugger."""
   prompt = '(jdb) '
-  use_rawinput: bool = False
+  use_rawinput = False
 
   def __init__(self, frames: List[DebuggerFrame], thread_id,
       stdin: Optional[IO[str]] = None, stdout: Optional[IO[str]] = None,

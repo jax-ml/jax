@@ -34,7 +34,7 @@ _web_consoles: Dict[Tuple[str, int], web_pdb.WebConsole] = {}
 class WebDebugger(cli_debugger.CliDebugger):
   """A web-based debugger."""
   prompt = '(jdb) '
-  use_rawinput: bool = False
+  use_rawinput = False
 
   def __init__(self, frames: List[debugger_core.DebuggerFrame], thread_id,
                completekey: str = "tab", host: str = "", port: int = 5555):
