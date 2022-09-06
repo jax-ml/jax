@@ -15,7 +15,7 @@
 from functools import partial
 import operator
 
-from typing import Any, Callable, Generic, List, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Generic, List, Optional, Sequence, Set, Tuple, TypeVar
 
 from jax import core
 from jax import lax
@@ -54,6 +54,7 @@ Array = Any
 ReadEffect = state.ReadEffect
 WriteEffect = state.WriteEffect
 AccumEffect = state.AccumEffect
+StateEffect = state.StateEffect
 ShapedArrayRef = state.ShapedArrayRef
 ref_set = state.ref_set
 ref_get = state.ref_get
@@ -222,6 +223,11 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
   init, _, ys = for_loop(length, for_body, (init, xs, ys), reverse=reverse)
   return init, ys
 
+def _get_ref_state_effects(jaxpr: core.Jaxpr) -> List[Set[StateEffect]]:
+  all_effects = jaxpr.effects
+  return [{eff for eff in all_effects
+           if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
+           and eff.ref_aval is v.aval} for v in jaxpr.invars]
 
 @for_p.def_abstract_eval
 def _for_abstract_eval(*avals, jaxpr, **__):
@@ -317,6 +323,38 @@ def _partial_eval_jaxpr_custom(jaxpr, in_unknowns, policy):
 
 _save_everything = lambda *_, **__: True
 
+def _is_read_only(ref_effects: Set[StateEffect]) -> bool:
+  assert len(ref_effects) > 0
+  if len(ref_effects) > 1:
+    # Means we must have a write or accum effect so not read-only
+    return False
+  eff, = ref_effects
+  return isinstance(eff, ReadEffect)
+
+def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> List[bool]:
+  # Get effects for each of the jaxpr inputs and remove the loop index.
+  ref_effects = _get_ref_state_effects(jaxpr)[1:]
+  # We first assume that *read-only `Ref`s* are loop-invariant. We can safely do
+  # this because the only way something can be loop-varying is if we write to it
+  # at some point. It's *possible* that read-write `Ref`s are loop-invariant but
+  # we conservatively assume they aren't.
+  loop_invar_refs = [_is_read_only(effs) if effs else True
+                     for effs in ref_effects]
+  loop_var_refs = map(operator.not_, loop_invar_refs)
+
+  # We'd like to detect if the outputs of the jaxpr are loop-invariant. An
+  # output is loop-invariant if it is downstream of only loop-invariant values
+  # (seeded by the read-only `Ref`s). If at any point, a loop-varying value
+  # interacts with a loop-invariant value, we produce a loop-varying value. We
+  # can use `partial_eval` to perform this analysis by treating loop-varying
+  # values as "unknown" and loop-invariant values as "known", since when a known
+  # and unknown value interact, they produce an unknown value.
+  loop_var_inputs = [True, *loop_var_refs]
+  _, _, loop_var_outputs, _, _, = _partial_eval_jaxpr_custom(
+      jaxpr, loop_var_inputs, _save_everything)
+  return map(operator.not_, loop_var_outputs)
+
+
 def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
                       jaxpr: core.Jaxpr, nsteps: int, reverse: bool,
                       which_linear: Tuple[bool, ...]) -> List[pe.JaxprTracer]:
@@ -371,29 +409,7 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   # dependent on the loop index. If a residual is not dependent on the loop
   # index, we don't need add an extra loop dimension we're reading from when we
   # convert it from an output into a write.
-
-  # In order to detect which residuals are loop-invariant, we need to run a
-  # fixpoint. This is because the residual could be dependent on a `Ref` that
-  # changes each iteration of the loop so we need to first detect which `Ref`s
-  # are loop-varying. We can do this by discharging the state from the jaxpr and
-  # running partial_eval with initially only the loop-index being loop-varying.
-  # The fixpoint will eventually propagate the loop-varying-ness over the
-  # inputs/outputs and we will converge.
-  loop_var_res = [False] * len(jaxpr_known_resout.outvars)
-  loop_var_refs = [False] * (len(jaxpr_known_resout.invars) - 1)
-  discharged_jaxpr_known_resout = core.ClosedJaxpr(
-      *discharge_state(jaxpr_known_resout, ()))
-  for _ in range(len(discharged_jaxpr_known_resout.jaxpr.invars)):
-    (_, _, loop_var_outputs, _) = pe.partial_eval_jaxpr_nounits(
-          discharged_jaxpr_known_resout, [True] + loop_var_refs, False)
-    loop_var_res, loop_var_refs_ = split_list(
-        loop_var_outputs, [len(loop_var_res)])
-    if loop_var_refs == loop_var_refs_:
-      break
-    loop_var_refs = map(operator.or_, loop_var_refs, loop_var_refs_)
-  # Now that the fixpoint is complete, we know which residuals are
-  # loop-invariant.
-  loop_invar_res = map(operator.not_, loop_var_res)
+  loop_invar_res = _loop_invariant_outputs(jaxpr_known_resout)
 
   jaxpr_known, res_avals = _convert_outputs_to_writes(nsteps,
                                                       jaxpr_known_resout,
@@ -504,29 +520,7 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
   # dependent on the loop index. If a residual is not dependent on the loop
   # index, we don't need add an extra loop dimension we're reading from when we
   # convert it from an output into a write.
-
-  # In order to detect which residuals are loop-invariant, we need to run a
-  # fixpoint. This is because the residual could be dependent on a `Ref` that
-  # changes each iteration of the loop so we need to first detect which `Ref`s
-  # are loop-varying. We can do this by discharging the state from the jaxpr and
-  # running partial_eval with initially only the loop-index being loop-varying.
-  # The fixpoint will eventually propagate the loop-varying-ness over the
-  # inputs/outputs and we will converge.
-  loop_var_res = [False] * len(jaxpr_known_resout.outvars)
-  loop_var_refs = [False] * (len(jaxpr_known_resout.invars) - 1)
-  discharged_jaxpr_known_resout = core.ClosedJaxpr(
-      *discharge_state(jaxpr_known_resout, ()))
-  for _ in range(len(discharged_jaxpr_known_resout.jaxpr.invars)):
-    (_, _, loop_var_outputs, _) = pe.partial_eval_jaxpr_nounits(
-          discharged_jaxpr_known_resout, [True] + loop_var_refs, False)
-    loop_var_res, loop_var_refs_ = split_list(
-        loop_var_outputs, [len(loop_var_res)])
-    if loop_var_refs == loop_var_refs_:
-      break
-    loop_var_refs = map(operator.or_, loop_var_refs, loop_var_refs_)
-  # Now that the fixpoint is complete, we know which residuals are
-  # loop-invariant.
-  loop_invar_res = map(operator.not_, loop_var_res)
+  loop_invar_res = _loop_invariant_outputs(jaxpr_known_resout)
 
   jaxpr_known, res_avals = _convert_outputs_to_writes(nsteps,
                                                       jaxpr_known_resout,

@@ -69,6 +69,8 @@ class AccumEffect(RefEffect):
   def __str__(self):
     return f"Accum<{self.ref_aval}>"
 
+StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
+
 # ## `Ref`s
 
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
