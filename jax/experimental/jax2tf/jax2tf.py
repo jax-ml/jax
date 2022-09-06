@@ -2316,7 +2316,7 @@ tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 def _random_seed_impl(seeds: TfVal, *, impl, _in_avals, _out_aval):
 
   def impl_wrapper(seeds: TfVal, *, impl):
-    return jax._src.prng.random_seed_impl_base(seeds, impl=impl)
+    return prng.random_seed_impl_base(seeds, impl=impl)
 
   converted_impl = _convert_jax_impl(
       impl_wrapper, multiple_results=False, with_physical_avals=True,
@@ -2324,14 +2324,14 @@ def _random_seed_impl(seeds: TfVal, *, impl, _in_avals, _out_aval):
   return converted_impl(
       seeds, impl=impl, _in_avals=_in_avals, _out_aval=_out_aval)
 
-tf_impl_with_avals[jax._src.prng.random_seed_p] = _random_seed_impl
+tf_impl_with_avals[prng.random_seed_p] = _random_seed_impl
 
 
 def _random_split_impl(keys: TfVal, *, count, _in_avals, _out_aval):
   keys_aval, = _in_avals
 
   def impl_wrapper(keys: TfVal, *, count):
-    return jax._src.prng.random_split_impl_base(
+    return prng.random_split_impl_base(
         keys_aval.dtype.impl, keys, keys_aval.ndim, count=count)
 
   converted_impl = _convert_jax_impl(
@@ -2340,14 +2340,14 @@ def _random_split_impl(keys: TfVal, *, count, _in_avals, _out_aval):
   return converted_impl(
       keys, count=count, _in_avals=_in_avals, _out_aval=_out_aval)
 
-tf_impl_with_avals[jax._src.prng.random_split_p] = _random_split_impl
+tf_impl_with_avals[prng.random_split_p] = _random_split_impl
 
 
 def _random_fold_in_impl(keys: TfVal, msgs: TfVal, *, _in_avals, _out_aval):
   keys_aval, _ = _in_avals
 
   def impl_wrapper(keys: TfVal, msgs: TfVal):
-    return jax._src.prng.random_fold_in_impl_base(
+    return prng.random_fold_in_impl_base(
         keys_aval.dtype.impl, keys, msgs, keys_aval.shape)
 
   converted_impl = _convert_jax_impl(
@@ -2356,14 +2356,14 @@ def _random_fold_in_impl(keys: TfVal, msgs: TfVal, *, _in_avals, _out_aval):
   return converted_impl(
       keys, msgs, _in_avals=_in_avals, _out_aval=_out_aval)
 
-tf_impl_with_avals[jax._src.prng.random_fold_in_p] = _random_fold_in_impl
+tf_impl_with_avals[prng.random_fold_in_p] = _random_fold_in_impl
 
 
 def _random_bits_impl(keys: TfVal, *, bit_width, shape, _in_avals, _out_aval):
   keys_aval, = _in_avals
 
   def impl_wrapper(keys: TfVal, **kwargs):
-    return jax._src.prng.random_bits_impl_base(
+    return prng.random_bits_impl_base(
         keys_aval.dtype.impl, keys, keys_aval.ndim,
         bit_width=bit_width, shape=shape)
 
@@ -2373,19 +2373,19 @@ def _random_bits_impl(keys: TfVal, *, bit_width, shape, _in_avals, _out_aval):
   return converted_impl(keys, bit_width=bit_width, shape=shape,
                         _in_avals=_in_avals, _out_aval=_out_aval)
 
-tf_impl_with_avals[jax._src.prng.random_bits_p] = _random_bits_impl
+tf_impl_with_avals[prng.random_bits_p] = _random_bits_impl
 
 
 def _random_wrap_impl(base_arr: TfVal, *, impl, _in_avals, _out_aval):
   return base_arr
 
-tf_impl_with_avals[jax._src.prng.random_wrap_p] = _random_wrap_impl
+tf_impl_with_avals[prng.random_wrap_p] = _random_wrap_impl
 
 
 def _random_unwrap_impl(keys: TfVal, *, _in_avals, _out_aval):
   return keys
 
-tf_impl_with_avals[jax._src.prng.random_unwrap_p] = _random_unwrap_impl
+tf_impl_with_avals[prng.random_unwrap_p] = _random_unwrap_impl
 
 
 
