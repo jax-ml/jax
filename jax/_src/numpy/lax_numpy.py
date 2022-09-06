@@ -989,8 +989,9 @@ def interp(x, xp, fp, left=None, right=None, period=None):
   dx = xp[i] - xp[i - 1]
   delta = x - xp[i - 1]
 
-  dx0 = dx == 0  # Protect against NaNs in `f` when `dx` is zero.
-  f = where(dx0, fp[i], fp[i - 1] + (delta / where(dx0, 1, dx)) * df)
+  epsilon = np.spacing(np.finfo(xp.dtype).eps)
+  dx0 = lax.abs(dx) <= epsilon  # Prevent NaN gradients when `dx` is small.
+  f = where(dx0, fp[i - 1], fp[i - 1] + (delta / where(dx0, 1, dx)) * df)
 
   if period is None:
     f = where(x < xp[0], fp[0] if left is None else left, f)

@@ -3136,6 +3136,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype={}_period={}_left={}_right={}".format(
+         dtype, period, left, right),
+       "dtype": dtype, "period": period, "left": left, "right": right}
+      for period in [None, 0.59]
+      for left in [None, 0]
+      for right in [None, 1]
+      for dtype in jtu.dtypes.floating
+  ))
+  def testInterpGradNan(self, dtype, period, left, right):
+    kwds = dict(period=period, left=left, right=right)
+    jnp_fun = partial(jnp.interp, **kwds)
+    # Probe values of x and xp that are close to zero and close together.
+    x = dtype(np.exp(np.linspace(-90, -20, 1000)))
+    g = jax.grad(lambda z: jnp.sum(jnp_fun(z, z, jnp.ones_like(z))))(x)
+    np.testing.assert_equal(np.all(np.isfinite(g)), True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_x1={}_x2={}_x1_rng={}".format(
           jtu.format_shape_dtype_string(x1_shape, x1_dtype),
           jtu.format_shape_dtype_string(x2_shape, np.int32),
