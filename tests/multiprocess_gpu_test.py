@@ -33,6 +33,11 @@ try:
 except ImportError:
   portpicker = None
 
+try:
+  import pytest
+except ImportError:
+  pytest = None
+
 config.parse_flags_with_absl()
 
 
@@ -151,7 +156,11 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 @unittest.skipIf(
     os.environ.get("SLURM_JOB_NUM_NODES", None) != "2",
     "Slurm environment with at least two nodes needed!")
+@unittest.skipIf(not pytest, "Test requires pytest markers")
 class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
+
+  if pytest is not None:
+    pytestmark = pytest.mark.SlurmMultiNodeGpuTest
 
   def test_gpu_multi_node_initialize_and_psum(self):
 

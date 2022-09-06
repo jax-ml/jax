@@ -40,7 +40,7 @@ EOF
 read -r -d '' cmd <<EOF
 date \
 && python3.8 -m pip  list | grep jax \
-&& python3.8 -m pytest --forked -v -s --continue-on-collection-errors \
+&& python3.8 -m pytest -m SlurmMultiNodeGpuTest --forked -v -s --continue-on-collection-errors \
     --junit-xml=/workspace/outputs/junit_output_\${SLURM_PROCID}.xml \
     /workspace/tests/multiprocess_gpu_test.py
 EOF
