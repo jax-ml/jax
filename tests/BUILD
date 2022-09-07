@@ -30,6 +30,7 @@ jax_generate_backend_suites()
 jax_test(
     name = "api_test",
     srcs = ["api_test.py"],
+    pjrt_c_api_bypass = True,
     shard_count = 10,
 )
 
@@ -172,6 +173,7 @@ jax_test(
     name = "xmap_test",
     srcs = ["xmap_test.py"],
     disable_configs = ["cpu_jax_array"],
+    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 10,
         "gpu": 4,
@@ -187,6 +189,7 @@ jax_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
     disable_configs = ["cpu_jax_array"],
+    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 5,
         "gpu": 5,
@@ -210,6 +213,7 @@ jax_test(
 jax_test(
     name = "array_test",
     srcs = ["array_test.py"],
+    pjrt_c_api_bypass = True,
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -244,6 +248,7 @@ jax_test(
 jax_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
+    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental_host_callback",
     ],
@@ -344,6 +349,7 @@ jax_test(
 jax_test(
     name = "lax_numpy_test",
     srcs = ["lax_numpy_test.py"],
+    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 40,
         "gpu": 40,
@@ -523,6 +529,7 @@ jax_test(
 jax_test(
     name = "pmap_test",
     srcs = ["pmap_test.py"],
+    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 30,
         "gpu": 30,
@@ -768,6 +775,7 @@ jax_test(
     backend_tags = {
         "tpu": ["nomsan"],  # TODO(b/213388298): this test fails msan.
     },
+    pjrt_c_api_bypass = True,
     deps = [
         "//jax:compilation_cache",
         "//jax:experimental",
@@ -787,6 +795,7 @@ jax_test(
     name = "host_callback_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=true"],
+    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -816,6 +825,7 @@ jax_test(
 jax_test(
     name = "host_callback_to_tf_test",
     srcs = ["host_callback_to_tf_test.py"],
+    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental_host_callback",
         "//jax:ode",
