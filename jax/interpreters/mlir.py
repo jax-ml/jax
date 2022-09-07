@@ -673,12 +673,6 @@ def module_to_string(module: ir.Module) -> str:
                          print_generic_op_form=False)
   return output.getvalue()
 
-def module_to_bytecode(module: ir.Module) -> bytes:
-  output = io.BytesIO()
-  module.operation.write_bytecode(file=output)
-  return output.getvalue()
-
-
 def _set_up_aliases(avals_in, avals_out, donated_args):
   input_output_aliases = [None] * len(avals_in)
   # To match-up in-avals to out-avals we only care about the number of
