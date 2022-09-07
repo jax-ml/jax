@@ -1,6 +1,6 @@
 # JAX Converters Evaluation Results
 
-*Last generated on: 2022-09-06* (YYYY-MM-DD)
+*Last generated on: 2022-09-07* (YYYY-MM-DD)
 
 This file contains the evaluation results for all converters in table format.
 
@@ -12,32 +12,31 @@ details on the different converters.
 
 ## Summary Table
 
-| Example | jax2tf_xla | jax2tf_noxla | jax2tf_noxla_tfjs | jax2tf_noxla_tflite | jax2tf_noxla_tflite+flex |
+| Example | jax2tf_xla | jax2tf_noxla | jax2tfjs | jax2tflite | jax2tflite+flex |
 | --- | --- | --- | --- | --- | --- |
 | flax/actor_critic | YES | YES | YES | YES | YES |
-| flax/bilstm | YES | YES | YES | [NO](#example-flaxbilstm--converter-jax2tf_noxla_tflite) |  [NO](#example-flaxbilstm--converter-jax2tf_noxla_tfliteflex) | 
+| flax/bilstm | YES | YES | YES | [NO](#example-flaxbilstm--converter-jax2tflite) |  [NO](#example-flaxbilstm--converter-jax2tfliteflex) | 
 | flax/resnet50 | YES | YES | YES | YES | YES |
-| flax/seq2seq | YES | YES | [NO](#example-flaxseq2seq--converter-jax2tf_noxla_tfjs) |  [NO](#example-flaxseq2seq--converter-jax2tf_noxla_tflite) |  YES |
-| flax/lm1b | YES | YES | YES | [NO](#example-flaxlm1b--converter-jax2tf_noxla_tflite) |  YES |
-| flax/nlp_seq | YES | YES | YES | [NO](#example-flaxnlp_seq--converter-jax2tf_noxla_tflite) |  YES |
-| flax/wmt | YES | YES | YES | [NO](#example-flaxwmt--converter-jax2tf_noxla_tflite) |  YES |
+| flax/seq2seq | YES | YES | [NO](#example-flaxseq2seq--converter-jax2tfjs) |  [NO](#example-flaxseq2seq--converter-jax2tflite) |  YES |
+| flax/lm1b | YES | YES | YES | YES | YES |
+| flax/nlp_seq | YES | YES | YES | YES | YES |
+| flax/wmt | YES | YES | YES | YES | YES |
 | flax/vae | YES | YES | YES | YES | YES |
 
 ## Errors
 
 ## `flax/actor_critic`
 ## `flax/bilstm`
-### Example: `flax/bilstm` | Converter: `jax2tf_noxla_tflite`
+### Example: `flax/bilstm` | Converter: `jax2tflite`
 ```
 Conversion error
 Some ops are not supported by the native TFLite runtime
 	tf.Abs(tensor<2xi32>) -> (tensor<2xi32>) : {device = ""}
-	tf.ScatterNd(tensor<1x?x?x?x1xi32>, tensor<1x1x2x1xi1>, tensor<1xi32>) -> (tensor<6xi1>) : {device = ""}
 	tf.Sign(tensor<2xi32>) -> (tensor<2xi32>) : {device = ""}
 ```
 [Back to top](#summary-table)
 
-### Example: `flax/bilstm` | Converter: `jax2tf_noxla_tflite+flex`
+### Example: `flax/bilstm` | Converter: `jax2tflite+flex`
 ```
 RuntimeError('tensorflow/lite/kernels/concatenation.cc:158 t->dims->data[d] != t0->dims->data[d] (3 != 1)Node number 11 (CONCATENATION) failed to prepare.Node number 32 (WHILE) failed to invoke.')
 ```
@@ -45,15 +44,15 @@ RuntimeError('tensorflow/lite/kernels/concatenation.cc:158 t->dims->data[d] != t
 
 ## `flax/resnet50`
 ## `flax/seq2seq`
-### Example: `flax/seq2seq` | Converter: `jax2tf_noxla_tfjs`
+### Example: `flax/seq2seq` | Converter: `jax2tfjs`
 ```
 Conversion error
 ValueError('Unsupported Ops in the model before optimization
-BitwiseXor, RightShift, Bitcast, LeftShift, BitwiseAnd, BitwiseOr')
+BitwiseXor, RightShift, Bitcast, BitwiseOr, BitwiseAnd, LeftShift')
 ```
 [Back to top](#summary-table)
 
-### Example: `flax/seq2seq` | Converter: `jax2tf_noxla_tflite`
+### Example: `flax/seq2seq` | Converter: `jax2tflite`
 ```
 Conversion error
 Some ops are not supported by the native TFLite runtime
@@ -72,8 +71,6 @@ Some ops are not supported by the native TFLite runtime
 	tf.RightShift(tensor<1x4xui32>, tensor<ui32>) -> (tensor<1x4xui32>) : {device = ""}
 	tf.RightShift(tensor<1xui32>, tensor<ui32>) -> (tensor<1xui32>) : {device = ""}
 	tf.RightShift(tensor<2xui32>, tensor<ui32>) -> (tensor<2xui32>) : {device = ""}
-	tf.ScatterNd(tensor<1x?x?x?x1xi32>, tensor<1x1x1x2xi1>, tensor<1xi32>) -> (tensor<4xi1>) : {device = ""}
-	tf.ScatterNd(tensor<1x?x?x?x1xi32>, tensor<1x1x1x4xi1>, tensor<1xi32>) -> (tensor<4xi1>) : {device = ""}
 	tf.SelectV2(tensor<i1>, tensor<1x4xui32>, tensor<1x4xui32>) -> (tensor<1x4xui32>) : {device = ""}
 	tf.SelectV2(tensor<i1>, tensor<1xui32>, tensor<1xui32>) -> (tensor<1xui32>) : {device = ""}
 	tf.SelectV2(tensor<i1>, tensor<2xui32>, tensor<2xui32>) -> (tensor<2xui32>) : {device = ""}
@@ -83,32 +80,8 @@ Some ops are not supported by the native TFLite runtime
 [Back to top](#summary-table)
 
 ## `flax/lm1b`
-### Example: `flax/lm1b` | Converter: `jax2tf_noxla_tflite`
-```
-Conversion error
-Some ops are not supported by the native TFLite runtime
-	tf.Sign(tensor<2x1xf32>) -> (tensor<2x1xf32>) : {device = ""}
-```
-[Back to top](#summary-table)
-
 ## `flax/nlp_seq`
-### Example: `flax/nlp_seq` | Converter: `jax2tf_noxla_tflite`
-```
-Conversion error
-Some ops are not supported by the native TFLite runtime
-	tf.Sign(tensor<2x1xf32>) -> (tensor<2x1xf32>) : {device = ""}
-```
-[Back to top](#summary-table)
-
 ## `flax/wmt`
-### Example: `flax/wmt` | Converter: `jax2tf_noxla_tflite`
-```
-Conversion error
-Some ops are not supported by the native TFLite runtime
-	tf.Sign(tensor<2x1xf32>) -> (tensor<2x1xf32>) : {device = ""}
-```
-[Back to top](#summary-table)
-
 ## `flax/vae`
 
 ## Description of Converters
