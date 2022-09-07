@@ -283,7 +283,16 @@ def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
                      x_dtype, data_dtype, index_dtype):
   """COO from dense matrix."""
   data_type, _, nnz = _validate_coo_mhlo(data, row, col)
-  rows, cols = shape
+  is_batched_matmat = False
+  batch_count = 1
+  if len(shape) == 2:
+    rows, cols = shape
+  elif len(shape) == 3:
+    is_batched_matmat = True
+    batch_count, rows, cols = shape
+    # Redefine nnz as nnz per batch.
+    nnz = nnz // batch_count
+
   B_shape = ir.RankedTensorType(B.type).shape
   _, Ccols = B_shape
 
@@ -291,14 +300,11 @@ def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
     compute_dtype = data_dtype
     compute_type = data_type
 
-  # TODO(tianjianlu): use user-defined batch count after enabling batch mode.
-  batch_count = 1
-
   # TODO(tianjianlu): use batch stride to trigger different mode of batch
   # computation. Currently batch_stride = 0 is not allowed because of the issue
   # in cusparse https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643
   # Set batch stride to be the matrix size for now.
-  lhs_batch_stride = rows * cols
+  lhs_batch_stride = nnz
   B_rows = rows if transpose else cols
   rhs_batch_stride =  B_rows * Ccols
 
@@ -308,17 +314,24 @@ def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
       rhs_batch_stride)
   out_size = cols if transpose else rows
 
+  if is_batched_matmat:
+    out_shape = [batch_count, out_size, Ccols]
+    out_layout = [2, 1, 0]
+  else:
+    out_shape = [out_size, Ccols]
+    out_layout = [1, 0]
+
   out = custom_call(
       f"{platform}sparse_coo_matmat",
       [
-          ir.RankedTensorType.get([out_size, Ccols], compute_type),
+          ir.RankedTensorType.get(out_shape, compute_type),
           ir.RankedTensorType.get([buffer_size],
                                   ir.IntegerType.get_signless(8)),
       ],
       [data, row, col, B],
       backend_config=opaque,
       operand_layouts=[[0], [0], [0], [1, 0]],
-      result_layouts=[[1, 0], [0]])
+      result_layouts=[out_layout, [0]])
   return out[0]
 
 cuda_coo_matmat = partial(_coo_matmat_mhlo, "cu", _cusparse)
