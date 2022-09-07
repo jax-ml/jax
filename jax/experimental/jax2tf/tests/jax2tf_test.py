@@ -488,8 +488,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       dict(testcase_name=f"function={with_function}",
            with_function=with_function)
       for with_function in [False, True]))
-  def test_gradients_unused_argument_readme(self, with_function=True):
-    # x2 and x3 are not used. x3 has integer type.
+  def test_gradients_unused_argument_readme(self, with_function=False):
+    # x1 and x3 are not used. x3 has integer type.
     def fn(x0, x1, x2, x3):
       return x0 * 0. + x2 * 2.
 
@@ -536,7 +536,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       dict(testcase_name=f"function={with_function}",
            with_function=with_function)
       for with_function in [False, True]))
-  def test_gradients_int_argument(self, with_function=True):
+  def test_gradients_int_argument(self, with_function=False):
     # https://github.com/google/jax/issues/6975
     # Also issue #6975.
     # An expanded version of test_gradients_unused_argument
