@@ -486,6 +486,22 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertGreater(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
+  def test_array_isinstance(self):
+    with jax_config.jax_array(True):
+      x = jnp.arange(5)
+
+      # Check type identity
+      assert type(x) is array.Array
+
+      # Check isinstance() for Arrays and tracers
+      is_array = lambda x: isinstance(x, array.Array)
+      jit_is_array = jax.jit(is_array)
+      vmap_is_array = jax.vmap(is_array)
+
+      self.assertTrue(is_array(x))
+      self.assertTrue(jit_is_array(x))
+      self.assertTrue(vmap_is_array(x).all())
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

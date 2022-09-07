@@ -105,7 +105,12 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   return jnp_value
 
 
-class Array:
+class ArrayMeta(type):
+  def __instancecheck__(cls, val):
+    return super().__instancecheck__(val) or isinstance(val, core.Tracer)
+
+
+class Array(metaclass=ArrayMeta):
   # TODO(yashkatariya): Add __slots__ here.
 
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
