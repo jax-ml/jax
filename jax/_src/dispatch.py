@@ -972,11 +972,14 @@ def compile_or_get_cached(backend, computation, compile_options,
   if isinstance(computation, ir.Module):
     sym_name = computation.operation.attributes['sym_name']
     module_name = ir.StringAttr(sym_name).value
-    # Convert ir.Module to str representation (the default), unless the
+    # Convert ir.Module to a string representation, unless the
     # back-end expliclity flags the ability to handle a module directly
     # (avoiding the overhead of back and forth conversions)
     if getattr(backend, "needs_str_ir", True):
-      computation = mlir.module_to_string(computation)
+      if xc.mlir_api_version >= 34:
+        computation = mlir.module_to_bytecode(computation)
+      else:
+        computation = mlir.module_to_string(computation)
   else:
     module_name = computation.name()
 
