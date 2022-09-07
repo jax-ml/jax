@@ -302,6 +302,20 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
       (i for i in in_shardings if i is not None), pxla.EMPTY_ENV.physical_mesh)
   in_shardings = [sharding.OpShardingSharding.get_replicated(da) if i is None else i
                   for i in in_shardings]
+
+  process_index = xb.process_index()
+  local_da = [d for d in da if d.process_index == process_index]
+  if len(local_da) != len(da):
+    warnings.warn(
+        "Running operations on `Array`s that are not fully addressable by this "
+        "process (i.e. `Array`s with data sharded across multiple devices and "
+        "processes.) is dangerous. It’s very important that all processes run "
+        "the same cross-process computations in the same order otherwise it "
+        "can lead to hangs.\n"
+        "If you’re not already familiar with JAX’s multi-process "
+        "programming model, please read "
+        "https://jax.readthedocs.io/en/latest/multi_process.html.")
+
   # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
   # the number of output avals at this stage. lower_sharding_computation will
   # apply it to all out_avals.
