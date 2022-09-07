@@ -4,7 +4,7 @@
 
 This file contains the evaluation results for all converters in table format.
 
-See [models_test.py](../tests/models_test.py) for instructions on how to
+See [models_test_main.py](../tests/models_test_main.py) for instructions on how to
 regenerate this table.
 
 See [Description of Converters](#description-of-converters) below for more

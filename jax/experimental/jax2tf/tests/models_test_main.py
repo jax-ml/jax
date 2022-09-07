@@ -21,10 +21,10 @@ Run this as follows:
 
 ```
 # Run all converters on all suites and regenerate the table.
-python3 models_test.py
+python3 models_test_main.py
 
 # Run only CNN and Resnet50 with the TFjs converter and don't write Markdown.
-python3 models_test.py \
+python3 models_test_main.py \
     --examples=flax/cnn,flax/resnet50 \
     --converters=jax2tf_noxla_tfjs \
     --write_markdown=False
