@@ -670,6 +670,8 @@ def make_sharded_device_array(
 
   if (_USE_CPP_SDA and
       (not device_buffers or
+       (xb.use_sharded_buffer and
+        isinstance(device_buffers, xb.xla_client.ShardedBuffer)) or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
     return pmap_lib.ShardedDeviceArray.make(
         aval, sharding_spec, device_buffers,
