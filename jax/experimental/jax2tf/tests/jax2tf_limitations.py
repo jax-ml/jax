@@ -130,14 +130,15 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "cos", "cosh", "complex", "conj", "convert_element_type", "cummax",
       "cummin", "device_put", "dynamic_slice", "dynamic_update_slice", "exp",
       "eq", "floor", "gather", "ge", "gt", "imag", "iota", "is_finite", "le",
-      "lt", "log", "mul", "ne", "neg", "not", "or", "pad", "population_count",
-      "random_categorical", "random_uniform", "random_randint",
-      "reduce", "reduce_and", "reduce_prod", "reduce_or", "reduce_sum",
-      "reduce_window_mul", "reduce_window_min", "reduce_window_max", "real",
-      "reshape", "rev", "rsqrt", "select_n", "select_and_scatter_add",
-      "shift_left", "shift_right_logical", "shift_right_arithmetic", "sign",
-      "sin", "sinh", "slice", "sqrt", "squeeze", "stop_gradient", "sub",
-      "tie_in", "transpose", "xor", "zeros_like"
+      "logistic", "lt", "log", "mul", "ne", "neg", "not", "or", "pad",
+      "population_count", "random_categorical", "random_uniform",
+      "random_randint", "reduce", "reduce_and", "reduce_prod", "reduce_or",
+      "reduce_sum", "reduce_window_mul", "reduce_window_min",
+      "reduce_window_max", "real", "reshape", "rev", "rsqrt", "select_n",
+      "select_and_scatter_add", "shift_left", "shift_right_logical",
+      "shift_right_arithmetic", "sign", "sin", "sinh", "slice", "sqrt",
+      "squeeze", "stop_gradient", "sub", "tie_in", "transpose", "xor",
+      "zeros_like"
   }
 
   @classmethod

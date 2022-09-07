@@ -498,11 +498,11 @@ def _integer_pow_taylor(primals_in, series_in, *, y):
 jet_rules[lax.integer_pow_p] = _integer_pow_taylor
 
 
-def _expit_taylor(primals_in, series_in):
+def _logistic_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in
   u = [x] + series
-  v = [jax.scipy.special.expit(x)] + [None] * len(series)
+  v = [lax.logistic(x)] + [None] * len(series)
   e = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
   for k in range(1, len(v)):
     v[k] = fact(k-1) * sum(_scale(k, j) * e[k-j] * u[j] for j in range(1, k+1))
@@ -511,12 +511,15 @@ def _expit_taylor(primals_in, series_in):
   primal_out, *series_out = v
   return primal_out, series_out
 
+jet_rules[lax.logistic_p] = _logistic_taylor
+
+
 def _tanh_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in
   u = [2*x] + [2 * series_ for series_ in series]
   primals_in, *series_in = u
-  primal_out, series_out = _expit_taylor((primals_in, ), (series_in, ))
+  primal_out, series_out = _logistic_taylor((primals_in, ), (series_in, ))
   series_out = [2 * series_ for series_ in series_out]
   return 2 * primal_out - 1, series_out
 jet_rules[lax.tanh_p] = _tanh_taylor

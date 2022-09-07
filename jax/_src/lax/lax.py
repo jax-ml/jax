@@ -300,6 +300,10 @@ def tanh(x: Array) -> Array:
   r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`."""
   return tanh_p.bind(x)
 
+def logistic(x: Array) -> Array:
+  r"""Elementwise logistic (sigmoid) function: :math:`\frac{1}{1 + e^{-x}}`."""
+  return logistic_p.bind(x)
+
 def sin(x: Array) -> Array:
   r"""Elementwise sine: :math:`\mathrm{sin}(x)`."""
   return sin_p.bind(x)
@@ -1735,6 +1739,18 @@ tanh_p = standard_unop(_float | _complex, 'tanh')
 ad.defjvp2(tanh_p, lambda g, ans, x: mul(add(g, mul(g, ans)),
                                          sub(_one(x), ans)))
 mlir.register_lowering(tanh_p, partial(_nary_lower_mhlo, mhlo.TanhOp))
+
+logistic_p = standard_unop(_float | _complex, 'logistic')
+ad.defjvp2(logistic_p, lambda g, ans, x: mul(g, mul(ans, sub(_one(ans), ans))))
+# TODO(phawkins): switch to mhlo.logistic lowering; debug numerical problems.
+# mlir.register_lowering(logistic_p, partial(_nary_lower_mhlo, mhlo.LogisticOp))
+
+def logistic_impl(x):
+  one = _const(x, 1)
+  return div(one, add(one, exp(neg(x))))
+
+mlir.register_lowering(logistic_p,
+                       mlir.lower_fun(logistic_impl, multiple_results=False))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
