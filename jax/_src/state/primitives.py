@@ -27,7 +27,8 @@ from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 
-from jax._src.state.types import ShapedArrayRef, StateEffect
+from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
+                                  AccumEffect)
 
 ## General utilities
 
@@ -155,7 +156,7 @@ def _get_abstract_eval(ref_aval: ShapedArrayRef, *idx, indexed_dims):
     raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
   idx_shapes = tuple(i.shape for i in idx)
   shape = _get_slice_output_shape(ref_aval.shape, idx_shapes, indexed_dims)
-  return (core.ShapedArray(shape, ref_aval.dtype), {StateEffect})
+  return (core.ShapedArray(shape, ref_aval.dtype), {ReadEffect(ref_aval)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
 
 
@@ -182,7 +183,7 @@ def _swap_abstract_eval(ref_aval: ShapedArrayRef, val_aval: core.AbstractValue,
                      f"Ref dtype: {ref_aval.dtype}. "
                      f"Value shape: {val_aval.dtype}. ")
   return (core.ShapedArray(expected_output_shape, ref_aval.dtype),
-          {StateEffect})
+          {WriteEffect(ref_aval)})
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 
 
@@ -209,7 +210,7 @@ def _addupdate_abstract_eval(ref_aval: ShapedArrayRef,
     raise ValueError("Invalid dtype for `addupdate`. "
                      f"Ref dtype: {ref_aval.dtype}. "
                      f"Value shape: {val_aval.dtype}. ")
-  return [], {StateEffect}
+  return [], {AccumEffect(ref_aval)}
 addupdate_p.def_effectful_abstract_eval(_addupdate_abstract_eval)
 
 ## Pretty printing for `get` and `swap` in jaxprs

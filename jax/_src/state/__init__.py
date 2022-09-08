@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for state."""
-from jax._src.state.types import ShapedArrayRef, StateEffect
+from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
+                                  AccumEffect)
 from jax._src.state.primitives import (ref_get, ref_set, ref_swap,
                                        ref_addupdate, get_p, swap_p,
                                        addupdate_p)
