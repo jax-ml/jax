@@ -464,4 +464,21 @@ def hard_silu(x: Array) -> Array:
   """
   return x * hard_sigmoid(x)
 
+@custom_jvp
+@jax.jit
+def squared_relu(x: Array) -> Array:
+  r"""Squared rectified linear unit activation function.
+
+  Computes the element-wise function
+
+  .. math::
+    \mathrm{squared_relu}(x) = \max(x, 0)^2
+
+  Args:
+    x : input array
+  """
+  return jnp.square(jnp.maximum(x, 0))
+squared_relu.defjvps(
+    lambda g, ans, x: lax.select(x > 0, 2 * x * g, lax.full_like(g, 0)))
+
 hard_swish = hard_silu

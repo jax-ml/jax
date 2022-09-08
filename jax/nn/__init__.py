@@ -36,9 +36,10 @@ from jax._src.nn.functions import (
   relu6 as relu6,
   selu as selu,
   sigmoid as sigmoid,
+  silu as silu,
   soft_sign as soft_sign,
   softmax as softmax,
   softplus as softplus,
-  silu as silu,
+  squared_relu as squared_relu,
   swish as swish,
 )
