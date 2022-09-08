@@ -701,6 +701,8 @@ def _conv_general_dilated_lower(
     output_feature_dimension=out_spec[1],
     output_spatial_dimensions=list(out_spec[2:]))
   num_spatial_dims = len(rhs_spec) - 2
+  if len(padding) == 0:
+    padding = np.zeros((0, 2), dtype=np.int64)
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
   if mlir_api_version < 24:
     op = mhlo.ConvOp

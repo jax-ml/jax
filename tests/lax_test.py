@@ -555,6 +555,48 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_fun, fun, args_maker)
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name": "_lhs_shape={}_rhs_shape={}"
+       "_dims={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype),
+           ",".join(dim_nums)),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "dimension_numbers": dim_nums,
+       "feature_group_count": feature_group_count,
+       "batch_group_count": batch_group_count, "perms": perms
+    } for batch_group_count, feature_group_count in s([(1, 1), (2, 1), (1, 2)])
+      for lhs_shape, rhs_shape in s([
+          ((b * batch_group_count, i * feature_group_count),
+           (j * feature_group_count * batch_group_count, i))
+          for b, i, j in itertools.product([2, 3], repeat=3)])
+      for dtype in s(all_dtypes)
+      for dim_nums, perms in s([
+        (("NC", "OI", "NC"), ([0, 1], [0, 1])),
+      ]))))
+  def testConvGeneralDilated0D(self, lhs_shape, rhs_shape, dtype,
+                               feature_group_count, batch_group_count,
+                               dimension_numbers, perms):
+    if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
+      # TODO(b/183565702): Support integer convolutions on CPU/GPU.
+      if jtu.device_under_test() == "gpu":
+        raise SkipTest("Integer convolution not yet supported on GPU")
+    rng = jtu.rand_small(self.rng())
+    lhs_perm, rhs_perm = perms  # permute to compatible shapes
+
+    def args_maker():
+      return [lax.transpose(rng(lhs_shape, dtype), lhs_perm),
+              lax.transpose(rng(rhs_shape, dtype), rhs_perm)]
+
+    def fun(lhs, rhs):
+      return lax.conv_general_dilated(
+          lhs, rhs, window_strides=(), padding=(),
+          dimension_numbers=dimension_numbers,
+          feature_group_count=feature_group_count,
+          batch_group_count=batch_group_count)
+
+    self._CompileAndCheck(fun, args_maker)
+
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
        "testcase_name": "_lhs_shape={}_rhs_shape={}_strides={}_padding={}"
        "_lhs_dilation={}_rhs_dilation={}"
        "_dims={}".format(
