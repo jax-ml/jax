@@ -23,8 +23,6 @@ import textwrap
 import warnings
 
 from jax._src.lib import pytree
-from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 
 from jax._src.util import safe_zip, unzip2
 
@@ -34,10 +32,7 @@ traceback_util.register_exclusion(__file__)
 T = TypeVar("T")
 U = TypeVar("U")
 
-if TYPE_CHECKING or xla_extension_version >= 78:
-  PyTreeDef = pytree.PyTreeDef
-else:
-  PyTreeDef = xla_extension.PyTreeDef  # pytype: disable=module-attr
+PyTreeDef = pytree.PyTreeDef
 
 
 def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):

@@ -19,7 +19,6 @@ from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-from jax._src.lib import mlir_api_version
 from jax import core
 from jax._src import dtypes
 from jax._src.lax import lax
@@ -704,23 +703,20 @@ def _conv_general_dilated_lower(
   if len(padding) == 0:
     padding = np.zeros((0, 2), dtype=np.int64)
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
-  if mlir_api_version < 24:
-    op = mhlo.ConvOp
-  else:
-    op = mhlo.ConvolutionOp
   return [
-      op(mlir.aval_to_ir_type(aval_out),
-         lhs,
-         rhs,
-         dimension_numbers=dnums,
-         feature_group_count=mlir.i64_attr(feature_group_count),
-         batch_group_count=mlir.i64_attr(batch_group_count),
-         window_strides=mlir.dense_int_elements(window_strides),
-         padding=mlir.dense_int_elements(padding),
-         lhs_dilation=mlir.dense_int_elements(lhs_dilation),
-         rhs_dilation=mlir.dense_int_elements(rhs_dilation),
-         window_reversal=window_reversal,
-         precision_config=lax.precision_attr(precision)).result
+      mhlo.ConvolutionOp(
+        mlir.aval_to_ir_type(aval_out),
+        lhs,
+        rhs,
+        dimension_numbers=dnums,
+        feature_group_count=mlir.i64_attr(feature_group_count),
+        batch_group_count=mlir.i64_attr(batch_group_count),
+        window_strides=mlir.dense_int_elements(window_strides),
+        padding=mlir.dense_int_elements(padding),
+        lhs_dilation=mlir.dense_int_elements(lhs_dilation),
+        rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+        window_reversal=window_reversal,
+        precision_config=lax.precision_attr(precision)).result
   ]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
