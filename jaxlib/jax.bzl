@@ -139,7 +139,8 @@ def jax_test(
         disable_configs = None,  # buildifier: disable=unused-variable
         enable_configs = None,  # buildifier: disable=unused-variable
         tags = [],
-        main = None):
+        main = None,
+        pjrt_c_api_bypass = False):  # buildifier: disable=unused-variable
     if main == None:
         if len(srcs) == 1:
             main = srcs[0]
