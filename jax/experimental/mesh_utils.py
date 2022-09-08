@@ -21,6 +21,7 @@ from absl import logging
 import jax
 import numpy as np
 
+CPU = 'cpu'
 _TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
@@ -301,6 +302,14 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
   """
   if devices is None:
     devices = jax.devices()
+  if len(mesh_shape) != len(dcn_mesh_shape):
+    raise ValueError(f'mesh_shape rank {len(mesh_shape)} must equal '
+                     f'of dcn_mesh_shape rank {len(dcn_mesh_shape)}')
+  device_kind = devices[-1].device_kind
+  if device_kind == CPU:
+    target_shape = np.array(mesh_shape) * np.array(dcn_mesh_shape)
+    return np.array(devices).reshape(target_shape)
+
   attr = 'process_index' if process_is_granule else 'slice_index'
   assert hasattr(devices[0], attr)
   granule_id, granules = 0, []
