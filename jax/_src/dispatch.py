@@ -1001,7 +1001,12 @@ def compile_or_get_cached(backend, computation, compile_options,
 
   # Persistent compilation cache only implemented on TPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
-  if cc.is_initialized() and backend.platform == 'tpu':
+  supported_platforms = ["tpu"]
+  # GPU caching can be enabled if JitRt is enabled.
+  # TODO(b/232263664): Remove check when JitRt is enabled by default.
+  if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
+    supported_platforms.append("gpu")
+  if cc.is_initialized() and backend.platform in supported_platforms:
     cached_executable = cc.get_executable(computation, compile_options, backend)
     if cached_executable is not None:
       logging.info('Persistent compilation cache hit for %s.', module_name)

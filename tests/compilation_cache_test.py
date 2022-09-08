@@ -42,8 +42,12 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() != "tpu":
-        raise SkipTest("serialize executable only works on TPU")
+    supported_platforms = ["tpu"]
+    if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
+      supported_platforms.append("gpu")
+    if jtu.device_under_test() not in supported_platforms:
+      raise SkipTest("serialize executable only works on " +
+                     ",".join(supported_platforms))
 
   def tearDown(self):
       super().tearDown()
@@ -212,7 +216,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_put_executable(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
-      computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+      computation = jax.xla_computation(lambda x, y: x + y)(np.int32(1),
+                                                            np.int32(1))
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
       backend = xla_bridge.get_backend()
