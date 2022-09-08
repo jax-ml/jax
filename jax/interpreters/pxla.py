@@ -2696,11 +2696,11 @@ def lower_sharding_computation(
     first_sharding = SingleDeviceSharding(device_assignment[0])
   else:
     if _is_unspecified(out_shardings):
-      backend, first_sharding = _get_backend_from_shardings(in_shardings)
+      backend, first_sharding = _get_backend_from_shardings(in_shardings)  # type: ignore
     else:
       # type ignore because mypy can't understand that out_shardings that are
       # UNSPECIFIED singleton are filtered above.
-      backend, first_sharding = _get_backend_from_shardings(
+      backend, first_sharding = _get_backend_from_shardings(  # type: ignore
           it.chain(in_shardings, out_shardings))  # type: ignore
     device_assignment = first_sharding._device_assignment
 
