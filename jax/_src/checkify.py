@@ -27,6 +27,7 @@ from jax import linear_util as lu
 from jax.api_util import flatten_fun
 from jax.experimental import pjit
 from jax.experimental import maps
+from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
@@ -501,6 +502,13 @@ def assert_batching_rule(batched_args, batch_dims, *, msgs):
   return [], []
 
 batching.primitive_batchers[assert_p] = assert_batching_rule
+
+def assert_jvp_rule(primals, _, *, msgs):
+  # Check primals, discard tangents.
+  assert_p.bind(*primals, msgs=msgs)
+  return [], []
+
+ad.primitive_jvps[assert_p] = assert_jvp_rule
 
 ## checkify rules
 

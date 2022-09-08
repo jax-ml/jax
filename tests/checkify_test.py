@@ -861,6 +861,19 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     checkify.checkify(g)(0.)  # does not crash
 
+  def test_grad(self):
+    @checkify.checkify
+    @jax.grad
+    def f(x):
+      checkify.check(jnp.all(x > 0), "should be positive!")
+      return x
+
+    err, _ = f(1.)
+    self.assertIsNone(err.get())
+
+    err, _ = f(0.)
+    self.assertIsNotNone(err.get())
+    self.assertIn("should be positive", err.get())
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
