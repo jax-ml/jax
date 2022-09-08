@@ -4031,9 +4031,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype in all_dtypes
       for func in ["array", "copy", "copy.copy", "copy.deepcopy"]))
   def testArrayCopy(self, dtype, func):
-    # TODO(https://github.com/google/jax/issues/12016): Make this work with Array.
-    if config.jax_array:
-      raise unittest.SkipTest("Does not work with Array.")
     x = jnp.ones(10, dtype=dtype)
     if func == "copy.deepcopy":
       copy_func = copy.deepcopy
@@ -4047,7 +4044,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x_copy = copy_func(x)
     x_copy_jit = jax.jit(copy_func)(x)
 
-    _ptr = lambda x: x.device_buffer.unsafe_buffer_pointer()
+    _ptr = lambda x: x.unsafe_buffer_pointer()
 
     self.assertEqual(_ptr(x), _ptr(x_view))
     self.assertEqual(_ptr(x), _ptr(x_view_jit))
