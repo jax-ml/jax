@@ -15,6 +15,7 @@
 
 import abc
 from functools import partial
+import operator as op
 from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence
 
 import numpy as np
@@ -114,8 +115,7 @@ class PRNGKeyArrayMeta(abc.ABCMeta):
 
   def __instancecheck__(self, instance):
     try:
-      return (hasattr(instance, 'aval') and
-              isinstance(instance.aval, core.ShapedArray) and
+      return (isinstance(instance.aval, core.ShapedArray) and
               type(instance.aval.dtype) is KeyTy)
     except AttributeError:
       super().__instancecheck__(instance)
@@ -168,6 +168,10 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   @property
   def dtype(self):
     return KeyTy(self.impl)
+
+  _device = property(op.attrgetter('_base_array._device'))
+  _committed = property(op.attrgetter('_base_array._committed'))
+  sharding = property(op.attrgetter('_base_array.sharding'))
 
   def _is_scalar(self):
     base_ndim = len(self.impl.key_shape)

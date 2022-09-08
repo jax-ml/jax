@@ -150,6 +150,12 @@ class MultiDeviceTest(jtu.JaxTestCase):
                                                 jax.device_put(x_uncommitted, devices[3])),
                                     devices[4])
 
+  def test_computation_follows_data_prng(self):
+    _, device, *_ = self.get_devices()
+    rng = jax.device_put(jax.random.PRNGKey(0), device)
+    val = jax.random.normal(rng, ())
+    self.assert_committed_to_device(val, device)
+
   def test_primitive_compilation_cache(self):
     devices = self.get_devices()
 
