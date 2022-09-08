@@ -31,8 +31,7 @@ class ArrayMeta(abc.ABCMeta):
     # that isinstance(x, ndarray) might return true but
     # issubclass(type(x), ndarray) might return false for an array tracer.
     try:
-      return (hasattr(instance, "aval") and
-              isinstance(instance.aval, core.UnshapedArray))
+      return isinstance(instance.aval, core.UnshapedArray)
     except AttributeError:
       super().__instancecheck__(instance)
 
