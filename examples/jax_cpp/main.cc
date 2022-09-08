@@ -60,20 +60,20 @@ int main(int argc, char** argv) {
   std::unique_ptr<xla::HloModule> test_module =
       LoadModuleFromFile(hlo_filename, xla::hlo_module_loader_details::Config(),
                          "txt", config_modifier_hook)
-          .ValueOrDie();
+          .value();
   const xla::HloModuleProto test_module_proto = test_module->ToProto();
 
   // Run it using JAX C++ Runtime (PJRT).
 
   // Get a CPU client.
   std::unique_ptr<xla::PjRtClient> client =
-      xla::GetCpuClient(/*asynchronous=*/true).ValueOrDie();
+      xla::GetCpuClient(/*asynchronous=*/true).value();
 
   // Compile XlaComputation to PjRtExecutable.
   xla::XlaComputation xla_computation(test_module_proto);
   xla::CompileOptions compile_options;
   std::unique_ptr<xla::PjRtLoadedExecutable> executable =
-      client->Compile(xla_computation, compile_options).ValueOrDie();
+      client->Compile(xla_computation, compile_options).value();
 
   // Prepare inputs.
   xla::Literal literal_x =
@@ -82,21 +82,21 @@ int main(int argc, char** argv) {
       xla::LiteralUtil::CreateR2<float>({{1.0f, 1.0f}, {1.0f, 1.0f}});
   std::unique_ptr<xla::PjRtBuffer> param_x =
       client->BufferFromHostLiteral(literal_x, client->addressable_devices()[0])
-          .ValueOrDie();
+          .value();
   std::unique_ptr<xla::PjRtBuffer> param_y =
       client->BufferFromHostLiteral(literal_y, client->addressable_devices()[0])
-          .ValueOrDie();
+          .value();
 
   // Execute on CPU.
   xla::ExecuteOptions execute_options;
   // One vector<buffer> for each device.
   std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>> results =
       executable->Execute({{param_x.get(), param_y.get()}}, execute_options)
-          .ValueOrDie();
+          .value();
 
   // Get result.
   std::shared_ptr<xla::Literal> result_literal =
-      results[0][0]->ToLiteralSync().ValueOrDie();
+      results[0][0]->ToLiteralSync().value();
   LOG(INFO) << "result = " << *result_literal;
   return 0;
 }
