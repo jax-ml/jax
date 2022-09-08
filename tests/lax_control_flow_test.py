@@ -2853,6 +2853,29 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     np.testing.assert_allclose(actual_tangents[0], expected_tangents[0])
     np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
 
+    def body2(_, refs):
+      # Here we use `i_ref` as a loop counter
+      a_ref, b_ref, c_ref, i_ref = refs
+      i = i_ref[()]
+      a = a_ref[i]
+      b = b_ref[()]
+      x = jnp.sin(a)
+      b_ref[()] = jnp.sin(b * x)
+      c_ref[i] = x * b
+      i_ref[()] = i + 1
+
+    def g(a, b):
+      c = jnp.zeros_like(a)
+      _, b, c, _ = for_impl(5, body2, (a, b, c, 0))
+      return b, c
+    a = jnp.arange(5.) + 1.
+    b = 1.
+    _, g_lin = jax.linearize(f, a, b)
+    expected_tangents = g_lin(a, b)
+    _, actual_tangents = jax.jvp(g, (a, b), (a, b))
+    np.testing.assert_allclose(actual_tangents[0], expected_tangents[0])
+    np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
+
   @parameterized.named_parameters(
       {"testcase_name": "_f={}_nsteps={}_impl={}".format(
         for_body_name, nsteps, impl_name),
