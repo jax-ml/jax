@@ -1755,17 +1755,11 @@ mlir.register_lowering(logistic_p,
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
-if mlir_api_version < 27:
-  mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SinOp))
-else:
-  mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SineOp))
+mlir.register_lowering(sin_p, partial(_nary_lower_mhlo, mhlo.SineOp))
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
-if mlir_api_version < 28:
-  mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosOp))
-else:
-  mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosineOp))
+mlir.register_lowering(cos_p, partial(_nary_lower_mhlo, mhlo.CosineOp))
 
 @_upcast_fp16_for_computation
 def _tan_impl(x):
@@ -2170,10 +2164,7 @@ def _sub_transpose(t, x, y):
 sub_p = standard_naryop([_num, _num], 'sub')
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
-if mlir_api_version < 29:
-  mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubOp))
-else:
-  mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubtractOp))
+mlir.register_lowering(sub_p, partial(_nary_lower_mhlo, mhlo.SubtractOp))
 
 
 def _mul_transpose(ct, x, y):
@@ -4244,11 +4235,8 @@ def _rng_uniform_lowering(ctx, a, b, *, shape):
   aval_out, = ctx.avals_out
   shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64),
                              canonicalize_types=False)
-  if mlir_api_version <= 22:
-    return mhlo.RngUniformOp(a, b, shape).results
-  else:
-    return mhlo.RngOp(a, b, shape,
-                      mhlo.RngDistributionAttr.get('UNIFORM')).results
+  return mhlo.RngOp(a, b, shape,
+                    mhlo.RngDistributionAttr.get('UNIFORM')).results
 
 mlir.register_lowering(rng_uniform_p, _rng_uniform_lowering)
 

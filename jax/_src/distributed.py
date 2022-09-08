@@ -22,7 +22,6 @@ from absl import logging
 from jax._src import cloud_tpu_init
 from jax._src.config import config
 from jax._src.lib import xla_bridge
-from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 
 class State:
@@ -79,7 +78,7 @@ class State:
     logging.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
-    if xla_client._version >= 77 and config.jax_coordination_service:
+    if config.jax_coordination_service:
       self.initialize_preemption_sync_manager()
 
   def shutdown(self):

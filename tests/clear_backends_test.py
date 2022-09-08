@@ -19,7 +19,6 @@ import jax
 from jax.config import config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge as xb
-from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
 
@@ -29,11 +28,10 @@ class ClearBackendsTest(jtu.JaxTestCase):
   def test_clear_backends(self):
     g = jax.jit(lambda x, y: x * y)
     self.assertEqual(g(1, 2), 2)
-    if xc._version >= 79:
-      self.assertNotEmpty(xb.get_backend().live_executables())
-      jax.clear_backends()
-      self.assertEmpty(xb.get_backend().live_executables())
-      self.assertEqual(g(1, 2), 2)
+    self.assertNotEmpty(xb.get_backend().live_executables())
+    jax.clear_backends()
+    self.assertEmpty(xb.get_backend().live_executables())
+    self.assertEqual(g(1, 2), 2)
 
 
 if __name__ == "__main__":

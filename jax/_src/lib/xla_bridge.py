@@ -162,8 +162,7 @@ def get_compile_options(
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
-  if lib.xla_extension_version >= 68:
-    compile_options.profile_version = FLAGS.jax_xla_profile_version
+  compile_options.profile_version = FLAGS.jax_xla_profile_version
   return compile_options
 
 
