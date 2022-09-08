@@ -27,6 +27,7 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.gda_serialization import serialization
 import numpy as np
+import tensorstore as ts
 
 config.parse_flags_with_absl()
 
@@ -217,6 +218,18 @@ class CheckpointTest(jtu.JaxTestCase):
 
     for l in m1.local_shards:
       self.assertArraysEqual(np.asarray(l.data), data.astype(np.float32))
+
+  def test_deserialize_tensorstore_array(self):
+    global_mesh = jtu.create_global_mesh((2,), ('x'))
+    data = np.arange(1024)
+    tspec = ts.array(data).spec()
+    m1, = serialization.run_deserialization(
+        [global_mesh],
+        [P(None)],
+        [tspec]
+    )
+    for l in m1.local_shards:
+      self.assertArraysEqual(np.asarray(l.data), data)
 
   def test_spec_has_metadata(self):
     spec = {
