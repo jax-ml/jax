@@ -652,10 +652,20 @@ parallel_functions_output_gda = config.define_bool_state(
     default=False,
     help='If True, pjit will output GDAs.')
 
+def _update_jax_array_global(val):
+  if lib.xla_extension_version >= 92:
+    lib.jax_jit.global_state().jax_array = val
+
+def _update_jax_array_thread_local(val):
+  if lib.xla_extension_version >= 92:
+    lib.jax_jit.thread_local_state().jax_array = val
+
 jax_array = config.define_bool_state(
     name='jax_array',
     default=False,
     upgrade=True,
+    update_global_hook = _update_jax_array_global,
+    update_thread_local_hook = _update_jax_array_thread_local,
     help=('If True, new pjit behavior will be enabled and `jax.Array` will be '
           'used.'))
 
