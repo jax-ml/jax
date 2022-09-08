@@ -980,24 +980,24 @@ def _dump_ir_to_file(name: str, ir: str):
   name.write_text(ir)
 
 
-def compile_or_get_cached(backend, computation, compile_options,
+def compile_or_get_cached(backend, computation: ir.Module, compile_options,
                           host_callbacks):
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
 
-  if isinstance(computation, ir.Module):
-    sym_name = computation.operation.attributes['sym_name']
-    module_name = ir.StringAttr(sym_name).value
-    # Convert ir.Module to a string representation, unless the
-    # back-end expliclity flags the ability to handle a module directly
-    # (avoiding the overhead of back and forth conversions)
-    if getattr(backend, "needs_str_ir", True):
-      if xc.mlir_api_version >= 34:
-        computation = mlir.module_to_bytecode(computation)
-      else:
-        computation = mlir.module_to_string(computation)
+  sym_name = computation.operation.attributes['sym_name']
+  module_name = ir.StringAttr(sym_name).value
+  # Convert ir.Module to a string representation, unless the
+  # back-end expliclity flags the ability to handle a module directly
+  # (avoiding the overhead of back and forth conversions)
+  serialized_computation: Union[str, bytes, ir.Module]
+  if getattr(backend, "needs_str_ir", True):
+    if xc.mlir_api_version >= 34:
+      serialized_computation = mlir.module_to_bytecode(computation)
+    else:
+      serialized_computation = mlir.module_to_string(computation)
   else:
-    module_name = computation.name()
+    serialized_computation = computation
 
   # Persistent compilation cache only implemented on TPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
@@ -1007,27 +1007,22 @@ def compile_or_get_cached(backend, computation, compile_options,
   if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("gpu")
   if cc.is_initialized() and backend.platform in supported_platforms:
-    cached_executable = cc.get_executable(computation, compile_options, backend)
+    cached_executable = cc.get_executable(serialized_computation,
+                                          compile_options, backend)
     if cached_executable is not None:
       logging.info('Persistent compilation cache hit for %s.', module_name)
       return cached_executable
     else:
-      compiled = backend_compile(backend, computation, compile_options,
-                                 host_callbacks)
-      cc.put_executable(module_name, computation, compile_options, compiled,
-                        backend)
+      compiled = backend_compile(backend, serialized_computation,
+                                 compile_options, host_callbacks)
+      cc.put_executable(module_name, serialized_computation, compile_options,
+                        compiled, backend)
       return compiled
 
   if FLAGS.jax_dump_ir_to:
-    if isinstance(computation, xc.XlaComputation):
-      ir_str = computation.as_hlo_text()
-    elif isinstance(computation, ir.Module):
-      ir_str = mlir.module_to_string(computation)
-    else:
-      assert isinstance(computation, str)
-      ir_str = computation
-    _dump_ir_to_file(module_name, ir_str)
-  return backend_compile(backend, computation, compile_options, host_callbacks)
+    _dump_ir_to_file(module_name, mlir.module_to_string(computation))
+  return backend_compile(backend, serialized_computation, compile_options,
+                         host_callbacks)
 
 
 def get_buffer_counts(out_avals, ordered_effects, has_unordered_effects):
