@@ -225,8 +225,8 @@ class DebugInfsTest(jtu.JaxTestCase):
   def testDebugNansDoesntReturnDeoptimizedResult(self):
     @jax.jit
     def f(x):
-      x + 2  # avoid trivial dispatch path by adding some eqn
-      return jnp.nan
+      y = x + 2  # avoid trivial dispatch path by adding some eqn
+      return jnp.nan, y
 
     with self.assertRaisesRegex(FloatingPointError, "de-optimized"):
       with jax.debug_nans(True):

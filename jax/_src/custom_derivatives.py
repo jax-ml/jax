@@ -26,6 +26,7 @@ from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                            register_pytree_node_class, tree_leaves)
 from jax._src import custom_api_util
 from jax._src import dtypes
+from jax._src.lax import lax
 from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
 from jax._src.api_util import flatten_fun_nokwargs, argnums_partial
 from jax.core import raise_to_shaped
@@ -339,6 +340,10 @@ def _apply_todos(todos, outs):
 
 
 allowed_effects: Set[core.Effect] = set()
+allowed_effects.add(lax.InOutFeedEffect.Infeed)
+allowed_effects.add(lax.InOutFeedEffect.Outfeed)
+
+
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 
 def _custom_jvp_call_typecheck(*in_avals, call_jaxpr, jvp_jaxpr_thunk, num_consts):

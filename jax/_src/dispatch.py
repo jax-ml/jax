@@ -316,6 +316,11 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
         "programming model, please read "
         "https://jax.readthedocs.io/en/latest/multi_process.html.")
 
+  if not in_shardings:
+    inp_device_assignment = da
+  else:
+    inp_device_assignment = None
+
   # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
   # the number of output avals at this stage. lower_sharding_computation will
   # apply it to all out_avals.
@@ -323,15 +328,13 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
       fun, 'jit', name, in_shardings, pjit._UNSPECIFIED,
       donated_invars, in_avals,
       in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
-      committed=committed).compile(
+      committed=committed, inp_device_assignment=inp_device_assignment).compile(
           _allow_propagation_to_outputs=True).unsafe_call
 
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
                            donated_invars, keep_unused, *arg_specs):
-  # TODO(yashkatariya): Remove the `and arg_specs` from here once
-  # lower_sharding_computation supports no avals as input.
-  if config.jax_array and arg_specs:
+  if config.jax_array:
     return sharded_lowering(fun, device, backend, name,
                             donated_invars, keep_unused, *arg_specs)
   else:
@@ -339,6 +342,13 @@ def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
                               keep_unused, *arg_specs).compile().unsafe_call
 
 xla_callable = lu.cache(_xla_callable_uncached)
+
+
+def is_single_device_sharding(sharding) -> bool:
+  from jax.experimental.sharding import PmapSharding
+  # Special case PmapSharding here because PmapSharding maps away an axis
+  # and needs to be handled separately.
+  return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
 
 
 @contextlib.contextmanager
@@ -531,19 +541,11 @@ def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:
 
 def _prune_unused_inputs(
     jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, Set[int], Set[int]]:
-  used = {v for v in jaxpr.outvars if isinstance(v, core.Var)}
-  # TODO(zhangqiaorjc): Improve the DCE algorithm by also pruning primitive
-  # applications that do not produce used outputs. Must handle side-effecting
-  # primitives and nested jaxpr.
-  used.update(
-      v for eqn in jaxpr.eqns for v in eqn.invars if isinstance(v, core.Var))
-  kept_const_idx, new_constvars = util.unzip2(
-      (i, v) for i, v in enumerate(jaxpr.constvars) if v in used)
-  kept_var_idx, new_invars = util.unzip2(
-      (i, v) for i, v in enumerate(jaxpr.invars) if v in used)
-  new_jaxpr = core.Jaxpr(new_constvars, new_invars, jaxpr.outvars, jaxpr.eqns,
-                         jaxpr.effects)
-  return new_jaxpr, set(kept_const_idx), set(kept_var_idx)
+  used_outputs = [True] * len(jaxpr.outvars)
+  new_jaxpr, used_consts, used_inputs = pe.dce_jaxpr_consts(jaxpr, used_outputs)
+  kept_const_idx = {i for i, b in enumerate(used_consts) if b}
+  kept_var_idx = {i for i, b in enumerate(used_inputs) if b}
+  return new_jaxpr, kept_const_idx, kept_var_idx
 
 
 # We can optionally set a Jaxpr rewriter that can be applied just before
