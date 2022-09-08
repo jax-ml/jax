@@ -25,7 +25,7 @@ from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_bridge as xb
-from jax._src.util import prod
+from jax._src.util import prod, safe_zip
 from jax.experimental import PartitionSpec as P
 from jax.experimental import sharding
 from jax.experimental import array
@@ -401,6 +401,24 @@ class JaxArrayTest(jtu.JaxTestCase):
     for s in y.addressable_shards:
       self.assertEqual(s.data._committed, y._committed)
       self.assertTrue(s.data._committed)
+
+  @jax_config.jax_array(True)
+  def test_array_jnp_array_copy_multi_device(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    arr, _ = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+
+    c_arr = jnp.array(arr, copy=True)
+    self.assertArraysEqual(arr, c_arr)
+    self.assertEqual(arr._committed, c_arr._committed)
+    for a, c in safe_zip(arr.addressable_shards, c_arr.addressable_shards):
+      self.assertArraysEqual(a.data, c.data)
+      self.assertEqual(a.index, c.index)
+      self.assertEqual(a.replica_id, c.replica_id)
+      self.assertEqual(a.device, c.device)
+      self.assertNotEqual(a.data.unsafe_buffer_pointer(),
+                          c.data.unsafe_buffer_pointer())
 
 
 class ShardingTest(jtu.JaxTestCase):
