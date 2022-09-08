@@ -30,7 +30,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import device_array
-from jax._src import dispatch
 from jax import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util
@@ -1327,7 +1326,7 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
   # (so it works in staged-out code as well as 'eager' code). Related to
   # equi-sharding.
   if (config.jax_array and hasattr(x, 'sharding') and
-      not dispatch.is_single_device_sharding(x.sharding)):
+      not isinstance(x.sharding, sharding.SingleDeviceSharding)):
     return array.make_array_from_callback(
         fill_shape, x.sharding, lambda idx: val[idx])  # type: ignore[arg-type]
   return val
@@ -4109,9 +4108,6 @@ def _after_all_lowering(ctx, *operands):
 mlir.register_lowering(after_all_p, _after_all_lowering)
 
 
-InOutFeedEffect = enum.Enum('InOutFeedEffect', ['Infeed', 'Outfeed'])
-
-
 def infeed(token, shape=None, partitions=None):
   """Consumes an infeed value of `shape` from the host. Experimental.
 
@@ -4137,14 +4133,13 @@ def infeed(token, shape=None, partitions=None):
 def _infeed_abstract_eval(token, *, shapes, partitions):
   if token is not abstract_token:
     raise TypeError("First argument to infeed must be a token")
-  return (*shapes, abstract_token), {InOutFeedEffect.Infeed}
+  return shapes + (abstract_token,)
 
 
 infeed_p = Primitive("infeed")
 infeed_p.multiple_results = True
 infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
-infeed_p.def_effectful_abstract_eval(_infeed_abstract_eval)
-mlir.lowerable_effects.add(InOutFeedEffect.Infeed)
+infeed_p.def_abstract_eval(_infeed_abstract_eval)
 
 
 def _infeed_lowering(ctx, token, *, shapes, partitions):
@@ -4190,12 +4185,11 @@ def outfeed(token, xs, partitions = None):
 def _outfeed_abstract_eval(token, *xs, partitions):
   if token is not abstract_token:
     raise TypeError("First argument to outfeed must be a token")
-  return abstract_token, {InOutFeedEffect.Outfeed}
+  return abstract_token
 
 outfeed_p = Primitive("outfeed")
 outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
-outfeed_p.def_effectful_abstract_eval(_outfeed_abstract_eval)
-mlir.lowerable_effects.add(InOutFeedEffect.Outfeed)
+outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 
 
 def _outfeed_lowering(ctx, token, *xs, partitions):

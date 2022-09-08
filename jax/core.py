@@ -208,7 +208,6 @@ class JaxprEqn(NamedTuple):
   def replace(self, *args, **kwargs):
     return self._replace(*args, **kwargs)
 
-# TODO(mattjj): call typecheck rules here, so we don't form bad eqns
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
   source_info = source_info or source_info_util.new_source_info()
   if config.jax_enable_checks:
@@ -2163,7 +2162,6 @@ aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
     ConcreteArray: (_map_shaped_array, _unmap_shaped_array),
-    AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
 }
 
 @contextmanager

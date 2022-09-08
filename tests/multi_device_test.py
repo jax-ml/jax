@@ -202,11 +202,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
       self.assertIsInstance(f(), jnp.DeviceArray)
     self.assert_uncommitted_to_device(f(), devices[0])
     self.assert_uncommitted_to_device(jax.jit(f)(), devices[0])
-    # Skip for jax.Array because it doesn't work with the device argument of
-    # jit as it is deprecated.
-    if not config.jax_array:
-      self.assert_committed_to_device(jax.jit(f, device=devices[1])(),
-                                      devices[1])
+    self.assert_committed_to_device(jax.jit(f, device=devices[1])(),
+                                    devices[1])
 
   def test_reshape(self):
     devices = self.get_devices()

@@ -31,7 +31,7 @@ from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax.experimental.sharding import (
-    MeshPspecSharding, PmapSharding, OpShardingSharding)
+    MeshPspecSharding, SingleDeviceSharding, PmapSharding, OpShardingSharding)
 
 from jax._src import dispatch
 from jax._src import dtypes
@@ -364,7 +364,7 @@ class KeyTyRules:
     phys_handler_maker = pxla.global_result_handlers[
         (core.ShapedArray, output_type)]
 
-    if dispatch.is_single_device_sharding(out_sharding):
+    if isinstance(out_sharding, SingleDeviceSharding):
       phys_sharding = out_sharding
     elif isinstance(out_sharding, MeshPspecSharding):
       trailing_spec = [None] * len(key_shape)

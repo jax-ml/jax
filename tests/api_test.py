@@ -1070,7 +1070,10 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     jitted_f = self.jit(lambda x, y: x, keep_unused=True)
     with jtu.count_device_put() as count:
       _ = jitted_f(1, 2)
-    self.assertEqual(count[0], 1)
+    if config.jax_array:
+      self.assertEqual(count[0], 2)
+    else:
+      self.assertEqual(count[0], 1)
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def test_jit_lower_compile_compiler_ir(self):

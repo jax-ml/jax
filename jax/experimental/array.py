@@ -451,7 +451,7 @@ def _device_put_array(x, device: Optional[Device]):
   # TODO(yashkatariya): Remove this restriction and the round trip via host
   # once lowering to XLA goes through `lower_mesh_computation`.
   assert x.is_fully_addressable()
-  if dispatch.is_single_device_sharding(x.sharding):
+  if isinstance(x.sharding, SingleDeviceSharding):
     x = dispatch._copy_device_array_to_device(pxla._set_aval(x._arrays[0]), device)
     return (x,)
   else:
@@ -462,7 +462,7 @@ dispatch.device_put_handlers[Array] = _device_put_array
 
 
 def _array_pmap_shard_arg(x, devices, indices, mode):
-  if dispatch.is_single_device_sharding(x.sharding):
+  if isinstance(x.sharding, SingleDeviceSharding):
     return pxla._shard_device_array(x, devices, indices, mode)
 
   if x._fast_path_args is None:
@@ -484,7 +484,7 @@ def _array_shard_arg(x, devices, indices, mode):
   if mode == pxla.InputsHandlerMode.pmap:
     return _array_pmap_shard_arg(x, devices, indices, mode)
   else:
-    if dispatch.is_single_device_sharding(x.sharding):
+    if isinstance(x.sharding, SingleDeviceSharding):
       return [buf if buf.device() == d else buf.copy_to_device(d)
               for buf, d in safe_zip(x._arrays, devices)]
     # If PmapSharding exists, then do a round trip via host. This will happen
