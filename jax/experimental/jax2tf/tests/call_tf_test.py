@@ -95,9 +95,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
   def test_eval_numpy_no_copy(self):
     if jtu.device_under_test() != "cpu":
       raise unittest.SkipTest("no_copy test works only on CPU")
-    if config.jax_array:
-      self.skipTest("np.shares_memory does not work with Array probably "
-                    "because call_tf doesn't handle Array.")
     # For ndarray, zero-copy only works for sufficiently-aligned arrays.
     x = np.ones((16, 16), dtype=np.float32)
     res = jax2tf.call_tf(lambda x: x)(x)
@@ -114,9 +111,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     if jtu.device_under_test() != "cpu":
       # TODO(necula): add tests for GPU and TPU
       raise unittest.SkipTest("no_copy test works only on CPU")
-    if config.jax_array:
-      self.skipTest("np.shares_memory does not work with Array probably "
-                    "because call_tf doesn't handle Array.")
     # For DeviceArray zero-copy works even if not aligned
     x = jnp.ones((3, 3))
     res = jax2tf.call_tf(lambda x: x)(x)
