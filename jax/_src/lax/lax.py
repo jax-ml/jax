@@ -149,8 +149,7 @@ def _broadcast_shapes_uncached(*shapes):
   shape_list = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
   result_shape = _try_broadcast_shapes(shape_list)
   if result_shape is None:
-    raise ValueError("Incompatible shapes for broadcasting: {}"
-                     .format(tuple(shape_list)))
+    raise ValueError(f"Incompatible shapes for broadcasting: shapes={list(shapes)}")
   return result_shape
 
 def _broadcast_ranks(s1, s2):
