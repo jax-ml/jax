@@ -142,6 +142,7 @@ def _use_python_method(f):
     _python_methods.add(f.__name__)
   return f
 
+
 @_use_cpp_array
 class Array:
   # TODO(yashkatariya): Add __slots__ here.
@@ -505,7 +506,7 @@ class Array:
 
 # explicitly set to be unhashable. Same as what device_array.py does.
 setattr(Array, "__hash__", None)
-
+setattr(Array, "__array_priority__", 100)
 
 def make_array_from_callback(shape: Shape, sharding: Sharding,
                              data_callback: Callable[[Optional[Index]], ArrayLike]) -> Array:

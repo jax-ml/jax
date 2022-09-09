@@ -562,19 +562,17 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertAllClose(x * 2 - 3., y)
 
   def test_trivial_computations(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with Array')
     x = jnp.array([1, 2, 3])
     y = self.jit(lambda x: x)(x)
-    self.assertIs(x, y)
+    self.assertEqual(x.unsafe_buffer_pointer(), y.unsafe_buffer_pointer())
 
     z1, z2 = self.jit(lambda x: (x, x))(x)
-    self.assertIs(z1, z2)
+    self.assertEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
 
     x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
     z1, z2, z3 = self.jit(lambda x, y: (y, 1, x))(x1, x2)
-    self.assertIs(z1, x2)
-    self.assertIs(z3, x1)
+    self.assertEqual(z1.unsafe_buffer_pointer(), x2.unsafe_buffer_pointer())
+    self.assertEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
   def test_trivial_computations_with_tokens(self):
@@ -1136,7 +1134,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(x, f(x))
 
   def test_hitting_cpp_path(self):
-    if not self.use_cpp_jit or config.jax_array:
+    if not self.use_cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     jit_impl = dispatch._xla_call_impl
@@ -1186,7 +1184,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_cache_key_defaults(self):
     # https://github.com/google/jax/discussions/11875
-    if not self.use_cpp_jit or config.jax_array:
+    if not self.use_cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
     f = self.jit(lambda x: (x ** 2).sum())
     self.assertEqual(f._cache_size(), 0)
@@ -2342,8 +2340,6 @@ class APITest(jtu.JaxTestCase):
                            np.zeros((4, 2), dtype=float0))
 
   def test_float0_error(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with Array')
     # float0 is incompatible with other dtypes
     float0_array = jax.grad(lambda x: x+0., allow_int=True)(1)
     error_text = "float0s do not support any operations by design"
@@ -2983,19 +2979,17 @@ class APITest(jtu.JaxTestCase):
     grad(lambda x: x[0])(CustomNode([0.]))
 
   def test_trivial_computations(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with Array')
     x = jnp.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
-    self.assertIs(x, y)
+    self.assertEqual(x.unsafe_buffer_pointer(), y.unsafe_buffer_pointer())
 
     z1, z2 = api.jit(lambda x: (x, x))(x)
-    self.assertIs(z1, z2)
+    self.assertEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
 
     x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
     z1, z2, z3 = api.jit(lambda x, y: (y, 1, x))(x1, x2)
-    self.assertIs(z1, x2)
-    self.assertIs(z3, x1)
+    self.assertEqual(z1.unsafe_buffer_pointer(), x2.unsafe_buffer_pointer())
+    self.assertEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
   def test_nested_jit_hoisting(self):
