@@ -24,7 +24,7 @@ from jax import core
 from jax.interpreters import mlir
 from jax.interpreters import xla
 
-from jax._src.lib import gpu_solver
+from jax._src.lib import gpu_solver, xla_extension_version
 
 import numpy as np
 
@@ -550,6 +550,6 @@ def spsolve(data, indices, indptr, b, tol=1e-6, reorder=1):
     An array with the same dtype and size as b representing the solution to
     the sparse linear system.
   """
-  if jax._src.lib.xla_extension_version < 86:
+  if xla_extension_version < 86:
     raise ValueError('spsolve requires jaxlib version 86 or above.')
   return spsolve_p.bind(data, indices, indptr, b, tol=tol, reorder=reorder)

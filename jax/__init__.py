@@ -146,3 +146,5 @@ from jax import tree_util as tree_util
 from jax import util as util
 
 import jax.lib  # TODO(phawkins): remove this export.
+
+del jax._src

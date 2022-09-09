@@ -15,6 +15,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     {jax-issue}`#7733`) is stable and public. See [the
     overview](https://jax.readthedocs.io/en/latest/aot.html) and the API docs
     for {mod}`jax.stages`.
+* Breaking changes
+  * `jax._src` is no longer imported into the from the public `jax` namespace.
+    This may break users that were using JAX internals.
 
 ## jax 0.3.17 (Aug 31, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.16...jax-v0.3.17).
