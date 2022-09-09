@@ -277,6 +277,38 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
 xla.xla_call_p.def_impl(_xla_call_impl)
 
 
+# TODO(yashkatariya,mattjj): Try to handle this in api.py via a device_put and
+# don't pass the device and backend argument to `_xla_callable_uncached`.
+def not_none_device_or_backend_on_jit(backend, device, num_ins):
+  """This is to support the backend and device argument on jit. It's a feature
+  that's deprecated but needs to be supported for feature parity and so that we
+  can delete the non-Array paths when Array is switched on.
+  """
+  # TODO(yashkatariya): Remove this entire function when backend and device are
+  # removed as arguments on jit.
+
+  from jax.experimental import sharding
+
+  if device is not None and backend is not None:
+    raise ValueError("can't specify both a device and a backend for jit, "
+                     "got device={} and backend={}".format(device, backend))
+
+  if backend is not None:
+    da = [xb.get_backend(backend).get_default_device_assignment(1)[0]]
+  else:
+    assert device is not None
+    da = [device]
+
+  assert len(da) == 1
+  # Set committed to True for this path because it simulates a device_put on
+  # behalf of a user.
+  committed = True
+  # in_shardings will be marked as replicated regardless of whatever the input
+  # had. Given that only a single device is allowed above, this is correct.
+  in_shardings = [sharding.OpShardingSharding.get_replicated(da)] * num_ins
+  return committed, da, in_shardings
+
+
 def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
                      *arg_specs):
   # TODO(yashkatariya): Remove the local imports from here when the functions
@@ -286,20 +318,9 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
 
   in_avals, in_shardings = util.unzip2(arg_specs)
 
-  if backend is not None:
-    # Set committed to True for this path because it simulates a device_put on
-    # behalf of a user.
-    committed = True
-    # This is to support the backend argument on jit. It's a feature that's
-    # deprecated but needs to be supported for feature parity and so that we
-    # can delete the non-Array paths when Array is switched on.
-    # TODO(yashkatariya): Remove this once backend is not an arg on jit.
-    da = [xb.get_backend(backend).get_default_device_assignment(1)[0]]
-    assert len(da) == 1
-    # in_shardings will be marked as replicated regardless of whatever the input
-    # had. Given that only a single device is allowed above, this is correct.
-    in_shardings = [sharding.OpShardingSharding.get_replicated(da)
-                    for _ in in_shardings]
+  if backend is not None or device is not None:
+    committed, da, in_shardings = not_none_device_or_backend_on_jit(
+        backend, device, len(in_shardings))
   else:
     committed = any(i is not None for i in in_shardings)
     da = pjit._get_and_check_device_assignment(

@@ -239,13 +239,10 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       assert len(side) == 3
 
   def test_jit_device(self):
-    if config.jax_array:
-      self.skipTest('The device parameter of jit has been deprecated. Array '
-                    'is not compatible with it and will not work.')
     device = jax.devices()[-1]
     x = self.jit(lambda x: x, device=device)(3.)
     _check_instance(self, x)
-    self.assertEqual(x.device_buffer.device(), device)
+    self.assertEqual(x.device(), device)
 
   @jtu.skip_on_devices("cpu")
   def test_jit_default_device(self):
@@ -267,13 +264,10 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(f(1).device(), system_default_device)
 
     with jax.default_device(test_device):
-      # Skip this for jax.Array because using the device argument of `jit` is
-      # deprecated.
-      if not config.jax_array:
-        # Explicit `device` or `backend` argument to jit overrides default_device
-        self.assertEqual(
-            jax.jit(f, device=system_default_device)(1).device(),
-            system_default_device)
+      # Explicit `device` or `backend` argument to jit overrides default_device
+      self.assertEqual(
+          jax.jit(f, device=system_default_device)(1).device(),
+          system_default_device)
       out = jax.jit(f, backend="cpu")(1)
       if config.jax_array:
         self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)

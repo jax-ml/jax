@@ -173,12 +173,9 @@ class MultiBackendTest(jtu.JaxTestCase):
     result2 = jax.jit(my_sin)(data_on_cpu)
     self.assertEqual(result2.device(), cpus[0])
 
-    # Skip this for jax.Array because using the device argument of `jit` is
-    # deprecated.
-    if not config.jax_array:
-      # jit with `device` spec places the data on the specified device\
-      result3 = jax.jit(my_sin, device=cpus[0])(2)
-      self.assertEqual(result3.device(), cpus[0])
+    # jit with `device` spec places the data on the specified device
+    result3 = jax.jit(my_sin, device=cpus[0])(2)
+    self.assertEqual(result3.device(), cpus[0])
 
     # jit with `backend` spec places the data on the specified backend
     result4 = jax.jit(my_sin, backend="cpu")(2)
