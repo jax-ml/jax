@@ -255,105 +255,137 @@ def jit_dispatch_with_transfer(state):
 
 
 @google_benchmark.register
+@google_benchmark.option.arg_name('jax_array')
+@google_benchmark.option.arg(True)
+@google_benchmark.option.arg(False)
 @required_devices(2)
 def pmap_trivial_2_devices(state):
-  f = jax.pmap(swap)
-  a, b = f(jnp.array([1, 2]), jnp.array([3, 4]))
+  with jax_config.jax_array(state.range(0)):
+    f = jax.pmap(swap)
+    a, b = f(jnp.array([1, 2]), jnp.array([3, 4]))
 
-  while state:
-    c, d = f(a, b)
-    c.block_until_ready()
-    d.block_until_ready()
+    while state:
+      c, d = f(a, b)
+      c.block_until_ready()
+      d.block_until_ready()
 
 
 @google_benchmark.register
+@google_benchmark.option.arg_name('jax_array')
+@google_benchmark.option.arg(True)
+@google_benchmark.option.arg(False)
 @required_devices(8)
 def pmap_trivial_dispatch_8_devices(state):
-  f = jax.pmap(swap)
-  a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
-           jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
+  with jax_config.jax_array(state.range(0)):
+    f = jax.pmap(swap)
+    a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
+             jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
 
-  while state:
-    a, b = f(a, b)
+    while state:
+      a, b = f(a, b)
 
 
 @google_benchmark.register
+@google_benchmark.option.arg_name('jax_array')
+@google_benchmark.option.arg(True)
+@google_benchmark.option.arg(False)
 @required_devices(8)
 def pmap_trivial_8_devices(state):
-  f = jax.pmap(swap)
-  a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
-           jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
+  with jax_config.jax_array(state.range(0)):
+    f = jax.pmap(swap)
+    a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
+             jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
 
-  while state:
-    c, d = f(a, b)
-    c.block_until_ready()
-    d.block_until_ready()
+    while state:
+      c, d = f(a, b)
+      c.block_until_ready()
+      d.block_until_ready()
 
 
 @google_benchmark.register
+@google_benchmark.option.arg_name('jax_array')
+@google_benchmark.option.arg(True)
+@google_benchmark.option.arg(False)
 @required_devices(2)
 def pmap_simple_2_devices(state):
-  f = jax.pmap(lambda a, b: (a + b, a - b))
-  a, b = f(jnp.array([1, 2]), jnp.array([3, 4]))
+  with jax_config.jax_array(state.range(0)):
+    f = jax.pmap(lambda a, b: (a + b, a - b))
+    a, b = f(jnp.array([1, 2]), jnp.array([3, 4]))
 
-  while state:
-    c, d = f(a, b)
-    c.block_until_ready()
-    d.block_until_ready()
+    while state:
+      c, d = f(a, b)
+      c.block_until_ready()
+      d.block_until_ready()
 
 
 @google_benchmark.register
+@google_benchmark.option.arg_name('jax_array')
+@google_benchmark.option.arg(True)
+@google_benchmark.option.arg(False)
 @required_devices(8)
 def pmap_simple_dispatch_8_devices(state):
-  f = jax.pmap(lambda a, b: (a + b, a - b))
-  a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
-           jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
+  with jax_config.jax_array(state.range(0)):
+    f = jax.pmap(lambda a, b: (a + b, a - b))
+    a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
+             jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
 
-  while state:
-    a, b = f(a, b)
+    while state:
+      a, b = f(a, b)
 
 
 @google_benchmark.register
+@google_benchmark.option.arg_name('jax_array')
+@google_benchmark.option.arg(True)
+@google_benchmark.option.arg(False)
 @required_devices(8)
 def pmap_simple_8_devices(state):
-  f = jax.pmap(lambda a, b: (a + b, a - b))
-  a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
-           jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
+  with jax_config.jax_array(state.range(0)):
+    f = jax.pmap(lambda a, b: (a + b, a - b))
+    a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
+             jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
 
-  while state:
-    c, d = f(a, b)
-    c.block_until_ready()
-    d.block_until_ready()
+    while state:
+      c, d = f(a, b)
+      c.block_until_ready()
+      d.block_until_ready()
 
 
 @google_benchmark.register
+@google_benchmark.option.arg_name('jax_array')
+@google_benchmark.option.arg(True)
+@google_benchmark.option.arg(False)
 @required_devices(8)
 def pmap_simple_dispatch_8_devices_100_args(state):
-  f = jax.pmap(lambda *args: args[1:] + (args[0] + 1,))
-  args = []
-  for i in range(100):
-    args.append(jnp.array(list(range(i, i+8))))
+  with jax_config.jax_array(state.range(0)):
+    f = jax.pmap(lambda *args: args[1:] + (args[0] + 1,))
+    args = []
+    for i in range(100):
+      args.append(jnp.array(list(range(i, i+8))))
 
-  args = f(*args)
-
-  while state:
     args = f(*args)
+
+    while state:
+      args = f(*args)
 
 
 @google_benchmark.register
+@google_benchmark.option.arg_name('jax_array')
+@google_benchmark.option.arg(True)
+@google_benchmark.option.arg(False)
 @required_devices(8)
 def pmap_simple_8_devices_100_args(state):
-  f = jax.pmap(lambda *args: args[1:] + (args[0] + 1,))
-  args = []
-  for i in range(100):
-    args.append(jnp.array(list(range(i, i+8))))
+  with jax_config.jax_array(state.range(0)):
+    f = jax.pmap(lambda *args: args[1:] + (args[0] + 1,))
+    args = []
+    for i in range(100):
+      args.append(jnp.array(list(range(i, i+8))))
 
-  # Warmup loop.
-  out = f(*args)
-
-  while state:
+    # Warmup loop.
     out = f(*args)
-    jax.tree_util.tree_map(lambda x: x.block_until_ready(), out)
+
+    while state:
+      out = f(*args)
+      jax.tree_util.tree_map(lambda x: x.block_until_ready(), out)
 
 
 def _run_sda_index_bench(state, num_devices):
