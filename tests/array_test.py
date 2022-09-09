@@ -505,6 +505,20 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertGreater(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
+  def test_is_compatible_error(self):
+    shape = (8, 2)
+    mesh = jtu.create_global_mesh((1, 1, 2), ('replica', 'data', 'mdl'))
+    mps = sharding.MeshPspecSharding(mesh, P(None, ('mdl',), None, None))
+    new_mps = sharding.MeshPspecSharding._from_parsed_pspec(
+        mps.mesh, mps._parsed_pspec)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Sharding MeshPspecSharding\(mesh={'replica': 1, 'data': 1, 'mdl': 2}, "
+        r"partition_spec=PartitionSpec\(None, \('mdl',\), None, None\)\) is only "
+        "valid for values of rank at least 4, but was applied to a value of rank 2"):
+      new_mps.is_compatible_aval(shape)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -637,6 +637,15 @@ class ParsedPartitionSpec:
   def user_spec(self):
     return self.unsynced_user_spec(SpecSync.IN_SYNC)
 
+  def get_partition_spec(self) -> PartitionSpec:
+    if self.sync < SpecSync.IN_SYNC:
+      return _get_single_pspec(self)
+    else:
+      if isinstance(self.unsafe_user_spec, PartitionSpec):
+        return self.unsafe_user_spec
+      else:
+        return _get_single_pspec(self)
+
   def unsynced_user_spec(self, min_sync):
     if self.sync < min_sync:
       raise AssertionError(f"Please open a bug report! ({self.sync} >= {min_sync})")
@@ -1283,7 +1292,7 @@ def with_sharding_constraint(x, axis_resources):
         for s in sharding_flat
     ]
   else:
-    sharding_flat = [MeshPspecSharding._from_parsed_pspec(mesh, a)
+    sharding_flat = [pxla._create_mesh_pspec_sharding(mesh, a.user_spec, a)
                      for a in axis_resources_flat]
     # Calculate unconstrained_dims from MeshPspecSharding because that information
     # is lost when converted to OpSharding. Bind unconstrained_dims to

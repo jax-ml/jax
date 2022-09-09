@@ -197,8 +197,7 @@ class MeshPspecSharding(XLACompatibleSharding):
 
   @classmethod
   def _from_parsed_pspec(cls, mesh, parsed_pspec):
-    from jax.experimental import pjit
-    return cls(mesh, pjit._get_single_pspec(parsed_pspec), parsed_pspec)
+    return cls(mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
 
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:

@@ -1052,6 +1052,24 @@ class PJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(out.shape, input_shape)
       out.unsafe_raw_array()  # doesn't crash
 
+  def test_with_sharding_constraint_is_compatible_error(self):
+    mesh = jtu.create_global_mesh((1, 1, 2), ('replica', 'data', 'mdl'))
+
+    with mesh:
+      def f(x):
+        y = with_sharding_constraint(x, P(None, ('mdl',), None, None))
+        z = y + 2
+        return z
+      pjit_f = pjit(f, in_axis_resources=P(None), out_axis_resources=P(None))
+
+      with self.assertRaisesRegex(
+          ValueError,
+          r"One of with_sharding_constraint.*Sharding "
+          r"MeshPspecSharding\(mesh={'replica': 1, 'data': 1, 'mdl': 2}, "
+          r"partition_spec=PartitionSpec\(None, \('mdl',\), None, None\)\) is only "
+          "valid for values of rank at least 4, but was applied to a value of rank 1"):
+        pjit_f(jnp.array([1, 2, 3]))
+
 
 class GDAPjitTest(jtu.JaxTestCase):
 
@@ -2180,8 +2198,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     x = jnp.arange(2)
     spec = P('x', 'y')
     error = re.compile(
-        r"One of with_sharding_constraint arguments" + r".*" + spec_regex(
-            pxla.array_mapping_to_axis_resources(pxla._get_array_mapping(spec))) +
+        r"One of with_sharding_constraint arguments" + r".*" + spec_regex(spec) +
         r".*rank at least 2, but was applied to a value of rank 1", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: with_sharding_constraint(x, spec),
@@ -2624,6 +2641,22 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.misses, cache_info1.misses)
     self.assertEqual(id(next_op_sharding_sharding._op_sharding),
                      id(op_sharding_sharding._op_sharding))
+
+  def test_get_partition_spec(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    s = MeshPspecSharding(mesh, P('x', 'y', None))
+
+    self.assertEqual(s._parsed_pspec.get_partition_spec(), P('x', 'y', None))
+
+    recovered_parsed_pspec = pjit_lib.parse_flatten_op_sharding(
+        s._to_xla_op_sharding(3), mesh)
+    self.assertEqual(recovered_parsed_pspec[0].get_partition_spec(),
+                     P(('x',), ('y',)))
+
+    out_of_sync_parsed_pspec = pjit_lib.ParsedPartitionSpec(
+        P('x', 'y'), ('x', 'y'), pjit_lib.SpecSync.OUT_OF_SYNC)
+    self.assertEqual(out_of_sync_parsed_pspec.get_partition_spec(),
+                     P(('x',), ('y',)))
 
 
 if __name__ == '__main__':
