@@ -65,6 +65,7 @@ jax.scipy.optimize
 .. autosummary::
   :toctree: _autosummary
 
+   fixed_point
    minimize
    OptimizeResults
 

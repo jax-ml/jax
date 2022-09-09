@@ -16,3 +16,7 @@ from jax._src.scipy.optimize.minimize import (
   minimize as minimize,
   OptimizeResults as OptimizeResults,
 )
+
+from jax._src.scipy.optimize.fixed_point import (
+  fixed_point as fixed_point
+)
