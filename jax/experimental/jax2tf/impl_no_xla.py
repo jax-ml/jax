@@ -921,7 +921,7 @@ def _gather_with_batch_dims(args: GatherArgs):
     start_indices,
     fn_output_signature=jax2tf._to_tf_dtype(args.operand.dtype)
   )
-  result = tf.squeeze(result, axis=1)
+  result = tf.reshape(result, jax2tf._eval_shape(args.out_aval.shape))
   return result
 
 

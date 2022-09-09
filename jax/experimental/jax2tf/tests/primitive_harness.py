@@ -1203,6 +1203,10 @@ dnums_2d = lax.GatherDimensionNumbers(
     offset_dims=(1,),
     collapsed_slice_dims=(0,),  # Batch dimension.
     start_index_map=(0, 1))
+dnums_2d_2 = lax.GatherDimensionNumbers(
+    offset_dims=(),
+    collapsed_slice_dims=(0, 1),  # Only first dim is batch, collapse both.
+    start_index_map=(0, 1))
 dnums_3d = lax.GatherDimensionNumbers(
     offset_dims=(1, 2),
     collapsed_slice_dims=(0,),  # Batch dimension.
@@ -1210,6 +1214,7 @@ dnums_3d = lax.GatherDimensionNumbers(
 
 for op_shape, start_indices, slice_sizes, dnums in [
     ((4, 6),    [[0, 1], [1, 2], [2, 3], [3, 2]], (1, 3),    dnums_2d),
+    ((1, 2),    [[0, 1]], (1, 1),                            dnums_2d_2),
     ((2, 6, 3), [[0, 1, 0], [1, 2, 0]],           (1, 3, 3), dnums_3d),
     # Test out of bounds behavior.
     ((3, 10),   [[0, 0], [1, 8], [2, 0]],         (1, 5),    dnums_2d),
