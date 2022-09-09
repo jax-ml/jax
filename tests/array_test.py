@@ -14,6 +14,7 @@
 """Tests for GlobalDeviceArray."""
 
 import os
+import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
@@ -354,14 +355,24 @@ class JaxArrayTest(jtu.JaxTestCase):
     y = jax.pmap(jnp.sin)(x)
     self.assertArraysEqual([a.device() for a in y],
                            [a.device() for a in y._arrays])
-    for a in y:
-      self.assertIsInstance(a, array.Array)
-      self.assertEqual(a._committed, y._committed)
 
     sin_x = iter(np.sin(x))
     for i, j in zip(iter(y), sin_x):
+      self.assertIsInstance(i, array.Array)
       self.assertArraysAllClose(i, j)
 
+  @jax_config.jax_array(True)
+  def test_array_iter_pmap_sharding_last_dim_sharded(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >= 2 devices.')
+
+    x = jnp.array([[1., 0., 0.], [0., 2., 3.]])
+    y = jax.pmap(jnp.sin, out_axes=1)(x)
+
+    for i, j in zip(iter(y), iter(np.sin(x).T)):
+      self.assertArraysAllClose(i, j)
+
+  @unittest.skip('After b/245667823 is fixed, this test can be enabled.')
   @jax_config.jax_array(True)
   def test_array_iter_mesh_pspec_sharding_multi_device(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -371,6 +382,21 @@ class JaxArrayTest(jtu.JaxTestCase):
 
     for i, j in zip(iter(arr), iter(input_data)):
       self.assertArraysEqual(i, j)
+
+  @unittest.skip('After b/245667823 is fixed, this test can be enabled.')
+  @jax_config.jax_array(True)
+  def test_array_getitem_mesh_pspec_sharding_multi_device(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    arr, _ = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+
+    # `__getitem__` with a specific index takes the fast path.
+    s = arr[2:4, 0:1]
+    self.assertArraysEqual(s, np.array([[4], [6]]))
+
+    # TODO(yashkatariya): Add assert equal for this when the test is enabled.
+    arr[:2]  # doesn't crash
 
   @jax_config.jax_array(True)
   def test_array_iter_mesh_pspec_sharding_single_device(self):

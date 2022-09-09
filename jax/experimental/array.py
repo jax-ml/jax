@@ -309,24 +309,46 @@ class Array:
       return format(self._value, format_spec)
 
   @_use_python_method
+  def __getitem__(self, idx):
+    from jax._src.numpy import lax_numpy
+    self._check_if_deleted()
+
+    # This index canonicalization only works for PmapSharding currently.
+    # TODO(yashkatariya): Make it work for other Shardings too wherever its
+    # possible to not do data movement.
+    if not isinstance(idx, tuple):
+      cidx = (idx,) + (slice(None),) * (len(self.shape) - 1)
+    else:
+      cidx = idx + (slice(None),) * (len(self.shape) - len(idx))
+    if self._npy_value is None:
+      if self._fast_path_args is None:
+        indices = tuple(self.sharding.devices_indices_map(self.shape).values())
+      else:
+        indices = tuple(self._fast_path_args.devices_indices_map.values())
+      try:
+        buf_idx = indices.index(cidx)
+      except ValueError:
+        buf_idx = None
+      if buf_idx is not None:
+        buf = self._arrays[buf_idx]
+        aval = core.ShapedArray(buf.xla_shape().dimensions(), self.dtype)
+        return Array(aval, SingleDeviceSharding(buf.device()), [buf],
+                     committed=False, _skip_checks=True)
+    return lax_numpy._rewriting_take(self, idx)
+
+  @_use_python_method
   def __iter__(self):
     if self.ndim == 0:
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
       assert self.is_fully_replicated() or self.is_fully_addressable()
-      # TODO(yashkatariya,mattjj): Handle more cases that can hit the 1 device
-      # sharding case. This will be possible when __getitem__ is implemented.
-      # Use DA like __iter__ when sharding is SingleDeviceSharding.
-      if len(self.sharding.device_set) == 1:
-        # chunk_iter is added to Array in lax_numpy.py similar to DA.
-        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
-      elif isinstance(self.sharding, PmapSharding):
-        return (s.data for s in self.addressable_shards)
+      # TODO(yashkatariya): Let all shardings take this route? The else path
+      # is taken by DA (in the old path) so keeping it here until we generalize
+      # it.
+      if isinstance(self.sharding, PmapSharding):
+        return (self[i] for i in range(self.shape[0]))  # type: ignore
       else:
-        # TODO(yashkatariya,mattjj): Avoid this round trip and figure out a better
-        # way to handle this when you have arbitrary sharding.
-        val = self._value
-        return (val[i] for i in range(val.shape[0]))
+        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
 
   @_use_python_method
   def item(self):

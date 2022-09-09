@@ -2697,11 +2697,6 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
 
   def testNoCopyIndexing1D(self):
-    # TODO(https://github.com/google/jax/issues/12016): Implement no copy
-    # indexing similar to SDA.
-    if config.jax_array:
-      self.skipTest('No copy indexing is not implemented for Array yet.')
-
     shape = (8, 4)
 
     if jax.device_count() < shape[0]:
@@ -2710,8 +2705,14 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     x = jnp.arange(prod(shape)).reshape(shape)
     sharded_x = pmap(lambda x: x)(x)
     self.assertIsNone(sharded_x._npy_value)
+
+    if config.jax_array:
+      arr_type = array.Array
+    else:
+      arr_type = device_array.DeviceArray
+
     for i in range(8):
-      self.assertIsInstance(sharded_x[i], device_array.DeviceArray)
+      self.assertIsInstance(sharded_x[i], arr_type)
     self.assertIsNone(sharded_x._npy_value)
 
   @parameterized.named_parameters(
