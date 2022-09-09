@@ -286,22 +286,26 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
 
   in_avals, in_shardings = util.unzip2(arg_specs)
 
-  # Specifying backend on `jit` is not supported when Array is enabled. So take
-  # the `lower_xla_callable` path which can handle it.
-  # TODO(yashkatariya): Figure out what to do with the backend argument in `jit`
   if backend is not None:
-    arg_specs = tuple(
-        (a, s._device) if isinstance(s, sharding.SingleDeviceSharding) else (a, None)
-        for a, s in zip(in_avals, in_shardings))
-    return lower_xla_callable(
-        fun, None, backend, name, donated_invars, False, keep_unused,
-        *arg_specs).compile().unsafe_call
-
-  committed = any(i is not None for i in in_shardings)
-  da = pjit._get_and_check_device_assignment(
-      (i for i in in_shardings if i is not None), pxla.EMPTY_ENV.physical_mesh)
-  in_shardings = [sharding.OpShardingSharding.get_replicated(da) if i is None else i
-                  for i in in_shardings]
+    # Set committed to True for this path because it simulates a device_put on
+    # behalf of a user.
+    committed = True
+    # This is to support the backend argument on jit. It's a feature that's
+    # deprecated but needs to be supported for feature parity and so that we
+    # can delete the non-Array paths when Array is switched on.
+    # TODO(yashkatariya): Remove this once backend is not an arg on jit.
+    da = [xb.get_backend(backend).get_default_device_assignment(1)[0]]
+    assert len(da) == 1
+    # in_shardings will be marked as replicated regardless of whatever the input
+    # had. Given that only a single device is allowed above, this is correct.
+    in_shardings = [sharding.OpShardingSharding.get_replicated(da)
+                    for _ in in_shardings]
+  else:
+    committed = any(i is not None for i in in_shardings)
+    da = pjit._get_and_check_device_assignment(
+        (i for i in in_shardings if i is not None), pxla.EMPTY_ENV.physical_mesh)
+    in_shardings = [sharding.OpShardingSharding.get_replicated(da) if i is None else i
+                    for i in in_shardings]
 
   process_index = xb.process_index()
   local_da = [d for d in da if d.process_index == process_index]
