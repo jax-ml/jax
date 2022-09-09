@@ -629,8 +629,14 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
   Returns:
     An array containing the concatenation.
   """
+  from jax.experimental import array
+
   if len(operands) == 0:
     raise ValueError("concatenate requires a non-empty sequences of arrays")
+  if len(operands) == 1:
+    op, = operands
+    if isinstance(op, (core.Tracer, device_array.DeviceArray, array.Array)):
+      return op
   return concatenate_p.bind(*operands, dimension=dimension)
 
 
@@ -2249,8 +2255,12 @@ mlir.register_lowering(shift_right_logical_p,
                        partial(_nary_lower_mhlo, mhlo.ShiftRightLogicalOp))
 
 def _compare_lower_mhlo(direction: str, ctx, x, y):
-  x_aval, y_aval = ctx.avals_in
-  aval_out, = ctx.avals_out
+  avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
+  if config.jax_dynamic_shapes:
+    substitute = partial(_substitute_axis_sizes_in_aval, ctx.axis_size_env)
+    avals_in = map(substitute, avals_in)
+    aval_out = substitute(aval_out)
+  x_aval, y_aval = avals_in
   x, y = broadcast_mhlo(aval_out.update(dtype=x_aval.dtype), ctx.avals_in,
                         (x, y))
   if dtypes.issubdtype(x_aval.dtype, np.inexact):
@@ -2757,8 +2767,9 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
   return ([expand_dims(_reduce_sum(ct, axes), unit_dims)] +
           [None] * len(dyn_shape))
 
-def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
+def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *dyn_shape, shape,
                                  broadcast_dimensions):
+  if dyn_shape: raise NotImplementedError  # TODO(mattjj)
   operand, = batched_args
   bdim, = batch_dims
   new_operand = batching.moveaxis(operand, bdim, 0)
@@ -3157,7 +3168,16 @@ batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 def _squeeze_lower(ctx, operand, *, dimensions):
   del dimensions  # Implied by the output aval.
   aval_out, = ctx.avals_out
-  return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), operand).results
+  if config.jax_dynamic_shapes:
+    substitute = partial(_substitute_axis_sizes_in_aval, ctx.axis_size_env)
+    aval_out = substitute(aval_out)
+  if any(isinstance(d, ir.Value) for d in aval_out.shape):
+    return mhlo.DynamicReshapeOp(
+        mlir.aval_to_ir_type(aval_out), operand,
+        mlir.shape_tensor(aval_out.shape),
+    ).results
+  else:
+    return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), operand).results
 
 mlir.register_lowering(squeeze_p, _squeeze_lower)
 

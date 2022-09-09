@@ -287,7 +287,6 @@ def gather(operand: Array, start_indices: Array,
       fill_value=fill_value)
 
 
-
 class ScatterDimensionNumbers(NamedTuple):
   """
   Describes the dimension number arguments to an `XLA's Scatter operator
@@ -1161,7 +1160,8 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
   expanded_indices_shape.pop(index_vector_dim)
   indices_shape = iter(expanded_indices_shape)
 
-  slice_sizes = iter(np.delete(slice_sizes, collapsed_slice_dims))
+  slice_sizes = (s for i, s in enumerate(slice_sizes)
+                 if i not in collapsed_slice_dims)
   return tuple(next(slice_sizes) if i in offset_dims
                else next(indices_shape) for i in range(output_shape_rank))
 
@@ -1250,7 +1250,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
   elif operand_bdim is None and indices_bdim is not None:
     indices = batching.moveaxis(indices, indices_bdim, 0)
-    offset_dims = tuple(np.add(1, dimension_numbers.offset_dims))
+    offset_dims = tuple(1 + d for d in dimension_numbers.offset_dims)
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
@@ -1308,10 +1308,8 @@ gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     weak_type_rule=_argnum_weak_type(0))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
-
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
-
 
 
 def _gather_lower(ctx, operand, indices, *,
@@ -2054,39 +2052,3 @@ def _dynamic_slice_indices(operand, start_indices: Any):
       d = lax.convert_element_type(core.dimension_as_value(d), _dtype(i))
       result.append(lax.select(i < 0, i + d, i))
   return result
-
-
-# TODO(mattjj): getslice is a prototype for dynamic shapes, revise or remove it
-def _getslice(x, lo, hi):
-  return getslice_p.bind(x, lo, hi)
-
-getslice_p = core.Primitive('getslice')
-
-@getslice_p.def_impl
-def getslice_impl(x, lo, hi):
-  return x[lo:hi]
-
-def _getslice_staging_rule(trace, x, lo, hi):
-  size = lax.make_bint(lax.clamp(0, hi - lo, x.shape[0]), x.shape[0])
-  aval = core.DShapedArray((size,), x.dtype, x.weak_type)
-  source_info = source_info_util.current()
-  out_tracer = pe.DynamicJaxprTracer(trace, aval, source_info)
-  invars = map(trace.getvar, [x, lo, hi])
-  eqn = pe.new_jaxpr_eqn(invars, [trace.makevar(out_tracer)],
-                         getslice_p, {}, source_info)
-  trace.frame.eqns.append(eqn)
-  return out_tracer
-pe.custom_staging_rules[getslice_p] = _getslice_staging_rule
-
-def _getslice_padding_rule(in_avals, out_avals, x, lo, hi):
-  xx = lax.concatenate([x, x], 0)
-  return [dynamic_slice_in_dim(xx, lo, x.shape[0])]
-pe.padding_rules[getslice_p] = _getslice_padding_rule
-
-def _getslice_lower(ctx, x, lo, hi):
-  aval_out, = ctx.avals_out
-  return mhlo.RealDynamicSliceOp(
-      mlir.aval_to_ir_type(aval_out), x,
-      mlir.shape_tensor([lo]), mlir.shape_tensor([hi]), mlir.shape_tensor([1])
-  ).results
-mlir.register_lowering(getslice_p, _getslice_lower)
