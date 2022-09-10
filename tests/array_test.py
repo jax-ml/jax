@@ -14,7 +14,6 @@
 """Tests for GlobalDeviceArray."""
 
 import os
-import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
@@ -372,7 +371,6 @@ class JaxArrayTest(jtu.JaxTestCase):
     for i, j in zip(iter(y), iter(np.sin(x).T)):
       self.assertArraysAllClose(i, j)
 
-  @unittest.skip('After b/245667823 is fixed, this test can be enabled.')
   @jax_config.jax_array(True)
   def test_array_iter_mesh_pspec_sharding_multi_device(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -383,20 +381,18 @@ class JaxArrayTest(jtu.JaxTestCase):
     for i, j in zip(iter(arr), iter(input_data)):
       self.assertArraysEqual(i, j)
 
-  @unittest.skip('After b/245667823 is fixed, this test can be enabled.')
   @jax_config.jax_array(True)
   def test_array_getitem_mesh_pspec_sharding_multi_device(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
-    arr, _ = create_array(
+    arr, input_data = create_array(
         input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
 
-    # `__getitem__` with a specific index takes the fast path.
+    # TODO(yashkatariya): `__getitem__` with a specific index takes the fast
+    # path after b/245667823 is fixed.
     s = arr[2:4, 0:1]
     self.assertArraysEqual(s, np.array([[4], [6]]))
-
-    # TODO(yashkatariya): Add assert equal for this when the test is enabled.
-    arr[:2]  # doesn't crash
+    self.assertArraysEqual(arr[:2], input_data[:2])
 
   @jax_config.jax_array(True)
   def test_array_iter_mesh_pspec_sharding_single_device(self):

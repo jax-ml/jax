@@ -313,28 +313,35 @@ class Array:
     from jax._src.numpy import lax_numpy
     self._check_if_deleted()
 
-    # This index canonicalization only works for PmapSharding currently.
+    if dispatch.is_single_device_sharding(self.sharding):
+      return lax_numpy._rewriting_take(self, idx)
     # TODO(yashkatariya): Make it work for other Shardings too wherever its
     # possible to not do data movement.
-    if not isinstance(idx, tuple):
-      cidx = (idx,) + (slice(None),) * (len(self.shape) - 1)
-    else:
-      cidx = idx + (slice(None),) * (len(self.shape) - len(idx))
-    if self._npy_value is None:
-      if self._fast_path_args is None:
-        indices = tuple(self.sharding.devices_indices_map(self.shape).values())
+    elif isinstance(self.sharding, PmapSharding):
+      if not isinstance(idx, tuple):
+        cidx = (idx,) + (slice(None),) * (len(self.shape) - 1)
       else:
-        indices = tuple(self._fast_path_args.devices_indices_map.values())
-      try:
-        buf_idx = indices.index(cidx)
-      except ValueError:
-        buf_idx = None
-      if buf_idx is not None:
-        buf = self._arrays[buf_idx]
-        aval = core.ShapedArray(buf.xla_shape().dimensions(), self.dtype)
-        return Array(aval, SingleDeviceSharding(buf.device()), [buf],
-                     committed=False, _skip_checks=True)
-    return lax_numpy._rewriting_take(self, idx)
+        cidx = idx + (slice(None),) * (len(self.shape) - len(idx))
+      if self._npy_value is None:
+        if self._fast_path_args is None:
+          indices = tuple(self.sharding.devices_indices_map(self.shape).values())
+        else:
+          indices = tuple(self._fast_path_args.devices_indices_map.values())
+        try:
+          buf_idx = indices.index(cidx)
+        except ValueError:
+          buf_idx = None
+        if buf_idx is not None:
+          buf = self._arrays[buf_idx]
+          aval = core.ShapedArray(buf.xla_shape().dimensions(), self.dtype)
+          return Array(aval, SingleDeviceSharding(buf.device()), [buf],
+                       committed=False, _skip_checks=True)
+      return lax_numpy._rewriting_take(self, idx)
+    else:
+      # TODO(yashkatariya): Don't bounce to host and use `_rewriting_take` or
+      # the fast path (see PmapSharding branch above) after b/245667823 is
+      # fixed.
+      return self._value[idx]
 
   @_use_python_method
   def __iter__(self):
@@ -342,13 +349,14 @@ class Array:
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
       assert self.is_fully_replicated() or self.is_fully_addressable()
-      # TODO(yashkatariya): Let all shardings take this route? The else path
-      # is taken by DA (in the old path) so keeping it here until we generalize
-      # it.
-      if isinstance(self.sharding, PmapSharding):
+      if dispatch.is_single_device_sharding(self.sharding):
+        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
+      elif isinstance(self.sharding, PmapSharding):
         return (self[i] for i in range(self.shape[0]))  # type: ignore
       else:
-        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
+        # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
+        # here after b/245667823 is fixed.
+        return (self._value[i] for i in range(self.shape[0]))
 
   @_use_python_method
   def item(self):
