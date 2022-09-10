@@ -707,6 +707,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     f_com = f_low.compile()
     f_low.donate_argnums == f_com.donate_argnums == (0,)
 
+  @unittest.skip('Fails in OSS builds on GPU with jax at HEAD and latest '
+                 'jaxlib on pypi.')
   def testInfeed(self):
     devices = np.array(jax.local_devices())
     nr_devices = len(devices)
