@@ -49,6 +49,7 @@ import jax._src.pretty_printer as pp
 from jax._src import lib
 from jax._src.lib import jax_jit
 from jax._src import traceback_util
+from jax._src.typing import DimSize, Shape
 traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
@@ -1599,13 +1600,6 @@ raise_to_shaped_mappings : Dict[type, Callable] = {
 }
 
 ### Operations on shapes and dimension sizes.
-
-# Shapes are tuples of dimension sizes, which are normally integers. We allow
-# modules to extend the set of dimension sizes to contain other types, e.g.,
-# symbolic dimensions in jax2tf.shape_poly.DimVar and masking.Poly.
-DimSize = Union[int, Any]  # extensible
-Shape = Sequence[DimSize]
-
 
 class InconclusiveDimensionOperation(Exception):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
