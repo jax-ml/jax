@@ -14,12 +14,13 @@
 
 from contextlib import contextmanager
 import inspect
+import io
 import functools
 from functools import partial
 import re
 import os
 import textwrap
-from typing import Dict, List, Generator, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Generator, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib
@@ -151,6 +152,14 @@ def join_tolerance(tol1, tol2):
 def check_eq(xs, ys, err_msg=''):
   assert_close = partial(_assert_numpy_allclose, err_msg=err_msg)
   tree_all(tree_map(assert_close, xs, ys))
+
+
+@contextmanager
+def capture_stdout() -> Generator[Callable[[], str], None, None]:
+  with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as fp:
+    def _read() -> str:
+      return fp.getvalue()
+    yield _read
 
 
 @contextmanager
