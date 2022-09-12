@@ -45,7 +45,7 @@ import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import core, lax
 from jax import custom_batching
-from jax._src import api, dtypes, dispatch
+from jax._src import api, dtypes, dispatch, lib
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
@@ -8997,6 +8997,20 @@ class CleanupTest(jtu.JaxTestCase):
       assert core.trace_state_clean()  # this is the hard one
     assert core.trace_state_clean()
 
+
+class EnvironmentInfoTest(jtu.JaxTestCase):
+  @parameterized.parameters([True, False])
+  def test_print_environment_info(self, return_string):
+    with jtu.capture_stdout() as stdout:
+      result = jax.print_environment_info(return_string=return_string)
+    if return_string:
+      self.assertEmpty(stdout())
+    else:
+      self.assertIsNone(result)
+      result = stdout()
+    assert f"jax:    {jax.__version__}" in result
+    assert f"jaxlib: {lib.version_str}" in result
+    assert f"numpy:  {np.__version__}" in result
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -109,3 +109,11 @@ Callbacks
 
     pure_callback
     debug.callback
+
+Miscellaneous
+-------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    print_environment_info

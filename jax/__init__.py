@@ -57,6 +57,7 @@ from jax._src.config import (
   transfer_guard_device_to_host as transfer_guard_device_to_host,
 )
 from .core import eval_context as ensure_compile_time_eval
+from jax._src.environment_info import print_environment_info as print_environment_info
 from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
   effects_barrier,
