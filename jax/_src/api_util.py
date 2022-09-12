@@ -37,6 +37,7 @@ map = safe_map
 
 def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
   """Ensure x is either an index or a tuple of indices."""
+  x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
   try:
     return operator.index(x)
   except TypeError:
@@ -44,6 +45,7 @@ def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
 
 def _ensure_index_tuple(x: Any) -> Tuple[int, ...]:
   """Convert x to a tuple of indices."""
+  x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
   try:
     return (operator.index(x),)
   except TypeError:
