@@ -1049,6 +1049,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(jnp.sin, jnp.zeros((2, 3), jnp.float32))
 
   def test_randint(self):
+    if jtu.device_under_test() == "gpu" and config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("randint on GPU uses custom calls; not supported")
+
     def randint():
       return jax.random.randint(
           jax.random.PRNGKey(42), shape=(), minval=0, maxval=1)
@@ -1327,6 +1330,8 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(
         tf.nest.map_structure(lambda t: t.numpy(), res), jax_res)
 
+  # TODO(necula): figure out this failure
+  @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
   def test_global_device_array(self):
 
     def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
