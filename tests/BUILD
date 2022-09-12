@@ -911,6 +911,16 @@ jax_test(
 )
 
 jax_test(
+    name = "for_loop_test",
+    srcs = ["for_loop_test.py"],
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
+    },
+)
+
+jax_test(
     name = "clear_backends_test",
     srcs = ["clear_backends_test.py"],
 )
