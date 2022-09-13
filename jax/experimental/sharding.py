@@ -31,6 +31,7 @@ Index = Tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
 
+@pxla.use_cpp_class(xc.Sharding if xc._version >= 94 else None)
 class Sharding(metaclass=abc.ABCMeta):
 
   # Abstract methods below that subclasses should implement.
@@ -70,7 +71,8 @@ class Sharding(metaclass=abc.ABCMeta):
     return self.devices_indices_map(global_shape)[device]
 
 
-class XLACompatibleSharding(Sharding):
+@pxla.use_cpp_class(xc.XLACompatibleSharding if xc._version >= 94 else None)
+class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
 
   # Abstract methods below that subclasses should implement.
 
@@ -278,8 +280,10 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return _get_replicated_op_sharding()
 
 
+@pxla.use_cpp_class(xc.PmapSharding if xc._version >= 94 else None)
 class PmapSharding(XLACompatibleSharding):
 
+  @pxla.use_cpp_method
   def __init__(self, devices: np.ndarray, sharding_spec: pxla.ShardingSpec):
     self.devices = devices
     # The sharding spec should be pmap's sharding spec.

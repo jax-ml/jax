@@ -2137,10 +2137,13 @@ class _PmapFastpathData(NamedTuple):
   input_sharding_specs: Sequence[pxla.ShardingSpec]
   input_devices: Sequence[xc.Device]
   input_indices: Sequence[pxla.Index]
+  input_array_shardings: Sequence[Any]
   # Data needed to build the ShardedDeviceArray from C++.
   out_sharding_specs: Sequence[pxla.ShardingSpec]
   out_indices: Sequence[pxla.Index]
   out_avals: Sequence[Any]
+  out_array_shardings: Sequence[Any]
+  out_committed: Sequence[Any]
 
 
 def _cpp_pmap(
@@ -2191,7 +2194,10 @@ def _cpp_pmap(
         not execute[0].has_host_callbacks and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
-        all(isinstance(x, device_array.DeviceArray) for x in out_flat))
+        all(
+            isinstance(x, device_array.DeviceArray) or
+            xc._version >= 94 and isinstance(x, xc.Array) for x in out_flat))
+
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       execute_replicated = execute[0]
@@ -2199,6 +2205,14 @@ def _cpp_pmap(
       in_handler = execute_replicated.in_handler
       out_indices = [tuple(s.devices_indices_map(a.shape).values())
                      for s, a in safe_zip(out_handler.out_shardings, out_handler.out_avals)]
+
+      if jax.config.jax_array:
+        out_array_shardings = [out.sharding for out in out_flat]
+        out_committed = [out._committed for out in out_flat]
+      else:
+        out_array_shardings = []
+        out_committed = []
+
       fastpath_data = _PmapFastpathData(
           version=1,
           xla_executable=execute_replicated.xla_executable,
@@ -2208,9 +2222,12 @@ def _cpp_pmap(
           input_sharding_specs=[i.sharding_spec for i in in_handler.in_shardings],
           input_devices=in_handler.local_devices,
           input_indices=in_handler.input_indices,
+          input_array_shardings=in_handler.in_shardings,
           out_sharding_specs=[s.sharding_spec for s in out_handler.out_shardings],
           out_indices=out_indices,
           out_avals=out_handler.out_avals,
+          out_array_shardings=out_array_shardings,
+          out_committed=out_committed,
       )
 
     else:
