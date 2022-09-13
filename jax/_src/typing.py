@@ -35,8 +35,12 @@ class HasDtypeAttribute(Protocol):
 
 Dtype = np.dtype
 
-# Any is here to allow scalar types like np.int32.
-# TODO(jakevdp) figure out how to specify these more strictly.
+# DtypeLike is meant to annotate inputs to np.dtype that return
+# a valid JAX dtype. It's different than numpy.typing.DTypeLike
+# because JAX doesn't support objects or structured dtypes.
+# It does not include JAX dtype extensions such as KeyType and others.
+# For now, we use Any to allow scalar types like np.int32 & jnp.int32.
+# TODO(jakevdp) specify these more strictly.
 DtypeLike = Union[Any, str, np.dtype, HasDtypeAttribute]
 
 # Shapes are tuples of dimension sizes, which are normally integers. We allow

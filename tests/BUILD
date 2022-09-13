@@ -732,6 +732,16 @@ py_test(
     ],
 )
 
+# TODO(jakevdp): make this a py_strict_test
+py_test(
+    name = "typing_test",
+    srcs = ["typing_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 py_test(
     name = "util_test",
     srcs = ["util_test.py"],
