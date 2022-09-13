@@ -19,9 +19,10 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+from jax import random
 from jax._src import test_util as jtu
-import jax.numpy as jnp
 from jax._src.lax.control_flow import for_loop
+import jax.numpy as jnp
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -30,10 +31,19 @@ def remat_of_for_loop(nsteps, body, state, **kwargs):
   return jax.remat(lambda state: for_loop.for_loop(nsteps, body, state,
                                                    **kwargs))(state)
 
+def nested_for_loop(nsteps, body, state, **kwargs):
+  def outer_body(_, refs):
+    def inner_body(i, _):
+      body(i, refs)
+      return
+    for_loop.for_loop(nsteps, inner_body, ())
+  return for_loop.for_loop(1, outer_body, state)
+
 FOR_LOOP_IMPLS = [
     (for_loop.for_loop, 'for_loop'),
     (jax.jit(for_loop.for_loop, static_argnums=(0, 1)), 'jit_for_loop'),
     (remat_of_for_loop, 'remat_for_loop'),
+    (nested_for_loop, 'nested_for_loop'),
 ]
 
 
@@ -360,6 +370,24 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
     jtu.check_grads(lambda *args: for_(n, f, args)[1].sum(), args, order=3,
                     rtol=7e-3, atol=1e-2)
+
+  def test_grad_of_triple_nested_for_loop(self):
+
+    func = lambda x: jnp.sin(x) + 1.
+
+    @jax.jit
+    def f(x):
+      out = jnp.zeros_like(x)
+      def body(i, j, k, refs):
+        x_ref, out_ref = refs
+        y = func(x_ref[i, j, k])
+        out_ref[i, j, k] += y
+      return for_loop.for_loop(x.shape, body, (x, out))[1].sum()
+
+    x = random.normal(random.PRNGKey(0), (5, 4, 3))
+    ref = lambda x: jax.vmap(jax.vmap(jax.vmap(func)))(x).sum()
+    self.assertAllClose(f(x), ref(x))
+    jtu.check_grads(f, (x,), order=2, atol=0.1, rtol=0.1)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
