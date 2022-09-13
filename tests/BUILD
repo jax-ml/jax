@@ -914,9 +914,9 @@ jax_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
     shard_count = {
-        "cpu": 20,
-        "gpu": 20,
-        "tpu": 20,
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
     },
 )
 
