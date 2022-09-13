@@ -19,12 +19,13 @@ import scipy.optimize as spoptimize
 
 from jax._src import api
 from jax._src import tree_util
-from jax import jit, vjp
+from jax import jit, jvp, vjp, vmap
 import jax.numpy as jnp
 from jax.lax import while_loop, cond
 from jax._src.numpy.util import _wraps, _promote_args_inexact
 from jax.tree_util import tree_flatten, tree_leaves, tree_unflatten, tree_structure
 from jax.util import safe_zip
+from jax.flatten_util import ravel_pytree
 
 
 from typing import Callable, Optional, Any, Tuple, TypeVar, cast
@@ -41,6 +42,10 @@ FIXED_POINT_LAX_DESC = textwrap.dedent(
     function have to be jax-transformable since they will be jitted in the
     call of :obj:`jax.lax.while_loop`.
 
+    The jax implementation implements in addition to the methods supported by
+    scipy the Newton method using information from the derivative of the
+    function.
+
     Caution: The jax implementation supports in contrast to the scipy one the
     usage of pytrees as input. If you define own functions for the check of
     convergence or error handling, then these function should support pytrees
@@ -50,7 +55,15 @@ FIXED_POINT_LAX_DESC = textwrap.dedent(
 
 
 FIXED_POINT_EXTRA_PARAMS = textwrap.dedent(
-    """\
+    """
+    method : {"del2", "iteration", "newton"}, optional
+        Method of finding the fixed-point, defaults to "del2",
+        which uses Steffensen's Method with Aitken's ``Del^2``
+        convergence acceleration [1]_. The "iteration" method simply iterates
+        the function until convergence is detected, without attempting to
+        accelerate the convergence. The "newton" method uses the derivative of
+        the function to find a better step size. The derivative is calculated
+        using the jax.jvp function.
     check_converged_func : function, optional
         Jax-transformable function which accepts the previous and the new value
         of one iteration and the tolerance criterion as parameters to determine
@@ -154,6 +167,25 @@ def fixed_point(
         body_func = _iteration_body
     elif method == "del2":
         body_func = _del2_body
+    elif method == "newton":
+        @tree_util.Partial
+        def func_with_args(x):
+            x_flat, x_unravel_pytree = ravel_pytree(x)
+
+            def f_root(y):
+                func_flat, _ = ravel_pytree(func(x_unravel_pytree(y), *args))
+                return func_flat - y
+
+            def f_root_jacobian(y):
+                _jvp = lambda s: jvp(f_root, (y,), (s,))[1]
+                Jt = vmap(_jvp, in_axes=1)(jnp.eye(len(y), dtype=y.dtype))
+                return jnp.transpose(Jt)
+
+            root_jac = f_root_jacobian(x_flat)
+            result = x_flat - jnp.linalg.solve(root_jac, f_root(x_flat))
+            return x_unravel_pytree(result)
+
+        body_func = _iteration_body
     else:
         raise ValueError(f"Unknown method '{method}'.")
 
