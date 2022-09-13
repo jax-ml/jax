@@ -2908,10 +2908,11 @@ def einsum(*operands, out=None, optimize='optimal', precision=None,
       for d in np.shape(op) if not core.is_constant_dim(d)
   }
   if not non_constant_dim_types:
-    einsum_contract_path_fn = opt_einsum.contract_path
+    contract_path = opt_einsum.contract_path
   else:
-    einsum_contract_path_fn = _polymorphic_einsum_contract_path_handlers[next(iter(non_constant_dim_types))]
-  operands, contractions = einsum_contract_path_fn(
+    ty = next(iter(non_constant_dim_types))
+    contract_path = _poly_einsum_handlers.get(ty, _default_poly_einsum_handler)
+  operands, contractions = contract_path(
         *operands, einsum_call=True, use_blas=True, optimize=optimize)
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
@@ -2919,7 +2920,16 @@ def einsum(*operands, out=None, optimize='optimal', precision=None,
 
 # Enable other modules to override einsum_contact_path.
 # Indexed by the type of the non constant dimension
-_polymorphic_einsum_contract_path_handlers = {}  # type: ignore
+_poly_einsum_handlers = {}  # type: ignore
+
+def _default_poly_einsum_handler(*operands, **kwargs):
+  dummy = collections.namedtuple('dummy', ['shape', 'dtype'])
+  dummies = [dummy(tuple(d if type(d) is int else 8 for d in x.shape), x.dtype)
+             if hasattr(x, 'dtype') else x for x in operands]
+  mapping = {id(d): i for i, d in enumerate(dummies)}
+  out_dummies, contractions = opt_einsum.contract_path(*dummies, **kwargs)
+  contract_operands = [operands[mapping[id(d)]] for d in out_dummies]
+  return contract_operands, contractions
 
 @_wraps(np.einsum_path)
 def einsum_path(subscripts, *operands, optimize='greedy'):
@@ -3027,7 +3037,7 @@ def _einsum(operands: Sequence,
 
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
-      assert _all(
+      assert jax.config.jax_dynamic_shapes or _all(
         name in lhs_names and name in rhs_names and
         lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
         for name in contracted_names)

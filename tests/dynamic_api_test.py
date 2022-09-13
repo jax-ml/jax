@@ -1327,6 +1327,33 @@ class DynamicShapeTest(jtu.JaxTestCase):
     h, = e.outvars
     self.assertEqual(h.aval.shape, (b, 1))
 
+  def test_einsum_basic(self):
+    x = jnp.arange(20.).reshape(4, 5)
+
+    def f(x):
+      return jnp.einsum('ij,kj->ik', x, x)
+
+    jaxpr = jax.make_jaxpr(f, abstracted_axes=('n', 'm'))(x).jaxpr
+    # { lambda ; a:i32[] b:i32[] c:f32[a,b]. let
+    #     d:f32[a,a] = xla_call[
+    #       call_jaxpr={ lambda ; e:i32[] f:i32[] g:f32[e,f] h:f32[e,f]. let
+    #           i:f32[e,e] = dot_general[
+    #             dimension_numbers=(((1,), (1,)), ((), ()))
+    #             precision=None
+    #             preferred_element_type=None
+    #           ] g h
+    #         in (i,) }
+    #       name=_einsum
+    #     ] a b c c
+    #   in (d,) }
+    self.assertLen(jaxpr.invars, 3)
+    a, b, c = jaxpr.invars
+    self.assertEqual(c.aval.shape[0], a)
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertLen(jaxpr.eqns[0].outvars, 1)
+    d, = jaxpr.eqns[0].outvars
+    self.assertEqual(d.aval.shape, (a, a))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

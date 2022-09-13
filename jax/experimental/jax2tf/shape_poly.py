@@ -518,7 +518,7 @@ def _einsum_contract_path(*operands, **kwargs):
     contract_operands.append(operands[idx[0]])
   return contract_operands, contractions
 
-lax_numpy._polymorphic_einsum_contract_path_handlers[_DimPolynomial] = _einsum_contract_path
+lax_numpy._poly_einsum_handlers[_DimPolynomial] = _einsum_contract_path
 
 # A JAX primitive with no array arguments but with a dimension parameter
 # that is a DimPoly. The value of the primitive is the value of the dimension.
