@@ -38,7 +38,7 @@ from jax._src.lax import parallel
 from jax._src import api as src_api
 from jax import random
 from jax.core import ShapedArray
-from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
+from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
 from jax._src import device_array
@@ -1544,128 +1544,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     else:
       r_db = r.device_buffers
     self.assertEqual(len(r_db), 6)
-
-  @ignore_xmap_warning()
-  def testSoftPmapBatchMatmul(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    n = 4 * jax.device_count()
-    xs = np.arange(n * 2 * 3).reshape(n, 2, 3)
-    ys = np.arange(n * 3 * 4).reshape(n, 3, 4)
-    ans = soft_pmap(jnp.dot, 'i')(xs, ys)
-    expected = np.einsum('nij,njk->nik', xs, ys)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @ignore_xmap_warning()
-  def testSoftPmapBatchMatmulJit(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    n = 4 * jax.device_count()
-    xs = np.arange(n * 2 * 3).reshape(n, 2, 3)
-    ys = np.arange(n * 3 * 4).reshape(n, 3, 4)
-    ans = soft_pmap(jit(jnp.dot), 'i')(xs, ys)
-    expected = np.einsum('nij,njk->nik', xs, ys)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @ignore_xmap_warning()
-  def testSoftPmapPsumConstant(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    n = 4 * jax.device_count()
-    def f(_):
-      return lax.psum(1, 'i')
-    ans = soft_pmap(f, 'i')(jnp.ones(n))
-    expected = n * np.ones(n)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @ignore_xmap_warning()
-  def testSoftPmapPsum(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    n = 4 * jax.device_count()
-    def f(x):
-      return x / lax.psum(x, 'i')
-    ans = soft_pmap(f, 'i')(jnp.ones(n))
-    expected = np.ones(n) / n
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @ignore_xmap_warning()
-  def testSoftPmapAxisIndex(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    n = 4 * jax.device_count()
-    def f(x):
-      return x * lax.axis_index('i')
-    ans = soft_pmap(f, 'i')(2 * jnp.ones(n, dtype='int32'))
-    expected = 2 * np.arange(n)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @ignore_xmap_warning()
-  def testSoftPmapOfJit(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    n = 4 * jax.device_count()
-    def f(x):
-      return 3 * x
-    ans = soft_pmap(jit(f), 'i')(np.arange(n))
-    expected = 3 * np.arange(n)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @ignore_xmap_warning()
-  @unittest.skip("not implemented")  # TODO(mattjj): re-implement
-  def testSoftPmapNested(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    n = 4 * jax.device_count()
-
-    @partial(soft_pmap, axis_name='i')
-    @partial(soft_pmap, axis_name='j')
-    def f(x):
-      i_size = lax.psum(1, 'i')
-      return x + lax.axis_index('i') + i_size * lax.axis_index('j')
-
-    ans = f(jnp.zeros((n, n)))
-    expected = np.arange(n ** 2).reshape(n, n).T
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @ignore_xmap_warning()
-  @unittest.skip("not implemented")  # TODO(mattjj): re-implement
-  def testGradOfSoftPmap(self):
-    n = 4 * jax.device_count()
-
-    @partial(soft_pmap, axis_name='i')
-    def f(x):
-      return x * lax.axis_index('i')
-
-    ans = grad(lambda x: jnp.sum(f(x)))(jnp.zeros((n, n)))
-    expected = np.repeat(np.arange(n)[:, None], n, axis=1)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  @ignore_xmap_warning()
-  def testSoftPmapDevicePersistence(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    device_count = jax.device_count()
-    shape = (2 * 2 * device_count, 2, 3)
-
-    # check that we can maintain device persistence across calls
-    x = np.arange(prod(shape)).reshape(shape)
-    x = soft_pmap(lambda x: x)(x)
-    self.assertIsInstance(x, pxla.ShardedDeviceArray)
-    x._npy_value = np.float32(np.nan)  # can't be coerced to ndarray for xfer
-    x = soft_pmap(lambda x: x)(x)  # doesn't crash
-    self.assertIsInstance(x, pxla.ShardedDeviceArray)
-
-  @unittest.skip("the underlying code here is broken")  # TODO(mattjj)
-  def testSoftPmapAllToAll(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with `Array`.')
-    n = 4 * jax.device_count()
-    def f(x):
-      return lax.all_to_all(x, 'i', 0, 0)
-    ans = soft_pmap(f, 'i')(jnp.arange(n ** 2).reshape(n, n))
-    expected = np.arange(n ** 2).reshape(n, n).T
-    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testShardedDeviceArrayBlockUntilReady(self):
     x = np.arange(jax.device_count())

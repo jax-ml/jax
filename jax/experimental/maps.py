@@ -1899,29 +1899,6 @@ class NoQuotesStr(str):
   __repr__ = str.__str__
 
 
-# -------- soft_pmap --------
-
-def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
-              ) -> Callable:
-  warn("soft_pmap is an experimental feature and probably has bugs!")
-  _check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
-
-  if any(axis != 0 for axis in tree_leaves(in_axes)):
-    raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")
-  proxy = object()
-  in_axes = _replace_nones(proxy, in_axes)
-  in_axes = tree_map(lambda i: {i: axis_name} if i is not proxy else {}, in_axes)
-
-
-  @wraps(fun)
-  def f_pmapped(*args, **kwargs):
-    mesh_devices = np.array(xb.local_devices())
-    with Mesh(mesh_devices, ['devices']):
-      return xmap(fun, in_axes=in_axes, out_axes={0: axis_name},
-                  axis_resources={axis_name: 'devices'})(*args, **kwargs)
-  return f_pmapped
-
 # -------- config flags --------
 
 def _thread_local_flag_unsupported(_):
