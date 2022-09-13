@@ -45,6 +45,7 @@ Then create a pull request that adds a file named
   9419: Jax and Jaxlib versioning <9419-jax-versioning>
   10657: Sequencing side-effects in JAX <10657-sequencing-effects>
   11830: `jax.remat` / `jax.checkpoint` new implementation <11830-new-remat-checkpoint>
+  12049: Type Annotation Roadmap for JAX <12049-type-annotations>
 
 
 Several early JEPs were converted in hindsight from other documentation,
