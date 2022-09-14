@@ -2404,7 +2404,8 @@ class HostCallbackCallTest(jtu.JaxTestCase):
       # On GPU we get a nice error back to Python
       with self.assertRaisesRegex(
           RuntimeError,
-          "RET_CHECK failure .* Mismatch between infeed source buffer shape s8.12345."):
+          "(.* Mismatch between infeed source buffer shape s8.12345."
+          "|.*The destination shape does not match the source shape.)"):
         thunk()
     elif jtu.device_under_test() == "tpu":
       # On TPU we get no error!!!
