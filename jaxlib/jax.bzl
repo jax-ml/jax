@@ -25,6 +25,7 @@ load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_li
 cuda_library = _cuda_library
 rocm_library = _rocm_library
 pytype_library = native.py_library
+pytype_test = native.py_test
 pyx_library = _pyx_library
 pybind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured

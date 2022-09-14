@@ -110,7 +110,7 @@ class TypingTest(jtu.JaxTestCase):
     self.assertTrue(jax.jit(is_array)(1.0))
     self.assertTrue(is_array(x))
     self.assertTrue(jax.jit(is_array)(x))
-    self.assertTrue(jax.vmap(is_array)(x).all())
+    self.assertTrue(jnp.all(jax.vmap(is_array)(x)))
 
 
 if __name__ == '__main__':

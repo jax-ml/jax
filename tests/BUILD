@@ -19,6 +19,7 @@ load(
     "jax_test_file_visibility",
     "py_deps",
     "pytype_library",
+    "pytype_test",
 )
 
 licenses(["notice"])
@@ -732,8 +733,7 @@ py_test(
     ],
 )
 
-# TODO(jakevdp): make this a py_strict_test
-py_test(
+pytype_test(
     name = "typing_test",
     srcs = ["typing_test.py"],
     deps = [
