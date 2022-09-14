@@ -269,10 +269,6 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
   def test_xmap_inherits_effects(self):
-    if config.jax_array:
-      raise unittest.SkipTest('Xmap does not work properly with Arrays '
-                              'containing SingleDeviceSharding.')
-
     def f(x):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='bar')
