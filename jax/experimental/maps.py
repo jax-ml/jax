@@ -551,7 +551,10 @@ def xmap(fun: Callable,
           _PositionalSemantics.GLOBAL
           if isinstance(a, GlobalDeviceArray) else _positional_semantics.val
           for a in args_flat)
-    out_positional_semantics = _positional_semantics.val
+    out_positional_semantics = (
+        _PositionalSemantics.GLOBAL
+        if config.jax_array or config.jax_parallel_functions_output_gda
+        else _positional_semantics.val)
 
     axis_resource_count = _get_axis_resource_count(
         frozen_axis_resources, resource_env, in_positional_semantics)
@@ -1335,7 +1338,6 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   xla.check_backend_matches(backend, ctx.module_context.platform)
   # The only way for any of those two assertions to be violated is when xmap
   # is using the SPMD lowering, but then this rule shouldn't even trigger.
-  assert out_positional_semantics == _PositionalSemantics.LOCAL
   assert spmd_in_axes is None and spmd_out_axes is None
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes, in_positional_semantics)
@@ -1344,18 +1346,13 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
       axis_resources, resource_env, in_positional_semantics)
   if any(resource_count.distributed for resource_count in axis_resource_count.values()):
     raise NotImplementedError
-  local_axis_sizes = {
-      axis: axis_resource_count[axis].to_local(out_positional_semantics, global_size)
-      for axis, global_size in global_axis_sizes.items()
-  }
 
-  local_mesh = resource_env.physical_mesh.local_mesh
-  local_mesh_shape = local_mesh.shape
+  mesh = resource_env.physical_mesh
   mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
 
   local_avals = [pxla.tile_aval_nd(
-                    local_mesh_shape, aval_mesh_in_axes,
-                    _insert_aval_axes(v.aval, aval_in_axes, local_axis_sizes))
+                    mesh.shape, aval_mesh_in_axes,
+                    _insert_aval_axes(v.aval, aval_in_axes, global_axis_sizes))
                  for v, aval_in_axes, aval_mesh_in_axes
                  in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
   # We have to substitute before tracing, because we want the vectorized
@@ -1371,6 +1368,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
   assert not consts
 
+  local_mesh_shape = mesh.local_mesh.shape
   tiled_ins = (
     mlir.lower_fun(partial(_tile, in_axes=arg_in_axes,
                            axis_sizes=local_mesh_shape),
