@@ -19,7 +19,7 @@ from functools import partial
 import itertools
 import operator
 from typing import (Any, Callable, Optional, Sequence, Tuple, List, Dict,
-                    TypeVar, Union, cast as type_cast)
+                    TypeVar, Union, cast as type_cast, overload)
 import warnings
 
 import numpy as np
@@ -1104,6 +1104,14 @@ def _reduce_and(operand: ArrayLike, axes: Sequence[int]) -> Array:
 
 def _reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_xor_p.bind(operand, axes=tuple(axes))
+
+@overload
+def sort(operand: Sequence[Array], dimension: int = -1,
+         is_stable: bool = True, num_keys: int = 1) -> Tuple[Array, ...]: ...
+
+@overload
+def sort(operand: Array, dimension: int = -1,
+         is_stable: bool = True, num_keys: int = 1) -> Array: ...
 
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Union[Array, Tuple[Array, ...]]:
