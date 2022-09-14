@@ -21,6 +21,7 @@ from jax import core
 from jax import lax
 from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
+from jax.config import config
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
@@ -39,7 +40,12 @@ import numpy as np
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import (
     _abstractify,
+    _avals_short,
+    _check_tree_and_avals,
     _initial_style_jaxpr,
+    _promote_weak_typed_inputs,
+    _typecheck_param,
+    allowed_effects,
     empty_array)
 
 ## JAX utilities
@@ -76,7 +82,8 @@ def _hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
   is_const_ref = [isinstance(var.aval, ShapedArrayRef) for var in
                   jaxpr.constvars]
   const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
-  const_avals = [ShapedArrayRef(aval.shape, aval.dtype) for aval in const_avals]  # pytype: disable=attribute-error
+  const_avals = [ShapedArrayRef(aval.shape, aval.dtype, aval.weak_type)  # pytype: disable=attribute-error
+                 for aval in const_avals]
   merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
   i_aval, *arg_avals = [var.aval for var in jaxpr.invars]
   in_avals = [i_aval, *merged_const_avals, *arg_avals]
@@ -99,15 +106,14 @@ def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
                               ) -> Tuple[core.Jaxpr, List[Any], PyTreeDef]:
   f, out_tree_thunk = flatten_fun_nokwargs(
       lu.wrap_init(f), treedef_tuple((tree_structure(0), state_tree)))
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      f, state_avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, state_avals)
   return jaxpr, consts, out_tree_thunk()
 
 def val_to_ref_aval(x) -> ShapedArrayRef:
   aval = core.raise_to_shaped(core.get_aval(x))
   if type(aval) is not core.ShapedArray:
     raise Exception(f"can't make ref from {x}")
-  return ShapedArrayRef(aval.shape, aval.dtype)
+  return ShapedArrayRef(aval.shape, aval.dtype, aval.weak_type)
 
 def for_loop(nsteps: Union[int, Sequence[int]],
              body: Callable[[Array, Ref[S]], None], init_state: S,
@@ -168,6 +174,18 @@ def for_loop(nsteps: Union[int, Sequence[int]],
     raise Exception("`body` should not return anything.")
   # Remove constvars from jaxpr and turn them into `Ref`s
   jaxpr = _hoist_consts_to_refs(jaxpr)
+
+  # If we have any weak-typed `Ref`s, they may change dtype if we write a
+  # strongly typed value into them. To detect this, we discharge the jaxpr and
+  # look at its output avals.
+  discharged_jaxpr, _ = discharge_state(jaxpr, ())
+  out_ref_avals = [v.aval for v in discharged_jaxpr.outvars]
+  flat_state, changed = _promote_weak_typed_inputs(
+      flat_state, state_avals, out_ref_avals)
+  if changed:
+    state_avals = map(val_to_ref_aval, flat_state)
+    jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
+        body, state_tree, [idx_aval, *state_avals])
   which_linear = (False,) * (len(consts) + len(flat_state))
   out_flat = for_p.bind(*consts, *flat_state, jaxpr=jaxpr, nsteps=int(nsteps),
                         reverse=reverse, which_linear=which_linear,
@@ -181,70 +199,6 @@ Carry = TypeVar('Carry')
 X = TypeVar('X')
 Y = TypeVar('Y')
 
-def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
-         init: Carry,
-         xs: X,
-         length: Optional[int] = None,
-         reverse: bool = False,
-         unroll: int = 1) -> Tuple[Carry, Y]:
-  if not callable(f):
-    raise TypeError("scan: f argument should be a callable.")
-  if unroll < 1:
-    raise ValueError("`unroll` must be a positive integer.")
-  xs_flat, xs_tree = tree_flatten(xs)
-
-  try:
-    lengths = [x.shape[0] for x in xs_flat]
-  except AttributeError as err:
-    msg = "scan got value with no leading axis to scan over: {}."
-    raise ValueError(
-      msg.format(', '.join(str(x) for x in xs_flat
-                           if not hasattr(x, 'shape')))) from err
-
-  if length is not None:
-    length = int(length)
-    if not all(length == l for l in lengths):
-      msg = ("scan got `length` argument of {} which disagrees with "
-             "leading axis sizes {}.")
-      raise ValueError(msg.format(length, [x.shape[0] for x in xs_flat]))
-  else:
-    unique_lengths = set(lengths)
-    if len(unique_lengths) > 1:
-      msg = "scan got values with different leading axis sizes: {}."
-      raise ValueError(msg.format(', '.join(str(x.shape[0]) for x in xs_flat)))
-    elif len(unique_lengths) == 0:
-      msg = "scan got no values to scan over and `length` not provided."
-      raise ValueError(msg)
-    else:
-      length, = unique_lengths
-
-  x_shapes = [x.shape[1:] for x in xs_flat]
-  x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
-  x_avals = tuple(map(core.ShapedArray, x_shapes, x_dtypes))
-
-  def _create_jaxpr(init):
-    init_flat = tree_leaves(init)
-    _, in_tree = tree_flatten((init, xs))
-
-    carry_avals = tuple(map(_abstractify, init_flat))
-    jaxpr, _, out_tree = _initial_style_jaxpr(
-        f, in_tree, carry_avals + x_avals, "scan")
-    return jaxpr, out_tree
-  jaxpr, out_tree = _create_jaxpr(init)
-  _, ys_avals = tree_unflatten(out_tree, jaxpr.out_avals)
-  ys = tree_map(lambda aval: lax.full((length, *aval.shape), 0, aval.dtype),
-                ys_avals)
-  def for_body(i, refs):
-    carry_refs, xs_refs, ys_refs = refs
-    carry = tree_map(lambda x: x[()], carry_refs)
-    x = tree_map(lambda x: x[i], xs_refs)
-    carry, y = f(carry, x)
-    tree_map(lambda c_ref, c: ref_set(c_ref, (), c), carry_refs, carry)
-    tree_map(lambda y_ref, y: ref_set(y_ref, (i,), y), ys_refs, y)
-  assert isinstance(length, int)
-  init, _, ys = for_loop(length, for_body, (init, xs, ys), reverse=reverse,
-                         unroll=unroll)
-  return init, ys
 
 def _get_ref_state_effects(jaxpr: core.Jaxpr) -> List[Set[StateEffect]]:
   all_effects = jaxpr.effects
@@ -664,9 +618,10 @@ def _convert_outputs_to_writes(
       else:
         res_ref[i] = res_val
     return []
-  res_ref_avals = [ShapedArrayRef(v.aval.shape, v.aval.dtype)  # pytype: disable=attribute-error
+  res_ref_avals = [ShapedArrayRef(v.aval.shape, v.aval.dtype, v.aval.weak_type)  # pytype: disable=attribute-error
                    if loop_invar else
-                   ShapedArrayRef((nsteps, *v.aval.shape), v.aval.dtype)
+                   ShapedArrayRef((nsteps, *v.aval.shape), v.aval.dtype,
+                     v.aval.weak_type)
                    for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [*in_avals, *res_ref_avals])
@@ -688,8 +643,10 @@ def _convert_inputs_to_reads(
 
   res_val_avals, (i_aval,), orig_ref_avals = \
       split_list([v.aval for v in jaxpr.invars], [num_res, 1])
-  res_ref_avals = [ShapedArrayRef(aval.shape, aval.dtype) if loop_invar else
-                   ShapedArrayRef((nsteps, *aval.shape), aval.dtype)  # pytype: disable=attribute-error
+  res_ref_avals = [ShapedArrayRef(aval.shape, aval.dtype, aval.weak_type)
+                   if loop_invar else
+                   ShapedArrayRef((nsteps, *aval.shape), aval.dtype,  # pytype: disable=attribute-error
+                                   aval.weak_type)
                    for aval, loop_invar in zip(res_val_avals, loop_invar_res)]
 
   jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
@@ -763,6 +720,47 @@ def _for_transpose(in_cts, *args, jaxpr, nsteps, reverse, which_linear, unroll):
   return ct_outs
 ad.primitive_transposes[for_p] = _for_transpose
 
+def _for_typecheck(bind_time, *in_atoms, reverse, nsteps, jaxpr, which_linear,
+                   unroll):
+  avals = [x.aval for x in in_atoms]
+  tc = partial(_typecheck_param, 'for')
+  tc(reverse, 'reverse', 'bool', type(reverse) is bool)
+  tc(jaxpr, 'jaxpr', 'Jaxpr', type(jaxpr) is core.Jaxpr)
+  tc(which_linear, 'which_linear', 'tuple of bool',
+     type(which_linear) is tuple and all(type(x) is bool for x in which_linear))
+  tc(unroll, 'unroll', 'positive int', type(unroll) is int and unroll > 0)
+
+  tc(nsteps, 'nsteps', 'non-negative int',
+     type(nsteps) is int and nsteps>= 0)
+
+  if len(which_linear) != len(avals):
+    raise core.JaxprTypeError(
+      f'for param linear has length {len(which_linear)} '
+      f'for {len(avals)} operands')
+
+  ref_avals_jaxpr = [v.aval for v in jaxpr.invars[1:]]
+
+  if len(jaxpr.outvars) > 0:
+    raise core.JaxprTypeError(
+      'for jaxpr has a non-zero number of outputs')
+  if not all(isinstance(aval, ShapedArrayRef) for aval in ref_avals_jaxpr):
+    raise core.JaxprTypeError(
+      f'for jaxpr has non-`Ref` inputs: {_avals_short(ref_avals_jaxpr)}')
+  avals_shaped_jaxpr = [core.ShapedArray(aval.shape, aval.dtype,
+                                         weak_type=aval.weak_type)
+                                         for aval in ref_avals_jaxpr]
+  if not all(map(core.typecompat, avals_shaped_jaxpr, avals)):
+    raise core.JaxprTypeError(
+      f'for jaxpr takes input types\n{_avals_short(avals_shaped_jaxpr)},\n'
+      f'called with values of type\n{_avals_short(avals)}')
+  jaxpr_aval_effects = _get_ref_state_effects(jaxpr)[1:]
+  aval_effects = [set(eff.replace(ref_aval=aval) for eff in effs) for aval, effs
+                  in zip(avals, jaxpr_aval_effects)
+                  if isinstance(aval, ShapedArrayRef)]
+  nonlocal_state_effects = core.join_effects(*aval_effects)
+  return avals, nonlocal_state_effects
+
+core.custom_typechecks[for_p] = partial(_for_typecheck, False)
 ### Testing utility
 
 def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):

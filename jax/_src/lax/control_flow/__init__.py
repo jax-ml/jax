@@ -17,13 +17,12 @@ from jax._src.lax.control_flow.loops import (associative_scan, cummax, cummax_p,
                                              cumprod_p, cumsum, cumsum_p,
                                              cumred_reduce_window_impl,
                                              fori_loop, map,
-                                             scan_bind, scan_p,
+                                             scan, scan_bind, scan_p,
                                              _scan_impl, while_loop, while_p)
 from jax._src.lax.control_flow.conditionals import cond, cond_p, switch
 from jax._src.lax.control_flow.solves import (custom_linear_solve, custom_root,
                                               _custom_linear_solve_impl,
                                               linear_solve_p)
-from jax._src.lax.control_flow.for_loop import scan
 
 from jax._src.lax.control_flow.common import allowed_effects
 # Private utilities used elsewhere in JAX

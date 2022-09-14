@@ -81,15 +81,16 @@ StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
 # A `ShapedArrayRef` is a abstract value for mutable containers of array types
 class ShapedArrayRef(core.AbstractValue):
-  __slots__ = ["shape", "dtype"]
+  __slots__ = ["shape", "dtype", "weak_type"]
 
-  def __init__(self, shape, dtype):
+  def __init__(self, shape, dtype, weak_type):
     self.shape = shape
     self.dtype = dtype
+    self.weak_type = weak_type
 
   def join(self, other):
     assert core.symbolic_equal_shape(self.shape, other.shape)
-    assert self.dtype == other.dtype
+    assert self.dtype == other.dtype and self.weak_type == other.weak_type
     return self
 
   ndim = property(lambda self: len(self.shape))
@@ -120,7 +121,7 @@ class ShapedArrayRef(core.AbstractValue):
     return ref_set(tracer, idx, value)
 
   def __repr__(self) -> str:
-    a = core.ShapedArray(self.shape, self.dtype)
+    a = core.ShapedArray(self.shape, self.dtype, weak_type=self.weak_type)
     return f'Ref{{{a.str_short()}}}'
 
   def at_least_vspace(self):
@@ -128,20 +129,23 @@ class ShapedArrayRef(core.AbstractValue):
 
   def __eq__(self, other):
     return (type(self) is type(other)
-            and self.dtype == other.dtype and self.shape == other.shape)
+            and self.dtype == other.dtype and self.shape == other.shape
+            and self.weak_type == other.weak_type)
 
   def __hash__(self):
-    return hash((self.shape, self.dtype))
+    return hash((self.shape, self.dtype, self.weak_type))
 
 
 core.raise_to_shaped_mappings[ShapedArrayRef] = lambda aval, _: aval
 
 def _map_ref(size, axis, aval):
   if axis is None: return aval
-  return ShapedArrayRef(tuple_delete(aval.shape, axis), aval.dtype)
+  return ShapedArrayRef(tuple_delete(aval.shape, axis), aval.dtype,
+                        aval.weak_type)
 
 def _unmap_ref(size, axis_name, axis, aval):
   if axis is None: return aval
-  return ShapedArrayRef(tuple_insert(aval.shape, axis, size), aval.dtype)
+  return ShapedArrayRef(tuple_insert(aval.shape, axis, size), aval.dtype,
+                        aval.weak_type)
 
 core.aval_mapping_handlers[ShapedArrayRef] = (_map_ref, _unmap_ref)

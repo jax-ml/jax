@@ -158,7 +158,8 @@ def _get_abstract_eval(ref_aval: ShapedArrayRef, *idx, indexed_dims):
     raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
   idx_shapes = tuple(i.shape for i in idx)
   shape = _get_slice_output_shape(ref_aval.shape, idx_shapes, indexed_dims)
-  return (core.ShapedArray(shape, ref_aval.dtype), {ReadEffect(ref_aval)})
+  return (core.ShapedArray(shape, ref_aval.dtype, weak_type=ref_aval.weak_type),
+          {ReadEffect(ref_aval)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
 
 
@@ -180,11 +181,12 @@ def _swap_abstract_eval(ref_aval: ShapedArrayRef, val_aval: core.AbstractValue,
                      f"Ref shape: {ref_aval.shape}. "
                      f"Value shape: {val_aval.shape}. "
                      f"Indices: {idx}. ")
-  if ref_aval.dtype != val_aval.dtype:
+  if ref_aval.dtype != val_aval.dtype and not ref_aval.weak_type:
     raise ValueError("Invalid dtype for `swap`. "
                      f"Ref dtype: {ref_aval.dtype}. "
                      f"Value shape: {val_aval.dtype}. ")
-  return (core.ShapedArray(expected_output_shape, ref_aval.dtype),
+  return (core.ShapedArray(expected_output_shape, val_aval.dtype,
+                           weak_type=ref_aval.weak_type),
           {WriteEffect(ref_aval)})
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 
