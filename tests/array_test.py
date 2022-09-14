@@ -516,6 +516,11 @@ class ShardingTest(jtu.JaxTestCase):
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
       new_mps.is_compatible_aval(shape)
 
+  def test_is_subclass(self):
+    # array version of api_test.py::APITest::test_is_subclass
+    self.assertTrue(issubclass(array.Array, jnp.ndarray))
+    self.assertFalse(issubclass(array.Array, np.ndarray))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
