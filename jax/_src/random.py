@@ -237,7 +237,7 @@ def _check_shape(name, shape: Union[Sequence[int], NamedShape], *param_shapes):
 
 def uniform(key: KeyArray,
             shape: Union[Sequence[int], NamedShape] = (),
-            dtype: DTypeLikeFloat = dtypes.float_,
+            dtype: DTypeLikeFloat = float,
             minval: RealArray = 0.,
             maxval: RealArray = 1.) -> jnp.ndarray:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
@@ -255,6 +255,7 @@ def uniform(key: KeyArray,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "uniform")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
@@ -298,7 +299,7 @@ def randint(key: KeyArray,
             shape: Sequence[int],
             minval: IntegerArray,
             maxval: IntegerArray,
-            dtype: DTypeLikeInt = dtypes.int_):
+            dtype: DTypeLikeInt = int):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
@@ -315,6 +316,7 @@ def randint(key: KeyArray,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "randint")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _randint(key, shape, minval, maxval, dtype)
@@ -538,7 +540,7 @@ def choice(key: KeyArray,
 
 def normal(key: KeyArray,
            shape: Union[Sequence[int], NamedShape] = (),
-           dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+           dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample standard normal random values with given shape and float dtype.
 
   Args:
@@ -552,6 +554,7 @@ def normal(key: KeyArray,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "normal")
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
@@ -585,7 +588,7 @@ def multivariate_normal(key: KeyArray,
                         mean: RealArray,
                         cov: RealArray,
                         shape: Optional[Sequence[int]] = None,
-                        dtype: DTypeLikeFloat = dtypes.float_,
+                        dtype: DTypeLikeFloat = float,
                         method: str = 'cholesky') -> jnp.ndarray:
   """Sample multivariate normal random values with given mean and covariance.
 
@@ -609,6 +612,7 @@ def multivariate_normal(key: KeyArray,
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "multivariate_normal")
   if method not in {'svd', 'eigh', 'cholesky'}:
     raise ValueError("method must be one of {'svd', 'eigh', 'cholesky'}")
   if not dtypes.issubdtype(dtype, np.floating):
@@ -654,7 +658,7 @@ def truncated_normal(key: KeyArray,
                      lower: RealArray,
                      upper: RealArray,
                      shape: Optional[Union[Sequence[int], NamedShape]] = None,
-                     dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+                     dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
@@ -676,6 +680,7 @@ def truncated_normal(key: KeyArray,
     Returns values in the open interval ``(lower, upper)``.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "truncated_normal")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
                      f"dtype, got {dtype}")
@@ -750,7 +755,7 @@ def beta(key: KeyArray,
          a: RealArray,
          b: RealArray,
          shape: Optional[Sequence[int]] = None,
-         dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+         dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Beta random values with given shape and float dtype.
 
   Args:
@@ -770,6 +775,7 @@ def beta(key: KeyArray,
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "beta")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `beta` must be a float "
                      f"dtype, got {dtype}")
@@ -801,7 +807,7 @@ def _beta(key, a, b, shape, dtype):
 
 def cauchy(key: KeyArray,
            shape: Sequence[int] = (),
-           dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+           dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Cauchy random values with given shape and float dtype.
 
   Args:
@@ -815,6 +821,7 @@ def cauchy(key: KeyArray,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "cauchy")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `cauchy` must be a float "
                      f"dtype, got {dtype}")
@@ -833,7 +840,7 @@ def _cauchy(key, shape, dtype):
 def dirichlet(key: KeyArray,
               alpha: RealArray,
               shape: Optional[Sequence[int]] = None,
-              dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+              dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Dirichlet random values with given shape and float dtype.
 
   Args:
@@ -854,6 +861,7 @@ def dirichlet(key: KeyArray,
     ``alpha.shape``.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "dirichlet")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `dirichlet` must be a float "
                      f"dtype, got {dtype}")
@@ -891,7 +899,7 @@ def _softmax(x, axis):
 
 def exponential(key: KeyArray,
                 shape: Sequence[int] = (),
-                dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+                dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Exponential random values with given shape and float dtype.
 
   Args:
@@ -905,6 +913,7 @@ def exponential(key: KeyArray,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "exponential")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `exponential` must be a float "
                      f"dtype, got {dtype}")
@@ -1055,7 +1064,7 @@ batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 def gamma(key: KeyArray,
           a: RealArray,
           shape: Optional[Sequence[int]] = None,
-          dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+          dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Gamma random values with given shape and float dtype.
 
   Args:
@@ -1077,6 +1086,7 @@ def gamma(key: KeyArray,
       accuracy for small values of ``a``.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "gamma")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gamma` must be a float "
                      f"dtype, got {dtype}")
@@ -1089,7 +1099,7 @@ def gamma(key: KeyArray,
 def loggamma(key: KeyArray,
              a: RealArray,
              shape: Optional[Sequence[int]] = None,
-             dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+             dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample log-gamma random values with given shape and float dtype.
 
   This function is implemented such that the following will hold for a
@@ -1118,8 +1128,9 @@ def loggamma(key: KeyArray,
     gamma : standard gamma sampler.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "loggamma")
   if not dtypes.issubdtype(dtype, np.floating):
-    raise ValueError(f"dtype argument to `gamma` must be a float "
+    raise ValueError(f"dtype argument to `loggamma` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
@@ -1230,7 +1241,7 @@ def _poisson(key, lam, shape, dtype):
 def poisson(key: KeyArray,
             lam: RealArray,
             shape: Optional[Sequence[int]] = None,
-            dtype: DTypeLikeInt = dtypes.int_) -> jnp.ndarray:
+            dtype: DTypeLikeInt = int) -> jnp.ndarray:
   """Sample Poisson random values with given shape and integer dtype.
 
   Args:
@@ -1246,6 +1257,7 @@ def poisson(key: KeyArray,
     ``shape is not None, or else by ``lam.shape``.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "poisson")
   # TODO(frostig): generalize underlying poisson implementation and
   # remove this check
   key_impl = key.dtype.impl
@@ -1265,7 +1277,7 @@ def poisson(key: KeyArray,
 
 def gumbel(key: KeyArray,
            shape: Sequence[int] = (),
-           dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+           dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Gumbel random values with given shape and float dtype.
 
   Args:
@@ -1279,6 +1291,7 @@ def gumbel(key: KeyArray,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "gumbel")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gumbel` must be a float "
                      f"dtype, got {dtype}")
@@ -1333,7 +1346,7 @@ def categorical(key: KeyArray,
 
 def laplace(key: KeyArray,
             shape: Sequence[int] = (),
-            dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+            dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Laplace random values with given shape and float dtype.
 
   Args:
@@ -1347,6 +1360,7 @@ def laplace(key: KeyArray,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "laplace")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `laplace` must be a float "
                      f"dtype, got {dtype}")
@@ -1364,7 +1378,7 @@ def _laplace(key, shape, dtype):
 
 def logistic(key: KeyArray,
              shape: Sequence[int] = (),
-             dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+             dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample logistic random values with given shape and float dtype.
 
   Args:
@@ -1378,6 +1392,7 @@ def logistic(key: KeyArray,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "logistic")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `logistic` must be a float "
                      f"dtype, got {dtype}")
@@ -1395,7 +1410,7 @@ def _logistic(key, shape, dtype):
 def pareto(key: KeyArray,
            b: RealArray,
            shape: Optional[Sequence[int]] = None,
-           dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+           dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Pareto random values with given shape and float dtype.
 
   Args:
@@ -1413,6 +1428,7 @@ def pareto(key: KeyArray,
     ``shape`` is not None, or else by ``b.shape``.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "pareto")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `pareto` must be a float "
                      f"dtype, got {dtype}")
@@ -1436,7 +1452,7 @@ def _pareto(key, b, shape, dtype):
 def t(key: KeyArray,
       df: RealArray,
       shape: Sequence[int] = (),
-      dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+      dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample Student's t random values with given shape and float dtype.
 
   Args:
@@ -1454,6 +1470,7 @@ def t(key: KeyArray,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "t")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `t` must be a float "
                      f"dtype, got {dtype}")
@@ -1479,7 +1496,7 @@ def _t(key, df, shape, dtype):
 
 def rademacher(key: KeyArray,
                shape: Sequence[int],
-               dtype: DTypeLikeInt = dtypes.int_) -> jnp.ndarray:
+               dtype: DTypeLikeInt = int) -> jnp.ndarray:
   """Sample from a Rademacher distribution.
 
   Args:
@@ -1493,6 +1510,7 @@ def rademacher(key: KeyArray,
 
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "rademacher")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   return _rademacher(key, shape, dtype)
@@ -1506,7 +1524,7 @@ def _rademacher(key, shape, dtype):
 
 def maxwell(key: KeyArray,
             shape: Sequence[int] = (),
-            dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+            dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample from a one sided Maxwell distribution.
 
   The scipy counterpart is `scipy.stats.maxwell`.
@@ -1523,6 +1541,7 @@ def maxwell(key: KeyArray,
   # Generate samples using:
   # sqrt(X^2 + Y^2 + Z^2), X,Y,Z ~N(0,1)
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "maxwell")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `maxwell` must be a float "
                      f"dtype, got {dtype}")
@@ -1542,7 +1561,7 @@ def double_sided_maxwell(key: KeyArray,
                          loc: RealArray,
                          scale: RealArray,
                          shape: Sequence[int] = (),
-                         dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+                         dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample from a double sided Maxwell distribution.
 
   Samples using:
@@ -1560,6 +1579,7 @@ def double_sided_maxwell(key: KeyArray,
 
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "double_sided_maxwell")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `double_sided_maxwell` must be a float"
                      f" dtype, got {dtype}")
@@ -1588,7 +1608,7 @@ def weibull_min(key: KeyArray,
                 scale: RealArray,
                 concentration: RealArray,
                 shape: Sequence[int] = (),
-                dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+                dtype: DTypeLikeFloat = float) -> jnp.ndarray:
   """Sample from a Weibull distribution.
 
   The scipy counterpart is `scipy.stats.weibull_min`.
@@ -1605,6 +1625,7 @@ def weibull_min(key: KeyArray,
 
   """
   key, _ = _check_prng_key(key)
+  lax_internal._check_user_dtype_supported(dtype, "weibull_min")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `weibull_min` must be a float "
                      f"dtype, got {dtype}")
@@ -1635,7 +1656,7 @@ def orthogonal(
   key: KeyArray,
   n: int,
   shape: Sequence[int] = (),
-  dtype: DTypeLikeFloat = dtypes.float_
+  dtype: DTypeLikeFloat = float
 ) -> jnp.ndarray:
   """Sample uniformly from the orthogonal group O(n).
 
@@ -1663,7 +1684,7 @@ def generalized_normal(
   key: KeyArray,
   p: float,
   shape: Sequence[int] = (),
-  dtype: DTypeLikeFloat = dtypes.float_
+  dtype: DTypeLikeFloat = float
 ) -> jnp.ndarray:
   """Sample from the generalized normal distribution.
 
@@ -1689,7 +1710,7 @@ def ball(
   d: int,
   p: float = 2,
   shape: Sequence[int] = (),
-  dtype: DTypeLikeFloat = dtypes.float_
+  dtype: DTypeLikeFloat = float
 ):
   """Sample uniformly from the unit Lp ball.
 

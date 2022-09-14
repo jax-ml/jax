@@ -973,7 +973,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": f"_lam={lam}_dtype={np.dtype(dtype).name}",
        "lam": lam, "dtype": np.dtype(dtype)}
       for lam in [0.5, 3, 9, 11, 50, 500]
-      for dtype in [np.int16, np.int32, np.int64]))
+      for dtype in jtu.dtypes.supported([np.int16, np.int32, np.int64])))
   def testPoisson(self, lam, dtype):
     key = self.seed_prng(0)
     rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
@@ -1185,8 +1185,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     crand = jax.jit(rand)
 
     with jax.numpy_rank_promotion('allow'):
-      uncompiled_samples = np.asarray(rand(key), np.float64)
-      compiled_samples = np.asarray(crand(key), np.float64)
+      uncompiled_samples = np.asarray(rand(key), dtype)
+      compiled_samples = np.asarray(crand(key), dtype)
 
     inv_scale = scipy.linalg.lapack.dtrtri(np.linalg.cholesky(cov), lower=True)[0]
     for samples in [uncompiled_samples, compiled_samples]:

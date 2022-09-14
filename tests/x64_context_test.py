@@ -127,7 +127,8 @@ class X64ContextTests(jtu.JaxTestCase):
     f = partial(random.uniform, random.PRNGKey(0), (1,), 'float64', -1, 1)
     with disable_x64():
       for _ in range(2):
-        f()
+        with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype float64"):
+          f()
     with enable_x64():
       for _ in range(2):
         f()
