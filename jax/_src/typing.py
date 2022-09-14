@@ -30,18 +30,18 @@ from typing import Any, Sequence, Union
 from typing_extensions import Protocol
 import numpy as np
 
-class HasDtypeAttribute(Protocol):
-  dtype: Dtype
+class HasDTypeAttribute(Protocol):
+  dtype: DType
 
-Dtype = np.dtype
+DType = np.dtype
 
-# DtypeLike is meant to annotate inputs to np.dtype that return
+# DTypeLike is meant to annotate inputs to np.dtype that return
 # a valid JAX dtype. It's different than numpy.typing.DTypeLike
 # because JAX doesn't support objects or structured dtypes.
 # It does not include JAX dtype extensions such as KeyType and others.
 # For now, we use Any to allow scalar types like np.int32 & jnp.int32.
 # TODO(jakevdp) specify these more strictly.
-DtypeLike = Union[Any, str, np.dtype, HasDtypeAttribute]
+DTypeLike = Union[Any, str, np.dtype, HasDTypeAttribute]
 
 # Shapes are tuples of dimension sizes, which are normally integers. We allow
 # modules to extend the set of dimension sizes to contain other types, e.g.,

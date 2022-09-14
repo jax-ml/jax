@@ -165,11 +165,11 @@ JAX type annotations should in general indicate the **intent** of APIs, rather t
 Inputs to JAX functions and methods should be typed as permissively as is reasonable: for example, while shapes are typically tuples, functions that accept a shape should accept arbitrary sequences. Similarly, functions that accept a dtype need not require an instance of class `np.dtype`, but rather any dtype-convertible object. This might include strings, built-in scalar types, or scalar object constructors such as `np.float64` and `jnp.float64`. In order to make this as uniform as possible across the package, we will add a {mod}`jax.typing` module with common type specifications, starting with broad categories such as:
 
 - `ArrayLike` would be a union of anything that can be implicitly converted into an array: for example, jax arrays, numpy arrays, JAX tracers, and python or numpy scalars
-- `DtypeLike` would be a union of anything that can be implicitly converted into a dtype: for example, numpy dtypes, numpy dtype objects, jax dtype objects, strings, and built-in types.
+- `DTypeLike` would be a union of anything that can be implicitly converted into a dtype: for example, numpy dtypes, numpy dtype objects, jax dtype objects, strings, and built-in types.
 - `ShapeLike` would be a union of anything that could be converted into a shape: for example, sequences of integer or integer-like objecs.
 - etc.
   
-Note that these will in general be simpler than the equivalent protocols used in {mod}`numpy.typing`. For example, in the case of `DtypeLike`, JAX does not support structured dtypes, so JAX can use a simpler implementation. Similarly, in `ArrayLike`, JAX generally does not support list or tuple inputs in place of arrays, so the type definition will be simpler than the NumPy analog.
+Note that these will in general be simpler than the equivalent protocols used in {mod}`numpy.typing`. For example, in the case of `DTypeLike`, JAX does not support structured dtypes, so JAX can use a simpler implementation. Similarly, in `ArrayLike`, JAX generally does not support list or tuple inputs in place of arrays, so the type definition will be simpler than the NumPy analog.
 
 #### Outputs should be strictly-typed
 
@@ -313,7 +313,7 @@ To move forward with type annotations, we will do the following:
 
    - Alias `Array = Any` for the time being, as this will take a bit more thought.
    - `ArrayLike`: a Union of types valid as inputs to normal `jax.numpy` functions
-   - `Dtype` / `DtypeLike` (Check on capitalization of the `t`: what do other projects use?)
+   - `DType` / `DTypeLike` (Note: numpy uses camel-cased `DType`; we should follow this convention for ease of use)
    - `Shape` / `NamedShape` / `ShapeLike`
 
    The beginnings of this are done in {jax-issue}`#12300`.
