@@ -66,6 +66,7 @@ from jax._src.lax.control_flow.common import (
     _prune_zeros,
     _typecheck_param,
     allowed_effects,
+    empty_array,
     )
 
 _map = safe_map
@@ -315,7 +316,7 @@ def _scan_impl_loop(*args, reverse, length, num_consts, num_carry, linear,
     ys_out = _map(partial(_update_array, i_), y_avals, ys, y_updates)
     return [i + 1] + carry_out + ys_out
 
-  ys_init = _map(partial(_empty_array, length), y_avals)
+  ys_init = _map(partial(empty_array, length), y_avals)
   if length == 0:
     return init + ys_init
   else:
@@ -413,9 +414,6 @@ def _dynamic_index_array(i, aval, x):
 
 def _index_array(i, aval, x):
   return slicing.index_in_dim(x, i, keepdims=False)
-
-def _empty_array(sz, aval):
-  return lax.broadcast(lax.empty(aval.dtype), (sz, *aval.shape))
 
 def _update_array(i, aval, xs, x):
   return slicing.dynamic_update_index_in_dim(xs, x, i, 0)
