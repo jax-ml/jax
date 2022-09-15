@@ -44,6 +44,7 @@ FOR_LOOP_IMPLS = [
     (jax.jit(for_loop.for_loop, static_argnums=(0, 1)), 'jit_for_loop'),
     (remat_of_for_loop, 'remat_for_loop'),
     (nested_for_loop, 'nested_for_loop'),
+    (partial(for_loop.for_loop, unroll=3), 'unrolled_for_loop'),
 ]
 
 
