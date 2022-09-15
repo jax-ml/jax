@@ -2938,9 +2938,11 @@ class LazyConstantTest(jtu.JaxTestCase):
       x_buf = x.device_buffer
       y_buf = y.device_buffer
     if np.dtype(dtype_in) == np.dtype(dtype_out):
-      self.assertIs(x_buf, y_buf)
+      self.assertEqual(x_buf.unsafe_buffer_pointer(),
+                       y_buf.unsafe_buffer_pointer())
     else:
-      self.assertIsNot(x_buf, y_buf)
+      self.assertNotEqual(x_buf.unsafe_buffer_pointer(),
+                          y_buf.unsafe_buffer_pointer())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fn={}_indexdtype={}"

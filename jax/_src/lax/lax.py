@@ -1331,7 +1331,8 @@ def full_like(x: Array, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None
   # (so it works in staged-out code as well as 'eager' code). Related to
   # equi-sharding.
   if (config.jax_array and hasattr(x, 'sharding') and
-      not dispatch.is_single_device_sharding(x.sharding)):
+      not dispatch.is_single_device_sharding(x.sharding) and
+      not isinstance(x.sharding, sharding.PmapSharding)):
     return array.make_array_from_callback(
         fill_shape, x.sharding, lambda idx: val[idx])  # type: ignore[arg-type]
   return val

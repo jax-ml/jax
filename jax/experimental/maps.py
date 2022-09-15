@@ -1817,6 +1817,8 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
   for arg, xmap_array_mapping in safe_zip(args_flat, mesh_in_axes):
     if isinstance(arg, (GlobalDeviceArray, Array)):
       arr_flavor = 'GDA' if isinstance(arg, GlobalDeviceArray) else 'Array'
+      if arr_flavor == 'Array' and not isinstance(arg.sharding, MeshPspecSharding):
+        continue
       mesh = arg.mesh if arr_flavor == 'GDA' else arg.sharding.mesh
       if mesh != resource_env.physical_mesh:
         raise ValueError(f"xmap's mesh and {arr_flavor}'s mesh should be equal. "

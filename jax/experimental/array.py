@@ -371,6 +371,23 @@ class Array:
     self._check_if_deleted()
     return list(self.sharding.device_set)
 
+  # TODO(https://github.com/google/jax/issues/12380): Remove this when DA is
+  # deleted.
+  @property
+  def device_buffer(self) -> DeviceArray:
+    self._check_if_deleted()
+    if len(self._arrays) == 1:
+      return self._arrays[0]
+    raise ValueError('Length of buffers is greater than 1. Please use '
+                     '`.device_buffers` instead.')
+
+  # TODO(https://github.com/google/jax/issues/12380): Remove this when SDA is
+  # deleted.
+  @property
+  def device_buffers(self) -> Sequence[DeviceArray]:
+    self._check_if_deleted()
+    return self._arrays
+
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
@@ -433,6 +450,7 @@ class Array:
     if self._npy_value is None:
       if self.is_fully_replicated():
         self._npy_value = np.asarray(self._arrays[0])  # type: ignore
+        self._npy_value.flags.writeable = False
         return cast(np.ndarray, self._npy_value)
 
       if not self.is_fully_addressable():
@@ -454,6 +472,7 @@ class Array:
         if not replica_id_exists or s.replica_id == 0:
           npy_value[s.index] = np.asarray(s.data._arrays[0])  # type: ignore  # [union-attr]
       self._npy_value = npy_value  # type: ignore
+      self._npy_value.flags.writeable = False
     # https://docs.python.org/3/library/typing.html#typing.cast
     return cast(np.ndarray, self._npy_value)
 

@@ -416,6 +416,7 @@ jax_test(
 jax_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
+    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 40,
         "gpu": 40,

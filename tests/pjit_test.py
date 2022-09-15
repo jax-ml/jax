@@ -1816,27 +1816,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
             in_axis_resources=MeshPspecSharding(global_mesh, P('x' ,'y')))(input_array)
         self.assertIsInstance(out, array.Array)
 
-  def test_in_axis_resources_error(self):
-    mesh = jtu.create_global_mesh((2,), ('x'))
-    with jax_array(True):
-      with self.assertRaisesRegex(
-            ValueError,
-            ('When `config.jax_array` flag is enabled, '
-             'in_axis_resources should contain instances of `Sharding` '
-             'or `pjit.AUTO`.')):
-        pjit(lambda x: x,
-             in_axis_resources=(MeshPspecSharding(mesh, P('x')),
-                                pjit_lib._UNSPECIFIED))
-
-  def test_out_axis_resources_error(self):
-    with jax_array(True):
-      with self.assertRaisesRegex(
-            ValueError,
-            ('When `config.jax_array` flag is enabled, '
-             'out_axis_resources should contain instances of `Sharding` '
-             'or `pjit.AUTO`.')):
-        pjit(lambda x: x, out_axis_resources=P('x'))
-
   def test_no_input_output(self):
     with jax_array(True):
       def f():
@@ -2118,15 +2097,31 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        'One of pjit arguments got sharding.*which is not a subclass of '
-        'XLACompatibleSharding.'):
+        'One of in_axis_resources leaf specifications got sharding.*which is '
+        'not a subclass of XLACompatibleSharding.'):
       pjit(lambda x: x, in_axis_resources=ts)(arr)
 
     with self.assertRaisesRegex(
         ValueError,
-        'One of pjit outputs got sharding.*which is not a subclass of '
-        'XLACompatibleSharding.'):
+        'One of out_axis_resources leaf specifications got sharding.*which is '
+        'not a subclass of XLACompatibleSharding.'):
       pjit(lambda x: x, out_axis_resources=ts)(arr)
+
+  @jax_array(True)
+  def test_array_enabled_non_empty_mesh_with_pspec(self):
+    arr = jnp.array([1, 2, 3])
+    with self.assertRaisesRegex(
+        RuntimeError,
+        "pjit requires a non-empty mesh!.*Alternatively, provide a "
+        "XLACompatibleSharding to pjit and then the mesh context manager is "
+        "not required."):
+      pjit(lambda x: x, in_axis_resources=P('x'))(arr)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        "in_axis_resources leaf specifications are expected to be PartitionSpec "
+        "instances or None, but got x"):
+      pjit(lambda x: x, in_axis_resources='x')
 
 
 class TempSharding(Sharding):
