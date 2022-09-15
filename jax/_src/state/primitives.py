@@ -25,7 +25,7 @@ from jax._src.util import safe_map, safe_zip, partition_list, tuple_insert
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-import jax.numpy as jnp
+import numpy as np
 
 from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
                                   AccumEffect)
@@ -65,14 +65,16 @@ def _get_impl(ref: Ref, *idx: int, **_):
   raise ValueError("Cannot run stateful primitive.")
 get_p.def_impl(_get_impl)
 
-Indexer = Tuple[Union[int, slice, jnp.ndarray], ...]
+Array = Any
+Indexer = Tuple[Union[int, slice, Any], ...]
 
 def _unpack_idx(idx: Indexer, ndim: int
                ) -> Tuple[Tuple[int, ...], Tuple[bool, ...]]:
   indexed_dims_ = [type(i) != slice for i in idx]
   _, non_slice_idx = partition_list(indexed_dims_, idx)
   indexed_dims = indexed_dims_ + [False] * (ndim - len(indexed_dims_))
-  return (tuple(map(lambda x: jnp.asarray(x, jnp.int32), non_slice_idx)),
+  import jax.numpy as jnp
+  return (tuple(map(lambda x: jnp.asarray(x, np.int32), non_slice_idx)),
           tuple(indexed_dims))
 
 def _get_slice_output_shape(in_shape: Tuple[int, ...],
@@ -156,7 +158,8 @@ def _get_abstract_eval(ref_aval: ShapedArrayRef, *idx, indexed_dims):
     raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
   idx_shapes = tuple(i.shape for i in idx)
   shape = _get_slice_output_shape(ref_aval.shape, idx_shapes, indexed_dims)
-  return (core.ShapedArray(shape, ref_aval.dtype), {ReadEffect(ref_aval)})
+  return (core.ShapedArray(shape, ref_aval.dtype, weak_type=ref_aval.weak_type),
+          {ReadEffect(ref_aval)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
 
 
@@ -178,11 +181,12 @@ def _swap_abstract_eval(ref_aval: ShapedArrayRef, val_aval: core.AbstractValue,
                      f"Ref shape: {ref_aval.shape}. "
                      f"Value shape: {val_aval.shape}. "
                      f"Indices: {idx}. ")
-  if ref_aval.dtype != val_aval.dtype:
+  if ref_aval.dtype != val_aval.dtype and not ref_aval.weak_type:
     raise ValueError("Invalid dtype for `swap`. "
                      f"Ref dtype: {ref_aval.dtype}. "
                      f"Value shape: {val_aval.dtype}. ")
-  return (core.ShapedArray(expected_output_shape, ref_aval.dtype),
+  return (core.ShapedArray(expected_output_shape, val_aval.dtype,
+                           weak_type=ref_aval.weak_type),
           {WriteEffect(ref_aval)})
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 
@@ -375,7 +379,7 @@ def _get_vmap(batched_args, batched_dims, *, indexed_dims):
       # `idxs` doesn't include the non indexed dims.
       idx_place = [i for i, i_dim in enumerate(indexed_dims)
                    if i_dim].index(ref_dim)
-      iota = lax.broadcasted_iota(jnp.dtype('int32'), idxs_shape, 0)
+      iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
       idxs = tuple_insert(idxs, idx_place, iota)
     else:
       bdim_out = _output_bdim(indexed_dims, ref_dim, idxs_shape)
@@ -408,7 +412,7 @@ def _swap_vmap(batched_args, batched_dims, *, indexed_dims):
     indexed_dims = tuple_insert(indexed_dims, ref_dim, True)
     idx_place = [i for i, i_dim in enumerate(indexed_dims)
                  if i_dim].index(ref_dim)
-    iota = lax.broadcasted_iota(jnp.dtype('int32'), idxs_shape, 0)
+    iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
     idxs = tuple_insert(idxs, idx_place, iota)
     val = batching.moveaxis(val, val_dim, 0)
     bdim_out = 0
@@ -441,7 +445,7 @@ def _addupdate_vmap(batched_args, batched_dims, *, indexed_dims):
     idx_place = [i for i, i_dim in enumerate(indexed_dims)
                  if i_dim].index(ref_dim)
     idxs_shape, = {i.shape for i in idxs} or [()]
-    iota = lax.broadcasted_iota(jnp.dtype('int32'), idxs_shape, 0)
+    iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
     idxs = tuple_insert(idxs, idx_place, iota)
     val = batching.moveaxis(val, val_dim, 0)
   return addupdate_p.bind(ref, val, *idxs, indexed_dims=indexed_dims), []

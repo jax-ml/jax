@@ -23,6 +23,7 @@ from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src import ad_util
+from jax._src import dtypes
 from jax._src import util
 from jax._src.util import cache, weakref_lru_cache, safe_map, unzip3
 from jax.tree_util import tree_map, tree_unflatten, tree_structure
@@ -141,3 +142,31 @@ def _show_diff(array1, array2):
 def _avals_short(avals):
   to_str = lambda aval: getattr(aval, 'str_short', partial(str, aval))()
   return ' '.join(map(to_str, avals))
+
+def empty_array(sz, aval):
+  return lax.broadcast(lax.empty(aval.dtype), (sz, *aval.shape))
+
+def _promote_weak_typed_inputs(in_vals, in_avals, out_avals):
+  """Promote weakly-typed in_vals to be compatible with out_avals.
+
+  Args:
+    in_vals : flattened list of input values.
+    in_avals : corresponding list of avals.
+    out_avals : list of target output avals.
+  Returns:
+    in_vals_new : flattened list of modified in_vals with no weak types.
+    changed : bool; true if in_vals required modification.
+  """
+  if len(in_vals) != len(in_avals) or len(in_avals) != len(out_avals):
+    # Calling function is responsible for catching this.
+    return in_vals, False
+  weak_mismatches = [i for i, (a1, a2) in enumerate(zip(in_avals, out_avals))
+                    if getattr(a1, 'weak_type', False) and not core.typematch(a1, a2)]
+  if not weak_mismatches:
+    return in_vals, False
+  for i in weak_mismatches:
+    new_dtype = dtypes.result_type(in_vals[i], out_avals[i])
+    in_vals[i] = lax.convert_element_type(in_vals[i], new_dtype)
+  return in_vals, True
+
+

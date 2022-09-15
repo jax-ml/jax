@@ -37,6 +37,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import dtypes
+from jax._src import state
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lax import lax
@@ -57,15 +58,18 @@ from jax._src.util import (
     )
 import numpy as np
 
+from jax._src.lax.control_flow import for_loop
 from jax._src.lax.control_flow.common import (
     _abstractify,
     _avals_short,
     _check_tree_and_avals,
     _initial_style_jaxpr,
     _make_closed_jaxpr,
+    _promote_weak_typed_inputs,
     _prune_zeros,
     _typecheck_param,
     allowed_effects,
+    empty_array,
     )
 
 _map = safe_map
@@ -74,32 +78,6 @@ zip = safe_zip
 T = TypeVar('T')
 Array = Any
 BooleanNumeric = Any  # A bool, or a Boolean array.
-
-### Helper functions
-
-def _promote_weak_typed_inputs(in_vals, in_avals, out_avals):
-  """Promote weakly-typed in_vals to be compatible with out_avals.
-
-  Args:
-    in_vals : flattened list of input values.
-    in_avals : corresponding list of avals.
-    out_avals : list of target output avals.
-  Returns:
-    in_vals_new : flattened list of modified in_vals with no weak types.
-    changed : bool; true if in_vals required modification.
-  """
-  if len(in_vals) != len(in_avals) or len(in_avals) != len(out_avals):
-    # Calling function is responsible for catching this.
-    return in_vals, False
-  weak_mismatches = [i for i, (a1, a2) in enumerate(zip(in_avals, out_avals))
-                    if getattr(a1, 'weak_type', False) and not core.typematch(a1, a2)]
-  if not weak_mismatches:
-    return in_vals, False
-  for i in weak_mismatches:
-    new_dtype = dtypes.result_type(in_vals[i], out_avals[i])
-    in_vals[i] = lax.convert_element_type(in_vals[i], new_dtype)
-  return in_vals, True
-
 
 ### scan
 
@@ -272,12 +250,21 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     raise NotImplementedError(
         f'Effects not supported in `scan`: {disallowed_effects}')
 
-  out = scan_p.bind(*consts, *in_flat,
-                    reverse=reverse, length=length, jaxpr=jaxpr,
-                    num_consts=len(consts), num_carry=len(init_flat),
-                    linear=(False,) * (len(consts) + len(in_flat)),
-                    unroll=unroll)
-  return tree_unflatten(out_tree, out)
+
+  _, ys_avals = tree_unflatten(out_tree, jaxpr.out_avals)
+  ys = tree_map(lambda aval: lax.full((length, *aval.shape), 0, aval.dtype),
+                ys_avals)
+  def for_body(i, refs):
+    carry_refs, xs_refs, ys_refs = refs
+    carry = tree_map(lambda x: x[()], carry_refs)
+    x = tree_map(lambda x: x[i], xs_refs)
+    carry, y = f(carry, x)
+    tree_map(lambda c_ref, c: state.ref_set(c_ref, (), c), carry_refs, carry)
+    tree_map(lambda y_ref, y: state.ref_set(y_ref, (i,), y), ys_refs, y)
+  assert isinstance(length, int)
+  init, _, ys = for_loop.for_loop(length, for_body, (init, xs, ys), reverse=reverse,
+                                  unroll=unroll)
+  return init, ys
 
 def _scan_impl_unrolled(*args, reverse, length, num_consts, num_carry, linear,
                         f_impl, x_avals, y_avals):
@@ -315,7 +302,7 @@ def _scan_impl_loop(*args, reverse, length, num_consts, num_carry, linear,
     ys_out = _map(partial(_update_array, i_), y_avals, ys, y_updates)
     return [i + 1] + carry_out + ys_out
 
-  ys_init = _map(partial(_empty_array, length), y_avals)
+  ys_init = _map(partial(empty_array, length), y_avals)
   if length == 0:
     return init + ys_init
   else:
@@ -413,9 +400,6 @@ def _dynamic_index_array(i, aval, x):
 
 def _index_array(i, aval, x):
   return slicing.index_in_dim(x, i, keepdims=False)
-
-def _empty_array(sz, aval):
-  return lax.broadcast(lax.empty(aval.dtype), (sz, *aval.shape))
 
 def _update_array(i, aval, xs, x):
   return slicing.dynamic_update_index_in_dim(xs, x, i, 0)
@@ -1125,6 +1109,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
+  assert len(body_jaxpr.jaxpr.invars) == len(body_consts) + len(init_vals)
   outs = while_p.bind(*cond_consts, *body_consts, *init_vals,
                       cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
@@ -1360,6 +1345,7 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   else:
     assert False, "Fixpoint not reached"
   assert not num_res
+  unks_in = body_consts_uk + carry_uk
   body_jaxpr_known = core.ClosedJaxpr(jaxpr_known_, body_jaxpr.consts)
   del jaxpr_known_, carry_uk_out, num_res
 

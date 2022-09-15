@@ -104,8 +104,6 @@ SCAN_IMPLS_WITH_FOR = [
     (partial(lax.scan, unroll=2), 'unroll2'),
     (scan_with_new_checkpoint , 'new_checkpoint'),
     (scan_with_new_checkpoint2, 'new_checkpoint2'),
-    (scan_with_for, 'for_loop'),
-    (scan_with_remat_for, 'for_loop_remat'),
 ]
 
 def while_loop_new_checkpoint(cond_fun, body_fun, init_val):
@@ -2116,8 +2114,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
           x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
           1., lambda x: x)
     elif loop == "fori_inside_scan":
+      def body(c, i, c1):
+        return c1 * c
       func = lambda x: lax.scan(
-          lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x), None),
+          lambda c, x: (lax.fori_loop(x, x + 2., partial(body, c), x), None),
           x, np.ones(2))[0]
     else:
       assert False
@@ -2341,22 +2341,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def new_jaxpr():
       jaxpr = jax.make_jaxpr(scan_fun)(c, xs).jaxpr
-      scan = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'scan')
+      scan = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'for')
       return jaxpr, scan
 
     jaxpr, eqn = new_jaxpr()
     eqn.params['reverse'] = 4
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        re.escape('invalid scan param reverse of type int, bool required: 4'),
-        lambda: core.check_jaxpr(jaxpr))
-
-    jaxpr, eqn = new_jaxpr()
-    eqn.params['num_consts'] = -3
-    self.assertRaisesRegex(
-        core.JaxprTypeError,
-        re.escape('invalid scan param num_consts of type int, '
-                  'non-negative int required: -3'),
+        re.escape('invalid for param reverse of type int, bool required: 4'),
         lambda: core.check_jaxpr(jaxpr))
 
   def test_cond_typecheck_param(self):
