@@ -81,7 +81,7 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
     raise NotImplementedError('Subclasses should implement this method.')
 
   @abc.abstractmethod
-  def _to_xla_op_sharding(self, num_dimensions: int) -> Optional[xc.OpSharding]:
+  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
   #############################################################################
