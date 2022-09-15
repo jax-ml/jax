@@ -29,9 +29,9 @@ from absl.testing import absltest
 import numpy as np
 
 
-# DtypeLike is meant to annotate inputs to np.dtype that return
+# DTypeLike is meant to annotate inputs to np.dtype that return
 # a valid JAX dtype, so we test with np.dtype.
-def dtypelike_to_dtype(x: typing.DtypeLike) -> typing.Dtype:
+def dtypelike_to_dtype(x: typing.DTypeLike) -> typing.DType:
   return np.dtype(x)
 
 
@@ -42,7 +42,7 @@ def arraylike_to_array(x: typing.ArrayLike) -> typing.Array:
   return lax.convert_element_type(x, np.result_type(x))
 
 
-class HasDtype:
+class HasDType:
   dtype: np.dtype
   def __init__(self, dt):
     self.dtype = np.dtype(dt)
@@ -53,20 +53,20 @@ float32_dtype = np.dtype("float32")
 # Avoid test parameterization because we want to statically check these annotations.
 class TypingTest(jtu.JaxTestCase):
 
-  def testDtypeLike(self) -> None:
-    out1: typing.Dtype = dtypelike_to_dtype("float32")
+  def testDTypeLike(self) -> None:
+    out1: typing.DType = dtypelike_to_dtype("float32")
     self.assertEqual(out1, float32_dtype)
 
-    out2: typing.Dtype = dtypelike_to_dtype(np.float32)
+    out2: typing.DType = dtypelike_to_dtype(np.float32)
     self.assertEqual(out2, float32_dtype)
 
-    out3: typing.Dtype = dtypelike_to_dtype(jnp.float32)
+    out3: typing.DType = dtypelike_to_dtype(jnp.float32)
     self.assertEqual(out3, float32_dtype)
 
-    out4: typing.Dtype = dtypelike_to_dtype(np.dtype('float32'))
+    out4: typing.DType = dtypelike_to_dtype(np.dtype('float32'))
     self.assertEqual(out4, float32_dtype)
 
-    out5: typing.Dtype = dtypelike_to_dtype(HasDtype("float32"))
+    out5: typing.DType = dtypelike_to_dtype(HasDType("float32"))
     self.assertEqual(out5, float32_dtype)
 
   def testArrayLike(self) -> None:

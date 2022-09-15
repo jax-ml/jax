@@ -66,7 +66,7 @@ from jax._src.lax.utils import (
   standard_translate,
 )
 from jax._src.lax import slicing
-from jax._src.typing import Array, ArrayLike, DtypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DTypeLike, Shape
 
 xb = xla_bridge
 xc = xla_client
@@ -532,7 +532,7 @@ def lt(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise less-than: :math:`x < y`."""
   return lt_p.bind(x, y)
 
-def convert_element_type(operand: ArrayLike, new_dtype: DtypeLike) -> Array:
+def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   """Elementwise cast.
 
   Wraps XLA's `ConvertElementType
@@ -551,7 +551,7 @@ def convert_element_type(operand: ArrayLike, new_dtype: DtypeLike) -> Array:
     operand = operand.__jax_array__()  # type: ignore
   return _convert_element_type(operand, new_dtype, weak_type=False)
 
-def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DtypeLike] = None,
+def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = None,
                           weak_type: bool = False):
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
@@ -585,7 +585,7 @@ def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DtypeLike] = N
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
                                        weak_type=new_weak_type)
 
-def bitcast_convert_type(operand: ArrayLike, new_dtype: DtypeLike) -> Array:
+def bitcast_convert_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   """Elementwise bitcast.
 
   Wraps XLA's `BitcastConvertType
@@ -693,7 +693,7 @@ PrecisionLike = Union[None, str, PrecisionType, Tuple[str, str],
                       Tuple[PrecisionType, PrecisionType]]
 
 def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
-        preferred_element_type: Optional[DtypeLike] = None) -> Array:
+        preferred_element_type: Optional[DTypeLike] = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot
@@ -730,7 +730,7 @@ DotDimensionNumbers = Tuple[Tuple[Sequence[int], Sequence[int]],
 
 def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
-                preferred_element_type: Optional[DtypeLike] = None) -> Array:
+                preferred_element_type: Optional[DTypeLike] = None) -> Array:
   """More general contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -953,13 +953,13 @@ def transpose(operand: ArrayLike, permutation: Sequence[int]) -> Array:
     return transpose_p.bind(operand, permutation=permutation)
 
 def argmin(operand: ArrayLike, axis: int,
-           index_dtype: DtypeLike) -> Tuple[Array, Array]:
+           index_dtype: DTypeLike) -> Tuple[Array, Array]:
   """Computes the index of the minimum element along ``axis``."""
   return argmin_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
 
 def argmax(operand: ArrayLike, axis: int,
-           index_dtype: DtypeLike) -> Tuple[Array, Array]:
+           index_dtype: DTypeLike) -> Tuple[Array, Array]:
   """Computes the index of the maximum element along ``axis``."""
   return argmax_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
@@ -1058,13 +1058,13 @@ def _get_monoid_reducer(monoid_op: Callable,
       return _reduce_min if np.equal(aval.val, _get_min_identity(dtype)) else None
   return None
 
-def _get_bitwise_and_identity(dtype: DtypeLike) -> np.ndarray:
+def _get_bitwise_and_identity(dtype: DTypeLike) -> np.ndarray:
   return np.array(-1, dtype)
 
-def _get_bitwise_or_identity(dtype: DtypeLike) -> np.ndarray:
+def _get_bitwise_or_identity(dtype: DTypeLike) -> np.ndarray:
   return np.array(0, dtype)
 
-def _get_max_identity(dtype: DtypeLike) -> np.ndarray:
+def _get_max_identity(dtype: DTypeLike) -> np.ndarray:
   if dtypes.issubdtype(dtype, np.inexact):
     return np.array(-np.inf, dtype)
   elif dtypes.issubdtype(dtype, np.integer):
@@ -1074,7 +1074,7 @@ def _get_max_identity(dtype: DtypeLike) -> np.ndarray:
   else:
     raise ValueError(f"Unsupported dtype for max: {dtype}")
 
-def _get_min_identity(dtype: DtypeLike) -> np.ndarray:
+def _get_min_identity(dtype: DTypeLike) -> np.ndarray:
   if dtypes.issubdtype(dtype, np.inexact):
     return np.array(np.inf, dtype)
   elif dtypes.issubdtype(dtype, np.integer):
@@ -1159,7 +1159,7 @@ def tie_in(x: Any, y: T) -> T:
   """Deprecated. Ignores ``x`` and returns ``y``."""
   return y
 
-def full(shape: Shape, fill_value: ArrayLike, dtype: Optional[DtypeLike] = None) -> Array:
+def full(shape: Shape, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None) -> Array:
   """Returns an array of `shape` filled with `fill_value`.
 
   Args:
@@ -1187,14 +1187,14 @@ def zeros_like_shaped_array(aval: ArrayLike) -> Array:
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
-def iota(dtype: DtypeLike, size: int) -> Array:
+def iota(dtype: DTypeLike, size: int) -> Array:
   """Wraps XLA's `Iota
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
   return broadcasted_iota(dtype, (size,), 0)
 
-def broadcasted_iota(dtype: DtypeLike, shape: Shape, dimension: int) -> Array:
+def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = canonicalize_shape(shape)
@@ -1205,7 +1205,7 @@ def broadcasted_iota(dtype: DtypeLike, shape: Shape, dimension: int) -> Array:
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension)
 
-def _eye(dtype: DtypeLike, shape: Shape, offset: int) -> Array:
+def _eye(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -1213,7 +1213,7 @@ def _eye(dtype: DtypeLike, shape: Shape, offset: int) -> Array:
                 broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False)
 
-def _delta(dtype: DtypeLike, shape: Shape, axes: Sequence[int]) -> Array:
+def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
   axes = map(int, axes)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -1225,7 +1225,7 @@ def _delta(dtype: DtypeLike, shape: Shape, axes: Sequence[int]) -> Array:
                                        new_dtype=dtype, weak_type=False)
   return broadcast_in_dim(result, shape, axes)
 
-def _tri(dtype: DtypeLike, shape: Shape, offset: int) -> Array:
+def _tri(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -1303,7 +1303,7 @@ def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
-def full_like(x: Array, fill_value: ArrayLike, dtype: Optional[DtypeLike] = None,
+def full_like(x: Array, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None,
               shape: Optional[Shape] = None) -> Array:
   """Create a full array like np.full based on the example array `x`.
 
@@ -2466,7 +2466,7 @@ def _masked(padded_value, logical_shape, dimensions, value=0):
 
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: Optional[DtypeLike]):
+                            preferred_element_type: Optional[DTypeLike]):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if not all(np.all(np.greater_equal(d, 0)) and np.all(np.less(d, lhs.ndim))
              for d in (lhs_contracting, lhs_batch)):
@@ -2542,7 +2542,7 @@ def tuple_delete(tup, idx):
 
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: Optional[DtypeLike]):
+                            preferred_element_type: Optional[DTypeLike]):
   input_dtype = naryop_dtype_rule(_input_dtype, [_any, _any], 'dot_general', lhs, rhs)
   if preferred_element_type is None:
     return input_dtype
@@ -2550,7 +2550,7 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
   return preferred_element_type
 
 def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
-                               preferred_element_type: Optional[DtypeLike],
+                               preferred_element_type: Optional[DTypeLike],
                                swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = g.ndim - y.ndim + len(x_batch) + 2 * len(x_contract)
@@ -2567,7 +2567,7 @@ def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
                    tuple(out_axes))
 
 def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision,
-                               preferred_element_type: Optional[DtypeLike]):
+                               preferred_element_type: Optional[DTypeLike]):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   return _dot_general_transpose_lhs(
@@ -2578,7 +2578,7 @@ def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision,
 
 def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
                             precision,
-                            preferred_element_type: Optional[DtypeLike]):
+                            preferred_element_type: Optional[DTypeLike]):
   lhs, rhs = batched_args
   new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
       (lhs.ndim, rhs.ndim), batch_dims, dimension_numbers)
