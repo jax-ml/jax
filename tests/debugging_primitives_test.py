@@ -738,12 +738,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_xmap(self):
-    # TODO(https://github.com/google/jax/issues/12016): Make xmap work properly
-    # with Arrays of different
-    # sharding.
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with Array.')
-
     if (jax.default_backend() in {"cpu", "gpu"}
         and jaxlib.xla_extension_version < 81):
       raise unittest.SkipTest("`pjit` of callback not supported.")
@@ -756,9 +750,15 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       out = maps.xmap(foo, in_axes=['foo'], out_axes=[...])(x)
       debug_print("Out: {}", out)
       return out
-    f = pjit.pjit(f, in_axis_resources=pjit.PartitionSpec('dev'),
-                  out_axis_resources=pjit.PartitionSpec())
-    with maps.Mesh(np.array(jax.devices()), ['dev']):
+    mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
+    if config.jax_array:
+      in_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
+      out_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec())
+    else:
+      in_spec = pjit.PartitionSpec('dev')
+      out_spec = pjit.PartitionSpec()
+    f = pjit.pjit(f, in_axis_resources=in_spec, out_axis_resources=out_spec)
+    with mesh:
       with jtu.capture_stdout() as output:
         f(jnp.arange(8, dtype=jnp.int32) * 2)
         lines = ["0: 0", "1: 2", "2: 4", "3: 6", "4: 8", "5: 10", "6: 12",

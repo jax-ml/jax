@@ -581,11 +581,13 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
 
 
 def pjit_check_aval_sharding(
-    shardings: Sequence[XLACompatibleSharding], flat_avals, what_aval: str,
-    allow_uneven_sharding: bool):
+    shardings, flat_avals, what_aval: str, allow_uneven_sharding: bool):
   for aval, s in zip(flat_avals, shardings):
     if _is_unspecified_or_from_gda_or_auto(s):
       continue
+    if not isinstance(s, XLACompatibleSharding):
+      raise ValueError(f'One of {what_aval} got sharding {s} which is not a '
+                       'subclass of XLACompatibleSharding.')
     global_str = "" if s.is_fully_addressable else " global"
     shape = aval.shape
     try:
@@ -781,24 +783,35 @@ pjit_p.multiple_results = True
 
 
 def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
-  arg_shardings = tuple(a.sharding if hasattr(a, 'sharding') else _UNSPECIFIED
-                        for a in args)
-  arg_ndims = tuple(a.ndim if hasattr(a, 'ndim') else 0 for a in args)
+  committed_arg_shardings = []
+  for a in args:
+    if hasattr(a, 'sharding'):
+      arg_s = a.sharding
+      if not isinstance(arg_s, XLACompatibleSharding):
+        raise ValueError(f'One of the argument to pjit got sharding {arg_s} '
+                         'which is not a subclass of XLACompatibleSharding.')
+      if a._committed:
+        committed_arg_shardings.append(arg_s)
+
   da = _get_and_check_device_assignment(
-        it.chain(arg_shardings, pjit_in_shardings, out_shardings), pjit_mesh)
+      it.chain(
+          committed_arg_shardings, pjit_in_shardings, out_shardings),
+      pjit_mesh)
 
   resolved_in_shardings = []
-  for arg_s, pjit_in_s, ndim in safe_zip(arg_shardings, pjit_in_shardings, arg_ndims):
+  for arg, pjit_in_s in safe_zip(args, pjit_in_shardings):
+    arg_s, committed = ((arg.sharding, arg._committed)
+                        if hasattr(arg, 'sharding') else (_UNSPECIFIED, False))
     if _is_unspecified(pjit_in_s):
       if _is_unspecified(arg_s):
         resolved_in_shardings.append(OpShardingSharding.get_replicated(da))
       else:
-        resolved_in_shardings.append(to_op_sharding_sharding(arg_s, ndim))
+        resolved_in_shardings.append(to_op_sharding_sharding(arg_s, arg.ndim))
     else:
       if not _is_unspecified(arg_s):
-        if not pxla.are_op_shardings_equal(
-            pjit_in_s._to_xla_op_sharding(ndim),
-            arg_s._to_xla_op_sharding(ndim)):
+        if committed and not pxla.are_op_shardings_equal(
+            pjit_in_s._to_xla_op_sharding(arg.ndim),
+            arg_s._to_xla_op_sharding(arg.ndim)):
           raise ValueError('Sharding passed to pjit does not match the sharding '
                            'on the respective arg. '
                            f'Got pjit sharding: {pjit_in_s},\n'
@@ -1400,8 +1413,8 @@ def get_array_mapping(
 def to_op_sharding_sharding(s, ndim):
   if isinstance(s, OpShardingSharding):
     return s
-  op_sharding_sharding =  OpShardingSharding(s._device_assignment,
-                                             s._to_xla_op_sharding(ndim))
+  op_sharding_sharding =  OpShardingSharding(
+      s._device_assignment, s._to_xla_op_sharding(ndim))  # type: ignore
   op_sharding_sharding._original_sharding = s
   return op_sharding_sharding
 
@@ -1501,7 +1514,6 @@ def _maybe_replace_from_gda_with_pspec(
   return tuple(out)
 
 
-@lru_cache(maxsize=4096)
 def _get_and_check_device_assignment(shardings, pjit_mesh):
   first_device_assignment = None
   mesh_devices = list(pjit_mesh.devices.flat)

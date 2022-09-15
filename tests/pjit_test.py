@@ -2103,6 +2103,47 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual([o.device() for o in out2._arrays], list(mesh.devices.flat))
     self.assertArraysEqual(out2, inp_data)
 
+  @jax_array(True)
+  def test_not_xlacompatible_sharding_error(self):
+    shape = (8, 2)
+    inp_data = np.arange(prod(shape)).reshape(shape)
+    ts = TempSharding(jax.devices())
+    arr = array.make_array_from_callback(
+        shape, ts, lambda idx: inp_data[idx])
+    with self.assertRaisesRegex(
+        ValueError,
+        'One of the argument to pjit got sharding.*which is not a subclass of '
+        'XLACompatibleSharding.'):
+      pjit(lambda x: x)(arr)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'One of pjit arguments got sharding.*which is not a subclass of '
+        'XLACompatibleSharding.'):
+      pjit(lambda x: x, in_axis_resources=ts)(arr)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'One of pjit outputs got sharding.*which is not a subclass of '
+        'XLACompatibleSharding.'):
+      pjit(lambda x: x, out_axis_resources=ts)(arr)
+
+
+class TempSharding(Sharding):
+
+  def __init__(self, devices):
+    self._devices = devices
+
+  @property
+  def device_set(self):
+    return set(self._devices)
+
+  def devices_indices_map(self, global_shape):
+    return {d: (slice(None),) * len(global_shape) for d in self.device_set}
+
+  def shard_shape(self, global_shape):
+    return global_shape
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
