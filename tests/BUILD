@@ -101,6 +101,7 @@ py_test(
     args = [
         "--exclude_test_targets=MultiProcessGpuTest",
     ],
+    tags = ["manual"],
     deps = [
         "//jax",
         "//jax:test_util",
