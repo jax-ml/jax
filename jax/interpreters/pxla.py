@@ -3367,8 +3367,8 @@ def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
   from jax.experimental.array import Array
 
   @lru_cache(maxsize=4096)
-  def _cached_check(arg_sharding, in_xla_sharding, arg_type, ndim):
-    if not are_op_shardings_equal(
+  def _cached_check(arg_sharding, in_xla_sharding, arg_type, ndim, committed):
+    if committed and not are_op_shardings_equal(
         arg_sharding._to_xla_op_sharding(ndim),
         in_xla_sharding._to_xla_op_sharding(ndim)):
       raise ValueError(
@@ -3381,9 +3381,9 @@ def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
       continue
     if isinstance(arg, GlobalDeviceArray):
       _cached_check(_create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes), xs,
-                    'GDA', arg.ndim)
+                    'GDA', arg.ndim, True)
     else:
-      _cached_check(arg.sharding, xs, 'Array', arg.ndim)
+      _cached_check(arg.sharding, xs, 'Array', arg.ndim, arg._committed)
 
 
 def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:

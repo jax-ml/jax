@@ -174,7 +174,6 @@ py_test(
 jax_test(
     name = "xmap_test",
     srcs = ["xmap_test.py"],
-    disable_configs = ["cpu_jax_array"],
     pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 10,
@@ -190,7 +189,6 @@ jax_test(
 jax_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
-    disable_configs = ["cpu_jax_array"],
     pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 5,

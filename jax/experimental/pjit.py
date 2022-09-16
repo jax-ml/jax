@@ -811,8 +811,15 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
       if _is_unspecified(arg_s):
         resolved_in_shardings.append(OpShardingSharding.get_replicated(da))
       else:
-        resolved_in_shardings.append(to_op_sharding_sharding(
-            cast(XLACompatibleSharding, arg_s), arg.ndim))
+        if committed:
+          resolved_in_shardings.append(to_op_sharding_sharding(
+              cast(XLACompatibleSharding, arg_s), arg.ndim))
+        else:
+          if dispatch.is_single_device_sharding(arg_s):
+            resolved_in_shardings.append(OpShardingSharding.get_replicated(da))
+          else:
+            raise NotImplementedError('Having uncommitted Array sharded on '
+                                      'multiple devices is not supported.')
     else:
       if not _is_unspecified(arg_s):
         if committed and not pxla.are_op_shardings_equal(

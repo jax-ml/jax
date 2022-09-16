@@ -332,13 +332,23 @@ class XMapTest(XMapTestCase):
     vshape = (4, 5)
     v = jnp.arange(np.prod(vshape)).reshape(vshape)
     zxy = fxy(v)
+    if config.jax_array:
+      zxy_sharding_spec = global_device_array._get_sharding_spec(
+          zxy.shape, zxy.sharding.mesh, zxy.sharding.spec)
+    else:
+      zxy_sharding_spec = zxy.sharding_spec
     self.assertEqual(
-        zxy.sharding_spec,
+        zxy_sharding_spec,
         pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
                           (pxla.ShardedAxis(0), pxla.ShardedAxis(1))))
     zyx = fyx(v)
+    if config.jax_array:
+      zyx_sharding_spec = global_device_array._get_sharding_spec(
+          zyx.shape, zyx.sharding.mesh, zyx.sharding.spec)
+    else:
+      zyx_sharding_spec = zyx.sharding_spec
     self.assertEqual(
-        zyx.sharding_spec,
+        zyx_sharding_spec,
         pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
                           (pxla.ShardedAxis(1), pxla.ShardedAxis(0))))
 
@@ -370,6 +380,11 @@ class XMapTest(XMapTestCase):
            axis_resources={'a': 'x'})(x)
 
   def testNoTracerLeak(self):
+    if config.jax_array:
+      self.skipTest('Does not work with Array because of ShardingContext '
+                    'being used in xmap because of jit. Removing that '
+                    'restriction makes the test pass but that should be done '
+                    'in a separate CL.')
     @jax.jit
     def xmap_linearize(xs):
       eye = jnp.eye(xs.shape[0], dtype=jnp.float32)
@@ -404,11 +419,21 @@ class XMapTest(XMapTestCase):
     xshape = (4, 2, 5)
     x = jnp.arange(np.prod(xshape), dtype=float).reshape(xshape)
     y = f(x)
-    self.assertAllClose(y, ((jnp.sin(x * 2) * np.arange(xshape[-1], dtype=float)[None, None]).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
-    self.assertEqual(y[0].sharding_spec.sharding,
+    self.assertAllClose(
+        y, ((jnp.sin(x * 2) *
+             np.arange(xshape[-1], dtype=float)[None, None]).transpose(
+                 (1, 2, 0)), (x * 2).sum((0, 1))))
+
+    if config.jax_array:
+      sharding_spec = global_device_array._get_sharding_spec(
+          y[0].shape, y[0].sharding.mesh, y[0].sharding.spec)
+    else:
+      sharding_spec = y[0].sharding_spec
+    self.assertEqual(sharding_spec.sharding,
                      (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
-    self.assertEqual(y[0].sharding_spec.mesh_mapping,
-                     (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
+    self.assertEqual(sharding_spec.mesh_mapping,
+                     (pxla.Replicated(2), pxla.ShardedAxis(0)) +
+                     (pxla.Replicated(2),) * (len(mesh) - 2))
     if config.experimental_xmap_spmd_lowering:
       hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
       # Make sure that there are non-partial sharding specs in the HLO
@@ -964,6 +989,7 @@ class NamedNNTest(XMapTestCase):
                         atol=1e-4, rtol=2e-2)
 
 
+@jax_config.jax_array(False)
 class XMapGDATest(XMapTestCase):
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
