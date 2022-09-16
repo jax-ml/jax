@@ -35,7 +35,7 @@ traceback_util.register_exclusion(__file__)
 FLAGS = flags.FLAGS
 
 # bfloat16 support
-bfloat16: type = xla_client.bfloat16
+bfloat16: type = xla_client.bfloat16  # pytype: disable=annotation-type-mismatch  # typed-numpy
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
