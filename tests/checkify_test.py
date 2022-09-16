@@ -766,6 +766,33 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "x must be negative")
 
+  def test_assert_discharging_cond(self):
+    def true_branch(x):
+      checkify.check(jnp.all(x != 0.), "x cannot be 0")
+      return 1/x
+
+    def false_branch(x):
+      checkify.check(jnp.all(x >= 0), "x must be positive")
+      return x*2
+
+    @jax.jit
+    def f(pred, x):
+      return lax.cond(pred, true_branch, false_branch, x)
+
+    checked_f = checkify.checkify(f)
+
+    err, _ = checked_f(True, 0.)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "x cannot be 0")
+    err, _ = checked_f(False, 0.)
+    self.assertIsNone(err.get())
+
+    err, _ = checked_f(False, -1.)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "x must be positive")
+    err, _ = checked_f(True, -1.)
+    self.assertIsNone(err.get())
+
   def test_assert_batching_rule(self):
     @jax.vmap
     def f(x):
@@ -863,12 +890,12 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     checkify.checkify(g)(0.)  # does not crash
 
   def test_grad(self):
-    @checkify.checkify
     @jax.grad
     def f(x):
       checkify.check(jnp.all(x > 0), "should be positive!")
       return x
 
+    f = checkify.checkify(f)
     err, _ = f(1.)
     self.assertIsNone(err.get())
 
@@ -906,6 +933,30 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "value needs to be less than 6")
 
+  def test_assert_cond_no_data_dependence(self):
+    def f():
+      return jax.lax.cond(True,
+                          lambda: checkify.check(False, "hi!"),
+                          lambda: checkify.check(False, "bye!"))
+
+    f = checkify.checkify(f)
+    err, _ = f()
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "hi!")
+
+  def test_assert_switch_no_data_dependence(self):
+    def branch():
+      checkify.check(False, "hi!")
+
+    def f():
+      return lax.switch(0, [branch]*3)
+
+    checked_f = checkify.checkify(f)
+
+    err, _ = checked_f()
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "hi!")
+
 class LowerableChecksTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
@@ -926,6 +977,5 @@ class LowerableChecksTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(xla_extension.XlaRuntimeError,
                                 "x needs to be positive"):
       f(-1.)
-
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
