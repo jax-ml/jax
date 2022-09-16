@@ -402,7 +402,7 @@ class ShardingContext:
 
   This context also uses the GSPMD partitioner.
   """
-  sharding: Any
+  device_assignment: Sequence[xc.Device]
 
   # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
   @property

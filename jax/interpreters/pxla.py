@@ -2647,21 +2647,17 @@ class PartitionSpec(tuple):
 
 def _get_backend_from_shardings(
     shardings: Iterable[Union[XLACompatibleSharding, _UnspecifiedValue]]
-) -> Tuple[xb.XlaBackend, XLACompatibleSharding]:
-  from jax.experimental.sharding import XLACompatibleSharding
-
+) -> Tuple[xb.XlaBackend, Sequence[xc.Device]]:
   da: Optional[Sequence[xc.Device]] = None
-  first_sharding = None
   for s in shardings:
     if _is_unspecified(s):
       continue
     # pytype does not understand that _UNSPECIFIED is being skipped above.
     da = s._device_assignment  # type: ignore
-    first_sharding = s
     break
   da = cast(Sequence[xc.Device], da)
   assert len(da) > 0
-  return xb.get_device_backend(da[0]), cast(XLACompatibleSharding, first_sharding)
+  return xb.get_device_backend(da[0]), da
 
 
 @profiler.annotate_function
@@ -2687,22 +2683,19 @@ def lower_sharding_computation(
   # Device assignment across all inputs and outputs should be the same. This
   # is checked in pjit.
   if inp_device_assignment is not None:
-    from jax.experimental.sharding import SingleDeviceSharding
     assert not in_shardings, "if device_assignment given, no in_shardings"
     # TODO(yashkatariya): Look into allowing more than 1 device here.
     assert len(inp_device_assignment) == 1
     device_assignment = inp_device_assignment
     backend = xb.get_device_backend(device_assignment[0])
-    first_sharding = SingleDeviceSharding(device_assignment[0])
   else:
     if _is_unspecified(out_shardings):
-      backend, first_sharding = _get_backend_from_shardings(in_shardings)  # type: ignore
+      backend, device_assignment = _get_backend_from_shardings(in_shardings)  # type: ignore
     else:
       # type ignore because mypy can't understand that out_shardings that are
       # UNSPECIFIED singleton are filtered above.
-      backend, first_sharding = _get_backend_from_shardings(  # type: ignore
+      backend, device_assignment = _get_backend_from_shardings(  # type: ignore
           it.chain(in_shardings, out_shardings))  # type: ignore
-    device_assignment = first_sharding._device_assignment
 
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
@@ -2796,7 +2789,7 @@ def lower_sharding_computation(
       else:
         out_op_shardings.append(o._to_xla_op_sharding(aval.ndim))
     replicated_args = [False] * len(global_in_avals)
-    axis_ctx = mlir.ShardingContext(first_sharding)
+    axis_ctx = mlir.ShardingContext(device_assignment)
   else:
     # This path is triggered for `jit(pmap)` cases.
     replicated_args = None
