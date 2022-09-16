@@ -262,11 +262,43 @@ def tree_reduce(function: Callable[[T, Any], T],
 
 def tree_reduce(function: Callable[[T, Any], T],
                 tree: Any,
-                initializer: Any = no_initializer) -> T:
+                initializer: Any = no_initializer,
+                is_leaf: Optional[Callable[[Any], bool]] = None) -> T:
+  """Apply function cumulatively over the leaves of a pytree, so as to reduce
+   the collection of leaves to a single value.
+
+  Args:
+    function: a function that takes two arguments, to be applied cumulatively
+      to the leaves of ``tree`` in the order returned by ``tree_leaves``.
+    tree: a pytree containing the leaves which will be passed to ``function``
+      for reduction.
+    initializer: an optional argument to be placed before the leaves
+     of ``tree`` in the calculation.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether
+      the flattening should traverse the current object, or if it should be
+      stopped immediately, with the whole subtree being treated as a leaf.
+
+  Returns:
+    A single value corresponding to the cumulative application of ``function``
+    to leaves of ``tree``.
+
+  Examples:
+
+    >>> import jax.tree_util
+    >>> jax.tree_util.tree_reduce(lambda x, y: x + y, {"x": 7, "y": 42, "z": 10})
+    59
+
+    If ``initializer`` is provided then it is placed before the flattened
+    leaves in the calculation:
+
+    >>> jax.tree_util.tree_reduce(lambda x, y: x + y, {"x": 7, "y": 42, "z": 10}, 1)
+    60
+  """
   if initializer is no_initializer:
-    return functools.reduce(function, tree_leaves(tree))
+    return functools.reduce(function, tree_leaves(tree, is_leaf))
   else:
-    return functools.reduce(function, tree_leaves(tree), initializer)
+    return functools.reduce(function, tree_leaves(tree, is_leaf), initializer)
 
 def tree_all(tree):
   return all(tree_leaves(tree))
