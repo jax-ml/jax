@@ -32,6 +32,11 @@ from jax._src import test_util as jtu
 import jax.numpy as jnp
 import numpy as np
 
+try:
+  import rich
+except ModuleNotFoundError:
+  rich = None
+
 config.parse_flags_with_absl()
 
 debug_print = debugging.debug_print
@@ -55,6 +60,11 @@ def tearDownModule():
 disabled_backends = []
 if jaxlib.version < (0, 3, 15):
   disabled_backends.append("tpu")
+
+class DummyDevice:
+  def __init__(self, device_kind, id):
+    self.device_kind = device_kind
+    self.id = id
 
 class DebugPrintTest(jtu.JaxTestCase):
 
@@ -855,6 +865,120 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "You may be passing an f-string"):
       f(jnp.arange(2))
       jax.effects_barrier()
+
+class VisualizeShardingTest(jtu.JaxTestCase):
+
+  def _create_devices(self, shape):
+    num_devices = np.prod(shape)
+    devices = [DummyDevice("CPU", i) for i in range(num_devices)]
+    return np.array(devices).reshape(shape)
+
+  def test_trivial_sharding(self):
+    mesh = maps.Mesh(self._create_devices(1), ['x'])
+    pspec = pjit.PartitionSpec('x')
+    sd = sharding.MeshPspecSharding(mesh, pspec)
+    shape = (5,)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd)
+    self.assertEqual(output(), _format_multiline("""
+    ┌─────┐
+    │CPU 0│
+    └─────┘
+    """))
+
+  def test_trivial_sharding_with_scale(self):
+    mesh = maps.Mesh(self._create_devices(1), ['x'])
+    pspec = pjit.PartitionSpec('x')
+    sd = sharding.MeshPspecSharding(mesh, pspec)
+    shape = (5,)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd, scale=3.5)
+    self.assertEqual(output(), _format_multiline("""
+    ┌───────┐
+    │ CPU 0 │
+    └───────┘
+    """))
+
+  def test_full_sharding(self):
+    mesh = maps.Mesh(self._create_devices((8, 4)), ['x', 'y'])
+    pspec = pjit.PartitionSpec('x', 'y')
+    sd = sharding.MeshPspecSharding(mesh, pspec)
+    shape = (8, 8)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd)
+    expected = _format_multiline("""
+    ┌──────┬──────┬──────┬──────┐
+    │CPU 0 │CPU 1 │CPU 2 │CPU 3 │
+    ├──────┼──────┼──────┼──────┤
+    │CPU 4 │CPU 5 │CPU 6 │CPU 7 │
+    ├──────┼──────┼──────┼──────┤
+    │CPU 8 │CPU 9 │CPU 10│CPU 11│
+    ├──────┼──────┼──────┼──────┤
+    │CPU 12│CPU 13│CPU 14│CPU 15│
+    ├──────┼──────┼──────┼──────┤
+    │CPU 16│CPU 17│CPU 18│CPU 19│
+    ├──────┼──────┼──────┼──────┤
+    │CPU 20│CPU 21│CPU 22│CPU 23│
+    ├──────┼──────┼──────┼──────┤
+    │CPU 24│CPU 25│CPU 26│CPU 27│
+    ├──────┼──────┼──────┼──────┤
+    │CPU 28│CPU 29│CPU 30│CPU 31│
+    └──────┴──────┴──────┴──────┘
+    """)
+    self.assertEqual(output(), expected)
+
+  def test_sharding_with_replication(self):
+    shape = (8, 8)
+    mesh = maps.Mesh(self._create_devices((8, 4)), ['x', 'y'])
+
+    pspec = pjit.PartitionSpec('x', None)
+    sd = sharding.MeshPspecSharding(mesh, pspec)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd)
+    expected = _format_multiline("""
+    ┌─────────────────────────┐
+    │       CPU 0,1,2,3       │
+    ├─────────────────────────┤
+    │       CPU 4,5,6,7       │
+    ├─────────────────────────┤
+    │      CPU 8,9,10,11      │
+    ├─────────────────────────┤
+    │     CPU 12,13,14,15     │
+    ├─────────────────────────┤
+    │     CPU 16,17,18,19     │
+    ├─────────────────────────┤
+    │     CPU 20,21,22,23     │
+    ├─────────────────────────┤
+    │     CPU 24,25,26,27     │
+    ├─────────────────────────┤
+    │     CPU 28,29,30,31     │
+    └─────────────────────────┘
+    """)
+    self.assertEqual(output(), expected)
+
+    mesh = maps.Mesh(self._create_devices((4, 2)), ['x', 'y'])
+    pspec = pjit.PartitionSpec(None, 'y')
+    sd = sharding.MeshPspecSharding(mesh, pspec)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd)
+    expected = _format_multiline("""
+    ┌────────────┬────────────┐
+    │            │            │
+    │            │            │
+    │            │            │
+    │            │            │
+    │CPU 0,2,4,6 │CPU 1,3,5,7 │
+    │            │            │
+    │            │            │
+    │            │            │
+    │            │            │
+    │            │            │
+    └────────────┴────────────┘
+    """)
+    self.assertEqual(output(), expected)
+
+if not rich:
+  del VisualizeShardingTest
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
