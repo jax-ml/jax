@@ -875,5 +875,35 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertIn("should be positive", err.get())
 
+  def test_checkify_of_vmap_of_while(self):
+    @jax.vmap
+    def fun(n, v):
+      def while_cond(s):
+        counter, value = s
+        checkify.check(value < 6, "value needs to be less than 6!")
+        return counter > 0
+
+      def while_body(s):
+        counter, value = s
+        checkify.check(value >= 0, "value needs to be positive!")
+        return counter/value, value - 1.
+
+      _, result = jax.lax.while_loop(while_cond, while_body, (n, v))
+      return result
+
+    checked_f = checkify.checkify(fun, errors=checkify.all_checks)
+
+    err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., 4.]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "divided by zero")
+
+    err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., -4.]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "value needs to be positive")
+
+    err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([6., 2., -4.]))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "value needs to be less than 6")
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
