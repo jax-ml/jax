@@ -98,6 +98,7 @@ try:
 except ImportError:
   ducc_fft = None  # type: ignore
 
+import jaxlib.jax_custom_call
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
 jax_jit = xla_client._xla.jax_jit

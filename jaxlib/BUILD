@@ -34,6 +34,7 @@ py_library(
         "gpu_solver.py",
         "gpu_sparse.py",
         "init.py",
+        "jax_custom_call.py",
         "lapack.py",
         "mhlo_helpers.py",
         ":version",
@@ -164,11 +165,14 @@ cc_library(
     alwayslink = 1,
 )
 
-cc_library(
-    name = "jax_custom_call",
+pybind_extension(
+    name = "_jax_custom_call",
     hdrs = [
       "jax_custom_call.h",
       "jax_custom_call_internal.h"
     ],
     srcs = ["jax_custom_call.cc"],
+    deps = [
+      "@pybind11",
+    ],
 )

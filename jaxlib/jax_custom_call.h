@@ -5,6 +5,9 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
+
+
 struct JaxCustomCallStatus;
 
 struct JaxCustomCallApi {
@@ -14,7 +17,7 @@ struct JaxCustomCallApi {
 void JaxCustomCallStatusSetSuccess(JaxCustomCallStatus* status);
 
 void JaxCustomCallStatusSetFailure(JaxCustomCallStatus* status,
-                                   const char* message, size_t message_len);
+                                   const char* message, uint32_t message_len);
 
 #ifdef __cplusplus
 }  // extern "C"

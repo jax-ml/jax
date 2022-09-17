@@ -173,6 +173,8 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/ducc_fft.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_prng.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
+  copy_to_jaxlib(f"__main__/jaxlib/_jax_custom_call.{pyext}")
+  copy_to_jaxlib("__main__/jaxlib/jax_custom_call.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_sparse.py")
   copy_to_jaxlib("__main__/jaxlib/version.py")
