@@ -2238,6 +2238,54 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "Devices of all `Array` inputs and outputs should be the same"):
       pjit(lambda x, y: (x, y))(a, b)
 
+  @jax_array(True)
+  def test_same_out_sharding_id(self):
+    shape = (8, 2)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    arr, inp_data = create_array(shape, mesh, P('x', 'y'))
+
+    f = pjit(lambda x: x)
+    out1 = f(arr)
+    self.assertArraysEqual(out1, inp_data)
+    out1_sharding_id = id(out1.sharding)
+
+    out2 = f(out1)
+    self.assertArraysEqual(out2, inp_data)
+    out2_sharding_id = id(out2.sharding)
+
+    out3 = f(out2)
+    self.assertArraysEqual(out3, inp_data)
+    out3_sharding_id = id(out3.sharding)
+
+    self.assertEqual(out1_sharding_id, out2_sharding_id)
+    self.assertEqual(out1_sharding_id, out3_sharding_id)
+    self.assertEqual(out2_sharding_id, out3_sharding_id)
+
+  @jax_array(True)
+  def test_out_sharding_indices_id_cache_hit(self):
+    shape = (8, 2)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    arr, _ = create_array(shape, mesh, P('x', 'y'))
+
+    f = pjit(lambda x: x)
+    out1 = f(arr)
+    self.assertIsInstance(out1.sharding, OpShardingSharding)
+    out1.sharding.devices_indices_map(shape)
+    cache_info1 = OpShardingSharding.devices_indices_map.cache_info()
+
+    out2 = f(out1)
+    self.assertIsInstance(out2.sharding, OpShardingSharding)
+    out2.sharding.devices_indices_map(shape)
+    cache_info2 = OpShardingSharding.devices_indices_map.cache_info()
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+
+    out3 = f(out2)
+    self.assertIsInstance(out3.sharding, OpShardingSharding)
+    out3.sharding.devices_indices_map(shape)
+    cache_info3 = OpShardingSharding.devices_indices_map.cache_info()
+    self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
+
+
 class TempSharding(Sharding):
 
   def __init__(self, devices):

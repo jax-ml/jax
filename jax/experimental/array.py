@@ -43,11 +43,6 @@ Index = Tuple[slice, ...]
 ArrayLike = Union[np.ndarray, DeviceArray]
 
 
-class _ArrayFastPathArgs(NamedTuple):
-  devices_indices_map: Mapping[Device, Optional[Index]]
-  addressable_device_assignment: Sequence[Device]
-
-
 class Shard:
   """A single data shard of an Array.
 
@@ -61,13 +56,11 @@ class Shard:
   """
 
   def __init__(self, device: Device, sharding: Sharding, global_shape: Shape,
-               data: Optional[Array] = None,
-               _fast_path_args: Optional[_ArrayFastPathArgs] = None):
+               data: Optional[Array] = None):
     self.device = device
     self._sharding = sharding
     self._global_shape = global_shape
     self.data = data
-    self._fast_path_args = _fast_path_args
 
   def __repr__(self):
     try:
@@ -78,16 +71,13 @@ class Shard:
 
   @property
   def index(self) -> Index:
-    if self._fast_path_args is None:
-      try:
-        device_indices_map_fn = self._sharding.devices_indices_map
-      except AttributeError:
-        raise ValueError('Cannot calculate indices from sharding: '
-                         f'{self._sharding}. Please create a device to index '
-                         'mapping for your sharding.') from None
-      index = device_indices_map_fn(self._global_shape)[self.device]
-    else:
-      index = self._fast_path_args.devices_indices_map[self.device]
+    try:
+      device_indices_map_fn = self._sharding.devices_indices_map
+    except AttributeError:
+      raise ValueError('Cannot calculate indices from sharding: '
+                       f'{self._sharding}. Please create a device to index '
+                       'mapping for your sharding.') from None
+    index = device_indices_map_fn(self._global_shape)[self.device]
     assert index is not None
     return index
 
@@ -112,8 +102,7 @@ class Array:
   @pxla.use_cpp_method
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
                arrays: Union[Sequence[DeviceArray], Sequence[Array]],
-               committed: bool, _skip_checks: bool = False,
-               _fast_path_args: Optional[_ArrayFastPathArgs] = None):
+               committed: bool, _skip_checks: bool = False):
     # NOTE: the actual implementation of the constructor is moved to C++.
 
     self.aval = aval
@@ -127,8 +116,6 @@ class Array:
     # See https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
     # for what committed means.
     self._committed = committed
-    # Optionally precomputed for performance.
-    self._fast_path_args = _fast_path_args
     self._npy_value = None
 
     if not _skip_checks or config.jax_enable_checks:
@@ -161,10 +148,7 @@ class Array:
     # XLACompatibleSharding. But leave the rearragement to XLACompatibleSharding
     # only.
     if isinstance(self.sharding, XLACompatibleSharding):
-      if self._fast_path_args is None:
-        addressable_da = cast(XLACompatibleSharding, self.sharding)._addressable_device_assignment
-      else:
-        addressable_da = self._fast_path_args.addressable_device_assignment
+      addressable_da = self.sharding._addressable_device_assignment
       if len(self._arrays) != len(addressable_da):
         raise ValueError(
             f"Expected {len(addressable_da)} per-device arrays "
@@ -264,10 +248,7 @@ class Array:
       else:
         cidx = idx + (slice(None),) * (len(self.shape) - len(idx))
       if self._npy_value is None:
-        if self._fast_path_args is None:
-          indices = tuple(self.sharding.devices_indices_map(self.shape).values())
-        else:
-          indices = tuple(self._fast_path_args.devices_indices_map.values())
+        indices = tuple(self.sharding.devices_indices_map(self.shape).values())
         try:
           buf_idx = indices.index(cidx)
         except ValueError:
@@ -399,8 +380,7 @@ class Array:
       # of a DA.
       array = Array(db.aval, SingleDeviceSharding(device), [db],
                     committed=self._committed, _skip_checks=True)
-      out.append(Shard(
-          device, self.sharding, self.shape, array, self._fast_path_args))
+      out.append(Shard(device, self.sharding, self.shape, array))
     return out
 
   def delete(self):
@@ -528,14 +508,10 @@ def _array_pmap_shard_arg(x, devices, indices, mode):
   if dispatch.is_single_device_sharding(x.sharding):
     return pxla._shard_device_array(x, devices, indices, mode)
 
-  if x._fast_path_args is None:
-    x_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
-  else:
-    x_indices = tuple(x._fast_path_args.devices_indices_map.values())
-
   # If the sharding of Array does not match pmap's sharding then take the slow
   # path which is similar to what SDA does. This slow path reroute only happens
   # for `pmap`.
+  x_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
   if indices == x_indices:
     return [buf if buf.device() == d else buf.copy_to_device(d)
             for buf, d in safe_zip(x._arrays, devices)]
@@ -591,15 +567,8 @@ def _array_global_result_handler(global_aval, out_sharding, committed,
   if core.is_opaque_dtype(global_aval.dtype):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed, is_out_sharding_from_xla)
-
-  # Calculate the indices and addressable device assignment once during
-  # compilation and pass it to the constructor.
-  _array_fast_path_args = _ArrayFastPathArgs(
-      out_sharding.devices_indices_map(global_aval.shape),
-      out_sharding._addressable_device_assignment)
   return lambda bufs: Array(global_aval, out_sharding, bufs,
-                            committed=committed, _skip_checks=True,
-                            _fast_path_args=_array_fast_path_args)
+                            committed=committed, _skip_checks=True)
 pxla.global_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.AbstractToken, pxla.OutputType.Array)] = lambda *_: lambda *_: core.token
@@ -610,13 +579,7 @@ def _array_local_result_handler(aval, sharding, indices):
   if core.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.local_sharded_result_handler(
         aval, sharding, indices)
-
-  # Calculate the indices and addressable device assignment once during
-  # compilation and pass it to the constructor.
-  _array_fast_path_args = _ArrayFastPathArgs(
-      sharding.devices_indices_map(aval.shape),
-      sharding._addressable_device_assignment)
   return lambda bufs: Array(aval, sharding, bufs, committed=True,
-                            _skip_checks=True, _fast_path_args=_array_fast_path_args)
+                            _skip_checks=True)
 pxla.local_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_local_result_handler
 pxla.local_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_local_result_handler

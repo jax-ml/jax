@@ -3012,6 +3012,30 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(w, jnp.cos(jnp.sin(x) ** 2))
 
+  @jax_config.jax_array(True)
+  def test_same_out_sharding_id(self):
+    if config.jax_disable_jit:
+      self.skipTest('Skip this under eager pmap mode.')
+    shape = (jax.device_count(), 2)
+    arr, inp_data = create_input_array_for_pmap(shape)
+
+    f = pmap(lambda x: x)
+    out1 = f(arr)
+    self.assertArraysEqual(out1, inp_data)
+    out1_sharding_id = id(out1.sharding)
+
+    out2 = f(out1)
+    self.assertArraysEqual(out2, inp_data)
+    out2_sharding_id = id(out2.sharding)
+
+    out3 = f(out2)
+    self.assertArraysEqual(out3, inp_data)
+    out3_sharding_id = id(out3.sharding)
+
+    self.assertEqual(out1_sharding_id, out2_sharding_id)
+    self.assertEqual(out1_sharding_id, out3_sharding_id)
+    self.assertEqual(out2_sharding_id, out3_sharding_id)
+
 
 class EagerPmapMixin:
 

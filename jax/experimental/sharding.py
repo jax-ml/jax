@@ -185,7 +185,8 @@ class MeshPspecSharding(XLACompatibleSharding):
   def __eq__(self, other):
     if not isinstance(other, MeshPspecSharding):
       return False
-
+    if id(self) == id(other):
+      return True
     if id(self.mesh) == id(other.mesh) and self._parsed_pspec == other._parsed_pspec:
       return True
     return self.mesh == other.mesh and self._parsed_pspec == other._parsed_pspec
@@ -262,6 +263,8 @@ class SingleDeviceSharding(XLACompatibleSharding):
   def __eq__(self, other):
     if not isinstance(other, SingleDeviceSharding):
       return False
+    if id(self) == id(other):
+      return True
     return self._device == other._device
 
   @property
@@ -292,6 +295,8 @@ class PmapSharding(XLACompatibleSharding):
   def __eq__(self, other):
     if not isinstance(other, PmapSharding):
       return False
+    if id(self) == id(other):
+      return True
     return (self.sharding_spec == other.sharding_spec and
             np.array_equal(self.devices, other.devices))
 
@@ -353,6 +358,8 @@ class OpShardingSharding(XLACompatibleSharding):
   def __eq__(self, other):
     if not isinstance(other, OpShardingSharding):
       return False
+    if id(self) == id(other):
+      return True
     return (pxla.are_op_shardings_equal(self._op_sharding, other._op_sharding) and
             self._devices == other._devices)
 

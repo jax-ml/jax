@@ -56,9 +56,7 @@ async def create_async_array_from_callback(
   dbs = [jax.device_put(array, device)
          for array, device in zip(local_arrays, addressable_da)]
   aval = jax.ShapedArray(global_shape, dbs[0].dtype)
-  return array.Array(
-      aval, inp_sharding, dbs, committed=True,
-      _fast_path_args=array._ArrayFastPathArgs(device_to_index_map, addressable_da))
+  return array.Array(aval, inp_sharding, dbs, committed=True)
 
 
 async def create_async_gda_from_callback(
